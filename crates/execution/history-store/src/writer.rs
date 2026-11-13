@@ -15,16 +15,19 @@
 //! uploaded under `seg/<k>/<epoch>/`, so a restarted writer never reuses an older epoch's
 //! uploads and a stale garbage collector cannot delete objects this writer publishes.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex, PoisonError},
+    time::Duration,
+};
 
 use alloy_primitives::B256;
 use object_store::ObjectStore;
 use tracing::{debug, info, warn};
 
 use crate::{
-    ArchiveLayout, Catalog, CatalogStore, ChainTip, ChunkVerifier, HistoryStoreError, IndexOptions,
-    IndexWriter, SegmentBuilder, SegmentIndex, SegmentObjects, SourcePool, UploadReport,
-    VersionedCatalog,
+    ArchiveLayout, ArchiveReader, Catalog, CatalogStore, ChainTip, ChunkVerifier,
+    HistoryStoreError, IndexOptions, IndexWriter, SegmentBuilder, SegmentIndex, SegmentManifest,
+    SegmentObjects, SegmentTip, SourcePool, UploadReport, VersionedCatalog,
 };
 
 /// A segment uploaded and indexed but not yet published: the state between the index flush and
@@ -37,6 +40,8 @@ pub struct PreparedSegment {
     pub segment: u64,
     /// Last block of the segment.
     pub last: u64,
+    /// Chain tip at `last`, which the next segment chains onto.
+    pub tip: ChainTip,
     /// Upload counts.
     pub upload: UploadReport,
 }
@@ -119,6 +124,8 @@ pub struct ArchiveWriter {
     pub config: WriterConfig,
     /// Catalog writer epoch this instance claimed.
     pub epoch: u64,
+    /// Tip of the last segment this writer published, so the next `prepare` reads nothing back.
+    pub last_tip: Mutex<Option<ChainTip>>,
 }
 
 impl ArchiveWriter {
@@ -163,6 +170,7 @@ impl ArchiveWriter {
             verifier,
             config,
             epoch,
+            last_tip: Mutex::new(None),
         })
     }
 
@@ -197,8 +205,14 @@ impl ArchiveWriter {
     pub async fn step(&self) -> Result<StepOutcome, HistoryStoreError> {
         match self.prepare().await? {
             PrepareOutcome::Ready(prepared) => {
-                self.publish(prepared.current, prepared.segment, prepared.last, prepared.upload)
-                    .await
+                let outcome = self
+                    .publish(prepared.current, prepared.segment, prepared.last, prepared.upload)
+                    .await?;
+                if matches!(outcome, StepOutcome::Published { .. }) {
+                    *self.last_tip.lock().unwrap_or_else(PoisonError::into_inner) =
+                        Some(prepared.tip);
+                }
+                Ok(outcome)
             }
             PrepareOutcome::Skip(outcome) => Ok(outcome),
         }
@@ -279,6 +293,7 @@ impl ArchiveWriter {
             });
         }
 
+        let tip = ChainTip::after(blocks.last().expect("segment has blocks"));
         let files = SegmentBuilder::new(n).build(segment, &blocks)?;
         // Uploads a crashed or superseded owner left for this segment are never published (the
         // segment is above `H` and this writer owns the catalog), and GC never revisits the
@@ -292,10 +307,13 @@ impl ArchiveWriter {
         self.index
             .write_segment(
                 &SegmentIndex::from_blocks(segment, n, &blocks),
-                &files.manifest(self.epoch),
+                &SegmentManifest {
+                    tip: Some(SegmentTip { last_hash: tip.hash, next_tx_num: tip.next_tx_num }),
+                    ..files.manifest(self.epoch)
+                },
             )
             .await?;
-        Ok(PrepareOutcome::Ready(Box::new(PreparedSegment { current, segment, last, upload })))
+        Ok(PrepareOutcome::Ready(Box::new(PreparedSegment { current, segment, last, tip, upload })))
     }
 
     /// Advances `H` to `last` by compare-and-swap, re-reading on conflict (TDD §4: on 412
@@ -327,8 +345,10 @@ impl ArchiveWriter {
         }
     }
 
-    /// Returns the hash and next transaction number of block `segment·N − 1`, read from the
-    /// archive's previous segment, or `None` for segment 0.
+    /// Returns the hash and next transaction number of block `segment·N − 1`, or `None` for
+    /// segment 0. Taken from the segment this writer last published, else from the previous
+    /// segment's manifest; only a manifest written before tips were recorded makes the writer
+    /// download and decode the previous segment, on the blocking pool.
     pub async fn archive_tip(
         &self,
         catalog: &Catalog,
@@ -344,16 +364,29 @@ impl ArchiveWriter {
                 reason: format!("H {:?} does not end segment {previous}", catalog.h),
             });
         }
+        let cached = *self.last_tip.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(tip) = cached.filter(|tip| tip.number == segment * n - 1) {
+            return Ok(Some(tip));
+        }
         let manifest = self.index.required_manifest(previous).await?;
+        if let Some(tip) = manifest.chain_tip() {
+            return Ok(Some(tip));
+        }
+        debug!(segment = previous, "manifest has no tip; reading the segment back");
         let files = self.objects.download(&manifest, n).await?;
-        manifest.check(previous, n, &files.files)?;
-        let blocks = files.read_blocks()?;
+        let blocks = ArchiveReader::blocking(move || {
+            manifest.check(previous, n, &files.files)?;
+            files.read_blocks()
+        })
+        .await?;
         Ok(blocks.last().map(ChainTip::after))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
+
     use alloy_primitives::Bytes;
     use alloy_rlp::Encodable;
     use object_store::{ObjectStoreExt, memory::InMemory};
@@ -502,6 +535,77 @@ mod tests {
             }
         }
         out
+    }
+
+    /// Review5 P2 writer tip: after a publish, the next `prepare` chains onto the tip the
+    /// writer kept, and a restarted writer onto the tip recorded in the previous segment's
+    /// manifest; neither reads a segment object back.
+    #[tokio::test]
+    async fn prepare_after_publish_reads_no_segment_objects() {
+        let fixture = ChainFixture::new(12, 2);
+        let counting = crate::test_utils::ChunkedStore::new(
+            Arc::new(InMemory::new()),
+            "chain/seg/",
+            usize::MAX,
+        );
+        let stats = Arc::clone(&counting.stats);
+        let store: Arc<dyn ObjectStore> = Arc::new(counting);
+        let w = writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 11))], 4).await;
+        w.step().await.unwrap();
+        let tip = ChainTip::after(&fixture.blocks[3]);
+        assert_eq!(*w.last_tip.lock().unwrap(), Some(tip), "the writer keeps segment 0's tip");
+        assert_eq!(
+            w.index.manifest(0).await.unwrap().and_then(|m| m.chain_tip()),
+            Some(tip),
+            "segment 0's manifest records its tip"
+        );
+        let outcome = w.step().await.unwrap();
+        assert!(matches!(outcome, StepOutcome::Published { segment: 1, .. }), "got {outcome:?}");
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 0, "segment 1 chained without seg/ reads");
+        drop(w);
+
+        let restarted =
+            writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 11))], 4).await;
+        assert_eq!(*restarted.last_tip.lock().unwrap(), None, "a restart starts with no tip");
+        let outcome = restarted.step().await.unwrap();
+        assert!(matches!(outcome, StepOutcome::Published { segment: 2, .. }), "got {outcome:?}");
+        assert_eq!(
+            stats.gets.load(Ordering::SeqCst),
+            0,
+            "the restart chained onto segment 1's manifest tip without seg/ reads"
+        );
+    }
+
+    /// A previous segment whose manifest predates recorded tips is read back to find the tip,
+    /// and the next segment still publishes.
+    #[tokio::test]
+    async fn legacy_manifest_without_a_tip_reads_the_segment_back() {
+        let fixture = ChainFixture::new(8, 2);
+        let counting = crate::test_utils::ChunkedStore::new(
+            Arc::new(InMemory::new()),
+            "chain/seg/",
+            usize::MAX,
+        );
+        let stats = Arc::clone(&counting.stats);
+        let store: Arc<dyn ObjectStore> = Arc::new(counting);
+        let w = writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 7))], 4).await;
+        w.step().await.unwrap();
+        drop(w);
+        let restarted =
+            writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 7))], 4).await;
+        let legacy = SegmentManifest {
+            tip: None,
+            ..restarted.index.manifest(0).await.unwrap().expect("segment 0 manifest")
+        };
+        restarted.index.db.put(crate::IndexKey::manifest(0), legacy.encode()).await.unwrap();
+        restarted.index.db.flush().await.unwrap();
+        let outcome = restarted.step().await.unwrap();
+        assert!(matches!(outcome, StepOutcome::Published { segment: 1, h: 7, .. }), "{outcome:?}");
+        assert_eq!(
+            stats.gets.load(Ordering::SeqCst),
+            21,
+            "the 21 objects of segment 0 were read back once to find its tip"
+        );
     }
 
     /// A crash after a partial upload is repaired by the next run, which deletes the crashed
@@ -803,6 +907,7 @@ mod tests {
                     last_block: 3,
                     epoch: 1,
                     files: Default::default(),
+                    tip: None,
                 },
             )
             .await

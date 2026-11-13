@@ -331,6 +331,7 @@ mod tests {
             last_block: k * 4 + 3,
             epoch: 1,
             files: BTreeMap::new(),
+            tip: None,
         }
     }
 

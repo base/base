@@ -529,6 +529,8 @@ pub struct ChunkStats {
     pub peak: AtomicU64,
     /// Chunks handed out.
     pub chunks: AtomicU64,
+    /// `get` calls under the tracked prefix.
+    pub gets: AtomicU64,
 }
 
 /// One chunk's bytes; returns its length to [`ChunkStats::live`] when the last reference to it
@@ -627,6 +629,7 @@ impl ObjectStore for ChunkedStore {
         if !location.as_ref().starts_with(&self.prefix) {
             return Ok(result);
         }
+        self.stats.gets.fetch_add(1, Ordering::SeqCst);
         let (meta, range) = (result.meta.clone(), result.range.clone());
         let (attributes, extensions) = (result.attributes.clone(), result.extensions.clone());
         let (chunk, stats) = (self.chunk, Arc::clone(&self.stats));

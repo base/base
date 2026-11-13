@@ -22,7 +22,7 @@ pub use convert::{ArchiveConverter, ArchivedBlockWithReceipts};
 mod eth;
 pub use eth::{
     ArchiveEth, ArchiveEthApiServer, ArchiveHandle, ArchiveRpcBoundary, ArchiveSource, LocalEthApi,
-    LocalFilterApi, LocalRetention, MAX_ARCHIVE_LOG_RANGE, StateDomain,
+    LocalFilterApi, LocalRetention, MAX_ARCHIVE_LOG_RANGE, RetentionCache, StateDomain,
 };
 
 mod eth_extension;

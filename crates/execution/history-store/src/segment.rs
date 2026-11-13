@@ -19,7 +19,7 @@ use reth_provider::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{BlockData, BlockRows, BodyIndices, HistoryStoreError};
+use crate::{BlockData, BlockRows, BodyIndices, ChainTip, HistoryStoreError};
 
 /// Prefix shared by every reth static file name.
 const STATIC_FILE_PREFIX: &str = "static_file_";
@@ -184,9 +184,33 @@ pub struct SegmentManifest {
     pub epoch: u64,
     /// Object name → checksum and size.
     pub files: BTreeMap<String, ManifestEntry>,
+    /// Hash and next transaction number after the segment's last block, so the writer can
+    /// chain the next segment without reading this one back. `None` in manifests written
+    /// before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip: Option<SegmentTip>,
+}
+
+/// What the next segment chains onto: the last block's hash and the first transaction number
+/// after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SegmentTip {
+    /// Hash of the segment's last block.
+    pub last_hash: B256,
+    /// First transaction number of the block after the segment.
+    pub next_tx_num: u64,
 }
 
 impl SegmentManifest {
+    /// The chain tip at the segment's last block, if the manifest records it.
+    pub fn chain_tip(&self) -> Option<ChainTip> {
+        self.tip.map(|tip| ChainTip {
+            number: self.last_block,
+            hash: tip.last_hash,
+            next_tx_num: tip.next_tx_num,
+        })
+    }
+
     /// Checks that this manifest describes segment `k` of `n` blocks.
     pub fn check_range(&self, k: u64, n: u64) -> Result<(), HistoryStoreError> {
         if (self.segment, self.first_block, self.last_block) == (k, k * n, k * n + n - 1) {
@@ -327,6 +351,7 @@ impl SegmentFiles {
             first_block: range.start(),
             last_block: range.end(),
             epoch,
+            tip: None,
             files: self
                 .files
                 .iter()
@@ -654,6 +679,33 @@ mod tests {
             "segment 0 expects blocks 0..=3, got 3 blocks",
             "short segment must be rejected"
         );
+    }
+
+    /// A manifest's tip survives an encode/decode round trip, and a manifest written before
+    /// the field existed still decodes, with no tip.
+    #[test]
+    fn manifest_round_trip_keeps_the_tip() {
+        let fixture = ChainFixture::new(8, 2);
+        let files = SegmentBuilder::new(4).build(1, &fixture.blocks[4..8]).unwrap();
+        let tip = SegmentTip { last_hash: fixture.blocks[7].hash, next_tx_num: 16 };
+        let manifest = SegmentManifest { tip: Some(tip), ..files.manifest(3) };
+        let decoded = SegmentManifest::decode(1, &manifest.encode()).unwrap();
+        assert_eq!(decoded, manifest, "every field, including the tip, round-trips");
+        assert_eq!(
+            decoded.chain_tip(),
+            Some(ChainTip { number: 7, hash: fixture.blocks[7].hash, next_tx_num: 16 }),
+            "the tip sits at the segment's last block"
+        );
+
+        let legacy = files.manifest(3);
+        let raw = legacy.encode();
+        assert!(
+            !String::from_utf8(raw.clone()).unwrap().contains("\"tip\""),
+            "a manifest without a tip encodes exactly as before the field existed"
+        );
+        let decoded = SegmentManifest::decode(1, &raw).unwrap();
+        assert_eq!(decoded.tip, None, "a legacy manifest decodes with no tip");
+        assert_eq!(decoded, legacy, "a legacy manifest round-trips unchanged");
     }
 
     /// Archive object names map to and from reth's static file names.

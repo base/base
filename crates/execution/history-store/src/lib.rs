@@ -30,6 +30,7 @@ pub use catalog::{
 mod segment;
 pub use segment::{
     BodyIndicesFile, ManifestEntry, SegmentBuilder, SegmentFile, SegmentFiles, SegmentManifest,
+    SegmentTip,
 };
 
 mod verify;

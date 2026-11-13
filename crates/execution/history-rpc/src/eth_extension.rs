@@ -9,7 +9,9 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_prune_types::PruneMode;
 use tracing::{info, warn};
 
-use crate::{ArchiveConverter, ArchiveEth, ArchiveEthApiServer, ArchiveHandle, ArchiveSource};
+use crate::{
+    ArchiveConverter, ArchiveEth, ArchiveEthApiServer, ArchiveHandle, ArchiveSource, RetentionCache,
+};
 
 /// Default bound on the startup catalog check.
 pub const DEFAULT_STARTUP_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
@@ -85,6 +87,7 @@ impl BaseNodeExtension for ArchiveEthExtension {
                 archive,
                 converter: ArchiveConverter::new(chain_spec),
                 max_logs_per_response,
+                retention: RetentionCache::new(config.snapshot_ttl),
             };
             ctx.modules.replace_configured(api.into_rpc())?;
             Ok(())

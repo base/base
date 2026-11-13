@@ -18,7 +18,7 @@
 use std::{
     future::Future,
     sync::{Arc, Mutex, PoisonError},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
@@ -319,7 +319,8 @@ pub enum StateDomain {
     Storage,
 }
 
-/// What the node still holds, read from its provider once per request.
+/// What the node still holds, read from its provider at most once per
+/// [`RetentionCache::ttl`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LocalRetention {
     /// Earliest block whose body the node holds.
@@ -345,6 +346,22 @@ impl LocalRetention {
             storage_history_pruned: pruned(PruneSegment::StorageHistory),
             receipts_pruned: pruned(PruneSegment::Receipts),
         }
+    }
+
+    /// Whether state at `block` can be outside the node's retention, so routing needs the
+    /// retention at all. The head and forkchoice tags (and an omitted block, which means
+    /// `latest`) are always retained; should the node still refuse one as pruned, that
+    /// refusal routes the read to the archive.
+    pub const fn may_be_pruned(block: Option<BlockId>) -> bool {
+        !matches!(
+            block,
+            None | Some(BlockId::Number(
+                BlockNumberOrTag::Latest
+                    | BlockNumberOrTag::Pending
+                    | BlockNumberOrTag::Safe
+                    | BlockNumberOrTag::Finalized
+            ))
+        )
     }
 
     /// Whether the node lacks `domain` history at `number`.
@@ -375,6 +392,39 @@ impl LocalRetention {
     }
 }
 
+/// The node's [`LocalRetention`], reused for `ttl` so the highest-volume RPCs do not open four
+/// provider read transactions each. Prune checkpoints move once per prune run, and a block
+/// pruned inside the TTL is still caught: the node refuses it as pruned, and that refusal goes
+/// to the archive.
+#[derive(Debug)]
+pub struct RetentionCache {
+    /// How long one read is reused.
+    pub ttl: Duration,
+    /// Last read and when it was taken.
+    pub cached: Mutex<Option<(Instant, LocalRetention)>>,
+}
+
+impl RetentionCache {
+    /// Creates an empty cache that reuses a read for `ttl`.
+    pub const fn new(ttl: Duration) -> Self {
+        Self { ttl, cached: Mutex::new(None) }
+    }
+
+    /// Returns the cached retention, or calls `read` and caches its result once the cached
+    /// value is older than [`Self::ttl`].
+    pub fn get(&self, read: impl FnOnce() -> LocalRetention) -> LocalRetention {
+        let mut cached = self.cached.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((at, retention)) = *cached
+            && at.elapsed() < self.ttl
+        {
+            return retention;
+        }
+        let retention = read();
+        *cached = Some((Instant::now(), retention));
+        retention
+    }
+}
+
 /// Local-first, archive-on-miss implementation of [`ArchiveEthApiServer`].
 #[derive(Debug)]
 pub struct ArchiveEth<Eth, F, N, P> {
@@ -393,6 +443,8 @@ pub struct ArchiveEth<Eth, F, N, P> {
     /// Most logs one archive `eth_getLogs` response may hold (the node's
     /// `--rpc.max-logs-per-response`).
     pub max_logs_per_response: usize,
+    /// The node's retention, reused for the archive's snapshot TTL.
+    pub retention: RetentionCache,
 }
 
 impl<Eth, F, N, P> ArchiveEth<Eth, F, N, P>
@@ -408,6 +460,11 @@ where
         + Sync
         + 'static,
 {
+    /// The node's retention, read through [`Self::retention`].
+    pub fn local_retention(&self) -> LocalRetention {
+        self.retention.get(|| LocalRetention::read(&self.provider))
+    }
+
     /// Reads block `number` and its receipts from the archive.
     pub async fn archived_block(
         &self,
@@ -428,7 +485,7 @@ where
         full: bool,
         local: RpcResult<Option<BaseBlockResponse>>,
     ) -> RpcResult<Option<BaseBlockResponse>> {
-        let retention = LocalRetention::read(&self.provider);
+        let retention = self.local_retention();
         match &local {
             Ok(Some(block)) if !retention.answer_incomplete(block.header.number) => return local,
             Ok(None) if !retention.archive_may_hold(number) => return local,
@@ -456,13 +513,13 @@ where
     /// Whether a local answer for `number` must be replaced by the archive's
     /// ([`LocalRetention::answer_incomplete`]); a pending answer (`None`) never is.
     pub fn local_answer_incomplete(&self, number: Option<u64>) -> bool {
-        number.is_some_and(|number| LocalRetention::read(&self.provider).answer_incomplete(number))
+        number.is_some_and(|number| self.local_retention().answer_incomplete(number))
     }
 
     /// Whether a transaction or receipt the node does not know may be in the archive
     /// ([`LocalRetention::archive_may_hold`]).
     pub fn archive_may_hold_hash(&self) -> bool {
-        LocalRetention::read(&self.provider).archive_may_hold(None)
+        self.local_retention().archive_may_hold(None)
     }
 
     /// Picks the answer when the archive cannot serve a request the node missed: the node's
@@ -512,9 +569,10 @@ where
     {
         let number =
             block.and_then(|block| self.provider.block_number_for_id(block).ok().flatten());
-        if let Some(number) = number
-            .filter(|number| LocalRetention::read(&self.provider).state_pruned(*number, domain))
-        {
+        if let Some(number) = number.filter(|number| {
+            LocalRetention::may_be_pruned(block)
+                && self.local_retention().state_pruned(*number, domain)
+        }) {
             return Err(number);
         }
         let answer = local().await;
@@ -557,7 +615,7 @@ where
         let lagging = || HistoryStoreError::Unavailable {
             reason: format!("archive H {h} is older than the node's {domain:?} history retention"),
         };
-        if LocalRetention::read(&self.provider).state_pruned(h, domain) {
+        if self.local_retention().state_pruned(h, domain) {
             return Err(lagging());
         }
         let state = self.provider.history_by_block_number(h);
@@ -843,6 +901,47 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review5 P2 retention reads: state reads at the head and forkchoice tags never read the
+    /// retention; explicit numbers, hashes and `earliest` do.
+    #[test]
+    fn recent_tags_skip_the_retention_read() {
+        for tag in [
+            BlockNumberOrTag::Latest,
+            BlockNumberOrTag::Pending,
+            BlockNumberOrTag::Safe,
+            BlockNumberOrTag::Finalized,
+        ] {
+            assert!(!LocalRetention::may_be_pruned(Some(BlockId::Number(tag))), "{tag:?} skips");
+        }
+        assert!(!LocalRetention::may_be_pruned(None), "an omitted block means latest");
+        assert!(LocalRetention::may_be_pruned(Some(BlockId::number(5))), "a number reads it");
+        assert!(
+            LocalRetention::may_be_pruned(Some(BlockId::Number(BlockNumberOrTag::Earliest))),
+            "earliest reads it"
+        );
+        assert!(LocalRetention::may_be_pruned(Some(BlockId::hash(B256::ZERO))), "a hash reads it");
+    }
+
+    /// Review5 P2 retention reads: every call inside the TTL reuses one provider read, and the
+    /// first call after the TTL reads again and sees the new checkpoints.
+    #[test]
+    fn retention_is_read_once_per_ttl() {
+        let cache = RetentionCache::new(Duration::from_millis(100));
+        let reads = std::cell::Cell::new(0u64);
+        let read = |earliest_body| {
+            reads.set(reads.get() + 1);
+            LocalRetention { earliest_body, ..Default::default() }
+        };
+        for call in 0..50 {
+            assert_eq!(cache.get(|| read(10)).earliest_body, 10, "call {call} sees the first read");
+        }
+        assert_eq!(reads.get(), 1, "50 calls inside the TTL make exactly one provider read");
+        std::thread::sleep(Duration::from_millis(120));
+        assert_eq!(cache.get(|| read(20)).earliest_body, 20, "a call after the TTL reads again");
+        assert_eq!(cache.get(|| read(30)).earliest_body, 20, "the refreshed read is reused");
+        assert_eq!(reads.get(), 2, "exactly one refresh after the TTL");
+    }
 
     /// Only the domain a read needs decides the route: pruned storage history leaves account
     /// reads local and vice versa.
