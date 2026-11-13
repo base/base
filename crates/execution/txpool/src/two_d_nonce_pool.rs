@@ -5,7 +5,7 @@
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet},
-    ops::Bound,
+    ops::{Bound, Range},
     sync::Arc,
     time::Instant,
 };
@@ -37,12 +37,15 @@ pub(crate) struct LaneCursor {
     /// The first nonce this lane can execute. Equal to `state_nonce` unless
     /// another store holds the pending run from `state_nonce` up to here.
     pub next_nonce: u64,
+    /// The lowest fee cap in that other store's run, which executes before
+    /// this lane; `None` when no run sits in front.
+    pub run_fee_cap: Option<u128>,
 }
 
 impl LaneCursor {
     /// A cursor sitting at the canonical nonce.
     pub(crate) const fn at(state_nonce: u64) -> Self {
-        Self { state_nonce, next_nonce: state_nonce }
+        Self { state_nonce, next_nonce: state_nonce, run_fee_cap: None }
     }
 }
 
@@ -52,6 +55,8 @@ struct NonceLane<T: BasePooledTx> {
     state_nonce: u64,
     /// First executable nonce; see [`LaneCursor::next_nonce`].
     next_nonce: u64,
+    /// See [`LaneCursor::run_fee_cap`].
+    run_fee_cap: Option<u128>,
     /// Length of the consecutive pending run from `next_nonce`. Kept in step
     /// by every mutation, so pending and queued splits never walk the lane.
     pending_len: u64,
@@ -71,6 +76,7 @@ impl<T: BasePooledTx> NonceLane<T> {
         let mut lane = Self {
             state_nonce: cursor.state_nonce,
             next_nonce: cursor.next_nonce,
+            run_fee_cap: cursor.run_fee_cap,
             pending_len: 0,
             transactions,
         };
@@ -167,6 +173,18 @@ impl<T: BasePooledTx> NonceLane<T> {
         self.transactions.len() - self.consecutive_pending_len()
     }
 
+    /// The lowest fee cap among the members and the run in front of them. A
+    /// member is included only after every transaction ahead of it, so the
+    /// tail is no more includable than this.
+    fn lowest_fee_cap(&self) -> u128 {
+        self.transactions
+            .values()
+            .map(|transaction| transaction.max_fee_per_gas())
+            .chain(self.run_fee_cap)
+            .min()
+            .unwrap_or_default()
+    }
+
     /// Whether every live member is in the pending run.
     fn is_fully_pending(&self) -> bool {
         self.transactions.last_key_value().is_none_or(|(nonce, _)| self.is_pending(*nonce))
@@ -179,7 +197,11 @@ impl<T: BasePooledTx> NonceLane<T> {
     }
 
     const fn cursor(&self) -> LaneCursor {
-        LaneCursor { state_nonce: self.state_nonce, next_nonce: self.next_nonce }
+        LaneCursor {
+            state_nonce: self.state_nonce,
+            next_nonce: self.next_nonce,
+            run_fee_cap: self.run_fee_cap,
+        }
     }
 }
 
@@ -422,11 +444,20 @@ impl SidecarSenderIds {
 }
 
 /// Eviction rank of a candidate (a lane tail or a nonce-free transaction); the
-/// smallest is evicted first. Field order is the ranking order: queued before
-/// pending, non-local before local, lowest fee cap, then most recently received.
+/// smallest is evicted first. Field order is the ranking order: unexecutable
+/// before executable, non-local before local, lowest fee cap, then most
+/// recently received.
+///
+/// A lane tail ranks by the lowest fee cap in its lane, or in the run another
+/// store holds in front of it, not its own: the tail is included only after
+/// every transaction ahead of it, so ranking by its own fee cap would let a
+/// lane whose head can never be included outrank, and push out, executable
+/// lanes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct EvictionKey {
-    pending: bool,
+    /// No nonce gap sits in front of the candidate and its fee cap covers the
+    /// pending base fee.
+    executable: bool,
     local: bool,
     max_fee_per_gas: u128,
     received: Reverse<Instant>,
@@ -455,6 +486,12 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     eviction_order: BTreeSet<EvictionKey>,
     /// The key each lane's tail currently holds in `eviction_order`.
     lane_candidates: HashMap<LaneId, EvictionKey>,
+    /// The key each nonce-free transaction, by replay id, currently holds in
+    /// `eviction_order`.
+    nonce_free_candidates: B256Map<EvictionKey>,
+    /// The pending block's base fee, below which a candidate ranks as
+    /// unexecutable. See [`Self::set_base_fee`].
+    base_fee: u64,
     /// Lanes whose executable cursor sits past their canonical anchor, with
     /// that anchor. Kept in step with `lanes` so a build never scans them.
     ahead_of_state: HashMap<LaneId, u64>,
@@ -477,6 +514,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             protocol_nonce_lanes: false,
             eviction_order: BTreeSet::new(),
             lane_candidates: HashMap::default(),
+            nonce_free_candidates: B256Map::default(),
+            base_fee: 0,
             ahead_of_state: HashMap::default(),
             shared_lanes: HashSet::default(),
         }
@@ -557,10 +596,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// capacity, returning them so callers can release their guard slots.
     ///
     /// Only lane tails and nonce-free transactions are candidates, so eviction
-    /// never opens a nonce gap. Queued tails (behind a nonce gap) go first: they
-    /// cannot execute and cost nothing to hold, so ranking them by fee alone
-    /// would let gapped spam push out pending transactions. See [`EvictionKey`]
-    /// for the full order. Each eviction is `O(log n)`.
+    /// never opens a nonce gap. Candidates that cannot execute (behind a nonce
+    /// gap, or with a fee cap below the pending base fee) go first: they cost
+    /// nothing to hold, so ranking them by fee alone would let such spam push
+    /// out executable transactions. See [`EvictionKey`]
+    /// for the full order. Each eviction is `O(m + log n)`, where `m` is the
+    /// evicted lane's length: re-ranking the lane walks it for its lowest fee cap.
     pub(crate) fn evict_over_capacity(&mut self) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut evicted = Vec::new();
         while self.limits.capacity.is_exceeded(self.hashes.len(), self.usage.size)
@@ -576,21 +617,67 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.eviction_order.first().map(|key| key.hash)
     }
 
-    fn eviction_key(&self, transaction: &ValidPoolTransaction<T>, pending: bool) -> EvictionKey {
+    /// Ranks `transaction` by `max_fee_per_gas`, the lowest fee cap paid
+    /// before it is included; `gapless` when no nonce gap sits in front of it.
+    fn eviction_key(
+        &self,
+        transaction: &ValidPoolTransaction<T>,
+        max_fee_per_gas: u128,
+        gapless: bool,
+    ) -> EvictionKey {
         EvictionKey {
-            pending,
+            executable: gapless && max_fee_per_gas >= u128::from(self.base_fee),
             local: self
                 .limits
                 .local_transactions
                 .is_local(transaction.origin, &transaction.sender()),
-            max_fee_per_gas: transaction.max_fee_per_gas(),
+            max_fee_per_gas,
             received: Reverse(transaction.timestamp),
             hash: *transaction.hash(),
         }
     }
 
+    /// Sets the pending block's base fee and re-ranks the candidates whose fee
+    /// cap lies between the previous base fee and this one, the only ones it
+    /// can move between executable and unexecutable.
+    pub(crate) fn set_base_fee(&mut self, base_fee: u64) {
+        let previous = std::mem::replace(&mut self.base_fee, base_fee);
+        let crossed = u128::from(previous.min(base_fee))..u128::from(previous.max(base_fee));
+        let lanes: Vec<_> = self
+            .lane_candidates
+            .iter()
+            .filter(|(_, key)| crossed.contains(&key.max_fee_per_gas))
+            .map(|(lane_id, _)| *lane_id)
+            .collect();
+        for lane_id in lanes {
+            self.refresh_lane_indexes(lane_id);
+        }
+        let nonce_free: Vec<_> = self
+            .nonce_free_candidates
+            .iter()
+            .filter(|(_, key)| crossed.contains(&key.max_fee_per_gas))
+            .map(|(replay_id, _)| *replay_id)
+            .collect();
+        for replay_id in nonce_free {
+            self.refresh_nonce_free_candidate(replay_id);
+        }
+    }
+
+    /// Re-ranks the nonce-free transaction stored under `replay_id` after it
+    /// was inserted, replaced or removed, or the base fee moved.
+    fn refresh_nonce_free_candidate(&mut self, replay_id: B256) {
+        if let Some(previous) = self.nonce_free_candidates.remove(&replay_id) {
+            self.eviction_order.remove(&previous);
+        }
+        if let Some(transaction) = self.nonce_free.get(&replay_id) {
+            let key = self.eviction_key(transaction, transaction.max_fee_per_gas(), true);
+            self.eviction_order.insert(key);
+            self.nonce_free_candidates.insert(replay_id, key);
+        }
+    }
+
     /// Re-ranks `lane_id`'s tail after the lane changed. Must follow every lane
-    /// mutation: the tail, and whether it is pending, depend on the whole lane.
+    /// mutation: the tail, and whether it is executable, depend on the whole lane.
     /// Brings every per-lane index in line with `lane_id` after it changed:
     /// its eviction candidate, its ahead-of-state anchor and its shared flag.
     fn refresh_lane_indexes(&mut self, lane_id: LaneId) {
@@ -608,7 +695,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.ahead_of_state.remove(&lane_id);
         }
         if let Some((_, tail)) = lane.transactions.last_key_value() {
-            let key = self.eviction_key(tail, lane.is_fully_pending());
+            let key = self.eviction_key(tail, lane.lowest_fee_cap(), lane.is_fully_pending());
             self.eviction_order.insert(key);
             self.lane_candidates.insert(lane_id, key);
         }
@@ -832,11 +919,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             if let Some(existing) = &replaced {
                 self.hashes.remove(existing.hash());
                 self.usage.remove(existing);
-                self.eviction_order.remove(&self.eviction_key(existing, true));
             }
             self.nonce_free.insert(replay_id, Arc::clone(&transaction));
             self.usage.add(&transaction);
-            self.eviction_order.insert(self.eviction_key(&transaction, true));
+            self.refresh_nonce_free_candidate(replay_id);
             self.hashes.insert(hash, Arc::clone(&transaction));
             let sender = transaction.sender();
             self.refresh_tip_backing(sender);
@@ -945,7 +1031,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         match self.lanes.get(&lane_id) {
             Some(lane) if lane.state_nonce < nonce => self.set_lane_cursor(
                 lane_id,
-                LaneCursor { state_nonce: nonce, next_nonce: lane.next_nonce.max(nonce) },
+                LaneCursor {
+                    state_nonce: nonce,
+                    next_nonce: lane.next_nonce.max(nonce),
+                    run_fee_cap: lane.run_fee_cap.filter(|_| lane.next_nonce > nonce),
+                },
             ),
             _ => LaneUpdate::default(),
         }
@@ -973,6 +1063,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             return update;
         }
         lane.state_nonce = cursor.state_nonce;
+        lane.run_fee_cap = cursor.run_fee_cap;
         if lane.next_nonce == cursor.next_nonce {
             self.refresh_lane_indexes(lane_id);
             return update;
@@ -1034,6 +1125,16 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// `None` when the lane has nothing pending.
     pub(crate) fn lane_pending_end(&self, lane_id: &LaneId) -> Option<u64> {
         self.lanes.get(lane_id).and_then(NonceLane::pending_end)
+    }
+
+    /// Returns the lowest fee cap among `lane_id`'s transactions in `nonces`.
+    pub(crate) fn lane_lowest_fee_cap(&self, lane_id: &LaneId, nonces: Range<u64>) -> Option<u128> {
+        self.lanes
+            .get(lane_id)?
+            .transactions
+            .range(nonces)
+            .map(|(_, transaction)| transaction.max_fee_per_gas())
+            .min()
     }
 
     /// Returns the live transaction at `nonce` in `lane_id`.
@@ -1334,7 +1435,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             let transaction = self.nonce_free.remove(&replay_id)?;
             self.hashes.remove(&hash);
             self.usage.remove(&transaction);
-            self.eviction_order.remove(&self.eviction_key(&transaction, true));
+            self.refresh_nonce_free_candidate(replay_id);
             self.refresh_tip_backing(transaction.sender());
             return Some(transaction);
         }
@@ -1570,6 +1671,7 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope, Eip8130Signed,
         TxEip8130,
     };
+    use reth_primitives_traits::InMemorySize;
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
 
     use super::*;
@@ -1631,21 +1733,22 @@ mod tests {
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let tx = TxEip8130 {
-            chain_id: test_chain_id(),
-            sender: None,
-            nonce_key,
-            nonce_sequence,
-            valid_after: 0,
-            valid_before,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas_limit: 50_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        };
+        sign_tx(
+            signer,
+            TxEip8130 {
+                chain_id: test_chain_id(),
+                nonce_key,
+                nonce_sequence,
+                valid_before,
+                max_priority_fee_per_gas,
+                max_fee_per_gas,
+                gas_limit: 50_000,
+                ..Default::default()
+            },
+        )
+    }
+
+    fn sign_tx(signer: &PrivateKeySigner, tx: TxEip8130) -> BasePooledTransaction {
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
@@ -2502,7 +2605,7 @@ mod tests {
     }
 
     #[test]
-    fn eviction_takes_the_cheapest_lane_tail_without_opening_a_gap() {
+    fn eviction_ranks_a_lane_by_its_cheapest_member_and_takes_its_tail() {
         let mut pool = TwoDNoncePool::new(PriceBumpConfig::default()).with_limits(SidecarLimits {
             capacity: SubPoolLimit::new(2, usize::MAX),
             ..SidecarLimits::unlimited()
@@ -2523,9 +2626,9 @@ mod tests {
         let evicted: Vec<_> =
             pool.evict_over_capacity().iter().map(|transaction| *transaction.hash()).collect();
 
-        assert_eq!(evicted, vec![other_hash]);
-        assert!(pool.contains(&cheap_head_hash));
-        assert!(pool.contains(&rich_tail_hash));
+        assert_eq!(evicted, vec![rich_tail_hash]);
+        assert!(pool.contains(&cheap_head_hash), "eviction never opens a gap");
+        assert!(pool.contains(&other_hash));
         assert!(pool.evict_over_capacity().is_empty());
     }
 
@@ -2631,6 +2734,114 @@ mod tests {
     }
 
     #[test]
+    fn lanes_with_unexecutable_heads_cannot_push_out_executable_lanes() {
+        const FEE_FLOOR: u128 = 7;
+        let mut pool = capped_pool(4);
+        let mut spam = Vec::new();
+        for _ in 0..2 {
+            let attacker = signer();
+            for (nonce, fee) in [(0, FEE_FLOOR), (1, 1_000_000)] {
+                let transaction =
+                    valid_pool_transaction(signed_channel_tx(&attacker, U256::from(1), nonce, fee));
+                spam.push(*transaction.hash());
+                pool.insert_validated(transaction, 0).unwrap();
+            }
+        }
+
+        let mut honest = Vec::new();
+        for _ in 0..4 {
+            let transaction =
+                valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 1_000));
+            honest.push(*transaction.hash());
+            pool.insert_validated(transaction, 0).unwrap();
+            for evicted in evicted_hashes(&mut pool) {
+                assert!(spam.contains(&evicted), "only spam is evicted");
+            }
+        }
+
+        assert!(honest.iter().all(|hash| pool.contains(hash)));
+        assert!(spam.iter().all(|hash| !pool.contains(hash)));
+    }
+
+    #[test]
+    fn large_descendants_behind_an_unexecutable_head_are_evicted_first() {
+        let attacker = signer();
+        let spam: Vec<_> = (0..4)
+            .map(|nonce| {
+                let (fee, metadata) =
+                    if nonce == 0 { (7, Bytes::new()) } else { (1_000_000, vec![0; 4_096].into()) };
+                valid_pool_transaction(sign_tx(
+                    &attacker,
+                    TxEip8130 {
+                        chain_id: test_chain_id(),
+                        nonce_key: U256::from(1),
+                        nonce_sequence: nonce,
+                        max_fee_per_gas: fee,
+                        gas_limit: 50_000,
+                        metadata,
+                        ..Default::default()
+                    },
+                ))
+            })
+            .collect();
+        let spam_size: usize = spam.iter().map(|transaction| transaction.transaction.size()).sum();
+        let tail_hash = *spam[3].hash();
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default()).with_limits(SidecarLimits {
+            capacity: SubPoolLimit::new(usize::MAX, spam_size),
+            ..SidecarLimits::unlimited()
+        });
+        for transaction in spam {
+            pool.insert_validated(transaction, 0).unwrap();
+        }
+        let honest = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 1_000));
+        let honest_hash = *honest.hash();
+        pool.insert_validated(honest, 0).unwrap();
+
+        assert_eq!(evicted_hashes(&mut pool), vec![tail_hash]);
+        assert!(pool.contains(&honest_hash));
+    }
+
+    #[test]
+    fn lanes_below_the_base_fee_rank_with_gapped_lanes() {
+        let mut pool = capped_pool(2);
+        pool.set_base_fee(1_000);
+        let underpriced =
+            valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 500));
+        let underpriced_hash = *underpriced.hash();
+        let gapped = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 1, 2_000));
+        let gapped_hash = *gapped.hash();
+        let honest = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 1_000));
+        let honest_hash = *honest.hash();
+        for transaction in [underpriced, gapped, honest] {
+            pool.insert_validated(transaction, 0).unwrap();
+        }
+
+        assert_eq!(evicted_hashes(&mut pool), vec![underpriced_hash]);
+        assert!(pool.contains(&gapped_hash) && pool.contains(&honest_hash));
+    }
+
+    #[test]
+    fn base_fee_changes_re_rank_lanes_and_nonce_free_transactions() {
+        let mut pool = capped_pool(0);
+        let lane = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 500));
+        let lane_hash = *lane.hash();
+        let gapped = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 1, 2_000));
+        let gapped_hash = *gapped.hash();
+        let nonce_free = valid_pool_transaction(signed_nonce_free_tx(&signer(), 1, 0, 600));
+        let nonce_free_hash = *nonce_free.hash();
+        for transaction in [lane, gapped, nonce_free] {
+            pool.insert_validated(transaction, 0).unwrap();
+        }
+
+        // Both cheap candidates drop below the base fee, then only the lane stays there.
+        pool.set_base_fee(1_000);
+        pool.set_base_fee(550);
+
+        assert_eq!(evicted_hashes(&mut pool), vec![lane_hash, gapped_hash, nonce_free_hash]);
+        assert!(pool.eviction_order.is_empty());
+    }
+
+    #[test]
     fn nonce_free_eviction_follows_replacement_and_removal() {
         let mut pool = capped_pool(0);
         let signer = signer();
@@ -2649,6 +2860,26 @@ mod tests {
         assert_eq!(pool.remove_transactions(&[removed_hash]).len(), 1);
 
         assert_eq!(evicted_hashes(&mut pool), vec![cheapest_hash, replacement_hash, richest_hash]);
+    }
+
+    #[test]
+    fn nonce_free_replacement_after_a_base_fee_change_leaves_no_stale_candidate() {
+        let mut pool = capped_pool(0);
+        let signer = signer();
+        let replaced = valid_pool_transaction(signed_nonce_free_tx(&signer, 1, 0, 600));
+        let underpriced = valid_pool_transaction(signed_nonce_free_tx(&signer, 2, 0, 800));
+        let underpriced_hash = *underpriced.hash();
+        pool.insert_validated(replaced, 0).unwrap();
+        pool.insert_validated(underpriced, 0).unwrap();
+
+        // The replaced transaction drops below the base fee before it is replaced.
+        pool.set_base_fee(1_000);
+        let replacement = valid_pool_transaction(signed_nonce_free_tx(&signer, 1, 0, 5_000));
+        let replacement_hash = *replacement.hash();
+        pool.insert_validated(replacement, 0).unwrap();
+
+        assert_eq!(evicted_hashes(&mut pool), vec![underpriced_hash, replacement_hash]);
+        assert!(pool.eviction_order.is_empty() && pool.nonce_free_candidates.is_empty());
     }
 
     fn sponsored_by(
@@ -2836,7 +3067,7 @@ mod tests {
         let signer = signer();
         let lane = (signer.address(), U256::ZERO);
         let mut pool = protocol_lane_pool();
-        let cursor = LaneCursor { state_nonce: 0, next_nonce: 2 };
+        let cursor = LaneCursor { state_nonce: 0, next_nonce: 2, run_fee_cap: Some(1_000) };
 
         let behind = valid_pool_transaction(signed_1559(&signer, 1, 1_000));
         let error = pool.insert_validated_at(behind, cursor).unwrap_err();
@@ -2871,7 +3102,7 @@ mod tests {
         let signer = signer();
         let lane = (signer.address(), U256::ZERO);
         let mut pool = protocol_lane_pool();
-        let ahead = LaneCursor { state_nonce: 0, next_nonce: 2 };
+        let ahead = LaneCursor { state_nonce: 0, next_nonce: 2, run_fee_cap: Some(1_000) };
         let [second, third] =
             [2, 3].map(|nonce| valid_pool_transaction(signed_1559(&signer, nonce, 1_000)));
         let (second_hash, third_hash) = (*second.hash(), *third.hash());
@@ -2893,16 +3124,25 @@ mod tests {
         assert_eq!(pool.lane_cursor(&lane), Some(LaneCursor::at(0)));
 
         // The run in front now reaches nonce 3: nonce 2 can never execute here.
-        let update = pool.set_lane_cursor(lane, LaneCursor { state_nonce: 0, next_nonce: 3 });
+        let update = pool.set_lane_cursor(
+            lane,
+            LaneCursor { state_nonce: 0, next_nonce: 3, run_fee_cap: Some(1_000) },
+        );
         assert_eq!(hashes(&update.discarded), vec![second_hash]);
         assert_eq!(hashes(&update.promoted), vec![third_hash]);
         assert!(!pool.contains(&second_hash));
 
         // Canonical maintenance only moves the anchor forward and never below the cursor.
         assert!(pool.advance_lane_nonce(lane, 2).discarded.is_empty());
-        assert_eq!(pool.lane_cursor(&lane), Some(LaneCursor { state_nonce: 2, next_nonce: 3 }));
+        assert_eq!(
+            pool.lane_cursor(&lane),
+            Some(LaneCursor { state_nonce: 2, next_nonce: 3, run_fee_cap: Some(1_000) })
+        );
         assert!(pool.advance_lane_nonce(lane, 1).discarded.is_empty());
-        assert_eq!(pool.lane_cursor(&lane), Some(LaneCursor { state_nonce: 2, next_nonce: 3 }));
+        assert_eq!(
+            pool.lane_cursor(&lane),
+            Some(LaneCursor { state_nonce: 2, next_nonce: 3, run_fee_cap: Some(1_000) })
+        );
 
         // Past the lane's last transaction the lane is dropped entirely.
         let update = pool.advance_lane_nonce(lane, 4);
