@@ -1314,9 +1314,17 @@ where
         let nonce_key = signed.tx().nonce_key;
         if nonce_key.is_zero() {
             watch_set.push(InvalidationKey::ProtocolNonce(sender));
-        } else if nonce_key != Eip8130Constants::NONCE_KEY_MAX
-            && let Ok(slot) = NonceManagerStorage::nonce_slot(sender, nonce_key)
-        {
+        } else if nonce_free {
+            // Mining any transaction with this `replay_id` (this one, or a twin
+            // with other fees or another signature) records it here, after which
+            // this transaction can never be included.
+            watch_set.push(InvalidationKey::Slot {
+                address: NonceManagerStorage::ADDRESS,
+                slot: B256::from(NonceManagerStorage::expiring_nonce_seen_slot(
+                    signed.tx().replay_id(sender),
+                )),
+            });
+        } else if let Ok(slot) = NonceManagerStorage::nonce_slot(sender, nonce_key) {
             watch_set.push(InvalidationKey::Slot {
                 address: NonceManagerStorage::ADDRESS,
                 slot: B256::from(slot),

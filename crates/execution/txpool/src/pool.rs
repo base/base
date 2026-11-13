@@ -458,7 +458,9 @@ where
     /// it is an EIP-8130 transaction sequenced on that nonce at or after the new
     /// value; every other watcher is returned to be invalidated, as an exact
     /// match would. Each surviving lane is returned with the store holding it
-    /// and the nonce its cursor moves to.
+    /// and the nonce its cursor moves to. A nonce-free transaction watches the
+    /// nonce manager slot recording its `replay_id`, so it never survives a
+    /// write there: it means a transaction with that `replay_id` was mined.
     fn resolve_nonce_advances(
         &self,
         advances: &[(InvalidationKey, u64)],
@@ -4591,6 +4593,44 @@ mod tests {
         assert!(pool.get(&hash).is_none());
         assert!(!pool.sidecar.pool.read().contains(&hash));
         assert!(!pool.guard.read().contains(&hash));
+    }
+
+    #[tokio::test]
+    async fn mined_replay_id_twin_evicts_nonce_free_transaction() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let expiry = INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
+        let nonce_free = |expiry, max_fee_per_gas| {
+            self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, expiry, max_fee_per_gas)
+        };
+        let pooled = nonce_free(expiry, 1_000);
+        // A fee bump this node never saw: another hash, the same `replay_id`.
+        let twin = nonce_free(expiry, 1_100);
+        let unrelated = nonce_free(expiry - 1, 1_000);
+        let replay_id = pooled.eip8130_replay_id().unwrap();
+        assert_ne!(twin.hash(), pooled.hash());
+        assert_eq!(twin.eip8130_replay_id(), Some(replay_id));
+        for transaction in [&pooled, &unrelated] {
+            pool.add_transaction(TransactionOrigin::Local, transaction.clone()).await.unwrap();
+        }
+
+        // Mining the twin records its `replay_id` with its `valid_before`.
+        let removed = pool.apply_state_diff(&[AccountStateDiff {
+            address: NonceManagerStorage::ADDRESS,
+            changed_slots: vec![(
+                B256::from(NonceManagerStorage::expiring_nonce_seen_slot(replay_id)),
+                U256::from(expiry),
+            )],
+            ..Default::default()
+        }]);
+
+        assert_eq!(removed.iter().map(|tx| *tx.hash()).collect::<Vec<_>>(), [*pooled.hash()]);
+        assert!(pool.get(pooled.hash()).is_none());
+        assert!(!pool.sidecar.pool.read().contains(pooled.hash()));
+        assert!(!pool.guard.read().contains(pooled.hash()));
+        assert!(pool.sidecar.pool.read().contains(unrelated.hash()));
+        assert!(pool.guard.read().contains(unrelated.hash()));
     }
 
     #[tokio::test]
