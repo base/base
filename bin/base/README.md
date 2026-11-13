@@ -12,14 +12,15 @@ every `--builder.*` flag. Any other execution, consensus, or builder flag is ign
 comes from the command line or its environment variable, and the node logs a warning naming it at
 startup. The full lists live in `src/surface.rs`.
 
-Flag names start with the layer or feature they configure, such as `--rpc.http.*`,
-`--execution.p2p.*`, `--consensus.p2p.*`, `--sequencer.*`, and `--txpool.*`. On/off switches end
+Flag names start with the layer or feature they configure, such as `--execution.rpc.*`,
+`--consensus.rpc.*`, `--execution.p2p.*`, `--consensus.p2p.*`, `--sequencer.*`, and `--txpool.*`. On/off switches end
 in `.enabled`. The old spellings are still accepted as hidden aliases, on every node command that
 has the flag:
 
 | Old                                              | New                                                  |
 | ------------------------------------------------ | ---------------------------------------------------- |
-| `--http`, `--http.*`, `--ws`, `--ws.*`, `--ipcpath` | `--rpc.http`, `--rpc.http.*`, `--rpc.ws`, `--rpc.ws.*`, `--rpc.ipc.path` |
+| `--http`, `--http.*`, `--ws`, `--ws.*`, `--ipcpath` | `--execution.rpc.http`, `--execution.rpc.http.*`, `--execution.rpc.ws`, `--execution.rpc.ws.*`, `--execution.rpc.ipc.path` |
+| `--rpc.*` (execution), such as `--rpc.gascap`      | `--execution.rpc.*`, such as `--execution.rpc.gascap` |
 | `--port`, `--addr`, `--nat`, `--bootnodes`, `--trusted-peers`, `--max-peers` | `--execution.p2p.port`, `--execution.p2p.addr`, and so on |
 | `--discovery.*`, `--p2p-secret-key`, `--disable-discovery` | `--execution.p2p.discovery.*`, `--execution.p2p.secret-key`, `--execution.p2p.disable-discovery` |
 | `--metrics`                                      | `--execution.metrics`                                |
@@ -39,8 +40,8 @@ mean something else.
 
 Supported flags keep their existing environment variables, such as `BASE_NODE_L1_ETH_RPC` for
 `--l1.rpc` and `BASE_CHAIN` for `--chain`. Supported flags without one take `BASE_` plus the flag
-name in upper case, with `.` and `-` turned into `_`, for example `BASE_RPC_HTTP_API`. Names that
-would end in `_PORT` end in `_PORT_NUMBER` instead, such as `BASE_RPC_HTTP_PORT_NUMBER`, because
+name in upper case, with `.` and `-` turned into `_`, for example `BASE_EXECUTION_RPC_HTTP_API`. Names that
+would end in `_PORT` end in `_PORT_NUMBER` instead, such as `BASE_EXECUTION_RPC_HTTP_PORT_NUMBER`, because
 Kubernetes sets `<SERVICE>_PORT` to `tcp://<ip>:<port>` for every Service.
 
 Consensus calls the embedded execution node's Engine API in memory, so Engine API transport
@@ -183,7 +184,7 @@ as any account. Startup prints endpoints and the starting head; database repair 
 rebuilds can take time before sequencing starts.
 
 ```sh
-just devnet snapshot run --dir "$HOME/data/my-devnet" --rpc.http.port 9545 --rpc.ws.port 9546
+just devnet snapshot run --dir "$HOME/data/my-devnet" --execution.rpc.http.port 9545 --execution.rpc.ws.port 9546
 # Direct binary usage; mainnet is the default.
 target/release/base dev --dir "$HOME/data/my-devnet"
 # For another supported chain, select the same chain for download and run.
