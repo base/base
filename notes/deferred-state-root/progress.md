@@ -283,3 +283,36 @@ The new native loops use ready=2 and five distinct never-exported same-parent ca
 Additional new tests cover every supported envelope/export conversion, protected exported capacity exhaustion, late completion after drop/reacquisition, changed finalized duplicate input, comparison at capacity preserving an unmatched same-height fork, and late builder comparison after independent validation. The existing `unmatched_builder_provenance_remains_protected` contract remains unchanged.
 
 Counts overlap and must not be summed. The one skipped pre-existing RPC WebSocket test requires localhost:8546. The unchanged randomized consensus transaction-content test passed this final run; its historical flake remains disclosed. `git diff --check` passes. No fmt, Clippy, zepter, broad clean, extra review round, CLI/custom-builder full package build, production/remote action, push or design-doc change. Supported-host compilation, parent CI/public-thread work and previously documented unsupported recovery/service boundaries remain outstanding.
+
+## Slow native Better replacement queue correction from 550d0f1bda
+
+Parent verified that last never-exported lease drop left queued closures and pending deadlines, so slow actual root computation plus ordinary BasicPayloadJob Better churn exhausted bounded admission without a root error. The approved design document is unchanged. Parent approved the following local queue correction before production edits, conditional on a genuine native failing-first test.
+
+- Replace non-removable sync_channel work admission with a bounded owned VecDeque and Condvar. Last never-exported drop removes only still-queued matching work and its pending deadline/candidate metadata. Its closure never invokes the provider. Once worker pop owns an operation, it remains non-preemptible, pending and deadlined until completion/drain.
+- Queued cancellation permits fresh-generation admission; running reacquisition remains idempotent. Worker pop and cancellation serialize through the queue lock, so no removed old closure can later erase new-generation pending work. Publication/completion serialize with candidate ownership.
+- Atomic admission uses candidates -> queue -> builders lock order, bounded queue and bounded pending counts. Ordinary transient fullness backpressures, rather than marking unhealthy immediately. Waits release every other lock, preserve the original absolute deadline, and recheck after wakeups. Pop/cancel/complete/close wake admission. Completion holds the queue lock during pending removal/notification to prevent lost wakeups. True deadlines, generic completion abandonment, panic and drain failures remain terminal.
+- No selected/exported work is canceled or skipped, and no validator computation is coalesced. Exported-unmatched comparisons remain protected/fail-closed at capacity. Raw block clones remain outside builder cross-comparison ownership but receive normal independent imported validation. Existing S insertion success/failure, c1-c4, same-height fork, actual-parent fallback, Never/pre-F and failstop/drain contracts remain.
+- `admitted` counts admissions including later cancellation. New `computed` counts only invoked worker operations. Computation-start/completion metrics exclude canceled unused jobs. Cancellation scans only the fixed bounded queue, never pool-sized data. No new dependency/helper crate, reth patch or priority scheduling.
+
+Fresh evidence directory: `target/deferred-root-queue1/`. Exact commands are in `evidence-commands1.txt`. All Rust runs used bg_process and scoped Justfile test-ci equivalents, locked/all-features/ci profiles, zero retries and no fail-fast.
+
+| Evidence | Exact result | Interpretation |
+|---|---|---|
+| `red1.log` | **0 passed, 1 failed, 23 filtered** | Tests-only change before production edits. Real BasicPayloadJob cannot reach eight distinct native Better builds while a real MPT operation occupies the worker with queued=2. This setup fills the queue before isolating the separate immediate builders-length guard; it is genuine native queue-orphan red, not claimed as isolated guard-branch red. |
+| `green1.log` | **276 passed, 1 failed, 0 skipped** | Queue units and new native replacement assertions passed. Its added independent validation failed because blocking fixture submit ran inside Tokio, corrected with spawn_blocking. This fixture failure remains recorded. |
+| `green2.log` | **530 passed, 0 failed, 1 skipped** | Final six-library/four-integration scope, prior 525 plus five new tests and one updated test. No warnings. |
+
+Native test asserts eight actual Better builds while a real MPT operation is blocked, exactly one queued current best, one pending identity, one ownership entry and only the running operation computed. Release computes exactly that real slow root and selected native builder root, never seven orphan provider roots. Real independent Engine validation then accepts the exact selected sealed identity and matches its actual MPT root. Four manager tests cover running reacquisition, cancellation/admission wake without retained ownership locks, protected-full backpressure/pop wake without skipping selected computations, and shutdown wake/drain. Updated queued-reacquisition testing verifies fresh admission and zero computation for both canceled generations.
+
+Final parent verification scope (530 passing tests plus existing skipped localhost RPC test):
+
+```sh
+RUST_MIN_STACK=8388608 cargo nextest run -P ci --locked \
+  -p base-execution-payload-builder -p base-execution-rpc -p base-node-core \
+  -p base-node-runner -p base-execution-chainspec -p base-consensus-engine \
+  --lib --test deferred_state_root_gate --test deferred_state_root_semantics \
+  --test in_memory_engine --test rpc_baseline_parity \
+  --all-features --cargo-profile ci --retries 0 --no-fail-fast
+```
+
+Counts overlap; do not sum earlier runs. Existing randomized consensus-content test passed, with historical flake still disclosed. `git diff --check` passes. Parent-reported Linux Format/Rust failures at 550 remain opaque (`Run clippy`, exit101); no concrete diagnostics/Depot authentication were obtained here, and no speculative CI source fixes were made. No fmt, Clippy, zepter, other-repo edits, extra review rounds, push, external interaction, deployment, benchmark, full CLI/custom-builder package build or approved-design edit occurred. Running providers remain non-preemptible. Prior unsupported recovery/export/service boundaries and supported-host compilation requirements remain. Parent owns independent final verification and CI diagnosis.

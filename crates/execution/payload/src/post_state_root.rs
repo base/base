@@ -3,7 +3,7 @@
 //! Computation does not certify a block. Only the validator wrapper may publish a validated
 //! entry after every inner check succeeds. Builder and validator work never share certification.
 
-use std::{collections::{BTreeMap, VecDeque}, fmt, io, panic::{AssertUnwindSafe, catch_unwind}, sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc}, thread::{self, JoinHandle}, time::{Duration, Instant}};
+use std::{collections::{BTreeMap, VecDeque}, fmt, io, panic::{AssertUnwindSafe, catch_unwind}, sync::{Arc, Condvar, Mutex, OnceLock, atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc}, thread::{self, JoinHandle}, time::{Duration, Instant}};
 use alloy_primitives::B256;
 use reth_storage_api::errors::{ProviderError, ProviderResult};
 use reth_trie_common::{HashedPostState, SortedTrieData, updates::TrieUpdates};
@@ -125,6 +125,8 @@ pub type PostStateRootOperation = Box<dyn FnOnce() -> ProviderResult<PostStateRo
 
 /// A queued operation and its private fallible publication channel.
 pub struct PostStateRootWork {
+    /// Builder identity eligible for removal only while still queued.
+    pub builder: Option<PostStateRootKey>,
     /// Root operation; no borrowed execution/provider state may escape into this closure.
     pub operation: PostStateRootOperation,
     /// Monotonic admission timestamp for queue lag accounting.
@@ -139,6 +141,15 @@ pub struct PostStateRootWork {
 
 impl fmt::Debug for PostStateRootWork {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.debug_struct("PostStateRootWork").finish_non_exhaustive() }
+}
+
+/// Owned pending operations, serialized with worker pop and candidate cancellation.
+#[derive(Debug, Default)]
+pub struct PostStateRootQueue {
+    /// Operations that have not entered the indivisible provider computation.
+    pub work: VecDeque<PostStateRootWork>,
+    /// Admission is closed while remaining owned work drains.
+    pub closed: bool,
 }
 
 /// One bounded wait owner. Dropping it cancels unpublished work.
@@ -245,6 +256,12 @@ impl Drop for PostStateRootCandidateLease {
                         return Ok(());
                     }
                     manager.retire_trusted_builder(self.key)?;
+                    let mut queue = manager.queue.0.lock().map_err(PostStateRootManager::error)?;
+                    if let Some(index) = queue.work.iter().position(|work| work.builder == Some(self.key)) {
+                        queue.work.remove(index);
+                        manager.builders.lock().map_err(PostStateRootManager::error)?.remove(&self.key);
+                        manager.queue.1.notify_all();
+                    }
                     if !manager.builders.lock().map_err(PostStateRootManager::error)?.contains_key(&self.key) { candidates.remove(&self.key); }
                 }
                 Ok(())
@@ -259,8 +276,8 @@ impl Drop for PostStateRootCandidateLease {
 pub struct PostStateRootManager {
     /// Admission and completion limits.
     pub limits: PostStateRootLimits,
-    /// Owned queue sender, closed before draining the worker.
-    pub sender: Mutex<Option<mpsc::SyncSender<PostStateRootWork>>>,
+    /// Bounded owned queue and wakeups for admission, pop, cancellation and shutdown.
+    pub queue: Arc<(Mutex<PostStateRootQueue>, Condvar)>,
     /// Worker retained for explicit accounting/drain; provider calculations are not preemptible.
     pub worker: Mutex<Option<JoinHandle<()>>>,
     /// Terminal operational failure, never invalid ancestry.
@@ -269,8 +286,10 @@ pub struct PostStateRootManager {
     pub ready: Mutex<PostStateRootEntries>,
     /// Outstanding builder identities; certification waits for these results.
     pub builders: Mutex<BTreeMap<PostStateRootKey, Instant>>,
-    /// Exact admitted provider operations for per-run root-work accounting.
+    /// Exact admitted operations, including unused work canceled before provider computation.
     pub admitted: AtomicUsize,
+    /// Actual operations invoked by the worker, excluding canceled queued candidates.
+    pub computed: Arc<AtomicUsize>,
     /// Native candidate ownership; exported unmatched comparisons are never silently evicted.
     pub candidates: Mutex<BTreeMap<PostStateRootKey, PostStateRootCandidate>>,
 }
@@ -281,27 +300,39 @@ impl PostStateRootManager {
         if limits.queued == 0 || limits.ready == 0 || limits.timeout.is_zero() {
             return Err(Self::error("post-state root limits must be positive"));
         }
-        let (sender, receiver) = mpsc::sync_channel::<PostStateRootWork>(limits.queued);
+        let queue = Arc::new((Mutex::new(PostStateRootQueue::default()), Condvar::new()));
+        let pending = queue.clone();
+        let computed = Arc::new(AtomicUsize::new(0)); let computations = computed.clone();
         let failed = Arc::new(AtomicBool::new(false)); let health = failed.clone();
         let worker = thread::Builder::new().name("base-post-state-root".into()).spawn(move || {
-            while let Ok(work) = receiver.recv() {
-                PostStateRootMetrics::jobs_started().increment(1);
+            loop {
+                let work = {
+                    let mut queue = pending.0.lock().expect("root queue poisoned");
+                    while queue.work.is_empty() && !queue.closed { queue = pending.1.wait(queue).expect("root queue poisoned"); }
+                    let Some(work) = queue.work.pop_front() else { break };
+                    pending.1.notify_all();
+                    work
+                };
                 PostStateRootMetrics::queue_lag().record(work.enqueued.elapsed().as_secs_f64());
                 let start = Instant::now();
                 let result = if health.load(Ordering::Acquire) || work.cancelled.load(Ordering::Acquire) {
                     Err(Self::error("post-state root work cancelled"))
                 } else {
-                    catch_unwind(AssertUnwindSafe(work.operation)).unwrap_or_else(|_| Err(Self::error("post-state root worker panicked")))
+                    PostStateRootMetrics::jobs_started().increment(1);
+                    computations.fetch_add(1, Ordering::Release);
+                    let result = catch_unwind(AssertUnwindSafe(work.operation)).unwrap_or_else(|_| Err(Self::error("post-state root worker panicked")));
+                    PostStateRootMetrics::job_duration().record(start.elapsed().as_secs_f64());
+                    PostStateRootMetrics::jobs_completed().increment(1);
+                    result
                 };
-                PostStateRootMetrics::job_duration().record(start.elapsed().as_secs_f64());
-                PostStateRootMetrics::jobs_completed().increment(1);
                 if result.is_err() { PostStateRootMetrics::jobs_failed().increment(1); health.store(true, Ordering::Release); }
                 if !work.cancelled.load(Ordering::Acquire) && work.result.send(result).is_err() && !work.detached.load(Ordering::Acquire) {
                     health.store(true, Ordering::Release);
                 }
+                pending.1.notify_all();
             }
         }).map_err(Self::error)?;
-        Ok(Self { limits, sender: Mutex::new(Some(sender)), worker: Mutex::new(Some(worker)), failed, ready: Mutex::default(), builders: Mutex::default(), admitted: AtomicUsize::new(0), candidates: Mutex::default() })
+        Ok(Self { limits, queue, worker: Mutex::new(Some(worker)), failed, ready: Mutex::default(), builders: Mutex::default(), admitted: AtomicUsize::new(0), computed, candidates: Mutex::default() })
     }
 
     /// Creates an engine-fatal provider error rather than a consensus-invalid payload error.
@@ -309,26 +340,45 @@ impl PostStateRootManager {
 
     /// Applies bounded backpressure and returns a single private completion owner.
     pub fn enqueue(&self, operation: PostStateRootOperation) -> ProviderResult<PostStateRootCompletion> {
+        Ok(self.enqueue_work(operation, None)?.expect("unkeyed work cannot be a duplicate"))
+    }
+
+    /// Atomically reserves queue and pending identity capacity; waits hold only the queue lock.
+    pub fn enqueue_work(&self, operation: PostStateRootOperation, builder: Option<PostStateRootKey>) -> ProviderResult<Option<PostStateRootCompletion>> {
         let deadline = Instant::now() + self.limits.timeout;
         let cancelled = Arc::new(AtomicBool::new(false)); let (result, receiver) = mpsc::sync_channel(1);
-        let detached = Arc::new(AtomicBool::new(false));
-        let mut work = PostStateRootWork { operation, result, cancelled: cancelled.clone(), detached: detached.clone(), enqueued: Instant::now() };
+        let detached = Arc::new(AtomicBool::new(builder.is_some()));
+        let work = PostStateRootWork { operation, builder, result, cancelled: cancelled.clone(), detached: detached.clone(), enqueued: Instant::now() };
         loop {
-            if self.failed.load(Ordering::Acquire) { return Err(Self::error("post-state root manager is unhealthy")); }
-            let sender = self.sender.lock().map_err(Self::error)?;
-            match sender.as_ref().ok_or_else(|| Self::error("post-state root manager stopped"))?.try_send(work) {
-                Ok(()) => { self.admitted.fetch_add(1, Ordering::Release); break; }
-                Err(mpsc::TrySendError::Full(pending)) => work = pending,
-                Err(mpsc::TrySendError::Disconnected(_)) => return Err(Self::error("post-state root worker dropped")),
+            self.check_health()?;
+            let candidates = if builder.is_some() { Some(self.candidates.lock().map_err(Self::error)?) } else { None };
+            let mut queue = self.queue.0.lock().map_err(Self::error)?;
+            let mut builders = self.builders.lock().map_err(Self::error)?;
+            if queue.closed { return Err(Self::error("post-state root manager stopped")); }
+            if let Some(key) = builder {
+                if builders.contains_key(&key) || self.get(key, PostStateRootSource::Builder)?.is_some() { return Ok(None); }
             }
-            drop(sender);
             if Instant::now() >= deadline {
                 self.failed.store(true, Ordering::Release);
                 return Err(Self::error("post-state root admission timed out"));
             }
-            thread::sleep(Duration::from_millis(1));
+            if queue.work.len() < self.limits.queued && (builder.is_none() || builders.len() < self.limits.queued + 1) {
+                if let Some(key) = builder { builders.insert(key, deadline); }
+                queue.work.push_back(work);
+                self.admitted.fetch_add(1, Ordering::Release);
+                self.queue.1.notify_all();
+                break;
+            }
+            drop(builders); drop(candidates);
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.failed.store(true, Ordering::Release);
+                return Err(Self::error("post-state root admission timed out"));
+            }
+            // Drop every other lock before waiting so last-owner cancellation can free a slot.
+            drop(self.queue.1.wait_timeout(queue, remaining).map_err(Self::error)?);
         }
-        Ok(PostStateRootCompletion { receiver, cancelled, failed: self.failed.clone(), deadline, detached, completed: false })
+        Ok(Some(PostStateRootCompletion { receiver, cancelled, failed: self.failed.clone(), deadline, detached, completed: false }))
     }
 
     /// Acquires shared native payload ownership and verifies duplicate finalized state exactly.
@@ -357,18 +407,8 @@ impl PostStateRootManager {
     /// Queues owned builder state without awaiting its current root on the seal path.
     pub fn enqueue_builder(self: &Arc<Self>, key: PostStateRootKey, operation: PostStateRootOperation) -> ProviderResult<()> {
         self.check_health()?;
-        {
-            let mut builders = self.builders.lock().map_err(Self::error)?;
-            if builders.contains_key(&key) { return Ok(()); }
-            if self.get(key, PostStateRootSource::Builder)?.is_some() { return Ok(()); }
-            if builders.len() >= self.limits.queued + 1 {
-                self.failed.store(true, Ordering::Release);
-                return Err(Self::error("builder root admission capacity or duplicate identity"));
-            }
-            builders.insert(key, Instant::now() + self.limits.timeout);
-        }
         let manager = self.clone();
-        match self.enqueue(Box::new(move || {
+        match self.enqueue_work(Box::new(move || {
             let result = operation().and_then(|data| {
                 manager.check_health()?;
                 // Serialize publication with last-owner retirement; the worker is not a payload owner.
@@ -378,14 +418,17 @@ impl PostStateRootManager {
                 }
                 Ok(data)
             });
-            manager.builders.lock().map_err(Self::error)?.remove(&key);
             let mut candidates = manager.candidates.lock().map_err(Self::error)?;
+            let _queue = manager.queue.0.lock().map_err(Self::error)?;
+            manager.builders.lock().map_err(Self::error)?.remove(&key);
+            manager.queue.1.notify_all();
             let compared = manager.ready.lock().map_err(Self::error)?.entries.contains_key(&(key, PostStateRootSource::Validator));
             if candidates.get(&key).is_some_and(|candidate| candidate.lease.strong_count() == 0 && (!candidate.selected || compared)) { candidates.remove(&key); }
             result
-        })) {
-            Ok(completion) => { completion.detach(); Ok(()) }
-            Err(error) => { self.builders.lock().map_err(Self::error)?.remove(&key); Err(error) }
+        }), Some(key)) {
+            Ok(Some(completion)) => { completion.detach(); Ok(()) }
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
         }
     }
 
@@ -479,7 +522,8 @@ impl PostStateRootManager {
     /// Closes admission and accounts for all owned work within a bounded drain interval.
     /// A provider call already running cannot be preempted. A drain timeout reports failure.
     pub fn drain(&self) -> ProviderResult<()> {
-        self.sender.lock().map_err(Self::error)?.take();
+        self.queue.0.lock().map_err(Self::error)?.closed = true;
+        self.queue.1.notify_all();
         let deadline = Instant::now() + self.limits.timeout;
         let mut worker = self.worker.lock().map_err(Self::error)?;
         if let Some(handle) = worker.as_ref() {
@@ -629,17 +673,110 @@ mod tests {
         let barrier = manager.enqueue(Box::new(move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Ok(data(9)) })).unwrap();
         started.recv_timeout(Duration::from_secs(2)).unwrap();
         let candidate = manager.candidate(key(1), &HashedPostState::default()).unwrap();
-        manager.enqueue_builder(key(1), Box::new(|| Ok(data(1)))).unwrap();
+        manager.enqueue_builder(key(1), Box::new(|| panic!("canceled queued generation must never compute"))).unwrap();
         drop(candidate);
+        assert_eq!(manager.builders.lock().unwrap().len(), 0, "queued unused generation must release pending identity immediately");
         let reacquired = manager.candidate(key(1), &HashedPostState::default()).unwrap();
-        manager.enqueue_builder(key(1), Box::new(|| panic!("duplicate operation must not execute"))).unwrap();
-        assert_eq!(manager.admitted.load(Ordering::Acquire), 2, "barrier plus one builder operation only, including reacquisition");
+        manager.enqueue_builder(key(1), Box::new(|| Ok(data(1)))).unwrap();
+        assert_eq!(manager.admitted.load(Ordering::Acquire), 3, "canceled queued identity must admit a fresh generation after reacquisition");
         drop(reacquired);
-        assert_eq!(manager.builders.lock().unwrap().len(), 1, "discarded candidate work must retain its bounded pending deadline until the worker finishes");
+        assert_eq!(manager.builders.lock().unwrap().len(), 0, "both canceled queued generations must release pending identity before computation");
         release.send(()).unwrap(); barrier.wait().unwrap(); manager.wait_builder(key(1)).unwrap();
         assert_eq!(manager.ready.lock().unwrap().entries.len(), 0, "late abandoned work must publish neither Builder nor Validator");
         manager.drain().unwrap();
         assert_eq!(manager.candidates.lock().unwrap().len(), 0, "drained unselected candidate metadata must retire");
+        assert_eq!(manager.computed.load(Ordering::Acquire), 1, "only the running barrier computes, neither unused queued generation does");
+    }
+
+    /// Once popped, an abandoned identity stays owned and reacquisition shares its operation.
+    #[test]
+    fn running_candidate_reacquisition_is_idempotent() {
+        let manager = Arc::new(PostStateRootManager::new(PostStateRootLimits::default()).unwrap());
+        let candidate = manager.candidate(key(1), &HashedPostState::default()).unwrap();
+        let (entered, started) = mpsc::channel(); let (release, blocked) = mpsc::channel();
+        manager.enqueue_builder(key(1), Box::new(move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Ok(data(1)) })).unwrap();
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        drop(candidate);
+        assert_eq!(manager.builders.lock().unwrap().len(), 1, "running work must remain owned with its original deadline");
+        let reacquired = manager.candidate(key(1), &HashedPostState::default()).unwrap();
+        manager.enqueue_builder(key(1), Box::new(|| panic!("running identity must not compute twice"))).unwrap();
+        reacquired.select();
+        release.send(()).unwrap(); manager.wait_builder(key(1)).unwrap();
+        assert_eq!(manager.admitted.load(Ordering::Acquire), 1, "running reacquisition admits zero additional operations");
+        assert_eq!(manager.get(key(1), PostStateRootSource::Builder).unwrap().unwrap().root, data(1).root, "reacquired running result must publish for selected identity");
+        drop(reacquired); manager.drain().unwrap();
+    }
+
+    /// Full admission releases ownership locks so concurrent unused cancellation can wake it.
+    #[test]
+    fn cancellation_wakes_bounded_builder_admission() {
+        let manager = Arc::new(PostStateRootManager::new(PostStateRootLimits { queued: 1, timeout: Duration::from_secs(2), ..Default::default() }).unwrap());
+        let (entered, started) = mpsc::channel(); let (release, blocked) = mpsc::channel();
+        let barrier = manager.enqueue(Box::new(move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Ok(data(9)) })).unwrap();
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        let candidate = manager.candidate(key(1), &HashedPostState::default()).unwrap();
+        manager.enqueue_builder(key(1), Box::new(|| panic!("queued orphan must not execute"))).unwrap();
+        let next = manager.candidate(key(2), &HashedPostState::default()).unwrap();
+        let (done, admitted) = mpsc::channel();
+        let waiting = manager.clone();
+        let admission = thread::spawn(move || { done.send(waiting.enqueue_builder(key(2), Box::new(|| Ok(data(2))))).unwrap(); });
+        assert!(matches!(admitted.recv_timeout(Duration::from_millis(50)), Err(mpsc::RecvTimeoutError::Timeout)), "ordinary full capacity must backpressure rather than fail immediately");
+        drop(candidate);
+        admitted.recv_timeout(Duration::from_secs(1)).expect("cancellation must wake admission without lock deadlock").unwrap();
+        admission.join().unwrap();
+        assert_eq!(manager.queue.0.lock().unwrap().work.len(), 1, "queue must contain exactly the new admitted candidate within its bound");
+        assert_eq!(manager.builders.lock().unwrap().len(), 1, "pending registry must contain only the new generation");
+        next.select(); release.send(()).unwrap(); barrier.wait().unwrap(); manager.wait_builder(key(2)).unwrap();
+        assert_eq!(manager.computed.load(Ordering::Acquire), 2, "only barrier and selected replacement compute");
+        drop(next); manager.check_health().unwrap(); manager.drain().unwrap();
+    }
+
+    /// Even fully protected pending builders backpressure until worker progress, not immediately fail.
+    #[test]
+    fn protected_builder_capacity_waits_for_worker_progress() {
+        let manager = Arc::new(PostStateRootManager::new(PostStateRootLimits { queued: 1, timeout: Duration::from_secs(2), ..Default::default() }).unwrap());
+        let first = manager.candidate(key(1), &HashedPostState::default()).unwrap(); first.select();
+        let second = manager.candidate(key(2), &HashedPostState::default()).unwrap(); second.select();
+        let third = manager.candidate(key(3), &HashedPostState::default()).unwrap(); third.select();
+        let (entered, started) = mpsc::channel(); let (release, blocked) = mpsc::channel();
+        manager.enqueue_builder(key(1), Box::new(move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Ok(data(1)) })).unwrap();
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        manager.enqueue_builder(key(2), Box::new(|| Ok(data(2)))).unwrap();
+        let waiting = manager.clone(); let (done, response) = mpsc::channel();
+        let admission = thread::spawn(move || { done.send(waiting.enqueue_builder(key(3), Box::new(|| Ok(data(3))))).unwrap(); });
+        assert!(matches!(response.recv_timeout(Duration::from_millis(50)), Err(mpsc::RecvTimeoutError::Timeout)), "queued+1 protected identities must backpressure third builder without terminal failure");
+        manager.check_health().unwrap();
+        assert_eq!(manager.builders.lock().unwrap().len(), 2, "one running and one queued selected builder exactly exhaust pending capacity");
+        assert_eq!(manager.queue.0.lock().unwrap().work.len(), 1, "pending admission cannot exceed the configured queue bound");
+        release.send(()).unwrap();
+        response.recv_timeout(Duration::from_secs(1)).expect("worker progress must wake protected builder admission").unwrap();
+        admission.join().unwrap();
+        for byte in 1..=3 {
+            manager.wait_builder(key(byte)).unwrap();
+            assert_eq!(manager.get(key(byte), PostStateRootSource::Builder).unwrap().unwrap().root, data(byte).root, "each selected builder must compute its own exact result");
+        }
+        drop((first, second, third)); manager.drain().unwrap();
+        assert_eq!(manager.computed.load(Ordering::Acquire), 3, "no selected computations may be skipped to make room");
+        manager.check_health().unwrap();
+    }
+
+    /// Closing admission wakes blocked callers, while drain still owns the running provider.
+    #[test]
+    fn drain_wakes_blocked_admission() {
+        let manager = Arc::new(PostStateRootManager::new(PostStateRootLimits { queued: 1, timeout: Duration::from_secs(2), ..Default::default() }).unwrap());
+        let (entered, started) = mpsc::channel(); let (release, blocked) = mpsc::channel();
+        let first = manager.enqueue(Box::new(move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Ok(data(1)) })).unwrap();
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        let second = manager.enqueue(Box::new(|| Ok(data(2)))).unwrap();
+        let waiting = manager.clone(); let (done, response) = mpsc::channel();
+        let admission = thread::spawn(move || { done.send(waiting.enqueue(Box::new(|| Ok(data(3)))).map(|_| ())).unwrap(); });
+        assert!(matches!(response.recv_timeout(Duration::from_millis(50)), Err(mpsc::RecvTimeoutError::Timeout)), "full queue must wait until capacity or shutdown");
+        let draining = manager.clone(); let drain = thread::spawn(move || draining.drain());
+        assert!(response.recv_timeout(Duration::from_secs(1)).expect("shutdown must wake admission").is_err(), "closed queue must reject blocked admission");
+        release.send(()).unwrap(); first.wait().unwrap(); second.wait().unwrap();
+        admission.join().unwrap(); drain.join().unwrap().unwrap();
+        assert_eq!(manager.computed.load(Ordering::Acquire), 2, "shutdown must drain both already owned operations only");
+        manager.check_health().unwrap();
     }
 
     /// A sealed identity may not coalesce different authoritative execution state.
