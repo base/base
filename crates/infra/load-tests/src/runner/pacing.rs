@@ -2,6 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    ops::Range,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -1923,6 +1924,9 @@ impl LoadRunner {
 
         let submit_started = Instant::now();
         let first_batch_id = enqueue_state.next_submit_batch_id.load(Ordering::SeqCst);
+        let batches =
+            first_batch_id..first_batch_id + selected.len().div_ceil(SIGNED_BATCH_SIZE) as u64;
+        drain_state.results_tracker.open_refill(batches.clone(), cycle_started);
         while !selected.is_empty() {
             if !Self::enqueue_signed_batch(
                 enqueue_state.submission_pipeline,
@@ -1937,10 +1941,11 @@ impl LoadRunner {
                 break;
             }
         }
-        let batch_ids: Vec<u64> =
-            (first_batch_id..enqueue_state.next_submit_batch_id.load(Ordering::SeqCst)).collect();
+        for unsent in enqueue_state.next_submit_batch_id.load(Ordering::SeqCst)..batches.end {
+            drain_state.results_tracker.abandon_refill_batch(unsent);
+        }
         let refill_lag = Self::wait_for_batch_completions(
-            &batch_ids,
+            &batches,
             cycle_started,
             Duration::from_millis(100),
             drain_state,
@@ -1948,9 +1953,6 @@ impl LoadRunner {
         .await;
         let submit_time = refill_lag
             .map(|lag| lag.saturating_sub(submit_started.saturating_duration_since(cycle_started)));
-        if !batch_ids.is_empty() && refill_lag.is_none() {
-            drain_state.results_tracker.register_pending_refill(batch_ids.clone(), cycle_started);
-        }
         let resulting_depth_gas = drain_state.mempool_depth_gas();
         drain_state.collector.record_pacing_cycle(PacingCycleObservation {
             elapsed: cycle_started
@@ -1981,33 +1983,31 @@ impl LoadRunner {
         Ok(())
     }
 
+    /// Waits up to `budget` for a refill cycle's batches to complete. Returns the cycle's
+    /// acknowledgement lag, or `None` when the cycle turns late and reports its lag later through
+    /// [`ResultsTracker::drain_completed_refill_lags`].
     async fn wait_for_batch_completions(
-        batch_ids: &[u64],
+        batches: &Range<u64>,
         cycle_started: Instant,
         budget: Duration,
         drain_state: &mut EnqueueDrainState<'_>,
     ) -> Option<Duration> {
-        if batch_ids.is_empty() {
-            return Some(Duration::ZERO);
-        }
-
         let deadline = cycle_started + budget;
         loop {
             drain_state.drain_run_events();
-            if let Some(completed_at) =
-                drain_state.results_tracker.take_completed_batches(batch_ids)
-            {
-                return Some(completed_at.saturating_duration_since(cycle_started));
+            if drain_state.results_tracker.refill_acked(batches) {
+                break;
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return None;
+                break;
             }
             match tokio::time::timeout(remaining, drain_state.submit_event_rx.recv()).await {
                 Ok(Some(event)) => drain_state.apply_submit_event(event),
-                Ok(None) | Err(_) => return None,
+                Ok(None) | Err(_) => break,
             }
         }
+        drain_state.results_tracker.stop_refill_wait(batches)
     }
 
     async fn enqueue_prefill_transactions(
@@ -2107,6 +2107,7 @@ impl LoadRunner {
                         drain_state.queued_gas.saturating_sub(u128::from(signed_tx.estimated_gas));
                 }
                 drain_state.collector.record_failures("submit queue closed", failed_count);
+                drain_state.results_tracker.abandon_refill_batch(batch_id);
                 false
             }
         }
