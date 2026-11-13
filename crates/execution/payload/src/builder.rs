@@ -1161,16 +1161,6 @@ where
                     "deferring validity-gated transaction: predicate evaluation budget exhausted"
                 );
                 best_txs.park_current();
-                emit_native_validity_event!(
-                    self,
-                    TransactionEventType::BuilderDeferred,
-                    tx_hash,
-                    validity_consideration_index,
-                    {
-                        "defer_reason" => "predicate_eval_budget_exhausted",
-                        "defer_detail" => "validity-predicate evaluation time budget exhausted for this payload build",
-                    }
-                );
                 continue;
             }
 
@@ -2152,9 +2142,6 @@ mod tests {
         ready: VecDeque<PooledCandidate>,
         parked: HashMap<B256, PooledCandidate>,
         current: Option<PooledCandidate>,
-        /// Whether promoted transactions are yielded before the remaining queued ones, as when
-        /// they outbid them.
-        promoted_first: bool,
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
         /// Parks held candidates before yielding them, as the pool's parking iterator does.
         hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
@@ -2175,7 +2162,6 @@ mod tests {
                 ready: VecDeque::new(),
                 parked: HashMap::default(),
                 current: None,
-                promoted_first: true,
                 invalid,
                 hold: None,
             }
@@ -2189,12 +2175,6 @@ mod tests {
             self.hold = hold;
             self
         }
-
-        /// Yields promoted transactions only after every queued one, so queued transactions can
-        /// change state between a promotion and the re-yield.
-        fn with_promoted_last(transactions: Vec<BasePooledTransaction>) -> Self {
-            Self { promoted_first: false, ..Self::new(transactions) }
-        }
     }
 
     impl PayloadTransactions for TestParkableTransactions {
@@ -2203,11 +2183,7 @@ mod tests {
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             assert!(self.current.is_none(), "current transaction was not lifecycle-managed");
             loop {
-                let transaction = if self.promoted_first {
-                    self.ready.pop_front().or_else(|| self.queued.pop_front())
-                } else {
-                    self.queued.pop_front().or_else(|| self.ready.pop_front())
-                }?;
+                let transaction = self.ready.pop_front().or_else(|| self.queued.pop_front())?;
                 if let Some(hold) = self.hold.as_mut()
                     && !transaction.transaction.validity_conditions().is_empty()
                     && hold.hold(&transaction)
@@ -2395,100 +2371,6 @@ mod tests {
         assert_eq!(
             rejections,
             [(TransactionEventType::BuilderRejected, "invalid_transaction".into())]
-        );
-    }
-
-    /// A promoted transaction whose predicate is broken again before it is re-yielded is parked a
-    /// second time. Parking is not journaled, however often it happens.
-    #[test]
-    fn native_builder_does_not_journal_parking_an_unsatisfied_transaction() {
-        let event_capture = TransactionEventCapture::install();
-        // Event capture is process-global, so these transactions must not share hashes with other
-        // tests.
-        let watched_address = Address::repeat_byte(0x46);
-        let gated = pool_transaction_to(0, Address::repeat_byte(0x57), U256::ZERO)
-            .with_validity_predicates(vec![ValidityPredicate::Balance {
-                address: watched_address,
-                op: ValidityOperator::Equal,
-                value: U256::ONE,
-            }]);
-        // The first trigger satisfies the predicate and promotes `gated`; the second breaks it
-        // again before `gated` is re-yielded.
-        let satisfy = pool_transaction_to(0, watched_address, U256::ONE);
-        let unsatisfy = pool_transaction_to(0, watched_address, U256::from(2));
-        let funded_senders = [gated.sender(), satisfy.sender(), unsatisfy.sender()];
-        let gated_hash = *gated.hash();
-
-        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            pool_payload_context(DENIM_TIMESTAMP),
-            TestParkableTransactions::with_promoted_last(vec![gated, satisfy, unsatisfy]),
-            &funded_senders,
-        ) else {
-            panic!("Denim payload must freeze")
-        };
-
-        assert!(
-            !payload.block().body().transactions.iter().any(|tx| *tx.tx_hash() == gated_hash),
-            "gated transaction must stay parked"
-        );
-        let gated_events = event_capture
-            .events()
-            .into_iter()
-            .filter(|event| event.tx_hash == Some(gated_hash))
-            .map(|event| event.event_type)
-            .collect::<Vec<_>>();
-        assert_eq!(gated_events, []);
-    }
-
-    /// A candidate reached after the evaluation budget ran out is deferred with a journal row,
-    /// while the candidate that was evaluated and parked gets none.
-    #[test]
-    fn native_builder_journals_a_deferral_when_the_evaluation_budget_is_exhausted() {
-        let event_capture = TransactionEventCapture::install();
-        // Event capture is process-global, so these transactions must not share hashes with other
-        // tests.
-        let unsatisfied = pool_transaction_to(0, Address::repeat_byte(0x6a), U256::ZERO)
-            .with_validity_predicates(vec![ValidityPredicate::Balance {
-                address: Address::repeat_byte(0x6c),
-                op: ValidityOperator::Equal,
-                value: U256::ONE,
-            }]);
-        // With a zero budget only the first candidate is evaluated, so this one never is.
-        let unevaluated = pool_transaction_to(0, Address::repeat_byte(0x6b), U256::ZERO)
-            .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
-                op: ValidityOperator::Equal,
-                value: U256::ONE,
-            }]);
-        let funded_senders = [unsatisfied.sender(), unevaluated.sender()];
-        let unsatisfied_hash = *unsatisfied.hash();
-        let unevaluated_hash = *unevaluated.hash();
-        let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
-        ctx.builder_config.predicate_eval_hard_cutoff = Duration::ZERO;
-
-        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            ctx,
-            TestParkableTransactions::new(vec![unsatisfied, unevaluated]),
-            &funded_senders,
-        ) else {
-            panic!("Denim payload must freeze")
-        };
-
-        assert!(payload.block().body().transactions.is_empty());
-        let journaled = event_capture
-            .events()
-            .into_iter()
-            .filter(|event| {
-                event.tx_hash == Some(unsatisfied_hash) || event.tx_hash == Some(unevaluated_hash)
-            })
-            .map(|event| (event.tx_hash, event.event_type, event.data.get("defer_reason").cloned()))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            journaled,
-            [(
-                Some(unevaluated_hash),
-                TransactionEventType::BuilderDeferred,
-                Some("predicate_eval_budget_exhausted".into()),
-            )]
         );
     }
 

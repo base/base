@@ -182,6 +182,8 @@ pub enum TransactionEventType {
     #[serde(rename = "BUILDER_REJECTED")]
     BuilderRejected,
     /// The builder deferred a transaction for later re-evaluation during payload construction.
+    ///
+    /// No longer emitted. Retained so historical events remain readable.
     #[serde(rename = "BUILDER_DEFERRED")]
     BuilderDeferred,
     /// The builder discarded a transaction that can no longer become valid.

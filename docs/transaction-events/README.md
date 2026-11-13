@@ -20,8 +20,9 @@ inclusion, and legacy flashblock events default to 30 days. Ingest rejects event
 whose `event_time` is already outside its window or more than an hour in the
 future. A retried `event_id` dedupes only within the same UTC hour of its
 `event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
-`TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
-same hot window as the other per-attempt builder decisions.
+`TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_EXPIRED` and the legacy
+`BUILDER_DEFERRED` use the same hot window as the other per-attempt builder
+decisions.
 
 ## Configuration Fields
 
@@ -218,7 +219,7 @@ transaction is decoded and before sequencer forwarding or pool insertion.
 `data.validity_predicates` (the serialized `balance`, `storage`, and `block_number`
 list; `flashblock_index` predicates are rejected before this
 event). Downstream lifecycle events —
-including `BUILDER_DEFERRED`, `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
+including `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
 `BUILDER_INCLUDED` — must not repeat that list; join them back by `tx_hash`. A
 replacement is a fresh admission with its own `tx_hash` and/or predicate list;
 `TXPOOL_REPLACED.replacement_hash` links the outgoing transaction to the
@@ -264,17 +265,22 @@ Builder:
 
 - `BUILDER_ACCEPTED`
 - `BUILDER_REJECTED`
-- `BUILDER_DEFERRED`
 - `BUILDER_EXPIRED`
 - `BUILDER_INCLUDED`
 - `BUILDER_PAYLOAD_FINALIZED`
 - `BUILDER_FLASHBLOCK_STARTED` (legacy)
 - `BUILDER_FLASHBLOCK_PUBLISHED` (legacy)
 - `BUILDER_FLASHBLOCK_BUILD_STOPPED` (legacy)
+- `BUILDER_DEFERRED` (legacy)
 
 The three `BUILDER_FLASHBLOCK_*` types are legacy events from the retired
 Flashblocks builder: they stay in the schema so historical journals still parse,
 and no current builder emits them.
+`BUILDER_DEFERRED` is legacy too: builders journaled it when they parked a
+validity transaction, with `data.defer_reason` set to
+`validity_predicate_not_satisfied` or `predicate_eval_budget_exhausted`. It
+stays in the schema so journals from those builders still parse, and no
+current builder emits it.
 
 Leader gating: every sequencer runs a builder, and every mempool node forwards
 every transaction to every builder, so without gating each builder journals its
@@ -303,30 +309,25 @@ only when the leader's pool rejects it, and around a transfer, for
 one poll interval plus the request's latency, either both or neither sequencer
 may journal.
 
-Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
-and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
+Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, and `BUILDER_EXPIRED`
+are emitted per payload-building attempt and include
 `payload_id` and `block_number`. The same transaction can therefore produce
 multiple decision events across build attempts. The builder does not emit
 `BUILDER_CONSIDERED`. The native builder journals only validity-gated
 candidates; a candidate whose
 predicates pass but which is then skipped (block limits, resource metering,
 coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A candidate
-whose predicate is not satisfied is parked and gets no event; a later state
-change in the same or a later build attempt can promote it. Parking is the
-most frequent builder decision and almost never precedes an inclusion, so it
-is only counted, in
-`base_builder_validity_predicate_evaluations_total{outcome="not_satisfied"}`.
-A validity transaction with no builder decision event may therefore have been
-parked, skipped or never reached in a build; the journal does not tell those
-apart. `BUILDER_DEFERRED` is emitted only with `defer_reason`
-`predicate_eval_budget_exhausted`: the build had spent its time budget for
-evaluating validity predicates when it reached the candidate. It is emitted
-once per transaction per build attempt, so rebuilds of the same payload report
-it again. `BUILDER_EXPIRED` is the terminal discard for builder-side
+the builder parks gets no event, whether its predicate is not satisfied or
+the build had already spent its time budget for evaluating validity
+predicates. Parking is the most frequent builder decision and almost never
+precedes an inclusion, so it is only counted, in
+`base_builder_validity_predicate_evaluations_total` under
+`outcome="not_satisfied"` and `outcome="budget_exhausted"`. A validity
+transaction with no builder decision event may therefore have been parked,
+skipped or never reached in a build; the journal does not tell those apart.
+`BUILDER_EXPIRED` is the terminal discard for builder-side
 windows that can never become valid again, such as an expired bundle validity
-window or an expired position predicate. `BUILDER_ACCEPTED` and
-`BUILDER_INCLUDED` are unchanged; correlate a deferral with a later
-accept/include by `tx_hash`.
+window or an expired position predicate.
 `BUILDER_ACCEPTED` carries three gas figures for the transaction it executed:
 `data.tx_gas_limit` is the declared limit; `data.gas_used` is the gas the
 transaction was billed and its receipt reports; `data.metered_gas_used` is the
@@ -463,7 +464,7 @@ Routed to node:
 ## Mempool / Builder Examples
 
 Validity admission. This is the only event that carries `data.validity_predicates`.
-Join later deferral, expiry, accept, and include events by `tx_hash`:
+Join later expiry, accept, and include events by `tx_hash`:
 
 ```json
 {
@@ -492,36 +493,6 @@ Join later deferral, expiry, accept, and include events by `tx_hash`:
         }
       }
     ]
-  }
-}
-```
-
-Deferred (the build had spent its time budget for evaluating validity
-predicates when it reached this candidate, so it is held for a later build
-attempt).
-Emitted once per transaction per build attempt, and does not repeat the
-predicate list. Parking a candidate whose predicate is not satisfied emits no
-event:
-
-```json
-{
-  "schema_version": "transaction-event/v1",
-  "event_id": "0x5d7e...",
-  "event_time": "2026-06-02T00:00:00.200000000Z",
-  "producer": "base-builder",
-  "event_type": "BUILDER_DEFERRED",
-  "network": "base-mainnet",
-  "tx_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
-  "block_hash": null,
-  "block_number": 123,
-  "payload_id": "0x0102030405060708",
-  "request_id": null,
-  "data": {
-    "builder_mode": "native",
-    "source_queue": "txpool_best",
-    "parent_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
-    "defer_reason": "predicate_eval_budget_exhausted",
-    "defer_detail": "validity-predicate evaluation time budget exhausted for this payload build"
   }
 }
 ```
