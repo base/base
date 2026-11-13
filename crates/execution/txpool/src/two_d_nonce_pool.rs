@@ -5,7 +5,7 @@
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet},
-    ops::Bound,
+    ops::{Bound, Range},
     sync::Arc,
     time::Instant,
 };
@@ -37,12 +37,15 @@ pub(crate) struct LaneCursor {
     /// The first nonce this lane can execute. Equal to `state_nonce` unless
     /// another store holds the pending run from `state_nonce` up to here.
     pub next_nonce: u64,
+    /// The lowest fee cap in that other store's run, which executes before
+    /// this lane; `None` when no run sits in front.
+    pub run_fee_cap: Option<u128>,
 }
 
 impl LaneCursor {
     /// A cursor sitting at the canonical nonce.
     pub(crate) const fn at(state_nonce: u64) -> Self {
-        Self { state_nonce, next_nonce: state_nonce }
+        Self { state_nonce, next_nonce: state_nonce, run_fee_cap: None }
     }
 }
 
@@ -52,6 +55,8 @@ struct NonceLane<T: BasePooledTx> {
     state_nonce: u64,
     /// First executable nonce; see [`LaneCursor::next_nonce`].
     next_nonce: u64,
+    /// See [`LaneCursor::run_fee_cap`].
+    run_fee_cap: Option<u128>,
     /// Length of the consecutive pending run from `next_nonce`. Kept in step
     /// by every mutation, so pending and queued splits never walk the lane.
     pending_len: u64,
@@ -71,6 +76,7 @@ impl<T: BasePooledTx> NonceLane<T> {
         let mut lane = Self {
             state_nonce: cursor.state_nonce,
             next_nonce: cursor.next_nonce,
+            run_fee_cap: cursor.run_fee_cap,
             pending_len: 0,
             transactions,
         };
@@ -167,12 +173,14 @@ impl<T: BasePooledTx> NonceLane<T> {
         self.transactions.len() - self.consecutive_pending_len()
     }
 
-    /// The lowest fee cap among the members. A member is included only after
-    /// every member ahead of it, so the tail is no more includable than this.
+    /// The lowest fee cap among the members and the run in front of them. A
+    /// member is included only after every transaction ahead of it, so the
+    /// tail is no more includable than this.
     fn lowest_fee_cap(&self) -> u128 {
         self.transactions
             .values()
             .map(|transaction| transaction.max_fee_per_gas())
+            .chain(self.run_fee_cap)
             .min()
             .unwrap_or_default()
     }
@@ -189,7 +197,11 @@ impl<T: BasePooledTx> NonceLane<T> {
     }
 
     const fn cursor(&self) -> LaneCursor {
-        LaneCursor { state_nonce: self.state_nonce, next_nonce: self.next_nonce }
+        LaneCursor {
+            state_nonce: self.state_nonce,
+            next_nonce: self.next_nonce,
+            run_fee_cap: self.run_fee_cap,
+        }
     }
 }
 
@@ -435,9 +447,10 @@ impl SidecarSenderIds {
 /// smallest is evicted first. Field order is the ranking order: queued before
 /// pending, non-local before local, lowest fee cap, then most recently received.
 ///
-/// A lane tail ranks by the lowest fee cap in its lane, not its own: the sidecar
-/// keeps no base fee, so ranking by the tail's would let a lane whose head can
-/// never be included at the base fee outrank, and push out, executable lanes.
+/// A lane tail ranks by the lowest fee cap in its lane, or in the run another
+/// store holds in front of it, not its own: these pools keep no base fee, so
+/// ranking by the tail's would let a lane whose head can never be included at
+/// the base fee outrank, and push out, executable lanes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct EvictionKey {
     pending: bool,
@@ -962,7 +975,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         match self.lanes.get(&lane_id) {
             Some(lane) if lane.state_nonce < nonce => self.set_lane_cursor(
                 lane_id,
-                LaneCursor { state_nonce: nonce, next_nonce: lane.next_nonce.max(nonce) },
+                LaneCursor {
+                    state_nonce: nonce,
+                    next_nonce: lane.next_nonce.max(nonce),
+                    run_fee_cap: lane.run_fee_cap.filter(|_| lane.next_nonce > nonce),
+                },
             ),
             _ => LaneUpdate::default(),
         }
@@ -990,6 +1007,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             return update;
         }
         lane.state_nonce = cursor.state_nonce;
+        lane.run_fee_cap = cursor.run_fee_cap;
         if lane.next_nonce == cursor.next_nonce {
             self.refresh_lane_indexes(lane_id);
             return update;
@@ -1051,6 +1069,16 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// `None` when the lane has nothing pending.
     pub(crate) fn lane_pending_end(&self, lane_id: &LaneId) -> Option<u64> {
         self.lanes.get(lane_id).and_then(NonceLane::pending_end)
+    }
+
+    /// Returns the lowest fee cap among `lane_id`'s transactions in `nonces`.
+    pub(crate) fn lane_lowest_fee_cap(&self, lane_id: &LaneId, nonces: Range<u64>) -> Option<u128> {
+        self.lanes
+            .get(lane_id)?
+            .transactions
+            .range(nonces)
+            .map(|(_, transaction)| transaction.max_fee_per_gas())
+            .min()
     }
 
     /// Returns the live transaction at `nonce` in `lane_id`.
@@ -2923,7 +2951,7 @@ mod tests {
         let signer = signer();
         let lane = (signer.address(), U256::ZERO);
         let mut pool = protocol_lane_pool();
-        let cursor = LaneCursor { state_nonce: 0, next_nonce: 2 };
+        let cursor = LaneCursor { state_nonce: 0, next_nonce: 2, run_fee_cap: Some(1_000) };
 
         let behind = valid_pool_transaction(signed_1559(&signer, 1, 1_000));
         let error = pool.insert_validated_at(behind, cursor).unwrap_err();
@@ -2958,7 +2986,7 @@ mod tests {
         let signer = signer();
         let lane = (signer.address(), U256::ZERO);
         let mut pool = protocol_lane_pool();
-        let ahead = LaneCursor { state_nonce: 0, next_nonce: 2 };
+        let ahead = LaneCursor { state_nonce: 0, next_nonce: 2, run_fee_cap: Some(1_000) };
         let [second, third] =
             [2, 3].map(|nonce| valid_pool_transaction(signed_1559(&signer, nonce, 1_000)));
         let (second_hash, third_hash) = (*second.hash(), *third.hash());
@@ -2980,16 +3008,25 @@ mod tests {
         assert_eq!(pool.lane_cursor(&lane), Some(LaneCursor::at(0)));
 
         // The run in front now reaches nonce 3: nonce 2 can never execute here.
-        let update = pool.set_lane_cursor(lane, LaneCursor { state_nonce: 0, next_nonce: 3 });
+        let update = pool.set_lane_cursor(
+            lane,
+            LaneCursor { state_nonce: 0, next_nonce: 3, run_fee_cap: Some(1_000) },
+        );
         assert_eq!(hashes(&update.discarded), vec![second_hash]);
         assert_eq!(hashes(&update.promoted), vec![third_hash]);
         assert!(!pool.contains(&second_hash));
 
         // Canonical maintenance only moves the anchor forward and never below the cursor.
         assert!(pool.advance_lane_nonce(lane, 2).discarded.is_empty());
-        assert_eq!(pool.lane_cursor(&lane), Some(LaneCursor { state_nonce: 2, next_nonce: 3 }));
+        assert_eq!(
+            pool.lane_cursor(&lane),
+            Some(LaneCursor { state_nonce: 2, next_nonce: 3, run_fee_cap: Some(1_000) })
+        );
         assert!(pool.advance_lane_nonce(lane, 1).discarded.is_empty());
-        assert_eq!(pool.lane_cursor(&lane), Some(LaneCursor { state_nonce: 2, next_nonce: 3 }));
+        assert_eq!(
+            pool.lane_cursor(&lane),
+            Some(LaneCursor { state_nonce: 2, next_nonce: 3, run_fee_cap: Some(1_000) })
+        );
 
         // Past the lane's last transaction the lane is dropped entirely.
         let update = pool.advance_lane_nonce(lane, 4);
