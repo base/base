@@ -24,9 +24,9 @@ use base_history_rpc::{
     DEFAULT_STARTUP_CHECK_TIMEOUT, SenderSource,
 };
 use base_history_store::{
-    ArchiveLayout, ArchiveWriter, CacheConfig, Catalog, CatalogStore, ChainIdentity, ChainSource,
-    ChunkVerifier, DEFAULT_MAX_RANGE_BLOCKS, DEFAULT_MAX_RANGE_BYTES, DEFAULT_SNAPSHOT_TTL,
-    RpcChainSource, SourcePool, StepOutcome, WriterConfig,
+    ArchiveLayout, ArchiveRpcError, ArchiveWriter, CacheConfig, Catalog, CatalogStore,
+    ChainIdentity, ChainSource, ChunkVerifier, DEFAULT_MAX_RANGE_BLOCKS, DEFAULT_MAX_RANGE_BYTES,
+    DEFAULT_SNAPSHOT_TTL, RpcChainSource, SourcePool, StepOutcome, WriterConfig,
     test_utils::{Gate, GateOp, GatedStore, test_index_options},
 };
 use base_node_runner::test_utils::{
@@ -39,11 +39,12 @@ use base_test_utils::{
 use object_store::{ObjectStore, RetryConfig, aws::AmazonS3Builder, memory::InMemory};
 use reth_chainspec::EthChainSpec;
 use reth_node_core::args::{PruningArgs, StaticFilesArgs};
-use reth_prune_types::PruneSegment;
+use reth_prune_types::{PruneCheckpoint, PruneMode, PruneSegment};
 use reth_rpc_layer::JwtSecret;
 use reth_storage_api::{
-    AccountReader, BlockBodyIndicesProvider, BlockNumReader, BlockReader, PruneCheckpointReader,
-    StateProviderFactory, TransactionsProvider, errors::ProviderError,
+    AccountReader, BlockBodyIndicesProvider, BlockNumReader, BlockReader, DBProvider,
+    DatabaseProviderFactory, PruneCheckpointReader, PruneCheckpointWriter, StateProviderFactory,
+    TransactionsProvider, errors::ProviderError,
 };
 use serde_json::{Value, json};
 
@@ -526,6 +527,60 @@ async fn node_pruning_senders_exports_recovered_senders() {
             (finalized + 1) / BLOCKS_PER_SEGMENT,
             "the writer verifies and publishes every segment ending at or below finalized \
              block {finalized}"
+        );
+    })
+    .await
+    .expect("e2e run timed out");
+}
+
+/// A prune that advances while a range is read makes the range `Pruned` (`4002`) instead of
+/// returning blocks whose changesets may already be gone.
+#[tokio::test(flavor = "multi_thread")]
+async fn range_pruned_during_the_read_is_refused() {
+    tokio::time::timeout(E2E_TIMEOUT, async {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
+        let harness =
+            archive_node(store, chain_spec, LocalNodeRetention::default()).await;
+        harness.advance_chain(BLOCKS_PER_SEGMENT * 2).await.expect("advance");
+        let provider = harness.blockchain_provider();
+        let mut export = ArchiveApiImpl::new(
+            provider.clone(),
+            ArchiveExportLimits {
+                max_range_blocks: DEFAULT_MAX_RANGE_BLOCKS,
+                max_range_bytes: DEFAULT_MAX_RANGE_BYTES,
+                max_concurrent_ranges: DEFAULT_MAX_CONCURRENT_RANGES,
+            },
+        );
+        let (from, to) = (1, 4);
+        assert_eq!(
+            export.block_range_blocking(from, to).expect("unpruned range is exported").len(),
+            4,
+            "the range exports while nothing is pruned"
+        );
+
+        // Block 2 has been read when the node's account-history pruner reaches block 2.
+        let writer = provider;
+        export.after_block = Some(Arc::new(move |number| {
+            if number == 2 {
+                let rw = writer.database_provider_rw().expect("rw provider");
+                rw.save_prune_checkpoint(
+                    PruneSegment::AccountHistory,
+                    PruneCheckpoint {
+                        block_number: Some(2),
+                        tx_number: None,
+                        prune_mode: PruneMode::Before(3),
+                    },
+                )
+                .expect("save checkpoint");
+                rw.commit().expect("commit checkpoint");
+            }
+        }));
+        let err = export.block_range_blocking(from, to).expect_err("range pruned mid-read");
+        assert_eq!(err.code(), ArchiveRpcError::PRUNED, "a mid-read prune is reported as pruned");
+        assert!(
+            matches!(err, ArchiveRpcError::Pruned { from: 1, bounds } if bounds.earliest_local == 3),
+            "the refusal names the new earliest local block 3, got {err:?}"
         );
     })
     .await

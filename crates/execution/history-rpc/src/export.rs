@@ -1,6 +1,6 @@
 //! `archive_` export endpoint served from the node's own provider (TDD §3).
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use alloy_consensus::{Header, transaction::SignerRecoverable};
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
@@ -115,7 +115,7 @@ pub enum SenderSource {
 }
 
 /// Implementation of the `archive_` namespace over a node provider.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ArchiveApiImpl<P> {
     /// Node provider.
     pub provider: P,
@@ -123,12 +123,31 @@ pub struct ArchiveApiImpl<P> {
     pub limits: ArchiveExportLimits,
     /// Concurrency limit of range calls.
     pub permits: RangePermits,
+    /// Called with each block number after it is read, before the next; tests use it to move
+    /// the node's prune checkpoints mid-range.
+    pub after_block: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+}
+
+impl<P: fmt::Debug> fmt::Debug for ArchiveApiImpl<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ArchiveApiImpl")
+            .field("provider", &self.provider)
+            .field("limits", &self.limits)
+            .field("permits", &self.permits)
+            .field("after_block", &self.after_block.is_some())
+            .finish()
+    }
 }
 
 impl<P: ArchiveExportProvider> ArchiveApiImpl<P> {
     /// Creates the endpoint.
     pub fn new(provider: P, limits: ArchiveExportLimits) -> Self {
-        Self { provider, limits, permits: RangePermits::new(limits.max_concurrent_ranges) }
+        Self {
+            provider,
+            limits,
+            permits: RangePermits::new(limits.max_concurrent_ranges),
+            after_block: None,
+        }
     }
 
     /// Computes `archive_status`.
@@ -189,8 +208,24 @@ impl<P: ArchiveExportProvider> ArchiveApiImpl<P> {
             });
         }
 
+        let out = self.read_range(from, to)?;
+        // The node's pruner can advance while the range is read, and a pruned changeset reads
+        // back as empty, which the writer accepts as served. A checkpoint covering `from` after
+        // the reads means some rows may be missing.
+        let earliest_local = self.earliest_local()?;
+        if from < earliest_local {
+            return Err(ArchiveRpcError::Pruned {
+                from,
+                bounds: RangeBounds { finalized: status.finalized, earliest_local },
+            });
+        }
+        Ok(out)
+    }
+
+    /// Reads blocks `from..=to` within the byte cap, without checking finality or retention.
+    pub fn read_range(&self, from: u64, to: u64) -> Result<Vec<ArchiveBlock>, ArchiveRpcError> {
         let senders = self.sender_source(from)?;
-        let mut out = Vec::with_capacity(blocks as usize);
+        let mut out = Vec::with_capacity((to - from + 1) as usize);
         let mut bytes = 0u64;
         for number in from..=to {
             let block = ArchiveBlock::from_data(&self.block_data(number, senders)?);
@@ -202,6 +237,9 @@ impl<P: ArchiveExportProvider> ArchiveApiImpl<P> {
                 });
             }
             out.push(block);
+            if let Some(after_block) = &self.after_block {
+                after_block(number);
+            }
         }
         Ok(out)
     }
