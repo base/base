@@ -53,7 +53,7 @@ All bundle fields are required and non-null; unknown bundle fields reject:
 | `blocks` | array of BasePayloadAttributes | 4..=10000 ordered blocks |
 | `digest` | 32-byte hex | Keccak of canonical serde JSON with digest zeroed |
 
-Each attributes object uses the native Engine serde schema: `timestamp` is a hex quantity in seconds, contiguous 1..N; `prevRandao` is zero bytes32; `suggestedFeeRecipient` is zero address; `withdrawals` is an empty array; `parentBeaconBlockRoot` is zero bytes32. Optional Engine `slotNumber` and `targetGasLimit` are absent/null. `transactions` is a non-null ordered array of 1..=1000 EIP-2718 hex byte strings; `noTxPool` is true; `gasLimit` is 30000000; `eip1559Params` is bytes8 encoding denominator 50/elasticity 6; `minBaseFee` is 1 wei. Run validates the exact serialization against the supported attributes constructor, not arbitrary Engine options.
+Each attributes object uses the native Engine serde schema: `timestamp` is a hex quantity in seconds, contiguous 1..N; `prevRandao` is zero bytes32; `suggestedFeeRecipient` is zero address; `withdrawals` is an empty array; `parentBeaconBlockRoot` is zero bytes32. Optional Engine `slotNumber` and `targetGasLimit` are absent/null. `transactions` is a non-null ordered array of 1..=1000 EIP-2718 hex byte strings; `noTxPool` is true; `gasLimit` is 126000000; `eip1559Params` is bytes8 encoding denominator 50/elasticity 6; `minBaseFee` is 1 wei. The fixed genesis uses the same gas limit, so even 1000 transfers (21 million gas) do not exceed the elasticity-six gas target. This synthetic configuration prevents base-fee growth above the frozen 2-gwei fee cap throughout the advertised block range; it is not a production gas-limit configuration. Run validates the exact serialization against the supported attributes constructor, not arbitrary Engine options.
 
 `--executable-manifest` must be supplied by a trusted external build operator from the clean build checkout and final executable, not inferred from runtime cwd. Keep it outside the output directory. It is a JSON object with required non-null fields:
 
@@ -197,6 +197,7 @@ In an operator-owned scratch checkout keep the compileable Engine trait, adapter
 | In `active_blocks`, exclude warmup by adding `.skip(bundle.warmup as usize)` before `.filter` | `root_bench::tests::aggregate_active_counts` |
 | In `execute`, replace the `input.json` raw write with `RootBenchBundle::write_new(..., &bundle)` | `root_bench::tests::input_bytes_are_verbatim` |
 | In `retain_error`, replace only the combined `RootBenchFailure` with an untyped formatted `eyre!` | `root_bench::tests::exit_categories_and_required_manifest` |
+| In `attributes` and `transfer_genesis`, restore the 30000000 gas limit | `root_bench::tests::maximum_transfer_block_stays_below_fee_target` |
 
 For each table filter use:
 

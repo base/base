@@ -367,7 +367,7 @@ impl RootBenchBundle {
         let sender = Self::freeze_identity()?;
         let mut genesis: Genesis = serde_json::from_value(json!({
             "config": {"chainId":900,"homesteadBlock":0,"eip150Block":0,"eip155Block":0,"eip158Block":0,"byzantiumBlock":0,"constantinopleBlock":0,"petersburgBlock":0,"istanbulBlock":0,"muirGlacierBlock":0,"berlinBlock":0,"londonBlock":0,"arrowGlacierBlock":0,"grayGlacierBlock":0,"mergeNetsplitBlock":0,"terminalTotalDifficulty":"0x0","terminalTotalDifficultyPassed":true,"bedrockBlock":0,"regolithTime":0,"canyonTime":0,"ecotoneTime":0,"fjordTime":0,"graniteTime":0,"holoceneTime":0,"isthmusTime":0,"jovianTime":0,"blockTime":1,"optimism":{"eip1559Elasticity":6,"eip1559Denominator":50}},
-            "timestamp":"0x0","gasLimit":"0x1c9c380","difficulty":"0x0","baseFeePerGas":"0x3b9aca00","alloc":{sender.to_string():{"balance":"0xd3c21bcecceda1000000"}}
+            "timestamp":"0x0","gasLimit":126000000,"difficulty":"0x0","baseFeePerGas":"0x3b9aca00","alloc":{sender.to_string():{"balance":"0xd3c21bcecceda1000000"}}
         }))?;
         let params = BaseChainSpec::from_genesis(genesis.clone()).base_fee_params_at_timestamp(0);
         genesis.extra_data = JovianExtraData::encode(B64::ZERO, params, 0)?;
@@ -378,7 +378,7 @@ impl RootBenchBundle {
     pub fn attributes(timestamp: u64, transactions: Vec<Bytes>) -> BasePayloadAttributes {
         BasePayloadAttributes {
             payload_attributes: PayloadAttributes { timestamp, prev_randao:B256::ZERO, suggested_fee_recipient:Address::ZERO, withdrawals:Some(vec![]), parent_beacon_block_root:Some(B256::ZERO), slot_number:None, target_gas_limit:None },
-            transactions:Some(transactions), no_tx_pool:Some(true), gas_limit:Some(30_000_000),
+            transactions:Some(transactions), no_tx_pool:Some(true), gas_limit:Some(126_000_000),
             eip_1559_params:Some(B64::from((50u64 << 32) | 6)), min_base_fee:Some(1),
         }
     }
@@ -398,7 +398,7 @@ impl RootBenchBundle {
         let expected = Self::freeze_identity()?;
         let mut nonce = 0;
         for (index, attrs) in self.blocks.iter().enumerate() {
-            ensure!(attrs.payload_attributes.timestamp == index as u64 + 1 && attrs.no_tx_pool == Some(true) && attrs.gas_limit == Some(30_000_000), "invalid frozen attributes");
+            ensure!(attrs.payload_attributes.timestamp == index as u64 + 1 && attrs.no_tx_pool == Some(true) && attrs.gas_limit == Some(126_000_000), "invalid frozen attributes");
             let transactions = attrs.transactions.as_ref().ok_or_else(|| eyre!("missing forced transactions"))?;
             ensure!(!transactions.is_empty() && transactions.len() <= 1000, "empty or oversized block");
             ensure!(serde_json::to_vec(attrs)? == serde_json::to_vec(&Self::attributes(index as u64 + 1, transactions.clone()))?, "unsupported fixed attributes");
@@ -1051,6 +1051,17 @@ mod tests {
         }
         assert_eq!(artifact["config"]["queue"], 6, "explicit nonsecret queue setting must remain readable");
         assert_eq!(artifact["config"]["persistence_threshold"], 0, "explicit nonsecret persistence setting must remain readable");
+        Ok(())
+    }
+
+    /// The largest admitted transfer block cannot raise the frozen workload's base fee.
+    #[test]
+    fn maximum_transfer_block_stays_below_fee_target() -> Result<()> {
+        let genesis = RootBenchBundle::transfer_genesis()?;
+        let attrs = RootBenchBundle::attributes(1, vec![]);
+        let maximum_used_gas = 1000 * 21_000;
+        assert_eq!(genesis.gas_limit, attrs.gas_limit.expect("fixed gas limit"), "genesis and payload must use the same gas limit");
+        assert!(maximum_used_gas <= genesis.gas_limit / 6, "the largest admitted workload must not exceed the elasticity-six gas target and raise its fee");
         Ok(())
     }
 
