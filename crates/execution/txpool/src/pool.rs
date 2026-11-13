@@ -21,6 +21,9 @@ use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
 use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::Recovered;
+use reth_provider::StateProviderFactory;
+use reth_revm::database::StateProviderDatabase;
+use reth_storage_api::StateProvider as _;
 use reth_transaction_pool::{
     AddedTransactionOutcome, AllPoolTransactions, AllTransactionsEvents, BestTransactions,
     BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo, FullTransactionEvent,
@@ -36,15 +39,17 @@ use revm::{database::TransitionState, state::EvmState};
 use tokio::{
     spawn,
     sync::mpsc::{self, error::TrySendError},
+    task::{JoinHandle, spawn_blocking},
 };
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, DormancyBuild,
-    DormancyWake, GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection,
-    MempoolGuard, ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions,
-    PoolStore, StateDiffInvalidation, ValidityDormancyMode, ValidityPoolLimits,
-    ValidityPoolMetrics, WokenLane,
+    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold,
+    DORMANCY_CLASSIFICATION_BUDGET, DORMANCY_CLASSIFICATION_CHUNK, DormancyBuild, DormancyWake,
+    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
+    PredicateContext, StateDiffInvalidation, ValidityDormancyMode, ValidityPoolLimits,
+    ValidityPoolMetrics, ValidityPredicateEvaluation, WokenLane,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
         InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
@@ -183,6 +188,9 @@ pub struct BaseTransactionPool<
     protocol_admission_lock: Arc<Mutex<()>>,
     /// Whether builds may own the validity pool's dormancy index.
     dormancy: ValidityDormancyMode,
+    /// The dormancy classification pass running on a blocking thread, if
+    /// any; at most one runs at a time.
+    dormancy_pass: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -218,6 +226,7 @@ where
             block_expiry: Arc::clone(&self.block_expiry),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
             dormancy: self.dormancy,
+            dormancy_pass: Arc::clone(&self.dormancy_pass),
         }
     }
 }
@@ -266,6 +275,7 @@ where
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
             dormancy: ValidityDormancyMode::default(),
+            dormancy_pass: Arc::new(Mutex::new(None)),
         };
         pool.sync_base_fee();
         pool
@@ -1665,7 +1675,7 @@ where
     /// them now. Only a commit that may wake something takes the validity
     /// pool's write lock.
     fn wake_dormant(&self, build: u64, state: &EvmState) -> Vec<WokenLane<T>> {
-        let affected = self.validity.pool.read().dormant_affected_by(state);
+        let affected = self.validity.pool.read().observe_commit(build, state);
         if affected.is_empty() {
             return Vec::new();
         }
@@ -1686,6 +1696,84 @@ where
                 Some((root, run))
             })
             .collect()
+    }
+
+    /// When canonical block `canonical` is the dormancy tip and no pass is
+    /// running, starts a pass on a blocking thread that classifies at most
+    /// [`DORMANCY_CLASSIFICATION_BUDGET`] queued validity transactions in
+    /// chunks of [`DORMANCY_CLASSIFICATION_CHUNK`]: each chunk is taken and
+    /// installed under a short write lock and evaluated against the tip's
+    /// state without one, and the pass stops once the tip moves; see the
+    /// crate README.
+    fn classify_dormancy(&self, canonical: BlockNumHash)
+    where
+        Client: StateProviderFactory,
+    {
+        let mut pass = self.dormancy_pass.lock();
+        if pass.as_ref().is_some_and(|pass| !pass.is_finished()) {
+            return;
+        }
+        let Some(first) = self
+            .validity
+            .pool
+            .write()
+            .take_classification(canonical, DORMANCY_CLASSIFICATION_CHUNK)
+            .filter(|candidates| !candidates.is_empty())
+        else {
+            return;
+        };
+        let state = match self.validator().validator().client().state_by_block_hash(canonical.hash)
+        {
+            Ok(state) => state,
+            Err(error) => {
+                debug!(error = %error, "tip state unavailable; dormancy classification skipped");
+                return;
+            }
+        };
+        let pool = Arc::clone(&self.validity.pool);
+        *pass = Some(spawn_blocking(move || {
+            let mut db = StateProviderDatabase::new((&state).into_evm_state_provider());
+            let context = PredicateContext { block_number: canonical.number.saturating_add(1) };
+            let mut next = Some(first);
+            for _ in 0..DORMANCY_CLASSIFICATION_BUDGET / DORMANCY_CLASSIFICATION_CHUNK {
+                let Some(chunk) = next
+                    .take()
+                    .or_else(|| {
+                        pool.write().take_classification(canonical, DORMANCY_CLASSIFICATION_CHUNK)
+                    })
+                    .filter(|chunk| !chunk.is_empty())
+                else {
+                    return;
+                };
+                let dormant = chunk
+                    .iter()
+                    .filter_map(|transaction| {
+                        match ValidityPredicateEvaluation::evaluate(
+                            transaction.transaction.validity_conditions(),
+                            &mut db,
+                            &context,
+                        ) {
+                            Ok(ValidityPredicateEvaluation::Unsatisfied {
+                                predicate,
+                                expired: false,
+                                ..
+                            }) => Some((*transaction.hash(), predicate)),
+                            _ => None,
+                        }
+                    })
+                    .collect();
+                pool.write().install_classification(canonical, dormant);
+            }
+        }));
+    }
+
+    /// Waits for the running dormancy classification pass, if any.
+    #[cfg(test)]
+    async fn finish_dormancy_pass(&self) {
+        let pass = self.dormancy_pass.lock().take();
+        if let Some(pass) = pass {
+            pass.await.expect("dormancy classification pass panicked");
+        }
     }
 
     /// The transaction the standard store owning `lane_id` holds at `nonce`,
@@ -2500,7 +2588,7 @@ where
 
 impl<Client, S, Evm, T, O> TransactionPoolExt for BaseTransactionPool<Client, S, Evm, T, O>
 where
-    Client: 'static,
+    Client: StateProviderFactory + 'static,
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
@@ -2606,6 +2694,7 @@ where
         GuardMetrics::tracked().set(self.guard.read().len() as f64);
         let (validity_transactions, validity_bytes) = self.validity_pool_occupancy();
         ValidityPoolMetrics::record_occupancy(validity_transactions, validity_bytes);
+        self.classify_dormancy(BlockNumHash::new(block_number, block_hash));
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
@@ -5886,15 +5975,7 @@ mod tests {
         mined_transactions: Vec<TxHash>,
         update_kind: PoolUpdateKind,
     ) -> B256 {
-        let block = SealedBlock::seal_slow(BaseBlock {
-            header: alloy_consensus::Header {
-                number,
-                gas_limit: pool.block_info().block_gas_limit,
-                timestamp: INTEGRATION_POOL_NOW_SECS + number * 2,
-                ..Default::default()
-            },
-            body: Default::default(),
-        });
+        let block = canonical_block(pool, number);
         pool.on_canonical_state_change(CanonicalStateUpdate {
             new_tip: &block,
             pending_block_base_fee: 0,
@@ -5904,6 +5985,19 @@ mod tests {
             update_kind,
         });
         block.hash()
+    }
+
+    /// The block [`canonical_update`] makes canonical at `number`.
+    fn canonical_block(pool: &IntegrationPool, number: u64) -> SealedBlock<BaseBlock> {
+        SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header {
+                number,
+                gas_limit: pool.block_info().block_gas_limit,
+                timestamp: INTEGRATION_POOL_NOW_SECS + number * 2,
+                ..Default::default()
+            },
+            body: Default::default(),
+        })
     }
 
     fn account_at(address: Address, nonce: u64) -> ChangedAccount {
@@ -7308,6 +7402,45 @@ mod tests {
             committed
         }
 
+        /// The writes made before selection when a system call moves `CONTRACT`'s `SLOT` to one.
+        fn slot_set_before_selection() -> TransitionState {
+            TransitionState::single(
+                CONTRACT,
+                TransitionAccount {
+                    info: Some(AccountInfo::default()),
+                    status: AccountStatus::Changed,
+                    previous_info: Some(AccountInfo::default()),
+                    previous_status: AccountStatus::Loaded,
+                    storage: [(SLOT, StorageSlot::new_changed(U256::ZERO, U256::from(1)))]
+                        .into_iter()
+                        .collect(),
+                    storage_was_destroyed: false,
+                },
+            )
+        }
+
+        /// Seals block 1 under the hash canonical block 1 has, so it becomes the tip that
+        /// [`commit_block`] of block 1 reaches.
+        fn seal_canonical_tip(pool: &IntegrationPool) -> B256 {
+            let tip = canonical_block(pool, 1).hash();
+            let no_writes = TransitionState::default();
+            pool.begin_dormancy_build(block_hash(0), 1, Some(&no_writes)).unwrap().seal(tip);
+            tip
+        }
+
+        /// A transaction of a fresh signer: nonce-free, or a lane root.
+        fn transaction(
+            client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+            nonce_free: bool,
+        ) -> BasePooledTransaction {
+            let signer = funded_signer(client);
+            if nonce_free {
+                signed_nonce_free_tx(&signer, INTEGRATION_POOL_NOW_MS + 5_000, 1_000)
+            } else {
+                signed_1559(&signer, 0)
+            }
+        }
+
         /// The state a commit leaves after moving `CONTRACT`'s `slot` to one.
         fn slot_written(slot: U256) -> EvmState {
             let mut account = Account::default();
@@ -7334,13 +7467,7 @@ mod tests {
         #[tokio::test]
         async fn a_sealed_park_is_left_out_only_by_the_next_owning_build(#[case] nonce_free: bool) {
             let (pool, client) = pool_dormancy_pool();
-            let signer = funded_signer(&client);
-            let transaction = if nonce_free {
-                signed_nonce_free_tx(&signer, INTEGRATION_POOL_NOW_MS + 5_000, 1_000)
-            } else {
-                signed_1559(&signer, 0)
-            };
-            let parked = add(&pool, gated(transaction, slot_is_one())).await;
+            let parked = add(&pool, gated(transaction(&client, nonce_free), slot_is_one())).await;
             seal(&pool, 1, &[(parked, slot_is_one())]);
 
             let build = begin(&pool, 2);
@@ -7496,19 +7623,7 @@ mod tests {
             3,
             TransitionState::default(),
         )]
-        #[case::pre_selection_write(slot_is_one(), 2, TransitionState::single(
-            CONTRACT,
-            TransitionAccount {
-                info: Some(AccountInfo::default()),
-                status: AccountStatus::Changed,
-                previous_info: Some(AccountInfo::default()),
-                previous_status: AccountStatus::Loaded,
-                storage: [(SLOT, StorageSlot::new_changed(U256::ZERO, U256::from(1)))]
-                    .into_iter()
-                    .collect(),
-                storage_was_destroyed: false,
-            },
-        ))]
+        #[case::pre_selection_write(slot_is_one(), 2, slot_set_before_selection())]
         #[tokio::test]
         async fn a_build_start_wakes_what_its_height_or_pre_selection_writes_satisfy(
             #[case] blocker: ValidityPredicate,
@@ -7543,6 +7658,142 @@ mod tests {
 
             let build = begin(&pool, 2);
             assert!(offered(&pool, &build).contains(&parked));
+        }
+
+        #[rstest]
+        #[case::unsatisfiable_lane_root(false, slot_is_one(), false)]
+        #[case::unsatisfiable_nonce_free(true, slot_is_one(), false)]
+        #[case::satisfiable(false, resting_predicates()[0].clone(), true)]
+        #[tokio::test]
+        async fn reaching_the_tip_classifies_admissions_before_a_build_sees_them(
+            #[case] nonce_free: bool,
+            #[case] blocker: ValidityPredicate,
+            #[case] ready: bool,
+        ) {
+            let (pool, client) = pool_dormancy_pool();
+            let tip = seal_canonical_tip(&pool);
+            let admitted = add(&pool, gated(transaction(&client, nonce_free), blocker)).await;
+
+            commit_block(&pool, 1, Vec::new(), Vec::new());
+
+            pool.finish_dormancy_pass().await;
+            let no_writes = TransitionState::default();
+            let build = pool.begin_dormancy_build(tip, 2, Some(&no_writes)).unwrap();
+            assert_eq!(offered(&pool, &build).contains(&admitted), ready);
+        }
+
+        /// A transaction admitted before the index has a tip is not queued, and the queue waits
+        /// for the canonical block that is the tip.
+        #[rstest]
+        #[case::admitted_without_a_tip(true, &[1], true)]
+        #[case::canonical_behind_the_tip_then_at_it(false, &[0, 1], false)]
+        #[tokio::test]
+        async fn classification_needs_a_tip_and_canonical_state_at_it(
+            #[case] admitted_without_a_tip: bool,
+            #[case] canonical: &[u64],
+            #[case] ready: bool,
+        ) {
+            let (pool, client) = pool_dormancy_pool();
+            let transaction = gated(transaction(&client, false), slot_is_one());
+            let (admitted, tip) = if admitted_without_a_tip {
+                let admitted = add(&pool, transaction).await;
+                (admitted, seal_canonical_tip(&pool))
+            } else {
+                let tip = seal_canonical_tip(&pool);
+                (add(&pool, transaction).await, tip)
+            };
+            for number in canonical {
+                commit_block(&pool, *number, Vec::new(), Vec::new());
+                pool.finish_dormancy_pass().await;
+            }
+
+            let no_writes = TransitionState::default();
+            let build = pool.begin_dormancy_build(tip, 2, Some(&no_writes)).unwrap();
+            assert_eq!(offered(&pool, &build).contains(&admitted), ready);
+        }
+
+        /// A classification against the tip's state misses what the owning build wrote on top of
+        /// it, so a write to the location the predicate reads keeps the transaction ready.
+        #[rstest]
+        #[case::pre_selection(true)]
+        #[case::commit(false)]
+        #[tokio::test]
+        async fn a_write_by_the_owning_build_voids_a_classification(#[case] pre_selection: bool) {
+            let (pool, client) = pool_dormancy_pool();
+            let tip = seal_canonical_tip(&pool);
+            let admitted = add(&pool, gated(transaction(&client, true), slot_is_one())).await;
+            let writes = if pre_selection {
+                slot_set_before_selection()
+            } else {
+                TransitionState::default()
+            };
+            let build = pool.begin_dormancy_build(tip, 2, Some(&writes)).unwrap();
+            let mut best = snapshot(&pool, &build);
+            if !pre_selection {
+                best.wake_by_state(&slot_written(SLOT));
+            }
+
+            commit_block(&pool, 1, Vec::new(), Vec::new());
+
+            pool.finish_dormancy_pass().await;
+            build.seal(block_hash(2));
+            assert!(offered(&pool, &begin(&pool, 3)).contains(&admitted));
+        }
+
+        /// A transaction classified after the owning build took its snapshot may be in it, so
+        /// that build's commit wakes it without offering it again; one classified before is
+        /// offered.
+        #[rstest]
+        #[case::before_the_snapshot(true)]
+        #[case::after_the_snapshot(false)]
+        #[tokio::test]
+        async fn a_commit_offers_a_transaction_classified_mid_build_once(
+            #[case] before_the_snapshot: bool,
+        ) {
+            let (pool, client) = pool_dormancy_pool();
+            let tip = seal_canonical_tip(&pool);
+            let admitted = add(&pool, gated(transaction(&client, true), slot_is_one())).await;
+            let no_writes = TransitionState::default();
+            let build = pool.begin_dormancy_build(tip, 2, Some(&no_writes)).unwrap();
+            if before_the_snapshot {
+                commit_block(&pool, 1, Vec::new(), Vec::new());
+                pool.finish_dormancy_pass().await;
+            }
+            let mut best = snapshot(&pool, &build);
+            if !before_the_snapshot {
+                commit_block(&pool, 1, Vec::new(), Vec::new());
+                pool.finish_dormancy_pass().await;
+            }
+
+            best.wake_by_state(&slot_written(SLOT));
+            assert_eq!(commit_all(&mut best), vec![admitted]);
+        }
+
+        #[tokio::test]
+        async fn the_next_build_offers_what_a_commit_wakes_however_it_was_classified() {
+            let (pool, client) = pool_dormancy_pool();
+            let tip = seal_canonical_tip(&pool);
+            let mid_build = add(&pool, gated(transaction(&client, false), slot_is_one())).await;
+            let no_writes = TransitionState::default();
+            let build = pool.begin_dormancy_build(tip, 2, Some(&no_writes)).unwrap();
+            let _ = snapshot(&pool, &build);
+            commit_block(&pool, 1, Vec::new(), Vec::new());
+            pool.finish_dormancy_pass().await;
+            let next_tip = canonical_block(&pool, 2).hash();
+            build.seal(next_tip);
+            let between_builds =
+                add(&pool, gated(transaction(&client, false), slot_is_one())).await;
+            commit_block(&pool, 2, Vec::new(), Vec::new());
+            pool.finish_dormancy_pass().await;
+
+            let build = pool.begin_dormancy_build(next_tip, 3, Some(&no_writes)).unwrap();
+            let mut best = snapshot(&pool, &build);
+            best.wake_by_state(&slot_written(SLOT));
+            let mut woken = commit_all(&mut best);
+            woken.sort();
+            let mut classified = vec![mid_build, between_builds];
+            classified.sort();
+            assert_eq!(woken, classified);
         }
     }
 }
