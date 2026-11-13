@@ -119,7 +119,7 @@ fn setup(regime: Regime) -> (Regime, Scan) {
         Candidates { queued: candidates.iter().cloned().collect(), yielded: Rc::clone(&yielded) };
     let scan: Scan = Box::new(move || {
         let cancelled = ctx
-            .execute_best_transactions(&mut info, &mut builder, transactions, None)
+            .execute_best_transactions(&mut info, &mut builder, transactions, None, None)
             .expect("scan");
         let totals = ScanTotals {
             cancelled: cancelled.is_some(),

@@ -4539,6 +4539,7 @@ dependencies = [
  "reth-trie-common",
  "reth-trie-parallel",
  "revm",
+ "rstest",
  "serde",
  "serde_json",
  "tempfile",

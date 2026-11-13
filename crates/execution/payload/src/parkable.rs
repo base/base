@@ -10,6 +10,7 @@ use reth_transaction_pool::{
     PoolTransaction, ValidPoolTransaction,
     error::{InvalidPoolTransactionError, PoolTransactionError},
 };
+use revm::state::EvmState;
 
 /// Indicates that the payload builder excluded a transaction from the current candidate iterator.
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +52,10 @@ pub trait ParkablePayloadTransactions:
 
     /// Excludes a predicate-parked transaction for the remainder of this iterator.
     fn discard_parked(&mut self, transaction_hash: TxHash) -> bool;
+
+    /// Offers the dormant transactions a committed transaction's `state` may satisfy. The default
+    /// keeps no dormancy index and wakes nothing.
+    fn wake_by_state(&mut self, _state: &EvmState) {}
 }
 
 impl<T> ParkablePayloadTransactions for NoopPayloadTransactions<Arc<ValidPoolTransaction<T>>>
@@ -163,5 +168,9 @@ where
             transaction_hash,
             InvalidPoolTransactionError::other(PayloadTransactionInvalidated),
         )
+    }
+
+    fn wake_by_state(&mut self, state: &EvmState) {
+        self.inner.wake_by_state(state);
     }
 }

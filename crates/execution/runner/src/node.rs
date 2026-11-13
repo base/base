@@ -127,6 +127,7 @@ impl BaseNode {
                         allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
                     .with_validity_pool_limits(self.args.validity_pool_limits())
+                    .with_validity_dormancy(self.args.validity_dormancy)
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
                     )
