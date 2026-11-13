@@ -701,7 +701,7 @@ impl RootBenchSample {
     pub fn flush_all_with(samples: &mut [Self], outcome: &mut Result<()>, mut persist: impl FnMut(&Self) -> Result<()>) {
         for sample in samples {
             sample.finish_cycle();
-            if let (Some(build), Some(payload)) = (sample.phases.get("build_fcu"), sample.phases.get("get_payload")) {
+            if let (Some(build), Some(payload), Some(_)) = (sample.phases.get("build_fcu"), sample.phases.get("get_payload"), sample.pending.envelope.as_ref()) {
                 sample.phases.insert("payload_available".into(), RootBenchInterval { start_ns:build.start_ns, end_ns:payload.end_ns });
             }
             RootBenchCleanup::retain_error(outcome, std::panic::catch_unwind(AssertUnwindSafe(|| sample.flush_pending())).unwrap_or_else(|_| Err(RootBenchExit::Incomplete.attach(eyre!("sample response serialization panicked")))));
@@ -1001,6 +1001,24 @@ mod tests {
         samples[1].phases.insert("canonical_fcu".into(), RootBenchInterval { start_ns:70, end_ns:2_000_000_010 });
         samples.push(RootBenchSample::new(3, false));
         assert_eq!(RootBenchSummary::loop_bounds(&samples).1, None, "an unfinished last measured block must not fall back to an earlier canonical endpoint");
+    }
+
+    /// Failed getPayload intervals remain diagnostics, never successful payload availability.
+    #[test]
+    fn failed_payload_flush_has_no_availability() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut sample = RootBenchSample::new(1, false);
+        sample.phases.insert("build_fcu".into(), RootBenchInterval { start_ns:1, end_ns:2 });
+        sample.phases.insert("get_payload".into(), RootBenchInterval { start_ns:3, end_ns:4 });
+        sample.error = Some("getPayload timed out".into());
+        let mut samples = vec![sample];
+        let mut outcome = Err(RootBenchExit::Timeout.attach(eyre!("getPayload timed out")));
+        RootBenchSample::flush_all(&mut samples, directory.path(), &mut outcome);
+        assert!(!samples[0].phases.contains_key("payload_available"), "a failed getPayload with no envelope must not invent payload availability");
+        let row: Value = serde_json::from_str(fs::read_to_string(directory.path().join("samples.jsonl"))?.trim())?;
+        assert!(row["phases"].get("payload_available").is_none(), "persisted failure evidence must omit successful availability");
+        assert_eq!(RootBenchExit::code(&outcome), 4, "flushing must preserve the actual timeout category");
+        Ok(())
     }
 
     /// Every retained sample is attempted on failure, including independent filesystem errors.
