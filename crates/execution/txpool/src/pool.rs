@@ -2863,8 +2863,10 @@ mod tests {
     use base_common_evm::BaseSpecId;
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
+    use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use base_test_utils::build_test_genesis_everest;
     use futures::{FutureExt, StreamExt, future::join_all};
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
     use reth_primitives_traits::{InMemorySize, SealedBlock};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;
@@ -2880,8 +2882,9 @@ mod tests {
     use super::*;
     use crate::{
         BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
-        LimitClass, NoExtensions, ValidatedTransaction, ValidityOperator, ValidityPredicate,
-        WatchSet,
+        DEFAULT_MAX_VALIDITY_PREDICATES, LimitClass, NoExtensions, TransactionValidity,
+        ValidatedTransaction, ValidityOperator, ValidityPredicate, WatchSet,
+        is_already_imported_rejection,
     };
 
     fn test_chain_id() -> u64 {
@@ -3540,6 +3543,108 @@ mod tests {
         assert_eq!(single.message(), expected);
         assert_eq!(batched, vec![Some(single)]);
         assert_eq!(pool.pool_size().pending, 1);
+    }
+
+    /// A pool whose stores hold one transaction each, with a transaction that fills `store`,
+    /// a cheaper one `store` then discards on arrival, and the predicates both are forwarded
+    /// with.
+    fn pool_with_full_store(
+        store: PoolStore,
+    ) -> (IntegrationPool, [BasePooledTransaction; 2], Vec<ValidityPredicate>) {
+        let one_pending =
+            PoolConfig { pending_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(one_pending);
+        let transaction = |max_fee_per_gas: u128| {
+            let signer = funded_signer(&client);
+            match store {
+                PoolStore::Protocol | PoolStore::Validity => {
+                    signed_1559_with_fees(&signer, 0, max_fee_per_gas, 0)
+                }
+                PoolStore::Sidecar => {
+                    self_paid_eoa_8130(&signer, U256::from(1), 0, 0, max_fee_per_gas)
+                }
+            }
+        };
+        let predicates =
+            if store == PoolStore::Validity { resting_predicates() } else { Vec::new() };
+        (pool, [transaction(2_000), transaction(1_000)], predicates)
+    }
+
+    /// The builder counts a capacity discard without journaling it, whichever store is full.
+    /// The duplicate the same handler rejects next is still journaled.
+    #[rstest::rstest]
+    #[case::standard(PoolStore::Protocol)]
+    #[case::eip8130_sidecar(PoolStore::Sidecar)]
+    #[case::validity(PoolStore::Validity)]
+    #[tokio::test]
+    async fn rpc_insert_journals_every_rejection_except_a_capacity_discard(
+        #[case] store: PoolStore,
+    ) {
+        let (pool, [incumbent, newcomer], predicates) = pool_with_full_store(store);
+        let (incumbent_hash, newcomer_hash) = (*incumbent.hash(), *newcomer.hash());
+        let wire = |tx: BasePooledTransaction| {
+            let recovered = tx.clone_into_consensus();
+            ValidatedTransaction {
+                sender: recovered.signer(),
+                raw: recovered.inner().encoded_2718().into(),
+                metering: None,
+                extensions: TransactionValidity {
+                    validity: predicates.clone(),
+                    validity_signature: None,
+                },
+            }
+        };
+        let capture = TransactionEventCapture::install();
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
+            pool.clone(),
+            true,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        );
+
+        assert_eq!(handler.insert_validated_transaction(wire(incumbent.clone())).await, Ok(()));
+        let discarded = handler.insert_validated_transaction(wire(newcomer)).await.unwrap_err();
+        let duplicate = handler.insert_validated_transaction(wire(incumbent)).await.unwrap_err();
+
+        assert_eq!(
+            discarded.message(),
+            format!(
+                "pool rejected transaction: {}",
+                PoolError::new(newcomer_hash, PoolErrorKind::DiscardedOnInsert)
+            )
+        );
+        assert!(is_already_imported_rejection(&duplicate), "{duplicate}");
+        assert_store(&pool, incumbent_hash, store);
+
+        let journal = |hash: TxHash| {
+            capture
+                .events()
+                .into_iter()
+                .filter(|event| event.tx_hash == Some(hash))
+                .map(|event| event.event_type)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            journal(incumbent_hash),
+            [
+                TransactionEventType::TxpoolValidatedInsertAccepted,
+                TransactionEventType::TxpoolValidatedInsertRejected,
+            ]
+        );
+        assert_eq!(journal(newcomer_hash), []);
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let rejected = |reason: &str| {
+            snapshot.iter().find_map(|(key, _, _, value)| {
+                (key.key().name() == "txpool.builder_rpc.txs_rejected"
+                    && key.key().labels().any(|l| l.key() == "reason" && l.value() == reason))
+                .then_some(value)
+            })
+        };
+        assert_eq!(rejected("discarded_on_insert"), Some(&DebugValue::Counter(1)));
+        assert_eq!(rejected("already_imported"), Some(&DebugValue::Counter(1)));
     }
 
     #[tokio::test]
