@@ -270,10 +270,6 @@ impl CliSurface {
         "sequencer.shadow-funding-amount-eth",
         "rollup.sequencer",
         "rollup.sequencer-headers",
-        "flashblocks.addr",
-        "flashblocks.port",
-        "flashblocks.block-time",
-        "flashblocks.leeway-time",
     ];
 
     /// Every builder flag bounds or records block production, so `base sequencer` supports the
@@ -810,7 +806,6 @@ mod tests {
         assert!(!help.contains("--engine.persistence-threshold"));
         assert!(!help.contains("--shadow-indexer.db-password"));
         assert!(!help.contains("--authrpc.port"));
-        assert!(!help.contains("flashblocks"));
 
         let help_all = rpc.render_long_help().to_string();
         assert!(help_all.contains("--txpool.max-account-slots"));
@@ -869,8 +864,6 @@ mod tests {
             "5",
             "--sequencer.l1-rpc-timeout-ms",
             "500",
-            "--flashblocks.leeway-time",
-            "50",
         ])
         .unwrap();
         assert!(cli.ignored.is_empty(), "{:?}", cli.ignored);
