@@ -391,12 +391,18 @@ impl ProofsCommand {
     /// Runs the selected proof operation and renders its output.
     pub async fn run(self, config: MonitoringConfig) -> Result<CommandOutcome> {
         match self.command {
-            ProofsCommands::Finalize(args) => run_finalize(config, args).await,
+            ProofsCommands::Finalize(args) => {
+                SnarkPlonkProofBytes::ensure_supported()?;
+                run_finalize(config, args).await
+            }
             ProofsCommands::Status(args) => run_status(config, args).await,
             ProofsCommands::List(args) => run_list(config, args).await,
             ProofsCommands::Games(args) => run_games(config, args).await,
             ProofsCommands::Propose(args) => run_propose(config, args).await,
-            ProofsCommands::Submit(args) => run_submit(config, args).await,
+            ProofsCommands::Submit(args) => {
+                SnarkPlonkProofBytes::ensure_supported()?;
+                run_submit(config, args).await
+            }
         }
     }
 }

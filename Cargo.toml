@@ -223,7 +223,7 @@ base-execution-eip8130 = { path = "crates/execution/eip8130", default-features =
 # Infra
 base-acceptance = { path = "acceptance" }
 base-roxy = { path = "crates/infra/roxy" }
-basectl-cli = { path = "crates/infra/basectl" }
+basectl-cli = { path = "crates/infra/basectl", default-features = false }
 base-fee-jobs = { path = "crates/infra/fee-jobs" }
 base-sidecrush = { path = "crates/infra/sidecrush" }
 audit-archiver-lib = { path = "crates/infra/audit" }

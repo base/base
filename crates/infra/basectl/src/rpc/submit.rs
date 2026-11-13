@@ -5,7 +5,9 @@ use std::{env, fmt, fs, path::Path, sync::Arc, time::Duration};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
-use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError, SnarkReceiptEncoder};
+#[cfg(feature = "proof-submit")]
+use base_proof_submission::SnarkReceiptEncoder;
+use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
 use base_prover_service_protocol::{GetProofResponse, ProofResult, ProofStatus};
 use base_tx_manager::{
     NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig, TxManagerError,
@@ -85,6 +87,16 @@ impl SubmitterKey {
 pub struct SnarkPlonkProofBytes;
 
 impl SnarkPlonkProofBytes {
+    /// Fails when this build cannot decode receipts, so `proofs submit` and
+    /// `proofs finalize` stop before requesting a paid proof or prompting.
+    pub const fn ensure_supported() -> Result<(), ProofsCommandError> {
+        if cfg!(feature = "proof-submit") {
+            Ok(())
+        } else {
+            Err(ProofsCommandError::ProofSubmitUnsupported)
+        }
+    }
+
     /// Extracts submittable PLONK proof bytes from a `getProof` response.
     ///
     /// Requires the session to have succeeded with a non-empty
@@ -124,12 +136,28 @@ impl SnarkPlonkProofBytes {
                 });
             }
         };
-        SnarkReceiptEncoder::encode_onchain_zk_proof(&plonk.proof.proof).map_err(|error| {
+        Self::encode_receipt(session_id, &plonk.proof.proof)
+    }
+
+    /// Encodes a prover-service SP1 PLONK receipt into on-chain proof bytes.
+    #[cfg(feature = "proof-submit")]
+    pub fn encode_receipt(session_id: &str, receipt: &[u8]) -> Result<Bytes, ProofsCommandError> {
+        SnarkReceiptEncoder::encode_onchain_zk_proof(receipt).map_err(|error| {
             ProofsCommandError::InvalidProposalProof {
                 session_id: session_id.to_string(),
                 message: error.to_string(),
             }
         })
+    }
+
+    /// Rejects receipt encoding in builds without the `proof-submit` feature;
+    /// callers check [`Self::ensure_supported`] first.
+    #[cfg(not(feature = "proof-submit"))]
+    pub const fn encode_receipt(
+        _session_id: &str,
+        _receipt: &[u8],
+    ) -> Result<Bytes, ProofsCommandError> {
+        Err(ProofsCommandError::ProofSubmitUnsupported)
     }
 }
 

@@ -320,6 +320,9 @@ pub enum ProofsCommandError {
         /// The proof session identifier.
         session_id: String,
     },
+    /// This basectl build was compiled without the `proof-submit` feature.
+    #[error("this basectl build cannot submit proofs; rebuild with the `proof-submit` feature")]
+    ProofSubmitUnsupported,
     /// The PLONK result could not be decoded into an on-chain SP1 proof.
     #[error("proof session {session_id} returned an invalid SP1 PLONK receipt: {message}")]
     InvalidProposalProof {

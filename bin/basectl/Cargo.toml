@@ -18,3 +18,7 @@ clap = { workspace = true, features = ["derive"] }
 rustls = { workspace = true, features = ["ring"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+
+[features]
+default = ["proof-submit"]
+proof-submit = ["basectl-cli/proof-submit"]

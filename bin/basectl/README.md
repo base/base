@@ -489,6 +489,11 @@ submitted from another.
 | `--yes` | Skip the interactive confirmation prompt. |
 | `--json` | Emit a structured JSON action outcome instead of pretty text. Requires `--yes`. |
 
+`proofs submit` and `proofs finalize` need the default `proof-submit` cargo feature, which links the
+SP1 prover stack to decode PLONK receipts (building it needs Go and `protoc`).
+Builds that never submit proofs can use `--no-default-features`; in those builds
+`proofs submit` and `proofs finalize` exit with an error before doing anything.
+
 `proofs submit` completes the standalone proving workflow: it fetches the
 completed PLONK proof for the game from the prover service and sends
 `AggregateVerifier.verifyProposalProof(proof)` to the game on L1, waiting for
