@@ -250,7 +250,7 @@ where
         let sidecar = TwoDNoncePool::new(config.price_bumps)
             .with_limits(SidecarLimits::from_pool_config(config));
         let validity = Self::validity_pool(config, ValidityPoolLimits::inherit());
-        Self {
+        let pool = Self {
             protocol_pool,
             ordering,
             sidecar: LaneStore::new(sidecar),
@@ -258,13 +258,24 @@ where
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
-        }
+        };
+        pool.sync_base_fee();
+        pool
     }
 
     fn validity_pool(config: &PoolConfig, limits: ValidityPoolLimits) -> TwoDNoncePool<T> {
         TwoDNoncePool::new(config.price_bumps)
             .with_limits(limits.resolve(config))
             .with_protocol_nonce_lanes()
+    }
+
+    /// Gives the lane stores the protocol pool's pending base fee, which ranks
+    /// their eviction candidates.
+    fn sync_base_fee(&self) {
+        let base_fee = self.protocol_pool.block_info().pending_basefee;
+        for store in self.lane_stores() {
+            store.pool.write().set_base_fee(base_fee);
+        }
     }
 
     /// Configures EIP-8130 admission limits. Call before sharing the pool.
@@ -278,6 +289,7 @@ where
     #[must_use]
     pub fn with_validity_pool_limits(self, limits: ValidityPoolLimits) -> Self {
         *self.validity.pool.write() = Self::validity_pool(self.protocol_pool.config(), limits);
+        self.sync_base_fee();
         self
     }
 
@@ -2422,7 +2434,8 @@ where
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
-        self.protocol_pool.set_block_info(info)
+        self.protocol_pool.set_block_info(info);
+        self.sync_base_fee();
     }
 
     fn on_canonical_state_change(
@@ -2454,6 +2467,7 @@ where
             }
         }
         self.protocol_pool.on_canonical_state_change(update);
+        self.sync_base_fee();
         // `protocol_pool.on_canonical_state_change` has already advanced the
         // validator's head clock to this block.
         let now_ms = self.validator().validator().block_timestamp_ms();
@@ -3853,6 +3867,30 @@ mod tests {
         assert!(pool.get(&incumbent_hash).is_none());
         assert!(!pool.guard.read().contains(&incumbent_hash));
         assert!(matches!(incumbent_events.next().await, Some(TransactionEvent::Discarded)));
+    }
+
+    #[tokio::test]
+    async fn sidecar_lanes_below_the_pending_base_fee_rank_with_gapped_lanes() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let gapped_signer = signer();
+        let underpriced_signer = signer();
+        for signer in [&gapped_signer, &underpriced_signer] {
+            fund(&client, signer.address());
+        }
+        let gapped = self_paid_eoa_8130(&gapped_signer, U256::from(1), 1, 0, 1_000_000);
+        let gapped_hash = *gapped.hash();
+        pool.add_transaction(TransactionOrigin::External, gapped).await.unwrap();
+        pool.set_block_info(BlockInfo { pending_basefee: 3_000, ..pool.block_info() });
+
+        let underpriced = self_paid_eoa_8130(&underpriced_signer, U256::from(1), 0, 0, 2_000);
+        let error = pool
+            .add_transaction(TransactionOrigin::External, underpriced)
+            .await
+            .expect_err("a lane below the pending base fee cannot push out a gapped lane");
+        assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
+        assert!(pool.get(&gapped_hash).is_some());
     }
 
     #[tokio::test]
