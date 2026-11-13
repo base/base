@@ -14,7 +14,7 @@ To additionally record witnesses automatically when a bad block is encountered a
 
 The local witness is fetched from your node using the same `debug_executionWitness` RPC method and saved to a JSON file before running the diff. For example:
 
-```
+```console
 curl -s -X POST http://localhost:8545 \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","method":"debug_executionWitness","params":["0x292FA96"],"id":1}' \
@@ -25,7 +25,7 @@ The block number in the `params` array must be hex. The `.result` field of the r
 
 ## Running the tool
 
-```
+```console
 cargo run -p base-witness-diff -- \
   --local <PATH>    path to the local witness JSON file
   --rpc-url <URL>   HTTP(S) URL of the reference L2 node to compare against
@@ -36,7 +36,7 @@ cargo run -p base-witness-diff -- \
 
 Example:
 
-```
+```console
 cargo run -p base-witness-diff -- \
   --local ~/witnesses/43127830_witness.json \
   --rpc-url https://reference-node:8545 \
@@ -45,13 +45,15 @@ cargo run -p base-witness-diff -- \
 
 ## Reading the output
 
-The tool prints four sections.
+The tool prints up to five sections.
 
 `=== Overview ===` shows the raw counts of state trie node preimages, bytecodes, and key preimages in each witness, then for each category how many are common to both, only in the local witness, or only in the reference witness. Comparison is by keccak256 hash of the raw bytes, so a node present in both witnesses with the same content is counted as common regardless of where it appears in the trie. Any nonzero only-local or only-rpc count means the two witnesses touched a different set of trie nodes, which is the expected symptom of a divergence. It also reports how many address preimages are available, which affects whether account addresses can be resolved in later sections.
 
-`=== Differing Leaf Nodes ===` is the core analysis. The tool decodes every RLP-encoded trie node from both witnesses, filters down to leaf nodes (which hold actual account or storage values rather than internal trie structure), and finds pairs that share the same trie path but carry different values. These are the nodes where the two executions produced a different result for the same key. For each differing leaf it attempts to decode the value as a `TrieAccount` (the RLP-encoded struct containing nonce, balance, code hash, and storage root). If both sides decode successfully, it prints the account side-by-side with a `✓` on matching fields and `DIFFERS` on mismatches. If the address can be recovered from the key preimages in the witness, it is shown; otherwise the path suffix in nibble hex is the only identifier. Leaves that do not decode as accounts are counted as storage leaf diffs — these represent individual storage slot values that diverged.
+`=== Differing Leaf Nodes ===` is the core analysis. A leaf node stores only the part of its key below its parent, so the tool first reconstructs each leaf's full key: it starts from every node that no other node in the witness references (normally just the pre-state root), follows branch and extension nodes by resolving child hashes against the witness, and descends into each account's storage trie from the account's storage root. Account leaves are identified by their 64-nibble hashed address, and storage leaves by their owning account plus their 64-nibble hashed slot. Leaves at the same full key with different values are the places where the two executions produced a different result. For each differing leaf it attempts to decode the value as a `TrieAccount` (the RLP-encoded struct containing nonce, balance, code hash, and storage root). If both sides decode successfully, it prints the account with its full path side-by-side with a `✓` on matching fields and `DIFFERS` on mismatches. If the address can be recovered from the key preimages in the witness, it is shown. Leaves that do not decode as accounts are counted as storage leaf diffs — these represent individual storage slot values that diverged.
 
-`=== Leaves Only in One Witness ===` appears only when there are trie leaves that exist in one witness but have no corresponding path entry in the other. This happens when an account is created or deleted during execution, or when a storage slot is written by one execution but not accessed at all by the other. Local-only leaves represent state that your node computed but the reference did not touch; RPC-only leaves are the inverse. Each is printed with its account data or raw storage value.
+`=== Leaves Only in One Witness ===` appears only when a leaf's full key exists in one witness but not the other. This happens when an account is created or deleted during execution, or when a storage slot is written by one execution but not accessed at all by the other. Local-only leaves represent state that your node computed but the reference did not touch; RPC-only leaves are the inverse. Each is printed with its full path and its account data or raw storage value. Storage paths print as `0x<account path>/0x<slot path>`.
+
+`=== Leaves With Unresolved Paths ===` appears only when some leaves cannot be placed under a root: the witness is missing the nodes above them, or they sit in a storage trie whose account leaf is missing or unresolved. Their paths are printed as the partial path from the nearest node present, marked `(partial)`, and they are never compared by path, so they appear in neither of the two sections above. A well-formed witness has none.
 
 `=== SUMMARY ===` collects all counts into a single block for quick comparison. If both witnesses are fully identical the final line reads `Witnesses are identical.`
 
