@@ -543,7 +543,6 @@ impl RootBenchRunArgs {
     /// Runs one bounded trial and always attempts explicit runtime drain, retaining failures.
     pub async fn execute(&self) -> Result<()> {
         static ACTIVE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-        let _active = ACTIVE.try_lock().map_err(|_| eyre!("only one root trial per process at a time"))?;
         ensure!(self.call_timeout_ms > 0 && self.run_timeout_ms > 0 && self.shutdown_timeout_ms > 0, "deadlines must be positive");
         RootBenchBundle::numbered(&self.output)?;
         let input_bytes = fs::read(&self.input)?;
@@ -563,6 +562,8 @@ impl RootBenchRunArgs {
         let manifest: Option<Value> = self.executable_manifest.as_ref().map(|path| fs::read(path).and_then(|bytes| serde_json::from_slice(&bytes).map_err(std::io::Error::other))).transpose()?;
         RootBenchBundle::write_new(&self.output.join("executable-source.json"), &json!({"external_manifest":manifest,"verification":"external-attestation-required","executable_keccak":executable_digest}))?;
         Self::verify_manifest(manifest.as_ref(), executable_digest)?;
+        // Independent preflight failures must not contend for the process-wide trial owner.
+        let _active = ACTIVE.try_lock().map_err(|_| eyre!("only one root trial per process at a time"))?;
         RootBenchBundle::write_new(&self.output.join("executable.json"), &json!({"executable_keccak":keccak256(fs::read(std::env::current_exe()?)?),"harness_module_keccak":keccak256(include_bytes!("root_bench.rs"))}))?;
         let environment = Self::environment_fingerprints(std::env::vars());
         RootBenchBundle::write_new(&self.output.join("launch.json"), &json!({"cohort":self.cohort,"transport":"typed-in-memory","receipt_source":"canonical-execution-provider-receipts_by_block","account_source":"canonical-execution-provider-state_by_block_hash/basic_account","config":Self::launch_settings(&launch),"runtime_checkout":{"source":String::from_utf8(source.stdout)?,"cargo_lock_keccak":keccak256(fs::read(checkout.join("Cargo.lock"))?),"reth_pin_keccak":keccak256(fs::read(checkout.join("etc/upstream-pins/reth.toml"))?),"not_executable_provenance":true},"argv":Self::argument_fingerprints(std::env::args_os()),"environment":environment,"unsupported":["cpu_time","rss","io","cache_hit_miss","persistence_lag","queue_depth","paced_cadence","immutable_6268_baseline"]}))?;
@@ -1057,6 +1058,36 @@ mod tests {
         assert!(!output.join("datadir1").exists(), "invalid input must never create writable node state");
         assert!(fs::create_dir(&output).is_err(), "a failed trial's numbered output cannot be reused");
         assert_eq!(fs::read(output.join("result.json"))?, original, "refused reuse must preserve failure bytes");
+        Ok(())
+    }
+
+    /// Parallel preflight calls must retain their own validation error, not lock contention.
+    #[test]
+    fn parallel_preflight_preserves_validation_errors() -> Result<()> {
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let mut calls = Vec::new();
+        for index in 0..8 {
+            let barrier = barrier.clone();
+            calls.push(std::thread::spawn(move || -> Result<()> {
+                let directory = tempfile::tempdir()?;
+                let input = directory.path().join("bundle1.json");
+                let valid = index % 2 == 0;
+                if valid { RootBenchBundle::write_new(&input, &RootBenchBundle::freeze(4, 1, 1)?)?; }
+                else { RootBenchBundle::write_new(&input, &json!({}))?; }
+                let output = directory.path().join("trial1");
+                let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:None, cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
+                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                barrier.wait();
+                let error = runtime.block_on(args.run()).expect_err("every preflight must reject without launching").to_string();
+                assert!(!error.contains("only one root trial"), "preflight error must not be replaced by another call's trial lock: {error}");
+                if valid { assert!(error.contains("external executable provenance unverified"), "valid input must retain the exact provenance failure: {error}"); }
+                else { assert!(error.contains("missing field"), "invalid input must retain its schema failure: {error}"); }
+                let report: Value = serde_json::from_slice(&fs::read(output.join("result.json"))?)?;
+                assert_eq!(report["complete"], false, "parallel preflight must never claim successful completion");
+                Ok(())
+            }));
+        }
+        for call in calls { call.join().expect("preflight thread must not panic")?; }
         Ok(())
     }
 
