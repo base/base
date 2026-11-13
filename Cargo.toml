@@ -286,7 +286,6 @@ base-l1-head = { path = "crates/utilities/l1-head" }
 base-reth-cli = { path = "crates/utilities/reth-cli" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-tx-manager = { path = "crates/utilities/tx-manager" }
-base-ring-buffer = { path = "crates/utilities/ring-buffer" }
 base-optimism-rpc = { path = "crates/utilities/optimism-rpc" }
 base-trusted-proxy = { path = "crates/utilities/trusted-proxy" }
 base-upgrade-signal = { path = "crates/utilities/upgrade-signal" }
@@ -297,7 +296,6 @@ base-runtime = { path = "crates/utilities/runtime", default-features = false }
 # revm
 revm = { version = "43.0.3", default-features = false }
 revm-bytecode = { version = "43.0.0", default-features = false }
-revm-database = { version = "43.0.1", default-features = false }
 revm-precompile = { version = "43.0.3", default-features = false }
 
 # evm2
@@ -567,10 +565,8 @@ thiserror = { version = "2.0", default-features = false }
 # collections and concurrency
 lru = "0.16"
 moka = "0.12"
-imbl = "7.0.0"
 rayon = "1.11"
 dashmap = "6.2"
-arc-swap = "1.7.1"
 parking_lot = "0.12.3"
 crossbeam-channel = "0.5.13"
 either = { version = "1.16.0", default-features = false }

@@ -6,7 +6,6 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718, transaction::TxHashRef};
-use alloy_eips::eip2718::Encodable2718;
 use alloy_evm::{
     Evm as AlloyEvm,
     block::{CommitChanges, TxResult},
@@ -17,6 +16,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::{BaseSpecId, L1BlockInfo, MeteredGas};
+use base_common_rpc_types_engine::PayloadReady;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
@@ -52,16 +52,17 @@ use reth_transaction_pool::{
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use revm::context::{Block, BlockEnv};
+use tokio::sync::broadcast;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
-    CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
-    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
-    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
-    RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
-    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
-    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
+    HoldInterrupt, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
+    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
+    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
+    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
+    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
+    payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -115,6 +116,8 @@ pub struct BasePayloadBuilder<
     pub config: BaseBuilderConfig,
     /// Validity transactions resting from the last block this builder finished.
     pub resting_predicates: RestingPredicateStore,
+    /// Optional, non-blocking notifications for frozen sequencer payloads.
+    pub payload_ready: Option<broadcast::Sender<PayloadReady>>,
     /// Marker for the payload attributes type.
     _pd: PhantomData<Attrs>,
 }
@@ -132,6 +135,7 @@ where
             client: self.client.clone(),
             config: self.config.clone(),
             resting_predicates: self.resting_predicates.clone(),
+            payload_ready: self.payload_ready.clone(),
             _pd: PhantomData,
         }
     }
@@ -166,8 +170,15 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
             evm_config,
             config,
             resting_predicates: RestingPredicateStore::default(),
+            payload_ready: None,
             _pd: PhantomData,
         }
+    }
+
+    /// Publishes a hint after a sequencer build returns a final, frozen payload.
+    pub fn with_payload_ready(mut self, sender: Option<broadcast::Sender<PayloadReady>>) -> Self {
+        self.payload_ready = sender;
+        self
     }
 
     /// Runs end-of-block maintenance of the resting validity set, such as the unseen sweep, on
@@ -175,6 +186,18 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
     pub fn with_task_executor(mut self, executor: Runtime) -> Self {
         self.resting_predicates = RestingPredicateStore::new(executor);
         self
+    }
+
+    /// Tells the consensus layer that `payload_id`, built on `parent_hash`, is frozen.
+    ///
+    /// A missing or lagging consumer must never block payload production, so a hint nobody is
+    /// subscribed to is counted and dropped.
+    pub fn notify_payload_ready(&self, payload_id: PayloadId, parent_hash: B256) {
+        let Some(sender) = &self.payload_ready else {
+            return;
+        };
+        let delivered = sender.send(PayloadReady { payload_id, parent_hash }).is_ok();
+        BuilderMetrics::record_payload_ready_hint(delivered);
     }
 }
 
@@ -316,7 +339,8 @@ where
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        self.build_payload(args, |attrs, resting| {
+        let no_tx_pool = args.config.attributes.no_tx_pool();
+        let outcome = self.build_payload(args, |attrs, resting| {
             // The pool snapshots every store here, so mid-build arrivals wait
             // for the next block.
             ParkableBestPayloadTransactions::new(
@@ -325,7 +349,13 @@ where
                     resting.map(SharedRestingPredicates::iterator_hold),
                 ),
             )
-        })
+        })?;
+        if !no_tx_pool && let BuildOutcome::Freeze(payload) = &outcome {
+            // The payload is fully assembled, including its state root. Reth may still be
+            // installing this result into the job; on_missing_payload awaits that same build.
+            self.notify_payload_ready(payload.id(), payload.block().parent_hash());
+        }
+        Ok(outcome)
     }
 
     fn on_missing_payload(
@@ -509,16 +539,15 @@ impl<Txs> Builder<'_, Txs> {
             let cancelled =
                 ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_ref())?;
             if !info.permanently_rejected_txs.is_empty() {
-                let (rejected, rejected_encodings): (Vec<_>, Vec<_>) =
-                    std::mem::take(&mut info.permanently_rejected_txs).into_iter().unzip();
+                let rejected = std::mem::take(&mut info.permanently_rejected_txs);
                 let count = rejected.len();
-                ctx.builder_config.rejection_cache.mark_rejected(&rejected_encodings);
+                ctx.builder_config.rejection_cache.mark_rejected(&rejected);
                 RejectionCacheMetrics::insertions().increment(count as u64);
                 RejectionCacheMetrics::size()
                     .set(ctx.builder_config.rejection_cache.entry_count() as f64);
                 MeteringProvider::remove(
                     ctx.builder_config.resource_metering.provider.as_ref(),
-                    &rejected_encodings,
+                    &rejected,
                 );
                 evict_permanently_rejected(rejected);
                 info!(
@@ -708,12 +737,9 @@ pub struct ExecutionInfo {
     pub inclusion: InclusionTracker,
     /// Cumulative resource-metering units for the current payload, aligned with the snapped schedule.
     pub resource_metering_usage: Vec<u128>,
-    /// Transactions that exceeded a per-transaction resource limit, as
-    /// `(transaction hash, encoding hash)`. The pool evicts them by transaction hash; the shared
-    /// rejection cache and the metering store drop them by the hash of their exact encoding
-    /// ([`Encodable2718::trie_hash`]), so EIP-8130 variants with the same transaction hash are
-    /// not affected.
-    pub permanently_rejected_txs: Vec<(TxHash, B256)>,
+    /// Transaction hashes that exceeded a per-transaction resource limit and should be
+    /// permanently removed from the pool and recorded in the shared rejection cache.
+    pub permanently_rejected_txs: Vec<TxHash>,
 }
 
 impl ExecutionInfo {
@@ -958,14 +984,12 @@ where
 
             let mut pending_resource_usage = None;
             let tx_hash = *sequencer_tx.tx_hash();
-            let encoded_hash = sequencer_tx.trie_hash();
             let gas_output = match builder.execute_transaction_with_commit_condition(
                 sequencer_tx.clone(),
                 |result| {
                     let result_and_state = result.result();
                     pending_resource_usage = resource_metering.unthrottled_usage(
                         &tx_hash,
-                        &encoded_hash,
                         result_and_state.result.tx_gas_used(),
                         &result_and_state.state,
                     );
@@ -1022,7 +1046,7 @@ where
     /// Transaction-scope resource-throttling excludes are recorded on
     /// [`ExecutionInfo::permanently_rejected_txs`] for the payload job to remove from the
     /// pool and insert into [`crate::config::BaseBuilderConfig::rejection_cache`] after this scan.
-    /// Later jobs sharing that cache skip the same encoding even if the pool has it again.
+    /// Later jobs sharing that cache skip the hash even if the pool has it again.
     /// Nonce-lane descendants are skipped for this scan via `mark_invalid`.
     /// Block-scope excludes only skip the current iterator.
     ///
@@ -1063,10 +1087,6 @@ where
         let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
         let mut validity_consideration_index = 0_u64;
-        // A blocked transaction is parked again each time a promotion re-yields it. Post-Denim
-        // the payload is built once, so this covers the whole block; pre-Denim rebuilds start a
-        // fresh scan and report deferrals again.
-        let mut deferrals = BlockDeferrals::default();
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
@@ -1104,12 +1124,9 @@ where
             }
 
             let tx_hash = *tx.hash();
-            // Rejections and metering depend on the exact bytes, which the transaction hash does
-            // not identify for EIP-8130.
-            let encoded_hash = tx.consensus_ref().inner().trie_hash();
             let replay_independent = tx.is_eip8130_nonce_free();
             let has_validity_predicates = !tx.validity_conditions().is_empty();
-            if self.builder_config.rejection_cache.is_rejected(&encoded_hash) {
+            if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
                 RejectionCacheMetrics::hits().increment(1);
                 RejectionCacheMetrics::size()
                     .set(self.builder_config.rejection_cache.entry_count() as f64);
@@ -1124,8 +1141,8 @@ where
 
             let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
-            // Every validity candidate ends with a decision event, so there is no separate
-            // `BUILDER_CONSIDERED`.
+            // Every validity candidate ends parked or with a decision event, so there is no
+            // separate `BUILDER_CONSIDERED`.
             if has_validity_predicates {
                 validity_consideration_index += 1;
             }
@@ -1144,18 +1161,6 @@ where
                     "deferring validity-gated transaction: predicate evaluation budget exhausted"
                 );
                 best_txs.park_current();
-                if deferrals.record(tx_hash, "predicate_eval_budget_exhausted") {
-                    emit_native_validity_event!(
-                        self,
-                        TransactionEventType::BuilderDeferred,
-                        tx_hash,
-                        validity_consideration_index,
-                        {
-                            "defer_reason" => "predicate_eval_budget_exhausted",
-                            "defer_detail" => "validity-predicate evaluation time budget exhausted for this payload build",
-                        }
-                    );
-                }
                 continue;
             }
 
@@ -1222,6 +1227,8 @@ where
                         expired: false,
                     }) => {
                         evaluation_counters.increment(ValidityEvaluationOutcome::NotSatisfied, 1);
+                        // Parking is the most frequent validity decision and rarely precedes an
+                        // inclusion, so it is counted above and not journaled.
                         trace!(
                             target: "payload_builder",
                             tx_hash = ?tx_hash,
@@ -1229,18 +1236,6 @@ where
                             "parking transaction with unsatisfied validity predicate"
                         );
                         best_txs.park_current();
-                        if deferrals.record(tx_hash, "validity_predicate_not_satisfied") {
-                            emit_native_validity_event!(
-                                self,
-                                TransactionEventType::BuilderDeferred,
-                                tx_hash,
-                                validity_consideration_index,
-                                {
-                                    "defer_reason" => "validity_predicate_not_satisfied",
-                                    "defer_detail" => "a validity predicate is not satisfied by the current build state",
-                                }
-                            );
-                        }
                         predicate_index.park(tx_hash, pooled, predicate);
                         continue;
                     }
@@ -1358,18 +1353,15 @@ where
                 continue;
             }
 
-            let (simulated, admission) = resource_metering.check_simulated_usage(
-                &tx_hash,
-                &encoded_hash,
-                &info.resource_metering_usage,
-            );
+            let (simulated, admission) =
+                resource_metering.check_simulated_usage(&tx_hash, &info.resource_metering_usage);
             if admission.should_exclude() {
                 resource_throttled += 1;
                 // Transaction-scope excludes cannot fit any block and are collected for
                 // permanent pool eviction after this scan. Block-scope excludes only skip
                 // the current iterator.
                 if admission.is_permanent() {
-                    info.permanently_rejected_txs.push((tx_hash, encoded_hash));
+                    info.permanently_rejected_txs.push(tx_hash);
                 }
                 trace!(
                     target: "payload_builder",
@@ -1487,7 +1479,7 @@ where
                 Ok(None) => {
                     resource_throttled += 1;
                     if executed_decision.as_ref().is_some_and(|decision| decision.is_permanent()) {
-                        info.permanently_rejected_txs.push((tx_hash, encoded_hash));
+                        info.permanently_rejected_txs.push(tx_hash);
                     }
                     trace!(
                         target: "payload_builder",
@@ -1749,17 +1741,13 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use alloy_consensus::{
-        Header, SignableTransaction, Transaction, TxEip1559, transaction::Recovered,
-    };
+    use alloy_consensus::{Header, SignableTransaction, Transaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_evm::Evm;
-    use alloy_primitives::{Address, B256, Bytes, Signature, StorageKey, TxHash, TxKind, U256};
+    use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::BaseUpgrade;
-    use base_common_consensus::{
-        BasePrimitives, BaseTxEnvelope, Eip8130Signed, Predeploys, TxEip8130,
-    };
+    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
@@ -1787,6 +1775,8 @@ mod tests {
     };
     use revm::{Database, database::TransitionState};
 
+    #[cfg(feature = "metrics")]
+    use super::{BasePayloadBuilder, PayloadReady, broadcast};
     use super::{
         BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
     };
@@ -1920,6 +1910,38 @@ mod tests {
     #[test]
     fn parallel_state_root_is_used() {
         assert_eq!(build_empty_payload(state_root_handle()), B256::repeat_byte(0x42));
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn frozen_payload_hints_are_counted_by_whether_a_receiver_was_subscribed() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let payload_id = PayloadId::new([7; 8]);
+        let parent_hash = B256::repeat_byte(8);
+        let (sender, mut receiver) = broadcast::channel(4);
+        let builder = BasePayloadBuilder::<(), (), (), ()>::new((), (), ());
+
+        metrics::with_local_recorder(&recorder, || {
+            // Split EL/CL deployments configure no channel and must not report hints.
+            builder.notify_payload_ready(payload_id, parent_hash);
+            assert!(!handle.render().contains("payload_ready_hints_sent_total"));
+
+            let builder = builder.with_payload_ready(Some(sender));
+            builder.notify_payload_ready(payload_id, parent_hash);
+            builder.notify_payload_ready(payload_id, parent_hash);
+            assert_eq!(receiver.try_recv(), Ok(PayloadReady { payload_id, parent_hash }));
+            drop(receiver);
+            builder.notify_payload_ready(payload_id, parent_hash);
+        });
+
+        let rendered = handle.render();
+        for expected in [
+            r#"base_builder_payload_ready_hints_sent_total{result="delivered"} 2"#,
+            r#"base_builder_payload_ready_hints_sent_total{result="no_receiver"} 1"#,
+        ] {
+            assert!(rendered.contains(expected), "expected `{expected}`, got: {rendered}");
+        }
     }
 
     #[cfg(feature = "metrics")]
@@ -2120,9 +2142,6 @@ mod tests {
         ready: VecDeque<PooledCandidate>,
         parked: HashMap<B256, PooledCandidate>,
         current: Option<PooledCandidate>,
-        /// Whether promoted transactions are yielded before the remaining queued ones, as when
-        /// they outbid them.
-        promoted_first: bool,
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
         /// Parks held candidates before yielding them, as the pool's parking iterator does.
         hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
@@ -2143,7 +2162,6 @@ mod tests {
                 ready: VecDeque::new(),
                 parked: HashMap::default(),
                 current: None,
-                promoted_first: true,
                 invalid,
                 hold: None,
             }
@@ -2157,12 +2175,6 @@ mod tests {
             self.hold = hold;
             self
         }
-
-        /// Yields promoted transactions only after every queued one, so queued transactions can
-        /// change state between a promotion and the re-yield.
-        fn with_promoted_last(transactions: Vec<BasePooledTransaction>) -> Self {
-            Self { promoted_first: false, ..Self::new(transactions) }
-        }
     }
 
     impl PayloadTransactions for TestParkableTransactions {
@@ -2171,11 +2183,7 @@ mod tests {
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             assert!(self.current.is_none(), "current transaction was not lifecycle-managed");
             loop {
-                let transaction = if self.promoted_first {
-                    self.ready.pop_front().or_else(|| self.queued.pop_front())
-                } else {
-                    self.queued.pop_front().or_else(|| self.ready.pop_front())
-                }?;
+                let transaction = self.ready.pop_front().or_else(|| self.queued.pop_front())?;
                 if let Some(hold) = self.hold.as_mut()
                     && !transaction.transaction.validity_conditions().is_empty()
                     && hold.hold(&transaction)
@@ -2364,48 +2372,6 @@ mod tests {
             rejections,
             [(TransactionEventType::BuilderRejected, "invalid_transaction".into())]
         );
-    }
-
-    /// A promoted transaction whose predicate is broken again before it is re-yielded is parked a
-    /// second time for the same reason, which the journal records once.
-    #[test]
-    fn native_builder_reports_a_repeated_deferral_once() {
-        let event_capture = TransactionEventCapture::install();
-        // Event capture is process-global, so these transactions must not share hashes with other
-        // tests.
-        let watched_address = Address::repeat_byte(0x46);
-        let gated = pool_transaction_to(0, Address::repeat_byte(0x57), U256::ZERO)
-            .with_validity_predicates(vec![ValidityPredicate::Balance {
-                address: watched_address,
-                op: ValidityOperator::Equal,
-                value: U256::ONE,
-            }]);
-        // The first trigger satisfies the predicate and promotes `gated`; the second breaks it
-        // again before `gated` is re-yielded.
-        let satisfy = pool_transaction_to(0, watched_address, U256::ONE);
-        let unsatisfy = pool_transaction_to(0, watched_address, U256::from(2));
-        let funded_senders = [gated.sender(), satisfy.sender(), unsatisfy.sender()];
-        let gated_hash = *gated.hash();
-
-        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            pool_payload_context(DENIM_TIMESTAMP),
-            TestParkableTransactions::with_promoted_last(vec![gated, satisfy, unsatisfy]),
-            &funded_senders,
-        ) else {
-            panic!("Denim payload must freeze")
-        };
-
-        assert!(
-            !payload.block().body().transactions.iter().any(|tx| *tx.tx_hash() == gated_hash),
-            "gated transaction must stay parked"
-        );
-        let gated_events = event_capture
-            .events()
-            .into_iter()
-            .filter(|event| event.tx_hash == Some(gated_hash))
-            .map(|event| event.event_type)
-            .collect::<Vec<_>>();
-        assert_eq!(gated_events, [TransactionEventType::BuilderDeferred]);
     }
 
     #[test]
@@ -3139,64 +3105,6 @@ mod tests {
         assert_eq!(included_tx_count(outcome), 0);
         assert!(evicted.lock().unwrap().is_empty());
         assert_eq!(invalid.lock().unwrap().len(), 1);
-    }
-
-    /// EIP-8130 transaction with a named sender, so `sender_auth` changes the encoding but not
-    /// the transaction hash.
-    fn eip8130_pool_transaction(sender_auth: Bytes) -> BasePooledTransaction {
-        let sender = Address::repeat_byte(0x81);
-        let tx = TxEip8130 {
-            chain_id: 8_453,
-            sender: Some(sender),
-            gas_limit: 100_000,
-            max_fee_per_gas: 2_000_000_000,
-            max_priority_fee_per_gas: 1,
-            ..Default::default()
-        };
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, Bytes::new()));
-        let encoded_len = envelope.encode_2718_len();
-        BasePooledTransaction::new(Recovered::new_unchecked(envelope, sender), encoded_len)
-    }
-
-    /// Records the keys the builder looks metering up by.
-    #[derive(Debug, Default)]
-    struct LookupRecorder(Mutex<Vec<B256>>);
-
-    impl MeteringProvider for LookupRecorder {
-        fn get(&self, encoded_hash: &B256) -> Option<Arc<MeterBundleResponse>> {
-            self.0.lock().unwrap().push(*encoded_hash);
-            None
-        }
-    }
-
-    /// Encodings that share a transaction hash are distinct entries in the rejection cache and
-    /// the metering store: rejecting one does not skip the other, and the other's metering is
-    /// looked up by its own encoding.
-    #[test]
-    fn rejection_cache_and_metering_are_keyed_by_exact_encoding() {
-        let rejected = eip8130_pool_transaction(Bytes::from_static(&[0x01]));
-        let variant = eip8130_pool_transaction(Bytes::from_static(&[0x02]));
-        assert_eq!(rejected.hash(), variant.hash());
-        let rejected_encoding = rejected.consensus_ref().inner().trie_hash();
-        let variant_encoding = variant.consensus_ref().inner().trie_hash();
-        assert_ne!(rejected_encoding, variant_encoding);
-
-        let scan = |tx: BasePooledTransaction| {
-            let lookups = Arc::new(LookupRecorder::default());
-            let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
-            ctx.builder_config.rejection_cache.insert(rejected_encoding);
-            ctx.builder_config.resource_metering = metering_config(
-                cpu_schedule(1_000_000, None, false),
-                Arc::clone(&lookups) as SharedMeteringProvider,
-            );
-            let transactions =
-                TestParkableTransactions::recording(vec![tx], Arc::new(Mutex::new(Vec::new())));
-            build_pool_payload_with(ctx, transactions, |_| {});
-            lookups.0.lock().unwrap().clone()
-        };
-
-        assert!(scan(rejected).is_empty(), "the rejected encoding is skipped before metering");
-        assert_eq!(scan(variant), vec![variant_encoding]);
     }
 
     #[test]

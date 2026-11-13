@@ -559,7 +559,7 @@ impl LoadConfig {
         Ok(())
     }
 
-    /// Sets the test to run indefinitely until stopped via the stop flag or Ctrl-C.
+    /// Sets the test to run indefinitely until stopped via the stop token or Ctrl-C.
     pub const fn with_continuous(mut self) -> Self {
         self.duration = None;
         self.measurement_blocks = None;

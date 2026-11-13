@@ -211,38 +211,15 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
             return Ok(());
         }
 
-        match candidate.category {
-            GameCategory::InvalidTeeProposal => {
-                self.process_invalid_proposal(
-                    candidate,
-                    DisputeIntent::Challenge,
-                    true,
-                    finalized_l2_block,
-                )
-                .await
-            }
+        let (intent, try_tee_first) = match candidate.category {
+            GameCategory::InvalidTeeProposal => (DisputeIntent::Challenge, true),
             GameCategory::FraudulentZkChallenge { challenged_index } => {
-                self.process_fraudulent_zk_challenge(candidate, challenged_index).await
+                return self.process_fraudulent_zk_challenge(candidate, challenged_index).await;
             }
-            GameCategory::InvalidZkProposal => {
-                self.process_invalid_proposal(
-                    candidate,
-                    DisputeIntent::Nullify,
-                    false,
-                    finalized_l2_block,
-                )
-                .await
-            }
-            GameCategory::InvalidDualProposal => {
-                self.process_invalid_proposal(
-                    candidate,
-                    DisputeIntent::Nullify,
-                    true,
-                    finalized_l2_block,
-                )
-                .await
-            }
-        }
+            GameCategory::InvalidZkProposal => (DisputeIntent::Nullify, false),
+            GameCategory::InvalidDualProposal => (DisputeIntent::Nullify, true),
+        };
+        self.process_invalid_proposal(candidate, intent, try_tee_first, finalized_l2_block).await
     }
 
     /// Fetches intermediate roots and validates them against the local L2 node.

@@ -118,6 +118,11 @@ base_metrics::define_metrics! {
         "Time from the end of transaction execution until the native payload is sealed, including the state root, in seconds"
     )]
     native_payload_state_root_duration: histogram,
+    #[describe(
+        "Frozen-payload hints published for the consensus layer, by whether a receiver was subscribed"
+    )]
+    #[label(name = "result", default = ["delivered", "no_receiver"])]
+    payload_ready_hints_sent_total: counter,
 }
 
 impl ValidityMetrics {
@@ -313,6 +318,13 @@ impl BuilderMetrics {
         Self::native_payload_execution_duration().record(execution.as_secs_f64());
         Self::native_payload_state_root_duration()
             .record(total.saturating_sub(execution).as_secs_f64());
+    }
+
+    /// Records one frozen-payload hint published for the consensus layer. `delivered` is false
+    /// when no receiver was subscribed, so the hint reached nobody.
+    pub fn record_payload_ready_hint(delivered: bool) {
+        let result = if delivered { "delivered" } else { "no_receiver" };
+        Self::payload_ready_hints_sent_total(result).increment(1);
     }
 
     /// Records one included transaction's tip per gas by flow and bid mechanism.

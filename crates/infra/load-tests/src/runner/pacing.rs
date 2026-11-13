@@ -4,19 +4,17 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 
-use alloy_network::Ethereum;
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::Eip8130Constants;
 use base_common_network::Base;
-use base_tx_manager::NonceManager;
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::{
     sync::{mpsc, watch},
@@ -39,7 +37,6 @@ use crate::{
     workload::{KeyStream, SeededRng, SelectedPayload, WorkloadGenerator},
 };
 
-const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const SUBMIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(200);
@@ -101,7 +98,6 @@ struct PresignConfig {
     /// rejection so stale signed chunks cannot be enqueued after a nonce resync.
     sender_generations: Vec<u64>,
     signers: Arc<HashMap<Address, PrivateKeySigner>>,
-    nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     chain_id: u64,
     base_fee_rx: watch::Receiver<u128>,
     max_gas_price: u128,
@@ -229,7 +225,6 @@ struct PresignEnqueueState<'a> {
     sender_indices: &'a HashMap<Address, usize>,
     buffer: &'a mut PresignBuffer,
     progress: &'a mut EnqueueProgress,
-    base_fee_tx: &'a watch::Sender<u128>,
     gas_estimate: &'a GasEstimate,
 }
 
@@ -494,6 +489,9 @@ impl LoadRunner {
 
     /// Runs the load test and returns metrics summary.
     pub async fn run(&mut self) -> Result<MetricsSummary> {
+        if self.stop.is_cancelled() {
+            return Err(BaselineError::Transaction("stopped before the load test started".into()));
+        }
         if self.b20_run_salt.is_none()
             && self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
         {
@@ -504,23 +502,14 @@ impl LoadRunner {
         self.derive_reverse_swap_amounts().await?;
 
         self.collector.reset();
-        self.stop_flag.store(false, Ordering::SeqCst);
         self.cancel_token = CancellationToken::new();
 
         self.base_fee = self.client.get_base_fee().await?;
         info!(base_fee = self.base_fee, "fetched current base fee");
+        let (base_fee_tx, base_fee_rx) = watch::channel(self.base_fee);
 
         if !self.validity_router.is_disabled() {
             self.probe_validity_endpoint().await?;
-        }
-
-        for account in self.accounts.accounts() {
-            if !self.nonce_managers.contains_key(&account.address) {
-                let provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
-                let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT)
-                    .with_pending_tag();
-                Arc::make_mut(&mut self.nonce_managers).insert(account.address, nonce_manager);
-            }
         }
 
         const SUBMIT_CHANNEL_BUFFER: usize = 32_768;
@@ -542,6 +531,7 @@ impl LoadRunner {
                 results_tracker.clone(),
                 self.config.block_time,
                 inclusion_pulse_tx.clone(),
+                base_fee_tx,
                 watcher_cancel.clone(),
             )
             .start(),
@@ -564,10 +554,6 @@ impl LoadRunner {
 
         info!(
             sender_count = account_count,
-            signer_worker_count = SubmissionPipeline::signer_worker_count(
-                self.submission_batch_rpcs.len(),
-                self.config.max_concurrent_submit_requests,
-            ),
             sender_worker_count = SubmissionPipeline::sender_worker_count(
                 self.submission_batch_rpcs.len(),
                 self.config.max_concurrent_submit_requests,
@@ -586,19 +572,14 @@ impl LoadRunner {
         );
 
         let signers = Arc::clone(&self.signers);
-        let nonce_managers = Arc::clone(&self.nonce_managers);
         let submission_batch_rpcs = Arc::clone(&self.submission_batch_rpcs);
         let mut submission_pipeline = SubmissionPipeline::start(
             signers,
-            nonce_managers,
             submission_batch_rpcs,
             results_tracker.clone(),
             submit_event_tx.clone(),
             PipelineStartConfig {
                 chain_id: self.config.chain_id,
-                max_gas_price: self.config.max_gas_price,
-                validity_priority_lead_multiplier: self.config.validity_priority_lead_multiplier,
-                validity_priority_fee_divisor: self.config.validity_priority_fee_divisor,
                 max_concurrent_submit_requests: self.config.max_concurrent_submit_requests,
                 validity_signing: self.config.validity_signing,
             },
@@ -608,11 +589,6 @@ impl LoadRunner {
             self.accounts.accounts().iter().map(|a| (a.address, 0)).collect();
         let mut rejected_senders = HashSet::new();
         let mut queued_gas = 0u128;
-
-        let mut last_base_fee_refresh = Instant::now();
-        // Refresh once per block so the cached base fee tracks the climb the load
-        // test itself induces; a stale fee mints underwater (unincludable) txs.
-        const BASE_FEE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
         let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
 
@@ -643,7 +619,7 @@ impl LoadRunner {
             .map(|(index, address)| (address, index))
             .collect();
         let nonce_initialization_started = Instant::now();
-        let sender_start_nonces = self.sender_start_nonces(&sender_addresses).await?;
+        let sender_start_nonces = Self::pending_nonces(&self.client, &sender_addresses).await?;
         let sender_count = sender_addresses.len();
         info!(
             sender_count,
@@ -712,22 +688,6 @@ impl LoadRunner {
 
         let (signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(PRESIGN_CHANNEL_BUFFER);
         let (nonce_reset_tx, nonce_reset_rx) = mpsc::channel(sender_count.max(1));
-        let (base_fee_tx, base_fee_rx) = watch::channel(self.base_fee);
-        let pacing_base_fee_tx = base_fee_tx.clone();
-        let base_fee_client = self.client.clone();
-        let base_fee_cancel = self.cancel_token.clone();
-        let base_fee_task = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    () = base_fee_cancel.cancelled() => break,
-                    () = tokio::time::sleep(Duration::from_secs(1)) => {
-                        if let Ok(base_fee) = base_fee_client.get_base_fee().await {
-                            base_fee_tx.send_replace(base_fee);
-                        }
-                    }
-                }
-            }
-        });
         let producer_task = tokio::spawn(Self::stream_presigned_transactions(
             PresignProducerState {
                 generator: producer_generator,
@@ -740,9 +700,8 @@ impl LoadRunner {
                 sender_next_nonces: sender_start_nonces,
                 sender_generations: vec![0; sender_count],
                 signers: Arc::clone(&self.signers),
-                nonce_managers: Arc::clone(&self.nonce_managers),
                 chain_id: self.config.chain_id,
-                base_fee_rx,
+                base_fee_rx: base_fee_rx.clone(),
                 max_gas_price: self.config.max_gas_price,
                 validity_priority_lead_multiplier: self.config.validity_priority_lead_multiplier,
                 validity_priority_fee_divisor: self.config.validity_priority_fee_divisor,
@@ -772,14 +731,13 @@ impl LoadRunner {
                 sender_indices: &sender_indices,
                 buffer: &mut presign_buffer,
                 progress: &mut progress,
-                base_fee_tx: &pacing_base_fee_tx,
                 gas_estimate: &gas_estimate,
             },
             floor_gas.min(u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas))),
             max_in_flight_per_sender,
             capacity,
             prefill_deadline,
-            &self.stop_flag,
+            &self.stop,
             &mut EnqueueDrainState {
                 submit_event_rx: &mut submit_event_rx,
                 queued_per_sender: &mut queued_per_sender,
@@ -809,6 +767,7 @@ impl LoadRunner {
             let drain_started = Instant::now();
             while submission_pipeline.pending_batches() > 0
                 && drain_started.elapsed() < SUBMIT_DRAIN_TIMEOUT
+                && !self.stop.is_cancelled()
             {
                 Self::drain_run_events(
                     &mut submit_event_rx,
@@ -893,7 +852,6 @@ impl LoadRunner {
                     sender_indices: &sender_indices,
                     buffer: &mut presign_buffer,
                     progress: &mut progress,
-                    base_fee_tx: &pacing_base_fee_tx,
                     gas_estimate: &gas_estimate,
                 },
                 BlockAlignedEnqueueConfig {
@@ -909,7 +867,7 @@ impl LoadRunner {
                     deadline: enqueue_deadline,
                 },
                 &mut inclusion_pulse_rx,
-                &self.stop_flag,
+                &self.stop,
                 &mut EnqueueDrainState {
                     submit_event_rx: &mut submit_event_rx,
                     queued_per_sender: &mut queued_per_sender,
@@ -965,8 +923,6 @@ impl LoadRunner {
                 }
             }
         }
-        base_fee_task.abort();
-
         if let Err(err) = enqueue_result {
             warn!(
                 error = %err,
@@ -984,21 +940,13 @@ impl LoadRunner {
         }
 
         while self.config.duration.is_none_or(|d| start.elapsed() < d)
-            && !self.stop_flag.load(Ordering::SeqCst)
+            && !self.stop.is_cancelled()
             && open_loop_enqueue_error.is_none()
             && !results_tracker.measurement_finished()
         {
             // --- Housekeeping (runs once per batch iteration) ---
 
-            if last_base_fee_refresh.elapsed() >= BASE_FEE_REFRESH_INTERVAL {
-                if let Ok(new_base_fee) = self.client.get_base_fee().await
-                    && new_base_fee != self.base_fee
-                {
-                    debug!(old_base_fee = self.base_fee, new_base_fee, "base fee updated");
-                    self.base_fee = new_base_fee;
-                }
-                last_base_fee_refresh = Instant::now();
-            }
+            self.base_fee = *base_fee_rx.borrow();
 
             Self::drain_run_events(
                 &mut submit_event_rx,
@@ -1051,8 +999,7 @@ impl LoadRunner {
                     "timed out waiting for submit queue to drain, closing submit queue"
                 );
             }
-            let failures =
-                submission_pipeline.close_and_fail_queued("submit queue abandoned").await;
+            let failures = submission_pipeline.close_and_fail_queued("submit queue abandoned");
             Self::apply_queued_submit_failures(
                 failures,
                 &mut queued_per_sender,
@@ -1076,10 +1023,6 @@ impl LoadRunner {
         for lag in results_tracker.drain_completed_refill_lags() {
             self.collector.record_completed_refill_lag(lag);
         }
-
-        // Keep background watchers alive through the drain so late block observations
-        // can still be joined into metrics.
-        self.stop_flag.store(true, Ordering::SeqCst);
 
         self.set_display_stage(LoadTestStage::DrainingConfirmations);
 
@@ -1249,24 +1192,16 @@ impl LoadRunner {
         Ok(summary)
     }
 
-    async fn sender_start_nonces(&self, sender_addresses: &[Address]) -> Result<Vec<u64>> {
-        let nonce_futures = sender_addresses.iter().map(|from| async move {
-            let nonce_manager = self.nonce_managers.get(from).ok_or_else(|| {
-                BaselineError::Transaction(format!("missing nonce manager for sender {from}"))
-            })?;
+    /// Bounded by the query client's [`RPC_TIMEOUT`](crate::rpc::RPC_TIMEOUT).
+    async fn pending_nonce(client: &QueryProvider, sender: Address) -> Result<u64> {
+        // The transport error can embed a credential-bearing RPC URL, so it is not formatted.
+        client.get_transaction_count(sender).pending().await.map_err(|_| {
+            BaselineError::Rpc(format!("failed to fetch pending nonce for sender {sender}"))
+        })
+    }
 
-            nonce_manager.reset().await;
-            let nonce_guard = nonce_manager.next_nonce().await.map_err(|e| {
-                BaselineError::Transaction(format!(
-                    "failed to fetch starting nonce for sender {from}: {e}"
-                ))
-            })?;
-            let nonce = nonce_guard.nonce();
-            nonce_guard.rollback();
-            Ok(nonce)
-        });
-
-        stream::iter(nonce_futures)
+    async fn pending_nonces(client: &QueryProvider, senders: &[Address]) -> Result<Vec<u64>> {
+        stream::iter(senders.iter().map(|&sender| Self::pending_nonce(client, sender)))
             .buffered(super::funding::FUNDING_CONCURRENCY)
             .try_collect()
             .await
@@ -1571,23 +1506,9 @@ impl LoadRunner {
                 continue;
             }
 
-            let nonce_manager = config.nonce_managers.get(&reset.address).ok_or_else(|| {
-                BaselineError::Transaction(format!(
-                    "missing nonce manager for sender {} during nonce reset",
-                    reset.address
-                ))
-            })?;
-            // The nonce manager uses the pending tag for load-test senders, so this restarts after
-            // transactions the node already accepted while avoiding the rejected stale tail.
-            nonce_manager.reset().await;
-            let nonce_guard = nonce_manager.next_nonce().await.map_err(|e| {
-                BaselineError::Transaction(format!(
-                    "failed to reset nonce for sender {}: {e}",
-                    reset.address
-                ))
-            })?;
-            let next_nonce = nonce_guard.nonce();
-            nonce_guard.rollback();
+            // The pending nonce restarts after transactions the node already accepted while
+            // avoiding the rejected stale tail.
+            let next_nonce = Self::pending_nonce(&config.query_client, reset.address).await?;
 
             config.sender_next_nonces[reset.sender_index] = next_nonce;
             config.sender_generations[reset.sender_index] = reset.generation;
@@ -1674,7 +1595,7 @@ impl LoadRunner {
         enqueue_state: &mut PresignEnqueueState<'_>,
         config: BlockAlignedEnqueueConfig,
         inclusion_pulse_rx: &mut mpsc::Receiver<InclusionPulse>,
-        stop_flag: &AtomicBool,
+        stop: &CancellationToken,
         drain_state: &mut EnqueueDrainState<'_>,
     ) -> Result<()> {
         let safety_interval = config.steady_submission_interval.unwrap_or_else(|| {
@@ -1696,7 +1617,7 @@ impl LoadRunner {
 
         loop {
             drain_state.drain_run_events();
-            if stop_flag.load(Ordering::SeqCst)
+            if stop.is_cancelled()
                 || config.deadline.is_some_and(|deadline| Instant::now() >= deadline)
             {
                 return Ok(());
@@ -1716,7 +1637,6 @@ impl LoadRunner {
                 let Some(canonical) = pulse.canonical else {
                     continue;
                 };
-                enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
                 Self::record_terminal_canonical_cycle(canonical, &config, drain_state);
                 last_recorded_canonical_block = Some(canonical.number);
                 continue;
@@ -1730,7 +1650,6 @@ impl LoadRunner {
                     };
                     if let Some(canonical) = pulse.canonical {
                         last_block_gas_limit = canonical.gas_limit;
-                        enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
                     }
                     last_pulse_at = pulse.observed_at;
                     if drain_state.results_tracker.measurement_finished() {
@@ -2062,12 +1981,12 @@ impl LoadRunner {
         max_in_flight_per_sender: usize,
         max_total_in_flight: usize,
         deadline: Instant,
-        stop_flag: &AtomicBool,
+        stop: &CancellationToken,
         drain_state: &mut EnqueueDrainState<'_>,
     ) -> Result<()> {
         while enqueue_state.buffer.buffered_gas() < target_gas {
             drain_state.drain_run_events();
-            if stop_flag.load(Ordering::SeqCst) {
+            if stop.is_cancelled() {
                 return Err(BaselineError::Transaction("stopped during open-loop enqueue".into()));
             }
             if Instant::now() >= deadline {
@@ -2277,15 +2196,13 @@ impl LoadRunner {
 mod tests {
     use std::{
         collections::{HashMap, HashSet},
-        sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicU64},
-        },
+        sync::{Arc, atomic::AtomicU64},
         time::{Duration, Instant},
     };
 
     use alloy_primitives::{Address, Bytes, TxHash, U256};
     use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
 
     use super::{
         BlockAlignedEnqueueConfig, EnqueueDrainState, EnqueueProgress, InclusionPulse, InjectLimit,
@@ -2323,7 +2240,6 @@ mod tests {
             sender_next_nonces: vec![7, 9],
             sender_generations: vec![0, 0],
             signers: Arc::clone(&runner.signers),
-            nonce_managers: Arc::clone(&runner.nonce_managers),
             chain_id: config.chain_id,
             base_fee_rx: rx,
             max_gas_price: config.max_gas_price,
@@ -2417,7 +2333,6 @@ mod tests {
             sender_next_nonces: vec![0; addresses.len()],
             sender_generations: vec![0; addresses.len()],
             signers: Arc::clone(&runner.signers),
-            nonce_managers: Arc::clone(&runner.nonce_managers),
             chain_id: config.chain_id,
             base_fee_rx: rx,
             max_gas_price: config.max_gas_price,
@@ -2494,15 +2409,11 @@ mod tests {
     ) -> SubmissionPipeline {
         SubmissionPipeline::start(
             Arc::new(HashMap::new()),
-            Arc::new(HashMap::new()),
             Arc::new(Vec::new()),
             results_tracker.clone(),
             submit_event_tx,
             PipelineStartConfig {
                 chain_id: 1,
-                max_gas_price: u128::MAX,
-                validity_priority_lead_multiplier: 1,
-                validity_priority_fee_divisor: 1,
                 max_concurrent_submit_requests: None,
                 validity_signing: crate::config::ValiditySigningMode::Adaptive,
             },
@@ -2561,7 +2472,7 @@ mod tests {
                 .send(SubmitEvent::Submitted(TxHash::repeat_byte(0xaa)))
                 .await
                 .expect("second send should unblock only after event drain");
-            let _ = submission_pipeline.close_and_fail_queued("test queue close").await;
+            let _ = submission_pipeline.close_and_fail_queued("test queue close");
         };
 
         let (enqueue_result, ()) = {
@@ -2924,13 +2835,12 @@ mod tests {
         let mut queued_gas = 0u128;
         let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
         let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
-        let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
         let mut progress =
             EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
         let mut presign_buffer = PresignBuffer::new(1);
         let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
-        let stop_flag = AtomicBool::new(false);
+        let stop = CancellationToken::new();
         let (pulse_tx, mut pulse_rx) = mpsc::channel(8);
         let (nonce_reset_tx, _nonce_reset_rx) = mpsc::channel(1);
         let sender_indices = HashMap::from([(sender, 0usize)]);
@@ -2943,7 +2853,6 @@ mod tests {
             sender_indices: &sender_indices,
             buffer: &mut presign_buffer,
             progress: &mut progress,
-            base_fee_tx: &base_fee_tx,
             gas_estimate: &super::GasEstimate::new(21_000),
         };
         let mut drain_state = EnqueueDrainState {
@@ -2976,7 +2885,7 @@ mod tests {
                         deadline: None,
                     },
                     &mut pulse_rx,
-                    &stop_flag,
+                    &stop,
                     &mut drain_state,
                 ),
                 async {
@@ -3057,13 +2966,12 @@ mod tests {
         let mut queued_gas = 0u128;
         let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
         let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
-        let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
         let mut progress =
             EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
         let mut presign_buffer = PresignBuffer::new(1);
         let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
-        let stop_flag = AtomicBool::new(false);
+        let stop = CancellationToken::new();
         let (_pulse_tx, mut pulse_rx) = mpsc::channel(1);
         let (nonce_reset_tx, _nonce_reset_rx) = mpsc::channel(1);
         let sender_indices = HashMap::from([(sender, 0usize)]);
@@ -3079,7 +2987,6 @@ mod tests {
                     sender_indices: &sender_indices,
                     buffer: &mut presign_buffer,
                     progress: &mut progress,
-                    base_fee_tx: &base_fee_tx,
                     gas_estimate: &super::GasEstimate::new(21_000),
                 },
                 BlockAlignedEnqueueConfig {
@@ -3102,7 +3009,7 @@ mod tests {
                     deadline: Some(Instant::now() + Duration::from_millis(210)),
                 },
                 &mut pulse_rx,
-                &stop_flag,
+                &stop,
                 &mut EnqueueDrainState {
                     submit_event_rx: &mut submit_event_rx,
                     queued_per_sender: &mut queued_per_sender,
@@ -3124,5 +3031,15 @@ mod tests {
         // cycle means the periodic refill fired before the deadline.
         assert!(summary.pacing.safety_cycles >= 3);
         assert!(!results_tracker.measurement_finished());
+    }
+
+    #[tokio::test]
+    async fn run_does_not_start_after_an_earlier_stop() {
+        let mut runner =
+            LoadRunner::new(crate::runner::LoadConfig::devnet()).expect("runner must initialize");
+        runner.stop_token().cancel();
+
+        let error = runner.run().await.expect_err("a stopped runner must not start a run");
+        assert!(error.to_string().contains("stopped before the load test started"));
     }
 }

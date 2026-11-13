@@ -3248,6 +3248,7 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-observability-events",
+ "base-protocol",
  "base-test-utils",
  "base-txpool-rpc",
  "chrono",
@@ -3787,6 +3788,7 @@ dependencies = [
  "base-common-chains",
  "base-common-genesis",
  "base-common-network",
+ "base-common-rpc-types-engine",
  "base-consensus-derive",
  "base-consensus-disc",
  "base-consensus-engine",
@@ -4541,6 +4543,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
 ]
 
@@ -4857,13 +4860,13 @@ dependencies = [
  "alloy-signer 2.5.0",
  "alloy-signer-local 2.5.0",
  "alloy-sol-types",
+ "async-channel",
  "async-trait",
  "base-cli-utils",
  "base-common-consensus",
  "base-common-network",
  "base-common-precompiles",
  "base-execution-txpool",
- "base-tx-manager",
  "eyre",
  "futures",
  "httpmock",
@@ -4962,7 +4965,6 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
- "base-execution-exex",
  "base-execution-payload-builder",
  "base-execution-rpc",
  "base-execution-trie",
@@ -5017,7 +5019,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
- "tracing",
 ]
 
 [[package]]
@@ -5668,19 +5669,15 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.5.0",
  "alloy-eips 2.5.0",
- "alloy-network 2.5.0",
  "alloy-primitives",
  "alloy-provider",
- "alloy-rlp",
  "alloy-sol-types",
  "anyhow",
  "async-trait",
  "base-common-chains",
- "base-common-consensus",
  "base-common-genesis",
  "base-common-network",
  "base-consensus-derive",
- "base-optimism-rpc",
  "base-proof",
  "base-proof-host",
  "base-proof-preimage",
@@ -5977,10 +5974,6 @@ version = "0.0.0"
 dependencies = [
  "backon",
 ]
-
-[[package]]
-name = "base-ring-buffer"
-version = "0.0.0"
 
 [[package]]
 name = "base-roxy"
@@ -6437,11 +6430,13 @@ dependencies = [
  "alloy-node-bindings",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rpc-client",
  "alloy-rpc-types-eth 2.5.0",
  "alloy-signer 2.5.0",
  "alloy-signer-local 2.5.0",
  "alloy-sol-types",
  "alloy-transport",
+ "alloy-transport-http",
  "async-trait",
  "backon",
  "base-common-signer",
@@ -6459,6 +6454,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+ "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
  "url",

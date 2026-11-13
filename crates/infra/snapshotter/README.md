@@ -14,6 +14,10 @@ restarting the EL (followed by the CL when configured, so it reconnects to the E
 static-file archives are reused only after their compressed size and the BLAKE3 hashes of every
 uncompressed source file match the previous manifest.
 
+Retryable upload errors are retried with linear backoff (5s steps, capped at 60s) for up to 20
+attempts per request, about 13.5 minutes of waiting. When retries run out, or generation or upload
+fails for any other reason, the run returns the error after restarting the stopped containers.
+
 If the EL is not at tip when a run begins, the snapshot is skipped and containers are left running
 untouched.
 

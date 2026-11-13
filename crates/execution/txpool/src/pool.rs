@@ -37,8 +37,8 @@ use tokio::{
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, BaseTxPoolError, BestTransactionsHold,
-    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, GuardLimits,
+    GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
     ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
     StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
@@ -250,7 +250,7 @@ where
         let sidecar = TwoDNoncePool::new(config.price_bumps)
             .with_limits(SidecarLimits::from_pool_config(config));
         let validity = Self::validity_pool(config, ValidityPoolLimits::inherit());
-        Self {
+        let pool = Self {
             protocol_pool,
             ordering,
             sidecar: LaneStore::new(sidecar),
@@ -258,13 +258,24 @@ where
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
-        }
+        };
+        pool.sync_base_fee();
+        pool
     }
 
     fn validity_pool(config: &PoolConfig, limits: ValidityPoolLimits) -> TwoDNoncePool<T> {
         TwoDNoncePool::new(config.price_bumps)
             .with_limits(limits.resolve(config))
             .with_protocol_nonce_lanes()
+    }
+
+    /// Gives the lane stores the protocol pool's pending base fee, which ranks
+    /// their eviction candidates.
+    fn sync_base_fee(&self) {
+        let base_fee = self.protocol_pool.block_info().pending_basefee;
+        for store in self.lane_stores() {
+            store.pool.write().set_base_fee(base_fee);
+        }
     }
 
     /// Configures EIP-8130 admission limits. Call before sharing the pool.
@@ -278,6 +289,7 @@ where
     #[must_use]
     pub fn with_validity_pool_limits(self, limits: ValidityPoolLimits) -> Self {
         *self.validity.pool.write() = Self::validity_pool(self.protocol_pool.config(), limits);
+        self.sync_base_fee();
         self
     }
 
@@ -458,7 +470,9 @@ where
     /// it is an EIP-8130 transaction sequenced on that nonce at or after the new
     /// value; every other watcher is returned to be invalidated, as an exact
     /// match would. Each surviving lane is returned with the store holding it
-    /// and the nonce its cursor moves to.
+    /// and the nonce its cursor moves to. A nonce-free transaction watches the
+    /// nonce manager slot recording its `replay_id`, so it never survives a
+    /// write there: it means a transaction with that `replay_id` was mined.
     fn resolve_nonce_advances(
         &self,
         advances: &[(InvalidationKey, u64)],
@@ -576,10 +590,11 @@ where
                 Some(nonce) => nonce.max(cursor.state_nonce),
                 None => cursor.state_nonce,
             };
-            let target = LaneCursor {
+            let target = self.validity_cursor(
+                lane_id,
                 state_nonce,
-                next_nonce: self.standard_pending_end(lane_id, state_nonce),
-            };
+                self.standard_pending_end(lane_id, state_nonce),
+            );
             if target == cursor {
                 continue;
             }
@@ -781,8 +796,7 @@ where
     /// Rechecks an EIP-8130 transaction against the pool's block gas limit, which can
     /// move after validation, as reth's protocol pool does for every transaction at
     /// insert. Execution reserves `gas_limit + payer_auth` against the block, and an
-    /// unpriceable payer authentication never fits. Only a `gas_limit` over the limit
-    /// on its own is a bad transaction: the hash does not cover `payer_auth`.
+    /// unpriceable payer authentication never fits.
     fn ensure_eip8130_fits_block_gas_limit(
         &self,
         hash: TxHash,
@@ -795,21 +809,21 @@ where
         let Some(signed) = transaction.as_eip8130() else {
             return Ok(());
         };
-        let gas_limit = transaction.gas_limit();
         let reserved_gas = IntrinsicGas::payer_auth_cost_of(signed)
-            .map_or(u64::MAX, |payer_auth| FeeCheck::max_chargeable_gas(gas_limit, payer_auth));
+            .map_or(u64::MAX, |payer_auth| {
+                FeeCheck::max_chargeable_gas(transaction.gas_limit(), payer_auth)
+            });
         let block_gas_limit = self.protocol_pool.block_info().block_gas_limit;
-        if reserved_gas <= block_gas_limit {
-            return Ok(());
+        if reserved_gas > block_gas_limit {
+            return Err(PoolError::new(
+                hash,
+                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::ExceedsGasLimit(
+                    reserved_gas,
+                    block_gas_limit,
+                )),
+            ));
         }
-        let error = if gas_limit > block_gas_limit {
-            InvalidPoolTransactionError::ExceedsGasLimit(reserved_gas, block_gas_limit)
-        } else {
-            InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Authentication {
-                reason: BaseTxPoolError::PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT,
-            })
-        };
-        Err(PoolError::new(hash, PoolErrorKind::InvalidTransaction(error)))
+        Ok(())
     }
 
     /// Records a transaction's last valid block in the block-expiry index,
@@ -1233,7 +1247,27 @@ where
         if let Some(cross) = cross {
             next_nonce = next_nonce.min(cross.transaction.nonce());
         }
-        LaneCursor { state_nonce, next_nonce: next_nonce.max(state_nonce) }
+        self.validity_cursor(lane_id, state_nonce, next_nonce.max(state_nonce))
+    }
+
+    /// A validity lane's cursor at `state_nonce` behind the standard store's
+    /// run up to `next_nonce`, carrying that run's lowest fee cap so eviction
+    /// ranks the lane by what blocks it.
+    fn validity_cursor(&self, lane_id: LaneId, state_nonce: u64, next_nonce: u64) -> LaneCursor {
+        let run = state_nonce..next_nonce;
+        let run_fee_cap = if run.is_empty() {
+            None
+        } else if lane_id.1.is_zero() {
+            self.protocol_pool
+                .get_transactions_by_sender(lane_id.0)
+                .iter()
+                .filter(|transaction| run.contains(&transaction.nonce()))
+                .map(|transaction| transaction.max_fee_per_gas())
+                .min()
+        } else {
+            self.sidecar.pool.read().lane_lowest_fee_cap(&lane_id, run)
+        };
+        LaneCursor { state_nonce, next_nonce, run_fee_cap }
     }
 
     /// Undoes a lane insertion that a post-insert check rejected: removes the
@@ -2402,7 +2436,8 @@ where
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
-        self.protocol_pool.set_block_info(info)
+        self.protocol_pool.set_block_info(info);
+        self.sync_base_fee();
     }
 
     fn on_canonical_state_change(
@@ -2434,6 +2469,7 @@ where
             }
         }
         self.protocol_pool.on_canonical_state_change(update);
+        self.sync_base_fee();
         // `protocol_pool.on_canonical_state_change` has already advanced the
         // validator's head clock to this block.
         let now_ms = self.validator().validator().block_timestamp_ms();
@@ -2827,8 +2863,10 @@ mod tests {
     use base_common_evm::BaseSpecId;
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
+    use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use base_test_utils::build_test_genesis_everest;
     use futures::{FutureExt, StreamExt, future::join_all};
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
     use reth_primitives_traits::{InMemorySize, SealedBlock};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;
@@ -2844,8 +2882,9 @@ mod tests {
     use super::*;
     use crate::{
         BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
-        LimitClass, NoExtensions, ValidatedTransaction, ValidityOperator, ValidityPredicate,
-        WatchSet,
+        DEFAULT_MAX_VALIDITY_PREDICATES, LimitClass, NoExtensions, TransactionValidity,
+        ValidatedTransaction, ValidityOperator, ValidityPredicate, WatchSet,
+        is_already_imported_rejection,
     };
 
     fn test_chain_id() -> u64 {
@@ -3506,6 +3545,108 @@ mod tests {
         assert_eq!(pool.pool_size().pending, 1);
     }
 
+    /// A pool whose stores hold one transaction each, with a transaction that fills `store`,
+    /// a cheaper one `store` then discards on arrival, and the predicates both are forwarded
+    /// with.
+    fn pool_with_full_store(
+        store: PoolStore,
+    ) -> (IntegrationPool, [BasePooledTransaction; 2], Vec<ValidityPredicate>) {
+        let one_pending =
+            PoolConfig { pending_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(one_pending);
+        let transaction = |max_fee_per_gas: u128| {
+            let signer = funded_signer(&client);
+            match store {
+                PoolStore::Protocol | PoolStore::Validity => {
+                    signed_1559_with_fees(&signer, 0, max_fee_per_gas, 0)
+                }
+                PoolStore::Sidecar => {
+                    self_paid_eoa_8130(&signer, U256::from(1), 0, 0, max_fee_per_gas)
+                }
+            }
+        };
+        let predicates =
+            if store == PoolStore::Validity { resting_predicates() } else { Vec::new() };
+        (pool, [transaction(2_000), transaction(1_000)], predicates)
+    }
+
+    /// The builder counts a capacity discard without journaling it, whichever store is full.
+    /// The duplicate the same handler rejects next is still journaled.
+    #[rstest::rstest]
+    #[case::standard(PoolStore::Protocol)]
+    #[case::eip8130_sidecar(PoolStore::Sidecar)]
+    #[case::validity(PoolStore::Validity)]
+    #[tokio::test]
+    async fn rpc_insert_journals_every_rejection_except_a_capacity_discard(
+        #[case] store: PoolStore,
+    ) {
+        let (pool, [incumbent, newcomer], predicates) = pool_with_full_store(store);
+        let (incumbent_hash, newcomer_hash) = (*incumbent.hash(), *newcomer.hash());
+        let wire = |tx: BasePooledTransaction| {
+            let recovered = tx.clone_into_consensus();
+            ValidatedTransaction {
+                sender: recovered.signer(),
+                raw: recovered.inner().encoded_2718().into(),
+                metering: None,
+                extensions: TransactionValidity {
+                    validity: predicates.clone(),
+                    validity_signature: None,
+                },
+            }
+        };
+        let capture = TransactionEventCapture::install();
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
+            pool.clone(),
+            true,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        );
+
+        assert_eq!(handler.insert_validated_transaction(wire(incumbent.clone())).await, Ok(()));
+        let discarded = handler.insert_validated_transaction(wire(newcomer)).await.unwrap_err();
+        let duplicate = handler.insert_validated_transaction(wire(incumbent)).await.unwrap_err();
+
+        assert_eq!(
+            discarded.message(),
+            format!(
+                "pool rejected transaction: {}",
+                PoolError::new(newcomer_hash, PoolErrorKind::DiscardedOnInsert)
+            )
+        );
+        assert!(is_already_imported_rejection(&duplicate), "{duplicate}");
+        assert_store(&pool, incumbent_hash, store);
+
+        let journal = |hash: TxHash| {
+            capture
+                .events()
+                .into_iter()
+                .filter(|event| event.tx_hash == Some(hash))
+                .map(|event| event.event_type)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            journal(incumbent_hash),
+            [
+                TransactionEventType::TxpoolValidatedInsertAccepted,
+                TransactionEventType::TxpoolValidatedInsertRejected,
+            ]
+        );
+        assert_eq!(journal(newcomer_hash), []);
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let rejected = |reason: &str| {
+            snapshot.iter().find_map(|(key, _, _, value)| {
+                (key.key().name() == "txpool.builder_rpc.txs_rejected"
+                    && key.key().labels().any(|l| l.key() == "reason" && l.value() == reason))
+                .then_some(value)
+            })
+        };
+        assert_eq!(rejected("discarded_on_insert"), Some(&DebugValue::Counter(1)));
+        assert_eq!(rejected("already_imported"), Some(&DebugValue::Counter(1)));
+    }
+
     #[tokio::test]
     async fn standard_transactions_are_not_eip8130_gated() {
         let (pool, client) = build_integration_pool();
@@ -3836,6 +3977,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sidecar_lanes_below_the_pending_base_fee_rank_with_gapped_lanes() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let gapped_signer = signer();
+        let underpriced_signer = signer();
+        for signer in [&gapped_signer, &underpriced_signer] {
+            fund(&client, signer.address());
+        }
+        let gapped = self_paid_eoa_8130(&gapped_signer, U256::from(1), 1, 0, 1_000_000);
+        let gapped_hash = *gapped.hash();
+        pool.add_transaction(TransactionOrigin::External, gapped).await.unwrap();
+        pool.set_block_info(BlockInfo { pending_basefee: 3_000, ..pool.block_info() });
+
+        let underpriced = self_paid_eoa_8130(&underpriced_signer, U256::from(1), 0, 0, 2_000);
+        let error = pool
+            .add_transaction(TransactionOrigin::External, underpriced)
+            .await
+            .expect_err("a lane below the pending base fee cannot push out a gapped lane");
+        assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
+        assert!(pool.get(&gapped_hash).is_some());
+    }
+
+    #[tokio::test]
     async fn sidecar_pool_size_reports_in_memory_size() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
@@ -3950,25 +4115,6 @@ mod tests {
         match &error.kind {
             PoolErrorKind::InvalidTransaction(kind) => kind,
             other => panic!("expected an invalid transaction, got {other:?}"),
-        }
-    }
-
-    /// Asserts the rejection for a sponsored transaction whose `gas_limit` fits the block
-    /// gas limit but whose payer authentication gas pushes it over: an authentication
-    /// error that does not mark the hash bad, since the hash does not cover `payer_auth`.
-    fn assert_payer_auth_exceeds_block_gas_limit(
-        error: &reth_transaction_pool::error::PoolError,
-        nonce_key: U256,
-    ) {
-        let InvalidPoolTransactionError::Other(other) = invalid_kind(error) else {
-            panic!("nonce key {nonce_key}: expected a Base pool error, got {error:?}");
-        };
-        assert!(!other.is_bad_transaction(), "nonce key {nonce_key}: {error:?}");
-        match other.as_any().downcast_ref::<BaseTxPoolError>() {
-            Some(BaseTxPoolError::Eip8130Authentication { reason }) => {
-                assert_eq!(*reason, BaseTxPoolError::PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT);
-            }
-            other => panic!("nonce key {nonce_key}: expected Eip8130Authentication, got {other:?}"),
         }
     }
 
@@ -4098,7 +4244,15 @@ mod tests {
                 .add_transaction(TransactionOrigin::External, transaction)
                 .await
                 .expect_err("gas_limit plus payer authentication exceeds the block gas limit");
-            assert_payer_auth_exceeds_block_gas_limit(&error, nonce_key);
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
+                        if *gas == SPONSORED_GAS_LIMIT + payer_auth
+                            && *limit == SPONSORED_GAS_LIMIT
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
         }
     }
 
@@ -4274,7 +4428,14 @@ mod tests {
                 pool.add_transaction(TransactionOrigin::External, transaction).await.expect_err(
                     "gas_limit plus payer authentication exceeds the pool's block gas limit",
                 );
-            assert_payer_auth_exceeds_block_gas_limit(&error, nonce_key);
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
+                        if *gas == POLICY_GAS_LIMIT + 1 && *limit == POLICY_GAS_LIMIT
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
             let transaction = sponsored_policy_tx(&signer, &payer, nonce_key, POLICY_GAS_LIMIT);
             pool.add_transaction(TransactionOrigin::External, transaction)
                 .await
@@ -4596,6 +4757,81 @@ mod tests {
         assert!(pool.get(&hash).is_none());
         assert!(!pool.sidecar.pool.read().contains(&hash));
         assert!(!pool.guard.read().contains(&hash));
+    }
+
+    #[tokio::test]
+    async fn mined_replay_id_twin_evicts_nonce_free_transaction() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let expiry = INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
+        let nonce_free = |expiry, max_fee_per_gas| {
+            self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, expiry, max_fee_per_gas)
+        };
+        let pooled = nonce_free(expiry, 1_000);
+        // A fee bump this node never saw: another hash, the same `replay_id`.
+        let twin = nonce_free(expiry, 1_100);
+        let unrelated = nonce_free(expiry - 1, 1_000);
+        let replay_id = pooled.eip8130_replay_id().unwrap();
+        assert_ne!(twin.hash(), pooled.hash());
+        assert_eq!(twin.eip8130_replay_id(), Some(replay_id));
+        for transaction in [&pooled, &unrelated] {
+            pool.add_transaction(TransactionOrigin::Local, transaction.clone()).await.unwrap();
+        }
+
+        // Mining the twin records its `replay_id` with its `valid_before`.
+        let removed = pool.apply_state_diff(&[AccountStateDiff {
+            address: NonceManagerStorage::ADDRESS,
+            changed_slots: vec![(
+                B256::from(NonceManagerStorage::expiring_nonce_seen_slot(replay_id)),
+                U256::from(expiry),
+            )],
+            ..Default::default()
+        }]);
+
+        assert_eq!(removed.iter().map(|tx| *tx.hash()).collect::<Vec<_>>(), [*pooled.hash()]);
+        assert!(pool.get(pooled.hash()).is_none());
+        assert!(!pool.sidecar.pool.read().contains(pooled.hash()));
+        assert!(!pool.guard.read().contains(pooled.hash()));
+        assert!(pool.sidecar.pool.read().contains(unrelated.hash()));
+        assert!(pool.guard.read().contains(unrelated.hash()));
+    }
+
+    #[tokio::test]
+    async fn mined_original_evicts_its_pooled_replacement() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let expiry = INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
+        let nonce_free = |max_fee_per_gas| {
+            self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, expiry, max_fee_per_gas)
+        };
+        let original = nonce_free(1_000);
+        let replacement = nonce_free(2_000);
+        let replay_id = original.eip8130_replay_id().unwrap();
+        pool.add_transaction(TransactionOrigin::Local, original.clone()).await.unwrap();
+        pool.add_transaction(TransactionOrigin::Local, replacement.clone()).await.unwrap();
+        assert!(pool.get(original.hash()).is_none());
+        assert!(pool.guard.read().contains(replacement.hash()));
+
+        // The original is mined anyway: pruning by mined hash misses the replacement.
+        canonical_update(&pool, 1, Vec::new(), vec![*original.hash()], PoolUpdateKind::Commit);
+        assert!(pool.sidecar.pool.read().contains(replacement.hash()));
+
+        // Its execution records the shared `replay_id`, which evicts the replacement.
+        let removed = pool.apply_state_diff(&[AccountStateDiff {
+            address: NonceManagerStorage::ADDRESS,
+            changed_slots: vec![(
+                B256::from(NonceManagerStorage::expiring_nonce_seen_slot(replay_id)),
+                U256::from(expiry),
+            )],
+            ..Default::default()
+        }]);
+
+        assert_eq!(removed.iter().map(|tx| *tx.hash()).collect::<Vec<_>>(), [*replacement.hash()]);
+        assert!(pool.get(replacement.hash()).is_none());
+        assert!(!pool.sidecar.pool.read().contains(replacement.hash()));
+        assert!(!pool.guard.read().contains(replacement.hash()));
     }
 
     #[tokio::test]
@@ -5637,12 +5873,17 @@ mod tests {
         let (pool, client) = build_integration_pool();
         let signer = funded_signer(&client);
         let standard0 = add(&pool, signed_1559(&signer, 0)).await;
-        let standard1 = add(&pool, signed_1559(&signer, 1)).await;
+        let standard1 = add(&pool, signed_1559_with_fees(&signer, 1, 2_000, 0)).await;
         let validity2 = add(&pool, validity_1559(&signer, 2, 1_000)).await;
         let validity3 = add(&pool, validity_1559(&signer, 3, 1_000)).await;
 
         assert_store(&pool, validity2, PoolStore::Validity);
         assert!(is_pending(&pool, validity2) && is_pending(&pool, validity3));
+        assert_eq!(
+            pool.validity.pool.read().lane_cursor(&(signer.address(), U256::ZERO)),
+            Some(LaneCursor { state_nonce: 0, next_nonce: 2, run_fee_cap: Some(1_000) }),
+            "the lane carries the lowest fee cap of the standard run in front of it"
+        );
         assert_eq!(best_hashes(&pool), vec![standard0, standard1, validity2, validity3]);
         assert_eq!(
             pool.get_highest_consecutive_transaction_by_sender(signer.address(), 0)
@@ -5922,7 +6163,7 @@ mod tests {
         assert!(is_pending(&pool, validity1));
         assert_eq!(
             pool.validity.pool.read().lane_cursor(&lane),
-            Some(LaneCursor { state_nonce: 0, next_nonce: 1 })
+            Some(LaneCursor { state_nonce: 0, next_nonce: 1, run_fee_cap: Some(1_000) })
         );
 
         // A sidecar successor behind the validity transaction is gapped.
@@ -6211,6 +6452,25 @@ mod tests {
         assert!(is_pending(&pool, head));
         assert_eq!(pool.validity_pool_occupancy().0, 3);
         assert_eq!(pool.pool_size().pending, 3);
+    }
+
+    #[tokio::test]
+    async fn validity_lanes_behind_an_unexecutable_sidecar_head_are_evicted_first() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_txs(2));
+        let attacker = funded_signer(&client);
+        let channel = U256::from(1);
+        let head = add(&pool, self_paid_eoa_8130(&attacker, channel, 0, 0, 7)).await;
+        let spam1 = add(&pool, validity_8130(&attacker, channel, 1, 1_000_000)).await;
+        let spam2 = add(&pool, validity_8130(&attacker, channel, 2, 1_000_000)).await;
+        assert!(is_pending(&pool, spam2), "the sidecar head makes the lane executable");
+
+        let honest = add(&pool, validity_8130(&funded_signer(&client), channel, 0, 1_000)).await;
+
+        assert_store(&pool, honest, PoolStore::Validity);
+        assert_gone(&pool, spam2);
+        assert_store(&pool, spam1, PoolStore::Validity);
+        assert_store(&pool, head, PoolStore::Sidecar);
     }
 
     #[tokio::test]

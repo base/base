@@ -1,7 +1,8 @@
 //! Transaction manager error types.
 
 use alloy_primitives::Bytes;
-use alloy_transport::TransportError;
+use alloy_transport::{RpcError, TransportError, TransportErrorKind};
+use alloy_transport_http::reqwest;
 use thiserror::Error;
 
 /// Maximum number of revert-data bytes rendered in [`RevertDisplay`].
@@ -93,14 +94,20 @@ pub enum TxManagerError {
 
     /// Calculated fee exceeds the configured fee-limit ceiling.
     ///
-    /// Returned by [`crate::FeeCalculator::check_limits`] when the proposed fee
-    /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
-    /// fee is at or above `fee_limit_threshold`. Non-retryable.
+    /// For a regular transaction, returned by
+    /// [`crate::FeeCalculator::check_limits`] when the proposed fee surpasses
+    /// `fee_limit_multiplier × suggested_fee` and the suggested fee is at or
+    /// above `fee_limit_threshold`. For a blob transaction, returned by
+    /// [`crate::BlobFeePolicy::fees`] and [`crate::BlobFeePolicy::replacement`]
+    /// when `max_priority_fee_per_gas` surpasses `upper_bound × blob_count`;
+    /// blob transactions never go through `check_limits`. Non-retryable.
     #[error("fee limit exceeded: fee {fee} exceeds ceiling {ceiling}")]
     FeeLimitExceeded {
         /// The proposed fee that was rejected.
         fee: u128,
-        /// The ceiling that was exceeded (`fee_limit_multiplier × suggested`).
+        /// The ceiling that was exceeded: `fee_limit_multiplier × suggested`
+        /// for a regular transaction, `upper_bound × blob_count` for a blob
+        /// transaction.
         ceiling: u128,
     },
 
@@ -172,6 +179,15 @@ pub enum TxManagerError {
     #[error("transaction already known")]
     AlreadyKnown,
 
+    /// A publish got no JSON-RPC answer, because it timed out or failed in transport
+    /// after the request may have reached the node.
+    ///
+    /// The transaction may be in the mempool, so its nonce must not be reused. The send
+    /// loop follows it as published, and this variant only reaches direct callers of
+    /// [`SimpleTxManager::publish_tx`](crate::SimpleTxManager::publish_tx).
+    #[error("publish got no answer")]
+    NoAnswer,
+
     /// Unclassified RPC error preserving the original error string.
     ///
     /// This variant is treated as retryable by [`TxManagerError::is_retryable`]
@@ -206,7 +222,21 @@ impl TxManagerError {
                 | Self::FeeTooLow
                 | Self::MaxFeePerGasTooLow
                 | Self::AlreadyKnown
+                | Self::NoAnswer
                 | Self::Rpc(_)
+        )
+    }
+
+    /// Returns `true` when the node refused the transaction for its fees, which a
+    /// replacement with higher fees can clear.
+    #[must_use]
+    pub const fn is_fee_rejection(&self) -> bool {
+        matches!(
+            self,
+            Self::Underpriced
+                | Self::ReplacementUnderpriced
+                | Self::FeeTooLow
+                | Self::MaxFeePerGasTooLow
         )
     }
 
@@ -290,7 +320,11 @@ impl RpcErrorClassifier {
         if lowered.contains("replacement transaction underpriced") {
             return TxManagerError::ReplacementUnderpriced;
         }
-        if lowered.contains("transaction underpriced") {
+        // Geth refuses a priority fee below its admission floor with "transaction gas
+        // price below minimum".
+        if lowered.contains("transaction underpriced")
+            || lowered.contains("gas price below minimum")
+        {
             return TxManagerError::Underpriced;
         }
         if lowered.contains("nonce too low") {
@@ -330,6 +364,30 @@ impl RpcErrorClassifier {
         TxManagerError::Rpc(payload.message.to_string())
     }
 
+    /// Returns `true` when `error` means that a request got no JSON-RPC answer although
+    /// it may have reached the node: a transport failure other than a failed connection,
+    /// or a gateway that lost the upstream answer (HTTP 502 or 504).
+    ///
+    /// A JSON-RPC answer, an invalid response, a failed connection, and any other HTTP
+    /// status, such as 429 or 503, mean that the node did not take the request.
+    #[must_use]
+    pub fn is_unanswered(error: &TransportError) -> bool {
+        let RpcError::Transport(kind) = error else {
+            return false;
+        };
+        match kind {
+            TransportErrorKind::HttpError(error)
+            | TransportErrorKind::HttpErrorWithRetryAfter { error, .. } => {
+                matches!(error.status, 502 | 504)
+            }
+            TransportErrorKind::Custom(error) => {
+                !error.downcast_ref::<reqwest::Error>().is_some_and(reqwest::Error::is_connect)
+            }
+            TransportErrorKind::PubsubUnavailable | TransportErrorKind::NonRetryable(_) => false,
+            _ => true,
+        }
+    }
+
     /// Returns `true` if `error_msg` contains any of the given substrings
     /// (compared case-insensitively).
     ///
@@ -346,8 +404,7 @@ impl RpcErrorClassifier {
 mod tests {
     use std::borrow::Cow;
 
-    use alloy_json_rpc::{ErrorPayload, RpcError};
-    use alloy_transport::TransportErrorKind;
+    use alloy_json_rpc::ErrorPayload;
     use rstest::rstest;
 
     use super::*;
@@ -380,6 +437,10 @@ mod tests {
         TxManagerError::ReplacementUnderpriced
     )]
     #[case::underpriced("transaction underpriced", TxManagerError::Underpriced)]
+    #[case::below_minimum_price(
+        "transaction gas price below minimum: gas tip cap 1, minimum needed 2",
+        TxManagerError::Underpriced
+    )]
     #[case::nonce_too_low("nonce too low", TxManagerError::NonceTooLow)]
     #[case::nonce_too_high("nonce too high", TxManagerError::NonceTooHigh)]
     #[case::insufficient_funds("insufficient funds", TxManagerError::InsufficientFunds)]
@@ -424,6 +485,36 @@ mod tests {
         assert_eq!(classified, TxManagerError::Rpc("transport request failed".to_string()));
     }
 
+    // ── is_unanswered ───────────────────────────────────────────────────
+
+    #[rstest]
+    #[case::connection_lost(TransportErrorKind::custom_str("connection reset"), true)]
+    #[case::backend_gone(RpcError::Transport(TransportErrorKind::BackendGone), true)]
+    #[case::bad_gateway(TransportErrorKind::http_error(502, String::new()), true)]
+    #[case::gateway_timeout(TransportErrorKind::http_error(504, String::new()), true)]
+    #[case::rate_limited(TransportErrorKind::http_error(429, String::new()), false)]
+    #[case::unavailable(TransportErrorKind::http_error(503, String::new()), false)]
+    #[case::json_rpc_error(error_resp("connection reset by peer"), false)]
+    #[case::invalid_response(
+        TransportError::deser_err(serde_json::from_str::<u64>("").unwrap_err(), ""),
+        false
+    )]
+    fn is_unanswered(#[case] error: TransportError, #[case] expected: bool) {
+        assert_eq!(RpcErrorClassifier::is_unanswered(&error), expected);
+    }
+
+    /// A request whose connection failed never reached the node.
+    #[tokio::test]
+    async fn a_failed_connection_is_not_unanswered() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let error = reqwest::Client::new().post(url).send().await.unwrap_err();
+        assert!(error.is_connect());
+
+        assert!(!RpcErrorClassifier::is_unanswered(&TransportErrorKind::custom(error)));
+    }
+
     // ── is_retryable ────────────────────────────────────────────────────
 
     #[rstest]
@@ -448,9 +539,24 @@ mod tests {
     #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
     #[case::max_fee_too_low(TxManagerError::MaxFeePerGasTooLow, true)]
     #[case::already_known(TxManagerError::AlreadyKnown, true)]
+    #[case::no_answer(TxManagerError::NoAnswer, true)]
     #[case::rpc(TxManagerError::Rpc("any error".to_string()), true)]
     fn is_retryable(#[case] error: TxManagerError, #[case] expected: bool) {
         assert_eq!(error.is_retryable(), expected);
+    }
+
+    // ── is_fee_rejection ────────────────────────────────────────────────
+
+    #[rstest]
+    #[case::underpriced(TxManagerError::Underpriced, true)]
+    #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
+    #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
+    #[case::max_fee_too_low(TxManagerError::MaxFeePerGasTooLow, true)]
+    #[case::already_known(TxManagerError::AlreadyKnown, false)]
+    #[case::rpc(TxManagerError::Rpc("connection reset".to_string()), false)]
+    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 2, ceiling: 1 }, false)]
+    fn is_fee_rejection(#[case] error: TxManagerError, #[case] expected: bool) {
+        assert_eq!(error.is_fee_rejection(), expected);
     }
 
     // ── is_already_known ────────────────────────────────────────────────
@@ -510,6 +616,7 @@ mod tests {
         "nonce acquisition failed"
     )]
     #[case::send_timeout(TxManagerError::SendTimeout, "send timed out")]
+    #[case::no_answer(TxManagerError::NoAnswer, "publish got no answer")]
     #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
     #[case::unsupported(TxManagerError::Unsupported("blob tx".to_string()), "unsupported: blob tx")]
     #[case::sign(TxManagerError::Sign("key error".to_string()), "signing failed: key error")]

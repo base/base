@@ -10,9 +10,7 @@
 //! - `ZK_RANGE_HASH`, which the aggregation program commits as the range
 //!   program's verifying key inside the journal.
 //!
-//! Either mismatch makes every on-chain ZK proof revert `InvalidProof()` — the
-//! failure the challenger E2E hit on zeronet after zk-host moved to base v1.4.2
-//! ahead of the on-chain hashes — while this test kept passing.
+//! Either mismatch makes every on-chain ZK proof revert `InvalidProof()`.
 //!
 //! Only meaningful when this binary and zk-host are built from the same base
 //! commit: the computed keys come from this binary's ELFs, the proofs from

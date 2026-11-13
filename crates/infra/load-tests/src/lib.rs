@@ -22,8 +22,9 @@ pub use utils::{BaselineError, Result};
 mod rpc;
 pub use rpc::{
     BaseFeeExt, BatchRpcClient, BatchSendError, BatchSendResult, JSON_RPC_METHOD_NOT_FOUND,
-    MAX_BATCH_RPC_SIZE, QueryProvider, RPC_TIMEOUT, RpcProviders, RpcResultExt, SubmitItem,
-    TxpoolAdminClient, WalletProvider, create_wallet_provider,
+    MAX_BATCH_RPC_SIZE, QueryProvider, RPC_TIMEOUT, ReplyStr, RpcProviders, RpcResultExt,
+    SubmitErrorReply, SubmitItem, SubmitParams, SubmitReply, SubmitRequest, TxpoolAdminClient,
+    ValiditySidecar, WalletProvider, create_wallet_provider,
 };
 
 mod metrics;
@@ -54,11 +55,10 @@ pub use runner::{
     DEFAULT_MAX_IN_FLIGHT_PER_SENDER, DisplaySnapshot, FUNDING_MAX_FEE_BASE_FEE_MULTIPLIER, Fees,
     GasEstimate, GasPricer, InclusionPulse, InclusionSource, InjectLimit, InjectPlan, LoadConfig,
     LoadRunner, LoadTestDisplay, LoadTestStage, MAX_FEE_BASE_FEE_MULTIPLIER,
-    MAX_SENDER_WORKER_COUNT, MAX_SIGNER_WORKER_COUNT, MIN_PRIORITY_FEE, MeasurementWindow,
-    MempoolDepthController, PipelineQueue, PipelineStartConfig, PredicateAddress, PredicateValue,
-    PreparedBatch, PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker,
-    SENDER_WORKERS_PER_RPC, SIGNER_WORKERS_PER_RPC, SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS,
-    SenderContext, SentTransaction, SignedBatch, SignedTransaction, SignerContext, SlotTemplate,
-    SubmissionPipeline, SubmitCohort, SubmitEvent, TxConfig, TxType, ValidityPredicateTemplate,
-    ValidityRouter,
+    MAX_SENDER_WORKER_COUNT, MIN_PRIORITY_FEE, MeasurementWindow, MempoolDepthController,
+    PipelineQueue, PipelineStartConfig, PredicateAddress, PredicateValue, PreparedTransaction,
+    PresignBuffer, QueuedSubmitFailures, ResultsTracker, SENDER_WORKERS_PER_RPC,
+    SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS, SenderContext, SentTransaction, SignedBatch,
+    SignedTransaction, SlotTemplate, SubmissionPipeline, SubmitCohort, SubmitEvent, TxConfig,
+    TxType, ValidityPredicateTemplate, ValidityRouter,
 };

@@ -334,6 +334,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             unsafe_payload_gossip_client: QueuedUnsafePayloadGossipClient::private(),
             sealer: None,
             pending_stop: None,
+            payload_ready: None,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
             schedule_delay: self.schedule_delay,
         };

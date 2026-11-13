@@ -54,7 +54,8 @@ impl From<NetworkConfig> for NetworkBuilder {
         .with_topic_scoring(config.topic_scoring)
         .with_gater_config(config.gater_config)
         .with_connection_limits_config(config.connection_limits_config)
-        .with_max_identify_peerstore_peers(config.max_identify_peerstore_peers);
+        .with_max_identify_peerstore_peers(config.max_identify_peerstore_peers)
+        .with_trusted_peers(config.trusted_peers);
         builder.gossip = builder.gossip.with_reuse_listener_port(config.reuse_listener_port);
         builder
     }
@@ -96,6 +97,11 @@ impl NetworkBuilder {
     /// Sets the configuration for the connection gater.
     pub fn with_gater_config(self, config: GaterConfig) -> Self {
         Self { gossip: self.gossip.with_gater_config(config), ..self }
+    }
+
+    /// Sets the trusted peers: multiaddrs with a `/p2p/<peer-id>` component.
+    pub fn with_trusted_peers(self, trusted_peers: Vec<Multiaddr>) -> Self {
+        Self { gossip: self.gossip.with_trusted_peers(trusted_peers), ..self }
     }
 
     /// Sets the connection limits enforced by the libp2p swarm.

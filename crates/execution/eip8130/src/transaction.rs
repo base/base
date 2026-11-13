@@ -40,14 +40,12 @@ pub struct AppliedTransaction {
 /// Resolving the sender ahead of authorization lets block execution check the
 /// nonce before any account change runs. The EOA recovery token is carried into
 /// [`TransactionAuthorizer`] so the secp256k1 ecrecover runs once per
-/// transaction. The hash of the exact encoding binds it to the `signed` it
-/// came from: the transaction hash would not do, since it covers neither
-/// `sender_auth` nor whether `sender` is explicit on the wire.
+/// transaction, and the transaction hash binds it to the `signed` it came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedSender {
     account: Address,
     recovered: Option<RecoveredActorId>,
-    encoded_hash: B256,
+    tx_hash: B256,
 }
 
 impl ResolvedSender {
@@ -57,14 +55,14 @@ impl ResolvedSender {
     /// Returns [`TxAuthError::SenderRecovery`] when an EOA `sender_auth` does
     /// not recover a signer.
     pub fn resolve(signed: &Eip8130Signed) -> Result<Self, TxAuthError> {
-        let encoded_hash = signed.encoded_hash();
+        let tx_hash = *signed.hash();
         if let Some(account) = signed.explicit_sender() {
-            return Ok(Self { account, recovered: None, encoded_hash });
+            return Ok(Self { account, recovered: None, tx_hash });
         }
         let recovered = RecoveredActorId::recover_eoa_sender(signed)
             .map_err(|_| TxAuthError::SenderRecovery)?
             .ok_or(TxAuthError::SenderRecovery)?;
-        Ok(Self { account: recovered.address(), recovered: Some(recovered), encoded_hash })
+        Ok(Self { account: recovered.address(), recovered: Some(recovered), tx_hash })
     }
 
     /// The resolved sender account.
@@ -72,13 +70,13 @@ impl ResolvedSender {
         self.account
     }
 
-    /// Checks that this sender was resolved from the exact encoding `signed`.
+    /// Checks that this sender was resolved from `signed`.
     ///
     /// # Errors
     /// Returns [`TxAuthError::ResolvedSenderMismatch`] when it was resolved
-    /// from a different encoding, even one with the same transaction hash.
+    /// from a different transaction.
     pub fn check_resolved_from(&self, signed: &Eip8130Signed) -> Result<(), TxAuthError> {
-        if self.encoded_hash == signed.encoded_hash() {
+        if self.tx_hash == *signed.hash() {
             Ok(())
         } else {
             Err(TxAuthError::ResolvedSenderMismatch)
@@ -1169,33 +1167,6 @@ mod tests {
         with_storage(|acc| {
             assert_eq!(
                 TransactionAuthorizer::authorize_and_apply(&second, sender, acc, LOCAL, NOW),
-                Err(TxAuthError::ResolvedSenderMismatch)
-            );
-        });
-    }
-
-    /// A named-sender copy of an EOA-path transaction shares its transaction
-    /// hash, so the recovered sender of the original must not authorize the
-    /// copy's unchecked `sender_auth`.
-    #[test]
-    fn sender_resolved_from_same_hash_variant_is_rejected() {
-        let sender_key = key(0x11);
-        let original = eoa_signed(TxEip8130::default(), &sender_key);
-        let named_copy = Eip8130Signed::new(
-            TxEip8130 { sender: Some(addr(&sender_key)), ..TxEip8130::default() },
-            Bytes::from_static(&[0xab; 66]),
-            Bytes::new(),
-        );
-        assert_eq!(original.hash(), named_copy.hash());
-        let sender = ResolvedSender::resolve(&original).unwrap();
-
-        assert_eq!(
-            TransactionAuthorizer::authorize_without_keystore(&named_copy, sender),
-            Err(TxAuthError::ResolvedSenderMismatch)
-        );
-        with_storage(|acc| {
-            assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&named_copy, sender, acc, LOCAL, NOW),
                 Err(TxAuthError::ResolvedSenderMismatch)
             );
         });

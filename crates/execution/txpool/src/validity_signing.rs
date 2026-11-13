@@ -23,9 +23,7 @@ sol! {
     /// EIP-712 message binding predicates to one signed transaction.
     #[derive(Debug)]
     struct ValidityAuthorization {
-        /// Transaction hash (`tx.hash()`): the complete signed EIP-2718 envelope
-        /// for every type except EIP-8130, whose hash excludes `sender_auth` and
-        /// `payer_auth`.
+        /// Hash of the complete signed EIP-2718 envelope.
         bytes32 transactionHash;
         /// Predicates sorted by their EIP-712 struct hashes, retaining duplicates.
         ValidityPredicate[] validity;

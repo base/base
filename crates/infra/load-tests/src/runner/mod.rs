@@ -26,11 +26,10 @@ pub use results_tracker::{
 mod submission;
 pub use submission::{
     BatchTxError, FUNDING_MAX_FEE_BASE_FEE_MULTIPLIER, Fees, GasPricer,
-    MAX_FEE_BASE_FEE_MULTIPLIER, MAX_SENDER_WORKER_COUNT, MAX_SIGNER_WORKER_COUNT,
-    MIN_PRIORITY_FEE, PipelineQueue, PipelineStartConfig, PreparedBatch, PreparedTransaction,
-    QueuedSubmitFailures, SENDER_WORKERS_PER_RPC, SIGNER_WORKERS_PER_RPC,
+    MAX_FEE_BASE_FEE_MULTIPLIER, MAX_SENDER_WORKER_COUNT, MIN_PRIORITY_FEE, PipelineQueue,
+    PipelineStartConfig, PreparedTransaction, QueuedSubmitFailures, SENDER_WORKERS_PER_RPC,
     SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS, SenderContext, SignedBatch, SignedTransaction,
-    SignerContext, SubmissionPipeline, SubmitCohort, SubmitEvent,
+    SubmissionPipeline, SubmitCohort, SubmitEvent,
 };
 
 mod validity_router;

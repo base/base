@@ -51,6 +51,8 @@ pub struct NetworkConfig {
     pub max_identify_peerstore_peers: NonZeroUsize,
     /// An optional list of bootnode ENRs to start the node with.
     pub bootnodes: BootNodes,
+    /// Trusted peer addresses, each with a `/p2p/<peer-id>` component.
+    pub trusted_peers: Vec<Multiaddr>,
     /// The [`RollupConfig`].
     pub rollup_config: RollupConfig,
     /// A signer for gossip payloads.
@@ -97,6 +99,7 @@ impl NetworkConfig {
             enr_update: true,
             keypair: Keypair::generate_secp256k1(),
             bootnodes: Default::default(),
+            trusted_peers: Default::default(),
             bootstore: Default::default(),
             gater_config: Default::default(),
             connection_limits_config: Default::default(),
