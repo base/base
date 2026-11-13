@@ -717,6 +717,6 @@ not unsatisfied predicates. A transaction whose predicate is false is skipped by
 simply never confirms (it is not distinguishable from an ordinary drop by a
 counter alone). Compare the `by_cohort` inclusion rates *relative to each other*
 rather than against an absolute target; to confirm the skip path directly,
-observe the builder's `BuilderRejected` event with reason
-`validity_predicate_not_satisfied`, or run the builder with
-`RUST_LOG=payload_builder=trace`.
+watch the builder's
+`base_builder_validity_predicate_evaluations_total{outcome="not_satisfied"}`
+counter, or run the builder with `RUST_LOG=payload_builder=trace`.

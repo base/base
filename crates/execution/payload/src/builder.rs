@@ -56,13 +56,13 @@ use tokio::sync::broadcast;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
-    CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
-    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
-    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
-    RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
-    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
-    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
+    HoldInterrupt, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
+    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
+    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
+    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
+    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
+    payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -1087,10 +1087,6 @@ where
         let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
         let mut validity_consideration_index = 0_u64;
-        // A blocked transaction is parked again each time a promotion re-yields it. Post-Denim
-        // the payload is built once, so this covers the whole block; pre-Denim rebuilds start a
-        // fresh scan and report deferrals again.
-        let mut deferrals = BlockDeferrals::default();
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
@@ -1145,8 +1141,8 @@ where
 
             let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
-            // Every validity candidate ends with a decision event, so there is no separate
-            // `BUILDER_CONSIDERED`.
+            // Every validity candidate ends parked or with a decision event, so there is no
+            // separate `BUILDER_CONSIDERED`.
             if has_validity_predicates {
                 validity_consideration_index += 1;
             }
@@ -1165,18 +1161,6 @@ where
                     "deferring validity-gated transaction: predicate evaluation budget exhausted"
                 );
                 best_txs.park_current();
-                if deferrals.record(tx_hash, "predicate_eval_budget_exhausted") {
-                    emit_native_validity_event!(
-                        self,
-                        TransactionEventType::BuilderDeferred,
-                        tx_hash,
-                        validity_consideration_index,
-                        {
-                            "defer_reason" => "predicate_eval_budget_exhausted",
-                            "defer_detail" => "validity-predicate evaluation time budget exhausted for this payload build",
-                        }
-                    );
-                }
                 continue;
             }
 
@@ -1243,6 +1227,8 @@ where
                         expired: false,
                     }) => {
                         evaluation_counters.increment(ValidityEvaluationOutcome::NotSatisfied, 1);
+                        // Parking is the most frequent validity decision and rarely precedes an
+                        // inclusion, so it is counted above and not journaled.
                         trace!(
                             target: "payload_builder",
                             tx_hash = ?tx_hash,
@@ -1250,18 +1236,6 @@ where
                             "parking transaction with unsatisfied validity predicate"
                         );
                         best_txs.park_current();
-                        if deferrals.record(tx_hash, "validity_predicate_not_satisfied") {
-                            emit_native_validity_event!(
-                                self,
-                                TransactionEventType::BuilderDeferred,
-                                tx_hash,
-                                validity_consideration_index,
-                                {
-                                    "defer_reason" => "validity_predicate_not_satisfied",
-                                    "defer_detail" => "a validity predicate is not satisfied by the current build state",
-                                }
-                            );
-                        }
                         predicate_index.park(tx_hash, pooled, predicate);
                         continue;
                     }
@@ -2168,9 +2142,6 @@ mod tests {
         ready: VecDeque<PooledCandidate>,
         parked: HashMap<B256, PooledCandidate>,
         current: Option<PooledCandidate>,
-        /// Whether promoted transactions are yielded before the remaining queued ones, as when
-        /// they outbid them.
-        promoted_first: bool,
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
         /// Parks held candidates before yielding them, as the pool's parking iterator does.
         hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
@@ -2191,7 +2162,6 @@ mod tests {
                 ready: VecDeque::new(),
                 parked: HashMap::default(),
                 current: None,
-                promoted_first: true,
                 invalid,
                 hold: None,
             }
@@ -2205,12 +2175,6 @@ mod tests {
             self.hold = hold;
             self
         }
-
-        /// Yields promoted transactions only after every queued one, so queued transactions can
-        /// change state between a promotion and the re-yield.
-        fn with_promoted_last(transactions: Vec<BasePooledTransaction>) -> Self {
-            Self { promoted_first: false, ..Self::new(transactions) }
-        }
     }
 
     impl PayloadTransactions for TestParkableTransactions {
@@ -2219,11 +2183,7 @@ mod tests {
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             assert!(self.current.is_none(), "current transaction was not lifecycle-managed");
             loop {
-                let transaction = if self.promoted_first {
-                    self.ready.pop_front().or_else(|| self.queued.pop_front())
-                } else {
-                    self.queued.pop_front().or_else(|| self.ready.pop_front())
-                }?;
+                let transaction = self.ready.pop_front().or_else(|| self.queued.pop_front())?;
                 if let Some(hold) = self.hold.as_mut()
                     && !transaction.transaction.validity_conditions().is_empty()
                     && hold.hold(&transaction)
@@ -2412,48 +2372,6 @@ mod tests {
             rejections,
             [(TransactionEventType::BuilderRejected, "invalid_transaction".into())]
         );
-    }
-
-    /// A promoted transaction whose predicate is broken again before it is re-yielded is parked a
-    /// second time for the same reason, which the journal records once.
-    #[test]
-    fn native_builder_reports_a_repeated_deferral_once() {
-        let event_capture = TransactionEventCapture::install();
-        // Event capture is process-global, so these transactions must not share hashes with other
-        // tests.
-        let watched_address = Address::repeat_byte(0x46);
-        let gated = pool_transaction_to(0, Address::repeat_byte(0x57), U256::ZERO)
-            .with_validity_predicates(vec![ValidityPredicate::Balance {
-                address: watched_address,
-                op: ValidityOperator::Equal,
-                value: U256::ONE,
-            }]);
-        // The first trigger satisfies the predicate and promotes `gated`; the second breaks it
-        // again before `gated` is re-yielded.
-        let satisfy = pool_transaction_to(0, watched_address, U256::ONE);
-        let unsatisfy = pool_transaction_to(0, watched_address, U256::from(2));
-        let funded_senders = [gated.sender(), satisfy.sender(), unsatisfy.sender()];
-        let gated_hash = *gated.hash();
-
-        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            pool_payload_context(DENIM_TIMESTAMP),
-            TestParkableTransactions::with_promoted_last(vec![gated, satisfy, unsatisfy]),
-            &funded_senders,
-        ) else {
-            panic!("Denim payload must freeze")
-        };
-
-        assert!(
-            !payload.block().body().transactions.iter().any(|tx| *tx.tx_hash() == gated_hash),
-            "gated transaction must stay parked"
-        );
-        let gated_events = event_capture
-            .events()
-            .into_iter()
-            .filter(|event| event.tx_hash == Some(gated_hash))
-            .map(|event| event.event_type)
-            .collect::<Vec<_>>();
-        assert_eq!(gated_events, [TransactionEventType::BuilderDeferred]);
     }
 
     #[test]
