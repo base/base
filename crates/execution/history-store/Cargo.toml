@@ -48,7 +48,7 @@ jsonrpsee = { workspace = true, features = ["macros", "server", "http-client"] }
 # async
 futures.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "rt", "sync", "time", "io-util"] }
 
 # misc
 lru.workspace = true

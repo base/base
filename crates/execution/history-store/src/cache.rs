@@ -9,8 +9,8 @@
 //! the segment's checksum manifest.
 
 use std::{
-    collections::{BTreeMap, HashMap},
-    fs,
+    collections::HashMap,
+    fs, io,
     num::NonZeroUsize,
     panic::AssertUnwindSafe,
     path::{Path, PathBuf},
@@ -21,7 +21,6 @@ use std::{
     time::SystemTime,
 };
 
-use alloy_primitives::Bytes;
 use base_common_consensus::BasePrimitives;
 use lru::LruCache;
 use reth_provider::providers::{StaticFileProvider, StaticFileProviderBuilder};
@@ -29,8 +28,8 @@ use roaring::RoaringBitmap;
 use tempfile::TempDir;
 
 use crate::{
-    BodyIndicesFile, Catalog, HistoryStoreError, IndexReader, SegmentFile, SegmentFiles,
-    SegmentManifest, SegmentObjects,
+    ArchiveReader, BodyIndicesFile, Catalog, HistoryStoreError, IndexReader, SegmentManifest,
+    SegmentObjects,
 };
 
 /// File touched on every disk-tier hit; its mtime orders LRU eviction.
@@ -42,6 +41,10 @@ const FILL_PREFIX: &str = "fill-";
 /// Prefix of published disk entries, followed by the segment number.
 const ENTRY_PREFIX: &str = "seg-";
 
+/// Default number of segment loads that may run at once
+/// ([`CacheConfig::max_concurrent_fills`]).
+pub const DEFAULT_MAX_CONCURRENT_FILLS: usize = 2;
+
 /// Cache sizing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CacheConfig {
@@ -51,6 +54,10 @@ pub struct CacheConfig {
     pub disk_dir: Option<PathBuf>,
     /// Byte budget of the disk cache (`--archive.cache-size`).
     pub disk_bytes: u64,
+    /// Segment loads (downloads and disk-entry checks) that may run at once across all
+    /// segments. Each load streams a whole segment through SHA-256, so this bounds the IO and
+    /// hashing that cold reads can start together.
+    pub max_concurrent_fills: NonZeroUsize,
 }
 
 impl Default for CacheConfig {
@@ -59,6 +66,8 @@ impl Default for CacheConfig {
             memory_segments: NonZeroUsize::new(4).expect("non-zero"),
             disk_dir: None,
             disk_bytes: 1 << 30,
+            max_concurrent_fills: NonZeroUsize::new(DEFAULT_MAX_CONCURRENT_FILLS)
+                .expect("non-zero"),
         }
     }
 }
@@ -189,16 +198,238 @@ impl DiskState {
 /// Disk bytes admitted for one fill, returned to the budget on drop, including when the fill
 /// future is cancelled.
 #[derive(Debug)]
-pub struct Reservation<'a> {
-    /// Cache the bytes were admitted to.
-    pub cache: &'a SegmentCache,
+pub struct Reservation {
+    /// Disk tier the bytes were admitted to.
+    pub tier: Arc<DiskTier>,
     /// Admitted bytes.
     pub bytes: u64,
 }
 
-impl Drop for Reservation<'_> {
+impl Drop for Reservation {
     fn drop(&mut self) {
-        self.cache.disk_state().reserved -= self.bytes;
+        self.tier.state().reserved -= self.bytes;
+    }
+}
+
+/// Outcome of looking for a segment's published disk entry.
+#[derive(Debug)]
+pub enum ExistingEntry {
+    /// The entry passed its manifest check and is open.
+    Hit(LoadedSegment),
+    /// No entry, or a corrupt one that was removed: fill it from the bucket.
+    Absent,
+    /// A corrupt entry another loaded segment still leases: serve this read ephemerally.
+    Leased,
+}
+
+/// The on-disk tier under `<disk_dir>/<namespace>`. Every method does blocking filesystem IO,
+/// so async callers run them through [`ArchiveReader::blocking`].
+#[derive(Debug)]
+pub struct DiskTier {
+    /// Directory holding this archive's entries.
+    pub root: PathBuf,
+    /// Byte budget of published entries plus reservations.
+    pub budget: u64,
+    /// Leases and reservations.
+    pub state: Mutex<DiskState>,
+}
+
+impl DiskTier {
+    /// Locks the disk-tier state.
+    pub fn state(&self) -> std::sync::MutexGuard<'_, DiskState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Directory of segment `k`'s published entry.
+    pub fn entry_dir(&self, k: u64) -> PathBuf {
+        self.root.join(format!("{ENTRY_PREFIX}{k}"))
+    }
+
+    /// Brings a persisted disk tier back within the budget before any lease exists.
+    ///
+    /// A `fill-*` directory left by a crashed process is never valid (publication is an atomic
+    /// rename), and its bytes are not covered by any reservation, so it is removed. Entries
+    /// written under a larger budget are then evicted least recently used first until the
+    /// published entries fit; an entry larger than the whole budget is removed, so later reads
+    /// of that segment follow the ephemeral policy instead of leasing it in place.
+    pub fn reconcile(&self) -> Result<(), HistoryStoreError> {
+        if !self.root.exists() {
+            return Ok(());
+        }
+        for entry in fs::read_dir(&self.root)? {
+            let path = entry?.path();
+            let abandoned = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(FILL_PREFIX));
+            if abandoned {
+                tracing::info!(path = %path.display(), "removing abandoned cache fill");
+                fs::remove_dir_all(&path)?;
+            }
+        }
+        let entries = Self::disk_entries(&self.root)?;
+        let mut total: u64 = entries.iter().map(|(_, size, _)| size).sum();
+        // Once the total fits, every remaining entry fits too, including against a budget
+        // smaller than one entry, which this loop empties.
+        for (_, size, path) in entries {
+            if total <= self.budget {
+                break;
+            }
+            tracing::info!(path = %path.display(), size, "evicting cache entry over the budget");
+            fs::remove_dir_all(&path)?;
+            total -= size;
+        }
+        Ok(())
+    }
+
+    /// Opens segment `k`'s published entry if it exists and matches `manifest`. Files are
+    /// hashed as they are read ([`SegmentManifest::check_dir`]), never loaded whole. A corrupt
+    /// entry is removed unless another loaded segment still leases it.
+    pub fn open_existing(
+        &self,
+        k: u64,
+        n: u64,
+        manifest: &SegmentManifest,
+    ) -> Result<ExistingEntry, HistoryStoreError> {
+        let Some(lease) = self.lease_existing(k) else { return Ok(ExistingEntry::Absent) };
+        let dir = lease.dir.clone();
+        match manifest.check_dir(k, n, &dir).and_then(|()| BodyIndicesFile::read(k, &dir, n)) {
+            Ok(bodies) => {
+                fs::write(dir.join(USED_MARKER), [])?;
+                let loaded = LoadedSegment::open(k, n, &dir, bodies, SegmentDir::Disk(lease))?;
+                Ok(ExistingEntry::Hit(loaded))
+            }
+            Err(err) => {
+                tracing::warn!(segment = k, error = %err, "discarding corrupt disk cache entry");
+                if self.discard(lease)? {
+                    Ok(ExistingEntry::Absent)
+                } else {
+                    Ok(ExistingEntry::Leased)
+                }
+            }
+        }
+    }
+
+    /// Leases segment `k`'s published entry if it exists. Checking and leasing under the disk
+    /// lock means eviction cannot remove the entry in between.
+    pub fn lease_existing(&self, k: u64) -> Option<Arc<DiskLease>> {
+        let dir = self.entry_dir(k);
+        let mut disk = self.state();
+        dir.exists().then(|| disk.lease(k, &dir))
+    }
+
+    /// Removes a corrupt entry unless another loaded segment still leases it. Returns whether
+    /// the entry was removed.
+    pub fn discard(&self, lease: Arc<DiskLease>) -> Result<bool, HistoryStoreError> {
+        let mut disk = self.state();
+        if Arc::strong_count(&lease) > 1 {
+            return Ok(false);
+        }
+        fs::remove_dir_all(&lease.dir)?;
+        disk.leases.remove(&lease.segment);
+        Ok(true)
+    }
+
+    /// Admits `bytes`, evicting unleased entries least recently used first. Returns `None`,
+    /// evicting nothing, when the fill cannot fit beside leased entries and other fills'
+    /// reservations.
+    pub fn reserve(self: &Arc<Self>, bytes: u64) -> Result<Option<Reservation>, HistoryStoreError> {
+        if bytes > self.budget {
+            return Ok(None);
+        }
+        fs::create_dir_all(&self.root)?;
+        let mut disk = self.state();
+        let entries = Self::disk_entries(&self.root)?;
+        let mut total: u64 = entries.iter().map(|(_, size, _)| size).sum::<u64>() + disk.reserved;
+        let evictable: Vec<(u64, PathBuf)> = entries
+            .into_iter()
+            .filter(|(_, _, path)| {
+                Self::entry_segment(path).is_none_or(|k| disk.live_lease(k).is_none())
+            })
+            .map(|(_, size, path)| (size, path))
+            .collect();
+        let freeable: u64 = evictable.iter().map(|(size, _)| size).sum();
+        if total - freeable + bytes > self.budget {
+            return Ok(None);
+        }
+        for (size, path) in evictable {
+            if total + bytes <= self.budget {
+                break;
+            }
+            fs::remove_dir_all(&path)?;
+            total -= size;
+        }
+        disk.reserved += bytes;
+        Ok(Some(Reservation { tier: Arc::clone(self), bytes }))
+    }
+
+    /// Creates an empty `fill-*` directory for a new entry.
+    pub fn fill_dir(&self) -> Result<TempDir, HistoryStoreError> {
+        Ok(tempfile::Builder::new().prefix(FILL_PREFIX).tempdir_in(&self.root)?)
+    }
+
+    /// Publishes a completed, manifest-checked fill as segment `k`'s entry and opens it.
+    pub fn publish_fill(
+        &self,
+        k: u64,
+        n: u64,
+        fill: TempDir,
+    ) -> Result<LoadedSegment, HistoryStoreError> {
+        let bodies = BodyIndicesFile::read(k, fill.path(), n)?;
+        fs::write(fill.path().join(USED_MARKER), [])?;
+        let lease = self.publish(k, fill)?;
+        let dir = lease.dir.clone();
+        LoadedSegment::open(k, n, &dir, bodies, SegmentDir::Disk(lease))
+    }
+
+    /// Renames a completed fill into place as segment `k`'s entry and leases it, under the disk
+    /// lock so no eviction sees the entry unleased.
+    pub fn publish(&self, k: u64, fill: TempDir) -> Result<Arc<DiskLease>, HistoryStoreError> {
+        let dir = self.entry_dir(k);
+        let mut disk = self.state();
+        let fill = fill.keep();
+        if let Err(err) = fs::rename(&fill, &dir) {
+            // Another process published the same entry first; its bytes are identical.
+            fs::remove_dir_all(&fill)?;
+            if !dir.exists() {
+                return Err(err.into());
+            }
+        }
+        Ok(disk.lease(k, &dir))
+    }
+
+    /// Parses the segment number of a published entry directory.
+    pub fn entry_segment(path: &Path) -> Option<u64> {
+        path.file_name()?.to_str()?.strip_prefix(ENTRY_PREFIX)?.parse().ok()
+    }
+
+    /// Published entries under `root` with their size, oldest first by last use.
+    pub fn disk_entries(root: &Path) -> Result<Vec<(SystemTime, u64, PathBuf)>, HistoryStoreError> {
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(root)? {
+            let path = entry?.path();
+            if Self::entry_segment(&path).is_none() || !path.is_dir() {
+                continue;
+            }
+            let used = fs::metadata(path.join(USED_MARKER))
+                .and_then(|meta| meta.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let mut size = 0;
+            for file in fs::read_dir(&path)? {
+                size += file?.metadata()?.len();
+            }
+            entries.push((used, size, path));
+        }
+        entries.sort();
+        Ok(entries)
+    }
+
+    /// Bytes held by published entries.
+    pub fn usage(&self) -> Result<u64, HistoryStoreError> {
+        if !self.root.exists() {
+            return Ok(0);
+        }
+        Ok(Self::disk_entries(&self.root)?.iter().map(|(_, size, _)| size).sum())
     }
 }
 
@@ -240,13 +471,18 @@ impl Drop for FillShare<'_> {
 /// - **Integrity.** Every fill, from the bucket or from disk, is checked against the segment's
 ///   SHA-256 manifest from the index before the files are opened. A corrupt disk entry is
 ///   removed and refetched.
+/// - **Bounded memory.** Objects stream from the bucket to their file chunk by chunk, hashed as
+///   they arrive, and disk entries are hashed as they are read, so a fill holds one chunk per
+///   object, never a whole segment. All filesystem IO, hashing and provider opens run on the
+///   blocking pool, and at most [`CacheConfig::max_concurrent_fills`] loads run at once across
+///   segments; a read waiting for a load slot can be cancelled without leaving state behind.
 /// - **Namespacing.** Disk entries live under `<disk_dir>/<namespace>/seg-<k>`, where the
 ///   namespace is the archive identity (chain id, genesis hash, format, `N`). Archives with
 ///   another identity never share entries. Within one identity, segment bytes are
 ///   deterministic and manifest-checked, so two buckets of the same chain may share entries.
 /// - **Single flight.** Concurrent misses for one segment wait on one fill. The fill writes
 ///   into a `fill-*` directory and renames it into place, so readers and other processes never
-///   see a partial entry.
+///   see a partial entry. A fill that fails its checks removes its directory.
 /// - **Leases.** Every segment loaded from the disk tier leases its entry, and eviction skips
 ///   leased entries, because reth opens jars lazily by path after the segment is loaded.
 ///   Segments held by the memory tier stay leased, so the budget must exceed
@@ -258,7 +494,7 @@ impl Drop for FillShare<'_> {
 ///   temporary directory and never persisted. Leases and reservations are process-local: two
 ///   processes sharing one cache directory each enforce the budget for their own fills only.
 /// - **Restart.** Opening the cache removes abandoned `fill-*` directories and evicts persisted
-///   entries until they fit the current budget ([`Self::reconcile_disk`]), before any lease.
+///   entries until they fit the current budget ([`DiskTier::reconcile`]), before any lease.
 pub struct SegmentCache {
     /// Sizing.
     pub config: CacheConfig,
@@ -272,8 +508,10 @@ pub struct SegmentCache {
     pub memory: Mutex<LruCache<u64, Arc<LoadedSegment>>>,
     /// In-flight fills, one lock per segment.
     pub fills: Mutex<HashMap<u64, Arc<tokio::sync::Mutex<()>>>>,
-    /// Disk-tier leases and reservations.
-    pub disk: Mutex<DiskState>,
+    /// Disk tier, if configured.
+    pub disk: Option<Arc<DiskTier>>,
+    /// Load slots shared by every segment ([`CacheConfig::max_concurrent_fills`]).
+    pub fill_permits: tokio::sync::Semaphore,
     /// Number of bucket downloads performed.
     pub downloads: AtomicU64,
 }
@@ -289,8 +527,9 @@ impl std::fmt::Debug for SegmentCache {
 }
 
 impl SegmentCache {
-    /// Creates a cache for the archive described by `catalog`.
-    pub fn new(
+    /// Creates a cache for the archive described by `catalog`, reconciling a persisted disk
+    /// tier with the configured budget first.
+    pub async fn new(
         config: CacheConfig,
         objects: SegmentObjects,
         catalog: &Catalog,
@@ -300,54 +539,30 @@ impl SegmentCache {
             "{}-{}-f{}-n{blocks_per_segment}",
             catalog.chain_id, catalog.genesis_hash, catalog.format
         );
+        let disk = config.disk_dir.as_ref().map(|dir| {
+            Arc::new(DiskTier {
+                root: dir.join(&namespace),
+                budget: config.disk_bytes,
+                state: Mutex::default(),
+            })
+        });
+        if let Some(tier) = &disk {
+            let tier = Arc::clone(tier);
+            ArchiveReader::blocking(move || tier.reconcile()).await?;
+        }
         let memory = Mutex::new(LruCache::new(config.memory_segments));
-        let cache = Self {
+        let fill_permits = tokio::sync::Semaphore::new(config.max_concurrent_fills.get());
+        Ok(Self {
             config,
             objects,
             blocks_per_segment,
             namespace,
             memory,
             fills: Mutex::default(),
-            disk: Mutex::default(),
+            disk,
+            fill_permits,
             downloads: AtomicU64::new(0),
-        };
-        cache.reconcile_disk()?;
-        Ok(cache)
-    }
-
-    /// Brings a persisted disk tier back within this cache's budget before any lease exists.
-    ///
-    /// A `fill-*` directory left by a crashed process is never valid (publication is an atomic
-    /// rename), and its bytes are not covered by any reservation, so it is removed. Entries
-    /// written under a larger budget are then evicted least recently used first until the
-    /// published entries fit; an entry larger than the whole budget is removed, so later reads
-    /// of that segment follow the ephemeral policy instead of leasing it in place.
-    pub fn reconcile_disk(&self) -> Result<(), HistoryStoreError> {
-        let Some(root) = self.disk_root().filter(|root| root.exists()) else { return Ok(()) };
-        for entry in fs::read_dir(&root)? {
-            let path = entry?.path();
-            let abandoned = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with(FILL_PREFIX));
-            if abandoned {
-                tracing::info!(path = %path.display(), "removing abandoned cache fill");
-                fs::remove_dir_all(&path)?;
-            }
-        }
-        let entries = Self::disk_entries(&root)?;
-        let mut total: u64 = entries.iter().map(|(_, size, _)| size).sum();
-        // Once the total fits, every remaining entry fits too, including against a budget
-        // smaller than one entry, which this loop empties.
-        for (_, size, path) in entries {
-            if total <= self.config.disk_bytes {
-                break;
-            }
-            tracing::info!(path = %path.display(), size, "evicting cache entry over the budget");
-            fs::remove_dir_all(&path)?;
-            total -= size;
-        }
-        Ok(())
+        })
     }
 
     /// Number of segments in the memory tier.
@@ -357,17 +572,17 @@ impl SegmentCache {
 
     /// Directory holding this archive's disk entries, if the disk tier is on.
     pub fn disk_root(&self) -> Option<PathBuf> {
-        self.config.disk_dir.as_ref().map(|dir| dir.join(&self.namespace))
-    }
-
-    /// Locks the disk-tier state.
-    pub fn disk_state(&self) -> std::sync::MutexGuard<'_, DiskState> {
-        self.disk.lock().unwrap_or_else(PoisonError::into_inner)
+        self.disk.as_ref().map(|tier| tier.root.clone())
     }
 
     /// Bytes admitted for fills that have not published yet.
     pub fn disk_reserved(&self) -> u64 {
-        self.disk_state().reserved
+        self.disk.as_ref().map_or(0, |tier| tier.state().reserved)
+    }
+
+    /// Bytes currently held by the disk tier's published entries. Does blocking IO.
+    pub fn disk_usage(&self) -> Result<u64, HistoryStoreError> {
+        self.disk.as_ref().map_or(Ok(0), |tier| tier.usage())
     }
 
     /// Returns segment `k`, loading it from disk or the bucket on a miss. `index` supplies the
@@ -385,6 +600,7 @@ impl SegmentCache {
         if let Some(hit) = self.memory_hit(k) {
             return Ok(hit);
         }
+        let _permit = self.fill_permits.acquire().await.map_err(io::Error::other)?;
         let loaded = Arc::new(self.load(k, index).await?);
         self.memory.lock().unwrap_or_else(PoisonError::into_inner).put(k, Arc::clone(&loaded));
         Ok(loaded)
@@ -403,48 +619,52 @@ impl SegmentCache {
     ) -> Result<LoadedSegment, HistoryStoreError> {
         let n = self.blocks_per_segment;
         let manifest = index.manifest(k).await?;
-        let Some(root) = self.disk_root() else { return self.load_ephemeral(&manifest).await };
-        let dir = root.join(format!("{ENTRY_PREFIX}{k}"));
-        if let Some(lease) = self.lease_existing(k, &dir) {
-            match Self::read_dir_files(&dir).and_then(|files| {
-                manifest.check(k, n, &files)?;
-                BodyIndicesFile::decode(k, &files[SegmentFile::BODY_INDICES], n)
-            }) {
-                Ok(bodies) => {
-                    fs::write(dir.join(USED_MARKER), [])?;
-                    return LoadedSegment::open(k, n, &dir, bodies, SegmentDir::Disk(lease));
-                }
-                Err(err) => {
-                    tracing::warn!(segment = k, error = %err, "discarding corrupt disk cache entry");
-                    if !self.discard(lease)? {
-                        return self.load_ephemeral(&manifest).await;
-                    }
-                }
-            }
+        let Some(tier) = self.disk.clone() else { return self.load_ephemeral(&manifest).await };
+        let existing = {
+            let (tier, manifest) = (Arc::clone(&tier), manifest.clone());
+            ArchiveReader::blocking(move || tier.open_existing(k, n, &manifest)).await?
+        };
+        match existing {
+            ExistingEntry::Hit(loaded) => return Ok(loaded),
+            ExistingEntry::Leased => return self.load_ephemeral(&manifest).await,
+            ExistingEntry::Absent => {}
         }
-        let Some(reservation) = self.reserve(&root, manifest.total_bytes())? else {
+        let reservation = {
+            let (tier, bytes) = (Arc::clone(&tier), manifest.total_bytes());
+            ArchiveReader::blocking(move || tier.reserve(bytes)).await?
+        };
+        let Some(reservation) = reservation else {
             return self.load_ephemeral(&manifest).await;
         };
-        let files = self.download(&manifest).await?;
-        let bodies = files.body_indices()?;
-        let fill = tempfile::Builder::new().prefix(FILL_PREFIX).tempdir_in(&root)?;
-        Self::write(&files, fill.path())?;
-        fs::write(fill.path().join(USED_MARKER), [])?;
-        let lease = self.publish(k, fill, &dir)?;
+        let fill = {
+            let tier = Arc::clone(&tier);
+            ArchiveReader::blocking(move || tier.fill_dir()).await?
+        };
+        if let Err(err) = self.download_to(&manifest, fill.path()).await {
+            return Self::abandon(fill, err).await;
+        }
+        let loaded = ArchiveReader::blocking(move || tier.publish_fill(k, n, fill)).await?;
         drop(reservation);
-        LoadedSegment::open(k, n, &dir, bodies, SegmentDir::Disk(lease))
+        Ok(loaded)
     }
 
-    /// Downloads the objects `manifest` lists and checks them.
-    pub async fn download(
+    /// Streams the objects `manifest` lists into `dir`, checking each against the manifest.
+    pub async fn download_to(
         &self,
         manifest: &SegmentManifest,
-    ) -> Result<SegmentFiles, HistoryStoreError> {
-        let n = self.blocks_per_segment;
+        dir: &Path,
+    ) -> Result<(), HistoryStoreError> {
         self.downloads.fetch_add(1, Ordering::Relaxed);
-        let files = self.objects.download(manifest, n).await?;
-        manifest.check(manifest.segment, n, &files.files)?;
-        Ok(files)
+        self.objects.download_to(manifest, self.blocks_per_segment, dir).await
+    }
+
+    /// Removes a failed fill's directory on the blocking pool and returns the fill's error.
+    pub async fn abandon<T>(dir: TempDir, err: HistoryStoreError) -> Result<T, HistoryStoreError> {
+        let path = dir.path().to_path_buf();
+        if let Err(close) = ArchiveReader::blocking(move || Ok(dir.close()?)).await {
+            tracing::warn!(path = %path.display(), error = %close, "failed to remove cache fill");
+        }
+        Err(err)
     }
 
     /// Downloads a segment into a temporary directory that is never persisted.
@@ -452,152 +672,16 @@ impl SegmentCache {
         &self,
         manifest: &SegmentManifest,
     ) -> Result<LoadedSegment, HistoryStoreError> {
-        let files = self.download(manifest).await?;
-        let bodies = files.body_indices()?;
-        let temp = tempfile::tempdir()?;
-        Self::write(&files, temp.path())?;
-        let path = temp.path().to_path_buf();
-        LoadedSegment::open(
-            manifest.segment,
-            self.blocks_per_segment,
-            &path,
-            bodies,
-            SegmentDir::Temp(temp),
-        )
-    }
-
-    /// Leases segment `k`'s published entry at `dir` if it exists. Checking and leasing under
-    /// the disk lock means eviction cannot remove the entry in between.
-    pub fn lease_existing(&self, k: u64, dir: &Path) -> Option<Arc<DiskLease>> {
-        let mut disk = self.disk_state();
-        dir.exists().then(|| disk.lease(k, dir))
-    }
-
-    /// Removes a corrupt entry unless another loaded segment still leases it. Returns whether
-    /// the entry was removed.
-    pub fn discard(&self, lease: Arc<DiskLease>) -> Result<bool, HistoryStoreError> {
-        let mut disk = self.disk_state();
-        if Arc::strong_count(&lease) > 1 {
-            return Ok(false);
+        let (k, n) = (manifest.segment, self.blocks_per_segment);
+        let temp = ArchiveReader::blocking(|| Ok(tempfile::tempdir()?)).await?;
+        if let Err(err) = self.download_to(manifest, temp.path()).await {
+            return Self::abandon(temp, err).await;
         }
-        fs::remove_dir_all(&lease.dir)?;
-        disk.leases.remove(&lease.segment);
-        Ok(true)
-    }
-
-    /// Admits `bytes` to the disk tier, evicting unleased entries least recently used first.
-    /// Returns `None`, evicting nothing, when the fill cannot fit beside leased entries and
-    /// other fills' reservations.
-    pub fn reserve(
-        &self,
-        root: &Path,
-        bytes: u64,
-    ) -> Result<Option<Reservation<'_>>, HistoryStoreError> {
-        if bytes > self.config.disk_bytes {
-            return Ok(None);
-        }
-        fs::create_dir_all(root)?;
-        let mut disk = self.disk_state();
-        let entries = Self::disk_entries(root)?;
-        let mut total: u64 = entries.iter().map(|(_, size, _)| size).sum::<u64>() + disk.reserved;
-        let evictable: Vec<(u64, PathBuf)> = entries
-            .into_iter()
-            .filter(|(_, _, path)| {
-                Self::entry_segment(path).is_none_or(|k| disk.live_lease(k).is_none())
-            })
-            .map(|(_, size, path)| (size, path))
-            .collect();
-        let freeable: u64 = evictable.iter().map(|(size, _)| size).sum();
-        if total - freeable + bytes > self.config.disk_bytes {
-            return Ok(None);
-        }
-        for (size, path) in evictable {
-            if total + bytes <= self.config.disk_bytes {
-                break;
-            }
-            fs::remove_dir_all(&path)?;
-            total -= size;
-        }
-        disk.reserved += bytes;
-        Ok(Some(Reservation { cache: self, bytes }))
-    }
-
-    /// Renames a completed fill into place as segment `k`'s entry and leases it, under the disk
-    /// lock so no eviction sees the entry unleased.
-    pub fn publish(
-        &self,
-        k: u64,
-        fill: TempDir,
-        dir: &Path,
-    ) -> Result<Arc<DiskLease>, HistoryStoreError> {
-        let mut disk = self.disk_state();
-        let fill = fill.keep();
-        if let Err(err) = fs::rename(&fill, dir) {
-            // Another process published the same entry first; its bytes are identical.
-            fs::remove_dir_all(&fill)?;
-            if !dir.exists() {
-                return Err(err.into());
-            }
-        }
-        Ok(disk.lease(k, dir))
-    }
-
-    /// Parses the segment number of a published entry directory.
-    pub fn entry_segment(path: &Path) -> Option<u64> {
-        path.file_name()?.to_str()?.strip_prefix(ENTRY_PREFIX)?.parse().ok()
-    }
-
-    /// Reads a disk entry back under archive object names.
-    pub fn read_dir_files(dir: &Path) -> Result<BTreeMap<String, Bytes>, HistoryStoreError> {
-        let mut files = BTreeMap::new();
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let object = if name == SegmentFile::BODY_INDICES {
-                name
-            } else if let Some(object) = SegmentFile::object_name(&name) {
-                object
-            } else {
-                continue;
-            };
-            files.insert(object, Bytes::from(fs::read(entry.path())?));
-        }
-        Ok(files)
-    }
-
-    /// Writes a segment's static files and body index into `dir`.
-    pub fn write(files: &SegmentFiles, dir: &Path) -> Result<(), HistoryStoreError> {
-        files.write_static_files(dir)?;
-        if let Some(raw) = files.files.get(SegmentFile::BODY_INDICES) {
-            fs::write(dir.join(SegmentFile::BODY_INDICES), raw)?;
-        }
-        Ok(())
-    }
-
-    /// Published entries under `root` with their size, oldest first by last use.
-    pub fn disk_entries(root: &Path) -> Result<Vec<(SystemTime, u64, PathBuf)>, HistoryStoreError> {
-        let mut entries = Vec::new();
-        for entry in fs::read_dir(root)? {
-            let path = entry?.path();
-            if Self::entry_segment(&path).is_none() || !path.is_dir() {
-                continue;
-            }
-            let used = fs::metadata(path.join(USED_MARKER))
-                .and_then(|meta| meta.modified())
-                .unwrap_or(SystemTime::UNIX_EPOCH);
-            let mut size = 0;
-            for file in fs::read_dir(&path)? {
-                size += file?.metadata()?.len();
-            }
-            entries.push((used, size, path));
-        }
-        entries.sort();
-        Ok(entries)
-    }
-
-    /// Bytes currently held by the disk tier's published entries.
-    pub fn disk_usage(&self) -> Result<u64, HistoryStoreError> {
-        let Some(root) = self.disk_root().filter(|root| root.exists()) else { return Ok(0) };
-        Ok(Self::disk_entries(&root)?.iter().map(|(_, size, _)| size).sum())
+        ArchiveReader::blocking(move || {
+            let path = temp.path().to_path_buf();
+            let bodies = BodyIndicesFile::read(k, &path, n)?;
+            LoadedSegment::open(k, n, &path, bodies, SegmentDir::Temp(temp))
+        })
+        .await
     }
 }

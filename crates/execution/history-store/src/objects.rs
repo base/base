@@ -1,12 +1,16 @@
 //! Upload, download and deletion of segment objects under `seg/<k>/<epoch>/`.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
-use alloy_primitives::Bytes;
+use alloy_primitives::{B256, Bytes};
 use futures::TryStreamExt;
 use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload};
+use sha2::{Digest, Sha256};
+use tokio::io::AsyncWriteExt;
 
-use crate::{ArchiveLayout, HistoryStoreError, SegmentFile, SegmentFiles, SegmentManifest};
+use crate::{
+    ArchiveLayout, HistoryStoreError, ManifestEntry, SegmentFile, SegmentFiles, SegmentManifest,
+};
 
 /// Outcome of uploading one segment.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -108,6 +112,60 @@ impl SegmentObjects {
             });
         }
         Ok(SegmentFiles { segment: k, blocks_per_segment, files })
+    }
+
+    /// Streams the objects `manifest` lists into `dir` under their local names
+    /// ([`SegmentManifest::local_name`]), checking each object's size and SHA-256 as its chunks
+    /// arrive. Memory stays bounded by one chunk per object whatever the segment size, and an
+    /// object longer than its manifest size is rejected before the rest of it is read. A missing
+    /// object is `Unavailable`; a size or checksum mismatch is `CorruptSegment`. On error, `dir`
+    /// may hold partial files and the caller discards it.
+    pub async fn download_to(
+        &self,
+        manifest: &SegmentManifest,
+        blocks_per_segment: u64,
+        dir: &Path,
+    ) -> Result<(), HistoryStoreError> {
+        let k = manifest.segment;
+        manifest.check_range(k, blocks_per_segment)?;
+        if !manifest.files.contains_key(SegmentFile::BODY_INDICES) {
+            return Err(HistoryStoreError::Unavailable {
+                reason: format!("segment {k} objects missing"),
+            });
+        }
+        for (name, expected) in &manifest.files {
+            let local = manifest
+                .local_name(name, blocks_per_segment)
+                .ok_or_else(|| ManifestEntry::corrupt(k, name, "not a segment file".to_string()))?;
+            let path = self.layout.segment_object(k, manifest.epoch, name);
+            let mut chunks = match self.store.get(&path).await {
+                Ok(result) => result.into_stream(),
+                Err(object_store::Error::NotFound { .. }) => {
+                    return Err(HistoryStoreError::Unavailable {
+                        reason: format!("segment {k} object {name} missing"),
+                    });
+                }
+                Err(err) => return Err(err.into()),
+            };
+            let mut file = tokio::fs::File::create(dir.join(local)).await?;
+            let mut hasher = Sha256::new();
+            let mut size = 0u64;
+            while let Some(chunk) = chunks.try_next().await? {
+                size += chunk.len() as u64;
+                if size > expected.size {
+                    return Err(ManifestEntry::corrupt(
+                        k,
+                        name,
+                        format!("more than manifest {} bytes", expected.size),
+                    ));
+                }
+                hasher.update(&chunk);
+                file.write_all(&chunk).await?;
+            }
+            file.flush().await?;
+            expected.check(k, name, size, B256::from_slice(&hasher.finalize()))?;
+        }
+        Ok(())
     }
 
     /// Deletes the objects of segment `k` under every epoch older than `epoch`, returning how

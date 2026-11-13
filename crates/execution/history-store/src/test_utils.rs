@@ -8,7 +8,10 @@
 use std::{
     collections::BTreeMap,
     fmt,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use alloy_consensus::{
@@ -21,10 +24,10 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::calculate_receipt_root_no_memo;
-use futures::{StreamExt, stream::BoxStream};
+use futures::{StreamExt, TryStreamExt, stream::BoxStream};
 use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, path::Path,
+    CopyOptions, GetOptions, GetResult, GetResultPayload, ListResult, MultipartUpload, ObjectMeta,
+    ObjectStore, PutMultipartOptions, PutOptions, PutPayload, PutResult, path::Path,
 };
 use reth_db_api::models::{AccountBeforeTx, StorageBeforeTx};
 use reth_primitives_traits::Account;
@@ -504,6 +507,171 @@ impl ObjectStore for GatedStore {
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
         let path = prefix.cloned().unwrap_or_default();
         Self::pass(&self.gates, GateOp::List, &path).await;
+        self.inner.list_with_delimiter(prefix).await
+    }
+
+    async fn copy_opts(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: CopyOptions,
+    ) -> object_store::Result<()> {
+        self.inner.copy_opts(from, to, options).await
+    }
+}
+
+/// Bytes handed out by a [`ChunkedStore`] and not yet dropped, with the peak reached.
+#[derive(Debug, Default)]
+pub struct ChunkStats {
+    /// Chunk bytes currently alive anywhere in the process.
+    pub live: AtomicU64,
+    /// Highest value `live` reached.
+    pub peak: AtomicU64,
+    /// Chunks handed out.
+    pub chunks: AtomicU64,
+}
+
+/// One chunk's bytes; returns its length to [`ChunkStats::live`] when the last reference to it
+/// is dropped.
+#[derive(Debug)]
+pub struct TrackedChunk {
+    /// The chunk's bytes.
+    pub data: Vec<u8>,
+    /// Stats the chunk is counted in.
+    pub stats: Arc<ChunkStats>,
+}
+
+impl AsRef<[u8]> for TrackedChunk {
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
+}
+
+impl Drop for TrackedChunk {
+    fn drop(&mut self) {
+        self.stats.live.fetch_sub(self.data.len() as u64, Ordering::SeqCst);
+    }
+}
+
+/// An object store that returns every `get` under `prefix` as a stream of `chunk`-byte chunks
+/// and tracks how many chunk bytes are alive at once, so tests can bound how much of an object
+/// a consumer buffers. Other reads pass through untracked.
+///
+/// Hand-rolled rather than a `mockall` mock because it wraps a real store and must observe
+/// when the returned bytes are dropped, which an expectation on the call cannot express.
+#[derive(Debug, Clone)]
+pub struct ChunkedStore {
+    /// Store the operations run against.
+    pub inner: Arc<dyn ObjectStore>,
+    /// Path prefix of the reads that are chunked and tracked.
+    pub prefix: String,
+    /// Chunk size in bytes.
+    pub chunk: usize,
+    /// Live and peak chunk bytes.
+    pub stats: Arc<ChunkStats>,
+}
+
+impl ChunkedStore {
+    /// Wraps `inner`, splitting reads under `prefix` into `chunk`-byte chunks.
+    pub fn new(inner: Arc<dyn ObjectStore>, prefix: &str, chunk: usize) -> Self {
+        Self { inner, prefix: prefix.to_string(), chunk, stats: Arc::default() }
+    }
+
+    /// Wraps `data` as a tracked chunk counted in `stats`.
+    pub fn track(
+        data: Vec<u8>,
+        stats: &Arc<ChunkStats>,
+    ) -> object_store::Result<alloy_primitives::bytes::Bytes> {
+        let len = data.len() as u64;
+        let live = stats.live.fetch_add(len, Ordering::SeqCst) + len;
+        stats.peak.fetch_max(live, Ordering::SeqCst);
+        stats.chunks.fetch_add(1, Ordering::SeqCst);
+        Ok(alloy_primitives::bytes::Bytes::from_owner(TrackedChunk {
+            data,
+            stats: Arc::clone(stats),
+        }))
+    }
+}
+
+impl fmt::Display for ChunkedStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ChunkedStore({})", self.inner)
+    }
+}
+
+#[async_trait::async_trait]
+impl ObjectStore for ChunkedStore {
+    async fn put_opts(
+        &self,
+        location: &Path,
+        payload: PutPayload,
+        opts: PutOptions,
+    ) -> object_store::Result<PutResult> {
+        self.inner.put_opts(location, payload, opts).await
+    }
+
+    async fn put_multipart_opts(
+        &self,
+        location: &Path,
+        opts: PutMultipartOptions,
+    ) -> object_store::Result<Box<dyn MultipartUpload>> {
+        self.inner.put_multipart_opts(location, opts).await
+    }
+
+    async fn get_opts(
+        &self,
+        location: &Path,
+        options: GetOptions,
+    ) -> object_store::Result<GetResult> {
+        let result = self.inner.get_opts(location, options).await?;
+        if !location.as_ref().starts_with(&self.prefix) {
+            return Ok(result);
+        }
+        let (meta, range) = (result.meta.clone(), result.range.clone());
+        let (attributes, extensions) = (result.attributes.clone(), result.extensions.clone());
+        let (chunk, stats) = (self.chunk, Arc::clone(&self.stats));
+        // Chunks are cut lazily from each inner buffer, so only the chunks the consumer still
+        // holds are counted as live.
+        let payload = result
+            .into_stream()
+            .map_ok(move |raw| {
+                let stats = Arc::clone(&stats);
+                futures::stream::iter((0..raw.len()).step_by(chunk).map(move |start| {
+                    let end = raw.len().min(start + chunk);
+                    Self::track(raw[start..end].to_vec(), &stats)
+                }))
+            })
+            .try_flatten()
+            .boxed();
+        Ok(GetResult {
+            payload: GetResultPayload::Stream(payload),
+            meta,
+            range,
+            attributes,
+            extensions,
+        })
+    }
+
+    fn delete_stream(
+        &self,
+        locations: BoxStream<'static, object_store::Result<Path>>,
+    ) -> BoxStream<'static, object_store::Result<Path>> {
+        self.inner.delete_stream(locations)
+    }
+
+    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+        self.inner.list(prefix)
+    }
+
+    fn list_with_offset(
+        &self,
+        prefix: Option<&Path>,
+        offset: &Path,
+    ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+        self.inner.list_with_offset(prefix, offset)
+    }
+
+    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
         self.inner.list_with_delimiter(prefix).await
     }
 

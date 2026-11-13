@@ -205,7 +205,8 @@ impl ArchiveReader {
             config.cache.clone(),
             SegmentObjects::new(store, layout),
             &current.catalog,
-        )?;
+        )
+        .await?;
         Ok(Self {
             catalog,
             index,
@@ -912,6 +913,7 @@ mod tests {
             memory_segments: NonZeroUsize::new(1).unwrap(),
             disk_dir: Some(dir.path().to_path_buf()),
             disk_bytes,
+            ..CacheConfig::default()
         }
     }
 
@@ -1409,8 +1411,8 @@ mod tests {
             let block = reader.block(&snapshot, 4).await.unwrap();
             assert_eq!(
                 disk_entries(&reader),
-                Vec::<String>::new(),
-                "segment 1 is not admitted beside it"
+                vec![fill_dirs(&reader)[0].clone()],
+                "segment 1 is not admitted beside it; only segment 0's paused fill exists"
             );
             gate.release();
             block
@@ -1451,6 +1453,118 @@ mod tests {
             "next read fills"
         );
         assert_eq!(disk_entries(&reader), vec!["seg-0"], "the retry published the entry");
+    }
+
+    /// Review4 P2 fill memory: segment objects stream from the bucket to their files chunk by
+    /// chunk, on both the disk and the ephemeral path, so a fill never holds more than one
+    /// chunk of a segment at a time, whatever the segment size.
+    #[tokio::test]
+    async fn fills_hold_at_most_one_chunk() {
+        const CHUNK: usize = 16;
+        let (store, fixture) = published(2).await;
+        let size = segment_size(&store).await;
+        assert!(size > 100 * CHUNK as u64, "segment of {size} bytes spans many chunks");
+        let chunked = crate::test_utils::ChunkedStore::new(Arc::clone(&store), "chain/seg/", CHUNK);
+        let stats = Arc::clone(&chunked.stats);
+        let chunked: Arc<dyn ObjectStore> = Arc::new(chunked);
+        let dir = tempfile::tempdir().unwrap();
+        let reader = open_reader(&chunked, &fixture, disk(&dir, size + size / 2)).await;
+        let snapshot = reader.snapshot().await.unwrap();
+        let before = stats.chunks.load(Ordering::SeqCst);
+        assert_eq!(reader.block(&snapshot, 1).await.unwrap().hash, fixture.blocks[1].hash);
+        assert_eq!(disk_entries(&reader), vec!["seg-0"], "segment 0 filled the disk tier");
+        // Segment 1 does not fit beside segment 0's leased entry, so it is served ephemerally.
+        assert_eq!(reader.block(&snapshot, 5).await.unwrap().hash, fixture.blocks[5].hash);
+        assert_eq!(disk_entries(&reader), vec!["seg-0"], "segment 1 was served ephemerally");
+        assert_eq!(reader.cache.downloads.load(Ordering::Relaxed), 2, "one disk, one ephemeral");
+        let chunks = stats.chunks.load(Ordering::SeqCst) - before;
+        assert!(
+            chunks >= 2 * size / CHUNK as u64,
+            "both fills streamed in {CHUNK}-byte chunks, got {chunks} chunks for 2 x {size} bytes"
+        );
+        assert_eq!(
+            stats.peak.load(Ordering::SeqCst),
+            CHUNK as u64,
+            "at most one chunk of a segment was buffered at any time"
+        );
+        assert_eq!(stats.live.load(Ordering::SeqCst), 0, "no chunk outlives its fill");
+    }
+
+    /// Review4 P2 fill concurrency: at most `max_concurrent_fills` (2) segment loads run at
+    /// once. A third cold segment waits for a load slot without touching the bucket, a read
+    /// cancelled while waiting leaves no fill lock behind, and the slot is served once a fill
+    /// finishes.
+    #[tokio::test]
+    async fn third_concurrent_fill_waits_for_a_slot() {
+        let (store, fixture) = published(3).await;
+        let gated = GatedStore::new(Arc::clone(&store));
+        let mut first_gate = gated.arm(GateOp::Get, "chain/seg/0/");
+        let mut second_gate = gated.arm(GateOp::Get, "chain/seg/1/");
+        let mut third_gate = gated.arm(GateOp::Get, "chain/seg/2/");
+        let gated: Arc<dyn ObjectStore> = Arc::new(gated);
+        let dir = tempfile::tempdir().unwrap();
+        let reader = Arc::new(open_reader(&gated, &fixture, disk(&dir, 1 << 30)).await);
+        assert_eq!(reader.cache.config.max_concurrent_fills.get(), 2, "default of 2 load slots");
+        let snapshot = reader.snapshot().await.unwrap();
+        let read = |number: u64| {
+            let reader = Arc::clone(&reader);
+            tokio::spawn(async move { reader.block(&snapshot, number).await.map(|b| b.hash) })
+        };
+        let (first, second) = (read(0), read(4));
+        first_gate.reached().await;
+        second_gate.reached().await;
+        assert_eq!(reader.cache.fill_permits.available_permits(), 0, "both slots taken");
+
+        let waiting = read(8);
+        let started = tokio::time::timeout(Duration::from_millis(200), third_gate.reached()).await;
+        assert!(started.is_err(), "the third fill does not reach the bucket without a slot");
+        assert_eq!(reader.cache.downloads.load(Ordering::Relaxed), 2, "only two fills started");
+        assert!(reader.cache.fills.lock().unwrap().contains_key(&2), "the third read is waiting");
+        waiting.abort();
+        assert!(waiting.await.unwrap_err().is_cancelled(), "the waiting read was cancelled");
+        assert!(
+            !reader.cache.fills.lock().unwrap().contains_key(&2),
+            "a read cancelled while waiting for a slot leaves no fill lock behind"
+        );
+
+        third_gate.release();
+        let retry = read(8);
+        first_gate.release();
+        assert_eq!(first.await.unwrap().unwrap(), fixture.blocks[0].hash, "segment 0 served");
+        assert_eq!(retry.await.unwrap().unwrap(), fixture.blocks[8].hash, "segment 2 served");
+        second_gate.release();
+        assert_eq!(second.await.unwrap().unwrap(), fixture.blocks[4].hash, "segment 1 served");
+        assert_eq!(reader.cache.downloads.load(Ordering::Relaxed), 3, "three fills in total");
+        assert_eq!(reader.cache.fill_permits.available_permits(), 2, "every slot returned");
+        assert_eq!(disk_entries(&reader), vec!["seg-0", "seg-1", "seg-2"], "all three persisted");
+    }
+
+    /// Review4 P2 streamed checks: an object whose bytes differ from the manifest fails its
+    /// checksum while streaming, and the fill leaves no `fill-*` directory, no entry and no
+    /// reservation behind.
+    #[tokio::test]
+    async fn corrupt_download_leaves_no_fill_dir() {
+        let (store, fixture) = published(1).await;
+        let path = ArchiveLayout::new("chain").segment_object(0, 1, "transactions.dat");
+        let mut raw = store.get(&path).await.unwrap().bytes().await.unwrap().to_vec();
+        let middle = raw.len() / 2;
+        raw[middle] ^= 0xff;
+        store.put(&path, raw.into()).await.unwrap();
+        let chunked: Arc<dyn ObjectStore> =
+            Arc::new(crate::test_utils::ChunkedStore::new(Arc::clone(&store), "chain/seg/", 64));
+        let dir = tempfile::tempdir().unwrap();
+        let reader = open_reader(&chunked, &fixture, disk(&dir, 1 << 30)).await;
+        let snapshot = reader.snapshot().await.unwrap();
+        let err = reader.block(&snapshot, 1).await.unwrap_err();
+        assert!(
+            matches!(&err, HistoryStoreError::CorruptSegment { segment: 0, file, reason }
+                if file == "transactions.dat" && reason.starts_with("sha256 ")),
+            "the corrupt chunk fails the streamed checksum, got {err}"
+        );
+        assert_eq!(fill_dirs(&reader), Vec::<String>::new(), "no fill directory left behind");
+        assert_eq!(disk_entries(&reader), Vec::<String>::new(), "nothing published");
+        assert_eq!(reader.cache.disk_reserved(), 0, "reservation released");
+        assert_eq!(reader.cache.fill_permits.available_permits(), 2, "load slot returned");
     }
 
     /// Review2 P2 lookup retry, against real `SlateDB` coverage: the view does not cover `H`

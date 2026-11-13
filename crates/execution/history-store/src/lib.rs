@@ -76,8 +76,8 @@ pub use router::{ArchiveSnapshot, RangeSplit, Route};
 
 mod cache;
 pub use cache::{
-    CacheConfig, DiskLease, DiskState, FillShare, LoadedSegment, Reservation, SegmentCache,
-    SegmentDir, SegmentVerification,
+    CacheConfig, DEFAULT_MAX_CONCURRENT_FILLS, DiskLease, DiskState, DiskTier, ExistingEntry,
+    FillShare, LoadedSegment, Reservation, SegmentCache, SegmentDir, SegmentVerification,
 };
 
 mod reader;

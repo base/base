@@ -6,7 +6,7 @@
 //! machinery. The archive object names drop the block range from reth's file name, because the
 //! range is implied by the segment number.
 
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, fs, io, path::Path};
 
 use alloy_primitives::{B256, Bytes};
 use base_common_consensus::BasePrimitives;
@@ -93,6 +93,11 @@ impl BodyIndicesFile {
         out.into()
     }
 
+    /// Reads and decodes `block_bodies.idx` of segment `segment` from `dir`. Does blocking IO.
+    pub fn read(segment: u64, dir: &Path, blocks: u64) -> Result<Self, HistoryStoreError> {
+        Self::decode(segment, &fs::read(dir.join(SegmentFile::BODY_INDICES))?, blocks)
+    }
+
     /// Decodes a file that must hold exactly `blocks` entries.
     pub fn decode(segment: u64, raw: &[u8], blocks: u64) -> Result<Self, HistoryStoreError> {
         if raw.len() as u64 != blocks * BODY_INDEX_ENTRY_LEN as u64 {
@@ -126,6 +131,39 @@ pub struct ManifestEntry {
     pub size: u64,
 }
 
+impl ManifestEntry {
+    /// Checks the measured `size` and `sha256` of object `file` of segment `segment` against
+    /// this entry.
+    pub fn check(
+        &self,
+        segment: u64,
+        file: &str,
+        size: u64,
+        sha256: B256,
+    ) -> Result<(), HistoryStoreError> {
+        if size != self.size {
+            return Err(Self::corrupt(
+                segment,
+                file,
+                format!("{size} bytes != manifest {}", self.size),
+            ));
+        }
+        if sha256 != self.sha256 {
+            return Err(Self::corrupt(
+                segment,
+                file,
+                format!("sha256 {sha256} != manifest {}", self.sha256),
+            ));
+        }
+        Ok(())
+    }
+
+    /// A [`HistoryStoreError::CorruptSegment`] for object `file` of segment `segment`.
+    pub fn corrupt(segment: u64, file: &str, reason: String) -> HistoryStoreError {
+        HistoryStoreError::CorruptSegment { segment, file: file.to_string(), reason }
+    }
+}
+
 /// Per-file SHA-256 checksums and sizes of one segment, plus the writer epoch whose
 /// `seg/<k>/<epoch>/` directory holds the published objects. Stored in the index under `m‖k`
 /// in the same batch as the segment's other entries.
@@ -149,6 +187,21 @@ pub struct SegmentManifest {
 }
 
 impl SegmentManifest {
+    /// Checks that this manifest describes segment `k` of `n` blocks.
+    pub fn check_range(&self, k: u64, n: u64) -> Result<(), HistoryStoreError> {
+        if (self.segment, self.first_block, self.last_block) == (k, k * n, k * n + n - 1) {
+            return Ok(());
+        }
+        Err(HistoryStoreError::CorruptSegment {
+            segment: k,
+            file: "manifest".to_string(),
+            reason: format!(
+                "manifest describes segment {} blocks {}..={}",
+                self.segment, self.first_block, self.last_block
+            ),
+        })
+    }
+
     /// Checks that this manifest describes segment `k` of `n` blocks and that `files` holds
     /// exactly the listed objects with matching checksums.
     pub fn check(
@@ -157,40 +210,73 @@ impl SegmentManifest {
         n: u64,
         files: &BTreeMap<String, Bytes>,
     ) -> Result<(), HistoryStoreError> {
-        let corrupt = |file: &str, reason: String| HistoryStoreError::CorruptSegment {
-            segment: k,
-            file: file.to_string(),
-            reason,
-        };
-        if (self.segment, self.first_block, self.last_block) != (k, k * n, k * n + n - 1) {
-            return Err(corrupt(
-                "manifest",
-                format!(
-                    "manifest describes segment {} blocks {}..={}",
-                    self.segment, self.first_block, self.last_block
-                ),
-            ));
-        }
+        self.check_range(k, n)?;
         for name in files.keys() {
             if !self.files.contains_key(name) {
-                return Err(corrupt(name, "object not in manifest".to_string()));
+                return Err(ManifestEntry::corrupt(k, name, "object not in manifest".to_string()));
             }
         }
         for (name, expected) in &self.files {
-            let bytes = files.get(name).ok_or_else(|| corrupt(name, "missing".to_string()))?;
-            if bytes.len() as u64 != expected.size {
-                return Err(corrupt(
-                    name,
-                    format!("{} bytes != manifest {}", bytes.len(), expected.size),
+            let bytes = files
+                .get(name)
+                .ok_or_else(|| ManifestEntry::corrupt(k, name, "missing".to_string()))?;
+            expected.check(
+                k,
+                name,
+                bytes.len() as u64,
+                B256::from_slice(&Sha256::digest(bytes)),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Name under which object `name` is stored in a segment directory of `n`-block segments:
+    /// reth's static file name, or `block_bodies.idx` itself. `None` for names that are not
+    /// part of the segment format.
+    pub fn local_name(&self, name: &str, n: u64) -> Option<String> {
+        if name == SegmentFile::BODY_INDICES {
+            return Some(name.to_string());
+        }
+        let start = self.segment * n;
+        SegmentFile::reth_file_name(name, &SegmentRangeInclusive::new(start, start + n - 1))
+    }
+
+    /// Checks that `dir` holds exactly the listed objects of segment `k` of `n` blocks with
+    /// matching sizes and checksums. Files are hashed as they are read, so memory stays bounded
+    /// by the read buffer whatever the segment size. Does blocking IO.
+    pub fn check_dir(&self, k: u64, n: u64, dir: &Path) -> Result<(), HistoryStoreError> {
+        self.check_range(k, n)?;
+        for entry in fs::read_dir(dir)? {
+            let name = entry?.file_name().to_string_lossy().into_owned();
+            let object = if name == SegmentFile::BODY_INDICES {
+                name
+            } else if let Some(object) = SegmentFile::object_name(&name) {
+                object
+            } else {
+                continue;
+            };
+            if !self.files.contains_key(&object) {
+                return Err(ManifestEntry::corrupt(
+                    k,
+                    &object,
+                    "object not in manifest".to_string(),
                 ));
             }
-            let actual = B256::from_slice(&Sha256::digest(bytes));
-            if actual != expected.sha256 {
-                return Err(corrupt(
-                    name,
-                    format!("sha256 {actual} != manifest {}", expected.sha256),
-                ));
-            }
+        }
+        for (name, expected) in &self.files {
+            let local = self
+                .local_name(name, n)
+                .ok_or_else(|| ManifestEntry::corrupt(k, name, "not a segment file".to_string()))?;
+            let mut file = match fs::File::open(dir.join(local)) {
+                Ok(file) => file,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                    return Err(ManifestEntry::corrupt(k, name, "missing".to_string()));
+                }
+                Err(err) => return Err(err.into()),
+            };
+            let mut hasher = Sha256::new();
+            let size = io::copy(&mut file, &mut hasher)?;
+            expected.check(k, name, size, B256::from_slice(&hasher.finalize()))?;
         }
         Ok(())
     }

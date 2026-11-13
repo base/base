@@ -40,7 +40,7 @@ This follows reth's hashed-state convention.
 | `pruner` | §6 | `Pruner::retire` advances `E` by owned CAS. `sweep` tombstones, deletes and drops retired segments after the grace period (default 24h). Both cap work at `max_segments_per_pass` (default 4). |
 | `service` | §4, §6 | `ArchiveService` drives the writer loop and runs maintenance (retire, sweep, orphan GC) on an interval, all under the writer's epoch. |
 | `router` | §5 | `ArchiveSnapshot` resolves `H` and `E` once per request. `route` and `split` sort blocks into served, `HistoryPruned` and `Unavailable`. |
-| `cache` | §5 | `SegmentCache` keeps a memory LRU of open segments and an optional disk LRU. Disk entries are namespaced by archive identity, filled single-flight into a `fill-*` directory and renamed into place, and kept within the byte budget; a segment larger than the budget, or one that cannot fit beside leased entries and other fills' reservations, is served from a temp dir. Every fill is checked against the segment manifest. |
+| `cache` | §5 | `SegmentCache` keeps a memory LRU of open segments and an optional disk LRU. Disk entries are namespaced by archive identity, filled single-flight into a `fill-*` directory and renamed into place, and kept within the byte budget; a segment larger than the budget, or one that cannot fit beside leased entries and other fills' reservations, is served from a temp dir. Every fill is checked against the segment manifest. Objects stream from the bucket to their files chunk by chunk and are hashed as they arrive, disk entries are hashed as they are read, all filesystem IO and hashing runs on the blocking pool, and at most `max_concurrent_fills` (default 2) segment loads run at once. |
 | `reader` | §2.2, §5 | `ArchiveReader` serves headers, blocks, receipts, hash lookups, bloom-filtered logs, and account and storage history. It checks hashes, roots and recovered senders before returning data, so a mismatch gives `CorruptSegment` and never wrong data. Segment reads and their checks run on the blocking pool, and each block's transaction-root, sender and receipt-root checks run once per segment load (`SegmentVerification`). `logs` returns each hit block with its logs and stops with `TooManyLogs` past the caller's cap. The catalog snapshot is reused for `snapshot_ttl` (default 2 s). |
 | `store` | §5 | `ArchiveStore::from_url` accepts `s3://bucket/prefix` (plus an optional endpoint for `MinIO`), `file://dir` and `memory://prefix`. `from_url_with(StoreOptions::reader())` gives nodes a 3 s connect timeout and at most 3 retries within 15 s, instead of `object_store`'s 10 retries over 3 minutes. |
 
@@ -101,6 +101,7 @@ They cover:
 - Corrupt-object, corrupt-changeset and tampered-sender detection.
 - Cache namespacing, single-flight fills, byte budget, oversized segments and corrupt disk entries.
 - Leased disk entries surviving eviction pressure, concurrent fills sharing the budget, and cancelled fills cleaning up.
+- Fills holding at most one chunk of a segment at a time (disk and ephemeral paths), a third concurrent fill waiting for a load slot, and a corrupt streamed object leaving no fill directory.
 - Cache restarts: abandoned fills removed, and persisted entries reconciled against a smaller budget, both checked against measured filesystem bytes.
 - Confirm fetches that return another block's header.
 

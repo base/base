@@ -194,7 +194,7 @@ pub struct ArchiveArgs {
     pub catalog_ttl: Duration,
 }
 
-/// Default byte budget of the on-disk archive segment cache (1 GiB).
+/// Default byte budget of the on-disk archive segment cache: 1 `GiB`.
 const DEFAULT_ARCHIVE_CACHE_BYTES: u64 = 1 << 30;
 
 impl Default for ArchiveArgs {
