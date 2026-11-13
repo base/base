@@ -303,6 +303,10 @@ struct SidecarUsage {
     sender_hashes: HashMap<Address, HashSet<TxHash>>,
     /// The backing last applied to each sender's transactions.
     applied_backing: HashMap<Address, bool>,
+    /// Senders whose applied backing changed since
+    /// [`TwoDNoncePool::take_backing_changes`] last took them. A lane in
+    /// another store behind a sender's run ranks by that run's backed tips.
+    backing_changes: HashSet<Address>,
 }
 
 impl SidecarUsage {
@@ -332,6 +336,7 @@ impl SidecarUsage {
                 self.sender_balances.remove(&sender);
                 self.sender_hashes.remove(&sender);
                 self.applied_backing.remove(&sender);
+                self.backing_changes.remove(&sender);
             }
         }
         self.sender_ids.release(transaction.sender_id());
@@ -932,6 +937,26 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .sender_hashes
             .get(sender)
             .map_or_else(Vec::new, |hashes| hashes.iter().copied().collect())
+    }
+
+    /// Returns the lanes holding `sender`'s transactions, from the per-sender
+    /// index rather than a pool scan.
+    pub(crate) fn sender_lanes(&self, sender: &Address) -> HashSet<LaneId> {
+        self.usage
+            .sender_hashes
+            .get(sender)
+            .into_iter()
+            .flatten()
+            .filter_map(|hash| self.lane_key(&self.hashes.get(hash)?.transaction))
+            .map(|nonce_key| (*sender, nonce_key))
+            .collect()
+    }
+
+    /// Takes the senders whose coinbase tip backing changed since the last
+    /// call, so the owner can re-rank the lanes another store holds behind
+    /// their runs. A sender leaves the set with its last transaction.
+    pub(crate) fn take_backing_changes(&mut self) -> HashSet<Address> {
+        std::mem::take(&mut self.usage.backing_changes)
     }
 
     /// Returns transactions for the given sender.
@@ -1586,7 +1611,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     /// Re-derives whether `sender`'s balance backs its coinbase tips and, when
     /// that changed, records it on every live transaction of the sender and
-    /// re-ranks the sender's eviction candidates, whose bids it moves.
+    /// re-ranks the sender's eviction candidates, whose bids it moves, and
+    /// reports the sender through [`Self::take_backing_changes`].
     /// Called after each change to the sender's summed cost or balance, so
     /// [`Self::best_transactions`] never has to walk the pool for it.
     fn refresh_tip_backing(&mut self, sender: Address) {
@@ -1597,6 +1623,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         if self.usage.applied_backing.insert(sender, backed) == Some(backed) {
             return;
         }
+        self.usage.backing_changes.insert(sender);
         let mut lanes = HashSet::new();
         let mut replay_ids = Vec::new();
         for hash in self.usage.sender_hashes.get(&sender).into_iter().flatten() {

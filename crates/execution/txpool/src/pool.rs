@@ -547,6 +547,10 @@ where
     /// pending run from that anchor. Returns the transactions discarded for
     /// falling below a cursor.
     ///
+    /// It also re-syncs every validity lane of the senders whose sidecar
+    /// coinbase tip backing changed since the last call: a lane behind such a
+    /// sender's sidecar run ranks by that run's bid, which the backing moves.
+    ///
     /// Anchors only move forward unless `authoritative_account_nonces` is set:
     /// then the reported account nonces come from canonical state that may
     /// have moved back (a reorg, or reth's resync of drifted accounts), and a
@@ -567,8 +571,15 @@ where
             self.protocol_admission_lock.is_locked(),
             "validity lanes are re-anchored under the admission lock"
         );
+        let backing_changes = self.sidecar.pool.write().take_backing_changes();
+        let rebid_lanes: Vec<_> = {
+            let validity = self.validity.pool.read();
+            backing_changes.iter().flat_map(|sender| validity.sender_lanes(sender)).collect()
+        };
         let mut targets: HashMap<LaneId, Option<u64>> = HashMap::new();
-        for (lane_id, nonce) in lanes {
+        for (lane_id, nonce) in
+            lanes.into_iter().chain(rebid_lanes.into_iter().map(|lane| (lane, None)))
+        {
             let entry = targets.entry(lane_id).or_default();
             *entry = (*entry).max(nonce);
         }
@@ -6503,6 +6514,39 @@ mod tests {
         assert_store(&pool, tipping, PoolStore::Validity);
         assert_gone(&pool, behind_idle);
         assert!(in_protocol_pool(&pool, head));
+    }
+
+    #[tokio::test]
+    async fn a_validity_lane_is_re_ranked_when_the_sidecar_run_in_front_loses_its_tip_backing() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_txs(1));
+        let tipper = signer();
+        let balance = U256::from(100) * tipping_fees();
+        client.add_account(tipper.address(), ExtendedAccount::new(0, balance));
+        // The balance backs the head's tip, so the lane behind it bids its own 2_000.
+        let head =
+            tipping_channel_8130(&tipper, None, 0, balance - U256::from(50) * tipping_fees());
+        let head = add(&pool, head).await;
+        let behind_head = tipping_8130_with_fees(
+            &tipper,
+            None,
+            TIPPING_NONCE_KEY,
+            1,
+            0,
+            U256::ZERO,
+            (2_000, 2_000),
+        )
+        .with_validity_predicates(resting_predicates());
+        let behind_head = add(&pool, behind_head).await;
+        assert!(is_pending(&pool, behind_head), "the sidecar head makes the lane executable");
+
+        // A nonce-free tip over-commits the balance: the head now tips nothing.
+        add(&pool, tipping_nonce_free_8130(&tipper, 0, U256::from(49) * tipping_fees())).await;
+        let honest = add(&pool, validity_1559(&funded_signer(&client), 0, 1_500)).await;
+
+        assert_store(&pool, honest, PoolStore::Validity);
+        assert_gone(&pool, behind_head);
+        assert_store(&pool, head, PoolStore::Sidecar);
     }
 
     #[tokio::test]
