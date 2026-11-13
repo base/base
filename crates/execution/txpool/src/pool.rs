@@ -2962,6 +2962,7 @@ mod tests {
         signed_8130(signer, nonce_key, nonce_sequence, 0, max_fee_per_gas, 50_000)
     }
 
+    /// Tips its whole fee cap, so a full store evicts the lowest fee cap first.
     fn signed_8130(
         signer: &PrivateKeySigner,
         nonce_key: U256,
@@ -2977,7 +2978,7 @@ mod tests {
             nonce_sequence,
             valid_after: 0,
             valid_before,
-            max_priority_fee_per_gas: 0,
+            max_priority_fee_per_gas: max_fee_per_gas,
             max_fee_per_gas,
             gas_limit,
             account_changes: Vec::new(),
@@ -5715,12 +5716,13 @@ mod tests {
         }]
     }
 
+    /// Tips its whole fee cap, so a full store evicts the lowest fee cap first.
     fn validity_1559(
         signer: &PrivateKeySigner,
         nonce: u64,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        signed_1559_with_fees(signer, nonce, max_fee_per_gas, 0)
+        signed_1559_with_fees(signer, nonce, max_fee_per_gas, max_fee_per_gas)
             .with_validity_predicates(resting_predicates())
     }
 
@@ -6077,7 +6079,8 @@ mod tests {
     async fn protocol_nonce_slot_is_exclusive_across_stores_under_the_price_bump() {
         let (pool, client) = build_integration_pool();
         let signer = funded_signer(&client);
-        let validity = validity_1559(&signer, 0, 1_000);
+        let validity = signed_1559_with_fees(&signer, 0, 1_000, 0)
+            .with_validity_predicates(resting_predicates());
         let validity_hash = *validity.hash();
         let mut validity_events = pool
             .add_transaction_and_subscribe(TransactionOrigin::External, validity)
