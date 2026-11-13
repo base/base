@@ -1,6 +1,6 @@
 //! Isolated serialized Engine build/import benchmark.
 
-use std::{collections::BTreeMap, fs::{self, OpenOptions}, future::Future, io::Write, path::{Path, PathBuf}, sync::{Arc, OnceLock}, time::{Duration, Instant}};
+use std::{collections::BTreeMap, fs::{self, OpenOptions}, future::Future, io::Write, path::{Path, PathBuf}, sync::Arc, time::{Duration, Instant}};
 use alloy_consensus::{Transaction, TxEnvelope, TxReceipt, transaction::SignerRecoverable};
 use alloy_eips::Decodable2718;
 use alloy_genesis::Genesis;
@@ -19,7 +19,7 @@ use base_execution_cli::{ExecutionNodeArgs, ExecutionNodeLaunchConfig};
 use base_load_tests::{Fees, PreparedTransaction, SubmissionPipeline, SubmitCohort};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use eyre::{Result, ensure, eyre};
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::PrometheusHandle;
 use reth_chainspec::EthChainSpec;
 use reth_cli_runner::CliContext;
 use reth_provider::ReceiptProvider;
@@ -314,10 +314,10 @@ impl RootBenchCohort {
     pub fn check_accounting(self, before: &str, after: &str) -> Result<()> {
         if !matches!(self, Self::R | Self::D) { return Ok(()); }
         for metric in ["builder_executions", "validator_executions", "current_roots_started{source=\"builder\"}", "current_roots_started{source=\"validator\"}", "validator_ready_outputs"] {
-            let key = format!("base_root_experiment_{metric}");
+            let key = format!("reth_base_root_experiment_{metric}");
             ensure!(Self::counter(after, &key)? - Self::counter(before, &key)? == 1.0, "missing/excess independent first-import accounting: {key}");
         }
-        let key = "base_root_experiment_trusted_insertions";
+        let key = "reth_base_root_experiment_trusted_insertions";
         ensure!(Self::counter(after, key)? == 0.0 && Self::counter(before, key)? == 0.0, "R/D trusted insertion observed");
         Ok(())
     }
@@ -443,7 +443,6 @@ impl RootBenchRunArgs {
 
     /// Runs one bounded trial and always attempts explicit runtime drain, retaining failures.
     pub async fn execute(&self) -> Result<()> {
-        static RECORDER: OnceLock<std::result::Result<PrometheusHandle, String>> = OnceLock::new();
         static ACTIVE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
         let _active = ACTIVE.try_lock().map_err(|_| eyre!("only one root trial per process at a time"))?;
         ensure!(self.call_timeout_ms > 0 && self.run_timeout_ms > 0 && self.shutdown_timeout_ms > 0, "deadlines must be positive");
@@ -471,7 +470,8 @@ impl RootBenchRunArgs {
             (name, if sensitive { format!("keccak:{}", keccak256(value)) } else { value })
         }).collect();
         RootBenchBundle::write_new(&self.output.join("launch.json"), &json!({"cohort":self.cohort,"transport":"typed-in-memory","receipt_source":"canonical-execution-provider-receipts_by_block","config":format!("{launch:#?}"),"runtime_checkout":{"source":String::from_utf8(source.stdout)?,"cargo_lock_keccak":keccak256(fs::read(checkout.join("Cargo.lock"))?),"reth_pin_keccak":keccak256(fs::read(checkout.join("etc/upstream-pins/reth.toml"))?),"not_executable_provenance":true},"argv":std::env::args().collect::<Vec<_>>(),"environment":environment,"unsupported":["cpu_time","rss","io","cache_hit_miss","persistence_lag","queue_depth","paced_cadence","immutable_6268_baseline"]}))?;
-        let metrics = RECORDER.get_or_init(|| PrometheusBuilder::new().install_recorder().map_err(|e| e.to_string())).as_ref().map_err(|e| eyre!("cannot own process metrics: {e}"))?.clone();
+        // Share Reth's idempotent recorder installation with the admitted node launcher.
+        let metrics = reth_node_metrics::recorder::install_prometheus_recorder().handle().clone();
         let origin = Instant::now();
         RootBenchBundle::write_new(&self.output.join("runtime.json"), &json!({"configuration":format!("{:#?}", RuntimeConfig::default())}))?;
         let runtime = std::thread::spawn(|| RuntimeBuilder::new(RuntimeConfig::default()).build()).join().map_err(|_| eyre!("runtime construction panicked"))??;
@@ -586,7 +586,7 @@ impl RootBenchRunArgs {
         let end_ns = origin.elapsed().as_nanos() as u64;
         let drained_metrics = Self::root_metrics(&metrics);
         RootBenchBundle::write_raw_new(&self.output.join("metrics-drained.txt"), drained_metrics.as_bytes())?;
-        if outcome.is_ok() && RootBenchCohort::counter(&drained_metrics, "base_root_experiment_jobs_failed")? != 0.0 { outcome = Err(eyre!("root worker failure observed after drain")); }
+        if outcome.is_ok() && RootBenchCohort::counter(&drained_metrics, "reth_base_root_experiment_jobs_failed")? != 0.0 { outcome = Err(eyre!("root worker failure observed after drain")); }
         let phases = ["build_fcu", "get_payload", "payload_available", "new_payload", "canonical_fcu", "cycle"];
         let summaries: BTreeMap<_, _> = phases.into_iter().map(|phase| (phase, RootBenchSummary::phase(&samples, phase))).collect();
         let measured: Vec<_> = samples.iter().filter(|s| !s.warmup && s.error.is_none() && s.phases.contains_key("cycle")).collect();
@@ -599,7 +599,7 @@ impl RootBenchRunArgs {
 
     /// Preserves process-level experiment series verbatim in the exporter's representation.
     pub fn root_metrics(handle: &PrometheusHandle) -> String {
-        handle.render().lines().filter(|line| line.starts_with("base_root_experiment_") || line.contains(" base_root_experiment_")).map(|line| format!("{line}\n")).collect()
+        handle.render().lines().filter(|line| line.starts_with("reth_base_root_experiment_") || line.contains(" reth_base_root_experiment_")).map(|line| format!("{line}\n")).collect()
     }
 }
 
@@ -616,6 +616,21 @@ mod tests {
     use base_execution_payload_builder::{PostStateRootManager, PostStateRootLimits};
     use super::*;
     use clap::Parser;
+
+    /// Harness capture and node launch share Reth's recorder and exported prefix.
+    #[test]
+    fn shared_reth_recorder_exports_root_metrics() -> Result<()> {
+        let recorder = reth_node_metrics::recorder::install_prometheus_recorder();
+        let handle = recorder.handle().clone();
+        assert!(std::ptr::eq(recorder, reth_node_metrics::recorder::install_prometheus_recorder()), "node launch must reuse the harness recorder without a second installation");
+        let key = "reth_base_root_experiment_payloads_sealed";
+        let before = RootBenchCohort::counter(&RootBenchRunArgs::root_metrics(&handle), key)?;
+        base_execution_payload_builder::PostStateRootMetrics::payloads_sealed().increment(1);
+        let captured = RootBenchRunArgs::root_metrics(&handle);
+        assert_eq!(RootBenchCohort::counter(&captured, key)?, before + 1.0, "capture must retain the actual Reth-prefixed production metric");
+        assert!(captured.contains("# TYPE reth_base_root_experiment_payloads_sealed counter"), "capture must retain metric family metadata");
+        Ok(())
+    }
 
     /// Receipt work remains observable on the owned runtime after a caller timeout.
     #[tokio::test]
@@ -804,9 +819,9 @@ mod tests {
         assert!(RootBenchSample::require_valid(&valid, B256::ZERO).is_err(), "VALID with wrong latestValidHash must reject");
         assert!(RootBenchSample::require_valid(&PayloadStatus::new(PayloadStatusEnum::Syncing, None), hash).is_err(), "SYNCING must reject");
         assert!(RootBenchCohort::R.check_accounting("", "").is_err(), "AlreadySeen VALID without actual independent execution must reject");
-        let metrics = "base_root_experiment_builder_executions 1\nbase_root_experiment_validator_executions 1\nbase_root_experiment_current_roots_started{source=\"builder\"} 1\nbase_root_experiment_current_roots_started{source=\"validator\"} 1\nbase_root_experiment_validator_ready_outputs 1\n";
+        let metrics = "reth_base_root_experiment_builder_executions 1\nreth_base_root_experiment_validator_executions 1\nreth_base_root_experiment_current_roots_started{source=\"builder\"} 1\nreth_base_root_experiment_current_roots_started{source=\"validator\"} 1\nreth_base_root_experiment_validator_ready_outputs 1\n";
         RootBenchCohort::R.check_accounting("", metrics)?;
-        assert!(RootBenchCohort::D.check_accounting("", &format!("{metrics}base_root_experiment_trusted_insertions 1\n")).is_err(), "trusted insertion must invalidate R/D evidence");
+        assert!(RootBenchCohort::D.check_accounting("", &format!("{metrics}reth_base_root_experiment_trusted_insertions 1\n")).is_err(), "trusted insertion must invalidate R/D evidence");
         Ok(())
     }
 

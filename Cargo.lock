@@ -6314,6 +6314,7 @@ dependencies = [
  "reth-ethereum-forks",
  "reth-node-builder",
  "reth-node-core",
+ "reth-node-metrics",
  "reth-primitives-traits",
  "reth-provider",
  "reth-rpc-layer",

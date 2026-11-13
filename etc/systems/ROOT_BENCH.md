@@ -47,7 +47,7 @@ Phase names are `build_fcu`, `get_payload`, `new_payload`, `canonical_fcu`, `pay
 
 ## Exact metric-family contract
 
-All names below are complete Prometheus family names. Counters have no `_total` suffix with this exporter configuration.
+All families below are exported with the `reth_` prefix by Reth's shared recorder, so `base_root_experiment_jobs_started` is emitted as `reth_base_root_experiment_jobs_started`. Apply that prefix to every family in the tables and lists below. Counters have no `_total` suffix with this exporter configuration. The harness shares Reth's idempotent recorder installation rather than installing a competing global recorder.
 
 | Counter | Meaning |
 |---|---|
