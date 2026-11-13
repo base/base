@@ -6308,6 +6308,7 @@ dependencies = [
  "prometheus-scraper",
  "rand 0.9.5",
  "reqwest 0.13.4",
+ "reth-chainspec",
  "reth-cli-runner",
  "reth-db",
  "reth-ethereum-forks",

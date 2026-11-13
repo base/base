@@ -39,6 +39,10 @@ Each build extends its own cohort's last accepted parent, never a frozen parent 
 
 Partial/error artifacts remain on launch, call, validation, Ctrl-C cancellation and drain failure; nonzero exit means incomplete. Abrupt termination can lose the current in-memory block sample. SIGTERM-specific cleanup is not yet verified.
 
+Receipt provider tasks run only on the explicitly owned execution runtime. Their handles remain retained across call and trial cancellation; `drain.json.receipt_reads_completed` is false while any such operation is still running. A timeout does not cancel an indivisible provider read. Runtime shutdown is bounded, and unfinished work makes the trial incomplete.
+
+Run from any directory inside a runtime source checkout. The harness resolves its Git root for diagnostic lock/pin reads. That checkout is not the executable-source attestation.
+
 Phase names are `build_fcu`, `get_payload`, `new_payload`, `canonical_fcu`, `payload_available` and `cycle`. FCU duration alone is admission, not construction time. `payload_available` spans build FCU request to getPayload response. `cycle` spans build request to canonical acceptance. Forced-attribute submission-to-inclusion is not mempool ingress latency. Warmup samples remain raw but are excluded from summaries and accepted-throughput numerators. Throughput divides accepted measured gas and successful included receipt count by measured wall time through completed shutdown/drain, not offered gas/transaction count. Failed or absent samples are never zero-valued successes.
 
 ## Exact metric-family contract

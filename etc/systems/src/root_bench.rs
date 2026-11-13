@@ -20,6 +20,7 @@ use base_load_tests::{Fees, PreparedTransaction, SubmissionPipeline, SubmitCohor
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use eyre::{Result, ensure, eyre};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use reth_chainspec::EthChainSpec;
 use reth_cli_runner::CliContext;
 use reth_provider::ReceiptProvider;
 use reth_tasks::{RuntimeBuilder, RuntimeConfig};
@@ -457,6 +458,9 @@ impl RootBenchRunArgs {
         let launch = self.cohort.launch_config(&bundle, &datadir)?;
         let source = std::process::Command::new("git").args(["rev-parse", "HEAD", "HEAD^{tree}"]).output()?;
         ensure!(source.status.success(), "source provenance requires a git checkout");
+        let checkout = std::process::Command::new("git").args(["rev-parse", "--show-toplevel"]).output()?;
+        ensure!(checkout.status.success(), "runtime diagnostics require a git checkout");
+        let checkout = PathBuf::from(String::from_utf8(checkout.stdout)?.trim());
         let executable_digest = keccak256(fs::read(std::env::current_exe()?)?);
         let manifest: Option<Value> = self.executable_manifest.as_ref().map(|path| fs::read(path).and_then(|bytes| serde_json::from_slice(&bytes).map_err(std::io::Error::other))).transpose()?;
         RootBenchBundle::write_new(&self.output.join("executable-source.json"), &json!({"external_manifest":manifest,"verification":"external-attestation-required","executable_keccak":executable_digest}))?;
@@ -466,7 +470,7 @@ impl RootBenchRunArgs {
             let sensitive = ["KEY", "TOKEN", "SECRET", "PASSWORD", "URL"].iter().any(|word| name.contains(word));
             (name, if sensitive { format!("keccak:{}", keccak256(value)) } else { value })
         }).collect();
-        RootBenchBundle::write_new(&self.output.join("launch.json"), &json!({"cohort":self.cohort,"transport":"typed-in-memory","receipt_source":"canonical-execution-provider-receipts_by_block","config":format!("{launch:#?}"),"runtime_checkout":{"source":String::from_utf8(source.stdout)?,"cargo_lock_keccak":keccak256(fs::read("Cargo.lock")?),"reth_pin_keccak":keccak256(fs::read("etc/upstream-pins/reth.toml")?),"not_executable_provenance":true},"argv":std::env::args().collect::<Vec<_>>(),"environment":environment,"unsupported":["cpu_time","rss","io","cache_hit_miss","persistence_lag","queue_depth","paced_cadence","immutable_6268_baseline"]}))?;
+        RootBenchBundle::write_new(&self.output.join("launch.json"), &json!({"cohort":self.cohort,"transport":"typed-in-memory","receipt_source":"canonical-execution-provider-receipts_by_block","config":format!("{launch:#?}"),"runtime_checkout":{"source":String::from_utf8(source.stdout)?,"cargo_lock_keccak":keccak256(fs::read(checkout.join("Cargo.lock"))?),"reth_pin_keccak":keccak256(fs::read(checkout.join("etc/upstream-pins/reth.toml"))?),"not_executable_provenance":true},"argv":std::env::args().collect::<Vec<_>>(),"environment":environment,"unsupported":["cpu_time","rss","io","cache_hit_miss","persistence_lag","queue_depth","paced_cadence","immutable_6268_baseline"]}))?;
         let metrics = RECORDER.get_or_init(|| PrometheusBuilder::new().install_recorder().map_err(|e| e.to_string())).as_ref().map_err(|e| eyre!("cannot own process metrics: {e}"))?.clone();
         let origin = Instant::now();
         RootBenchBundle::write_new(&self.output.join("runtime.json"), &json!({"configuration":format!("{:#?}", RuntimeConfig::default())}))?;
@@ -476,6 +480,8 @@ impl RootBenchRunArgs {
         let mut samples = Vec::new();
         let mut measurement_start_ns = None;
         let timeout = Duration::from_millis(self.call_timeout_ms);
+        // Keep blocking read ownership across cancellation; only the owned runtime may run it.
+        let mut receipt_tasks = Vec::new();
         let mut critical_result = None;
         let mut outcome = tokio::select! {
             result = tokio::time::timeout(Duration::from_millis(self.run_timeout_ms), async {
@@ -524,7 +530,9 @@ impl RootBenchRunArgs {
                     ensure!(head.header.hash == hash, "canonical head differs from accepted hash");
                     let transactions = attrs.transactions.as_ref().ok_or_else(|| eyre!("missing transactions"))?;
                     let provider = node.handle.node.provider.clone();
-                    let receipts = tokio::time::timeout(timeout, tokio::task::spawn_blocking(move || provider.receipts_by_block(hash.into()))).await???.ok_or_else(|| eyre!("missing canonical native receipts for {hash}"))?;
+                    receipt_tasks.push(runtime.spawn_blocking(move || provider.receipts_by_block(hash.into())));
+                    let receipts = tokio::time::timeout(timeout, receipt_tasks.last_mut().expect("retained receipt task")).await???.ok_or_else(|| eyre!("missing canonical native receipts for {hash}"))?;
+                    receipt_tasks.pop();
                     RootBenchSample::verify_receipts(&receipts, transactions.len(), block.header.gas_used)?;
                     sample.successful_receipts = receipts.len() as u64;
                     let sender_nonce = tokio::time::timeout(timeout, reads.get_transaction_count(RootBenchBundle::freeze_identity()?)).await??;
@@ -569,7 +577,9 @@ impl RootBenchRunArgs {
         }
         let worker_result = Self::verify_worker(service.as_ref().and_then(|service| service.manager.get()), self.cohort != RootBenchCohort::O);
         let worker_joined_healthy = worker_result.is_ok();
-        let drained = guards_completed && worker_joined_healthy;
+        let receipt_reads_completed = receipt_tasks.iter().all(|task| task.is_finished());
+        if !receipt_reads_completed && outcome.is_ok() { outcome = Err(eyre!("receipt provider work remains outstanding after shutdown")); }
+        let drained = guards_completed && worker_joined_healthy && receipt_reads_completed;
         if let Err(error) = worker_result { if outcome.is_ok() { outcome = Err(error); } }
         if matches!(&critical_result, Some(Err(_)) | Some(Ok(Err(_)))) && outcome.is_ok() { outcome = Err(eyre!("critical task failure: {critical_result:?}")); }
         tokio::task::spawn_blocking(move || runtime.shutdown_timeout(shutdown)).await?;
@@ -582,7 +592,7 @@ impl RootBenchRunArgs {
         let measured: Vec<_> = samples.iter().filter(|s| !s.warmup && s.error.is_none() && s.phases.contains_key("cycle")).collect();
         let seconds = measurement_start_ns.map(|start| (end_ns - start) as f64 / 1e9);
         let complete = outcome.is_ok() && drained;
-        RootBenchBundle::write_new(&self.output.join("drain.json"), &json!({"guards_completed":guards_completed,"worker_joined_healthy":worker_joined_healthy,"manager_observed":service.as_ref().is_some_and(|s| s.manager.get().is_some()),"critical_task_result":format!("{critical_result:?}")}))?;
+        RootBenchBundle::write_new(&self.output.join("drain.json"), &json!({"guards_completed":guards_completed,"worker_joined_healthy":worker_joined_healthy,"receipt_reads_completed":receipt_reads_completed,"manager_observed":service.as_ref().is_some_and(|s| s.manager.get().is_some()),"critical_task_result":format!("{critical_result:?}")}))?;
         RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"complete":complete,"error":outcome.as_ref().err().map(|e| format!("{e:#}")),"drained":drained,"cohort":self.cohort,"input_digest":bundle.digest,"samples":samples,"summaries":summaries,"measurement_start_ns":measurement_start_ns,"drain_end_ns":end_ns,"accepted_gas_per_second":seconds.map(|s| measured.iter().map(|row| row.accepted_gas).sum::<u64>() as f64 / s),"successful_receipts_per_second":seconds.map(|s| measured.iter().map(|row| row.successful_receipts).sum::<u64>() as f64 / s)}))?;
         outcome?; ensure!(drained, "shutdown/drain deadline exceeded; trial incomplete"); Ok(())
     }
@@ -606,6 +616,23 @@ mod tests {
     use base_execution_payload_builder::{PostStateRootManager, PostStateRootLimits};
     use super::*;
     use clap::Parser;
+
+    /// Receipt work remains observable on the owned runtime after a caller timeout.
+    #[tokio::test]
+    async fn receipt_timeout_retains_owned_work() -> Result<()> {
+        let runtime = std::thread::spawn(|| RuntimeBuilder::new(RuntimeConfig::default()).build()).join().expect("runtime construction must not panic")?;
+        let (release, blocked) = std::sync::mpsc::channel();
+        let (started, running) = tokio::sync::oneshot::channel();
+        let mut task = runtime.spawn_blocking(move || { started.send(()).expect("caller must await start"); blocked.recv().expect("caller must release read"); });
+        running.await?;
+        assert!(tokio::time::timeout(Duration::from_millis(1), &mut task).await.is_err(), "blocked read must exceed caller deadline");
+        assert!(!task.is_finished(), "timed-out read must remain observable, not claim completion");
+        release.send(())?;
+        tokio::time::timeout(Duration::from_secs(2), &mut task).await??;
+        assert!(task.is_finished(), "released read must complete before successful drain");
+        tokio::task::spawn_blocking(move || runtime.shutdown_timeout(Duration::from_secs(2))).await?;
+        Ok(())
+    }
 
     /// Ecotone and Isthmus header fields must survive native envelope reconstruction.
     #[test]
