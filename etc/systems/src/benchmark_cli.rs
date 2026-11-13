@@ -62,6 +62,8 @@ pub enum BenchmarkCommand {
     Aggregate(AggregateBenchmarkArgs),
     /// Replay blocks exported by a snapshot run into one validator on a restored snapshot.
     Replay(crate::ReplayBenchmarkArgs),
+    /// Run an isolated immutable-workload Engine construction/import trial.
+    RootBench(crate::RootBenchArgs),
     /// Measure the L1 data an exported run or an RPC block range needs.
     Da(crate::DaBenchmarkArgs),
 }
@@ -259,6 +261,7 @@ impl BenchmarkCli {
             Some(BenchmarkCommand::Snapshot(args)) => args.run().await,
             Some(BenchmarkCommand::Aggregate(args)) => args.run(),
             Some(BenchmarkCommand::Replay(args)) => args.run().await,
+            Some(BenchmarkCommand::RootBench(args)) => args.run().await,
             Some(BenchmarkCommand::Da(args)) => args.run().await,
         }
     }

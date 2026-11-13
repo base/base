@@ -6,6 +6,9 @@ real builder and client execution and consensus components in one managed launch
 applications against a snapshot, use `base dev` instead; see
 [docs/guides/DEVNET.md](../../docs/guides/DEVNET.md).
 
+For isolated deferred-root Engine benchmark commands and artifact formats, see
+[ROOT_BENCH.md](ROOT_BENCH.md).
+
 ## Test port ownership
 
 In-process nodes use a node-owned `PortPool` for ports that must be selected before binding.

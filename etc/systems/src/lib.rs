@@ -45,6 +45,12 @@ pub use calibration::{Calibration, TxProfile};
 mod da_cli;
 pub use da_cli::{DA_RESULT_FILE, DaBenchmarkArgs, DaResult};
 
+mod root_bench;
+pub use root_bench::{
+    RootBenchArgs, RootBenchBundle, RootBenchCohort, RootBenchCommand, RootBenchInterval,
+    RootBenchNodeArgs, RootBenchRunArgs, RootBenchSample, RootBenchSummary,
+};
+
 mod replay_cli;
 pub use replay_cli::{
     FIRST_DIVERGENCE_FILE, FirstDivergence, LatencySummary, REPLAY_METRICS_FILE,

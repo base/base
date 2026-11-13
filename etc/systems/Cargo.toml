@@ -52,6 +52,7 @@ base-common-chains.workspace = true
 
 # reth
 reth-db.workspace = true
+reth-cli-runner.workspace = true
 reth-tasks = { workspace = true, features = ["rayon"] }
 reth-provider.workspace = true
 reth-node-core.workspace = true
@@ -115,6 +116,7 @@ reqwest.workspace = true
 chrono.workspace = true
 prometheus-scraper = { version = "0.2.0", default-features = false }
 tempfile.workspace = true
+metrics-exporter-prometheus.workspace = true
 serde_yaml.workspace = true
 async-trait.workspace = true
 uuid = { workspace = true, features = ["v4"] }
