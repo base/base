@@ -4964,7 +4964,6 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
- "base-execution-exex",
  "base-execution-payload-builder",
  "base-execution-rpc",
  "base-execution-trie",
@@ -5019,7 +5018,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
- "tracing",
 ]
 
 [[package]]
