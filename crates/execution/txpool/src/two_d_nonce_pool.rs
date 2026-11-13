@@ -34,7 +34,7 @@ use crate::{
     best::MergeSource,
     dormancy::{
         BuildLocal, DiscardedIndex, Dormancy, DormancyMergeGate, DormantEntry, DormantSlot,
-        WriteFence,
+        RetiredCollections, WriteFence,
     },
 };
 
@@ -539,6 +539,8 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     /// What the build owning the dormancy index parked and wrote, shared with
     /// its iterator so the build loop parks and wakes without this pool's lock.
     running_build: Option<Arc<Mutex<BuildLocal<T>>>>,
+    /// Builds' parks retired under the lock, freed once it is released.
+    retired_builds: Vec<Arc<Mutex<BuildLocal<T>>>>,
 }
 
 /// Ends the background merge of a sealed build's parks however the merge task
@@ -573,13 +575,20 @@ impl<T: BasePooledTx> BuildMergeCompletion<T> {
 impl<T: BasePooledTx> Drop for BuildMergeCompletion<T> {
     fn drop(&mut self) {
         let (build, completed) = (self.build, self.completed);
-        let woken = {
-            let mut validity = self.pool.write();
+        let woken = TwoDNoncePool::write_retiring(&self.pool, |validity| {
             if completed { validity.release_build(build) } else { validity.fail_build_merge(build) }
-        };
+        });
         self.gate.finish();
         TwoDNoncePool::record_build_end(&self.pool, woken);
     }
+}
+
+/// What the validity pool retired under its lock, freed when this is dropped, after the lock is
+/// released.
+#[derive(Debug)]
+pub(crate) struct RetiredDormancy<T: BasePooledTx> {
+    _builds: Vec<Arc<Mutex<BuildLocal<T>>>>,
+    _collections: RetiredCollections,
 }
 
 /// Dormancy candidates taken for classification, with the state they must be classified for.
@@ -587,9 +596,12 @@ impl<T: BasePooledTx> Drop for BuildMergeCompletion<T> {
 pub(crate) struct DormancyBatch<T: BasePooledTx> {
     /// The block the candidates are classified for.
     pub context: PredicateContext,
-    /// Queued transactions that are still pooled, not dormant, and a ready
-    /// root or nonce-free transaction.
-    pub candidates: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Queued hashes, at most [`crate::DORMANCY_CLASSIFICATION_BUDGET`],
+    /// turned into candidates a chunk at a time with
+    /// [`TwoDNoncePool::dormancy_candidates`].
+    pub queued: Vec<TxHash>,
+    /// Dormant transactions the canary re-evaluates.
+    pub canary: Vec<Arc<ValidPoolTransaction<T>>>,
 }
 
 impl<T: BasePooledTx> TwoDNoncePool<T> {
@@ -612,6 +624,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             pending_shared_lanes: IndexSet::default(),
             dormancy: Dormancy::new(ValidityDormancyMode::Off),
             running_build: None,
+            retired_builds: Vec::new(),
         }
     }
 
@@ -1620,16 +1633,18 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         if !self.dormancy.is_running(build) {
             return Err(None);
         }
-        let mut local = self
-            .running_build
-            .take()
-            .map(|local| std::mem::replace(&mut *local.lock(), BuildLocal::new(false)));
         if let Some(reason) = self.dormancy.deferred_discard.take() {
             let woken = self.dormancy.build_wakes;
             self.discard_dormancy_now(reason);
             return Err(Some(woken));
         }
+        let mut local = self
+            .running_build
+            .take()
+            .map(|local| std::mem::replace(&mut *local.lock(), BuildLocal::new(false)));
         self.dormancy.tip = Some(BlockNumHash::new(self.dormancy.height, block_hash));
+        // Without a classification in flight the build's written locations
+        // stay in what is returned, to be freed outside the lock.
         if self.dormancy.classifying.is_none() {
             self.dormancy.clear_fences();
         } else if let Some(written) = local.as_mut().and_then(|local| local.written.take()) {
@@ -1637,7 +1652,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
         match local {
             Some(local) if !local.parked.is_empty() => Ok(local),
-            _ => Err(self.release_build(build)),
+            local => {
+                self.retired_builds.extend(local.map(|local| Arc::new(Mutex::new(local))));
+                Err(self.release_build(build))
+            }
         }
     }
 
@@ -1774,12 +1792,35 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// transactions ready again, snapshots offer every pending lane.
     fn discard_dormancy_now(&mut self, reason: DormancyDiscardReason) {
         self.dormancy.set_index_aside();
-        self.running_build = None;
+        self.retired_builds.extend(self.running_build.take());
         self.dormancy.tip = None;
         self.dormancy.building = false;
         self.dormancy.deferred_discard = None;
         self.dormancy.discards += 1;
         ValidityPoolMetrics::dormancy_discards(reason.as_label()).increment(1);
+    }
+
+    /// Takes what was retired under the lock, to free after releasing it.
+    pub(crate) fn take_retired(&mut self) -> RetiredDormancy<T> {
+        RetiredDormancy {
+            _builds: std::mem::take(&mut self.retired_builds),
+            _collections: self.dormancy.take_retired(),
+        }
+    }
+
+    /// Runs `operation` under `pool`'s write lock, then frees what it retired
+    /// after releasing the lock, so no lock hold pays for a bulk teardown.
+    pub(crate) fn write_retiring<R>(
+        pool: &RwLock<Self>,
+        operation: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let (result, retired) = {
+            let mut pool = pool.write();
+            let result = operation(&mut pool);
+            (result, pool.take_retired())
+        };
+        drop(retired);
+        result
     }
 
     /// Records the metrics of a build that ended having woken `woken`
@@ -1788,12 +1829,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         if let Some(woken) = woken {
             ValidityPoolMetrics::dormant_wakes().record(woken as f64);
         }
-        ValidityPoolMetrics::dormant_transactions().set(pool.read().dormant_len() as f64);
+        ValidityPoolMetrics::record_dormancy(pool.read().dormant_len(), 0);
     }
 
     /// Takes an index a discard set aside, so its transactions can be made
-    /// ready again with [`Self::restore_ready`]; [`Self::finish_restoring`]
-    /// ends it.
+    /// ready again with [`Self::restore_ready`], chunk by chunk, outside a
+    /// long lock hold; [`Self::finish_restoring`] ends it.
     pub(crate) fn take_discarded_dormancy(&mut self) -> Option<DiscardedIndex> {
         self.dormancy.take_discarded()
     }
@@ -1895,10 +1936,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         run.next().is_some_and(|head| Arc::ptr_eq(head, root)).then(|| run.cloned().collect())
     }
 
-    /// Takes up to [`crate::DORMANCY_CLASSIFICATION_BUDGET`] of the classification
-    /// queue's candidates, to classify against the canonical state `head`
-    /// without holding the pool lock; the rest stay queued. `None` unless
-    /// dormancy is enforced and `head` is the tip; the queue then waits.
+    /// Takes up to [`crate::DORMANCY_CLASSIFICATION_BUDGET`] queued
+    /// transactions, and the canary's next dormant transactions, to classify
+    /// against the canonical state `head` without holding the pool lock; the
+    /// rest stay queued. `None` unless dormancy is enforced and `head` is the
+    /// tip; the queue then waits.
     pub(crate) fn take_dormancy_batch(&mut self, head: B256) -> Option<DormancyBatch<T>> {
         let tip = self.dormancy.tip.filter(|tip| {
             self.dormancy.is_enforced()
@@ -1906,18 +1948,31 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 && self.dormancy.deferred_discard.is_none()
         })?;
         let context = PredicateContext { block_number: tip.number.checked_add(1)? };
-        let candidates = self
+        let queued = self.dormancy.take_queued();
+        let canary = self
             .dormancy
-            .take_queued()
+            .take_canary()
             .into_iter()
-            .filter(|hash| !self.dormancy.is_dormant(hash) && self.eligible_slot(hash).is_some())
             .filter_map(|hash| self.hashes.get(&hash).cloned())
             .collect();
         self.dormancy.classifying = Some(self.dormancy.discards);
-        Some(DormancyBatch { context, candidates })
+        Some(DormancyBatch { context, queued, canary })
     }
 
-    /// Installs a batch's classifications, deciding per transaction
+    /// The transactions among `hashes` that are still dormancy candidates:
+    /// pooled, not dormant, and a ready root or nonce-free transaction.
+    pub(crate) fn dormancy_candidates(
+        &self,
+        hashes: &[TxHash],
+    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        hashes
+            .iter()
+            .filter(|hash| !self.dormancy.is_dormant(hash) && self.eligible_slot(hash).is_some())
+            .filter_map(|hash| self.hashes.get(hash).cloned())
+            .collect()
+    }
+
+    /// Installs some of a batch's classifications, deciding per transaction
     /// against the pool as it is now: a candidate is parked only while the
     /// very transaction classified is still pooled as a ready dormancy
     /// candidate, no build wrote its blocker since the state classification
@@ -1946,13 +2001,13 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
     }
 
-    /// Queues again candidates a classification pass took but did not classify.
-    pub(crate) fn requeue_unclassified(
-        &mut self,
-        candidates: impl IntoIterator<Item = Arc<ValidPoolTransaction<T>>>,
-    ) {
-        for transaction in candidates {
-            self.requeue(&transaction);
+    /// Queues again the still-pooled transactions among `hashes`, which a
+    /// classification pass took but did not classify.
+    pub(crate) fn requeue_unclassified(&mut self, hashes: &[TxHash]) {
+        for hash in hashes {
+            if self.hashes.contains_key(hash) {
+                self.dormancy.enqueue(*hash);
+            }
         }
     }
 
@@ -1973,6 +2028,31 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             || self.running_build.as_ref().is_some_and(|local| {
                 local.lock().written.as_ref().is_some_and(WriteFence::is_overflowed)
             })
+    }
+
+    /// Wakes the canary transactions still pooled, still dormant and found
+    /// runnable, unless the index was discarded since the batch was taken;
+    /// returns how many.
+    pub(crate) fn wake_runnable(
+        &mut self,
+        canary: Vec<(Arc<ValidPoolTransaction<T>>, DormancyClassification)>,
+    ) -> usize {
+        // A discard since the batch was taken makes its verdicts stale.
+        if self.dormancy.classifying != Some(self.dormancy.discards) {
+            return 0;
+        }
+        canary
+            .into_iter()
+            .filter(|(transaction, classification)| {
+                *classification == DormancyClassification::Matched
+                    && self.is_pooled(transaction)
+                    && self.dormancy.remove(*transaction.hash()).is_some_and(|entry| {
+                        // Not a build's wake: kept out of the running build's wake count.
+                        self.make_ready(*transaction.hash(), entry.slot);
+                        true
+                    })
+            })
+            .count()
     }
 
     /// Ends the classification in flight.
@@ -3687,6 +3767,46 @@ mod tests {
         assert_eq!(offered(&pool), ready);
     }
 
+    /// A drop or a seal detaches the build's parks in constant time instead of
+    /// freeing them under the lock: an abandoned build's parks are freed only
+    /// when the retired collections are dropped, and a seal hands its parks to
+    /// the caller to collect and merge.
+    #[test]
+    fn builds_hand_their_parks_over_instead_of_freeing_them_under_the_lock() {
+        let signer = signer();
+        let mut pool = protocol_lane_pool();
+        pool.set_dormancy_mode(ValidityDormancyMode::Enforce);
+        let root = valid_pool_transaction(signed_1559(&signer, 0, 1_000));
+        let hash = *root.hash();
+        pool.insert_validated(root, 0).unwrap();
+        let root = pool.get(&hash).unwrap();
+        let blocker = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(10),
+        };
+        let park = |pool: &mut TwoDNoncePool<BasePooledTransaction>| {
+            let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
+            pool.begin_snapshot(build).1.lock().park(&root, blocker.clone());
+            build
+        };
+
+        let build = park(&mut pool);
+        let parked = Arc::strong_count(&root);
+        pool.abandon_build(build);
+        assert_eq!(Arc::strong_count(&root), parked, "the drop only retires the parks");
+        drop(pool.take_retired());
+        assert_eq!(Arc::strong_count(&root), parked - 1, "they are freed with the retired value");
+
+        let build = park(&mut pool);
+        let local = pool.seal_build(build, B256::repeat_byte(1)).unwrap();
+        assert_eq!(Arc::strong_count(&root), parked, "the seal hands the parks over");
+        let parks = local.into_parks();
+        pool.merge_build_parks(build, &parks, false);
+        pool.release_build(build);
+        drop(parks);
+        assert!(pool.dormancy.is_dormant(&hash), "the merged park is dormant on the tip");
+    }
+
     /// The locations builds sealed during a classification write are merged
     /// into one fence capped at [`crate::DORMANCY_FENCE_CAPACITY`]; past the cap the
     /// classification parks nothing and its candidates stay ready.
@@ -3791,16 +3911,13 @@ mod tests {
 
         let mut passes = Vec::new();
         while let Some(batch) = pool.take_dormancy_batch(tip) {
-            if batch.candidates.is_empty() {
+            if batch.queued.is_empty() {
                 break;
             }
-            passes.push(batch.candidates.len());
+            passes.push(batch.queued.len());
+            let candidates = pool.dormancy_candidates(&batch.queued);
             pool.install_dormancy(
-                batch
-                    .candidates
-                    .into_iter()
-                    .map(|candidate| (candidate, dormant.clone()))
-                    .collect(),
+                candidates.into_iter().map(|candidate| (candidate, dormant.clone())).collect(),
             );
             pool.finish_classification();
         }
@@ -3827,13 +3944,13 @@ mod tests {
 
         let mut passes = Vec::new();
         while let Some(batch) = pool.take_dormancy_batch(tip) {
-            if batch.candidates.is_empty() || passes.len() == 4 {
+            if batch.queued.is_empty() || passes.len() == 4 {
                 break;
             }
-            passes.push(batch.candidates.len());
+            passes.push(batch.queued.len());
+            let candidates = pool.dormancy_candidates(&batch.queued);
             pool.install_dormancy(
-                batch
-                    .candidates
+                candidates
                     .into_iter()
                     .map(|candidate| (candidate, DormancyClassification::Matched))
                     .collect(),
@@ -3882,6 +3999,42 @@ mod tests {
 
         assert_eq!(pool.hashes.len(), 2, "the two replacements stay pooled");
         assert_eq!(pool.dormancy.queued_len(), 2);
+    }
+
+    /// Canary verdicts taken before a discard are stale: a transaction parked
+    /// again under the new tip stays dormant and is not counted.
+    #[test]
+    fn a_discard_voids_the_canary_verdicts_of_the_batch_in_flight() {
+        let signer = signer();
+        let mut pool = protocol_lane_pool();
+        pool.set_dormancy_mode(ValidityDormancyMode::Enforce);
+        let root = valid_pool_transaction(signed_1559(&signer, 0, 1_000));
+        let hash = *root.hash();
+        pool.insert_validated(root, 0).unwrap();
+        let root = pool.get(&hash).unwrap();
+        let tip = B256::repeat_byte(1);
+        let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
+        let _ = pool.seal_build(build, tip);
+        pool.take_dormancy_batch(tip).unwrap();
+
+        pool.discard_dormancy(DormancyDiscardReason::Reorg);
+        let blocker = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0xbb),
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(1),
+        };
+        let build = pool.begin_build(tip, 2, None).unwrap();
+        pool.begin_snapshot(build).1.lock().park(&root, blocker);
+        let mut local = pool.seal_build(build, B256::repeat_byte(2)).unwrap();
+        let adopted = pool.adopt_build_parks(build, &mut local);
+        pool.merge_build_parks(build, &local.into_parks(), adopted);
+        pool.release_build(build);
+        assert!(pool.dormancy.is_dormant(&hash));
+
+        let woken = pool.wake_runnable(vec![(root, DormancyClassification::Matched)]);
+
+        assert_eq!(woken, 0);
+        assert!(pool.dormancy.is_dormant(&hash));
     }
 
     /// On an empty index a seal's parks are adopted as the index wholesale;

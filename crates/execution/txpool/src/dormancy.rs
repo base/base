@@ -33,9 +33,12 @@ pub const DORMANCY_FENCE_CAPACITY: usize = 65_536;
 /// maintenance for long.
 pub const DORMANCY_CLASSIFICATION_BUDGET: usize = 32_768;
 
-/// Candidates classified between checks that the pass's results still count, so a pass whose
-/// results a discard or an overflowing fence voided stops reading state soon after.
-pub const DORMANCY_CLASSIFICATION_CHUNK: usize = 256;
+/// Dormant transactions the canary re-evaluates per classification.
+pub const DORMANCY_CANARY_BUDGET: usize = 64;
+
+/// Most classification results installed per hold of the validity pool lock, so a build waiting
+/// on the lock never waits long.
+pub const DORMANCY_INSTALL_BATCH: usize = 256;
 
 /// Longest a build starting waits for the merge of the previous build's parks before running
 /// without the dormancy index.
@@ -384,6 +387,13 @@ impl DiscardedIndex {
     }
 }
 
+/// Collections the validity pool retired under its lock, to free after releasing it.
+#[derive(Debug, Default)]
+pub(crate) struct RetiredCollections {
+    canaries: Vec<IndexSet<TxHash>>,
+    fences: Vec<WriteFence>,
+}
+
 /// The validity pool's predicate index, scoped to the builder's tip, with the classification
 /// queue and the build lifecycle that keeps every entry false on top of the tip.
 ///
@@ -400,6 +410,9 @@ pub(crate) struct Dormancy {
     lanes: HashMap<LaneId, TxHash>,
     /// Pooled transactions waiting for classification; a transaction leaving the pool leaves it.
     queue: IndexSet<TxHash>,
+    /// Dormant transactions blocked on state, sampled in rotation from `canary_next`.
+    canary: IndexSet<TxHash>,
+    canary_next: usize,
     /// The last block this builder sealed; `None` until a seal and after a discard.
     pub tip: Option<BlockNumHash>,
     /// Builds started so far; the latest one is `builds`.
@@ -426,6 +439,8 @@ pub(crate) struct Dormancy {
     /// while a classification was in flight, deduplicated and capped at
     /// [`DORMANCY_FENCE_CAPACITY`], past which the classification parks nothing.
     pub fence: WriteFence,
+    /// Collections retired under the lock, freed once it is released.
+    retired: RetiredCollections,
     /// Transactions woken during the running build.
     pub build_wakes: usize,
 }
@@ -439,6 +454,8 @@ impl Dormancy {
             block_releases: BTreeMap::new(),
             lanes: HashMap::default(),
             queue: IndexSet::default(),
+            canary: IndexSet::default(),
+            canary_next: 0,
             tip: None,
             builds: 0,
             building: false,
@@ -450,6 +467,7 @@ impl Dormancy {
             discards: 0,
             classifying: None,
             fence: WriteFence::default(),
+            retired: RetiredCollections::default(),
             build_wakes: 0,
         }
     }
@@ -478,6 +496,8 @@ impl Dormancy {
     /// empty index; the transactions it held are made ready again by
     /// [`Self::take_discarded`]'s caller, off the build path.
     pub(crate) fn set_index_aside(&mut self) {
+        self.retired.canaries.push(std::mem::take(&mut self.canary));
+        self.canary_next = 0;
         self.discarded.push(DiscardedIndex {
             _index: std::mem::take(&mut self.index),
             _block_releases: std::mem::take(&mut self.block_releases),
@@ -487,15 +507,20 @@ impl Dormancy {
         self.clear_fences();
     }
 
-    /// Forgets every location builds wrote.
+    /// Forgets every location builds wrote, retiring the fence to free outside the lock.
     pub(crate) fn clear_fences(&mut self) {
-        self.fence = WriteFence::default();
+        self.retired.fences.push(std::mem::take(&mut self.fence));
     }
 
     /// Records that a sealed build wrote `written` on top of the state a classification in
     /// flight reads.
     pub(crate) fn fence_sealed(&mut self, written: WriteFence) {
         self.fence.absorb(written);
+    }
+
+    /// Takes the collections retired so far, to free outside the lock.
+    pub(crate) fn take_retired(&mut self) -> RetiredCollections {
+        std::mem::take(&mut self.retired)
     }
 
     /// Takes one discarded index to make ready again; [`Self::finish_restoring`] ends it.
@@ -595,6 +620,10 @@ impl Dormancy {
         if let Some(block) = entry.release_block {
             self.block_releases.entry(block).or_default().insert(hash);
         }
+        // A block-number blocker is released by the build at its height, never missed by a wake.
+        if entry.release_block.is_none() {
+            self.canary.insert(hash);
+        }
         self.entries.insert(hash, entry);
     }
 
@@ -602,6 +631,7 @@ impl Dormancy {
     pub(crate) fn remove(&mut self, hash: TxHash) -> Option<DormantEntry> {
         self.index.remove(hash);
         let entry = self.entries.remove(&hash)?;
+        self.canary.swap_remove(&hash);
         if let DormantSlot::Lane(lane_id) = entry.slot {
             self.lanes.remove(&lane_id);
         }
@@ -614,6 +644,17 @@ impl Dormancy {
             }
         }
         Some(entry)
+    }
+
+    /// The next dormant transactions in the canary's rotation, at most
+    /// [`DORMANCY_CANARY_BUDGET`] of them.
+    pub(crate) fn take_canary(&mut self) -> Vec<TxHash> {
+        let len = self.canary.len();
+        let picked = (0..DORMANCY_CANARY_BUDGET.min(len))
+            .filter_map(|offset| self.canary.get_index((self.canary_next + offset) % len).copied())
+            .collect::<Vec<_>>();
+        self.canary_next = if len == 0 { 0 } else { (self.canary_next + picked.len()) % len };
+        picked
     }
 }
 
@@ -629,6 +670,34 @@ mod tests {
 
     fn balance_of(address: Address) -> ValidityPredicate {
         ValidityPredicate::Balance { address, op: ValidityOperator::GreaterThan, value: U256::ZERO }
+    }
+
+    /// Block-number blockers stay out of the rotation, and the state-blocked
+    /// transactions it holds are sampled again by every classification.
+    #[test]
+    fn the_canary_keeps_sampling_state_blocked_transactions_among_block_bound_ones() {
+        let mut dormancy = Dormancy::new(ValidityDormancyMode::Enforce);
+        let block_bound = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(1_000),
+        };
+        for index in 0..110_u64 {
+            let hash = B256::from(U256::from(index));
+            let slot = DormantSlot::NonceFree(hash);
+            if index < 10 {
+                dormancy.park(hash, slot, balance_of(address(index as usize)), None);
+            } else {
+                dormancy.park(hash, slot, block_bound.clone(), Some(1_000));
+            }
+        }
+
+        for _ in 0..2 {
+            assert_eq!(dormancy.take_canary().len(), 10);
+        }
+        dormancy.remove(B256::from(U256::from(3)));
+        let sampled = dormancy.take_canary();
+        assert_eq!(sampled.len(), 9, "a transaction no longer dormant leaves the rotation");
+        assert!(!sampled.contains(&B256::from(U256::from(3))));
     }
 
     /// Destroyed-storage addresses count against the same cap as keys; past
