@@ -267,10 +267,12 @@ counts the discards from all three stores, and `txpool.validity.evicted` and
 `txpool.validity.pool_transactions` give the validity pool's evictions and
 occupancy (in Datadog: `base.reth_txpool_builder_rpc_txs_rejected.count`,
 `base.reth_txpool_validity_evicted.count` and
-`base.reth_txpool_validity_pool_transactions`). Every other rejection reason is
-still journaled. Consequence for readers: a forwarded transaction with neither
-`TXPOOL_VALIDATED_INSERT_ACCEPTED` nor `TXPOOL_VALIDATED_INSERT_REJECTED` from
-the leader was either discarded for capacity or never reached the leader.
+`base.reth_txpool_validity_pool_transactions`). Every other pool rejection
+reason is still journaled. Consequence for readers: a forwarded transaction with
+neither `TXPOOL_VALIDATED_INSERT_ACCEPTED` nor `TXPOOL_VALIDATED_INSERT_REJECTED`
+from the leader did not necessarily fail to reach it. Capacity discards leave no
+verdict, and neither do inserts the builder refuses before asking the pool
+(undecodable bytes, extension or validity-signature policy, an oversized batch).
 
 `TXPOOL_BUILDER_FORWARD_DROPPED` is emitted only for transaction-scoped drops
 where the forwarding task still knows the `tx_hash`, such as final RPC failure
