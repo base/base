@@ -167,6 +167,16 @@ impl<T: BasePooledTx> NonceLane<T> {
         self.transactions.len() - self.consecutive_pending_len()
     }
 
+    /// The lowest fee cap among the members. A member is included only after
+    /// every member ahead of it, so the tail is no more includable than this.
+    fn lowest_fee_cap(&self) -> u128 {
+        self.transactions
+            .values()
+            .map(|transaction| transaction.max_fee_per_gas())
+            .min()
+            .unwrap_or_default()
+    }
+
     /// Whether every live member is in the pending run.
     fn is_fully_pending(&self) -> bool {
         self.transactions.last_key_value().is_none_or(|(nonce, _)| self.is_pending(*nonce))
@@ -424,6 +434,10 @@ impl SidecarSenderIds {
 /// Eviction rank of a candidate (a lane tail or a nonce-free transaction); the
 /// smallest is evicted first. Field order is the ranking order: queued before
 /// pending, non-local before local, lowest fee cap, then most recently received.
+///
+/// A lane tail ranks by the lowest fee cap in its lane, not its own: the sidecar
+/// keeps no base fee, so ranking by the tail's would let a lane whose head can
+/// never be included at the base fee outrank, and push out, executable lanes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct EvictionKey {
     pending: bool,
@@ -608,7 +622,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.ahead_of_state.remove(&lane_id);
         }
         if let Some((_, tail)) = lane.transactions.last_key_value() {
-            let key = self.eviction_key(tail, lane.is_fully_pending());
+            let key = EvictionKey {
+                max_fee_per_gas: lane.lowest_fee_cap(),
+                ..self.eviction_key(tail, lane.is_fully_pending())
+            };
             self.eviction_order.insert(key);
             self.lane_candidates.insert(lane_id, key);
         }
@@ -1570,6 +1587,7 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope, Eip8130Signed,
         TxEip8130,
     };
+    use reth_primitives_traits::InMemorySize;
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
 
     use super::*;
@@ -1631,21 +1649,22 @@ mod tests {
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let tx = TxEip8130 {
-            chain_id: test_chain_id(),
-            sender: None,
-            nonce_key,
-            nonce_sequence,
-            valid_after: 0,
-            valid_before,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas_limit: 50_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        };
+        sign_tx(
+            signer,
+            TxEip8130 {
+                chain_id: test_chain_id(),
+                nonce_key,
+                nonce_sequence,
+                valid_before,
+                max_priority_fee_per_gas,
+                max_fee_per_gas,
+                gas_limit: 50_000,
+                ..Default::default()
+            },
+        )
+    }
+
+    fn sign_tx(signer: &PrivateKeySigner, tx: TxEip8130) -> BasePooledTransaction {
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
@@ -2502,7 +2521,7 @@ mod tests {
     }
 
     #[test]
-    fn eviction_takes_the_cheapest_lane_tail_without_opening_a_gap() {
+    fn eviction_ranks_a_lane_by_its_cheapest_member_and_takes_its_tail() {
         let mut pool = TwoDNoncePool::new(PriceBumpConfig::default()).with_limits(SidecarLimits {
             capacity: SubPoolLimit::new(2, usize::MAX),
             ..SidecarLimits::unlimited()
@@ -2523,9 +2542,9 @@ mod tests {
         let evicted: Vec<_> =
             pool.evict_over_capacity().iter().map(|transaction| *transaction.hash()).collect();
 
-        assert_eq!(evicted, vec![other_hash]);
-        assert!(pool.contains(&cheap_head_hash));
-        assert!(pool.contains(&rich_tail_hash));
+        assert_eq!(evicted, vec![rich_tail_hash]);
+        assert!(pool.contains(&cheap_head_hash), "eviction never opens a gap");
+        assert!(pool.contains(&other_hash));
         assert!(pool.evict_over_capacity().is_empty());
     }
 
@@ -2628,6 +2647,74 @@ mod tests {
 
         assert_eq!(evicted_hashes(&mut pool), vec![tail_hash, head_hash]);
         assert_eq!(pool.pending_and_queued_txn_count(), (0, 0));
+    }
+
+    #[test]
+    fn lanes_with_unexecutable_heads_cannot_push_out_executable_lanes() {
+        const FEE_FLOOR: u128 = 7;
+        let mut pool = capped_pool(4);
+        let mut spam = Vec::new();
+        for _ in 0..2 {
+            let attacker = signer();
+            for (nonce, fee) in [(0, FEE_FLOOR), (1, 1_000_000)] {
+                let transaction =
+                    valid_pool_transaction(signed_channel_tx(&attacker, U256::from(1), nonce, fee));
+                spam.push(*transaction.hash());
+                pool.insert_validated(transaction, 0).unwrap();
+            }
+        }
+
+        let mut honest = Vec::new();
+        for _ in 0..4 {
+            let transaction =
+                valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 1_000));
+            honest.push(*transaction.hash());
+            pool.insert_validated(transaction, 0).unwrap();
+            for evicted in evicted_hashes(&mut pool) {
+                assert!(spam.contains(&evicted), "only spam is evicted");
+            }
+        }
+
+        assert!(honest.iter().all(|hash| pool.contains(hash)));
+        assert!(spam.iter().all(|hash| !pool.contains(hash)));
+    }
+
+    #[test]
+    fn large_descendants_behind_an_unexecutable_head_are_evicted_first() {
+        let attacker = signer();
+        let spam: Vec<_> = (0..4)
+            .map(|nonce| {
+                let (fee, metadata) =
+                    if nonce == 0 { (7, Bytes::new()) } else { (1_000_000, vec![0; 4_096].into()) };
+                valid_pool_transaction(sign_tx(
+                    &attacker,
+                    TxEip8130 {
+                        chain_id: test_chain_id(),
+                        nonce_key: U256::from(1),
+                        nonce_sequence: nonce,
+                        max_fee_per_gas: fee,
+                        gas_limit: 50_000,
+                        metadata,
+                        ..Default::default()
+                    },
+                ))
+            })
+            .collect();
+        let spam_size: usize = spam.iter().map(|transaction| transaction.transaction.size()).sum();
+        let tail_hash = *spam[3].hash();
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default()).with_limits(SidecarLimits {
+            capacity: SubPoolLimit::new(usize::MAX, spam_size),
+            ..SidecarLimits::unlimited()
+        });
+        for transaction in spam {
+            pool.insert_validated(transaction, 0).unwrap();
+        }
+        let honest = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 1_000));
+        let honest_hash = *honest.hash();
+        pool.insert_validated(honest, 0).unwrap();
+
+        assert_eq!(evicted_hashes(&mut pool), vec![tail_hash]);
+        assert!(pool.contains(&honest_hash));
     }
 
     #[test]
