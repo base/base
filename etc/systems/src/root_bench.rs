@@ -1,6 +1,6 @@
 //! Isolated serialized Engine build/import benchmark.
 
-use std::{collections::BTreeMap, fs::{self, OpenOptions}, future::Future, io::Write, path::{Path, PathBuf}, sync::Arc, time::{Duration, Instant}};
+use std::{collections::BTreeMap, fs::{self, OpenOptions}, future::Future, io::{Read, Write}, panic::AssertUnwindSafe, path::{Path, PathBuf}, sync::{Arc, OnceLock}, time::{Duration, Instant}};
 use alloy_consensus::{Transaction, TxEnvelope, TxReceipt, transaction::SignerRecoverable};
 use alloy_eips::Decodable2718;
 use alloy_genesis::Genesis;
@@ -27,6 +27,65 @@ use reth_tasks::{PanickedTaskError, Runtime, RuntimeBuilder, RuntimeConfig};
 use tokio::task::{JoinError, JoinHandle};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use futures::FutureExt;
+use serde::ser::{SerializeMap, SerializeStruct};
+
+/// Fixed synthetic gas limit shared by genesis, frozen attributes and validation.
+pub const ROOT_BENCH_GAS_LIMIT: u64 = 126_000_000;
+
+/// Fixed context for the production Engine driver and its mocked callers.
+pub struct RootBenchDrive {
+    /// Accepted fresh-genesis identity.
+    pub genesis: B256,
+    /// Initial blocks excluded from measurement.
+    pub warmup: u64,
+    /// Shared trial-relative clock origin.
+    pub origin: Instant,
+    /// Per-call deadline.
+    pub timeout: Duration,
+}
+
+/// Borrowed JSONL view adds the full envelope without constructing a second JSON tree.
+pub struct RootBenchSampleRecord<'a> {
+    /// Retained sample, including typed payload bytes.
+    pub sample: &'a RootBenchSample,
+}
+
+/// Borrowed response map keeps native envelopes in samples.jsonl only.
+pub struct RootBenchResponses<'a> {
+    /// Small serialized responses and the retained native envelope.
+    pub sample: &'a RootBenchSample,
+}
+
+impl Serialize for RootBenchResponses<'_> {
+    /// Streams the native payload directly, preserving the existing JSONL response shape.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(None)?;
+        for (name, value) in &self.sample.responses { if name != "payload" { map.serialize_entry(name, value)?; } }
+        if let Some(envelope) = &self.sample.pending.envelope { map.serialize_entry("payload", envelope)?; }
+        map.end()
+    }
+}
+
+impl Serialize for RootBenchSampleRecord<'_> {
+    /// Preserves every sample field while substituting a borrowed full-response map.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let sample = self.sample;
+        let mut row = serializer.serialize_struct("RootBenchSample", 11)?;
+        row.serialize_field("number", &sample.number)?;
+        row.serialize_field("warmup", &sample.warmup)?;
+        row.serialize_field("parent_hash", &sample.parent_hash)?;
+        row.serialize_field("block_hash", &sample.block_hash)?;
+        row.serialize_field("phases", &sample.phases)?;
+        row.serialize_field("cycle_ns", &sample.cycle_ns)?;
+        row.serialize_field("responses", &RootBenchResponses { sample })?;
+        row.serialize_field("error", &sample.error)?;
+        row.serialize_field("accepted_gas", &sample.accepted_gas)?;
+        row.serialize_field("successful_receipts", &sample.successful_receipts)?;
+        row.serialize_field("payload_reference", &sample.payload_reference)?;
+        row.end()
+    }
+}
 
 /// Root-benchmark process outcome, independent of diagnostic error text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +273,8 @@ pub struct RootBenchSample {
     pub pending: RootBenchPending,
     /// Raw Engine responses and payload ID.
     pub responses: BTreeMap<String, Value>,
+    /// JSONL row selector and JSON pointer for the full native payload, absent until available.
+    pub payload_reference: Option<Value>,
     /// Failure retained separately from zero-duration success.
     pub error: Option<String>,
     /// Canonically accepted block gas.
@@ -324,7 +385,7 @@ impl RootBenchCleanup {
         let drained = guards_completed && worker_joined_healthy && receipt_reads_completed;
         let shutdown = tokio::task::spawn_blocking(move || self.runtime.shutdown_timeout(timeout)).await.map_err(|error| eyre!("runtime shutdown join failed: {error}"));
         Self::retain_error(outcome, shutdown);
-        json!({"drained":drained,"guards_completed":guards_completed,"worker_joined_healthy":worker_joined_healthy,"receipt_reads_completed":receipt_reads_completed,"manager_observed":self.manager.is_some(),"critical_task_result":format!("{:?}", self.critical_result)})
+        json!({"schema_version":1,"drained":drained,"guards_completed":guards_completed,"worker_joined_healthy":worker_joined_healthy,"receipt_reads_completed":receipt_reads_completed,"manager_observed":self.manager.is_some(),"critical_task_result":format!("{:?}", self.critical_result)})
     }
 }
 
@@ -367,7 +428,7 @@ impl RootBenchBundle {
         let sender = Self::freeze_identity()?;
         let mut genesis: Genesis = serde_json::from_value(json!({
             "config": {"chainId":900,"homesteadBlock":0,"eip150Block":0,"eip155Block":0,"eip158Block":0,"byzantiumBlock":0,"constantinopleBlock":0,"petersburgBlock":0,"istanbulBlock":0,"muirGlacierBlock":0,"berlinBlock":0,"londonBlock":0,"arrowGlacierBlock":0,"grayGlacierBlock":0,"mergeNetsplitBlock":0,"terminalTotalDifficulty":"0x0","terminalTotalDifficultyPassed":true,"bedrockBlock":0,"regolithTime":0,"canyonTime":0,"ecotoneTime":0,"fjordTime":0,"graniteTime":0,"holoceneTime":0,"isthmusTime":0,"jovianTime":0,"blockTime":1,"optimism":{"eip1559Elasticity":6,"eip1559Denominator":50}},
-            "timestamp":"0x0","gasLimit":126000000,"difficulty":"0x0","baseFeePerGas":"0x3b9aca00","alloc":{sender.to_string():{"balance":"0xd3c21bcecceda1000000"}}
+            "timestamp":"0x0","gasLimit":ROOT_BENCH_GAS_LIMIT,"difficulty":"0x0","baseFeePerGas":"0x3b9aca00","alloc":{sender.to_string():{"balance":"0xd3c21bcecceda1000000"}}
         }))?;
         let params = BaseChainSpec::from_genesis(genesis.clone()).base_fee_params_at_timestamp(0);
         genesis.extra_data = JovianExtraData::encode(B64::ZERO, params, 0)?;
@@ -378,7 +439,7 @@ impl RootBenchBundle {
     pub fn attributes(timestamp: u64, transactions: Vec<Bytes>) -> BasePayloadAttributes {
         BasePayloadAttributes {
             payload_attributes: PayloadAttributes { timestamp, prev_randao:B256::ZERO, suggested_fee_recipient:Address::ZERO, withdrawals:Some(vec![]), parent_beacon_block_root:Some(B256::ZERO), slot_number:None, target_gas_limit:None },
-            transactions:Some(transactions), no_tx_pool:Some(true), gas_limit:Some(126_000_000),
+            transactions:Some(transactions), no_tx_pool:Some(true), gas_limit:Some(ROOT_BENCH_GAS_LIMIT),
             eip_1559_params:Some(B64::from((50u64 << 32) | 6)), min_base_fee:Some(1),
         }
     }
@@ -398,7 +459,7 @@ impl RootBenchBundle {
         let expected = Self::freeze_identity()?;
         let mut nonce = 0;
         for (index, attrs) in self.blocks.iter().enumerate() {
-            ensure!(attrs.payload_attributes.timestamp == index as u64 + 1 && attrs.no_tx_pool == Some(true) && attrs.gas_limit == Some(126_000_000), "invalid frozen attributes");
+            ensure!(attrs.payload_attributes.timestamp == index as u64 + 1 && attrs.no_tx_pool == Some(true) && attrs.gas_limit == Some(ROOT_BENCH_GAS_LIMIT), "invalid frozen attributes");
             let transactions = attrs.transactions.as_ref().ok_or_else(|| eyre!("missing forced transactions"))?;
             ensure!(!transactions.is_empty() && transactions.len() <= 1000, "empty or oversized block");
             ensure!(serde_json::to_vec(attrs)? == serde_json::to_vec(&Self::attributes(index as u64 + 1, transactions.clone()))?, "unsupported fixed attributes");
@@ -500,6 +561,25 @@ impl RootBenchSummary {
         Self { count:sorted.len(), p50_ns:rank(50), p90_ns:rank(90), p95_ns:rank(95), p99_ns:rank(99) }
     }
 
+    /// Returns actual measured Engine endpoints; cancellation never invents a canonical end.
+    pub fn loop_bounds(samples: &[RootBenchSample]) -> (Option<u64>, Option<u64>) {
+        let start = samples.iter().find(|s| !s.warmup).and_then(|s| s.phases.get("build_fcu")).map(|p| p.start_ns);
+        let end = samples.iter().rev().find(|s| !s.warmup).filter(|s| s.pending.canonical_fcu.as_ref().is_some_and(|response| response.payload_status.status == PayloadStatusEnum::Valid && response.payload_status.latest_valid_hash == s.block_hash)).and_then(|s| s.phases.get("canonical_fcu")).map(|p| p.end_ns);
+        (start, end)
+    }
+
+    /// Publishes verified totals over the saturated wall interval only for a complete workload.
+    pub fn engine_saturated(samples: &[RootBenchSample], expected_measured: usize, complete: bool) -> Option<Value> {
+        let measured: Vec<_> = samples.iter().filter(|s| !s.warmup).collect();
+        if !complete || expected_measured == 0 || measured.len() != expected_measured || measured.iter().any(|s| s.error.is_some() || s.cycle_ns.is_none() || !s.pending.canonical_fcu.as_ref().is_some_and(|response| response.payload_status.status == PayloadStatusEnum::Valid && response.payload_status.latest_valid_hash == s.block_hash) || ["build_fcu", "get_payload", "new_payload", "canonical_fcu"].iter().any(|phase| !s.phases.contains_key(*phase))) { return None; }
+        let (start, end) = Self::loop_bounds(samples);
+        let window_ns = end?.checked_sub(start?)?;
+        if window_ns == 0 { return None; }
+        let gas_used: u64 = measured.iter().map(|s| s.accepted_gas).sum();
+        let transactions: u64 = measured.iter().map(|s| s.successful_receipts).sum();
+        Some(json!({"window_ns":window_ns,"measured_blocks":measured.len() as u64,"gas_used":gas_used,"transactions":transactions,"gas_per_second":gas_used as f64 * 1_000_000_000.0 / window_ns as f64,"transactions_per_second":transactions as f64 * 1_000_000_000.0 / window_ns as f64}))
+    }
+
     /// Computes verified gas/s and receipts/s through drain using nanosecond wall time.
     pub fn throughput(samples: &[RootBenchSample], start_ns: Option<u64>, end_ns: u64) -> Option<(f64, f64)> {
         let duration = end_ns.checked_sub(start_ns?)?;
@@ -519,7 +599,7 @@ impl RootBenchSummary {
 impl RootBenchSample {
     /// Creates a pending sample without success values.
     pub fn new(number: u64, warmup: bool) -> Self {
-        Self { number, warmup, parent_hash:B256::ZERO, block_hash:None, phases:BTreeMap::new(), cycle_ns:None, responses:BTreeMap::new(), pending:RootBenchPending::default(), error:None, accepted_gas:0, successful_receipts:0 }
+        Self { number, warmup, parent_hash:B256::ZERO, block_hash:None, phases:BTreeMap::new(), cycle_ns:None, responses:BTreeMap::new(), payload_reference:None, pending:RootBenchPending::default(), error:None, accepted_gas:0, successful_receipts:0 }
     }
 
     /// Sums raw phase durations without inventing a monotonic endpoint.
@@ -528,32 +608,36 @@ impl RootBenchSample {
     }
 
     /// Drives only bounded Engine calls and retains typed evidence. Verification follows saturation.
-    pub async fn drive<E: RootBenchEngine>(engine: &E, attributes: Vec<BasePayloadAttributes>, genesis: B256, warmup: u64, origin: Instant, timeout: Duration, samples: &mut Vec<Self>, measurement_start: &mut Option<u64>) -> Result<()> {
+    pub async fn drive<E: RootBenchEngine>(engine: &E, attributes: Vec<BasePayloadAttributes>, context: RootBenchDrive, samples: &mut Vec<Self>, measurement_start: &mut Option<u64>) -> Result<()> {
+        let genesis = context.genesis;
+        let warmup = context.warmup;
+        let origin = context.origin;
+        let timeout = context.timeout;
         samples.reserve(attributes.len());
         let mut parent = genesis;
         for (index, attrs) in attributes.into_iter().enumerate() {
             if index as u64 == warmup { *measurement_start = Some(origin.elapsed().as_nanos() as u64); }
             samples.push(Self::new(index as u64 + 1, (index as u64) < warmup));
-            let sample = samples.last_mut().expect("just retained sample");
+            let sample = samples.last_mut().ok_or_else(|| RootBenchExit::Incomplete.attach(eyre!("retained sample missing")))?;
             sample.parent_hash = parent;
             let result: Result<B256> = async {
                 let fcu = ForkchoiceState { head_block_hash:parent, safe_block_hash:parent, finalized_block_hash:genesis };
                 sample.pending.build_fcu = Some(sample.call("build_fcu", origin, timeout, engine.fcu(fcu, Some(attrs))).await?);
-                let started = sample.pending.build_fcu.as_ref().expect("received build response");
+                let started = sample.pending.build_fcu.as_ref().ok_or_else(|| RootBenchExit::Incomplete.attach(eyre!("build response missing")))?;
                 Self::require_valid(&started.payload_status, parent)?;
                 let id = started.payload_id.ok_or_else(|| eyre!("build FCU missing payload ID"))?;
                 // AwaitInProgress resolves construction. There is deliberately no scheduling sleep.
                 sample.pending.envelope = Some(sample.call("get_payload", origin, timeout, engine.payload(id)).await?);
-                let envelope = sample.pending.envelope.as_ref().expect("received payload");
+                let envelope = sample.pending.envelope.as_ref().ok_or_else(|| RootBenchExit::Incomplete.attach(eyre!("payload missing")))?;
                 let hash = envelope.execution_payload.payload_inner.payload_inner.payload_inner.block_hash;
                 sample.block_hash = Some(hash);
                 // Import consumes a clone, prepared before the import phase clock.
                 let payload = envelope.execution_payload.clone();
                 let beacon = envelope.parent_beacon_block_root;
                 sample.pending.new_payload = Some(sample.call("new_payload", origin, timeout, engine.import(payload, beacon)).await?);
-                Self::require_valid(sample.pending.new_payload.as_ref().expect("received import response"), hash)?;
+                Self::require_valid(sample.pending.new_payload.as_ref().ok_or_else(|| RootBenchExit::Incomplete.attach(eyre!("import response missing")))?, hash)?;
                 sample.pending.canonical_fcu = Some(sample.call("canonical_fcu", origin, timeout, engine.fcu(ForkchoiceState { head_block_hash:hash, ..fcu }, None)).await?);
-                Self::require_valid(&sample.pending.canonical_fcu.as_ref().expect("received canonical response").payload_status, hash)?;
+                Self::require_valid(&sample.pending.canonical_fcu.as_ref().ok_or_else(|| RootBenchExit::Incomplete.attach(eyre!("canonical response missing")))?.payload_status, hash)?;
                 Ok(hash)
             }.await;
             match result { Ok(hash) => parent = hash, Err(error) => { sample.error = Some(format!("{error:#}")); return Err(error); } }
@@ -597,9 +681,30 @@ impl RootBenchSample {
         if let Some(response) = &self.pending.build_fcu { self.responses.insert("build_fcu".into(), serde_json::to_value(response)?); }
         if let Some(response) = &self.pending.new_payload { self.responses.insert("new_payload".into(), serde_json::to_value(response)?); }
         if let Some(response) = &self.pending.canonical_fcu { self.responses.insert("canonical_fcu".into(), serde_json::to_value(response)?); }
-        if let Some(envelope) = &self.pending.envelope { self.responses.insert("payload".into(), serde_json::to_value(envelope)?); }
+        if self.pending.envelope.is_some() {
+            let reference = json!({"file":"samples.jsonl","number":self.number,"selection":"last-row-per-number","pointer":"/responses/payload"});
+            self.responses.insert("payload".into(), reference.clone());
+            self.payload_reference = Some(reference);
+        }
         if let Some(header) = &self.pending.payload_header { self.responses.insert("payload_header".into(), serde_json::to_value(header)?); }
         Ok(())
+    }
+
+    /// Attempts every buffered sample independently; evidence failures never short-circuit drain.
+    pub fn flush_all(samples: &mut [Self], output: &Path, outcome: &mut Result<()>) {
+        Self::flush_all_with(samples, outcome, |sample| sample.persist(output));
+    }
+
+    /// Shares independent row attempts with fault-injection tests of serialization failures.
+    pub fn flush_all_with(samples: &mut [Self], outcome: &mut Result<()>, mut persist: impl FnMut(&Self) -> Result<()>) {
+        for sample in samples {
+            sample.finish_cycle();
+            if let (Some(build), Some(payload)) = (sample.phases.get("build_fcu"), sample.phases.get("get_payload")) {
+                sample.phases.insert("payload_available".into(), RootBenchInterval { start_ns:build.start_ns, end_ns:payload.end_ns });
+            }
+            RootBenchCleanup::retain_error(outcome, std::panic::catch_unwind(AssertUnwindSafe(|| sample.flush_pending())).unwrap_or_else(|_| Err(RootBenchExit::Incomplete.attach(eyre!("sample response serialization panicked")))));
+            RootBenchCleanup::retain_error(outcome, std::panic::catch_unwind(AssertUnwindSafe(|| persist(sample))).unwrap_or_else(|_| Err(RootBenchExit::Incomplete.attach(eyre!("sample persistence panicked")))));
+        }
     }
 
     /// Requires the exact accepted identity as well as VALID status.
@@ -610,7 +715,11 @@ impl RootBenchSample {
     /// Appends a flushed phase snapshot without overwriting earlier evidence.
     pub fn persist(&self, output: &Path) -> Result<()> {
         let mut file = OpenOptions::new().append(true).create(true).open(output.join("samples.jsonl"))?;
-        serde_json::to_writer(&mut file, self)?; file.write_all(b"\n")?; file.sync_data()?; Ok(())
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| serde_json::to_writer(&mut file, &RootBenchSampleRecord { sample:self }))).map_err(|_| RootBenchExit::Incomplete.attach(eyre!("sample serialization panicked"))).and_then(|result| result.map_err(Into::into));
+        // Terminate even a failed row so independent later samples remain recoverable JSONL.
+        let newline = file.write_all(b"\n");
+        let durable = file.sync_data();
+        result?; newline?; durable?; Ok(())
     }
 
     /// Times one bounded call without serialization or disk I/O between Engine phases.
@@ -624,6 +733,30 @@ impl RootBenchSample {
 }
 
 impl RootBenchRunArgs {
+    /// Converts unwinding active work to a typed failure so retained state can be drained.
+    pub async fn catch_active<T>(future: impl Future<Output = Result<T>>) -> Result<T> {
+        AssertUnwindSafe(future).catch_unwind().await.unwrap_or_else(|_| Err(RootBenchExit::Incomplete.attach(eyre!("active trial panicked; in-flight outcome uncertain"))))
+    }
+
+    /// Hashes a byte stream using a fixed 64-KiB buffer, without whole-file allocation.
+    pub fn hash_reader(reader: &mut impl Read) -> Result<B256> {
+        let mut hash = alloy_primitives::Keccak256::new();
+        let mut buffer = [0u8; 65536];
+        loop { let count = reader.read(&mut buffer)?; if count == 0 { break; } hash.update(&buffer[..count]); }
+        Ok(hash.finalize())
+    }
+
+    /// Caches success and failure exactly once, including under parallel preflight callers.
+    pub fn cached_digest(cache: &OnceLock<std::result::Result<B256, String>>, read: impl FnOnce() -> Result<B256>) -> Result<B256> {
+        cache.get_or_init(|| read().map_err(|error| format!("{error:#}"))).as_ref().copied().map_err(|error| eyre!("executable digest unavailable: {error}"))
+    }
+
+    /// Opens the running executable once per process; all artifacts reuse the cached result.
+    pub fn executable_digest() -> Result<B256> {
+        static DIGEST: OnceLock<std::result::Result<B256, String>> = OnceLock::new();
+        Self::cached_digest(&DIGEST, || Self::hash_reader(&mut fs::File::open(std::env::current_exe()?)?))
+    }
+
     /// Fingerprints every captured environment value, including apparently benign settings.
     pub fn environment_fingerprints(values: impl IntoIterator<Item = (String, String)>) -> BTreeMap<String, String> {
         values.into_iter().filter(|(name, _)| name.starts_with("RETH_") || name.starts_with("BASE_")).map(|(name, value)| (name, format!("keccak:{}", keccak256(value)))).collect()
@@ -670,7 +803,7 @@ impl RootBenchRunArgs {
         let mut outcome = self.execute().await.map_err(|error| RootBenchExit::Refused.attach(error));
         if let Err(error) = &outcome {
             if !self.output.join("result.json").exists() {
-                let fallback = RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"complete":false,"drained":false,"error":format!("{error:#}"),"cohort":self.cohort}));
+                let fallback = RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"schema_version":1,"complete":false,"drained":false,"error":format!("{error:#}"),"cohort":self.cohort}));
                 RootBenchCleanup::retain_error(&mut outcome, fallback);
             }
         }
@@ -695,19 +828,20 @@ impl RootBenchRunArgs {
         let checkout = std::process::Command::new("git").args(["rev-parse", "--show-toplevel"]).output()?;
         ensure!(checkout.status.success(), "runtime diagnostics require a git checkout");
         let checkout = PathBuf::from(String::from_utf8(checkout.stdout)?.trim());
-        let executable_digest = keccak256(fs::read(std::env::current_exe()?)?);
-        let manifest: Option<Value> = if self.executable_manifest.as_os_str().is_empty() { None } else { Some(serde_json::from_slice(&fs::read(&self.executable_manifest)?)?) };
-        RootBenchBundle::write_new(&self.output.join("executable-source.json"), &json!({"external_manifest":manifest,"verification":"external-attestation-required","executable_keccak":executable_digest}))?;
-        Self::verify_manifest(manifest.as_ref(), executable_digest)?;
+        let executable_digest = Self::executable_digest()?;
+        let manifest_bytes = fs::read(&self.executable_manifest).map_err(|error| eyre!("external executable provenance unverified; manifest read failed: {error}"))?;
+        let manifest: Value = serde_json::from_slice(&manifest_bytes)?;
+        RootBenchBundle::write_new(&self.output.join("executable-source.json"), &json!({"schema_version":1,"external_manifest":manifest,"verification":"external-attestation-required","executable_keccak":executable_digest}))?;
+        Self::verify_manifest(Some(&manifest), executable_digest)?;
         // Independent preflight failures must not contend for the process-wide trial owner.
         let _active = ACTIVE.try_lock().map_err(|_| eyre!("only one root trial per process at a time"))?;
-        RootBenchBundle::write_new(&self.output.join("executable.json"), &json!({"executable_keccak":keccak256(fs::read(std::env::current_exe()?)?),"harness_module_keccak":keccak256(include_bytes!("root_bench.rs"))}))?;
+        RootBenchBundle::write_new(&self.output.join("executable.json"), &json!({"schema_version":1,"executable_keccak":executable_digest,"harness_module_keccak":keccak256(include_bytes!("root_bench.rs"))}))?;
         let environment = Self::environment_fingerprints(std::env::vars());
-        RootBenchBundle::write_new(&self.output.join("launch.json"), &json!({"cohort":self.cohort,"transport":"typed-in-memory","receipt_source":"canonical-execution-provider-receipts_by_block","account_source":"canonical-execution-provider-state_by_block_hash/basic_account","config":Self::launch_settings(&launch),"runtime_checkout":{"source":String::from_utf8(source.stdout)?,"cargo_lock_keccak":keccak256(fs::read(checkout.join("Cargo.lock"))?),"reth_pin_keccak":keccak256(fs::read(checkout.join("etc/upstream-pins/reth.toml"))?),"not_executable_provenance":true},"argv":Self::argument_fingerprints(std::env::args_os()),"environment":environment,"unsupported":["cpu_time","rss","io","cache_hit_miss","persistence_lag","queue_depth","paced_cadence","immutable_6268_baseline"]}))?;
+        RootBenchBundle::write_new(&self.output.join("launch.json"), &json!({"schema_version":1,"cohort":self.cohort,"transport":"typed-in-memory","receipt_source":"canonical-execution-provider-receipts_by_block","account_source":"canonical-execution-provider-state_by_block_hash/basic_account","config":Self::launch_settings(&launch),"runtime_checkout":{"source":String::from_utf8(source.stdout)?,"cargo_lock_keccak":keccak256(fs::read(checkout.join("Cargo.lock"))?),"reth_pin_keccak":keccak256(fs::read(checkout.join("etc/upstream-pins/reth.toml"))?),"not_executable_provenance":true},"argv":Self::argument_fingerprints(std::env::args_os()),"environment":environment,"unsupported":["cpu_time","rss","io","cache_hit_miss","persistence_lag","queue_depth","paced_cadence","immutable_6268_baseline"]}))?;
         // Share Reth's idempotent recorder installation with the admitted node launcher.
         let metrics = reth_node_metrics::recorder::install_prometheus_recorder().handle().clone();
         let origin = Instant::now();
-        RootBenchBundle::write_new(&self.output.join("runtime.json"), &json!({"configuration":format!("{:#?}", RuntimeConfig::default())}))?;
+        RootBenchBundle::write_new(&self.output.join("runtime.json"), &json!({"schema_version":1,"configuration":format!("{:#?}", RuntimeConfig::default())}))?;
         let runtime = std::thread::spawn(|| RuntimeBuilder::new(RuntimeConfig::default()).build()).join().map_err(|_| eyre!("runtime construction panicked"))??;
         let Some(mut critical) = runtime.take_task_manager_handle() else {
             let mut outcome = Err(eyre!("runtime critical-task monitor unavailable"));
@@ -726,7 +860,7 @@ impl RootBenchRunArgs {
         // Keep blocking read ownership across cancellation; only the owned runtime may run it.
         let mut receipt_tasks = Vec::new();
         let mut critical_result = None;
-        let mut outcome = tokio::select! {
+        let mut outcome = Self::catch_active(async { tokio::select! {
             result = tokio::time::timeout(Duration::from_millis(self.run_timeout_ms), async {
             launched = Some(tokio::time::timeout(timeout, launch.launch_default(CliContext { task_executor: runtime.clone() })).await.map_err(|_| RootBenchExit::Timeout.attach(eyre!("launch timed out")))??);
             let node = launched.as_ref().ok_or_else(|| eyre!("launch handle missing"))?;
@@ -737,7 +871,10 @@ impl RootBenchRunArgs {
             let before = Self::root_metrics(&metrics);
             before_metrics = Some(before.clone());
             RootBenchBundle::write_raw_new(&self.output.join("metrics-before.txt"), before.as_bytes())?;
-            RootBenchSample::drive(&node.engine_api, attributes, initial.header.hash, bundle.warmup, origin, timeout, &mut samples, &mut measurement_start_ns).await?;
+            RootBenchSample::drive(&node.engine_api, attributes, RootBenchDrive { genesis:initial.header.hash, warmup:bundle.warmup, origin, timeout }, &mut samples, &mut measurement_start_ns).await?;
+            let mut evidence = Ok(());
+            RootBenchSample::flush_all(&mut samples, &self.output, &mut evidence);
+            evidence?;
             // No provider work, reconstruction, scrapes, serialization or filesystem work occurs
             // between canonical acceptance and the next build. All checks below follow saturation.
             let mut activation_parent_root = Some(initial.header.state_root);
@@ -768,7 +905,8 @@ impl RootBenchRunArgs {
                     ensure!(recipient_balance == U256::from(expected_nonce), "recipient balance must reflect every accepted signed transfer exactly");
                     Ok(receipts.len() as u64)
                 }));
-                let checked = tokio::time::timeout(timeout, receipt_tasks.last_mut().expect("retained receipt/account task")).await.map_err(|_| RootBenchExit::Timeout.attach(eyre!("provider verification timed out")))?;
+                let task = receipt_tasks.last_mut().ok_or_else(|| RootBenchExit::Incomplete.attach(eyre!("retained receipt/account task missing")))?;
+                let checked = tokio::time::timeout(timeout, task).await.map_err(|_| RootBenchExit::Timeout.attach(eyre!("provider verification timed out")))?;
                 receipt_tasks.pop();
                 sample.successful_receipts = checked??;
                 sample.accepted_gas = gas_used;
@@ -782,12 +920,16 @@ impl RootBenchRunArgs {
             }) => result.map_err(|_| RootBenchExit::Timeout.attach(eyre!("overall trial deadline exceeded; in-flight call outcome uncertain"))).and_then(|result| result),
             failure = &mut critical => { let error = eyre!("runtime critical-task monitor ended during trial: {failure:?}"); critical_result = Some(failure); Err(error) },
             _ = tokio::signal::ctrl_c() => Err(eyre!("trial interrupted; in-flight call outcome uncertain")),
-        };
+        } }).await;
+        if let Err(error) = &outcome {
+            if let Some(last) = samples.last_mut() { last.error.get_or_insert_with(|| format!("{error:#}")); }
+        }
+        RootBenchSample::flush_all(&mut samples, &self.output, &mut outcome);
         // Releasing transports/providers before graceful shutdown is part of the measurement.
         let service = launched.as_ref().and_then(|node| node.root_service.clone());
         drop(launched);
         let manager = service.as_ref().and_then(|service| service.manager.get()).cloned();
-        let drain = RootBenchCleanup { runtime, critical:Some(critical), critical_result, manager, manager_required:self.cohort != RootBenchCohort::O, receipt_tasks, timeout:Duration::from_millis(self.shutdown_timeout_ms) }.finish(samples.last_mut(), &self.output, &mut outcome).await;
+        let drain = RootBenchCleanup { runtime, critical:Some(critical), critical_result, manager, manager_required:self.cohort != RootBenchCohort::O, receipt_tasks, timeout:Duration::from_millis(self.shutdown_timeout_ms) }.finish(None, &self.output, &mut outcome).await;
         let drained = drain["drained"] == true;
         let end_ns = origin.elapsed().as_nanos() as u64;
         let drained_metrics = Self::root_metrics(&metrics);
@@ -795,19 +937,14 @@ impl RootBenchRunArgs {
         let metric_result = RootBenchCohort::counter(&drained_metrics, "reth_base_root_experiment_jobs_failed").and_then(|failures| { ensure!(failures == 0.0, "root worker failure observed after drain"); Ok(()) });
         RootBenchCleanup::retain_error(&mut outcome, metric_result);
         if let Some(before) = before_metrics { RootBenchCleanup::retain_error(&mut outcome, self.cohort.check_accounting(&before, &drained_metrics, self.cohort.active_blocks(&bundle))); }
-        for sample in &mut samples {
-            sample.finish_cycle();
-            if let (Some(build), Some(payload), Some(_)) = (sample.phases.get("build_fcu"), sample.phases.get("get_payload"), sample.pending.envelope.as_ref()) {
-                sample.phases.insert("payload_available".into(), RootBenchInterval { start_ns:build.start_ns, end_ns:payload.end_ns });
-            }
-            RootBenchCleanup::retain_error(&mut outcome, sample.flush_pending());
-            RootBenchCleanup::retain_error(&mut outcome, sample.persist(&self.output));
-        }
+        RootBenchSample::flush_all(&mut samples, &self.output, &mut outcome);
         let phases = ["build_fcu", "get_payload", "payload_available", "new_payload", "canonical_fcu", "cycle"];
         let summaries: BTreeMap<_, _> = phases.into_iter().map(|phase| (phase, RootBenchSummary::phase(&samples, phase))).collect();
         let throughput = RootBenchSummary::throughput(&samples, measurement_start_ns, end_ns);
         RootBenchCleanup::retain_error(&mut outcome, RootBenchBundle::write_new(&self.output.join("drain.json"), &drain));
-        let result = RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"complete":outcome.is_ok() && drained,"error":outcome.as_ref().err().map(|e| format!("{e:#}")),"drained":drained,"cohort":self.cohort,"input_digest":bundle.digest,"samples":samples,"summaries":summaries,"measurement_start_ns":measurement_start_ns,"drain_end_ns":end_ns,"accepted_gas_per_second":throughput.map(|value| value.0),"successful_receipts_per_second":throughput.map(|value| value.1)}));
+        let (loop_start_ns, loop_end_ns) = RootBenchSummary::loop_bounds(&samples);
+        let engine_saturated = RootBenchSummary::engine_saturated(&samples, bundle.blocks.len() - bundle.warmup as usize, outcome.is_ok() && drained);
+        let result = RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"schema_version":1,"complete":outcome.is_ok() && drained,"error":outcome.as_ref().err().map(|e| format!("{e:#}")),"drained":drained,"cohort":self.cohort,"input_digest":bundle.digest,"samples":samples,"summaries":summaries,"measurement_start_ns":measurement_start_ns,"drain_end_ns":end_ns,"loop_start_ns":loop_start_ns,"loop_end_ns":loop_end_ns,"engine_saturated":engine_saturated,"accepted_gas_per_second":throughput.map(|value| value.0),"successful_receipts_per_second":throughput.map(|value| value.1)}));
         RootBenchCleanup::retain_error(&mut outcome, result);
         outcome.map_err(|error| RootBenchExit::Incomplete.attach(error))?; ensure!(drained, "trial did not drain"); Ok(())
     }
@@ -831,6 +968,142 @@ mod tests {
     use base_execution_payload_builder::{PostStateRootManager, PostStateRootLimits};
     use super::*;
     use clap::Parser;
+
+    /// Saturated rates use raw measured Engine boundaries, not drain or phase sums.
+    #[test]
+    fn saturated_wall_interval_and_fail_closed_rates() {
+        let mut warmup = RootBenchSample::new(1, true);
+        warmup.phases.insert("build_fcu".into(), RootBenchInterval { start_ns:1, end_ns:2 });
+        let mut measured = RootBenchSample::new(2, false);
+        for (phase, start, end) in [("build_fcu", 10, 20), ("get_payload", 30, 40), ("new_payload", 50, 60), ("canonical_fcu", 70, 2_000_000_010)] {
+            measured.phases.insert(phase.into(), RootBenchInterval { start_ns:start, end_ns:end });
+        }
+        measured.finish_cycle(); measured.accepted_gas = 42_000; measured.successful_receipts = 2;
+        measured.block_hash = Some(B256::repeat_byte(2));
+        measured.pending.canonical_fcu = Some(alloy_rpc_types_engine::ForkchoiceUpdated { payload_status:PayloadStatus::new(PayloadStatusEnum::Valid, measured.block_hash), payload_id:None });
+        let mut samples = vec![warmup, measured];
+        assert_eq!(RootBenchSummary::loop_bounds(&samples), (Some(10), Some(2_000_000_010)), "wall bounds must equal actual measured Engine endpoints");
+        let expected = json!({"window_ns":2_000_000_000u64,"measured_blocks":1,"gas_used":42_000,"transactions":2,"gas_per_second":21_000.0,"transactions_per_second":1.0});
+        assert_eq!(RootBenchSummary::engine_saturated(&samples, 1, true), Some(expected), "saturation must include gaps but exclude all post-loop work");
+        assert_eq!(RootBenchSummary::engine_saturated(&samples, 2, true), None, "partial successful prefix must not pass the expected measured count");
+        assert_eq!(RootBenchSummary::engine_saturated(&samples, 1, false), None, "incomplete trial must never publish saturated rates");
+        samples[1].error = Some("verification failed".into());
+        assert_eq!(RootBenchSummary::engine_saturated(&samples, 1, true), None, "verification failure must invalidate rates");
+        samples[1].error = None; samples[1].phases.remove("canonical_fcu");
+        assert_eq!(RootBenchSummary::engine_saturated(&samples, 1, true), None, "cancelled in-flight canonical acceptance must not count");
+        samples[1].pending.canonical_fcu = None;
+        assert_eq!(RootBenchSummary::loop_bounds(&samples), (Some(10), None), "unaccepted canonical response must not invent a successful end");
+        assert_eq!(RootBenchSummary::loop_bounds(&[]), (None, None), "absent loop has no invented endpoints");
+        samples[1].pending.canonical_fcu = Some(alloy_rpc_types_engine::ForkchoiceUpdated { payload_status:PayloadStatus::new(PayloadStatusEnum::Valid, samples[1].block_hash), payload_id:None });
+        samples[1].phases.insert("canonical_fcu".into(), RootBenchInterval { start_ns:70, end_ns:2_000_000_010 });
+        samples.push(RootBenchSample::new(3, false));
+        assert_eq!(RootBenchSummary::loop_bounds(&samples).1, None, "an unfinished last measured block must not fall back to an earlier canonical endpoint");
+    }
+
+    /// Every retained sample is attempted on failure, including independent filesystem errors.
+    #[test]
+    fn buffered_flush_attempts_every_sample() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut samples = vec![RootBenchSample::new(1, false), RootBenchSample::new(2, false), RootBenchSample::new(3, false)];
+        // Valid earlier responses must survive alongside later incomplete samples.
+        samples[0].pending.build_fcu = Some(alloy_rpc_types_engine::ForkchoiceUpdated { payload_status:PayloadStatus::new(PayloadStatusEnum::Valid, Some(B256::ZERO)), payload_id:None });
+        let mut outcome = Err(eyre::Report::new(RootBenchExit::Timeout));
+        RootBenchSample::flush_all(&mut samples, directory.path(), &mut outcome);
+        let rows: Vec<Value> = fs::read_to_string(directory.path().join("samples.jsonl"))?.lines().map(serde_json::from_str).collect::<std::result::Result<_, _>>()?;
+        assert_eq!(rows.iter().map(|row| row["number"].as_u64().unwrap()).collect::<Vec<_>>(), vec![1, 2, 3], "failure cleanup must persist every sample in order");
+        assert_eq!(RootBenchExit::code(&outcome), 4, "evidence writes must preserve the observed deadline category");
+        let mut failed = Ok(());
+        RootBenchSample::flush_all(&mut samples, &directory.path().join("missing"), &mut failed);
+        assert_eq!(format!("{:#}", failed.unwrap_err()).matches("subsequent failure").count(), 2, "three independent failed writes must all be attempted");
+        let injected = tempfile::tempdir()?;
+        let mut attempts = Vec::new();
+        RootBenchSample::flush_all_with(&mut samples, &mut outcome, |sample| {
+            attempts.push(sample.number);
+            if sample.number == 1 { return RootBenchBundle::write_new(&injected.path().join("invalid1.json"), &BTreeMap::from([((1u8, 2u8), 3u8)])); }
+            sample.persist(injected.path())
+        });
+        let rows: Vec<Value> = fs::read_to_string(injected.path().join("samples.jsonl"))?.lines().map(serde_json::from_str).collect::<std::result::Result<_, _>>()?;
+        assert_eq!(attempts, vec![1, 2, 3], "a real serde failure must not skip later row attempts");
+        assert_eq!(rows.iter().map(|row| row["number"].as_u64().unwrap()).collect::<Vec<_>>(), vec![2, 3], "later rows must persist after serialization failure");
+        assert_eq!(RootBenchExit::code(&outcome), 4, "serialization failure must not erase observed timeout category");
+        Ok(())
+    }
+
+    /// Full native payloads remain in JSONL while result summaries reference them.
+    #[test]
+    fn payload_reference_resolves_without_result_duplication() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut sample = RootBenchSample::new(7, false);
+        sample.pending.envelope = Some(SelfFixture::envelope(B256::repeat_byte(7)));
+        sample.flush_pending()?; sample.persist(directory.path())?;
+        let summary = serde_json::to_value(&sample)?;
+        assert_eq!(summary["responses"]["payload"], summary["payload_reference"], "result retains the payload field with the approved reference instead of duplicated transactions");
+        assert_eq!(summary["payload_reference"], json!({"file":"samples.jsonl","number":7,"selection":"last-row-per-number","pointer":"/responses/payload"}), "reference must define a stable row selector and JSON pointer");
+        let row: Value = serde_json::from_str(fs::read_to_string(directory.path().join("samples.jsonl"))?.trim())?;
+        assert_eq!(row.pointer("/responses/payload"), Some(&serde_json::to_value(sample.pending.envelope.as_ref().unwrap())?), "JSONL retains exact complete native envelope");
+        assert_eq!(sample.responses.get("payload"), sample.payload_reference.as_ref(), "flushing retains only small reference metadata, not a second JSON envelope");
+        Ok(())
+    }
+
+    /// Streamed hashing matches one-shot hashing across read-buffer boundaries.
+    #[test]
+    fn streamed_executable_digest_and_cached_error() -> Result<()> {
+        let bytes = vec![0x5a; 131_073];
+        assert_eq!(RootBenchRunArgs::hash_reader(&mut bytes.as_slice())?, keccak256(&bytes), "streamed digest must cover every byte including tail");
+        let cache = std::sync::OnceLock::new();
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        for _ in 0..2 {
+            assert!(RootBenchRunArgs::cached_digest(&cache, || { attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst); Err(eyre!("injected read failure")) }).is_err(), "cached failure must stay a failure");
+        }
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1, "cached error must prevent repeated executable reads");
+        let success = Arc::new(OnceLock::new());
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut calls = Vec::new();
+        for _ in 0..8 {
+            let success = success.clone(); let reads = reads.clone();
+            calls.push(std::thread::spawn(move || RootBenchRunArgs::cached_digest(&success, || { reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst); Ok(B256::repeat_byte(3)) })));
+        }
+        for call in calls { assert_eq!(call.join().expect("cache caller must not panic")?, B256::repeat_byte(3), "all parallel callers must share exact digest"); }
+        assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1, "parallel preflight must initialize successful digest once");
+        Ok(())
+    }
+
+    /// Unwinding Engine work is converted to an active typed failure with retained samples.
+    #[tokio::test]
+    async fn driver_panic_retains_all_buffered_samples() -> Result<()> {
+        let mut engine = MockRootBenchEngine::new();
+        engine.expect_fcu().times(1).returning(|_, _| panic!("injected Engine panic"));
+        let mut samples = Vec::new();
+        let mut start = None;
+        let result = RootBenchRunArgs::catch_active(RootBenchSample::drive(&engine, vec![RootBenchBundle::attributes(1, vec![])], RootBenchDrive { genesis:B256::ZERO, warmup:0, origin:Instant::now(), timeout:Duration::from_secs(1) }, &mut samples, &mut start)).await;
+        assert_eq!(RootBenchExit::code(&result), 3, "caught harness panic must be incomplete, not refused");
+        let directory = tempfile::tempdir()?;
+        let mut outcome = result;
+        RootBenchSample::flush_all(&mut samples, directory.path(), &mut outcome);
+        assert_eq!(fs::read_to_string(directory.path().join("samples.jsonl"))?.lines().count(), 1, "panic must retain the attempted sample");
+        let mut samples = vec![RootBenchSample::new(1, false), RootBenchSample::new(2, false)];
+        let mut attempts = Vec::new();
+        RootBenchSample::flush_all_with(&mut samples, &mut outcome, |sample| {
+            attempts.push(sample.number);
+            if sample.number == 1 { panic!("injected persistence panic"); }
+            sample.persist(directory.path())
+        });
+        assert_eq!(attempts, vec![1, 2], "persistence panic must not suppress independent later evidence");
+        assert_eq!(RootBenchExit::code(&outcome), 3, "caught persistence panic must remain an active incomplete failure");
+        Ok(())
+    }
+
+    /// The named gas constant and recommended warmup preserve frozen-input compatibility.
+    #[test]
+    fn named_gas_limit_and_activation_warmup() -> Result<()> {
+        assert_eq!(ROOT_BENCH_GAS_LIMIT, 126_000_000, "fixed gas contract must not change");
+        let bundle = RootBenchBundle::freeze(4, 1, 2)?;
+        assert_eq!(bundle.version, 1, "input version and digest schema stay unchanged");
+        assert_eq!(bundle.genesis.gas_limit, ROOT_BENCH_GAS_LIMIT, "genesis uses fixed gas constant");
+        assert_eq!(bundle.blocks[0].gas_limit, Some(ROOT_BENCH_GAS_LIMIT), "attributes use fixed gas constant");
+        assert_eq!(bundle.blocks[bundle.warmup as usize].payload_attributes.timestamp, 3, "recommended warmup excludes activation timestamp two");
+        Ok(())
+    }
 
     /// Phase sums exclude inter-call work; throughput rejects absent/zero denominators.
     #[test]
@@ -863,7 +1136,7 @@ mod tests {
         let input = directory.path().join("input1.json");
         RootBenchBundle::write_raw_new(&input, &raw)?;
         let output = directory.path().join("trial1");
-        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:PathBuf::new(), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
+        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:directory.path().join("missing-manifest1.json"), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
         assert!(args.run().await.is_err(), "missing attestation must refuse before node launch");
         assert_eq!(fs::read(output.join("input.json"))?, raw, "production input capture must preserve every byte");
         Ok(())
@@ -934,7 +1207,7 @@ mod tests {
             parent = hash;
         }
         let mut samples = Vec::with_capacity(2);
-        RootBenchSample::drive(&engine, attrs.into_iter().take(2).collect(), genesis, 1, Instant::now(), Duration::from_secs(1), &mut samples, &mut None).await?;
+        RootBenchSample::drive(&engine, attrs.into_iter().take(2).collect(), RootBenchDrive { genesis, warmup:1, origin:Instant::now(), timeout:Duration::from_secs(1) }, &mut samples, &mut None).await?;
         assert_eq!(samples.len(), 2, "exactly two blocks must finish");
         assert_eq!(samples[1].parent_hash, B256::repeat_byte(1), "second build must extend first accepted hash");
         assert!(samples.iter().all(|s| s.pending.envelope.is_some() && s.responses.is_empty()), "typed evidence must survive without serialization");
@@ -983,7 +1256,7 @@ mod tests {
                 }
                 // A missing payload ID matters only at build admission; other phases were filtered.
                 let mut samples = Vec::with_capacity(1);
-                let result = RootBenchSample::drive(&engine, vec![RootBenchBundle::attributes(1, vec![])], parent, 0, Instant::now(), Duration::from_millis(1), &mut samples, &mut None).await;
+                let result = RootBenchSample::drive(&engine, vec![RootBenchBundle::attributes(1, vec![])], RootBenchDrive { genesis:parent, warmup:0, origin:Instant::now(), timeout:Duration::from_millis(1) }, &mut samples, &mut None).await;
                 assert!(result.is_err(), "phase {phase} failure {failure} must stop driver");
                 assert_eq!(samples.len(), 1, "failed phase retains exactly one sample");
                 if phase > 1 { assert!(samples[0].pending.envelope.is_some(), "later failure retains typed payload"); }
@@ -1257,6 +1530,27 @@ mod tests {
         Ok(())
     }
 
+    /// Real missing and malformed manifest files refuse before execution runtime construction.
+    #[tokio::test]
+    async fn missing_and_invalid_manifest_files_refuse() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let input = directory.path().join("bundle1.json");
+        RootBenchBundle::write_new(&input, &RootBenchBundle::freeze(4, 1, 1)?)?;
+        for (index, contents) in [None, Some(b"not JSON".as_slice()), Some(b"{}".as_slice())].into_iter().enumerate() {
+            let manifest = directory.path().join(format!("manifest{index}.json"));
+            if let Some(bytes) = contents { RootBenchBundle::write_raw_new(&manifest, bytes)?; }
+            let output = directory.path().join(format!("trial{index}"));
+            let args = RootBenchRunArgs { input:input.clone(), output:output.clone(), executable_manifest:manifest, cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
+            let outcome = args.run().await;
+            assert_eq!(RootBenchExit::code(&outcome), 2, "missing/malformed manifest must refuse, never become an active failure");
+            let report: Value = serde_json::from_slice(&fs::read(output.join("result.json"))?)?;
+            assert_eq!(report["schema_version"], 1, "refusal result must carry additive artifact schema version");
+            assert_eq!(report["complete"], false, "manifest refusal cannot certify success");
+            assert!(!output.join("runtime.json").exists(), "manifest checks precede runtime construction");
+        }
+        Ok(())
+    }
+
     /// Runtime checkout identity is never substituted for external executable provenance.
     #[test]
     fn executable_manifest_required_and_bound() -> Result<()> {
@@ -1375,7 +1669,7 @@ mod tests {
         let input = directory.path().join("bad1.json");
         RootBenchBundle::write_new(&input, &json!({}))?;
         let output = directory.path().join("trial1");
-        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:PathBuf::new(), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
+        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:directory.path().join("missing-manifest1.json"), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
         assert!(args.run().await.is_err(), "invalid frozen input must fail before launch");
         let original = fs::read(output.join("result.json"))?;
         let report: Value = serde_json::from_slice(&original)?;
@@ -1400,7 +1694,7 @@ mod tests {
                 if valid { RootBenchBundle::write_new(&input, &RootBenchBundle::freeze(4, 1, 1)?)?; }
                 else { RootBenchBundle::write_new(&input, &json!({}))?; }
                 let output = directory.path().join("trial1");
-                let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:PathBuf::new(), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
+                let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:directory.path().join("missing-manifest1.json"), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
                 let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
                 barrier.wait();
                 let error = runtime.block_on(args.run()).expect_err("every preflight must reject without launching").to_string();
@@ -1423,7 +1717,7 @@ mod tests {
         let input = directory.path().join("bundle1.json");
         RootBenchBundle::write_new(&input, &RootBenchBundle::freeze(4, 1, 1)?)?;
         let output = directory.path().join("trial1");
-        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:PathBuf::new(), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
+        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:directory.path().join("missing-manifest1.json"), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
         let error = args.run().await.expect_err("runtime checkout must not authorize measurement");
         assert!(error.to_string().contains("external executable provenance unverified"), "missing attestation must be the explicit refusal reason");
         let report: Value = serde_json::from_slice(&fs::read(output.join("result.json"))?)?;
@@ -1447,6 +1741,17 @@ mod tests {
             assert_eq!(result["complete"], true, "actual admitted R/D trial must drain and succeed");
             assert_eq!(result["samples"].as_array().unwrap().len(), 4, "all activation boundary blocks must be recorded");
             assert_eq!(result["summaries"]["cycle"]["count"], 3, "one warmup must be excluded");
+            assert_eq!(result["schema_version"], 1, "active result must use additive artifact schema version");
+            assert_eq!(result["loop_start_ns"], result["samples"][1]["phases"]["build_fcu"]["start_ns"], "saturation starts at first measured Engine phase");
+            assert_eq!(result["loop_end_ns"], result["samples"][3]["phases"]["canonical_fcu"]["end_ns"], "saturation ends at final measured canonical response");
+            let window = result["loop_end_ns"].as_u64().unwrap() - result["loop_start_ns"].as_u64().unwrap();
+            assert_eq!(result["engine_saturated"], json!({"window_ns":window,"measured_blocks":3,"gas_used":126_000,"transactions":6,"gas_per_second":126_000.0 * 1_000_000_000.0 / window as f64,"transactions_per_second":6.0 * 1_000_000_000.0 / window as f64}), "real admitted R/D must use exactly the measured verified totals over raw wall endpoints");
+            let rows: Vec<Value> = fs::read_to_string(dir.path().join("trial1/samples.jsonl"))?.lines().map(serde_json::from_str).collect::<std::result::Result<_, _>>()?;
+            for summary in result["samples"].as_array().unwrap() {
+                let row = rows.iter().rev().find(|row| row["number"] == summary["payload_reference"]["number"]).unwrap();
+                assert_eq!(summary["responses"]["payload"], summary["payload_reference"], "result payload keeps its field name as an explicit reference");
+                assert_eq!(row["responses"]["payload"]["executionPayload"]["blockHash"], summary["block_hash"], "reference must resolve the exact accepted native payload");
+            }
             for sample in result["samples"].as_array().unwrap() {
                 assert_eq!(sample["successful_receipts"], 2, "both native receipts must be independently checked at each boundary block");
                 assert_eq!(sample["accepted_gas"], 42_000, "both transfers must contribute exact canonical gas");

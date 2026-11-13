@@ -47,7 +47,8 @@ pub use da_cli::{DA_RESULT_FILE, DaBenchmarkArgs, DaResult};
 
 mod root_bench;
 pub use root_bench::{
-    RootBenchEngine, RootBenchExit, RootBenchFailure,
+    ROOT_BENCH_GAS_LIMIT, RootBenchDrive, RootBenchEngine, RootBenchExit, RootBenchFailure,
+    RootBenchResponses, RootBenchSampleRecord,
     RootBenchArgs, RootBenchBundle, RootBenchCleanup, RootBenchCohort, RootBenchCommand, RootBenchInterval,
     RootBenchNodeArgs, RootBenchPending, RootBenchRunArgs, RootBenchSample, RootBenchSummary,
 };
