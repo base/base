@@ -36,13 +36,14 @@ impl CliSurface {
         ("p2p.signer.", "sequencer.signer."),
         ("p2p.", "consensus.p2p."),
         ("conductor.", "sequencer.conductor."),
-        ("http.", "rpc.http."),
-        ("ws.", "rpc.ws."),
+        ("http.", "execution.rpc.http."),
+        ("ws.", "execution.rpc.ws."),
         ("discovery.", "execution.p2p.discovery."),
         ("rollup.txpool-", "txpool."),
         ("rollup.mempool-", "txpool."),
         ("rollup.validity-pool-", "txpool.validity-pool-"),
         ("validity-", "validity."),
+        ("rpc.", "execution.rpc."),
     ];
 
     /// Flags renamed to Base conventions on every node command. Renamed flags keep their old
@@ -78,9 +79,9 @@ impl CliSurface {
 
     /// Execution-layer flags renamed only on [`Self::EXECUTION_COMMANDS`].
     pub(crate) const EXECUTION_RENAMES: &[(&str, &str)] = &[
-        ("http", "rpc.http"),
-        ("ws", "rpc.ws"),
-        ("ipcpath", "rpc.ipc.path"),
+        ("http", "execution.rpc.http"),
+        ("ws", "execution.rpc.ws"),
+        ("ipcpath", "execution.rpc.ipc.path"),
         ("port", "execution.p2p.port"),
         ("addr", "execution.p2p.addr"),
         ("nat", "execution.p2p.nat"),
@@ -128,7 +129,7 @@ impl CliSurface {
     pub(crate) const HEADINGS: &[&str] = &[
         Self::DEFAULT_HEADING,
         "Storage",
-        "JSON-RPC",
+        "Execution RPC",
         "Consensus RPC",
         "Execution P2P",
         "Consensus P2P",
@@ -143,16 +144,16 @@ impl CliSurface {
         ("l1.beacon", Self::DEFAULT_HEADING),
         ("datadir", "Storage"),
         ("full", "Storage"),
-        ("rpc.http", "JSON-RPC"),
-        ("rpc.http.addr", "JSON-RPC"),
-        ("rpc.http.port", "JSON-RPC"),
-        ("rpc.http.api", "JSON-RPC"),
-        ("rpc.http.corsdomain", "JSON-RPC"),
-        ("rpc.ws", "JSON-RPC"),
-        ("rpc.ws.addr", "JSON-RPC"),
-        ("rpc.ws.port", "JSON-RPC"),
-        ("rpc.ws.api", "JSON-RPC"),
-        ("rpc.ws.origins", "JSON-RPC"),
+        ("execution.rpc.http", "Execution RPC"),
+        ("execution.rpc.http.addr", "Execution RPC"),
+        ("execution.rpc.http.port", "Execution RPC"),
+        ("execution.rpc.http.api", "Execution RPC"),
+        ("execution.rpc.http.corsdomain", "Execution RPC"),
+        ("execution.rpc.ws", "Execution RPC"),
+        ("execution.rpc.ws.addr", "Execution RPC"),
+        ("execution.rpc.ws.port", "Execution RPC"),
+        ("execution.rpc.ws.api", "Execution RPC"),
+        ("execution.rpc.ws.origins", "Execution RPC"),
         ("consensus.rpc.addr", "Consensus RPC"),
         ("consensus.rpc.port", "Consensus RPC"),
         ("consensus.rpc.enable-admin", "Consensus RPC"),
@@ -214,10 +215,10 @@ impl CliSurface {
         "txpool.validity-pool-max-count",
         "txpool.validity-pool-max-size",
         "txpool.validity-pool-max-account-slots",
-        "rpc.gascap",
-        "rpc.txfeecap",
-        "rpc.eth-proof-window",
-        "rpc.ipc.path",
+        "execution.rpc.gascap",
+        "execution.rpc.txfeecap",
+        "execution.rpc.eth-proof-window",
+        "execution.rpc.ipc.path",
         "consensus.rpc.execution-forwarding-endpoint",
         "execution.p2p.secret-key-hex",
         "execution.p2p.disable-discovery",
@@ -249,7 +250,7 @@ impl CliSurface {
 
     /// Advanced flags supported only on `base rpc`.
     pub(crate) const RPC_ADVANCED_FLAGS: &[&str] = &[
-        "rpc.forwarding-endpoint",
+        "execution.rpc.forwarding-endpoint",
         "min-suggested-priority-fee",
         "tx-forwarding.enabled",
         "tx-forwarding.builder-urls",
@@ -985,7 +986,7 @@ mod tests {
             .map(|heading| help.find(&format!("{heading}:")).expect(heading))
             .collect();
         assert!(positions.is_sorted(), "{help}");
-        assert!(help.contains("--rpc.http.port <PORT>"), "{help}");
+        assert!(help.contains("--execution.rpc.http.port <PORT>"), "{help}");
     }
 
     #[test]
@@ -1002,6 +1003,13 @@ mod tests {
                 panic!("expected rpc command");
             };
             assert_eq!(rpc.consensus.rpc_flags.listen_port, 9546);
+        }
+        for flag in ["--execution.rpc.http.port", "--http.port"] {
+            let BaseCommand::Rpc(rpc) = parse(&["base", "rpc", flag, "8600"]).unwrap().command
+            else {
+                panic!("expected rpc command");
+            };
+            assert_eq!(rpc.execution.node.rpc.http_port, 8600);
         }
 
         let cli = BaseCli::try_parse_curated([
@@ -1059,8 +1067,8 @@ mod tests {
             .env("BASE_NODE_L2_ENGINE_AUTH", "/tmp/jwt.hex")
             .env("BASE_NODE_PORT", "tcp://10.0.0.1:30303")
             .env("BASE_NODE_L1_RPC_TIMEOUT_MS", "not-a-number")
-            .env("BASE_RPC_HTTP_PORT_NUMBER", "8600")
-            .env("BASE_RPC_HTTP_PORT", "tcp://10.0.0.1:8545")
+            .env("BASE_EXECUTION_RPC_HTTP_PORT_NUMBER", "8600")
+            .env("BASE_EXECUTION_RPC_HTTP_PORT", "tcp://10.0.0.1:8545")
             .output()
             .unwrap();
 
