@@ -492,3 +492,25 @@ fn parity_deposit_below_the_calldata_floor_fails() {
         compare: vec![(SENDER, vec![]), (Address::repeat_byte(0x22), vec![])],
     });
 }
+
+#[test]
+fn parity_deposit_above_eip7825_cap_caps_execution_gas() {
+    // From Azul (Osaka) a deposit's regular execution gas is capped at 2^24 even when its gas
+    // limit is higher. `GAS PUSH1 0 SSTORE` records the gas the top-level frame sees in slot 0.
+    let target = Address::repeat_byte(0x22);
+    assert_parity(Fixture {
+        seed: vec![Seed {
+            address: target,
+            balance: U256::ZERO,
+            nonce: 1,
+            code: vec![0x5a, 0x60, 0x00, 0x55],
+        }],
+        to: TxKind::Call(target),
+        mint: 0,
+        value: U256::ZERO,
+        gas_limit: 20_000_000,
+        input: vec![],
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (target, vec![U256::ZERO])],
+    });
+}

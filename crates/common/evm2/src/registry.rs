@@ -8,8 +8,7 @@ use evm2::{
     env::TxEnvExt,
     ethereum::{
         TxEnvelope, eip1559, eip2930, eip7702, execute_initial_frame, finalize_gas,
-        initial_gas_and_reservoir, intrinsic_and_floor_gas, legacy, prepare_initial_frame,
-        warm_base_accounts,
+        intrinsic_and_floor_gas, legacy, prepare_initial_frame, warm_base_accounts,
     },
     handler::GasSettlement,
     interpreter::{GasTracker, InstrStop},
@@ -113,16 +112,20 @@ impl BaseEvmTypes {
         warm_base_accounts(host, tx.to);
 
         // Meter the deposit like a standard transaction: charge intrinsic gas up front, run the
-        // call/create frame with the remaining gas, and bill at least the EIP-7623 calldata
-        // floor. A deposit that cannot afford its intrinsic cost or floor is settled as a failed
-        // deposit.
+        // call/create frame with the remaining gas (capped at the active EIP-7825 per-tx limit,
+        // with any excess parked in the reservoir to match the revm reference), and bill at least
+        // the EIP-7623 calldata floor. A deposit that cannot afford its intrinsic cost or floor
+        // is settled as a failed deposit.
+        let version = host.version();
         let (intrinsic, floor_gas) =
-            intrinsic_and_floor_gas(host.version(), tx.from, tx.to, &tx.input, 0, 0, tx.value);
+            intrinsic_and_floor_gas(version, tx.from, tx.to, &tx.input, 0, 0, tx.value);
         if tx.gas_limit < intrinsic.max(floor_gas) {
             return Ok(Self::failed_deposit(tx));
         }
-        let (execution_gas_limit, reservoir) =
-            initial_gas_and_reservoir(host.version(), tx.gas_limit, intrinsic, 0);
+        let execution_gas = tx.gas_limit - intrinsic;
+        let execution_gas_limit =
+            tx.gas_limit.min(version.tx_gas_limit_cap).saturating_sub(intrinsic);
+        let reservoir = execution_gas - execution_gas_limit;
         let mut tx_gas =
             GasTracker::new_with_execution_gas_and_reservoir(execution_gas_limit, reservoir);
         // Deposits cannot fail fatally per the OP-stack spec (the revm reference catches every
