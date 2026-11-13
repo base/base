@@ -12,7 +12,10 @@ sp1_zkvm::entrypoint!(main);
 use base_proof_succinct_range_utils::run_range_program;
 #[cfg(feature = "tracing-subscriber")]
 use base_proof_succinct_range_utils::setup_tracing;
-use base_proof_zk_utils::witness::{DefaultWitnessData, WitnessData};
+use base_proof_zk_utils::{
+    precompiles::CustomCrypto,
+    witness::{DefaultWitnessData, WitnessData},
+};
 use rkyv::rancor::Error;
 
 fn main() {
@@ -25,7 +28,7 @@ fn main() {
             .expect("Failed to deserialize witness data.");
 
         let (oracle, beacon) = witness_data
-            .get_oracle_and_blob_provider()
+            .get_oracle_and_blob_provider::<CustomCrypto>()
             .await
             .expect("Failed to load oracle and blob provider");
 
