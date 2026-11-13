@@ -10,8 +10,8 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes, PayloadStatus, PayloadStatusEnum};
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::JovianExtraData;
-use base_common_network::{Base, BaseEngineApi};
-use base_common_rpc_types_engine::{BasePayloadAttributes, BaseExecutionPayloadV4, ExecutionData};
+use base_common_network::{Base, BaseEngineApi, SharedEngineApi};
+use base_common_rpc_types_engine::{BasePayloadAttributes, BaseExecutionPayloadV4, BaseExecutionPayloadEnvelopeV4, ExecutionData};
 use base_execution_payload_builder::PostStateRootManager;
 use base_consensus_engine::InMemoryTransport;
 use base_execution_chainspec::BaseChainSpec;
@@ -27,6 +27,74 @@ use reth_tasks::{PanickedTaskError, Runtime, RuntimeBuilder, RuntimeConfig};
 use tokio::task::{JoinError, JoinHandle};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+/// Root-benchmark process outcome, independent of diagnostic error text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootBenchExit {
+    /// Refused before runtime execution.
+    Refused,
+    /// Active trial failed without an observed harness deadline.
+    Incomplete,
+    /// A harness deadline actually expired.
+    Timeout,
+}
+
+impl std::fmt::Display for RootBenchExit {
+    /// Formats the typed category without inferring it from internal worker messages.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{self:?}") }
+}
+impl std::error::Error for RootBenchExit {}
+
+/// Combined diagnostics preserve their primary category across evidence/cleanup failures.
+#[derive(Debug)]
+pub struct RootBenchFailure {
+    /// Category used at the binary boundary.
+    pub exit: RootBenchExit,
+    /// Primary and subsequent diagnostics in observation order.
+    pub message: String,
+}
+impl std::fmt::Display for RootBenchFailure {
+    /// Retains the full diagnostic chain in human-readable errors.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(&self.message) }
+}
+impl std::error::Error for RootBenchFailure {}
+
+impl RootBenchExit {
+    /// Reads only typed categories; opaque internal errors are incomplete, never inferred timeouts.
+    pub fn category(error: &eyre::Report) -> Option<Self> {
+        error.chain().find_map(|cause| cause.downcast_ref::<Self>().copied().or_else(|| cause.downcast_ref::<RootBenchFailure>().map(|e| e.exit)))
+    }
+    /// Maps only RootBench results to the documented process status.
+    pub fn code(outcome: &Result<()>) -> i32 {
+        match outcome { Ok(()) => 0, Err(error) => match Self::category(error).unwrap_or(Self::Incomplete) { Self::Refused => 2, Self::Incomplete => 3, Self::Timeout => 4 } }
+    }
+    /// Attaches a category while preserving all diagnostic text.
+    pub fn attach(self, error: eyre::Report) -> eyre::Report {
+        eyre::Report::new(RootBenchFailure { exit:Self::category(&error).unwrap_or(self), message:format!("{error:#}") })
+    }
+}
+
+/// Minimal benchmark-local Engine calls, shared by real execution and default mock tests.
+#[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
+pub trait RootBenchEngine: Send + Sync {
+    /// Admits a build or canonically accepts a hash.
+    async fn fcu(&self, state: ForkchoiceState, attrs: Option<BasePayloadAttributes>) -> Result<alloy_rpc_types_engine::ForkchoiceUpdated>;
+    /// Waits for the native payload without an artificial delay.
+    async fn payload(&self, id: alloy_rpc_types_engine::PayloadId) -> Result<BaseExecutionPayloadEnvelopeV4>;
+    /// Imports the payload through independent validation.
+    async fn import(&self, payload: BaseExecutionPayloadV4, beacon_root: B256) -> Result<PayloadStatus>;
+}
+
+#[async_trait::async_trait]
+impl RootBenchEngine for SharedEngineApi {
+    /// Uses the production FCU V3 handler directly.
+    async fn fcu(&self, state: ForkchoiceState, attrs: Option<BasePayloadAttributes>) -> Result<alloy_rpc_types_engine::ForkchoiceUpdated> { Ok(self.fork_choice_updated_v3(state, attrs).await?) }
+    /// Uses production getPayload V4 construction.
+    async fn payload(&self, id: alloy_rpc_types_engine::PayloadId) -> Result<BaseExecutionPayloadEnvelopeV4> { Ok(self.get_payload_v4(id).await?) }
+    /// Uses production newPayload V4 first import.
+    async fn import(&self, payload: BaseExecutionPayloadV4, beacon_root: B256) -> Result<PayloadStatus> { Ok(self.new_payload_v4(payload, beacon_root).await?) }
+}
 
 /// Dedicated immutable-input benchmark commands.
 #[derive(Debug, Parser)]
@@ -72,7 +140,7 @@ pub struct RootBenchRunArgs {
     pub cohort: RootBenchCohort,
     /// Externally attested executable-to-clean-source identity JSON, required before launch.
     #[arg(long)]
-    pub executable_manifest: Option<PathBuf>,
+    pub executable_manifest: PathBuf,
     /// Deadline for each Engine/read call.
     #[arg(long, default_value_t = 30_000)]
     pub call_timeout_ms: u64,
@@ -139,6 +207,8 @@ pub struct RootBenchSample {
     pub block_hash: Option<B256>,
     /// Monotonic phase boundaries.
     pub phases: BTreeMap<String, RootBenchInterval>,
+    /// Sum of exactly four Engine call durations; null until canonical acceptance.
+    pub cycle_ns: Option<u64>,
     /// Unserialized responses from the current Engine sequence.
     #[serde(skip)]
     pub pending: RootBenchPending,
@@ -155,6 +225,8 @@ pub struct RootBenchSample {
 /// Typed Engine evidence retained without serialization between successful calls.
 #[derive(Debug, Default, Clone)]
 pub struct RootBenchPending {
+    /// Complete native payload retained for verification after saturation.
+    pub envelope: Option<BaseExecutionPayloadEnvelopeV4>,
     /// Build admission and payload ID.
     pub build_fcu: Option<alloy_rpc_types_engine::ForkchoiceUpdated>,
     /// First import response.
@@ -204,7 +276,10 @@ impl RootBenchCleanup {
         if let Err(error) = result {
             *outcome = Err(match outcome.as_ref() {
                 Ok(()) => error,
-                Err(primary) => eyre!("{primary:#}; subsequent failure: {error:#}"),
+                Err(primary) => eyre::Report::new(RootBenchFailure {
+                    exit:if RootBenchExit::category(primary) == Some(RootBenchExit::Timeout) || RootBenchExit::category(&error) == Some(RootBenchExit::Timeout) { RootBenchExit::Timeout } else { RootBenchExit::category(primary).unwrap_or(RootBenchExit::Incomplete) },
+                    message:format!("{primary:#}; subsequent failure: {error:#}"),
+                }),
             });
         }
     }
@@ -220,17 +295,17 @@ impl RootBenchCleanup {
         }
         let drain_runtime = self.runtime.clone();
         let timeout = self.timeout;
-        let guards_completed = match tokio::task::spawn_blocking(move || drain_runtime.graceful_shutdown_with_timeout(timeout)).await {
-            Ok(completed) => completed,
-            Err(error) => { Self::retain_error(outcome, Err(eyre!("graceful shutdown join failed: {error}"))); false }
+        let (guards_completed, deadline_observed) = match tokio::task::spawn_blocking(move || drain_runtime.graceful_shutdown_with_timeout(timeout)).await {
+            Ok(completed) => (completed, !completed),
+            Err(error) => { Self::retain_error(outcome, Err(eyre!("graceful shutdown join failed: {error}"))); (false, false) }
         };
-        if !guards_completed { Self::retain_error(outcome, Err(eyre!("shutdown/drain deadline exceeded; trial incomplete"))); }
+        if deadline_observed { Self::retain_error(outcome, Err(RootBenchExit::Timeout.attach(eyre!("shutdown/drain deadline exceeded; trial incomplete")))); }
         // The task manager can exit before shutdown-task panics. Worker state is required too.
         if self.critical_result.is_none() {
             if let Some(critical) = self.critical.as_mut() {
                 match tokio::time::timeout(timeout, critical).await {
                     Ok(result) => self.critical_result = Some(result),
-                    Err(_) => Self::retain_error(outcome, Err(eyre!("critical-task monitor shutdown deadline exceeded"))),
+                    Err(_) => Self::retain_error(outcome, Err(RootBenchExit::Timeout.attach(eyre!("critical-task monitor shutdown deadline exceeded")))),
                 }
             } else { Self::retain_error(outcome, Err(eyre!("runtime critical-task monitor unavailable"))); }
         }
@@ -258,8 +333,11 @@ impl RootBenchArgs {
     pub async fn run(self) -> Result<()> {
         match self.command {
             RootBenchCommand::Freeze { output, blocks, transactions_per_block, warmup } => {
-                RootBenchBundle::numbered(&output)?;
-                RootBenchBundle::write_new(&output, &RootBenchBundle::freeze(blocks, transactions_per_block, warmup)?)
+                let result = (|| {
+                    RootBenchBundle::numbered(&output)?;
+                    RootBenchBundle::write_new(&output, &RootBenchBundle::freeze(blocks, transactions_per_block, warmup)?)
+                })();
+                result.map_err(|error| RootBenchExit::Refused.attach(error))
             }
             RootBenchCommand::Run(args) => args.run().await,
         }
@@ -383,15 +461,21 @@ impl RootBenchCohort {
         launch.node_config.network.discovery.disable_discovery = true;
         launch.node_config.network.max_inbound_peers = Some(0);
         launch.node_config.network.max_outbound_peers = Some(0);
+        ensure!(launch.node_config.prune_config().is_none(), "all benchmark cohorts require unpruned history");
         Ok(launch)
     }
 
+    /// Counts controlled blocks, including warmup, rather than measured samples.
+    pub fn active_blocks(self, bundle: &RootBenchBundle) -> u64 {
+        bundle.blocks.iter().filter(|attrs| self == Self::R || (self == Self::D && attrs.payload_attributes.timestamp >= bundle.activation)).count() as u64
+    }
+
     /// Requires actual independent first-import work; VALID/AlreadySeen is not evidence.
-    pub fn check_accounting(self, before: &str, after: &str) -> Result<()> {
+    pub fn check_accounting(self, before: &str, after: &str, active_blocks: u64) -> Result<()> {
         if !matches!(self, Self::R | Self::D) { return Ok(()); }
         for metric in ["builder_executions", "validator_executions", "current_roots_started{source=\"builder\"}", "current_roots_started{source=\"validator\"}", "validator_ready_outputs"] {
             let key = format!("reth_base_root_experiment_{metric}");
-            ensure!(Self::counter(after, &key)? - Self::counter(before, &key)? == 1.0, "missing/excess independent first-import accounting: {key}");
+            ensure!(Self::counter(after, &key)? - Self::counter(before, &key)? == active_blocks as f64, "missing/excess aggregate independent first-import accounting: {key}");
         }
         let key = "reth_base_root_experiment_trusted_insertions";
         ensure!(Self::counter(after, key)? == 0.0 && Self::counter(before, key)? == 0.0, "R/D trusted insertion observed");
@@ -416,16 +500,75 @@ impl RootBenchSummary {
         Self { count:sorted.len(), p50_ns:rank(50), p90_ns:rank(90), p95_ns:rank(95), p99_ns:rank(99) }
     }
 
+    /// Computes verified gas/s and receipts/s through drain using nanosecond wall time.
+    pub fn throughput(samples: &[RootBenchSample], start_ns: Option<u64>, end_ns: u64) -> Option<(f64, f64)> {
+        let duration = end_ns.checked_sub(start_ns?)?;
+        if duration == 0 { return None; }
+        let measured: Vec<_> = samples.iter().filter(|s| !s.warmup && s.error.is_none() && s.cycle_ns.is_some()).collect();
+        if measured.is_empty() { return None; }
+        let seconds = duration as f64 / 1_000_000_000.0;
+        Some((measured.iter().map(|s| s.accepted_gas).sum::<u64>() as f64 / seconds, measured.iter().map(|s| s.successful_receipts).sum::<u64>() as f64 / seconds))
+    }
+
     /// Excludes warmup and incomplete/error samples without inventing zero observations.
     pub fn phase(samples: &[RootBenchSample], phase: &str) -> Self {
-        Self::from_samples(&samples.iter().filter(|s| !s.warmup && s.error.is_none()).filter_map(|s| s.phases.get(phase).map(|i| i.end_ns - i.start_ns)).collect::<Vec<_>>())
+        Self::from_samples(&samples.iter().filter(|s| !s.warmup && s.error.is_none()).filter_map(|s| if phase == "cycle" { s.cycle_ns } else { s.phases.get(phase).map(|i| i.end_ns - i.start_ns) }).collect::<Vec<_>>())
     }
 }
 
 impl RootBenchSample {
     /// Creates a pending sample without success values.
     pub fn new(number: u64, warmup: bool) -> Self {
-        Self { number, warmup, parent_hash:B256::ZERO, block_hash:None, phases:BTreeMap::new(), responses:BTreeMap::new(), pending:RootBenchPending::default(), error:None, accepted_gas:0, successful_receipts:0 }
+        Self { number, warmup, parent_hash:B256::ZERO, block_hash:None, phases:BTreeMap::new(), cycle_ns:None, responses:BTreeMap::new(), pending:RootBenchPending::default(), error:None, accepted_gas:0, successful_receipts:0 }
+    }
+
+    /// Sums raw phase durations without inventing a monotonic endpoint.
+    pub fn finish_cycle(&mut self) {
+        self.cycle_ns = if self.error.is_none() { ["build_fcu", "get_payload", "new_payload", "canonical_fcu"].into_iter().try_fold(0u64, |total, phase| self.phases.get(phase).and_then(|interval| total.checked_add(interval.end_ns.checked_sub(interval.start_ns)?))) } else { None };
+    }
+
+    /// Drives only bounded Engine calls and retains typed evidence. Verification follows saturation.
+    pub async fn drive<E: RootBenchEngine>(engine: &E, attributes: Vec<BasePayloadAttributes>, genesis: B256, warmup: u64, origin: Instant, timeout: Duration, samples: &mut Vec<Self>, measurement_start: &mut Option<u64>) -> Result<()> {
+        samples.reserve(attributes.len());
+        let mut parent = genesis;
+        for (index, attrs) in attributes.into_iter().enumerate() {
+            if index as u64 == warmup { *measurement_start = Some(origin.elapsed().as_nanos() as u64); }
+            samples.push(Self::new(index as u64 + 1, (index as u64) < warmup));
+            let sample = samples.last_mut().expect("just retained sample");
+            sample.parent_hash = parent;
+            let result: Result<B256> = async {
+                let fcu = ForkchoiceState { head_block_hash:parent, safe_block_hash:parent, finalized_block_hash:genesis };
+                sample.pending.build_fcu = Some(sample.call("build_fcu", origin, timeout, engine.fcu(fcu, Some(attrs))).await?);
+                let started = sample.pending.build_fcu.as_ref().expect("received build response");
+                Self::require_valid(&started.payload_status, parent)?;
+                let id = started.payload_id.ok_or_else(|| eyre!("build FCU missing payload ID"))?;
+                // AwaitInProgress resolves construction. There is deliberately no scheduling sleep.
+                sample.pending.envelope = Some(sample.call("get_payload", origin, timeout, engine.payload(id)).await?);
+                let envelope = sample.pending.envelope.as_ref().expect("received payload");
+                let hash = envelope.execution_payload.payload_inner.payload_inner.payload_inner.block_hash;
+                sample.block_hash = Some(hash);
+                // Import consumes a clone, prepared before the import phase clock.
+                let payload = envelope.execution_payload.clone();
+                let beacon = envelope.parent_beacon_block_root;
+                sample.pending.new_payload = Some(sample.call("new_payload", origin, timeout, engine.import(payload, beacon)).await?);
+                Self::require_valid(sample.pending.new_payload.as_ref().expect("received import response"), hash)?;
+                sample.pending.canonical_fcu = Some(sample.call("canonical_fcu", origin, timeout, engine.fcu(ForkchoiceState { head_block_hash:hash, ..fcu }, None)).await?);
+                Self::require_valid(&sample.pending.canonical_fcu.as_ref().expect("received canonical response").payload_status, hash)?;
+                Ok(hash)
+            }.await;
+            match result { Ok(hash) => parent = hash, Err(error) => { sample.error = Some(format!("{error:#}")); return Err(error); } }
+        }
+        Ok(())
+    }
+
+    /// Checks native identity/order and D's activation commitment against the actual pre-F root.
+    pub fn verify_block(block: &alloy_consensus::Block<Bytes>, attrs: &BasePayloadAttributes, parent: B256, number: u64, cohort: RootBenchCohort, activation: u64, activation_parent_root: Option<B256>) -> Result<()> {
+        ensure!(block.header.parent_hash == parent && block.header.number == number && block.header.timestamp == attrs.payload_attributes.timestamp, "native payload identity mismatch");
+        ensure!(Some(&block.body.transactions) == attrs.transactions.as_ref(), "native payload changed signed transaction bytes/order");
+        if cohort == RootBenchCohort::D && attrs.payload_attributes.timestamp == activation {
+            ensure!(activation_parent_root == Some(block.header.state_root), "D activation must commit the actual pre-F parent post-state");
+        }
+        Ok(())
     }
 
     /// Reconstructs all V4 header fields and checks the advertised native block identity.
@@ -454,6 +597,7 @@ impl RootBenchSample {
         if let Some(response) = &self.pending.build_fcu { self.responses.insert("build_fcu".into(), serde_json::to_value(response)?); }
         if let Some(response) = &self.pending.new_payload { self.responses.insert("new_payload".into(), serde_json::to_value(response)?); }
         if let Some(response) = &self.pending.canonical_fcu { self.responses.insert("canonical_fcu".into(), serde_json::to_value(response)?); }
+        if let Some(envelope) = &self.pending.envelope { self.responses.insert("payload".into(), serde_json::to_value(envelope)?); }
         if let Some(header) = &self.pending.payload_header { self.responses.insert("payload_header".into(), serde_json::to_value(header)?); }
         Ok(())
     }
@@ -470,18 +614,11 @@ impl RootBenchSample {
     }
 
     /// Times one bounded call without serialization or disk I/O between Engine phases.
-    pub async fn call<T, E: std::fmt::Display>(&mut self, name: &str, origin: Instant, timeout: Duration, output: &Path, future: impl Future<Output = std::result::Result<T, E>>) -> Result<T> {
+    pub async fn call<T>(&mut self, name: &str, origin: Instant, timeout: Duration, future: impl Future<Output = Result<T>>) -> Result<T> {
         let start_ns = origin.elapsed().as_nanos() as u64;
-        let result = tokio::time::timeout(timeout, future).await.map_err(|e| eyre!("{name} timed out: {e}")).and_then(|result| result.map_err(|e| eyre!("{name}: {e}")));
+        let result = tokio::time::timeout(timeout, future).await.map_err(|_| RootBenchExit::Timeout.attach(eyre!("{name} timed out"))).and_then(|result| result);
         self.phases.insert(name.into(), RootBenchInterval { start_ns, end_ns:origin.elapsed().as_nanos() as u64 });
-        let mut result = result;
-        if let Err(error) = &result {
-            self.error = Some(error.to_string());
-            let mut evidence = Ok(());
-            RootBenchCleanup::retain_error(&mut evidence, self.flush_pending());
-            RootBenchCleanup::retain_error(&mut evidence, self.persist(output));
-            if let Err(evidence) = evidence { result = Err(eyre!("{error:#}; evidence failure: {evidence:#}")); }
-        }
+        if let Err(error) = &result { self.error = Some(format!("{error:#}")); }
         result
     }
 }
@@ -499,7 +636,7 @@ impl RootBenchRunArgs {
 
     /// Records only explicit nonsecret scalar settings, never CLI-derived configuration Debug.
     pub fn launch_settings(launch: &ExecutionNodeLaunchConfig) -> Value {
-        json!({"queue":launch.standard.rpc.rollup_args.root_experiment_queue,"retention":launch.standard.rpc.rollup_args.root_experiment_ready,"persistence_threshold":launch.node_config.engine.persistence_threshold,"allow_unwind_canonical_header":launch.node_config.engine.allow_unwind_canonical_header,"snap_v2":launch.node_config.network.snap_v2,"disable_discovery":launch.node_config.network.discovery.disable_discovery,"max_inbound_peers":launch.node_config.network.max_inbound_peers,"max_outbound_peers":launch.node_config.network.max_outbound_peers,"witness_hook_configured":launch.node_config.debug.invalid_block_hook.is_some()})
+        json!({"unpruned":launch.node_config.prune_config().is_none(),"queue":launch.standard.rpc.rollup_args.root_experiment_queue,"retention":launch.standard.rpc.rollup_args.root_experiment_ready,"persistence_threshold":launch.node_config.engine.persistence_threshold,"allow_unwind_canonical_header":launch.node_config.engine.allow_unwind_canonical_header,"snap_v2":launch.node_config.network.snap_v2,"disable_discovery":launch.node_config.network.discovery.disable_discovery,"max_inbound_peers":launch.node_config.network.max_inbound_peers,"max_outbound_peers":launch.node_config.network.max_outbound_peers,"witness_hook_configured":launch.node_config.debug.invalid_block_hook.is_some()})
     }
 
     /// Refuses unverified or mismatched external executable-to-source provenance.
@@ -528,9 +665,9 @@ impl RootBenchRunArgs {
 
     /// Reserves a fresh output directory and records even pre-launch failures without reuse.
     pub async fn run(self) -> Result<()> {
-        RootBenchBundle::numbered(&self.output)?;
-        fs::create_dir(&self.output)?;
-        let mut outcome = self.execute().await;
+        RootBenchBundle::numbered(&self.output).map_err(|error| RootBenchExit::Refused.attach(error))?;
+        fs::create_dir(&self.output).map_err(|error| RootBenchExit::Refused.attach(error.into()))?;
+        let mut outcome = self.execute().await.map_err(|error| RootBenchExit::Refused.attach(error));
         if let Err(error) = &outcome {
             if !self.output.join("result.json").exists() {
                 let fallback = RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"complete":false,"drained":false,"error":format!("{error:#}"),"cohort":self.cohort}));
@@ -549,7 +686,7 @@ impl RootBenchRunArgs {
         let bundle: RootBenchBundle = serde_json::from_slice(&input_bytes)?;
         bundle.validate()?;
         // Allocation is intentionally outside the writable node directory and is never reset.
-        RootBenchBundle::write_new(&self.output.join("input.json"), &bundle)?;
+        RootBenchBundle::write_raw_new(&self.output.join("input.json"), &input_bytes)?;
         let datadir = self.output.join("datadir1");
         fs::create_dir(&datadir)?;
         let launch = self.cohort.launch_config(&bundle, &datadir)?;
@@ -559,7 +696,7 @@ impl RootBenchRunArgs {
         ensure!(checkout.status.success(), "runtime diagnostics require a git checkout");
         let checkout = PathBuf::from(String::from_utf8(checkout.stdout)?.trim());
         let executable_digest = keccak256(fs::read(std::env::current_exe()?)?);
-        let manifest: Option<Value> = self.executable_manifest.as_ref().map(|path| fs::read(path).and_then(|bytes| serde_json::from_slice(&bytes).map_err(std::io::Error::other))).transpose()?;
+        let manifest: Option<Value> = if self.executable_manifest.as_os_str().is_empty() { None } else { Some(serde_json::from_slice(&fs::read(&self.executable_manifest)?)?) };
         RootBenchBundle::write_new(&self.output.join("executable-source.json"), &json!({"external_manifest":manifest,"verification":"external-attestation-required","executable_keccak":executable_digest}))?;
         Self::verify_manifest(manifest.as_ref(), executable_digest)?;
         // Independent preflight failures must not contend for the process-wide trial owner.
@@ -576,10 +713,14 @@ impl RootBenchRunArgs {
             let mut outcome = Err(eyre!("runtime critical-task monitor unavailable"));
             let drain = RootBenchCleanup { runtime, critical:None, critical_result:None, manager:None, manager_required:self.cohort != RootBenchCohort::O, receipt_tasks:Vec::new(), timeout:Duration::from_millis(self.shutdown_timeout_ms) }.finish(None, &self.output, &mut outcome).await;
             RootBenchCleanup::retain_error(&mut outcome, RootBenchBundle::write_new(&self.output.join("drain.json"), &drain));
-            return outcome;
+            return outcome.map_err(|error| RootBenchExit::Incomplete.attach(error));
         };
         let mut launched = None;
-        let mut samples = Vec::new();
+        let mut samples = Vec::with_capacity(bundle.blocks.len());
+        let attributes = bundle.blocks.clone();
+        let mut total_transactions = 0;
+        let cumulative_transactions: Vec<usize> = bundle.blocks.iter().map(|attrs| { total_transactions += attrs.transactions.as_ref().map_or(0, Vec::len); total_transactions }).collect();
+        let mut before_metrics = None;
         let mut measurement_start_ns = None;
         let timeout = Duration::from_millis(self.call_timeout_ms);
         // Keep blocking read ownership across cancellation; only the owned runtime may run it.
@@ -587,89 +728,58 @@ impl RootBenchRunArgs {
         let mut critical_result = None;
         let mut outcome = tokio::select! {
             result = tokio::time::timeout(Duration::from_millis(self.run_timeout_ms), async {
-            launched = Some(tokio::time::timeout(timeout, launch.launch_default(CliContext { task_executor: runtime.clone() })).await.map_err(|_| eyre!("launch timed out"))??);
+            launched = Some(tokio::time::timeout(timeout, launch.launch_default(CliContext { task_executor: runtime.clone() })).await.map_err(|_| RootBenchExit::Timeout.attach(eyre!("launch timed out")))??);
             let node = launched.as_ref().ok_or_else(|| eyre!("launch handle missing"))?;
             let read_module = node.auth_module.clone();
-            #[cfg(test)]
-            let read_module = {
-                let mut module = read_module;
-                // The integration trial must succeed without the unavailable EngineEthApi methods.
-                module.remove_method("eth_getTransactionCount");
-                module.remove_method("eth_getBalance");
-                assert!(!module.method_names().any(|name| matches!(name, "eth_getTransactionCount" | "eth_getBalance")), "integration read transport must omit both account RPC methods");
-                module
-            };
             let reads = RootProvider::<Base>::new(RpcClient::new(InMemoryTransport { module:read_module }, false));
-            let initial = tokio::time::timeout(timeout, reads.get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)).await??.ok_or_else(|| eyre!("missing genesis"))?;
+            let initial = tokio::time::timeout(timeout, reads.get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)).await.map_err(|_| RootBenchExit::Timeout.attach(eyre!("genesis read timed out")))??.ok_or_else(|| eyre!("missing genesis"))?;
             ensure!(initial.header.number == 0, "fresh-genesis benchmark cannot resume a database");
-            let mut parent = initial.header.hash;
-            let mut parent_root = initial.header.state_root;
-            RootBenchBundle::write_raw_new(&self.output.join("metrics-before.txt"), Self::root_metrics(&metrics).as_bytes())?;
-            for (index, attrs) in bundle.blocks.iter().enumerate() {
-                if index as u64 == bundle.warmup { measurement_start_ns = Some(origin.elapsed().as_nanos() as u64); }
-                samples.push(RootBenchSample::new(index as u64 + 1, (index as u64) < bundle.warmup));
-                let sample = samples.last_mut().ok_or_else(|| eyre!("missing sample"))?;
-                sample.parent_hash = parent;
-                let before = Self::root_metrics(&metrics);
-                RootBenchBundle::write_raw_new(&self.output.join(format!("metrics{}-before.txt", index + 1)), before.as_bytes())?;
-                let result: Result<()> = async {
-                    let fcu = ForkchoiceState { head_block_hash:parent, safe_block_hash:parent, finalized_block_hash:initial.header.hash };
-                    let start = origin.elapsed().as_nanos() as u64;
-                    sample.pending.build_fcu = Some(sample.call("build_fcu", origin, timeout, &self.output, node.engine_api.fork_choice_updated_v3(fcu, Some(attrs.clone()))).await?);
-                    let started = sample.pending.build_fcu.as_ref().expect("received build response");
-                    RootBenchSample::require_valid(&started.payload_status, parent)?;
-                    let id = started.payload_id.ok_or_else(|| eyre!("build FCU missing payload ID"))?;
-                    // AwaitInProgress resolves construction. There is deliberately no scheduling sleep.
-                    let envelope = sample.call("get_payload", origin, timeout, &self.output, node.engine_api.get_payload_v4(id)).await?;
-                    let available = origin.elapsed().as_nanos() as u64;
-                    sample.phases.insert("payload_available".into(), RootBenchInterval { start_ns:start, end_ns:available });
-                    sample.block_hash = Some(envelope.execution_payload.payload_inner.payload_inner.payload_inner.block_hash);
-                    let block = RootBenchSample::payload_block(envelope.execution_payload.clone(), envelope.parent_beacon_block_root)?;
-                    let hash = block.header.hash_slow();
-                    sample.block_hash = Some(hash);
-                    sample.pending.payload_header = Some(block.header.clone());
-                    ensure!(block.header.parent_hash == parent && block.header.number == index as u64 + 1 && block.header.timestamp == attrs.payload_attributes.timestamp, "native payload identity mismatch");
-                    ensure!(Some(&block.body.transactions) == attrs.transactions.as_ref(), "native payload changed signed transaction bytes/order");
-                    if self.cohort == RootBenchCohort::D && attrs.payload_attributes.timestamp == bundle.activation { ensure!(block.header.state_root == parent_root, "D activation must commit the actual pre-F parent post-state"); }
-                    sample.pending.new_payload = Some(sample.call("new_payload", origin, timeout, &self.output, node.engine_api.new_payload_v4(envelope.execution_payload, envelope.parent_beacon_block_root)).await?);
-                    RootBenchSample::require_valid(sample.pending.new_payload.as_ref().expect("received import response"), hash)?;
-                    sample.pending.canonical_fcu = Some(sample.call("canonical_fcu", origin, timeout, &self.output, node.engine_api.fork_choice_updated_v3(ForkchoiceState { head_block_hash:hash, ..fcu }, None)).await?);
-                    RootBenchSample::require_valid(&sample.pending.canonical_fcu.as_ref().expect("received canonical response").payload_status, hash)?;
-                    sample.phases.insert("cycle".into(), RootBenchInterval { start_ns:start, end_ns:origin.elapsed().as_nanos() as u64 });
-                    sample.flush_pending()?;
-                    sample.responses.insert("first_import".into(), json!(true));
-                    let head = tokio::time::timeout(timeout, reads.get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)).await??.ok_or_else(|| eyre!("missing accepted head"))?;
-                    ensure!(head.header.hash == hash, "canonical head differs from accepted hash");
-                    let transactions = attrs.transactions.as_ref().ok_or_else(|| eyre!("missing transactions"))?;
-                    let provider = node.handle.node.provider.clone();
-                    let sender = RootBenchBundle::freeze_identity()?;
-                    let expected_nonce: usize = bundle.blocks[..=index].iter().map(|b| b.transactions.as_ref().map_or(0, Vec::len)).sum();
-                    let transaction_count = transactions.len();
-                    receipt_tasks.push(runtime.spawn_blocking(move || -> Result<u64> {
-                        let receipts = provider.receipts_by_block(hash.into())?.ok_or_else(|| eyre!("missing canonical native receipts for {hash}"))?;
-                        RootBenchSample::verify_receipts(&receipts, transaction_count, block.header.gas_used)?;
-                        let state = provider.state_by_block_hash(hash)?;
-                        let sender_nonce = AccountReader::basic_account(&state, &sender)?.unwrap_or_default().nonce;
-                        ensure!(sender_nonce == expected_nonce as u64, "accepted sender nonce mismatch");
-                        let recipient_balance = AccountReader::basic_account(&state, &Address::repeat_byte(2))?.unwrap_or_default().balance;
-                        ensure!(recipient_balance == U256::from(expected_nonce), "recipient balance must reflect every accepted signed transfer exactly");
-                        Ok(receipts.len() as u64)
-                    }));
-                    let checked = tokio::time::timeout(timeout, receipt_tasks.last_mut().expect("retained receipt/account task")).await?;
-                    receipt_tasks.pop();
-                    sample.successful_receipts = checked??;
-                    let after = Self::root_metrics(&metrics);
-                    RootBenchBundle::write_raw_new(&self.output.join(format!("metrics{}-after.txt", index + 1)), after.as_bytes())?;
-                    if self.cohort == RootBenchCohort::R || (self.cohort == RootBenchCohort::D && attrs.payload_attributes.timestamp >= bundle.activation) { self.cohort.check_accounting(&before, &after)?; }
-                    sample.accepted_gas = block.header.gas_used;
-                    parent = hash; parent_root = block.header.state_root;
-                    Ok(())
+            let before = Self::root_metrics(&metrics);
+            before_metrics = Some(before.clone());
+            RootBenchBundle::write_raw_new(&self.output.join("metrics-before.txt"), before.as_bytes())?;
+            RootBenchSample::drive(&node.engine_api, attributes, initial.header.hash, bundle.warmup, origin, timeout, &mut samples, &mut measurement_start_ns).await?;
+            // No provider work, reconstruction, scrapes, serialization or filesystem work occurs
+            // between canonical acceptance and the next build. All checks below follow saturation.
+            let mut activation_parent_root = Some(initial.header.state_root);
+            for (index, sample) in samples.iter_mut().enumerate() {
+                sample.finish_cycle();
+                let attrs = &bundle.blocks[index];
+                let verification: Result<()> = async {
+                let envelope = sample.pending.envelope.as_ref().ok_or_else(|| eyre!("missing retained payload"))?;
+                let block = RootBenchSample::payload_block(envelope.execution_payload.clone(), envelope.parent_beacon_block_root)?;
+                let hash = sample.block_hash.ok_or_else(|| eyre!("missing accepted hash"))?;
+                RootBenchSample::verify_block(&block, attrs, sample.parent_hash, sample.number, self.cohort, bundle.activation, activation_parent_root)?;
+                let canonical = tokio::time::timeout(timeout, reads.get_block_by_number(sample.number.into())).await.map_err(|_| RootBenchExit::Timeout.attach(eyre!("canonical read timed out")))??.ok_or_else(|| eyre!("missing accepted canonical block"))?;
+                ensure!(canonical.header.hash == hash, "canonical block differs from accepted hash");
+                if attrs.payload_attributes.timestamp < bundle.activation { activation_parent_root = Some(block.header.state_root); }
+                sample.pending.payload_header = Some(block.header.clone());
+                let provider = node.handle.node.provider.clone();
+                let sender = RootBenchBundle::freeze_identity()?;
+                let expected_nonce = cumulative_transactions[index];
+                let transaction_count = attrs.transactions.as_ref().ok_or_else(|| eyre!("missing transactions"))?.len();
+                let gas_used = block.header.gas_used;
+                receipt_tasks.push(runtime.spawn_blocking(move || -> Result<u64> {
+                    let receipts = provider.receipts_by_block(hash.into())?.ok_or_else(|| eyre!("missing canonical native receipts for {hash}"))?;
+                    RootBenchSample::verify_receipts(&receipts, transaction_count, gas_used)?;
+                    let state = provider.state_by_block_hash(hash)?;
+                    let sender_nonce = AccountReader::basic_account(&state, &sender)?.unwrap_or_default().nonce;
+                    ensure!(sender_nonce == expected_nonce as u64, "accepted sender nonce mismatch");
+                    let recipient_balance = AccountReader::basic_account(&state, &Address::repeat_byte(2))?.unwrap_or_default().balance;
+                    ensure!(recipient_balance == U256::from(expected_nonce), "recipient balance must reflect every accepted signed transfer exactly");
+                    Ok(receipts.len() as u64)
+                }));
+                let checked = tokio::time::timeout(timeout, receipt_tasks.last_mut().expect("retained receipt/account task")).await.map_err(|_| RootBenchExit::Timeout.attach(eyre!("provider verification timed out")))?;
+                receipt_tasks.pop();
+                sample.successful_receipts = checked??;
+                sample.accepted_gas = gas_used;
+                Ok(())
                 }.await;
-                if let Err(error) = result { sample.error = Some(format!("{error:#}")); return Err(error); }
-                sample.persist(&self.output)?;
+                if let Err(error) = verification { sample.error = Some(format!("{error:#}")); return Err(error); }
             }
+            let head = tokio::time::timeout(timeout, reads.get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)).await.map_err(|_| RootBenchExit::Timeout.attach(eyre!("final head read timed out")))??.ok_or_else(|| eyre!("missing final head"))?;
+            ensure!(samples.last().and_then(|s| s.block_hash) == Some(head.header.hash), "final head differs from final accepted hash");
             Ok::<(), eyre::Report>(())
-            }) => result.map_err(|_| eyre!("overall trial deadline exceeded; in-flight call outcome uncertain")).and_then(|result| result),
+            }) => result.map_err(|_| RootBenchExit::Timeout.attach(eyre!("overall trial deadline exceeded; in-flight call outcome uncertain"))).and_then(|result| result),
             failure = &mut critical => { let error = eyre!("runtime critical-task monitor ended during trial: {failure:?}"); critical_result = Some(failure); Err(error) },
             _ = tokio::signal::ctrl_c() => Err(eyre!("trial interrupted; in-flight call outcome uncertain")),
         };
@@ -684,14 +794,22 @@ impl RootBenchRunArgs {
         RootBenchCleanup::retain_error(&mut outcome, RootBenchBundle::write_raw_new(&self.output.join("metrics-drained.txt"), drained_metrics.as_bytes()));
         let metric_result = RootBenchCohort::counter(&drained_metrics, "reth_base_root_experiment_jobs_failed").and_then(|failures| { ensure!(failures == 0.0, "root worker failure observed after drain"); Ok(()) });
         RootBenchCleanup::retain_error(&mut outcome, metric_result);
+        if let Some(before) = before_metrics { RootBenchCleanup::retain_error(&mut outcome, self.cohort.check_accounting(&before, &drained_metrics, self.cohort.active_blocks(&bundle))); }
+        for sample in &mut samples {
+            sample.finish_cycle();
+            if let (Some(build), Some(payload), Some(_)) = (sample.phases.get("build_fcu"), sample.phases.get("get_payload"), sample.pending.envelope.as_ref()) {
+                sample.phases.insert("payload_available".into(), RootBenchInterval { start_ns:build.start_ns, end_ns:payload.end_ns });
+            }
+            RootBenchCleanup::retain_error(&mut outcome, sample.flush_pending());
+            RootBenchCleanup::retain_error(&mut outcome, sample.persist(&self.output));
+        }
         let phases = ["build_fcu", "get_payload", "payload_available", "new_payload", "canonical_fcu", "cycle"];
         let summaries: BTreeMap<_, _> = phases.into_iter().map(|phase| (phase, RootBenchSummary::phase(&samples, phase))).collect();
-        let measured: Vec<_> = samples.iter().filter(|s| !s.warmup && s.error.is_none() && s.phases.contains_key("cycle")).collect();
-        let seconds = measurement_start_ns.map(|start| (end_ns - start) as f64 / 1e9);
+        let throughput = RootBenchSummary::throughput(&samples, measurement_start_ns, end_ns);
         RootBenchCleanup::retain_error(&mut outcome, RootBenchBundle::write_new(&self.output.join("drain.json"), &drain));
-        let result = RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"complete":outcome.is_ok() && drained,"error":outcome.as_ref().err().map(|e| format!("{e:#}")),"drained":drained,"cohort":self.cohort,"input_digest":bundle.digest,"samples":samples,"summaries":summaries,"measurement_start_ns":measurement_start_ns,"drain_end_ns":end_ns,"accepted_gas_per_second":seconds.map(|s| measured.iter().map(|row| row.accepted_gas).sum::<u64>() as f64 / s),"successful_receipts_per_second":seconds.map(|s| measured.iter().map(|row| row.successful_receipts).sum::<u64>() as f64 / s)}));
+        let result = RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"complete":outcome.is_ok() && drained,"error":outcome.as_ref().err().map(|e| format!("{e:#}")),"drained":drained,"cohort":self.cohort,"input_digest":bundle.digest,"samples":samples,"summaries":summaries,"measurement_start_ns":measurement_start_ns,"drain_end_ns":end_ns,"accepted_gas_per_second":throughput.map(|value| value.0),"successful_receipts_per_second":throughput.map(|value| value.1)}));
         RootBenchCleanup::retain_error(&mut outcome, result);
-        outcome?; ensure!(drained, "shutdown/drain deadline exceeded; trial incomplete"); Ok(())
+        outcome.map_err(|error| RootBenchExit::Incomplete.attach(error))?; ensure!(drained, "trial did not drain"); Ok(())
     }
 
     /// Preserves process-level experiment series verbatim in the exporter's representation.
@@ -713,6 +831,200 @@ mod tests {
     use base_execution_payload_builder::{PostStateRootManager, PostStateRootLimits};
     use super::*;
     use clap::Parser;
+
+    /// Phase sums exclude inter-call work; throughput rejects absent/zero denominators.
+    #[test]
+    fn exact_cycle_and_throughput() {
+        let mut sample = RootBenchSample::new(1, false);
+        for (phase, start, end) in [("build_fcu", 1, 11), ("get_payload", 20, 40), ("new_payload", 60, 90), ("canonical_fcu", 100, 140)] {
+            sample.phases.insert(phase.into(), RootBenchInterval { start_ns:start, end_ns:end });
+        }
+        sample.finish_cycle();
+        sample.accepted_gas = 42_000; sample.successful_receipts = 2;
+        assert_eq!(sample.cycle_ns, Some(100), "cycle must sum only four Engine phases");
+        assert_eq!(RootBenchSummary::phase(&[sample.clone()], "cycle").p50_ns, Some(100), "summary must use phase sum, not wall span");
+        assert_eq!(RootBenchSummary::throughput(&[sample.clone()], Some(10), 2_000_000_010), Some((21_000.0, 1.0)), "units must be gas/s and receipts/s");
+        for start in [None, Some(2_000_000_010), Some(2_000_000_011)] {
+            assert_eq!(RootBenchSummary::throughput(&[sample.clone()], start, 2_000_000_010), None, "missing/nonpositive wall time is absent");
+        }
+        sample.warmup = true;
+        assert_eq!(RootBenchSummary::throughput(&[sample.clone()], Some(0), 1_000_000_000), None, "warmup is not measurement");
+        sample.warmup = false; sample.error = Some("failed".into());
+        let mut absent = RootBenchSample::new(2, false); absent.accepted_gas = 42_000;
+        assert_eq!(RootBenchSummary::throughput(&[absent], Some(0), 1_000_000_000), None, "missing completed cycle cannot contribute");
+        assert_eq!(RootBenchSummary::throughput(&[sample], Some(0), 1_000_000_000), None, "errors are not throughput observations");
+    }
+
+    /// Raw input evidence preserves noncanonical JSON bytes exactly.
+    #[tokio::test]
+    async fn input_bytes_are_verbatim() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let raw = format!(" \n{}\t\n", serde_json::to_string_pretty(&serde_json::to_value(RootBenchBundle::freeze(4, 1, 1)?)?)?).into_bytes();
+        let input = directory.path().join("input1.json");
+        RootBenchBundle::write_raw_new(&input, &raw)?;
+        let output = directory.path().join("trial1");
+        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:PathBuf::new(), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
+        assert!(args.run().await.is_err(), "missing attestation must refuse before node launch");
+        assert_eq!(fs::read(output.join("input.json"))?, raw, "production input capture must preserve every byte");
+        Ok(())
+    }
+
+    /// Typed deadlines survive later filesystem failures; other failures remain incomplete.
+    #[test]
+    fn exit_categories_and_required_manifest() -> Result<()> {
+        for (primary, expected) in [(RootBenchExit::Timeout, 4), (RootBenchExit::Incomplete, 3), (RootBenchExit::Refused, 2)] {
+            let mut outcome = Err(eyre::Report::new(primary));
+            RootBenchCleanup::retain_error(&mut outcome, Err(eyre!("filesystem failed")));
+            assert_eq!(RootBenchExit::code(&outcome), expected, "cleanup must retain primary category");
+        }
+        assert_eq!(RootBenchExit::code(&Ok(())), 0, "success has code zero");
+        assert_eq!(RootBenchExit::code(&Err(eyre!("opaque internal timeout"))), 3, "message text must never infer timeout");
+        let mut validation_then_timeout = Err(RootBenchExit::Incomplete.attach(eyre!("validation failed")));
+        RootBenchCleanup::retain_error(&mut validation_then_timeout, Err(eyre::Report::new(RootBenchExit::Timeout)));
+        RootBenchCleanup::retain_error(&mut validation_then_timeout, Err(eyre!("filesystem failed")));
+        assert_eq!(RootBenchExit::code(&validation_then_timeout), 4, "actually observed cleanup deadline takes precedence");
+        let parsed = crate::BenchmarkCli::try_parse_from(["base-bench", "root-bench", "run", "--input", "input1.json", "--output", "trial1", "--cohort", "d", "--executable-manifest", "build1.json"])?;
+        let Some(crate::BenchmarkCommand::RootBench(args)) = parsed.command else { panic!("parser must select root benchmark"); };
+        let RootBenchCommand::Run(args) = args.command else { panic!("parser must select run"); };
+        assert_eq!((args.call_timeout_ms, args.run_timeout_ms, args.shutdown_timeout_ms), (30_000, 300_000, 30_000), "deadline defaults must use exact milliseconds");
+        assert_eq!(args.executable_manifest, PathBuf::from("build1.json"), "required manifest retains provided path");
+        let parsed = RootBenchArgs::try_parse_from(["root-bench", "freeze", "--output", "input1.json"])?;
+        let RootBenchCommand::Freeze { blocks, transactions_per_block, warmup, .. } = parsed.command else { panic!("parser must select freeze"); };
+        assert_eq!((blocks, transactions_per_block, warmup), (8, 10, 1), "freeze defaults must remain fixed");
+        for (blocks, transfers, warmup) in [(3, 1, 1), (10001, 1, 1), (4, 0, 1), (4, 1001, 1), (4, 1, 4)] {
+            assert!(RootBenchBundle::freeze(blocks, transfers, warmup).is_err(), "unsupported workload bounds must refuse");
+        }
+        assert!(crate::BenchmarkCli::try_parse_from(["base-bench", "root-bench", "run", "--input", "input1.json", "--output", "trial1", "--cohort", "r"]).is_err(), "manifest must be required by Clap");
+        Ok(())
+    }
+
+    /// Aggregate correctness includes warmup and only active D timestamps.
+    #[test]
+    fn aggregate_active_counts() -> Result<()> {
+        let bundle = RootBenchBundle::freeze(4, 1, 1)?;
+        assert_eq!(RootBenchCohort::R.active_blocks(&bundle), 4, "R includes every warmup and measured block");
+        assert_eq!(RootBenchCohort::D.active_blocks(&bundle), 3, "D includes timestamps 2 through 4");
+        for (cohort, count) in [(RootBenchCohort::R, 4), (RootBenchCohort::D, 3)] {
+            let raw = format!("reth_base_root_experiment_builder_executions {count}\nreth_base_root_experiment_validator_executions {count}\nreth_base_root_experiment_current_roots_started{{source=\"builder\"}} {count}\nreth_base_root_experiment_current_roots_started{{source=\"validator\"}} {count}\nreth_base_root_experiment_validator_ready_outputs {count}\n");
+            cohort.check_accounting("", &raw, cohort.active_blocks(&bundle))?;
+            assert!(cohort.check_accounting("", &raw, 1).is_err(), "per-block gate must not pass aggregate observations");
+        }
+        for cohort in [RootBenchCohort::O, RootBenchCohort::S, RootBenchCohort::R, RootBenchCohort::D] {
+            let directory = tempfile::tempdir()?;
+            assert!(cohort.launch_config(&bundle, directory.path())?.node_config.prune_config().is_none(), "all cohorts need unpruned history");
+        }
+        Ok(())
+    }
+
+    /// Production driver uses strict ordered calls, retains envelopes and extends accepted parents.
+    #[tokio::test]
+    async fn engine_driver_order_and_next_parent() -> Result<()> {
+        let mut engine = MockRootBenchEngine::new();
+        let mut sequence = mockall::Sequence::new();
+        let attrs = RootBenchBundle::freeze(4, 1, 1)?.blocks;
+        let genesis = B256::repeat_byte(9);
+        let mut parent = genesis;
+        for (index, attributes) in attrs.iter().take(2).enumerate() {
+            let hash = B256::repeat_byte(index as u8 + 1);
+            let expected_attrs = attributes.clone();
+            engine.expect_fcu().withf(move |state, attrs| state.head_block_hash == parent && state.safe_block_hash == parent && state.finalized_block_hash == genesis && attrs.as_ref() == Some(&expected_attrs)).times(1).in_sequence(&mut sequence).returning(move |_, _| Ok(alloy_rpc_types_engine::ForkchoiceUpdated { payload_status:PayloadStatus::new(PayloadStatusEnum::Valid, Some(parent)), payload_id:Some(alloy_rpc_types_engine::PayloadId::new([1; 8])) }));
+            engine.expect_payload().withf(|id| *id == alloy_rpc_types_engine::PayloadId::new([1; 8])).times(1).in_sequence(&mut sequence).returning(move |_| Ok(SelfFixture::envelope(hash)));
+            engine.expect_import().withf(move |payload, _| payload.payload_inner.payload_inner.payload_inner.block_hash == hash).times(1).in_sequence(&mut sequence).returning(move |_, _| Ok(PayloadStatus::new(PayloadStatusEnum::Valid, Some(hash))));
+            engine.expect_fcu().withf(move |state, attrs| state.head_block_hash == hash && attrs.is_none()).times(1).in_sequence(&mut sequence).returning(move |_, _| Ok(alloy_rpc_types_engine::ForkchoiceUpdated { payload_status:PayloadStatus::new(PayloadStatusEnum::Valid, Some(hash)), payload_id:None }));
+            parent = hash;
+        }
+        let mut samples = Vec::with_capacity(2);
+        RootBenchSample::drive(&engine, attrs.into_iter().take(2).collect(), genesis, 1, Instant::now(), Duration::from_secs(1), &mut samples, &mut None).await?;
+        assert_eq!(samples.len(), 2, "exactly two blocks must finish");
+        assert_eq!(samples[1].parent_hash, B256::repeat_byte(1), "second build must extend first accepted hash");
+        assert!(samples.iter().all(|s| s.pending.envelope.is_some() && s.responses.is_empty()), "typed evidence must survive without serialization");
+        Ok(())
+    }
+
+    /// The actual phase timeout wrapper records raw boundaries and a typed observed deadline.
+    #[tokio::test]
+    async fn every_phase_deadline_is_typed() -> Result<()> {
+        for phase in ["build_fcu", "get_payload", "new_payload", "canonical_fcu"] {
+            let mut sample = RootBenchSample::new(1, false);
+            let result = sample.call(phase, Instant::now(), Duration::from_millis(1), std::future::pending::<Result<()>>()).await;
+            assert_eq!(RootBenchExit::code(&result), 4, "observed {phase} deadline must have exit 4");
+            assert_eq!(sample.phases.len(), 1, "deadline records only the attempted phase");
+            sample.finish_cycle();
+            assert_eq!(sample.cycle_ns, None, "failed phases cannot produce completed cycles");
+        }
+        Ok(())
+    }
+
+    /// Each phase stops at its first transport/status/deadline failure without retry.
+    #[tokio::test]
+    async fn engine_driver_fails_closed() -> Result<()> {
+        for phase in 0..4 {
+            for failure in 0..8 {
+                if (phase == 1 && failure > 1) || (phase != 0 && failure == 5) { continue; }
+                let mut engine = MockRootBenchEngine::new();
+                let mut sequence = mockall::Sequence::new();
+                let parent = B256::repeat_byte(9);
+                let hash = B256::repeat_byte(1);
+                for step in 0..=phase {
+                    let failed = step == phase;
+                    let response_hash = if step == 0 { parent } else { hash };
+                    let status = if failed && failure == 2 { PayloadStatus::new(PayloadStatusEnum::Syncing, None) } else if failed && failure == 3 { PayloadStatus::new(PayloadStatusEnum::Valid, None) } else if failed && failure == 6 { PayloadStatus::new(PayloadStatusEnum::Invalid { validation_error:"invalid root".into() }, Some(response_hash)) } else if failed && failure == 7 { PayloadStatus::new(PayloadStatusEnum::Accepted, Some(response_hash)) } else { PayloadStatus::new(PayloadStatusEnum::Valid, Some(if failed && failure == 4 { B256::ZERO } else { response_hash })) };
+                    match step {
+                        0 | 3 => {
+                            engine.expect_fcu().times(1).in_sequence(&mut sequence).returning(move |_, _| {
+                                if failed && failure == 0 { return Err(eyre!("injected transport")); }
+                                if failed && failure == 1 { return Err(eyre::Report::new(RootBenchExit::Timeout)); }
+                                Ok(alloy_rpc_types_engine::ForkchoiceUpdated { payload_status:status.clone(), payload_id:if failed && failure == 5 { None } else { Some(alloy_rpc_types_engine::PayloadId::new([1; 8])) } })
+                            });
+                        }
+                        1 => { engine.expect_payload().times(1).in_sequence(&mut sequence).returning(move |_| if failed { Err(if failure == 1 { eyre::Report::new(RootBenchExit::Timeout) } else { eyre!("injected payload transport") }) } else { Ok(SelfFixture::envelope(hash)) }); }
+                        _ => { engine.expect_import().times(1).in_sequence(&mut sequence).returning(move |_, _| if failed && failure < 2 { Err(if failure == 1 { eyre::Report::new(RootBenchExit::Timeout) } else { eyre!("injected import transport") }) } else { Ok(status.clone()) }); }
+                    }
+                }
+                // A missing payload ID matters only at build admission; other phases were filtered.
+                let mut samples = Vec::with_capacity(1);
+                let result = RootBenchSample::drive(&engine, vec![RootBenchBundle::attributes(1, vec![])], parent, 0, Instant::now(), Duration::from_millis(1), &mut samples, &mut None).await;
+                assert!(result.is_err(), "phase {phase} failure {failure} must stop driver");
+                assert_eq!(samples.len(), 1, "failed phase retains exactly one sample");
+                if phase > 1 { assert!(samples[0].pending.envelope.is_some(), "later failure retains typed payload"); }
+            }
+        }
+        Ok(())
+    }
+
+    /// Activation validates the actual pre-fork root after payload reconstruction.
+    #[test]
+    fn activation_parent_root_and_payload_identity() -> Result<()> {
+        let attrs = RootBenchBundle::attributes(2, vec![]);
+        let parent = B256::repeat_byte(3);
+        let actual_root = B256::repeat_byte(4);
+        let mut block = alloy_consensus::Block::<Bytes> { header:alloy_consensus::Header { parent_hash:parent, number:2, timestamp:2, state_root:actual_root, ..Default::default() }, body:Default::default() };
+        RootBenchSample::verify_block(&block, &attrs, parent, 2, RootBenchCohort::D, 2, Some(actual_root))?;
+        assert!(RootBenchSample::verify_block(&block, &attrs, parent, 2, RootBenchCohort::D, 2, Some(B256::ZERO)).is_err(), "current/delayed root is not actual pre-F root");
+        block.header.parent_hash = B256::ZERO;
+        assert!(RootBenchSample::verify_block(&block, &attrs, parent, 2, RootBenchCohort::D, 2, Some(actual_root)).is_err(), "wrong parent rejects");
+        block.header.parent_hash = parent; block.header.number = 3;
+        assert!(RootBenchSample::verify_block(&block, &attrs, parent, 2, RootBenchCohort::D, 2, Some(actual_root)).is_err(), "wrong number rejects");
+        block.header.number = 2;
+        block.header.timestamp = 3;
+        assert!(RootBenchSample::verify_block(&block, &attrs, parent, 2, RootBenchCohort::D, 2, Some(actual_root)).is_err(), "wrong payload timestamp rejects");
+        block.header.timestamp = 2; block.body.transactions.push(Bytes::from_static(b"wrong"));
+        assert!(RootBenchSample::verify_block(&block, &attrs, parent, 2, RootBenchCohort::D, 2, Some(actual_root)).is_err(), "changed transaction bytes/order rejects");
+        Ok(())
+    }
+
+    /// Native envelope fixture needs no provider or root computation.
+    pub struct SelfFixture;
+    impl SelfFixture {
+        /// Constructs a typed payload carrying a chosen advertised hash.
+        pub fn envelope(hash: B256) -> base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV4 {
+            let block = alloy_consensus::Block::<TxEnvelope> { header:alloy_consensus::Header { withdrawals_root:Some(B256::ZERO), blob_gas_used:Some(0), excess_blob_gas:Some(0), requests_hash:Some(alloy_eips::eip7685::EMPTY_REQUESTS_HASH), parent_beacon_block_root:Some(B256::ZERO), ..Default::default() }, body:Default::default() };
+            let data = ExecutionData::from_block_slow(&block);
+            let mut payload = data.payload.as_v4().expect("fixture selects V4").clone();
+            payload.payload_inner.payload_inner.payload_inner.block_hash = hash;
+            base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV4 { execution_payload:payload, block_value:U256::ZERO, blobs_bundle:Default::default(), should_override_builder:false, parent_beacon_block_root:B256::ZERO, execution_requests:vec![] }
+        }
+    }
 
     /// All captured values and argv tokens are opaque, and launch settings never copy domains.
     #[test]
@@ -924,7 +1236,8 @@ mod tests {
             sample.pending.build_fcu = Some(alloy_rpc_types_engine::ForkchoiceUpdated { payload_status:PayloadStatus::new(PayloadStatusEnum::Valid, Some(B256::ZERO)), payload_id:Some(alloy_rpc_types_engine::PayloadId::new([1; 8])) });
             if failed_phase == "canonical_fcu" { sample.pending.new_payload = Some(PayloadStatus::new(PayloadStatusEnum::Valid, Some(B256::ZERO))); }
             assert!(sample.responses.is_empty(), "successful Engine sequence must not serialize responses");
-            let failed = if timeout { sample.call(failed_phase, Instant::now(), Duration::from_millis(1), directory.path(), std::future::pending::<std::result::Result<(), &str>>()).await } else { sample.call(failed_phase, Instant::now(), Duration::from_secs(1), directory.path(), std::future::ready(Err::<(), _>("injected transport failure"))).await };
+            let failed = if timeout { sample.call(failed_phase, Instant::now(), Duration::from_millis(1), std::future::pending::<Result<()>>()).await } else { sample.call(failed_phase, Instant::now(), Duration::from_secs(1), std::future::ready(Err::<(), _>(eyre!("injected transport failure")))).await };
+            sample.flush_pending()?; sample.persist(directory.path())?;
             assert!(failed.is_err(), "later transport failure or timeout must propagate");
             let saved: Value = serde_json::from_str(fs::read_to_string(directory.path().join("samples.jsonl"))?.trim())?;
             assert_eq!(saved["responses"]["build_fcu"]["payloadId"], "0x0101010101010101", "build payload ID must survive every later failure");
@@ -1002,7 +1315,7 @@ mod tests {
         assert_eq!((summary.count, summary.p50_ns, summary.p90_ns, summary.p95_ns, summary.p99_ns), (10, Some(5), Some(9), Some(10), Some(10)), "nearest rank must include exact sample count");
         let mut rows = vec![RootBenchSample::new(1, true), RootBenchSample::new(2, false), RootBenchSample::new(3, false)];
         rows[0].phases.insert("cycle".into(), RootBenchInterval { start_ns:0, end_ns:999 });
-        rows[1].phases.insert("cycle".into(), RootBenchInterval { start_ns:2, end_ns:12 });
+        rows[1].cycle_ns = Some(10);
         rows[2].error = Some("failed".into());
         rows[2].phases.insert("cycle".into(), RootBenchInterval { start_ns:0, end_ns:500 });
         assert_eq!(RootBenchSummary::phase(&rows, "cycle"), RootBenchSummary::from_samples(&[10]), "warmup and failures must not enter any percentile or count");
@@ -1018,10 +1331,10 @@ mod tests {
         RootBenchSample::require_valid(&valid, hash)?;
         assert!(RootBenchSample::require_valid(&valid, B256::ZERO).is_err(), "VALID with wrong latestValidHash must reject");
         assert!(RootBenchSample::require_valid(&PayloadStatus::new(PayloadStatusEnum::Syncing, None), hash).is_err(), "SYNCING must reject");
-        assert!(RootBenchCohort::R.check_accounting("", "").is_err(), "AlreadySeen VALID without actual independent execution must reject");
+        assert!(RootBenchCohort::R.check_accounting("", "", 1).is_err(), "AlreadySeen VALID without actual independent execution must reject");
         let metrics = "reth_base_root_experiment_builder_executions 1\nreth_base_root_experiment_validator_executions 1\nreth_base_root_experiment_current_roots_started{source=\"builder\"} 1\nreth_base_root_experiment_current_roots_started{source=\"validator\"} 1\nreth_base_root_experiment_validator_ready_outputs 1\n";
-        RootBenchCohort::R.check_accounting("", metrics)?;
-        assert!(RootBenchCohort::D.check_accounting("", &format!("{metrics}reth_base_root_experiment_trusted_insertions 1\n")).is_err(), "trusted insertion must invalidate R/D evidence");
+        RootBenchCohort::R.check_accounting("", metrics, 1)?;
+        assert!(RootBenchCohort::D.check_accounting("", &format!("{metrics}reth_base_root_experiment_trusted_insertions 1\n"), 1).is_err(), "trusted insertion must invalidate R/D evidence");
         Ok(())
     }
 
@@ -1042,7 +1355,8 @@ mod tests {
     async fn timeout_and_partial_artifacts() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let mut sample = RootBenchSample::new(1, false);
-        let failed = sample.call("new_payload", Instant::now(), Duration::from_millis(1), directory.path(), std::future::pending::<std::result::Result<(), std::io::Error>>()).await;
+        let failed = sample.call("new_payload", Instant::now(), Duration::from_millis(1), std::future::pending::<Result<()>>()).await;
+        sample.flush_pending()?; sample.persist(directory.path())?;
         assert!(failed.is_err(), "a never-completing Engine call must hit its deadline without retry");
         assert!(sample.error.as_ref().unwrap().contains("timed out"), "timeout must remain an explicit failure");
         assert_eq!(RootBenchSummary::phase(&[sample], "new_payload").count, 0, "timeout must not count as a successful latency");
@@ -1050,7 +1364,7 @@ mod tests {
         let input = directory.path().join("bad1.json");
         RootBenchBundle::write_new(&input, &json!({}))?;
         let output = directory.path().join("trial1");
-        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:None, cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
+        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:PathBuf::new(), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
         assert!(args.run().await.is_err(), "invalid frozen input must fail before launch");
         let original = fs::read(output.join("result.json"))?;
         let report: Value = serde_json::from_slice(&original)?;
@@ -1075,7 +1389,7 @@ mod tests {
                 if valid { RootBenchBundle::write_new(&input, &RootBenchBundle::freeze(4, 1, 1)?)?; }
                 else { RootBenchBundle::write_new(&input, &json!({}))?; }
                 let output = directory.path().join("trial1");
-                let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:None, cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
+                let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:PathBuf::new(), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
                 let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
                 barrier.wait();
                 let error = runtime.block_on(args.run()).expect_err("every preflight must reject without launching").to_string();
@@ -1098,7 +1412,7 @@ mod tests {
         let input = directory.path().join("bundle1.json");
         RootBenchBundle::write_new(&input, &RootBenchBundle::freeze(4, 1, 1)?)?;
         let output = directory.path().join("trial1");
-        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:None, cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
+        let args = RootBenchRunArgs { input, output:output.clone(), executable_manifest:PathBuf::new(), cohort:RootBenchCohort::R, call_timeout_ms:1, run_timeout_ms:10, shutdown_timeout_ms:10 };
         let error = args.run().await.expect_err("runtime checkout must not authorize measurement");
         assert!(error.to_string().contains("external executable provenance unverified"), "missing attestation must be the explicit refusal reason");
         let report: Value = serde_json::from_slice(&fs::read(output.join("result.json"))?)?;
@@ -1115,7 +1429,7 @@ mod tests {
             let dir = tempfile::tempdir()?;
             let input = dir.path().join("bundle1.json");
             RootBenchBundle::write_new(&input, &RootBenchBundle::freeze(4, 2, 1)?)?;
-            let executable_manifest = Some(PathBuf::from(std::env::var("ROOT_BENCH_EXECUTABLE_MANIFEST").map_err(|_| eyre!("supported-host integration requires externally supplied manifest for this test executable"))?));
+            let executable_manifest = PathBuf::from(std::env::var("ROOT_BENCH_EXECUTABLE_MANIFEST").map_err(|_| eyre!("supported-host integration requires externally supplied manifest for this test executable"))?);
             let args = RootBenchRunArgs { input, output: dir.path().join("trial1"), executable_manifest, cohort, call_timeout_ms: 30_000, run_timeout_ms: 180_000, shutdown_timeout_ms: 30_000 };
             args.run().await?;
             let result: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.path().join("trial1/result.json"))?)?;

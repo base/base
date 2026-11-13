@@ -167,6 +167,7 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 
 # misc
 anyhow.workspace = true
+mockall.workspace = true
 indicatif.workspace = true
 
 [[bench]]

@@ -1,128 +1,209 @@
 # Deferred root Engine benchmark contract
 
-This command benchmarks serialized native payload construction and first import on an isolated custom chain. It is not a consensus service, derivation test, independent-node throughput test, or performance certification. The implementation and acceptance checks below require supported-host verification before measurement.
+This command measures serialized native payload construction and first import on an isolated custom chain. It is not a consensus service, derivation test, independent-node throughput test, or performance certification. Source implementation and mocked tests do not replace supported-Linux execution.
 
-## Commands
+## Commands and preconditions
 
-Build the dedicated executable from the clean checkout on the operator's Linux host:
+Build on the operator's Linux host from a clean, pinned build checkout:
 
 ```sh
 cargo build --locked --release -p base-system-tests --bin base-bench
 ```
 
-The following examples assume `target/release` is on `PATH`. Supply the external manifest for that exact release executable when running a trial.
+With `target/release` on `PATH`:
 
 ```sh
 base-bench root-bench freeze --output workload1.json --blocks 8 --transactions-per-block 10 --warmup 1
 base-bench root-bench run --input workload1.json --cohort r --output trial1 --executable-manifest build1.json
 ```
 
-Run one process per cohort/trial. `--cohort` accepts `o`, `s`, `r`, `d`. `--call-timeout-ms`, `--run-timeout-ms`, and `--shutdown-timeout-ms` bound calls, the trial including launch, and graceful drain respectively. No call retries or artificial sleeps are allowed. The output basename must end in a number; existing destinations are refused. `trial1/datadir1` is disposable; never remove its sibling experimental marker to reuse it.
+Run one process per trial/cohort. Parent directories must already exist and be writable. Output basenames must end in a number; freeze files and trial directories are create-new, never reused. `trial1/datadir1` is disposable; never remove its sibling experimental marker to reuse it. Keep orchestration inputs, the external manifest and operator evidence outside the binary-owned output directory. Run inside a Git source checkout containing `Cargo.lock` and `etc/upstream-pins/reth.toml`; the resolved checkout supplies diagnostic identity, not executable provenance. Only one active trial per process is admitted.
 
-Fresh genesis only is supported. Snapshot restore is not implemented here; the existing production admission manifest/API is the required route for a future separately tested extension. There is no snapshot rewrite or active-database recovery path.
+| Command | Flag | Type | Default | Enforced contract |
+|---|---|---|---|---|
+| freeze | `--output` | path | required | new numbered JSON basename; existing parent |
+| freeze | `--blocks` | u64 blocks | 8 | 4..=10000, including warmup |
+| freeze | `--transactions-per-block` | u64 transfers | 10 | 1..=1000 |
+| freeze | `--warmup` | u64 blocks | 1 | 0..blocks, exclusive upper bound |
+| run | `--input` | path | required | readable validated frozen bundle |
+| run | `--output` | path | required | new numbered directory; existing parent |
+| run | `--cohort` | enum | required | `o`, `s`, `r`, `d` |
+| run | `--executable-manifest` | path | required by Clap | external clean-source attestation for exact executable |
+| run | `--call-timeout-ms` | u64 milliseconds | 30000 | positive; each launch/Engine/read wait |
+| run | `--run-timeout-ms` | u64 milliseconds | 300000 | positive; launch, saturation and post-loop verification, excluding drain |
+| run | `--shutdown-timeout-ms` | u64 milliseconds | 30000 | positive; each shutdown stage, not a combined shutdown budget |
 
-## Frozen input
+No call retries or artificial sleeps. Only fresh genesis is supported. Snapshot restore, snapshot rewriting and active-database recovery are not implemented. The existing production admission manifest/API is the route for any separately tested extension.
 
-Versioned JSON contains `chain_id: 900`, genesis allocation, activation timestamp 2, `warmup`, and ordered `blocks` containing complete `BasePayloadAttributes`, including signed EIP-2718 `transactions`, fixed timestamps, gas limit, randomness, fee recipient, withdrawals, beacon root and fee parameters. `digest` is Keccak of the canonical serde JSON encoding with that field zeroed. Preparation uses `SubmissionPipeline::sign_at_nonce` with an explicitly funded deterministic test account. Run validates digest, signed chain ID, recovered sender, contiguous nonce, gas, fees, recipient and value before any writable node launch. Signing and serialization are outside measured phases. Input must be treated as immutable by base-metal and independently content-addressed in its trial manifest.
+## Input and executable provenance
 
-This first workload is state-changing native ETH transfers, a correctness/latency smoke workload, not representative root-performance coverage. It does not depend on ancestor hashes.
+Preparation uses `SubmissionPipeline::sign_at_nonce` to freeze signed state-changing native ETH transfers, not a representative root-performance workload. The well-known synthetic test-only signing key is 32 repeated `0x01` bytes. It is public, not a credential. Never use it for real funds.
 
-These are deliberate EL-only blocks without an L1-info transaction. Receipt verification uses the launched node's canonical execution provider `receipts_by_block(accepted_hash)`, not Base's `eth_getTransactionReceipt` converter, which requires L1-info calldata. The accepted canonical head hash and native payload transaction bytes/order bind the block; native receipts are positionally associated with that exact block's transactions. Exact receipt count, success status, per-position cumulative-gas delta of 21000 and total header gas are required. Native receipts do not have RPC transaction/block/index metadata. Sender nonce and recipient balance remain exact checks. No receipt verification is skipped and no L1/CL fixtures are inserted.
+`input.json` preserves the exact input file bytes, including whitespace and key order. Its raw-byte digest is not the bundle's canonical integrity digest. Validation checks the canonical digest, exact genesis/forks, chain, fixed attributes, recovered sender, contiguous nonce, gas, fees, recipient and value before node launch. Signing and serialization are outside measured Engine calls. Input should also be independently content-addressed by the operator.
 
-Nonce and balance verification uses `state_by_block_hash(accepted_hash).basic_account`, on the same explicitly owned runtime blocking job as native receipt verification. The authenticated Engine read transport exposes only the `EngineEthApi` subset, so this command never relies on `eth_getTransactionCount` or `eth_getBalance`. The integration trial explicitly removes both account RPC methods before running.
+All bundle fields are required and non-null; unknown bundle fields reject:
 
-The deterministic signing key is a well-known synthetic test-only key consisting of 32 repeated `0x01` bytes. It is public, not a credential. Never use this key for real funds or a production account.
+| Input field | JSON type / units | Contract |
+|---|---|---|
+| `version` | u64 | 1 |
+| `chain_id` | u64 | disposable chain 900 |
+| `genesis` | Ethereum Genesis object | timestamp 0, exact supported allocation/forks; no common D schedule |
+| `activation` | u64 Unix seconds | 2 |
+| `warmup` | u64 blocks | less than block count |
+| `blocks` | array of BasePayloadAttributes | 4..=10000 ordered blocks |
+| `digest` | 32-byte hex | Keccak of canonical serde JSON with digest zeroed |
 
-## Cohort launch
+Each attributes object uses the native Engine serde schema: `timestamp` is a hex quantity in seconds, contiguous 1..N; `prevRandao` is zero bytes32; `suggestedFeeRecipient` is zero address; `withdrawals` is an empty array; `parentBeaconBlockRoot` is zero bytes32. Optional Engine `slotNumber` and `targetGasLimit` are absent/null. `transactions` is a non-null ordered array of 1..=1000 EIP-2718 hex byte strings; `noTxPool` is true; `gasLimit` is 30000000; `eip1559Params` is bytes8 encoding denominator 50/elasticity 6; `minBaseFee` is 1 wei. Run validates the exact serialization against the supported attributes constructor, not arbitrary Engine options.
 
-All arms use CLI-derived `ExecutionNodeArgs`, typed `ExecutionNodeLaunchConfig::launch_default`, disposable acknowledgement, chain 900, no CL/L1 services, no forwarding, no proof history, no metering/indexer/payer/event extensions, no discovery and no peers. The witness diagnostic hook is explicitly unconfigured. Queue 6, retention 128, root timeout 30000 ms, persistence threshold 0, allow-unwind-canonical-header true, snap-v2 false and unused ports are common. Only D sets `config.base.deferredStateRoot = 2`. O selects `ordinary`, S `serial-trusted`, R `serial-reexecution`, D `deferred`.
+`--executable-manifest` must be supplied by a trusted external build operator from the clean build checkout and final executable, not inferred from runtime cwd. Keep it outside the output directory. It is a JSON object with required non-null fields:
 
-O is candidate ordinary, NOT immutable #6268. An unchanged #6268 baseline needs a separately built, attested harness-only adapter because it lacks the admitted extension-free cohort runner. No baseline binary or parity certification is supplied here. D vs R is the primary comparison; D vs O confounds algorithm and re-execution.
+| Manifest field | Type / units | Check |
+|---|---|---|
+| `executable_keccak` | 32-byte hex | Keccak of exact running executable bytes |
+| `source_commit`, `source_tree` | 40-digit Git hex IDs | structurally valid build-source identities |
+| `cargo_lock_keccak`, `reth_pin_keccak` | 32-byte hex | build lock and upstream-pin identity |
+| `clean_source` | bool | true |
 
-Each build extends its own cohort's last accepted parent, never a frozen parent hash. The sequence is build FCU, immediate getPayload, first newPayload, canonical FCU. All three status-bearing responses require VALID and exact latestValidHash. Payload transaction bytes/order and canonical receipts are checked. R and active D additionally require exact per-block deltas of builder execution/current root, validator execution/current root, ready validator output, and zero trusted insertion attempts. VALID by itself can mean AlreadySeen and does not pass this gate. Pre-F D does not emit controlled execution accounting. O/S trusted insertion event ordering remains observable rather than guaranteed by sleeps.
+Malformed, missing, dirty-source or mismatched attestation refuses launch. Digest binding and schema do not authenticate the issuer or prove the builder's truthfulness. Runtime checkout identity need not equal build identity and cannot replace attestation. No broad build system is added.
 
-## Output
+## Launch and successful-loop boundary
 
-`input.json` preserves the canonical input. `launch.json` records an allowlist of nonsecret scalar launch settings, receipt/account sources, argument fingerprints and BASE_/RETH_ environment fingerprints. No broad CLI-derived configuration Debug dump is retained. Every captured environment value and every whole argument token is Keccak-hashed, including benign values, endpoints, headers, JWT settings, paths and inline flag values. Its `runtime_checkout` commit/tree/lock/pin identity describes only the runtime working directory, never the executable's source. `executable.json` identifies executable and compiled benchmark-module bytes; `executable-source.json` retains the supplied external manifest. See the provenance gate below.
+All arms use CLI-derived `ExecutionNodeArgs` and typed `ExecutionNodeLaunchConfig::launch_default`, disposable acknowledgement, chain 900, unused ports, no CL/L1 services, forwarding, proof history, metering/indexer/payer/event extensions, discovery or peers. Witness hooks are explicitly unconfigured. Queue 6, retention 128, root timeout 30000 ms, persistence threshold 0, allow-unwind-canonical-header true and snap-v2 false are common. Every cohort explicitly requires `node_config.prune_config().is_none()` before launch and records `config.unpruned: true`. This does not change pruning implementation. Unpruned history beyond the ready-cache horizon still needs runtime verification.
 
-`samples.jsonl` is flushed after each block cycle or call failure, including raw monotonic start/end nanoseconds, payload ID, parent/block hash, warmup membership, responses/status/latestValidHash, header commitment, error, gas and successful receipt count. Successful Engine responses are retained as typed pending values, then serialized after canonical FCU or on any error/cancellation. No disk writes or response serialization delay successful Engine phases. `metrics-before.txt`, per-block `metricsN-before.txt`/`metricsN-after.txt`, and `metrics-drained.txt` preserve raw `base_root_experiment` Prometheus lines without distributing deltas over blocks.
+O selects candidate `ordinary`; S `serial-trusted`; R `serial-reexecution`; D `deferred`. Only D installs `config.base.deferredStateRoot = 2`. O is NOT immutable #6268. An unchanged #6268 baseline needs a separately built/attested harness-only adapter because it lacks this admitted extension-free runner. D versus R is the primary comparison; D versus O confounds algorithm and re-execution.
 
-`result.json` records completion/error, drain status, samples and nearest-rank count/p50/p90/p95/p99 summaries. `drain.json` records graceful guard completion separately from observed healthy, joined root worker state, manager presence, and consumed critical-task result. All active S/R/D trials require the shared manager, closed queue, no retained worker JoinHandle and healthy manager after guards finish. O may have no manager. The runtime critical-task result is consumed during execution or shutdown, but its normal shutdown result alone cannot prove worker completion because the task manager can exit before drain-task panics.
+The production-used `RootBenchEngine` trait has only FCU V3, getPayload V4 and newPayload V4, with a direct `SharedEngineApi` implementation and Mockall default tests. It is benchmark-local, not a general Engine framework.
 
-Partial/error artifacts are best effort on launch, call, validation, Ctrl-C cancellation and drain failure; nonzero exit means incomplete. Serialization, persistence and task JoinErrors are accumulated without replacing the primary trial error or skipping cleanup. After runtime construction, cleanup attempts bounded graceful shutdown, checks actual workers/provider reads, then calls `runtime.shutdown_timeout`, including when the critical monitor is unavailable. Post-cleanup metrics, drain and result writes are attempted independently. A failed output filesystem can prevent any of these artifacts from being written. Abrupt termination can lose the current in-memory block sample. SIGTERM-specific cleanup is not yet verified.
+Before saturation, the command validates/launches, reserves sample capacity, clones owned attributes, precomputes cumulative transaction counts and captures baseline metrics. Saturation performs only:
 
-Receipt and account provider tasks run only on the explicitly owned execution runtime. Their handles remain retained across call and trial cancellation; `drain.json.receipt_reads_completed` covers both receipt and account checks and is false while any such operation is still running. Completed retained handles are consumed so provider errors and panics cannot be mistaken for successful checks. A timeout does not cancel an indivisible provider read. Runtime shutdown is bounded, and unfinished work makes the trial incomplete.
+1. FCU with owned attributes extending this cohort's last accepted parent.
+2. Immediate getPayload, with no scheduling sleep.
+3. First newPayload, with its consumed payload clone prepared before that call's clock.
+4. Canonical FCU, then immediately the next build.
 
-Run from any directory inside a runtime source checkout. The harness resolves its Git root for diagnostic lock/pin reads. That checkout is not the executable-source attestation.
+All three status-bearing responses require VALID and exact latestValidHash; build FCU requires a payload ID. Failure stops without retry. Complete typed envelopes, response objects, advertised hashes and raw call boundaries remain in memory. No block reconstruction/header clone, transaction comparison, block RPC, provider work, metric rendering, JSON serialization or filesystem work occurs in the successful loop or between canonical FCU and the next build.
 
-Phase names are `build_fcu`, `get_payload`, `new_payload`, `canonical_fcu`, `payload_available` and `cycle`. FCU duration alone is admission, not construction time. `payload_available` spans build FCU request to getPayload response. `cycle` spans build request to canonical acceptance. Forced-attribute submission-to-inclusion is not mempool ingress latency. Warmup samples remain raw but are excluded from summaries and accepted-throughput numerators. Throughput divides accepted measured gas and successful included receipt count by measured wall time through completed shutdown/drain, not offered gas/transaction count. Failed or absent samples are never zero-valued successes.
+After the entire loop, verification reconstructs sidecar-complete native headers and verifies advertised hashes, parent/number/timestamp and transaction bytes/order. D at activation must commit the actual pre-F parent's post-state root, not the current block's root. After activation the parent's delayed header root must not be used as actual parent state; this harness only asserts the explicit activation boundary and otherwise relies on core semantics.
 
-## Exact metric-family contract
+Each retained accepted hash is checked against its canonical block by NUMBER; a separate Latest read checks the final head. Receipts and accounts are read by ACCEPTED HASH on retained blocking tasks on the explicitly owned execution runtime. EL-only blocks have no L1-info transaction, so this never uses Base's enriched `eth_getTransactionReceipt` converter or `eth_getTransactionCount`/`eth_getBalance`. Native receipts require exact cardinality, success, per-position cumulative-gas delta 21000 and total header gas. Sender nonce and recipient balance equal the precomputed cumulative transfer count. Native receipts have no RPC transaction/block/index metadata; positional association is bound to the exact accepted block transaction order.
 
-All families below are exported with the `reth_` prefix by Reth's shared recorder, so `base_root_experiment_jobs_started` is emitted as `reth_base_root_experiment_jobs_started`. Apply that prefix to every family in the tables and lists below. Counters have no `_total` suffix with this exporter configuration. The harness shares Reth's idempotent recorder installation rather than installing a competing global recorder.
+## Accounting and timing
 
-| Counter | Meaning |
+Only baseline and post-drain metric snapshots are taken. R requires exact aggregate execution/current-root/ready-output deltas for every workload block. D requires them only for timestamps at or after activation. Warmup remains included in correctness/accounting: timestamps 1..4 with activation 2 require R=4 and D=3. Trusted insertion attempts must stay zero. VALID alone may mean AlreadySeen and is not independent-work evidence. Aggregates cannot independently certify every hash: excess work for one hash can mask missing work for another. O/S insertion event order remains observable, not guaranteed by sleeps.
+
+Phase boundaries are actual monotonic nanoseconds relative to trial origin. `build_fcu`, `get_payload`, `new_payload`, `canonical_fcu` each have raw start/end. FCU alone measures admission, not construction. `payload_available` is the observed span from build FCU request start to successful getPayload response, including inter-call overhead. `cycle_ns` is exactly the sum of the four Engine phase durations, NOT that wall-clock span. There is no fabricated `cycle` endpoint; summaries named `cycle` use `cycle_ns`.
+
+Warmup/error/absent-cycle observations are excluded from throughput numerators and cycle percentiles. Empty summaries have count 0 and null percentiles. Throughput is gas/s and successful receipts/s, dividing verified measured totals by wall time from the first measured build through runtime shutdown/drain. This includes post-loop verification of ALL blocks, failure evidence writes during cleanup and shutdown overhead. It is not Engine-only saturating throughput and makes no claim that moving filesystem work eliminates dilution. Final post-drain result/sample writes are outside that denominator. No separate Engine-only throughput is emitted. Missing start, nonpositive elapsed time or no eligible samples yields null, never infinity or invented zero observations. Partial rates on incomplete results are diagnostics, not measurements. Forced-attribute submission-to-inclusion is not mempool ingress latency.
+
+## Artifacts and schemas
+
+Files are create-new except append-only `samples.jsonl`. Numbers below are JSON integers unless stated otherwise. Engine responses/envelopes use native serde Engine schemas with hex quantities and hashes. Fields called nullable may be null when unavailable; missing files are possible on refusal or filesystem failure.
+
+| Artifact | Fields and types / units |
 |---|---|
-| `base_root_experiment_jobs_started` | Actual serial provider operations invoked, including parent recovery |
-| `base_root_experiment_jobs_completed` | Invoked operations completed, including failures |
-| `base_root_experiment_jobs_failed` | Provider failure or panic; zero alone does not certify drain |
-| `base_root_experiment_current_roots_started` | Current roots by `source="builder"` or `source="validator"` |
-| `base_root_experiment_builder_executions` | Controlled builder attempts |
-| `base_root_experiment_validator_executions` | Independent controlled validator attempts |
-| `base_root_experiment_validator_ready_outputs` | Ready outputs exposed to Engine, not canonical acceptance |
-| `base_root_experiment_trusted_insertions` | Controlled trusted-insertion attempts |
-| `base_root_experiment_redundant_stock_sorts` | Redundant stock sorting still owned by runtime |
-| `base_root_experiment_payloads_sealed` | Immutable sealed payloads, not Engine VALID responses |
+| `input.json` | original raw bytes, schema above |
+| `executable-source.json` | `external_manifest`: object or null; `verification`: string `external-attestation-required`; `executable_keccak`: bytes32 hex |
+| `executable.json` | `executable_keccak`, `harness_module_keccak`: bytes32 hex |
+| `launch.json` | `cohort`: O/S/R/D string; `transport`: string `typed-in-memory`; `receipt_source`, `account_source`: provider-method description strings; `config`: object below; `runtime_checkout`: object below; `argv`: array of hashed strings; `environment`: name-to-hash object; `unsupported`: array of strings |
+| `launch.config` | `unpruned`, `allow_unwind_canonical_header`, `snap_v2`, `disable_discovery`, `witness_hook_configured`: bools; `queue`, `retention`: counts; `persistence_threshold`: blocks; `max_inbound_peers`, `max_outbound_peers`: nullable counts, configured 0 |
+| `launch.runtime_checkout` | `source`: string containing diagnostic commit/tree IDs; `cargo_lock_keccak`, `reth_pin_keccak`: bytes32 hex; `not_executable_provenance`: true |
+| `runtime.json` | `configuration`: string of default RuntimeConfig Debug, not CLI/environment Debug |
+| `metrics-before.txt`, `metrics-drained.txt` | raw Prometheus root-experiment families/metadata, process scope |
+| `samples.jsonl` | successive sample objects below; retain last row per block number, never sum duplicate failure snapshots |
+| `drain.json` | `drained`, `guards_completed`, `worker_joined_healthy`, `receipt_reads_completed`, `manager_observed`: bools; `critical_task_result`: diagnostic string |
+| `result.json` | `complete`, `drained`: bools; `error`: nullable string; `cohort`: O/S/R/D string; `input_digest`: bytes32 hex; `samples`: sample array; `summaries`: phase-name-to-summary object; `measurement_start_ns`: nullable u64 ns; `drain_end_ns`: u64 ns; `accepted_gas_per_second`, `successful_receipts_per_second`: nullable f64 gas/s and receipts/s |
+| refusal `result.json` | best-effort subset `complete:false`, `drained:false`, `error`: string, `cohort`: string; other fields absent |
 
-Distribution families, all durations in seconds:
+Each sample has `number`: one-based u64 block index; `warmup`: bool; `parent_hash`: bytes32 hex; `block_hash`: nullable bytes32 hex; `phases`: name-to-`{start_ns:u64,end_ns:u64}` object in ns; `cycle_ns`: nullable u64 ns; `responses`: object with optional `build_fcu`, `new_payload`, `canonical_fcu`, complete `payload` envelope and reconstructed `payload_header`; `error`: nullable string; `accepted_gas`: u64 gas; `successful_receipts`: u64 count. The last two remain 0 until verified and must not be interpreted without completion/error gates. Typed `pending` is in-memory only, not a JSON field. Summaries have `count`: usize observations and nullable u64 ns `p50_ns`, `p90_ns`, `p95_ns`, `p99_ns` using exact nearest rank.
 
-- `base_root_experiment_job_duration`
-- `base_root_experiment_queue_lag`
-- `base_root_experiment_completion_wait`
-- `base_root_experiment_sorting_duration`
-- `base_root_experiment_calculation_duration`
-- `base_root_experiment_builder_execution_duration`
-- `base_root_experiment_validator_execution_duration`
-- `base_root_experiment_finalization_to_seal`
+Every captured BASE_/RETH_ environment value and every whole argument token is Keccak-hashed, including benign values, endpoints, headers, JWT settings, paths and inline flag values. No broad CLI-derived configuration dump is retained. Hashes do not replace executable provenance.
 
-These are recorded with the metrics histogram API but the default Prometheus builder has no configured histogram buckets. It exports summaries with `{quantile="..."}` series and `_sum`/`_count`, not guaranteed `_bucket` series. Preserve the emitted TYPE and labels; do not reinterpret quantile values as buckets or subtract quantiles to infer per-block percentiles. Metrics have process scope. A one-process-per-trial policy is required. The harness is included in that process's resource cost.
+Serialization, persistence and join errors cannot skip cleanup. Retained provider handles survive cancellation/timeouts and are consumed if finished. Graceful guard completion alone does not prove worker completion: active S/R/D requires the actual manager, closed queue, no retained worker JoinHandle and healthy manager. O may have no manager. Critical-task results are consumed, but a normal task-manager result alone is insufficient because drain-task panics may occur later. Post-drain worker-failure metrics must remain zero. An indivisible provider operation is not cancelled by its caller's timeout; outstanding work prevents success. Explicit runtime shutdown remains bounded. Abrupt termination can lose current in-memory evidence; failed filesystems can prevent all artifacts. SIGTERM cleanup is not verified.
 
-An absent counter is treated as zero only for exact counter gates. Required active R/D deltas must still be exactly one, so empty scrapes cannot pass. Missing distributions mean no observations, not zero latency. Read `result.json.complete` and process exit status first; never aggregate incomplete trials, `error` rows, missing phases, or warmup rows into successful observations. JSONL contains successive snapshots: retain the last row per block number rather than summing duplicate failure snapshots. Empty latency summaries have `count: 0` and null percentile fields. Failed trials may retain diagnostic partial throughput values; these are not measurements.
+## Exit categories
 
-## Executable provenance gate
+Only the thin `base-bench` RootBench dispatch uses these categories. Other commands retain existing behavior.
 
-`--executable-manifest` is mandatory for measurement. An external trusted build operator must supply a JSON object with `executable_keccak` matching the exact running executable's bytes, `source_commit` and `source_tree` as 40-digit Git object IDs, `cargo_lock_keccak`, `reth_pin_keccak` as 32-byte Keccak hex digests, and `clean_source: true`. The manifest must be produced from the clean build checkout and final executable by the external build process, not inferred from runtime cwd. Keep it outside the binary-owned trial directory. No broad build system is added here.
+| Exit | Meaning |
+|---|---|
+| 0 | complete, verified, drained success |
+| 2 | refused before execution, including CLI/preflight/input/provenance/output admission |
+| 3 | active incomplete trial without an observed harness deadline |
+| 4 | actual harness launch/call/read/run/shutdown deadline expiration |
 
-The command checks schema and executable digest binding and preserves the external attestation. It does not independently prove the builder's truthfulness or authenticate the manifest issuer. Operator trust and correct source-to-binary attestation remain external responsibilities. Missing, malformed, dirty-source or mismatched attestation refuses launch and measurement success. A matching digest alone without source/lock/pin fields is insufficient. Runtime checkout identity need not equal the attested build identity and cannot replace it.
+Typed categories survive appended evidence/cleanup/filesystem errors. An observed harness timeout takes precedence even if a non-timeout failure occurred first. Otherwise the primary category is retained. Opaque internal root errors are incomplete/3, even if their text says timeout: core worker errors erase their underlying type. No substring matching. A false graceful-shutdown completion result establishes an observed shutdown deadline; a worker health failure by itself does not.
 
-The actual typed-launch integration test also requires `ROOT_BENCH_EXECUTABLE_MANIFEST` pointing to an externally generated manifest for that exact test executable, after building it on the supported host. Do not generate an attestation from arbitrary current checkout state simply to make the gate pass.
+## Exact metric families
 
-That integration test is explicitly ignored by default because it needs external provenance and process-global metric isolation. Run unit tests separately, then launch the built test executable in its own process with the supplied manifest, filtering only `root_bench::tests::admitted_nonempty_r_d_engine_trial --ignored --exact --test-threads=1`. Do not combine it with injected worker-failure tests in the same process. The top-level `just test` excludes `base-system-tests`, so targeted package commands are required for this module.
+Reth's shared idempotent recorder emits the full names below, without `_total`. An absent counter is zero only for exact counter gates; missing active deltas cannot pass. No per-block scrapes or metric-derived per-block percentiles are emitted.
 
-The operator runs Linux validation. From the repository root, run the unit-test filter separately:
+| Counter | Meaning / labels |
+|---|---|
+| `reth_base_root_experiment_jobs_started` | actual provider operations, including parent recovery |
+| `reth_base_root_experiment_jobs_completed` | invoked operations completed, including failures |
+| `reth_base_root_experiment_jobs_failed` | provider failure/panic; zero alone does not certify drain |
+| `reth_base_root_experiment_current_roots_started{source="builder"}` | controlled builder current roots |
+| `reth_base_root_experiment_current_roots_started{source="validator"}` | controlled validator current roots |
+| `reth_base_root_experiment_builder_executions` | controlled builder attempts |
+| `reth_base_root_experiment_validator_executions` | independent controlled validator attempts |
+| `reth_base_root_experiment_validator_ready_outputs` | ready outputs exposed to Engine, not canonical acceptance |
+| `reth_base_root_experiment_trusted_insertions` | controlled trusted-insertion attempts |
+| `reth_base_root_experiment_redundant_stock_sorts` | redundant stock sorts still owned by runtime |
+| `reth_base_root_experiment_payloads_sealed` | sealed payloads, not VALID responses |
+
+Do not require jobs_started = twice the active-block count: parent-root recovery also invokes provider operations. Duration families in seconds are `reth_base_root_experiment_job_duration`, `reth_base_root_experiment_queue_lag`, `reth_base_root_experiment_completion_wait`, `reth_base_root_experiment_sorting_duration`, `reth_base_root_experiment_calculation_duration`, `reth_base_root_experiment_builder_execution_duration`, `reth_base_root_experiment_validator_execution_duration`, `reth_base_root_experiment_finalization_to_seal`. Preserve emitted labels/TYPE. These use the histogram API but the default exporter has no configured buckets: output is summaries with quantiles, `_sum` and `_count`, not guaranteed `_bucket`. Never subtract quantiles. Process-global metrics require one isolated process per trial; the harness remains part of process resource cost.
+
+## Linux operator gates and gap map
+
+The operator owns execution; the commands below are unrun here. Top-level `just test` excludes this package, so use the exact scoped commands:
 
 ```sh
-RUST_MIN_STACK=8388608 cargo test --locked -p base-system-tests --lib root_bench::tests:: -- --test-threads=1
-```
-
-Build the library test executable without running the ignored integration test:
-
-```sh
+RUST_MIN_STACK=8388608 cargo test --locked -p base-system-tests \
+  --lib root_bench::tests:: -- --test-threads=1
 cargo test --locked -p base-system-tests --lib --no-run
+cargo build --locked --release -p base-system-tests --bin base-bench
 ```
 
-Use the exact `base_system_tests-<hash>` executable path printed by that command. Have the trusted external build operator attest that executable, then set `TEST_EXECUTABLE` to its path and `EXTERNAL_TEST_MANIFEST` to the supplied manifest path. Run only the ignored R/D test in a new process:
+Have a trusted external operator attest the exact `base_system_tests-<hash>` executable printed by `--no-run`. Set its path as `TEST_EXECUTABLE` and the externally supplied manifest as `EXTERNAL_TEST_MANIFEST`. Do not rebuild after attestation. Run only this ignored integration test in its own process, separate from injected worker-failure tests:
 
 ```sh
-ROOT_BENCH_EXECUTABLE_MANIFEST="$EXTERNAL_TEST_MANIFEST" RUST_MIN_STACK=8388608 \
-  "$TEST_EXECUTABLE" root_bench::tests::admitted_nonempty_r_d_engine_trial \
+ROOT_BENCH_EXECUTABLE_MANIFEST="$EXTERNAL_TEST_MANIFEST" \
+RUST_MIN_STACK=8388608 \
+"$TEST_EXECUTABLE" root_bench::tests::admitted_nonempty_r_d_engine_trial \
   --ignored --exact --test-threads=1
 ```
 
-Do not rebuild or change the test executable between attestation and this invocation. Successful static checks do not replace these Linux tests.
+| Requirement | Existing implementation / test path | Evidence level and remaining gate |
+|---|---|---|
+| exact production Engine order, next parent, fail closed | `etc/systems/src/root_bench.rs`: `engine_driver_order_and_next_parent`, `engine_driver_fails_closed`, `every_phase_deadline_is_typed` | source/default mock and timeout-wrapper tests; Linux compile/run required; mocks return typed timeout errors, wrapper separately observes real deadlines |
+| native sidecars/hash, activation, bytes/order, state/receipts | same module: `native_payload_sidecars_and_advertised_hash`, `activation_parent_root_and_payload_identity`, `native_receipt_verification`, `admitted_nonempty_r_d_engine_trial` | default source tests and ignored real-engine test; real MPT correctness and parity unverified |
+| independent aggregate accounting/unpruned history | same module: `aggregate_active_counts`, `status_and_independent_accounting` | source/default tests; real R/D metrics and historical accepted-hash reads beyond 128 roots required |
+| timing, summaries, warmup, rates | same module: `exact_cycle_and_throughput`, `percentiles_and_warmup` | pure production-used helpers; not a performance result |
+| provenance, bytes, categories, lifecycle | same module: `executable_manifest_required_and_bound`, `input_bytes_are_verbatim`, `exit_categories_and_required_manifest`, cleanup tests | default tests unrun; actual filesystem failure/cancellation/SIGTERM gates remain |
+| deferred semantics/publication/retention | `crates/execution/node/tests/deferred_state_root_semantics.rs`, `crates/execution/payload/src/post_state_root.rs`, `crates/execution/runner/src/deferred_state_root.rs` | existing core code/tests, not changed or rerun; F/F+1 actual-parent semantics and retention stress required |
+| immutable baseline, snapshot, representative load | existing replay/snapshot modules in `etc/systems/src`, workload tooling in `crates/infra/load-tests` | not provided by this fresh-genesis transfer benchmark; separate baseline adapter/parity and workload gates |
+| paired trials and resource/cadence accounting | external operator/base-metal | CPU affinity, OS CPU/RSS/I/O, paired repeats external; queue/cache/persistence/cancellation/paced/missed-cadence unsupported; serialized saturation proves no overlap |
 
-## External responsibilities and unverified requirements
+### Behavioral red-on-revert, operator-owned and unrun
 
-base-metal owns paired repeated trials, CPU affinity, OS CPU time/RSS/I/O sampling and resource accounting. Queue-depth/cache-hit/miss/persistence-lag/cancellation and paced/missed-cadence measurements are unsupported here. Serialized saturation has no configured cadence and proves no pipeline overlap. A shutdown timeout is incomplete, not evidence that an indivisible provider thread stopped.
+In an operator-owned scratch checkout keep the compileable Engine trait, adapter, driver and tests. Reverse ONLY one correction below, run the named exact test expecting its behavioral assertion failure, restore it and rerun green. Compilation/dependency failure, missing attestation, or reversing the entire extraction is NOT red evidence. Use new numbered logs for every attempt and never overwrite previous evidence.
 
-Required gates before use: package compile and the colocated `root_bench::tests` on a supported host; actual admitted R/D nonempty activation runs; core semantic/publication/retention regressions; independent first-import metrics; exact state/receipt/nonce/gas parity; immutable baseline parity and source provenance; O/S insertion-path observations; retention stress beyond 128 roots; failure injection for worker panic/drop/timeout and cancellation. No full performance certification is implied by source implementation or unit checks.
+| Specific reversible behavioral change | Exact default test filter |
+|---|---|
+| In `drive`, replace `Ok(hash) => parent = hash` with `Ok(_) => {}` | `root_bench::tests::engine_driver_order_and_next_parent` |
+| In `require_valid`, remove only `&& status.latest_valid_hash == Some(hash)` | `root_bench::tests::engine_driver_fails_closed` |
+| In `finish_cycle`, replace the successful four-phase sum with `Some(0)` while retaining the error guard | `root_bench::tests::exact_cycle_and_throughput` |
+| In `verify_block`, remove only the D activation `ensure!` | `root_bench::tests::activation_parent_root_and_payload_identity` |
+| In `active_blocks`, exclude warmup by adding `.skip(bundle.warmup as usize)` before `.filter` | `root_bench::tests::aggregate_active_counts` |
+| In `execute`, replace the `input.json` raw write with `RootBenchBundle::write_new(..., &bundle)` | `root_bench::tests::input_bytes_are_verbatim` |
+| In `retain_error`, replace only the combined `RootBenchFailure` with an untyped formatted `eyre!` | `root_bench::tests::exit_categories_and_required_manifest` |
+
+For each table filter use:
+
+```sh
+RUST_MIN_STACK=8388608 cargo test --locked -p base-system-tests \
+  --lib root_bench::tests::engine_driver_order_and_next_parent \
+  -- --exact --test-threads=1
+```
+
+Substitute the exact filter from the table. Mandatory observed behavioral red/green is not established by this guide or static checks. No independent-node performance, immutable-baseline parity, actual delayed-root correctness, long-run history availability or Linux execution is certified here.
