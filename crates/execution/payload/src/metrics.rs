@@ -123,6 +123,34 @@ base_metrics::define_metrics! {
     )]
     #[label(name = "result", default = ["delivered", "no_receiver"])]
     payload_ready_hints_sent_total: counter,
+    #[describe(
+        "Upper bound on the time from a getPayload finalization request (or the build start, when the request predates the scan) until a one-shot native build stops its transaction scan, in seconds"
+    )]
+    native_payload_finalization_exit_duration: histogram,
+    #[describe(
+        "Time to assemble and seal the native payload, including the state root when no state-root job supplied one, in seconds"
+    )]
+    native_payload_finish_duration: histogram,
+    #[describe("One-shot native builds that included no pool transaction, by why the scan ended empty")]
+    #[label(
+        name = "reason",
+        default = ["finalized_before_scan", "finalized_mid_scan", "pool_exhausted", "all_skipped"]
+    )]
+    native_payload_empty_builds_total: counter,
+    #[describe(
+        "Time from a one-shot native build's start until its transaction scan first saw the getPayload finalization request, in seconds, by whether the build included no pool transaction"
+    )]
+    #[label(name = "empty", default = ["true", "false"])]
+    native_payload_scan_window_duration: histogram,
+    #[describe(
+        "Time from a one-shot native build's start until it included its first pool transaction, in seconds"
+    )]
+    native_payload_first_tx_offset_duration: histogram,
+    #[describe(
+        "Pool transactions a one-shot native build's scan pulled from the pool iterator, by whether the build included no pool transaction"
+    )]
+    #[label(name = "empty", default = ["true", "false"])]
+    native_payload_pool_txs_yielded: histogram,
 }
 
 impl ValidityMetrics {
@@ -272,6 +300,33 @@ impl ValidityEvaluationOutcome {
     }
 }
 
+/// Why a one-shot native build included no pool transaction: the `reason` label of
+/// `native_payload_empty_builds_total`. A finalization request outranks the pool's contents, so a
+/// scan that finalization cut short counts as finalized even if nothing eligible was left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyBuildReason {
+    /// The finalization request arrived before the scan's first check, so the build had no time.
+    FinalizedBeforeScan,
+    /// The finalization request stopped the scan before it included a transaction.
+    FinalizedMidScan,
+    /// The pool iterator yielded nothing.
+    PoolExhausted,
+    /// The scan pulled transactions but included none of them.
+    AllSkipped,
+}
+
+impl EmptyBuildReason {
+    /// Returns the label value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FinalizedBeforeScan => "finalized_before_scan",
+            Self::FinalizedMidScan => "finalized_mid_scan",
+            Self::PoolExhausted => "pool_exhausted",
+            Self::AllSkipped => "all_skipped",
+        }
+    }
+}
+
 /// `validity_predicate_evaluations_total` handles, resolved on first increment of each outcome.
 ///
 /// Resolving lazily keeps the exported series identical to incrementing through
@@ -325,6 +380,38 @@ impl BuilderMetrics {
     pub fn record_payload_ready_hint(delivered: bool) {
         let result = if delivered { "delivered" } else { "no_receiver" };
         Self::payload_ready_hints_sent_total(result).increment(1);
+    }
+
+    /// Records the finalization phases of one native payload build: the scan-exit bound, when
+    /// finalization stopped the scan, and the payload finish.
+    pub fn record_native_finalization(exit_bound: Option<Duration>, finish: Duration) {
+        if let Some(exit_bound) = exit_bound {
+            Self::native_payload_finalization_exit_duration().record(exit_bound.as_secs_f64());
+        }
+        Self::native_payload_finish_duration().record(finish.as_secs_f64());
+    }
+
+    /// Records how one one-shot native build's pool scan went: why it included nothing (`None`
+    /// when it included a pool transaction), how many pool transactions it pulled, when it first
+    /// saw the finalization request, and when it included its first pool transaction. The last
+    /// two are measured from the build start and are `None` when the event did not happen.
+    pub fn record_one_shot_scan(
+        empty_reason: Option<EmptyBuildReason>,
+        pool_txs_yielded: u64,
+        scan_window: Option<Duration>,
+        first_tx_offset: Option<Duration>,
+    ) {
+        let empty = if empty_reason.is_some() { "true" } else { "false" };
+        if let Some(reason) = empty_reason {
+            Self::native_payload_empty_builds_total(reason.as_str()).increment(1);
+        }
+        Self::native_payload_pool_txs_yielded(empty).record(pool_txs_yielded as f64);
+        if let Some(scan_window) = scan_window {
+            Self::native_payload_scan_window_duration(empty).record(scan_window.as_secs_f64());
+        }
+        if let Some(first_tx_offset) = first_tx_offset {
+            Self::native_payload_first_tx_offset_duration().record(first_tx_offset.as_secs_f64());
+        }
     }
 
     /// Records one included transaction's tip per gas by flow and bid mechanism.
