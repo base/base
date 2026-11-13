@@ -168,6 +168,7 @@ impl CliSurface {
         ("consensus.p2p.listen.udp", "Consensus P2P"),
         ("consensus.p2p.advertise.ip", "Consensus P2P"),
         ("consensus.p2p.bootnodes", "Consensus P2P"),
+        ("consensus.p2p.trusted-peers", "Consensus P2P"),
         ("consensus.p2p.priv.path", "Consensus P2P"),
         ("consensus.p2p.peers.hi", "Consensus P2P"),
         ("execution.metrics", "Metrics"),
@@ -263,6 +264,10 @@ impl CliSurface {
         "sequencer.conductor.binary-commit",
         "sequencer.l1-confs",
         "sequencer.l1-rpc-timeout-ms",
+        "sequencer.isolated",
+        "sequencer.shadow-blocks-per-cycle",
+        "sequencer.shadow-funding-address",
+        "sequencer.shadow-funding-amount-eth",
         "rollup.sequencer",
         "rollup.sequencer-headers",
         "flashblocks.addr",
@@ -884,12 +889,14 @@ mod tests {
             "7",
             "--rollup.mempool-payer-limit",
             "8",
+            "--sequencer.isolated",
         ])
         .unwrap();
         assert!(cli.ignored.is_empty(), "{:?}", cli.ignored);
         let BaseCommand::Sequencer(sequencer) = cli.command else {
             panic!("expected sequencer command");
         };
+        assert!(sequencer.consensus.sequencer_flags.isolated);
         assert_eq!(sequencer.builder.max_uncompressed_block_size, Some(1000));
         assert_eq!(sequencer.builder.predicate_eval_hard_cutoff_ms, 25);
         assert_eq!(sequencer.builder.rollup_args.mempool_sender_limit, 7);
