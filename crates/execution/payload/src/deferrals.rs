@@ -2,10 +2,10 @@ use alloy_primitives::{TxHash, map::HashSet};
 
 /// The deferrals journaled as `BUILDER_DEFERRED` for the block being built.
 ///
-/// A validity-gated transaction that stays blocked is parked again after every promotion, in
-/// every following block until its predicate is satisfied. A build reports a deferral only when
-/// it tells the journal something new: the first time a transaction is deferred for a reason in
-/// that build.
+/// A build reports a deferral only when it tells the journal something new: the first time a
+/// transaction is deferred for a reason in that build. Parking a transaction whose predicate is
+/// unsatisfied is not journaled, so the only reason recorded is an exhausted predicate
+/// evaluation budget.
 #[derive(Debug, Default)]
 pub struct BlockDeferrals {
     seen: HashSet<(TxHash, &'static str)>,

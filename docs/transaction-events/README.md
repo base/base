@@ -307,23 +307,25 @@ Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
 `payload_id` and `block_number`. The same transaction can therefore produce
 multiple decision events across build attempts. The builder does not emit
-`BUILDER_CONSIDERED`: every candidate gets one of the decision events above. The
-native builder journals only validity-gated candidates; a candidate whose
+`BUILDER_CONSIDERED`. The native builder journals only validity-gated
+candidates; a candidate whose
 predicates pass but which is then skipped (block limits, resource metering,
-coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A parked
-transaction is parked again on every later build attempt and after every
-promote-and-repark, but the builder emits `BUILDER_DEFERRED` only the first
-time it defers a transaction in a block build and again when the
-`defer_reason` changes. The native builder tracks this per build attempt, so
-rebuilds of the same payload report a deferral again. Reindexing an already-parked
-transaction when its blocker changes does not emit another
-`BUILDER_DEFERRED`. `BUILDER_EXPIRED` is the terminal discard for builder-side
+coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A candidate
+whose predicate is not satisfied yet is parked for a later build attempt and
+gets no event: parking is the most frequent builder decision and almost never
+precedes an inclusion, so it is only counted, in
+`base_builder_validity_predicate_evaluations_total{outcome="not_satisfied"}`.
+A validity transaction with no builder decision event was therefore either
+parked or never reached in a build; the journal does not tell those apart.
+`BUILDER_DEFERRED` is emitted only with `defer_reason`
+`predicate_eval_budget_exhausted`: the build's time budget for evaluating
+validity predicates ran out before the candidate was evaluated. It is emitted
+once per transaction per build attempt, so rebuilds of the same payload report
+it again. `BUILDER_EXPIRED` is the terminal discard for builder-side
 windows that can never become valid again, such as an expired bundle validity
 window or an expired position predicate. `BUILDER_ACCEPTED` and
 `BUILDER_INCLUDED` are unchanged; correlate a deferral with a later
-accept/include by `tx_hash` within the same `payload_id`. A
-parking-capacity miss stays `BUILDER_REJECTED` with
-`validity_predicate_not_satisfied`.
+accept/include by `tx_hash`.
 `BUILDER_ACCEPTED` carries three gas figures for the transaction it executed:
 `data.tx_gas_limit` is the declared limit; `data.gas_used` is the gas the
 transaction was billed and its receipt reports; `data.metered_gas_used` is the
@@ -460,7 +462,7 @@ Routed to node:
 ## Mempool / Builder Examples
 
 Validity admission. This is the only event that carries `data.validity_predicates`.
-Join later park, expiry, accept, and include events by `tx_hash`:
+Join later deferral, expiry, accept, and include events by `tx_hash`:
 
 ```json
 {
@@ -493,9 +495,11 @@ Join later park, expiry, accept, and include events by `tx_hash`:
 }
 ```
 
-Parked (recoverable predicate, held for a later build attempt).
-Emitted once per block per defer reason, and does not repeat the predicate
-list:
+Deferred (the build's time budget for evaluating validity predicates ran out
+before this candidate was evaluated, so it is held for a later build attempt).
+Emitted once per transaction per build attempt, and does not repeat the
+predicate list. Parking a candidate whose predicate is not satisfied emits no
+event:
 
 ```json
 {
@@ -514,14 +518,13 @@ list:
     "builder_mode": "native",
     "source_queue": "txpool_best",
     "parent_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
-    "defer_reason": "validity_predicate_not_satisfied",
-    "defer_detail": "a validity predicate is not satisfied by the current build state"
+    "defer_reason": "predicate_eval_budget_exhausted",
+    "defer_detail": "validity-predicate evaluation time budget exhausted for this payload build"
   }
 }
 ```
 
-Terminal builder-side expiry. A parking-capacity miss stays `BUILDER_REJECTED`
-with `validity_predicate_not_satisfied` instead:
+Terminal builder-side expiry:
 
 ```json
 {

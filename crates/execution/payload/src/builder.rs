@@ -1087,9 +1087,9 @@ where
         let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
         let mut validity_consideration_index = 0_u64;
-        // A blocked transaction is parked again each time a promotion re-yields it. Post-Denim
-        // the payload is built once, so this covers the whole block; pre-Denim rebuilds start a
-        // fresh scan and report deferrals again.
+        // `BUILDER_DEFERRED` is journaled once per transaction in a scan. Post-Denim the payload
+        // is built once, so this covers the whole block; pre-Denim rebuilds start a fresh scan
+        // and report deferrals again.
         let mut deferrals = BlockDeferrals::default();
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
@@ -1145,8 +1145,8 @@ where
 
             let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
-            // Every validity candidate ends with a decision event, so there is no separate
-            // `BUILDER_CONSIDERED`.
+            // Every validity candidate ends parked or with a decision event, so there is no
+            // separate `BUILDER_CONSIDERED`.
             if has_validity_predicates {
                 validity_consideration_index += 1;
             }
@@ -1243,6 +1243,8 @@ where
                         expired: false,
                     }) => {
                         evaluation_counters.increment(ValidityEvaluationOutcome::NotSatisfied, 1);
+                        // Parking is the most frequent validity decision and rarely precedes an
+                        // inclusion, so it is counted above and not journaled.
                         trace!(
                             target: "payload_builder",
                             tx_hash = ?tx_hash,
@@ -1250,18 +1252,6 @@ where
                             "parking transaction with unsatisfied validity predicate"
                         );
                         best_txs.park_current();
-                        if deferrals.record(tx_hash, "validity_predicate_not_satisfied") {
-                            emit_native_validity_event!(
-                                self,
-                                TransactionEventType::BuilderDeferred,
-                                tx_hash,
-                                validity_consideration_index,
-                                {
-                                    "defer_reason" => "validity_predicate_not_satisfied",
-                                    "defer_detail" => "a validity predicate is not satisfied by the current build state",
-                                }
-                            );
-                        }
                         predicate_index.park(tx_hash, pooled, predicate);
                         continue;
                     }
@@ -2415,9 +2405,9 @@ mod tests {
     }
 
     /// A promoted transaction whose predicate is broken again before it is re-yielded is parked a
-    /// second time for the same reason, which the journal records once.
+    /// second time. Parking is not journaled, however often it happens.
     #[test]
-    fn native_builder_reports_a_repeated_deferral_once() {
+    fn native_builder_does_not_journal_parking_an_unsatisfied_transaction() {
         let event_capture = TransactionEventCapture::install();
         // Event capture is process-global, so these transactions must not share hashes with other
         // tests.
@@ -2453,7 +2443,59 @@ mod tests {
             .filter(|event| event.tx_hash == Some(gated_hash))
             .map(|event| event.event_type)
             .collect::<Vec<_>>();
-        assert_eq!(gated_events, [TransactionEventType::BuilderDeferred]);
+        assert_eq!(gated_events, []);
+    }
+
+    /// A candidate reached after the evaluation budget ran out is deferred with a journal row,
+    /// while the candidate that was evaluated and parked gets none.
+    #[test]
+    fn native_builder_journals_a_deferral_when_the_evaluation_budget_is_exhausted() {
+        let event_capture = TransactionEventCapture::install();
+        // Event capture is process-global, so these transactions must not share hashes with other
+        // tests.
+        let unsatisfied = pool_transaction_to(0, Address::repeat_byte(0x58), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x47),
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        // Evaluating `unsatisfied` spends the 1 ns budget, so this one is never evaluated.
+        let unevaluated = pool_transaction_to(0, Address::repeat_byte(0x59), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let funded_senders = [unsatisfied.sender(), unevaluated.sender()];
+        let unsatisfied_hash = *unsatisfied.hash();
+        let unevaluated_hash = *unevaluated.hash();
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.builder_config.predicate_eval_hard_cutoff = Duration::from_nanos(1);
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            ctx,
+            TestParkableTransactions::new(vec![unsatisfied, unevaluated]),
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        assert!(payload.block().body().transactions.is_empty());
+        let journaled = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.tx_hash == Some(unsatisfied_hash) || event.tx_hash == Some(unevaluated_hash)
+            })
+            .map(|event| (event.tx_hash, event.event_type, event.data.get("defer_reason").cloned()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            journaled,
+            [(
+                Some(unevaluated_hash),
+                TransactionEventType::BuilderDeferred,
+                Some("predicate_eval_budget_exhausted".into()),
+            )]
+        );
     }
 
     #[test]

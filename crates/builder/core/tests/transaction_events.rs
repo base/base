@@ -27,8 +27,10 @@ fn validity_instance() -> LocalInstanceBuilder {
     )
 }
 
+/// A transaction parked on an unsatisfied predicate and included once a trigger satisfies it is
+/// journaled as accepted: parking emits no event.
 #[tokio::test]
-async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
+async fn recoverable_predicate_is_parked_without_builder_deferred() -> eyre::Result<()> {
     let capture = TransactionEventCapture::install();
     let instance = validity_instance().build().await?;
     let driver = instance.driver().await?;
@@ -92,8 +94,12 @@ async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
         .map(|event| event.event_type)
         .collect();
     assert!(
-        gated_types.contains(&TransactionEventType::BuilderDeferred),
-        "recoverable predicate must emit BUILDER_DEFERRED, got {gated_types:?}"
+        gated_types.contains(&TransactionEventType::BuilderAccepted),
+        "the included transaction must emit BUILDER_ACCEPTED, got {gated_types:?}"
+    );
+    assert!(
+        !gated_types.contains(&TransactionEventType::BuilderDeferred),
+        "parking on an unsatisfied predicate must not emit BUILDER_DEFERRED, got {gated_types:?}"
     );
     assert!(
         !gated_types.contains(&TransactionEventType::BuilderRejected),
@@ -115,10 +121,10 @@ async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
     Ok(())
 }
 
-/// A transaction that stays blocked is re-evaluated and parked again on every build. Each build
-/// journals its deferral, and the builder never reports it as considered.
+/// A transaction that stays blocked is re-evaluated and parked again on every build. Its
+/// arrival at the builder is journaled, and the builder journals no decision for it.
 #[tokio::test]
-async fn blocked_transaction_emits_builder_deferred_without_considered() -> eyre::Result<()> {
+async fn blocked_transaction_emits_no_builder_decision_event() -> eyre::Result<()> {
     let capture = TransactionEventCapture::install();
     let instance = validity_instance().build().await?;
     let driver = instance.driver().await?;
@@ -159,15 +165,26 @@ async fn blocked_transaction_emits_builder_deferred_without_considered() -> eyre
         );
     }
 
-    let events = capture.events();
-    let deferred = events.iter().any(|event| {
-        event.tx_hash == Some(blocked_hash)
-            && event.event_type == TransactionEventType::BuilderDeferred
-    });
-    assert!(deferred, "blocked transaction must be journaled as deferred");
+    let blocked_types: Vec<_> = capture
+        .events()
+        .into_iter()
+        .filter(|event| event.tx_hash == Some(blocked_hash))
+        .map(|event| event.event_type)
+        .collect();
     assert!(
-        !events.iter().any(|event| event.event_type == TransactionEventType::BuilderConsidered),
-        "the builder must not emit BUILDER_CONSIDERED"
+        blocked_types.contains(&TransactionEventType::TxpoolValidatedInsertAccepted),
+        "the blocked transaction's arrival must be journaled, got {blocked_types:?}"
+    );
+    assert!(
+        !blocked_types.iter().any(|event_type| matches!(
+            event_type,
+            TransactionEventType::BuilderDeferred
+                | TransactionEventType::BuilderConsidered
+                | TransactionEventType::BuilderAccepted
+                | TransactionEventType::BuilderRejected
+                | TransactionEventType::BuilderExpired
+        )),
+        "parking must not emit a builder decision event, got {blocked_types:?}"
     );
 
     Ok(())
