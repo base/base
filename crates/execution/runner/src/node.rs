@@ -125,6 +125,7 @@ impl BaseNode {
                         allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
                     .with_validity_pool_limits(self.args.validity_pool_limits())
+                    .with_validity_dormancy(self.args.validity_dormancy)
                     .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
             )
             .executor(BaseExecutorBuilder::default())

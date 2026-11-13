@@ -51,6 +51,7 @@ fn run_block(ctx: &Ctx, pool: &Pool, db: &InMemoryDB, resting: &SharedRestingPre
             &mut builder,
             parkable(pool, Some(resting)),
             Some(resting),
+            None,
         )
         .expect("in-memory execution cannot fail"),
     );

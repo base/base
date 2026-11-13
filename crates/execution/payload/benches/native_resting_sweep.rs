@@ -246,7 +246,7 @@ fn main() {
             ParkedBestTransactions::new(pool.best(), Ordering::coinbase_tip(), 0)
                 .with_hold(Some(shared.iterator_hold())),
         ));
-        ctx.execute_best_transactions(&mut info, &mut builder, best, Some(&shared))
+        ctx.execute_best_transactions(&mut info, &mut builder, best, Some(&shared), None)
             .expect("in-memory execution cannot fail");
         let mut resting = shared.take_predicates();
         assert_eq!(builder.executor().receipts().len(), FILLER_PER_BLOCK);
