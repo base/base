@@ -10,7 +10,7 @@
 mod export;
 pub use export::{
     ArchiveApiImpl, ArchiveExportLimits, ArchiveExportProvider, DEFAULT_MAX_CONCURRENT_RANGES,
-    EXPORTED_PRUNE_SEGMENTS, RangePermits,
+    EXPORTED_PRUNE_SEGMENTS, RangePermits, SenderSource,
 };
 
 mod export_extension;

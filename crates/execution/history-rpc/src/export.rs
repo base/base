@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::Header;
+use alloy_consensus::{Header, transaction::SignerRecoverable};
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use base_history_store::{
     ArchiveApiServer, ArchiveBlock, ArchiveRpcError, ArchiveStatus, BlockData, BlockRows,
@@ -93,14 +93,26 @@ impl<P> ArchiveExportProvider for P where
 }
 
 /// Prune segments whose data `archive_getBlockRange` returns; a block pruned in any of them is
-/// not exportable.
-pub const EXPORTED_PRUNE_SEGMENTS: [PruneSegment; 5] = [
-    PruneSegment::SenderRecovery,
+/// not exportable. `SenderRecovery` is absent: pruned senders are recovered from the
+/// transactions instead ([`SenderSource::Recover`]), so a node pruning them (reth's `--full`)
+/// still serves ranges.
+pub const EXPORTED_PRUNE_SEGMENTS: [PruneSegment; 4] = [
     PruneSegment::Receipts,
     PruneSegment::AccountHistory,
     PruneSegment::StorageHistory,
     PruneSegment::Bodies,
 ];
+
+/// Where a range export takes transaction senders from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SenderSource {
+    /// The node's sender table, which holds every block in the range.
+    Table,
+    /// Recovered from each transaction's signature, because the node prunes senders fully
+    /// (reth then never writes them) or the `SenderRecovery` prune checkpoint covers a block in
+    /// the range. Deposits yield their `from`, as in the writer's `ChunkVerifier`.
+    Recover,
+}
 
 /// Implementation of the `archive_` namespace over a node provider.
 #[derive(Debug, Clone)]
@@ -177,10 +189,11 @@ impl<P: ArchiveExportProvider> ArchiveApiImpl<P> {
             });
         }
 
+        let senders = self.sender_source(from)?;
         let mut out = Vec::with_capacity(blocks as usize);
         let mut bytes = 0u64;
         for number in from..=to {
-            let block = ArchiveBlock::from_data(&self.block_data(number)?);
+            let block = ArchiveBlock::from_data(&self.block_data(number, senders)?);
             bytes += block.payload_len() as u64;
             if bytes > self.limits.max_range_bytes {
                 return Err(ArchiveRpcError::TooManyBytes {
@@ -193,8 +206,34 @@ impl<P: ArchiveExportProvider> ArchiveApiImpl<P> {
         Ok(out)
     }
 
-    /// Reads every exported row of one canonical block.
-    pub fn block_data(&self, number: u64) -> Result<BlockData, ArchiveRpcError> {
+    /// Chooses where a range starting at `from` takes its senders: recovered when the
+    /// `SenderRecovery` prune checkpoint is in `Full` mode (reth skips writing senders
+    /// altogether, whatever block the checkpoint names) or is at or above `from`, otherwise
+    /// the sender table.
+    pub fn sender_source(&self, from: u64) -> Result<SenderSource, ArchiveRpcError> {
+        let checkpoint = self
+            .provider
+            .get_prune_checkpoint(PruneSegment::SenderRecovery)
+            .map_err(Self::internal)?;
+        Ok(
+            if checkpoint.is_some_and(|checkpoint| {
+                checkpoint.prune_mode.is_full()
+                    || checkpoint.block_number.is_some_and(|pruned| pruned >= from)
+            }) {
+                SenderSource::Recover
+            } else {
+                SenderSource::Table
+            },
+        )
+    }
+
+    /// Reads every exported row of one canonical block, taking senders from `senders`.
+    /// Recovery is CPU work on the calling thread, which for range calls is the blocking pool.
+    pub fn block_data(
+        &self,
+        number: u64,
+        senders: SenderSource,
+    ) -> Result<BlockData, ArchiveRpcError> {
         let provider = &self.provider;
         let header = provider
             .header_by_number(number)
@@ -210,9 +249,28 @@ impl<P: ArchiveExportProvider> ArchiveApiImpl<P> {
         let (transactions, senders, receipts) = if tx_range.is_empty() {
             (Vec::new(), Vec::new(), Vec::new())
         } else {
+            let transactions =
+                provider.transactions_by_tx_range(tx_range.clone()).map_err(Self::internal)?;
+            let table = match senders {
+                SenderSource::Table => {
+                    provider.senders_by_tx_range(tx_range.clone()).map_err(Self::internal)?
+                }
+                SenderSource::Recover => Vec::new(),
+            };
+            // A full sender-recovery node writes no senders even before its first prune run
+            // records a checkpoint, and a prune can race this read: recover whenever the
+            // table does not hold every sender.
+            let senders = if table.len() == transactions.len() {
+                table
+            } else {
+                transactions
+                    .iter()
+                    .map(|tx| tx.recover_signer().map_err(Self::internal))
+                    .collect::<Result<_, _>>()?
+            };
             (
-                provider.transactions_by_tx_range(tx_range.clone()).map_err(Self::internal)?,
-                provider.senders_by_tx_range(tx_range.clone()).map_err(Self::internal)?,
+                transactions,
+                senders,
                 provider.receipts_by_tx_range(tx_range).map_err(Self::internal)?,
             )
         };

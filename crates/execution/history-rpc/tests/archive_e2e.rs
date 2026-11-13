@@ -19,14 +19,14 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, TransactionCountOwner};
 use base_history_rpc::{
-    ArchiveEthConfig, ArchiveEthExtension, ArchiveExportConfig, ArchiveExportExtension,
-    ArchiveExportLimits, ArchiveSource, DEFAULT_MAX_CONCURRENT_RANGES,
-    DEFAULT_STARTUP_CHECK_TIMEOUT,
+    ArchiveApiImpl, ArchiveEthConfig, ArchiveEthExtension, ArchiveExportConfig,
+    ArchiveExportExtension, ArchiveExportLimits, ArchiveSource, DEFAULT_MAX_CONCURRENT_RANGES,
+    DEFAULT_STARTUP_CHECK_TIMEOUT, SenderSource,
 };
 use base_history_store::{
-    ArchiveLayout, ArchiveWriter, CacheConfig, Catalog, CatalogStore, ChainIdentity, ChunkVerifier,
-    DEFAULT_MAX_RANGE_BLOCKS, DEFAULT_MAX_RANGE_BYTES, DEFAULT_SNAPSHOT_TTL, RpcChainSource,
-    SourcePool, StepOutcome, WriterConfig,
+    ArchiveLayout, ArchiveWriter, CacheConfig, Catalog, CatalogStore, ChainIdentity, ChainSource,
+    ChunkVerifier, DEFAULT_MAX_RANGE_BLOCKS, DEFAULT_MAX_RANGE_BYTES, DEFAULT_SNAPSHOT_TTL,
+    RpcChainSource, SourcePool, StepOutcome, WriterConfig,
     test_utils::{Gate, GateOp, GatedStore, test_index_options},
 };
 use base_node_runner::test_utils::{
@@ -39,9 +39,11 @@ use base_test_utils::{
 use object_store::{ObjectStore, RetryConfig, aws::AmazonS3Builder, memory::InMemory};
 use reth_chainspec::EthChainSpec;
 use reth_node_core::args::{PruningArgs, StaticFilesArgs};
+use reth_prune_types::PruneSegment;
 use reth_rpc_layer::JwtSecret;
 use reth_storage_api::{
-    AccountReader, BlockNumReader, BlockReader, StateProviderFactory, errors::ProviderError,
+    AccountReader, BlockBodyIndicesProvider, BlockNumReader, BlockReader, PruneCheckpointReader,
+    StateProviderFactory, TransactionsProvider, errors::ProviderError,
 };
 use serde_json::{Value, json};
 
@@ -117,6 +119,22 @@ fn short_retention() -> LocalNodeRetention {
             blocks_per_file_transaction_senders: Some(BLOCKS_PER_SEGMENT),
             blocks_per_file_account_change_sets: Some(BLOCKS_PER_SEGMENT),
             blocks_per_file_storage_change_sets: Some(BLOCKS_PER_SEGMENT),
+            ..Default::default()
+        },
+    }
+}
+
+/// Settings of reth's `--full` sender handling (`--prune.sender-recovery.full`) with every other
+/// exported table kept: the node drops each block's senders as soon as it is pruned.
+fn senders_pruned() -> LocalNodeRetention {
+    LocalNodeRetention {
+        pruning: PruningArgs {
+            block_interval: Some(1),
+            sender_recovery_full: true,
+            ..Default::default()
+        },
+        static_files: StaticFilesArgs {
+            blocks_per_file_transaction_senders: Some(BLOCKS_PER_SEGMENT),
             ..Default::default()
         },
     }
@@ -422,6 +440,96 @@ async fn archive_writer(
     )
     .await
     .expect("writer opens")
+}
+
+/// Review7 P2: a node that prunes senders (reth's `--full`) is still a writer source. Its
+/// status keeps the earliest local block at genesis, and its range export recovers each
+/// sender from the transaction (deposits give their `from`), so the senders equal the ones the
+/// node recorded at execution and the writer's `ChunkVerifier` accepts every segment.
+#[tokio::test(flavor = "multi_thread")]
+async fn node_pruning_senders_exports_recovered_senders() {
+    tokio::time::timeout(E2E_TIMEOUT, async {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
+        let harness =
+            archive_node(Arc::clone(&store), Arc::clone(&chain_spec), senders_pruned()).await;
+        let sender_of = |raw: &Bytes| match BaseTxEnvelope::decode_2718(&mut raw.as_ref())
+            .expect("tx decodes")
+        {
+            BaseTxEnvelope::Deposit(deposit) => deposit.from,
+            _ => Account::Alice.address(),
+        };
+        let mut expected = Vec::new();
+        for number in 1..=ACTIVE_BLOCKS {
+            let (transfer, _) = Account::Alice
+                .sign_txn_request(
+                    BaseTransactionRequest::default()
+                        .to(Account::Bob.address())
+                        .value(U256::from(number))
+                        .nonce(number - 1),
+                )
+                .expect("transfer tx");
+            let txs = vec![l1_info_deposit(number), base_time_deposit(number), transfer];
+            expected.push(txs.iter().map(sender_of).collect::<Vec<_>>());
+            harness.build_block_from_transactions(txs).await.expect("active block");
+        }
+        harness.advance_chain(BLOCKS_PER_SEGMENT * 2 - ACTIVE_BLOCKS).await.expect("advance");
+
+        // In `Full` mode reth never writes senders, and the checkpoint keeps naming the block
+        // of its first pass.
+        let provider = harness.blockchain_provider();
+        let checkpoint = provider
+            .get_prune_checkpoint(PruneSegment::SenderRecovery)
+            .expect("checkpoint read")
+            .expect("the pruner ran");
+        assert!(checkpoint.prune_mode.is_full(), "senders are pruned fully, got {checkpoint:?}");
+        let indices = provider.block_body_indices(3).expect("read").expect("body indices");
+        let stored = provider.senders_by_tx_range(indices.first_tx_num..indices.next_tx_num());
+        assert!(
+            !matches!(&stored, Ok(senders) if senders.len() as u64 == indices.tx_count),
+            "the node holds no senders for block 3, got {stored:?}"
+        );
+        // Even a range that chose the sender table (no checkpoint yet, or a racing prune)
+        // recovers when the table is short.
+        let export = ArchiveApiImpl::new(
+            provider.clone(),
+            ArchiveExportLimits {
+                max_range_blocks: DEFAULT_MAX_RANGE_BLOCKS,
+                max_range_bytes: DEFAULT_MAX_RANGE_BYTES,
+                max_concurrent_ranges: DEFAULT_MAX_CONCURRENT_RANGES,
+            },
+        );
+        let block = export.block_data(3, SenderSource::Table).expect("block 3 exports");
+        assert_eq!(block.senders, expected[2], "a short sender table falls back to recovery");
+        let secret = JwtSecret::from_hex(DEFAULT_JWT_SECRET.to_string()).expect("test jwt secret");
+        let source = RpcChainSource::with_jwt(harness.auth_url(), Duration::from_secs(10), secret)
+            .expect("source");
+        let status = source.status().await.expect("archive_status");
+        assert_eq!(status.earliest_local, 0, "pruned senders do not move the earliest local block");
+        let range = source.get_block_range(1, ACTIVE_BLOCKS).await.expect("range is exported");
+        let senders: Vec<Vec<Address>> = range.iter().map(|block| block.senders.clone()).collect();
+        assert_eq!(senders, expected, "recovered senders equal the senders of each transaction");
+        let above = checkpoint.block_number.expect("checkpoint block") + 1;
+        assert!(above <= ACTIVE_BLOCKS, "block {above} is above the checkpoint and active");
+        let range = source.get_block_range(above, ACTIVE_BLOCKS).await.expect("range is exported");
+        let senders: Vec<Vec<Address>> = range.iter().map(|block| block.senders.clone()).collect();
+        assert_eq!(
+            senders,
+            expected[above as usize - 1..],
+            "a range above the full-mode checkpoint's block is recovered too"
+        );
+
+        let writer = archive_writer(Arc::clone(&store), &chain_spec, &harness).await;
+        let finalized = status.finalized;
+        assert_eq!(
+            drain(&writer).await,
+            (finalized + 1) / BLOCKS_PER_SEGMENT,
+            "the writer verifies and publishes every segment ending at or below finalized \
+             block {finalized}"
+        );
+    })
+    .await
+    .expect("e2e run timed out");
 }
 
 /// When archive `H` is older than the node's state history, a read of state unchanged since

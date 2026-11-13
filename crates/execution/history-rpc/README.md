@@ -14,11 +14,13 @@ Both are `BaseNodeExtension`s, installed by `base-execution-cli` from `--archive
 
 A range is rejected with a typed code when:
 - It ends above finalized (`4001`).
-- It starts below the node's earliest local block or below a prune checkpoint of an exported segment (`4002`).
+- It starts below the node's earliest local block or below a prune checkpoint of an exported segment: bodies, receipts, account or storage history (`4002`).
 - It exceeds `--archive.max-range-blocks`, default 8192 (`4003`).
 - It exceeds `--archive.max-range-bytes`, default 64 `MiB` (`4004`). The TDD says 256 MB; see `base-history-store`'s deviations for why it is lower.
 
 Other failures are an invalid range (`4005`), a missing block (`4006`) and missing changesets (`4007`). Error data carries `finalized` and `earliestLocal`.
+
+Pruned senders do not make a block unexportable, so a `--full` node (`--prune.sender-recovery.full`) can be a writer source. When the node prunes senders fully, or its `SenderRecovery` prune checkpoint covers the range, the export recovers each sender from the transaction signature (deposits give their `from`, as the writer's `ChunkVerifier` expects) instead of reading the sender table. Recovery costs CPU on the source, on the blocking pool that serves range calls, bounded by `--archive.max-range-blocks` per call and `--archive.max-concurrent-ranges` calls at once.
 
 At most `--archive.max-concurrent-ranges` (default 2) range calls run at once. A further call fails immediately with `4008` (busy) instead of queueing; the writer then tries its next source or backs off.
 

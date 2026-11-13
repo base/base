@@ -105,7 +105,8 @@ pub struct ArchiveBlock {
     pub body_indices: BodyIndices,
     /// EIP-2718 encoded transactions.
     pub transactions: Vec<Bytes>,
-    /// Sender of each transaction as stored by the node.
+    /// Sender of each transaction, from the node's sender table or, where the node pruned
+    /// senders, recovered from the transaction.
     pub senders: Vec<Address>,
     /// `Compact`-encoded receipts.
     pub receipts: Vec<Bytes>,
