@@ -1019,9 +1019,9 @@ where
     ///
     /// A nonce is eligible for return when BOTH of these hold:
     /// 1. The send failed (`result.is_err()`).
-    /// 2. No transaction was ever successfully published — if a tx was
-    ///    published, the nonce may be in the mempool and must not be
-    ///    reused.
+    /// 2. No transaction was ever published — if a tx was published, or its
+    ///    publish got no answer, the nonce may be in the mempool and must not
+    ///    be reused.
     fn should_return_reserved_nonce<T>(
         result: &TxManagerResult<T>,
         send_state: &SendState,
@@ -1145,6 +1145,10 @@ where
     ///
     /// A failed bump is logged and the send keeps waiting, because a version published
     /// earlier may still be mined. Aborting is left to [`SendState::critical_error_at`].
+    ///
+    /// When no replacement exists within the fee limit, the last version is sent again as
+    /// it is: it may never have reached a mempool (its publish got no answer) or may have
+    /// been dropped from it, and nothing else would publish it again.
     async fn try_fee_bump(
         &self,
         candidate: &TxCandidate,
@@ -1164,6 +1168,12 @@ where
 
         match self.handle_fee_bump(candidate, send_state, receipt_tx, state).await {
             Ok((prepared, tx_hash)) => state.replace(prepared, tx_hash),
+            Err(error @ TxManagerError::FeeLimitExceeded { .. }) => {
+                warn!(error = %error, tx_hash = %state.tx_hash, "fee limit reached, resending the last version");
+                // `publish_tx` logs and records the outcome; a failure is retried next tick.
+                let _ =
+                    self.publish_tx(send_state, &state.prepared.raw_tx, Some(state.tx_hash)).await;
+            }
             Err(error) => warn!(error = %error, "fee bump failed, will retry next tick"),
         }
     }
@@ -1249,15 +1259,22 @@ where
     /// [`publish_tx_with_nonce_retry`](Self::publish_tx_with_nonce_retry), a
     /// replacement with [`publish_tx`](Self::publish_tx).
     ///
+    /// A version whose publish got no answer ([`TxManagerError::NoAnswer`]) may have
+    /// reached the node, so it is returned as published: the send polls its receipt,
+    /// replaces it in the next fee bump, and keeps its nonce.
+    ///
     /// A blob transaction that the node refuses for its fees is replaced right
     /// away by [`replace_blob_tx`](Self::replace_blob_tx), from the refused fees,
     /// until a version is accepted or no replacement exists within the upper bound
     /// of [`BlobFeePolicy`]. A blob version the node already knows is published
-    /// under its own hash. After an RPC error, such as a network error, the same
-    /// signed blob version is sent again every `publish_retry_delay`, up to
-    /// `publish_max_retries` times, without raising any fee. Every other error is
-    /// returned. Before each new attempt, a closed manager or a critical error of
-    /// `send_state`, such as an expired mempool deadline, ends the publication. Each
+    /// under its own hash. After an RPC error or no answer, such as a network
+    /// error, the same signed blob version is sent again every
+    /// `publish_retry_delay`, up to `publish_max_retries` times, without raising any
+    /// fee. Once a publish of a blob version got no answer, that version may be in a
+    /// mempool, so it is not replaced here any more: every later error, a fee refusal
+    /// included, returns it as published, and the send polls its receipt. Every other
+    /// error is returned. Before each new attempt, a closed manager or a critical error
+    /// of `send_state`, such as an expired mempool deadline, ends the publication. Each
     /// published blob replacement raises the fees the next blob transactions start
     /// from.
     async fn publish_version(
@@ -1270,6 +1287,9 @@ where
         let mut is_replacement = last_tx_hash.is_some();
         let mut remaining_retries = self.config.publish_max_retries;
         let mut is_retry = false;
+        // Whether a publish of this blob version got no answer. It may then be in a mempool,
+        // so it is no longer replaced here.
+        let mut unanswered = false;
         loop {
             if is_retry {
                 if self.is_closed() {
@@ -1284,30 +1304,36 @@ where
                 Some(_) => self.publish_tx(send_state, &prepared.raw_tx, last_tx_hash).await,
                 None => self.publish_tx_with_nonce_retry(send_state, &prepared.raw_tx).await,
             };
-            if !candidate.is_blob() {
-                return result.map(|tx_hash| (prepared, tx_hash));
-            }
             // The hash of this version, also when the node already knows it: `publish_tx`
             // then returns the hash of the previous version.
             let tx_hash = *prepared
                 .to_envelope()
                 .map_err(|error| TxManagerError::Sign(error.to_string()))?
                 .tx_hash();
+            if !candidate.is_blob() {
+                return match result {
+                    Err(TxManagerError::NoAnswer) => Ok((prepared, tx_hash)),
+                    result => result.map(|tx_hash| (prepared, tx_hash)),
+                };
+            }
             match result {
                 Ok(_) => {}
                 // `publish_tx` already accepts it once a version was published. A first
                 // version the node knows is the same signed transaction, in its mempool.
                 Err(TxManagerError::AlreadyKnown) => {
-                    send_state.record_successful_publish();
+                    send_state.record_publish();
                     info!(tx_hash = %tx_hash, "blob transaction already known in mempool");
                 }
-                Err(error) if error.is_fee_rejection() => {
+                Err(error) if !unanswered && error.is_fee_rejection() => {
                     info!(error = %error, "blob transaction refused for its fees, replacing it");
                     prepared = self.replace_blob_tx(candidate, &prepared).await?;
                     is_replacement = true;
                     continue;
                 }
-                Err(error @ TxManagerError::Rpc(_)) if remaining_retries > 0 => {
+                Err(error @ (TxManagerError::Rpc(_) | TxManagerError::NoAnswer))
+                    if remaining_retries > 0 =>
+                {
+                    unanswered |= error == TxManagerError::NoAnswer;
                     remaining_retries -= 1;
                     warn!(
                         error = %error,
@@ -1316,6 +1342,13 @@ where
                     );
                     self.runtime.sleep(self.config.publish_retry_delay).await;
                     continue;
+                }
+                Err(error) if unanswered || error == TxManagerError::NoAnswer => {
+                    warn!(
+                        error = %error,
+                        tx_hash = %tx_hash,
+                        "following a blob transaction whose publication got no answer",
+                    );
                 }
                 Err(error) => return Err(error),
             }
@@ -1395,15 +1428,19 @@ where
 
     /// Broadcasts a raw transaction to the network.
     ///
-    /// On success, records a successful publish on the [`SendState`] and
-    /// returns the locally computed transaction hash. On [`TxManagerError::AlreadyKnown`]
-    /// after a prior successful publish, treats it as success — records
-    /// another successful publish and returns `Ok(last_tx_hash)` so
-    /// callers do not need to special-case this variant. All other errors
-    /// are forwarded to [`SendState::process_send_error`] for state tracking.
+    /// On success, records a publish on the [`SendState`] and returns the locally
+    /// computed transaction hash. On [`TxManagerError::AlreadyKnown`] after a prior
+    /// publish with a known hash, treats it as success — records another publish and
+    /// returns `Ok(last_tx_hash)` so callers do not need to special-case this variant.
+    /// Other JSON-RPC error answers are forwarded to [`SendState::process_send_error`]
+    /// for state tracking.
+    ///
+    /// A publish that gets no JSON-RPC answer (see [`TxManagerError::NoAnswer`]) may
+    /// still have reached the node, so it is recorded as a publish too, which keeps the
+    /// nonce of the send from being reused.
     ///
     /// The `last_tx_hash` parameter is the hash from the most recent
-    /// successful publish. When the network returns `AlreadyKnown` on
+    /// publish. When the network returns `AlreadyKnown` on
     /// resubmission, this hash is returned as the successful result.
     ///
     /// The returned hash never comes from the RPC. It is the decoded envelope's
@@ -1412,12 +1449,15 @@ where
     /// EIP-2718 hash of any typed transaction whose network encoding equals its
     /// consensus encoding; a well-formed RPC hash is not preferred, because the RPC
     /// reply is advisory. A different or undecodable hash in a valid JSON-RPC success
-    /// response only logs a warning; only a transport failure, an invalid response
-    /// envelope, or a JSON-RPC error response is a publication error.
+    /// response only logs a warning; only a transport failure, a timeout, an invalid
+    /// response envelope, or a JSON-RPC error response is a publication error.
     ///
     /// # Errors
     ///
-    /// Returns the classified error on publication failure.
+    /// Returns [`TxManagerError::NoAnswer`] when the publish timed out or failed in
+    /// transport after the request may have reached the node (see
+    /// [`RpcErrorClassifier::is_unanswered`]), and the classified error on any other
+    /// publication failure.
     pub async fn publish_tx(
         &self,
         send_state: &SendState,
@@ -1460,21 +1500,24 @@ where
                     }
                     Ok(_) => {}
                 }
-                send_state.record_successful_publish();
+                send_state.record_publish();
                 info!(tx_hash = %local_tx_hash, "transaction published");
-                Ok(local_tx_hash)
+                return Ok(local_tx_hash);
+            }
+            Ok(Err(e)) if RpcErrorClassifier::is_unanswered(&e) => {
+                self.metrics.record_rpc_error();
             }
             Ok(Err(e)) => {
                 let classified = self.classify_and_record_rpc(&e);
                 // AlreadyKnown on resubmission is a success — the tx is in
                 // the mempool from a prior publish. Return the previous hash.
-                if classified.is_already_known() && send_state.has_published() {
-                    let hash = last_tx_hash.ok_or_else(|| {
-                        TxManagerError::InvalidConfig(
-                            "AlreadyKnown but no prior tx hash available — caller must track the hash from publish_tx".into(),
-                        )
-                    })?;
-                    send_state.record_successful_publish();
+                // A first version resent after a publish that got no answer has
+                // no previous hash: its caller handles the error.
+                if classified.is_already_known()
+                    && send_state.has_published()
+                    && let Some(hash) = last_tx_hash
+                {
+                    send_state.record_publish();
                     info!(tx_hash = %hash, "transaction already known in mempool, treating as success");
                     return Ok(hash);
                 }
@@ -1496,16 +1539,17 @@ where
                     error!(error = %classified, "publish failed with non-retryable error");
                 }
 
-                Err(classified)
+                return Err(classified);
             }
-            Err(_) => {
-                let err = self.rpc_error("send_raw_transaction timed out");
-                send_state.process_send_error(&err);
-                self.metrics.record_publish_error();
-                warn!(error = %err, "publish timed out");
-                Err(err)
-            }
+            Err(_) => self.metrics.record_rpc_error(),
         }
+
+        // Without an answer, the node may have received the transaction. Its nonce
+        // must stay with this send, which may still see it mined.
+        send_state.record_publish();
+        self.metrics.record_publish_error();
+        warn!(tx_hash = %local_tx_hash, "publish got no answer, the transaction may have reached the node");
+        Err(TxManagerError::NoAnswer)
     }
 
     /// Spawns a background task that polls for a transaction receipt and
@@ -1847,7 +1891,9 @@ where
 #[cfg(test)]
 mod tests {
     //! The receipt-checking provider wraps Alloy's concrete RPC builders, which automock
-    //! cannot construct, to reject confirmation under an RPC-supplied hash.
+    //! cannot construct, to reject confirmation under an RPC-supplied hash. The
+    //! answer-losing transport fails publishes in transport between mocked answers, which
+    //! the mocked client cannot express.
 
     use std::{
         sync::{
@@ -1863,14 +1909,19 @@ mod tests {
         TxEip4844, TxEip4844WithSidecar,
     };
     use alloy_eips::{Encodable2718, eip4844::Blob};
+    use alloy_json_rpc::{RequestPacket, ResponsePacket};
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{Address, B256, Bloom, Bytes, TxKind, U256, keccak256};
     use alloy_provider::{Provider, ProviderBuilder, ProviderCall, RootProvider};
+    use alloy_rpc_client::RpcClient;
     use alloy_rpc_types_eth::{Block, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use alloy_transport::mock::Asserter;
+    use alloy_transport::{
+        TransportError, TransportErrorKind, TransportFut,
+        mock::{Asserter, MockTransport},
+    };
     use base_runtime::{
         Clock,
         deterministic::{Config, Context, Runner},
@@ -1879,7 +1930,7 @@ mod tests {
     use rstest::rstest;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
+        net::{TcpListener, TcpStream},
         sync::mpsc,
     };
     use tokio_util::sync::CancellationToken;
@@ -2126,6 +2177,31 @@ mod tests {
         assert!(send_state.has_published());
     }
 
+    /// JSON-RPC answer to the chain ID query made when a manager is built.
+    const CHAIN_ID_RESPONSE: &str = r#"{"jsonrpc":"2.0","id":0,"result":"0x1"}"#;
+
+    /// Reads one HTTP request with a JSON body from `stream`.
+    async fn read_http_request(stream: &mut TcpStream) {
+        let mut request = Vec::with_capacity(1024);
+        loop {
+            assert_ne!(stream.read_buf(&mut request).await.unwrap(), 0);
+            if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n")
+                && serde_json::from_slice::<serde_json::Value>(&request[end + 4..]).is_ok()
+            {
+                return;
+            }
+        }
+    }
+
+    /// Writes an HTTP response with `status` and `body` to `stream`.
+    async fn write_http_response(stream: &mut TcpStream, status: &str, body: &str) {
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    }
+
     #[rstest]
     #[case::html("<html>rate limited</html>")]
     #[case::empty("")]
@@ -2136,23 +2212,10 @@ mod tests {
         let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
         let server = tokio::spawn(async move {
             tokio::time::timeout(Duration::from_secs(5), async move {
-                for body in [r#"{"jsonrpc":"2.0","id":0,"result":"0x1"}"#, body] {
+                for body in [CHAIN_ID_RESPONSE, body] {
                     let (mut stream, _) = listener.accept().await.unwrap();
-                    let mut request = Vec::with_capacity(1024);
-                    loop {
-                        assert_ne!(stream.read_buf(&mut request).await.unwrap(), 0);
-                        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n")
-                            && serde_json::from_slice::<serde_json::Value>(&request[end + 4..])
-                                .is_ok()
-                        {
-                            break;
-                        }
-                    }
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    stream.write_all(response.as_bytes()).await.unwrap();
+                    read_http_request(&mut stream).await;
+                    write_http_response(&mut stream, "200 OK", body).await;
                 }
             })
             .await
@@ -2180,6 +2243,82 @@ mod tests {
             Some(TxManagerError::MempoolDeadlineExpired)
         );
         server.await.unwrap();
+    }
+
+    /// How the HTTP server of [`publish_tx_without_a_json_rpc_answer`] treats the publish.
+    #[derive(Debug, Clone, Copy)]
+    enum PublishFate {
+        /// The server reads the request and closes the connection.
+        ConnectionClosed,
+        /// The server reads the request and never answers.
+        NeverAnswered,
+        /// The server answers with this HTTP status and no JSON-RPC body.
+        Status(&'static str),
+        /// The server stops listening, so the connection is refused.
+        ConnectionRefused,
+    }
+
+    /// A publish without a JSON-RPC answer that may have reached the node, because the
+    /// connection closed, the network timeout expired or a gateway lost the answer, is
+    /// recorded as a publish, so the send keeps its nonce and the mempool deadline no
+    /// longer applies. A refused connection or an HTTP refusal never reached the node: it
+    /// is a plain RPC error.
+    #[rstest]
+    #[case::connection_closed(PublishFate::ConnectionClosed, true)]
+    #[case::timed_out(PublishFate::NeverAnswered, true)]
+    #[case::gateway_timeout(PublishFate::Status("504 Gateway Timeout"), true)]
+    #[case::unavailable(PublishFate::Status("503 Service Unavailable"), false)]
+    #[case::connection_refused(PublishFate::ConnectionRefused, false)]
+    #[tokio::test]
+    async fn publish_tx_without_a_json_rpc_answer(
+        #[case] fate: PublishFate,
+        #[case] may_have_reached_the_node: bool,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_http_request(&mut stream).await;
+            write_http_response(&mut stream, "200 OK", CHAIN_ID_RESPONSE).await;
+            if matches!(fate, PublishFate::ConnectionRefused) {
+                return;
+            }
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_http_request(&mut stream).await;
+            match fate {
+                PublishFate::NeverAnswered => std::future::pending::<()>().await,
+                PublishFate::Status(status) => write_http_response(&mut stream, status, "").await,
+                PublishFate::ConnectionClosed | PublishFate::ConnectionRefused => {}
+            }
+        });
+        let manager = SimpleTxManager::from_wallet(
+            RootProvider::new_http(url),
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig { network_timeout: Duration::from_millis(500), ..Default::default() },
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let send_state = SendState::new(3).unwrap();
+        send_state.set_runtime_mempool_deadline(Duration::from_secs(1));
+
+        let result =
+            manager.publish_tx(&send_state, &signed_eip1559().encoded_2718().into(), None).await;
+
+        server.abort();
+        if may_have_reached_the_node {
+            assert_eq!(result, Err(TxManagerError::NoAnswer));
+            assert!(send_state.has_published());
+            assert_eq!(send_state.critical_error_at(Duration::from_secs(1)), None);
+        } else {
+            assert_eq!(result, Err(TxManagerError::Rpc("transport request failed".into())));
+            assert!(!send_state.has_published());
+            assert_eq!(
+                send_state.critical_error_at(Duration::from_secs(1)),
+                Some(TxManagerError::MempoolDeadlineExpired)
+            );
+        }
     }
 
     #[tokio::test]
@@ -3112,6 +3251,172 @@ mod tests {
         });
     }
 
+    /// Transport over a mocked client that loses the answers to the publishes at the
+    /// positions (from 0) in `lost`, as when the connection breaks after the node got the
+    /// transaction: they fail in transport and use no mocked response.
+    #[derive(Debug, Clone)]
+    struct LosingPublishAnswers {
+        inner: MockTransport,
+        lost: &'static [usize],
+        publishes: Arc<AtomicUsize>,
+    }
+
+    impl LosingPublishAnswers {
+        /// A provider over `asserter` that loses the answers to the publishes in `lost`.
+        fn provider(asserter: &Asserter, lost: &'static [usize]) -> RootProvider {
+            let transport = Self {
+                inner: MockTransport::new(asserter.clone()),
+                lost,
+                publishes: Arc::default(),
+            };
+            RootProvider::new(RpcClient::new(transport, true))
+        }
+    }
+
+    impl tower::Service<RequestPacket> for LosingPublishAnswers {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, request: RequestPacket) -> Self::Future {
+            if request.method_names().any(|method| method == "eth_sendRawTransaction")
+                && self.lost.contains(&self.publishes.fetch_add(1, Ordering::SeqCst))
+            {
+                return Box::pin(async { Err(TransportErrorKind::custom_str("connection reset")) });
+            }
+            self.inner.call(request)
+        }
+    }
+
+    /// A first blob tx version whose publication got no answer is sent again as it is after
+    /// the publish retry delay. Whatever the node then answers, the send follows that version,
+    /// which may be in a mempool: it confirms when the version lands, and no fee is raised.
+    /// A fee refusal, as from a load-balanced backend that never saw the version, does not
+    /// replace it, or its receipt would no longer be polled.
+    #[rstest]
+    #[case::accepted(None)]
+    #[case::already_known(Some("already known"))]
+    #[case::nonce_too_low(Some("nonce too low"))]
+    #[case::refused_for_its_fees(Some("replacement transaction underpriced"))]
+    fn a_blob_tx_whose_publication_got_no_answer_is_resent_and_followed(
+        #[case] resend_error: Option<&'static str>,
+    ) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, block) = mined_receipt(tx_hash, 10);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            match resend_error {
+                None => asserter.push_success(&tx_hash),
+                Some(error) => asserter.push_failure_msg(error),
+            }
+            asserter.push_success(&10u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().never();
+            metrics.expect_record_blob_tx_landed().with(eq(0.01), eq(0)).times(1).return_const(());
+            let manager = blob_manager(
+                &ctx,
+                LosingPublishAnswers::provider(&asserter, &[0]),
+                (10_000_000, 10_000_000_000),
+                metrics,
+            )
+            .await;
+
+            manager.send(blob_candidate()).await.expect("the send should confirm");
+
+            assert_eq!(ctx.now(), manager.config.publish_retry_delay);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
+    /// A first blob tx version whose publications never get an answer is followed as
+    /// published once its resends are used up: the send confirms when it lands.
+    #[test]
+    fn a_blob_tx_whose_publications_never_get_an_answer_is_followed() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (receipt, block) = mined_receipt(B256::with_last_byte(1), 10);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_success(&10u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().never();
+            metrics.expect_record_blob_tx_landed().with(eq(0.01), eq(0)).times(1).return_const(());
+            let mut manager = blob_manager(
+                &ctx,
+                LosingPublishAnswers::provider(&asserter, &[0, 1]),
+                (10_000_000, 10_000_000_000),
+                metrics,
+            )
+            .await;
+            manager.config.publish_max_retries = 1;
+
+            manager.send(blob_candidate()).await.expect("the send should confirm");
+
+            assert_eq!(ctx.now(), manager.config.publish_retry_delay);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
+    /// A fee bump whose publication got no answer is followed as published: its receipt is
+    /// polled under its own hash, so the send confirms when it lands.
+    #[test]
+    fn a_fee_bump_whose_publication_got_no_answer_is_followed() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut block: Block = Block::default();
+            block.header.base_fee_per_gas = Some(1_000_000_000);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            asserter.push_success(&1_000_000_000u128);
+            asserter.push_success(&Some(&block));
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::ZERO);
+            asserter.push_success(&1u64);
+            // The fee bump, priced at the resubmission timeout, whose answer is lost.
+            asserter.push_success(&1_000_000_000u128);
+            asserter.push_success(&Some(&block));
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&10u64);
+            // The canonical block of the fee bump.
+            asserter.push_success(&Some(&mined_receipt(B256::ZERO, 10).1));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().times(1).return_const(());
+            let polled = Arc::new(Mutex::new(Vec::new()));
+            let provider = LandingProvider {
+                inner: LosingPublishAnswers::provider(&asserter, &[1]),
+                landing: 1,
+                polled: Arc::clone(&polled),
+            };
+            let manager = blob_manager(&ctx, provider, (10_000_000, 10_000_000_000), metrics).await;
+            let candidate =
+                TxCandidate { to: Some(Address::with_last_byte(0x42)), ..Default::default() };
+
+            // Polled under the hash of the first version only, the send would never confirm.
+            let confirmed = tokio::select! {
+                result = manager.send(candidate) => result.expect("the send should confirm"),
+                () = ctx.sleep(3 * BLOB_RESUBMISSION_TIMEOUT) => panic!("the fee bump should land"),
+            };
+
+            let polled = polled.lock().unwrap().clone();
+            assert_eq!(polled.len(), 2, "the fee bump is polled under its own hash");
+            assert_eq!(confirmed.transaction_hash, polled[1]);
+            assert_eq!(ctx.now(), BLOB_RESUBMISSION_TIMEOUT);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
     /// A first blob tx version whose publication fails on the network is not sent again once
     /// the mempool deadline expired during the publish retry delay: the send fails.
     #[test]
@@ -3183,24 +3488,34 @@ mod tests {
     }
 
     /// A blob tx whose doubled `max_priority_fee_per_gas` would pass the upper bound is not
-    /// replaced: at each resubmission timeout, nothing is read, signed or published.
+    /// replaced: at each resubmission timeout, nothing is read or signed, and the same
+    /// version is sent again. Here its publishes get no answer until the endpoint recovers,
+    /// as in an outage that outlasts the fee bumps, so the resend is what reaches the node.
     #[test]
-    fn a_blob_tx_at_the_upper_bound_is_not_replaced() {
+    fn a_blob_tx_at_the_upper_bound_is_resent_as_it_is() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let asserter = Asserter::new();
             asserter.push_success(&1u64);
             push_blob_pricing(&asserter);
             asserter.push_success(&0u64);
-            asserter.push_success(&B256::with_last_byte(1));
+            // The first publish gets no answer, and the send polls its receipt.
             asserter.push_success(&1u64);
             asserter.push_success(&Option::<TransactionReceipt>::None);
+            // The resends: the first gets no answer, the second is accepted, the third is known.
+            asserter.push_success(&B256::with_last_byte(1));
+            asserter.push_failure_msg("already known");
             // What a replacement would read first.
             push_blob_pricing(&asserter);
             let mut metrics = blob_send_metrics();
             metrics.expect_record_gas_bump().never();
-            let manager =
-                blob_manager(&ctx, mocked(&asserter), (1_000_000_000, 1_000_000_000), metrics)
-                    .await;
+            let mut manager = blob_manager(
+                &ctx,
+                LosingPublishAnswers::provider(&asserter, &[0, 1]),
+                (1_000_000_000, 1_000_000_000),
+                metrics,
+            )
+            .await;
+            manager.config.publish_max_retries = 0;
             let mut send = Box::pin(manager.send(blob_candidate()));
             assert!(futures::poll!(&mut send).is_pending());
 
@@ -3272,7 +3587,7 @@ mod tests {
         if has_publish {
             // Publishing is only reachable once a nonce has been signed.
             send_state.record_assigned_nonce(0);
-            send_state.record_successful_publish();
+            send_state.record_publish();
         }
         assert_eq!(
             SimpleTxManager::<RootProvider>::should_reset_nonce_on_send_error(
@@ -3319,7 +3634,7 @@ mod tests {
     ) {
         let send_state = crate::SendState::new(3).expect("should create send state");
         if has_publish {
-            send_state.record_successful_publish();
+            send_state.record_publish();
         }
         assert_eq!(
             SimpleTxManager::<RootProvider>::should_return_reserved_nonce(&result, &send_state,),
