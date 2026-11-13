@@ -2,16 +2,31 @@
 //! snapshot of the build that owns its dormancy index, until a write or a block height can satisfy
 //! them.
 
-use std::{collections::BTreeMap, fmt, str::FromStr};
+use std::{collections::BTreeMap, fmt, str::FromStr, sync::atomic::AtomicBool};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{
-    B256, TxHash,
-    map::{B256Map, B256Set, HashMap},
+    Address, B256, TxHash, U256,
+    map::{AddressSet, B256Map, B256Set, HashMap, HashSet, IndexSet},
 };
+use parking_lot::Mutex;
 use revm::{database::TransitionState, state::EvmState};
 
-use crate::{ParkedPredicateIndex, ValidityOperator, ValidityPredicate, two_d_nonce_pool::LaneId};
+use crate::{
+    ParkedPredicateIndex, ValidityOperator, ValidityPredicate, ValidityPredicateKey,
+    two_d_nonce_pool::LaneId,
+};
+
+/// Most queued transactions one classification pass takes; the rest wait for the next pass.
+pub const DORMANCY_CLASSIFICATION_BUDGET: usize = 32_768;
+
+/// Transactions a classification pass takes, evaluates and installs at a time, so it holds the
+/// validity pool's write lock only briefly and stops soon after its tip moves.
+pub const DORMANCY_CLASSIFICATION_CHUNK: usize = 256;
+
+/// Most state locations the owning build's [`WriteFence`] records; past it every location counts
+/// as written.
+pub const DORMANCY_FENCE_CAPACITY: usize = 65_536;
 
 /// Where the native builder keeps the validity transactions it parked from one block to the next.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -112,6 +127,73 @@ pub(crate) enum DormantSlot {
     NonceFree(B256),
 }
 
+/// The state locations the owning build wrote on top of the tip, whose value a classification that
+/// read the tip's state may have missed.
+#[derive(Debug, Default)]
+pub(crate) struct WriteFence {
+    keys: HashSet<ValidityPredicateKey>,
+    destroyed_storage: AddressSet,
+    overflowed: bool,
+}
+
+impl WriteFence {
+    /// Records the locations a commit that wrote `state` changed.
+    pub(crate) fn record_state(&mut self, state: &EvmState) {
+        for (address, account) in state.iter().filter(|(_, account)| account.is_touched()) {
+            if self.overflowed {
+                return;
+            }
+            let slots = account.storage.iter().filter(|(_, slot)| slot.is_changed());
+            self.record(*address, account.is_selfdestructed(), slots.map(|(slot, _)| *slot));
+        }
+    }
+
+    /// Records the locations `transitions` changed relative to the state it started from.
+    pub(crate) fn record_transitions(&mut self, transitions: &TransitionState) {
+        for (address, transition) in &transitions.transitions {
+            if self.overflowed {
+                return;
+            }
+            let destroyed = transition.storage_was_destroyed || transition.status.was_destroyed();
+            let slots = transition.storage.iter().filter(|(_, slot)| slot.is_changed());
+            self.record(*address, destroyed, slots.map(|(slot, _)| *slot));
+        }
+    }
+
+    /// Records the changed `slots` of `address`, and its balance and nonce, which count as
+    /// written whenever the account is touched.
+    fn record(
+        &mut self,
+        address: Address,
+        storage_destroyed: bool,
+        slots: impl Iterator<Item = U256>,
+    ) {
+        if storage_destroyed {
+            self.destroyed_storage.insert(address);
+        }
+        let account =
+            [ValidityPredicateKey::Nonce(address), ValidityPredicateKey::Balance(address)];
+        for key in account
+            .into_iter()
+            .chain(slots.map(|slot| ValidityPredicateKey::Storage(address, slot)))
+        {
+            self.keys.insert(key);
+            if self.keys.len() + self.destroyed_storage.len() > DORMANCY_FENCE_CAPACITY {
+                *self = Self { overflowed: true, ..Self::default() };
+                return;
+            }
+        }
+    }
+
+    /// Whether a classification of `predicate` against the tip's state may be stale.
+    pub(crate) fn voids(&self, predicate: &ValidityPredicate) -> bool {
+        let key = ValidityPredicateKey::for_predicate(predicate);
+        self.overflowed
+            || self.keys.contains(&key)
+            || matches!(key, ValidityPredicateKey::Storage(address, _) if self.destroyed_storage.contains(&address))
+    }
+}
+
 /// The validity pool's dormancy index and the build lifecycle that scopes it to one tip; see the
 /// crate README.
 #[derive(Debug, Default)]
@@ -123,6 +205,16 @@ pub(crate) struct Dormancy {
     /// Dormant transactions blocked on a block number, by the first block that satisfies it.
     block_releases: BTreeMap<u64, B256Set>,
     lanes: HashMap<LaneId, TxHash>,
+    /// Pooled transactions waiting for classification against the tip.
+    pub queue: IndexSet<TxHash>,
+    /// What the owning build wrote on top of the tip. Behind its own lock so a commit records into
+    /// it while holding the pool's read lock.
+    pub fence: Mutex<WriteFence>,
+    /// Whether the owning build took its snapshot, which a later classification may find in it.
+    /// Atomic because the snapshot is taken under the pool's read lock.
+    pub owner_snapshot_taken: AtomicBool,
+    /// Transactions classified dormant after the owning build took its snapshot.
+    pub classified_mid_build: B256Set,
     /// The last block this node sealed; `None` before a seal and after a discard.
     pub tip: Option<BlockNumHash>,
     /// The build that owns the index.
@@ -142,16 +234,26 @@ impl Dormancy {
         self.entries.is_empty()
     }
 
+    pub(crate) fn is_dormant(&self, hash: &TxHash) -> bool {
+        self.entries.contains_key(hash)
+    }
+
     pub(crate) fn lane_root(&self, lane_id: &LaneId) -> Option<TxHash> {
         self.lanes.get(lane_id).copied()
     }
 
-    /// Indexes `hash`, dormant in `slot`, under `predicate`, which the build of block
-    /// [`Self::height`] found failing.
-    pub(crate) fn park(&mut self, hash: TxHash, slot: DormantSlot, predicate: ValidityPredicate) {
+    /// Indexes `hash`, dormant in `slot`, under `predicate`, which fails for block `block`.
+    pub(crate) fn park(
+        &mut self,
+        hash: TxHash,
+        slot: DormantSlot,
+        predicate: ValidityPredicate,
+        block: u64,
+    ) {
+        self.remove(hash);
         let release = match &predicate {
             ValidityPredicate::BlockNumber { op: ValidityOperator::NotEqual, .. } => {
-                Some(self.height.saturating_add(1))
+                Some(block.saturating_add(1))
             }
             ValidityPredicate::BlockNumber { op: ValidityOperator::GreaterThan, value } => {
                 Some(value.saturating_to::<u64>().saturating_add(1))
@@ -185,6 +287,14 @@ impl Dormancy {
         }
         self.index.remove(hash);
         Some(slot)
+    }
+
+    /// Ends the owning build's ownership, forgetting what it wrote and classified.
+    pub(crate) fn end_build(&mut self) {
+        self.owner = None;
+        self.fence = Mutex::default();
+        self.owner_snapshot_taken = AtomicBool::default();
+        self.classified_mid_build.clear();
     }
 
     /// Empties the index, returning where each transaction was dormant.

@@ -4712,6 +4712,7 @@ dependencies = [
  "reth-node-api",
  "reth-primitives-traits",
  "reth-provider",
+ "reth-revm",
  "reth-storage-api",
  "reth-tasks",
  "reth-transaction-pool",
