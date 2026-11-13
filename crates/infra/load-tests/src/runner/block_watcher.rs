@@ -19,7 +19,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use base_common_network::Base;
 use futures::{StreamExt, stream};
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{Semaphore, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -152,19 +152,21 @@ pub struct BlockWatcher {
     results_tracker: ResultsTracker,
     block_time: Duration,
     pulse_tx: mpsc::Sender<InclusionPulse>,
+    base_fee: watch::Sender<u128>,
     cancel_token: CancellationToken,
 }
 
 impl BlockWatcher {
-    /// Creates a new [`BlockWatcher`].
+    /// Creates a new [`BlockWatcher`] that publishes each new head's base fee to `base_fee`.
     pub const fn new(
         provider: RootProvider<Base>,
         results_tracker: ResultsTracker,
         block_time: Duration,
         pulse_tx: mpsc::Sender<InclusionPulse>,
+        base_fee: watch::Sender<u128>,
         cancel_token: CancellationToken,
     ) -> Self {
-        Self { provider, results_tracker, block_time, pulse_tx, cancel_token }
+        Self { provider, results_tracker, block_time, pulse_tx, base_fee, cancel_token }
     }
 
     /// Spawns the watcher as a background task.
@@ -298,6 +300,7 @@ impl BlockWatcher {
 
             // Process and publish the newest block first. Confirmation recovery for any
             // missed intermediate blocks must not delay refilling for the next block.
+            self.base_fee.send_replace(latest.base_fee);
             let has_measured_pending = self.results_tracker.has_measured_pending(&latest.tx_hashes);
             let block_match =
                 self.results_tracker.on_new_block_hashes(latest.observation, latest.tx_hashes);
