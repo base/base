@@ -163,7 +163,14 @@ pub struct ArchiveArgs {
     pub max_concurrent_ranges: usize,
 
     /// Archive to read pruned history from: `s3://bucket/prefix`, `file:///dir` or `memory://`.
-    #[arg(id = "archive_url", long = "archive.url", env = "ARCHIVE_URL", value_name = "URL")]
+    /// Requires `--archive.cache-dir`, which also holds segments served without caching them.
+    #[arg(
+        id = "archive_url",
+        long = "archive.url",
+        env = "ARCHIVE_URL",
+        value_name = "URL",
+        requires = "archive_cache_dir"
+    )]
     pub url: Option<String>,
 
     /// S3 service endpoint for S3-compatible stores such as `MinIO`.
@@ -175,7 +182,8 @@ pub struct ArchiveArgs {
     )]
     pub endpoint: Option<String>,
 
-    /// Directory for the optional on-disk segment cache (off when unset).
+    /// Directory for the on-disk segment cache, required with `--archive.url`. Segments that do
+    /// not fit the cache are served from its `ephemeral/` subdirectory while loaded.
     #[arg(id = "archive_cache_dir", long = "archive.cache-dir", requires = "archive_url")]
     pub cache_dir: Option<PathBuf>,
 
@@ -1178,8 +1186,8 @@ mod tests {
     }
 
     /// Regression for the clap id collision between `ArchiveArgs::url` and reth's `era.url`:
-    /// both parse together, the archive flags land in `ArchiveArgs`, and `--archive.cache-dir`
-    /// without `--archive.url` is rejected.
+    /// both parse together, the archive flags land in `ArchiveArgs`, and `--archive.url` and
+    /// `--archive.cache-dir` each require the other.
     #[test]
     fn archive_args_parse_beside_reth_args_with_a_url_field() {
         ArchiveWithEraParser::command().debug_assert();
@@ -1211,6 +1219,14 @@ mod tests {
             clap::error::ErrorKind::MissingRequiredArgument,
             "missing url: {err}"
         );
+        let err = ArchiveWithEraParser::try_parse_from(["reth", "--archive.url", "memory://c"])
+            .expect_err("--archive.url requires --archive.cache-dir");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "missing cache dir: {err}"
+        );
+        assert!(err.to_string().contains("--archive.cache-dir"), "the error names the flag: {err}");
     }
 
     /// The full `RpcStandardNodeArgs` passes clap's debug asserts and parses the archive flags.

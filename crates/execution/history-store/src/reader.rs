@@ -617,9 +617,12 @@ mod tests {
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
-    use crate::test_utils::{
-        ChainFixture, FIXTURE_CHAIN_ID, FIXTURE_SLOTS, GateOp, GatedStore, fixture_writer,
-        test_index_options,
+    use crate::{
+        SegmentDir,
+        test_utils::{
+            ChainFixture, FIXTURE_CHAIN_ID, FIXTURE_SLOTS, GateOp, GatedStore, fixture_writer,
+            test_index_options,
+        },
     };
 
     /// Publishes `segments` segments of 4 blocks and returns the store and fixture.
@@ -982,6 +985,83 @@ mod tests {
             !reader.cache.disk_root().unwrap().join("seg-0").exists(),
             "no entry for segment 0"
         );
+    }
+
+    /// Names of the `ephemeral-*` directories under `<disk_dir>/ephemeral`.
+    fn ephemeral_dirs(dir: &tempfile::TempDir) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(dir.path().join("ephemeral")) else {
+            return Vec::new();
+        };
+        entries.map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect()
+    }
+
+    /// Review6 P2 ephemeral placement: with a cache directory, a segment that is not admitted
+    /// to the disk tier is served from `<disk_dir>/ephemeral`, never the system temp dir, is
+    /// not counted as a disk-tier entry, and its directory is removed once the memory tier
+    /// evicts the segment.
+    #[tokio::test]
+    async fn ephemeral_segments_live_under_the_cache_dir() {
+        let (store, fixture) = published(2).await;
+        let size = segment_size(&store).await;
+        let dir = tempfile::tempdir().unwrap();
+        let reader = open_reader(&store, &fixture, disk(&dir, size - 1)).await;
+        let snapshot = reader.snapshot().await.unwrap();
+        let held = reader.segment(&snapshot, 2).await.unwrap();
+        let SegmentDir::Temp(temp) = &held.dir else {
+            panic!("an oversized segment is not a disk-tier entry: {:?}", held.dir)
+        };
+        assert_eq!(
+            temp.path().parent(),
+            Some(dir.path().join("ephemeral").as_path()),
+            "the ephemeral segment lives under <disk_dir>/ephemeral"
+        );
+        assert_eq!(ephemeral_dirs(&dir).len(), 1, "exactly one ephemeral directory");
+        assert!(ephemeral_dirs(&dir)[0].starts_with("ephemeral-"), "{:?}", ephemeral_dirs(&dir));
+        assert_eq!(reader.cache.disk_usage().unwrap(), 0, "ephemeral bytes are not disk entries");
+        assert!(
+            !reader.cache.disk_root().unwrap().join("seg-0").exists(),
+            "segment 0 is not persisted"
+        );
+        drop(held);
+
+        // The memory tier holds one segment; loading segment 1 evicts segment 0.
+        let held = reader.segment(&snapshot, 4).await.unwrap();
+        assert_eq!(reader.cache.memory_len(), 1, "the memory tier holds exactly one segment");
+        assert_eq!(
+            ephemeral_dirs(&dir).len(),
+            1,
+            "segment 0's ephemeral directory is removed once the memory tier evicts it"
+        );
+        drop(held);
+        assert_eq!(
+            reader.block(&snapshot, 5).await.unwrap().hash,
+            fixture.blocks[5].hash,
+            "segment 1 served ephemerally"
+        );
+        drop(reader);
+        assert_eq!(
+            ephemeral_dirs(&dir),
+            Vec::<String>::new(),
+            "no ephemeral directory outlives the reader"
+        );
+    }
+
+    /// Review6 P2 restart: an `ephemeral-*` directory left by a crashed process is removed when
+    /// the cache opens, and other files under `ephemeral/` are left alone.
+    #[tokio::test]
+    async fn stale_ephemeral_dir_is_removed_on_open() {
+        let (store, fixture) = published(1).await;
+        let dir = tempfile::tempdir().unwrap();
+        let stale = dir.path().join("ephemeral").join("ephemeral-crashed");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("headers"), [0u8; 64]).unwrap();
+        let unrelated = dir.path().join("ephemeral").join("keep");
+        std::fs::write(&unrelated, []).unwrap();
+        let reader = open_reader(&store, &fixture, disk(&dir, 1 << 30)).await;
+        assert!(!stale.exists(), "the stale ephemeral directory is removed when the cache opens");
+        assert!(unrelated.exists(), "files without the ephemeral- prefix are left alone");
+        let snapshot = reader.snapshot().await.unwrap();
+        assert_eq!(reader.block(&snapshot, 1).await.unwrap().hash, fixture.blocks[1].hash);
     }
 
     /// Disk entries are namespaced by archive identity: a reader of another chain id never

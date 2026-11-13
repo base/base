@@ -26,7 +26,7 @@ At most `--archive.max-concurrent-ranges` (default 2) range calls run at once. A
 
 ## Reader routing (`eth_`, TDD §5)
 
-`ArchiveEthExtension` is enabled by `--archive.url`, with optional `--archive.endpoint`, `--archive.cache-dir` and `--archive.cache-size`. At startup it reads the catalog once, bounded by 10 s, on a scoped thread. A reachable catalog for another chain id, genesis or format fails node start. A missing catalog, unreachable storage or a timeout logs a warning; the node starts and opens the reader lazily on the first archive-bound request. It replaces these methods with local-first, archive-on-miss versions:
+`ArchiveEthExtension` is enabled by `--archive.url` with the required `--archive.cache-dir`, and optional `--archive.endpoint` and `--archive.cache-size`. At startup it reads the catalog once, bounded by 10 s, on a scoped thread. A reachable catalog for another chain id, genesis or format fails node start. A missing catalog, unreachable storage or a timeout logs a warning; the node starts and opens the reader lazily on the first archive-bound request. It replaces these methods with local-first, archive-on-miss versions:
 
 | Method | Local miss signal | Archive path |
 | --- | --- | --- |

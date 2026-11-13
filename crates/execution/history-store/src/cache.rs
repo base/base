@@ -38,6 +38,12 @@ const USED_MARKER: &str = "USED";
 /// Prefix of in-progress fill directories, renamed into place once complete.
 const FILL_PREFIX: &str = "fill-";
 
+/// Directory under the cache directory holding segments served without persisting them.
+const EPHEMERAL_DIR: &str = "ephemeral";
+
+/// Prefix of the directories in [`EPHEMERAL_DIR`], one per ephemerally loaded segment.
+const EPHEMERAL_PREFIX: &str = "ephemeral-";
+
 /// Prefix of published disk entries, followed by the segment number.
 const ENTRY_PREFIX: &str = "seg-";
 
@@ -228,6 +234,9 @@ pub enum ExistingEntry {
 pub struct DiskTier {
     /// Directory holding this archive's entries.
     pub root: PathBuf,
+    /// Directory holding segments served without persisting them (`<disk_dir>/ephemeral`).
+    /// It lies outside [`Self::root`], so its bytes never count against [`Self::budget`].
+    pub ephemeral: PathBuf,
     /// Byte budget of published entries plus reservations.
     pub budget: u64,
     /// Leases and reservations.
@@ -253,6 +262,21 @@ impl DiskTier {
     /// published entries fit; an entry larger than the whole budget is removed, so later reads
     /// of that segment follow the ephemeral policy instead of leasing it in place.
     pub fn reconcile(&self) -> Result<(), HistoryStoreError> {
+        // A directory under `ephemeral/` belongs to a segment loaded by a process that is gone:
+        // a live one removes its own directories when the segment is dropped.
+        if self.ephemeral.exists() {
+            for entry in fs::read_dir(&self.ephemeral)? {
+                let path = entry?.path();
+                let stale = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(EPHEMERAL_PREFIX));
+                if stale {
+                    tracing::info!(path = %path.display(), "removing stale ephemeral segment");
+                    fs::remove_dir_all(&path)?;
+                }
+            }
+        }
         if !self.root.exists() {
             return Ok(());
         }
@@ -361,6 +385,12 @@ impl DiskTier {
         }
         disk.reserved += bytes;
         Ok(Some(Reservation { tier: Arc::clone(self), bytes }))
+    }
+
+    /// Creates an empty `ephemeral-*` directory for a segment served without persisting it.
+    pub fn ephemeral_dir(&self) -> Result<TempDir, HistoryStoreError> {
+        fs::create_dir_all(&self.ephemeral)?;
+        Ok(tempfile::Builder::new().prefix(EPHEMERAL_PREFIX).tempdir_in(&self.ephemeral)?)
     }
 
     /// Creates an empty `fill-*` directory for a new entry.
@@ -490,11 +520,14 @@ impl Drop for FillShare<'_> {
 /// - **Budget.** A fill reserves its segment's manifest size before downloading, under the
 ///   same lock as eviction, and keeps the reservation until its entry is published. Published
 ///   entries plus reservations never exceed `disk_bytes`; a fill that cannot be admitted
-///   (larger than the budget, or blocked by leased entries and other fills) is served from a
-///   temporary directory and never persisted. Leases and reservations are process-local: two
+///   (larger than the budget, or blocked by leased entries and other fills) is served from an
+///   `ephemeral-*` directory under `<disk_dir>/ephemeral` and never persisted. Ephemeral
+///   segments live only while loaded, so they add at most `memory_segments +
+///   max_concurrent_fills` segments of disk beyond `disk_bytes`. Leases and reservations are process-local: two
 ///   processes sharing one cache directory each enforce the budget for their own fills only.
-/// - **Restart.** Opening the cache removes abandoned `fill-*` directories and evicts persisted
-///   entries until they fit the current budget ([`DiskTier::reconcile`]), before any lease.
+/// - **Restart.** Opening the cache removes abandoned `fill-*` and `ephemeral-*` directories and
+///   evicts persisted entries until they fit the current budget ([`DiskTier::reconcile`]),
+///   before any lease.
 pub struct SegmentCache {
     /// Sizing.
     pub config: CacheConfig,
@@ -542,6 +575,7 @@ impl SegmentCache {
         let disk = config.disk_dir.as_ref().map(|dir| {
             Arc::new(DiskTier {
                 root: dir.join(&namespace),
+                ephemeral: dir.join(EPHEMERAL_DIR),
                 budget: config.disk_bytes,
                 state: Mutex::default(),
             })
@@ -667,13 +701,20 @@ impl SegmentCache {
         Err(err)
     }
 
-    /// Downloads a segment into a temporary directory that is never persisted.
+    /// Downloads a segment into a temporary directory that is never persisted: under the
+    /// cache directory's `ephemeral/` when the disk tier is on, so ephemeral segments never
+    /// land in the system temp dir (often RAM-backed) of a node, else the system temp dir.
     pub async fn load_ephemeral(
         &self,
         manifest: &SegmentManifest,
     ) -> Result<LoadedSegment, HistoryStoreError> {
         let (k, n) = (manifest.segment, self.blocks_per_segment);
-        let temp = ArchiveReader::blocking(|| Ok(tempfile::tempdir()?)).await?;
+        let tier = self.disk.clone();
+        let temp = ArchiveReader::blocking(move || match tier {
+            Some(tier) => tier.ephemeral_dir(),
+            None => Ok(tempfile::tempdir()?),
+        })
+        .await?;
         if let Err(err) = self.download_to(manifest, temp.path()).await {
             return Self::abandon(temp, err).await;
         }
