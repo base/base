@@ -111,6 +111,10 @@ base_metrics::define_metrics! {
     pool_transactions: gauge,
     #[describe("Summed size of transactions currently held by the validity pool, in bytes")]
     pool_bytes: gauge,
+    #[describe("Validity transactions kept out of the native build's snapshot as dormant, as of the last seal or discard")]
+    dormant_transactions: gauge,
+    #[describe("Times the validity pool discarded a non-empty dormancy index, making every dormant transaction ready")]
+    dormancy_discards: counter,
 }
 
 impl ValidityPoolMetrics {

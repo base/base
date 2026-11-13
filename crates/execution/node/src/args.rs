@@ -11,7 +11,7 @@ use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
 use base_execution_txpool::{
     DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT,
-    ValidityPoolLimits,
+    ValidityDormancyMode, ValidityPoolLimits,
 };
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
@@ -424,6 +424,12 @@ pub struct RollupArgs {
     #[arg(long = "rollup.validity-pool-max-account-slots")]
     pub validity_pool_max_account_slots: Option<usize>,
 
+    /// Where the native builder keeps the validity transactions it parked from one block to the
+    /// next: its own resting set (`resting`) or the validity pool's dormancy index (`pool`).
+    /// Only the native builder's own builds read it.
+    #[arg(long = "rollup.validity-dormancy", default_value_t = ValidityDormancyMode::Resting)]
+    pub validity_dormancy: ValidityDormancyMode,
+
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
     #[arg(
@@ -558,6 +564,7 @@ impl Default for RollupArgs {
             validity_pool_max_count: None,
             validity_pool_max_size: None,
             validity_pool_max_account_slots: None,
+            validity_dormancy: ValidityDormancyMode::Resting,
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_db: ProofsHistoryDbBackend::default(),
@@ -646,6 +653,16 @@ mod tests {
     fn validity_pool_limits_default_to_inherit() {
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
         assert_eq!(args.validity_pool_limits(), ValidityPoolLimits::inherit());
+    }
+
+    #[test]
+    fn validity_dormancy_defaults_to_resting_and_parses_pool() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.validity_dormancy, ValidityDormancyMode::Resting);
+        let args =
+            CommandParser::<RollupArgs>::parse_from(["reth", "--rollup.validity-dormancy", "pool"])
+                .args;
+        assert_eq!(args.validity_dormancy, ValidityDormancyMode::Pool);
     }
 
     #[test]

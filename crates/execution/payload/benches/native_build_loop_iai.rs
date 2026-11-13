@@ -184,8 +184,14 @@ fn setup() -> Blocks {
             let transactions =
                 Counted { inner: parkable(&pool, Some(&shared)), lifecycle: Rc::clone(&lifecycle) };
             black_box(
-                ctx.execute_best_transactions(&mut info, &mut builder, transactions, Some(&shared))
-                    .expect("in-memory execution cannot fail"),
+                ctx.execute_best_transactions(
+                    &mut info,
+                    &mut builder,
+                    transactions,
+                    Some(&shared),
+                    None,
+                )
+                .expect("in-memory execution cannot fail"),
             );
             included += builder.executor().receipts().len();
             resting = shared.take_predicates();

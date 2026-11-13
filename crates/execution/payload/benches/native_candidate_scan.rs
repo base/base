@@ -52,8 +52,9 @@ fn scan(
         Candidates { queued: candidates.iter().cloned().collect(), yielded: Default::default() };
 
     let start = std::time::Instant::now();
-    let cancelled =
-        ctx.execute_best_transactions(&mut info, &mut builder, transactions, None).expect("scan");
+    let cancelled = ctx
+        .execute_best_transactions(&mut info, &mut builder, transactions, None, None)
+        .expect("scan");
     let elapsed = start.elapsed();
     black_box(cancelled);
     (elapsed, info.cumulative_gas_used / TRANSFER_GAS)

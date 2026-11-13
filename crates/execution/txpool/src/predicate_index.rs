@@ -1,4 +1,4 @@
-//! Validity-predicate evaluation and indexing for payload transactions.
+//! Validity-predicate evaluation and indexing by the state location that blocks a transaction.
 
 use core::ops::Bound::{Excluded, Included};
 use std::collections::BTreeMap;
@@ -7,10 +7,9 @@ use alloy_primitives::{
     Address, TxHash, U256,
     map::{B256Map, B256Set, HashMap, U256Map},
 };
-use base_execution_txpool::{
-    PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
-};
 use revm::{Database, database::TransitionState, state::EvmState};
+
+use crate::{PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate};
 
 /// The number of parked predicates at which a flat bucket becomes ordered by default.
 pub const DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD: usize = 32;
@@ -200,6 +199,11 @@ impl<T> ParkedPredicateIndex<T> {
         self.transactions
             .get_mut(&transaction_hash)
             .map(|entry| (&mut entry.transaction, &entry.predicate))
+    }
+
+    /// Returns each indexed transaction's hash with the predicate it is parked under.
+    pub fn parked(&self) -> impl Iterator<Item = (TxHash, &ValidityPredicate)> + '_ {
+        self.transactions.iter().map(|(hash, entry)| (*hash, &entry.predicate))
     }
 
     /// Replaces a parked transaction's currently unsatisfied predicate.
@@ -700,9 +704,6 @@ pub mod test_utils {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, map::B256Set};
-    use base_execution_txpool::{
-        PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
-    };
     use revm::{
         database::InMemoryDB,
         state::{Account, AccountInfo, EvmState, EvmStorageSlot},
@@ -713,6 +714,7 @@ mod tests {
         ValidityPredicateKey,
         test_utils::{ReadError, RecordingDatabase},
     };
+    use crate::{PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate};
 
     fn balance(address: Address, op: ValidityOperator, value: u64) -> ValidityPredicate {
         ValidityPredicate::Balance { address, op, value: U256::from(value) }
