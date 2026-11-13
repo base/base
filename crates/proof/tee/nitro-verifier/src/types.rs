@@ -84,7 +84,7 @@ sol! {
 
     /// Platform Configuration Register (PCR) entry.
     struct Pcr {
-        /// PCR index number (0-23 for AWS Nitro Enclaves).
+        /// PCR index number (0-31 per the AWS Nitro attestation document spec).
         uint64 index;
         /// 48-byte PCR measurement value (SHA-384 hash).
         Bytes48 value;

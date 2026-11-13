@@ -37,8 +37,16 @@ base-snapshotter = { workspace = true }
 use base_snapshotter::{
     DockerContainerManager, RpcTipChecker, Snapshotter, SnapshotUploader, SnapshotterConfig,
 };
+use clap::Parser;
 
-let config = SnapshotterConfig::parse();
+// `SnapshotterConfig` is a `clap::Args` group; flatten it into your own parser.
+#[derive(Parser)]
+struct Cli {
+    #[command(flatten)]
+    snapshotter: SnapshotterConfig,
+}
+
+let config = Cli::parse().snapshotter;
 let container_manager = DockerContainerManager::new(&config.docker_socket)?;
 let tip_checker = RpcTipChecker::new(config.el_rpc_url.clone());
 

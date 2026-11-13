@@ -23,8 +23,8 @@ base-proof-preimage = { workspace = true }
 use base_proof_preimage::{PreimageOracleClient, HintWriterClient};
 
 // In a no_std FPVM client:
-let data = oracle.get(preimage_key)?;
-hint_writer.write(&hint)?;
+let data = oracle.get(preimage_key).await?;
+hint_writer.write(&hint).await?;
 ```
 
 [preimage-abi-spec]: https://specs.base.org/protocol/fault-proof#pre-image-oracle

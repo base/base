@@ -33,11 +33,14 @@ Instantiate the Alloy-backed clients to query L1, L2, and rollup nodes:
 
 ```rust,ignore
 use alloy_eips::BlockNumberOrTag;
-use base_proof_rpc::{L1Client, L1Provider, L2Client, RollupClient};
+use base_proof_rpc::{
+    L1Client, L1ClientConfig, L1Provider, L2Client, L2ClientConfig, RollupClient,
+    RollupClientConfig,
+};
 
-let l1 = L1Client::new(l1_url)?;
-let l2 = L2Client::new(l2_url)?;
-let rollup = RollupClient::new(rollup_url)?;
+let l1 = L1Client::new(L1ClientConfig::new(l1_url))?;
+let l2 = L2Client::new(L2ClientConfig::new(l2_url))?;
+let rollup = RollupClient::new(RollupClientConfig::new(rollup_url))?;
 
 let finalized_header = l1.header_by_number(BlockNumberOrTag::Finalized).await?;
 ```
