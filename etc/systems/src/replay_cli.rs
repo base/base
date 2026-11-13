@@ -23,6 +23,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadInputV2, ForkchoiceState, JwtSecret, PayloadStatus, PayloadStatusEnum,
 };
 use alloy_rpc_types_eth::BlockNumberOrTag;
+use base_common_consensus::BasePrimitives;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types_engine::BaseExecutionPayload;
 use base_consensus_engine::BaseEngineClient;
@@ -33,7 +34,9 @@ use base_node_runner::BaseNodeExtension;
 use base_proofs_extension::ProofsHistoryExtension;
 use clap::Args;
 use eyre::{Result, WrapErr, ensure};
+use reth_provider::{CanonStateNotification, CanonStateNotifications};
 use serde::Serialize;
+use tokio::sync::broadcast::error::TryRecvError;
 use tracing::warn;
 
 use crate::{
@@ -99,12 +102,20 @@ pub struct ReplayBenchmarkArgs {
     /// Directory a node wrote with `--debug.engine-api-store`. Replays its messages verbatim
     /// instead of the export's blocks, from the first payload built on the datadir head, and
     /// writes `recorded-replay-result.json`. The export supplies only the chain spec.
-    #[arg(long, conflicts_with_all = ["paced", "proofs_dir"])]
+    #[arg(long, conflicts_with_all = ["paced", "proofs_dir", "reorg_every"])]
     pub engine_store_dir: Option<PathBuf>,
     /// Skip checking each block's state root task trie updates against a serial computation.
     /// The check logs differences even when the state root matches; it does not fail the replay.
     #[arg(long)]
     pub no_compare_updates: bool,
+    /// Make Reth reorg the chain every this many blocks: after a block is inserted it makes a
+    /// block built from a later block's transactions canonical in place of the latest blocks,
+    /// and the next forkchoice update returns to the exported chain.
+    #[arg(long)]
+    pub reorg_every: Option<NonZeroUsize>,
+    /// Canonical blocks each injected reorg replaces; at most `--reorg-every`.
+    #[arg(long, requires = "reorg_every", default_value = "1")]
+    pub reorg_depth: NonZeroUsize,
 }
 
 /// How blocks were scheduled.
@@ -152,6 +163,40 @@ impl LatencySummary {
     }
 }
 
+/// Injected reorgs, kept apart from the main latency summaries.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayReorgSummary {
+    /// Requested blocks between reorgs.
+    pub every: u64,
+    /// Requested exported blocks replaced per reorg.
+    pub depth: u64,
+    /// Reorgs the node performed; Reth skips one when it cannot build the sibling chain.
+    pub count: u64,
+    /// `engine_newPayload` latency of the blocks that triggered a reorg; includes building the
+    /// sibling chain.
+    pub new_payload: LatencySummary,
+    /// `engine_forkchoiceUpdated` latency of those blocks; includes inserting the sibling chain,
+    /// reorging to it and back.
+    pub forkchoice: LatencySummary,
+}
+
+impl ReplayReorgSummary {
+    /// Summarizes the blocks that carry a reorg depth.
+    pub fn new(every: NonZeroUsize, depth: NonZeroUsize, blocks: &[ReplayBlockTiming]) -> Self {
+        let reorged = blocks.iter().filter(|block| block.reorg_depth.is_some());
+        let collect =
+            |field: fn(&ReplayBlockTiming) -> f64| reorged.clone().map(field).collect::<Vec<_>>();
+        Self {
+            every: every.get() as u64,
+            depth: depth.get() as u64,
+            count: reorged.clone().count() as u64,
+            new_payload: LatencySummary::from_millis(&collect(|block| block.new_payload_ms)),
+            forkchoice: LatencySummary::from_millis(&collect(|block| block.forkchoice_ms)),
+        }
+    }
+}
+
 /// Engine timings for one replayed block.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -173,6 +218,10 @@ pub struct ReplayBlockTiming {
     /// Paced mode only: how late `newPayload` was sent relative to the block's schedule.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lag_ms: Option<f64>,
+    /// Reorg mode only: exported blocks the reorg Reth injected while inserting this block
+    /// replaced. Such blocks are left out of the main latency summaries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reorg_depth: Option<u64>,
 }
 
 /// Machine-readable outcome of one replay, written to `replay-result.json`.
@@ -199,6 +248,9 @@ pub struct ReplayResult {
     /// Paced mode only: lag behind the recorded schedule.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paced_lag: Option<LatencySummary>,
+    /// Reorg mode only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reorgs: Option<ReplayReorgSummary>,
     /// Node head number after the replay.
     pub final_number: u64,
     /// Node head hash after the replay.
@@ -283,6 +335,15 @@ struct ReplayRun {
 impl ReplayBenchmarkArgs {
     /// Starts the node, replays the export, writes results, and exits nonzero on a mismatch.
     pub async fn run(self) -> Result<()> {
+        if let Some(every) = self.reorg_every {
+            // A deeper reorg would replace blocks at or below the export boundary, which the safe
+            // and finalized heads must stay ancestors of.
+            ensure!(
+                self.reorg_depth <= every,
+                "--reorg-depth {} exceeds --reorg-every {every}",
+                self.reorg_depth
+            );
+        }
         let manifest = read_export_manifest(&self.export_dir)?;
         let (chain_spec, block_interval) = Self::replay_chain_spec(&manifest)?;
         Self::prepare_output_dir(&self.output_dir)?;
@@ -315,6 +376,10 @@ impl ReplayBenchmarkArgs {
                 block_interval.snapshot_persistence_backpressure_threshold(),
             ),
             state_root_task_compare_updates: !self.no_compare_updates,
+            // Reth reorgs once it has forwarded more than `reorg_frequency` forkchoice updates,
+            // and its depth counts blocks below the replaced head.
+            reorg_frequency: self.reorg_every.map(|every| every.get() - 1),
+            reorg_depth: self.reorg_every.map(|_| self.reorg_depth.get() - 1),
             tx_forwarding_config: None,
             validity_signature_mode: ValiditySignatureMode::Off,
             upgrade_signal: None,
@@ -401,8 +466,16 @@ impl ReplayBenchmarkArgs {
             Duration::from_millis(self.metrics_scrape_interval_ms.get()),
         )
         .await?;
+        let canonical = self.reorg_every.map(|_| client.subscribe_canonical_state());
         let mut run = self
-            .replay_blocks(&engine, &manifest, safe, finalized, probe.as_ref().map(|p| &p.head))
+            .replay_blocks(
+                &engine,
+                &manifest,
+                safe,
+                finalized,
+                probe.as_ref().map(|p| &p.head),
+                canonical,
+            )
             .await;
         if let Some(divergence) =
             run.error.as_mut().and_then(|error| error.downcast_mut::<FirstDivergence>())
@@ -432,7 +505,7 @@ impl ReplayBenchmarkArgs {
                 }
                 Err(error) => return Err(error),
             };
-        let result = ReplayResult {
+        let mut result = ReplayResult {
             proofs,
             compare_updates: !self.no_compare_updates,
             ..Self::summarize(
@@ -442,6 +515,9 @@ impl ReplayBenchmarkArgs {
                 (final_number, final_hash, final_state_root),
             )
         };
+        result.reorgs = self
+            .reorg_every
+            .map(|every| ReplayReorgSummary::new(every, self.reorg_depth, &result.blocks));
         let result_path = self.output_dir.join(REPLAY_RESULT_FILE);
         LocalBenchmarkArgs::write_json(&result_path, &result, "replay result")?;
         println!("replay result: {}", result_path.display());
@@ -478,6 +554,7 @@ impl ReplayBenchmarkArgs {
         safe: B256,
         finalized: B256,
         head: Option<&tokio::sync::watch::Sender<u64>>,
+        mut canonical: Option<CanonStateNotifications<BasePrimitives>>,
     ) -> ReplayRun {
         let mut blocks = Vec::with_capacity(manifest.block_count as usize);
         let mut first_timestamp_ms = None;
@@ -518,7 +595,9 @@ impl ReplayBenchmarkArgs {
                 } else {
                     None
                 };
-                blocks.push(Self::insert(engine, &block, safe, finalized, lag).await?);
+                blocks.push(
+                    Self::insert(engine, &block, safe, finalized, lag, canonical.as_mut()).await?,
+                );
                 if let Some(head) = head {
                     head.send_replace(block.number);
                 }
@@ -547,6 +626,7 @@ impl ReplayBenchmarkArgs {
         safe: B256,
         finalized: B256,
         lag: Option<Duration>,
+        canonical: Option<&mut CanonStateNotifications<BasePrimitives>>,
     ) -> Result<ReplayBlockTiming> {
         let payload = &block.envelope.execution_payload;
         let version = match payload {
@@ -610,6 +690,7 @@ impl ReplayBenchmarkArgs {
             .wrap_err_with(|| format!("forkchoiceUpdated failed for block {}", block.number))?;
         let forkchoice = started.elapsed();
         Self::ensure_valid(&updated.payload_status, "forkchoiceUpdated", block)?;
+        let reorg_depth = canonical.and_then(Self::injected_reorg_depth);
 
         Ok(ReplayBlockTiming {
             number: block.number,
@@ -620,7 +701,25 @@ impl ReplayBenchmarkArgs {
             new_payload_ms: Self::millis(new_payload),
             forkchoice_ms: Self::millis(forkchoice),
             lag_ms: lag.map(Self::millis),
+            reorg_depth,
         })
+    }
+
+    /// Blocks replaced by the first reorg among the canonical updates received since the last
+    /// call. The replay only extends the chain, so every reorg is one Reth injected.
+    fn injected_reorg_depth(
+        canonical: &mut CanonStateNotifications<BasePrimitives>,
+    ) -> Option<u64> {
+        let mut depth = None;
+        loop {
+            match canonical.try_recv() {
+                Ok(CanonStateNotification::Reorg { old, .. }) => {
+                    depth.get_or_insert(old.len() as u64);
+                }
+                Ok(CanonStateNotification::Commit { .. }) | Err(TryRecvError::Lagged(_)) => {}
+                Err(TryRecvError::Empty | TryRecvError::Closed) => return depth,
+            }
+        }
     }
 
     /// Fails with a [`FirstDivergence`] unless `status` is `VALID`.
@@ -649,7 +748,11 @@ impl ReplayBenchmarkArgs {
         (final_number, final_hash, final_state_root): (u64, B256, B256),
     ) -> ReplayResult {
         let collect = |field: fn(&ReplayBlockTiming) -> Option<f64>| {
-            run.blocks.iter().filter_map(field).collect::<Vec<_>>()
+            run.blocks
+                .iter()
+                .filter(|block| block.reorg_depth.is_none())
+                .filter_map(field)
+                .collect::<Vec<_>>()
         };
         let wall_seconds = run.wall_time.as_secs_f64();
         let blocks_replayed = run.blocks.len() as u64;
@@ -667,6 +770,7 @@ impl ReplayBenchmarkArgs {
             forkchoice: LatencySummary::from_millis(&collect(|block| Some(block.forkchoice_ms))),
             paced_lag: (mode == ReplayMode::Paced)
                 .then(|| LatencySummary::from_millis(&collect(|block| block.lag_ms))),
+            reorgs: None,
             final_number,
             final_hash,
             final_state_root,
@@ -811,7 +915,7 @@ mod tests {
 
     use super::{
         FirstDivergence, LatencySummary, ReplayBenchmarkArgs, ReplayBlockTiming, ReplayMode,
-        ReplayRun,
+        ReplayReorgSummary, ReplayRun,
     };
     use crate::{
         BenchmarkCli, BenchmarkCommand, DevnetBlockInterval, ExportSource, ExportedBlock,
@@ -846,6 +950,15 @@ mod tests {
             new_payload_ms,
             forkchoice_ms: 1.0,
             lag_ms,
+            reorg_depth: None,
+        }
+    }
+
+    fn reorged(number: u64, new_payload_ms: f64, forkchoice_ms: f64) -> ReplayBlockTiming {
+        ReplayBlockTiming {
+            forkchoice_ms,
+            reorg_depth: Some(2),
+            ..timing(number, new_payload_ms, None)
         }
     }
 
@@ -871,6 +984,7 @@ mod tests {
         assert_eq!(args.shutdown_timeout_seconds, 0);
         assert!(args.proofs_dir.is_none());
         assert!(!args.no_compare_updates);
+        assert!(args.reorg_every.is_none());
     }
 
     #[test]
@@ -893,6 +1007,83 @@ mod tests {
         };
         assert_eq!(args.proofs_dir.unwrap().to_string_lossy(), "/snapshot/restored/proofs");
         assert_eq!(args.proofs_concurrency.get(), 2);
+    }
+
+    #[test]
+    fn parses_reorg_mode_and_requires_reorg_every_for_depth() {
+        let base = [
+            "base-bench",
+            "replay",
+            "--datadir",
+            "/snapshot/restored",
+            "--export-dir",
+            "/boot/export",
+            "--output-dir",
+            "results/replay",
+        ];
+        let cli = BenchmarkCli::parse_from(base.into_iter().chain([
+            "--reorg-every",
+            "50",
+            "--reorg-depth",
+            "2",
+        ]));
+
+        let Some(BenchmarkCommand::Replay(args)) = cli.command else {
+            panic!("expected replay command");
+        };
+        assert_eq!(args.reorg_every.unwrap().get(), 50);
+        assert_eq!(args.reorg_depth.get(), 2);
+        assert!(
+            BenchmarkCli::try_parse_from(base.into_iter().chain(["--reorg-depth", "2"])).is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_reorg_depth_beyond_reorg_every() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "replay",
+            "--datadir",
+            "/snapshot/restored",
+            "--export-dir",
+            "/boot/export",
+            "--output-dir",
+            "results/replay",
+            "--reorg-every",
+            "1",
+            "--reorg-depth",
+            "2",
+        ]);
+        let Some(BenchmarkCommand::Replay(args)) = cli.command else {
+            panic!("expected replay command");
+        };
+
+        let error = args.run().await.unwrap_err();
+
+        assert!(error.to_string().contains("--reorg-depth 2 exceeds --reorg-every 1"));
+    }
+
+    #[test]
+    fn summary_keeps_reorged_blocks_out_of_the_main_latency() {
+        let manifest = manifest(2_000);
+        let blocks = vec![
+            timing(30_000_001, 4.0, None),
+            reorged(30_000_002, 40.0, 90.0),
+            timing(30_000_003, 8.0, None),
+        ];
+        let run = ReplayRun { blocks, wall_time: Duration::from_secs(1), error: None };
+        let last = (manifest.last_number, manifest.last_hash, manifest.last_state_root);
+
+        let result = ReplayBenchmarkArgs::summarize(manifest, ReplayMode::Unpaced, run, last);
+        let reorgs =
+            ReplayReorgSummary::new(50.try_into().unwrap(), 2.try_into().unwrap(), &result.blocks);
+
+        assert_eq!(result.blocks_replayed, 3);
+        assert_eq!(result.new_payload.max_ms, 8.0);
+        assert_eq!(result.forkchoice.max_ms, 1.0);
+        assert_eq!((reorgs.every, reorgs.depth, reorgs.count), (50, 2, 1));
+        assert_eq!(reorgs.new_payload.max_ms, 40.0);
+        assert_eq!(reorgs.forkchoice.max_ms, 90.0);
     }
 
     #[test]

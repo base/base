@@ -57,7 +57,8 @@ pub use recorded_replay::{
 mod replay_cli;
 pub use replay_cli::{
     FIRST_DIVERGENCE_FILE, FirstDivergence, LatencySummary, REPLAY_METRICS_FILE,
-    REPLAY_RESULT_FILE, ReplayBenchmarkArgs, ReplayBlockTiming, ReplayMode, ReplayResult,
+    REPLAY_RESULT_FILE, ReplayBenchmarkArgs, ReplayBlockTiming, ReplayMode, ReplayReorgSummary,
+    ReplayResult,
 };
 
 mod replay_proofs;

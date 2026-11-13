@@ -314,6 +314,8 @@ impl L2Stack {
             persistence_threshold: None,
             persistence_backpressure_threshold: None,
             state_root_task_compare_updates: false,
+            reorg_frequency: None,
+            reorg_depth: None,
             tx_forwarding_config,
             validity_signature_mode: config.validity_signature_mode,
             upgrade_signal: config.execution_upgrade_signal.clone(),

@@ -4,6 +4,7 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
+use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
@@ -26,7 +27,9 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_provider::providers::BlockchainProvider;
+use reth_provider::{
+    CanonStateNotifications, CanonStateSubscriptions, providers::BlockchainProvider,
+};
 use reth_tasks::{Runtime, RuntimeBuilder, TokioConfig};
 use tempfile::TempDir;
 use tracing::warn;
@@ -76,6 +79,11 @@ pub struct InProcessClientConfig {
     /// Check the state root task's trie updates against a serial computation on every block,
     /// logging any difference.
     pub state_root_task_compare_updates: bool,
+    /// Reth's `--debug.reorg-frequency`: after more than this many forwarded forkchoice updates,
+    /// the next payload that extends the head also reorgs the head to a generated sibling chain.
+    pub reorg_frequency: Option<usize>,
+    /// Reth's `--debug.reorg-depth`: canonical blocks each generated block replaces, minus one.
+    pub reorg_depth: Option<usize>,
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
@@ -104,6 +112,7 @@ pub struct InProcessClient {
     chain_spec: Arc<BaseChainSpec>,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
+    canonical_state: Box<dyn CanonStateSubscriptions<Primitives = BasePrimitives> + Sync + Send>,
     _runtime: Runtime,
     data_dir: PathBuf,
     _temp_dir: Option<TempDir>,
@@ -246,6 +255,8 @@ impl InProcessClient {
                 Some(persistence_backpressure_threshold);
         }
         node_config.engine.state_root_task_compare_updates = config.state_root_task_compare_updates;
+        node_config.debug.reorg_frequency = config.reorg_frequency;
+        node_config.debug.reorg_depth = config.reorg_depth;
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(data_dir.clone());
         node_config = node_config
@@ -295,6 +306,7 @@ impl InProcessClient {
             metrics_addr,
             chain_spec,
             _node_exit_future: node_exit_future,
+            canonical_state: Box::new(node_handle.provider.clone()),
             _node: Box::new(node_handle),
             _runtime: runtime,
             data_dir,
@@ -355,6 +367,12 @@ impl InProcessClient {
         &self.data_dir
     }
 
+    /// Subscribes to the node's canonical chain updates, sent before the engine API call that
+    /// caused them returns.
+    pub fn subscribe_canonical_state(&self) -> CanonStateNotifications<BasePrimitives> {
+        self.canonical_state.subscribe_to_canonical_state()
+    }
+
     /// Requests graceful node shutdown before releasing the private runtime.
     pub async fn shutdown(self) -> Result<()> {
         let shutdown = self
@@ -368,6 +386,7 @@ impl InProcessClient {
                 warn!(error = %error, "forcing client runtime shutdown after graceful timeout");
             }
         }
+        drop(self.canonical_state);
         drop(self._node);
         let runtime = self._runtime;
         tokio::task::spawn_blocking(move || drop(runtime))

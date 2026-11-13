@@ -147,6 +147,8 @@ impl SnapshotL2Stack {
                 block_interval.snapshot_persistence_backpressure_threshold(),
             ),
             state_root_task_compare_updates: false,
+            reorg_frequency: None,
+            reorg_depth: None,
             tx_forwarding_config: None,
             upgrade_signal: None,
             extra_extensions: Vec::new(),
