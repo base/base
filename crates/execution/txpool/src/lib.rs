@@ -58,7 +58,10 @@ pub use predicate_index::{
 };
 
 mod dormancy;
-pub use dormancy::{BuildParks, DormancyBuild, ValidityDormancyMode};
+pub use dormancy::{
+    BuildParks, DORMANCY_CLASSIFICATION_BUDGET, DORMANCY_CLASSIFICATION_CHUNK,
+    DORMANCY_FENCE_CAPACITY, DormancyBuild, ValidityDormancyMode,
+};
 
 mod block_expiry;
 pub use block_expiry::BlockExpiryIndex;

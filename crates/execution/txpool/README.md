@@ -213,6 +213,21 @@ rolled out.
 - **Park.** A transaction still parked on a failed predicate when the owning build stops
   selecting becomes dormant when the build seals, under that predicate, and the sealed block
   becomes the tip.
+- **Classify on admission.** So that no build pays for a newly admitted transaction the tip cannot
+  run, a nonce-free transaction or anchored lane root admitted while the index has a tip queues
+  for classification; nothing queues without a tip, and a transaction leaving the pool leaves the
+  queue. When canonical pool maintenance reaches the tip's block and no pass is running, it takes
+  at most `DORMANCY_CLASSIFICATION_BUDGET` queued transactions, leaving the rest for a later pass,
+  `DORMANCY_CLASSIFICATION_CHUNK` at a time, and evaluates their predicates for the block after
+  the tip against the tip's state on a blocking thread, outside the pool's locks; each chunk
+  installs before the next is taken, and the pass stops once the tip moves. Each one whose predicate fails, short of expiring, then becomes dormant as if the
+  owning build had parked it, unless the tip changed or was discarded since the pass started, or
+  the owning build wrote a location the predicate reads (touching an account counts as writing its
+  balance and nonce). Past `DORMANCY_FENCE_CAPACITY` written locations every location counts as
+  written, so the pass installs nothing. Every taken transaction leaves the queue, whether or not
+  it became dormant; a build evaluates the rest. A transaction classified while a build owns the
+  index may be in that build's snapshot, so that build's commits wake it to ready without offering
+  it a second time.
 - **Wake by state.** A commit in the owning build wakes the dormant transactions whose blocking
   location it wrote; each rejoins the running build at its priority, followed by the rest of its
   lane as the pool holds it then, including successors admitted or replaced after the build's
