@@ -250,7 +250,7 @@ where
         let sidecar = TwoDNoncePool::new(config.price_bumps)
             .with_limits(SidecarLimits::from_pool_config(config));
         let validity = Self::validity_pool(config, ValidityPoolLimits::inherit());
-        Self {
+        let pool = Self {
             protocol_pool,
             ordering,
             sidecar: LaneStore::new(sidecar),
@@ -258,13 +258,24 @@ where
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
-        }
+        };
+        pool.sync_base_fee();
+        pool
     }
 
     fn validity_pool(config: &PoolConfig, limits: ValidityPoolLimits) -> TwoDNoncePool<T> {
         TwoDNoncePool::new(config.price_bumps)
             .with_limits(limits.resolve(config))
             .with_protocol_nonce_lanes()
+    }
+
+    /// Gives the lane stores the protocol pool's pending base fee, which ranks
+    /// their eviction candidates.
+    fn sync_base_fee(&self) {
+        let base_fee = self.protocol_pool.block_info().pending_basefee;
+        for store in self.lane_stores() {
+            store.pool.write().set_base_fee(base_fee);
+        }
     }
 
     /// Configures EIP-8130 admission limits. Call before sharing the pool.
@@ -278,6 +289,7 @@ where
     #[must_use]
     pub fn with_validity_pool_limits(self, limits: ValidityPoolLimits) -> Self {
         *self.validity.pool.write() = Self::validity_pool(self.protocol_pool.config(), limits);
+        self.sync_base_fee();
         self
     }
 
@@ -578,10 +590,11 @@ where
                 Some(nonce) => nonce.max(cursor.state_nonce),
                 None => cursor.state_nonce,
             };
-            let target = LaneCursor {
+            let target = self.validity_cursor(
+                lane_id,
                 state_nonce,
-                next_nonce: self.standard_pending_end(lane_id, state_nonce),
-            };
+                self.standard_pending_end(lane_id, state_nonce),
+            );
             if target == cursor {
                 continue;
             }
@@ -1234,7 +1247,27 @@ where
         if let Some(cross) = cross {
             next_nonce = next_nonce.min(cross.transaction.nonce());
         }
-        LaneCursor { state_nonce, next_nonce: next_nonce.max(state_nonce) }
+        self.validity_cursor(lane_id, state_nonce, next_nonce.max(state_nonce))
+    }
+
+    /// A validity lane's cursor at `state_nonce` behind the standard store's
+    /// run up to `next_nonce`, carrying that run's lowest fee cap so eviction
+    /// ranks the lane by what blocks it.
+    fn validity_cursor(&self, lane_id: LaneId, state_nonce: u64, next_nonce: u64) -> LaneCursor {
+        let run = state_nonce..next_nonce;
+        let run_fee_cap = if run.is_empty() {
+            None
+        } else if lane_id.1.is_zero() {
+            self.protocol_pool
+                .get_transactions_by_sender(lane_id.0)
+                .iter()
+                .filter(|transaction| run.contains(&transaction.nonce()))
+                .map(|transaction| transaction.max_fee_per_gas())
+                .min()
+        } else {
+            self.sidecar.pool.read().lane_lowest_fee_cap(&lane_id, run)
+        };
+        LaneCursor { state_nonce, next_nonce, run_fee_cap }
     }
 
     /// Undoes a lane insertion that a post-insert check rejected: removes the
@@ -2403,7 +2436,8 @@ where
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
-        self.protocol_pool.set_block_info(info)
+        self.protocol_pool.set_block_info(info);
+        self.sync_base_fee();
     }
 
     fn on_canonical_state_change(
@@ -2435,6 +2469,7 @@ where
             }
         }
         self.protocol_pool.on_canonical_state_change(update);
+        self.sync_base_fee();
         // `protocol_pool.on_canonical_state_change` has already advanced the
         // validator's head clock to this block.
         let now_ms = self.validator().validator().block_timestamp_ms();
@@ -3834,6 +3869,30 @@ mod tests {
         assert!(pool.get(&incumbent_hash).is_none());
         assert!(!pool.guard.read().contains(&incumbent_hash));
         assert!(matches!(incumbent_events.next().await, Some(TransactionEvent::Discarded)));
+    }
+
+    #[tokio::test]
+    async fn sidecar_lanes_below_the_pending_base_fee_rank_with_gapped_lanes() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let gapped_signer = signer();
+        let underpriced_signer = signer();
+        for signer in [&gapped_signer, &underpriced_signer] {
+            fund(&client, signer.address());
+        }
+        let gapped = self_paid_eoa_8130(&gapped_signer, U256::from(1), 1, 0, 1_000_000);
+        let gapped_hash = *gapped.hash();
+        pool.add_transaction(TransactionOrigin::External, gapped).await.unwrap();
+        pool.set_block_info(BlockInfo { pending_basefee: 3_000, ..pool.block_info() });
+
+        let underpriced = self_paid_eoa_8130(&underpriced_signer, U256::from(1), 0, 0, 2_000);
+        let error = pool
+            .add_transaction(TransactionOrigin::External, underpriced)
+            .await
+            .expect_err("a lane below the pending base fee cannot push out a gapped lane");
+        assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
+        assert!(pool.get(&gapped_hash).is_some());
     }
 
     #[tokio::test]
@@ -5709,12 +5768,17 @@ mod tests {
         let (pool, client) = build_integration_pool();
         let signer = funded_signer(&client);
         let standard0 = add(&pool, signed_1559(&signer, 0)).await;
-        let standard1 = add(&pool, signed_1559(&signer, 1)).await;
+        let standard1 = add(&pool, signed_1559_with_fees(&signer, 1, 2_000, 0)).await;
         let validity2 = add(&pool, validity_1559(&signer, 2, 1_000)).await;
         let validity3 = add(&pool, validity_1559(&signer, 3, 1_000)).await;
 
         assert_store(&pool, validity2, PoolStore::Validity);
         assert!(is_pending(&pool, validity2) && is_pending(&pool, validity3));
+        assert_eq!(
+            pool.validity.pool.read().lane_cursor(&(signer.address(), U256::ZERO)),
+            Some(LaneCursor { state_nonce: 0, next_nonce: 2, run_fee_cap: Some(1_000) }),
+            "the lane carries the lowest fee cap of the standard run in front of it"
+        );
         assert_eq!(best_hashes(&pool), vec![standard0, standard1, validity2, validity3]);
         assert_eq!(
             pool.get_highest_consecutive_transaction_by_sender(signer.address(), 0)
@@ -5994,7 +6058,7 @@ mod tests {
         assert!(is_pending(&pool, validity1));
         assert_eq!(
             pool.validity.pool.read().lane_cursor(&lane),
-            Some(LaneCursor { state_nonce: 0, next_nonce: 1 })
+            Some(LaneCursor { state_nonce: 0, next_nonce: 1, run_fee_cap: Some(1_000) })
         );
 
         // A sidecar successor behind the validity transaction is gapped.
@@ -6283,6 +6347,25 @@ mod tests {
         assert!(is_pending(&pool, head));
         assert_eq!(pool.validity_pool_occupancy().0, 3);
         assert_eq!(pool.pool_size().pending, 3);
+    }
+
+    #[tokio::test]
+    async fn validity_lanes_behind_an_unexecutable_sidecar_head_are_evicted_first() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_txs(2));
+        let attacker = funded_signer(&client);
+        let channel = U256::from(1);
+        let head = add(&pool, self_paid_eoa_8130(&attacker, channel, 0, 0, 7)).await;
+        let spam1 = add(&pool, validity_8130(&attacker, channel, 1, 1_000_000)).await;
+        let spam2 = add(&pool, validity_8130(&attacker, channel, 2, 1_000_000)).await;
+        assert!(is_pending(&pool, spam2), "the sidecar head makes the lane executable");
+
+        let honest = add(&pool, validity_8130(&funded_signer(&client), channel, 0, 1_000)).await;
+
+        assert_store(&pool, honest, PoolStore::Validity);
+        assert_gone(&pool, spam2);
+        assert_store(&pool, spam1, PoolStore::Validity);
+        assert_store(&pool, head, PoolStore::Sidecar);
     }
 
     #[tokio::test]
