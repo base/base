@@ -27,6 +27,7 @@ has the flag:
 | `--rpc.addr`, `--rpc.port`, `--rpc.*` (consensus) | `--consensus.rpc.addr`, `--consensus.rpc.port`, `--consensus.rpc.*` |
 | `--p2p.sequencer.*`, `--p2p.signer.*`, `--conductor.*` | `--sequencer.*`, `--sequencer.signer.*`, `--sequencer.conductor.*` |
 | `--rollup.txpool-*`, `--rollup.mempool-*`        | `--txpool.*`                                         |
+| `--rollup.validity-pool-*`                       | `--txpool.validity-pool-*`                           |
 | `--enable-metering`, `--enable-shadow-indexer`, `--enable-tx-forwarding` | `--metering.enabled`, `--shadow-indexer.enabled`, `--tx-forwarding.enabled` |
 | `--builder-rpc-urls`, `--rollup.payer`, `--rollup.payer-enabled` | `--tx-forwarding.builder-urls`, `--payer.url`, `--payer.enabled` |
 | `--validity-*`, `--execution-chain`              | `--validity.*`, `--execution.chain`                  |

@@ -1,6 +1,6 @@
 //! Curated flag surface for the integrated `base` node commands.
 
-use std::ffi::OsString;
+use std::{ffi::OsString, iter::Peekable};
 
 use clap::{Arg, ArgAction, ArgMatches, Command, error::ErrorKind, parser::ValueSource};
 use tracing::warn;
@@ -41,6 +41,7 @@ impl CliSurface {
         ("discovery.", "execution.p2p.discovery."),
         ("rollup.txpool-", "txpool."),
         ("rollup.mempool-", "txpool."),
+        ("rollup.validity-pool-", "txpool.validity-pool-"),
         ("validity-", "validity."),
     ];
 
@@ -210,6 +211,9 @@ impl CliSurface {
         "txpool.allowlisted-payers",
         "txpool.allowlisted-payer-limit",
         "txpool.trusted-delegation-targets",
+        "txpool.validity-pool-max-count",
+        "txpool.validity-pool-max-size",
+        "txpool.validity-pool-max-account-slots",
         "rpc.gascap",
         "rpc.txfeecap",
         "rpc.eth-proof-window",
@@ -220,6 +224,11 @@ impl CliSurface {
         "execution.p2p.discovery.v4",
         "consensus.p2p.bootnodes-file",
         "consensus.p2p.scoring",
+        "consensus.p2p.priv.raw",
+        "consensus.p2p.advertise.tcp",
+        "consensus.p2p.advertise.udp",
+        "checkpoint.path",
+        "safedb.path",
         "upgrade-signal.contract",
         "upgrade-signal.mode",
         "upgrade-signal.l1-block-tag",
@@ -241,6 +250,7 @@ impl CliSurface {
     /// Advanced flags supported only on `base rpc`.
     pub(crate) const RPC_ADVANCED_FLAGS: &[&str] = &[
         "rpc.forwarding-endpoint",
+        "min-suggested-priority-fee",
         "tx-forwarding.enabled",
         "tx-forwarding.builder-urls",
         "payer.enabled",
@@ -587,16 +597,34 @@ impl CliSurface {
         command: &Command,
         args: Vec<OsString>,
     ) -> (Vec<OsString>, Vec<IgnoredFlag>) {
-        // ponytail: the subcommand is the first token naming a curated command, so a root flag
-        // value spelled `rpc` or `sequencer` would be misread; clustered or attached short flags
-        // (`-ab`, `-a1`) reach clap unchanged. Pre-parse with clap if either ever matters.
-        let position = args
-            .iter()
-            .skip(1)
-            .position(|arg| Self::CURATED_COMMANDS.iter().any(|name| arg == name))
-            .map(|index| index + 1);
-        let Some((position, name)) =
-            position.and_then(|position| Some((position, args[position].to_str()?)))
+        // ponytail: clustered or attached short flags (`-ab`, `-a1`) reach clap unchanged, so a
+        // root flag spelled that way could hide the subcommand. Pre-parse with clap if it matters.
+        let mut position = None;
+        let mut index = 1;
+        let mut tokens = args[1..].iter().peekable();
+        while let Some(token) = tokens.next() {
+            let text = token.to_string_lossy();
+            if text == "--" {
+                break;
+            }
+            if !text.starts_with('-') {
+                position = Some(index);
+                break;
+            }
+            index += 1;
+            let root_arg = command.get_arguments().find(|arg| {
+                Self::names("base", arg, &text)
+                    || Self::ROOT_RENAMES.iter().any(|(old, new)| {
+                        arg.get_long() == Some(old) && text.strip_prefix("--") == Some(new)
+                    })
+            });
+            if let Some(arg) = root_arg {
+                index += Self::skip_values(arg, &mut tokens);
+            }
+        }
+        let Some((position, name)) = position
+            .and_then(|position| Some((position, args[position].to_str()?)))
+            .filter(|(_, name)| Self::CURATED_COMMANDS.contains(name))
         else {
             return (args, Vec::new());
         };
@@ -638,21 +666,33 @@ impl CliSurface {
                 continue;
             };
             ignored.push(IgnoredFlag { long: long.clone(), env: None });
-            if inline_value || !arg.get_action().takes_values() {
-                continue;
-            }
-            let range = arg.get_num_args().unwrap_or_else(|| 1.into());
-            let mut taken = 0;
-            while taken < range.max_values()
-                && rest.peek().is_some_and(|next| {
-                    taken < range.min_values() || !next.to_string_lossy().starts_with('-')
-                })
-            {
-                rest.next();
-                taken += 1;
+            if !inline_value {
+                Self::skip_values(arg, &mut rest);
             }
         }
         (kept, ignored)
+    }
+
+    /// Advances `rest` past the values that `arg` takes after its flag token, and returns how
+    /// many tokens it skipped.
+    pub(crate) fn skip_values<'a>(
+        arg: &Arg,
+        rest: &mut Peekable<impl Iterator<Item = &'a OsString>>,
+    ) -> usize {
+        if !arg.get_action().takes_values() || arg.is_require_equals_set() {
+            return 0;
+        }
+        let range = arg.get_num_args().unwrap_or_else(|| 1.into());
+        let mut taken = 0;
+        while taken < range.max_values()
+            && rest.peek().is_some_and(|next| {
+                taken < range.min_values() || !next.to_string_lossy().starts_with('-')
+            })
+        {
+            rest.next();
+            taken += 1;
+        }
+        taken
     }
 
     /// Rejects node command lines that pass `--chain` both before and after the subcommand.
@@ -849,6 +889,36 @@ mod tests {
     }
 
     #[test]
+    fn curates_only_the_parsed_subcommand() {
+        let consensus: Vec<OsString> = [
+            "base",
+            "consensus",
+            "--mode",
+            "sequencer",
+            "--l2-engine-jwt-secret",
+            "/jwt.hex",
+            "--checkpoint.path",
+            "/data/checkpoint",
+        ]
+        .map(OsString::from)
+        .into();
+        let (kept, dropped) = CliSurface::strip_unsupported(&BaseCli::command(), consensus.clone());
+        assert_eq!(kept, consensus);
+        assert!(dropped.is_empty());
+
+        let cli = parse(&[
+            "base",
+            "--logs.file.directory",
+            "rpc",
+            "rpc",
+            "--engine.persistence-threshold",
+            "4",
+        ])
+        .unwrap();
+        assert_eq!(ignored(&cli), ["engine.persistence-threshold"]);
+    }
+
+    #[test]
     fn accepts_flags_operators_set_through_env() {
         assert!(parse(&["base", "rpc", "--l1.trust-rpc"]).unwrap().ignored.is_empty());
         let cli = parse(&[
@@ -883,6 +953,8 @@ mod tests {
             "--rollup.mempool-payer-limit",
             "8",
             "--sequencer.isolated",
+            "--checkpoint.path",
+            "/data/checkpoint",
         ])
         .unwrap();
         assert!(cli.ignored.is_empty(), "{:?}", cli.ignored);
@@ -890,6 +962,7 @@ mod tests {
             panic!("expected sequencer command");
         };
         assert!(sequencer.consensus.sequencer_flags.isolated);
+        assert_eq!(sequencer.consensus.checkpoint_path, Some(PathBuf::from("/data/checkpoint")));
         assert_eq!(sequencer.builder.max_uncompressed_block_size, Some(1000));
         assert_eq!(sequencer.builder.predicate_eval_hard_cutoff_ms, 25);
         assert_eq!(sequencer.builder.rollup_args.mempool_sender_limit, 7);
