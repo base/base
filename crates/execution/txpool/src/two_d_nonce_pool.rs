@@ -486,6 +486,9 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     eviction_order: BTreeSet<EvictionKey>,
     /// The key each lane's tail currently holds in `eviction_order`.
     lane_candidates: HashMap<LaneId, EvictionKey>,
+    /// The key each nonce-free transaction, by replay id, currently holds in
+    /// `eviction_order`.
+    nonce_free_candidates: B256Map<EvictionKey>,
     /// The pending block's base fee, below which a candidate ranks as
     /// unexecutable. See [`Self::set_base_fee`].
     base_fee: u64,
@@ -511,6 +514,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             protocol_nonce_lanes: false,
             eviction_order: BTreeSet::new(),
             lane_candidates: HashMap::default(),
+            nonce_free_candidates: B256Map::default(),
             base_fee: 0,
             ahead_of_state: HashMap::default(),
             shared_lanes: HashSet::default(),
@@ -633,10 +637,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
     }
 
-    fn nonce_free_eviction_key(&self, transaction: &ValidPoolTransaction<T>) -> EvictionKey {
-        self.eviction_key(transaction, transaction.max_fee_per_gas(), true)
-    }
-
     /// Sets the pending block's base fee and re-ranks the candidates whose fee
     /// cap lies between the previous base fee and this one, the only ones it
     /// can move between executable and unexecutable.
@@ -653,14 +653,26 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.refresh_lane_indexes(lane_id);
         }
         let nonce_free: Vec<_> = self
-            .nonce_free
-            .values()
-            .filter(|transaction| crossed.contains(&transaction.max_fee_per_gas()))
-            .map(|transaction| self.nonce_free_eviction_key(transaction))
+            .nonce_free_candidates
+            .iter()
+            .filter(|(_, key)| crossed.contains(&key.max_fee_per_gas))
+            .map(|(replay_id, _)| *replay_id)
             .collect();
-        for key in nonce_free {
-            self.eviction_order.remove(&EvictionKey { executable: !key.executable, ..key });
+        for replay_id in nonce_free {
+            self.refresh_nonce_free_candidate(replay_id);
+        }
+    }
+
+    /// Re-ranks the nonce-free transaction stored under `replay_id` after it
+    /// was inserted, replaced or removed, or the base fee moved.
+    fn refresh_nonce_free_candidate(&mut self, replay_id: B256) {
+        if let Some(previous) = self.nonce_free_candidates.remove(&replay_id) {
+            self.eviction_order.remove(&previous);
+        }
+        if let Some(transaction) = self.nonce_free.get(&replay_id) {
+            let key = self.eviction_key(transaction, transaction.max_fee_per_gas(), true);
             self.eviction_order.insert(key);
+            self.nonce_free_candidates.insert(replay_id, key);
         }
     }
 
@@ -907,11 +919,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             if let Some(existing) = &replaced {
                 self.hashes.remove(existing.hash());
                 self.usage.remove(existing);
-                self.eviction_order.remove(&self.nonce_free_eviction_key(existing));
             }
             self.nonce_free.insert(replay_id, Arc::clone(&transaction));
             self.usage.add(&transaction);
-            self.eviction_order.insert(self.nonce_free_eviction_key(&transaction));
+            self.refresh_nonce_free_candidate(replay_id);
             self.hashes.insert(hash, Arc::clone(&transaction));
             let sender = transaction.sender();
             self.refresh_tip_backing(sender);
@@ -1424,7 +1435,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             let transaction = self.nonce_free.remove(&replay_id)?;
             self.hashes.remove(&hash);
             self.usage.remove(&transaction);
-            self.eviction_order.remove(&self.nonce_free_eviction_key(&transaction));
+            self.refresh_nonce_free_candidate(replay_id);
             self.refresh_tip_backing(transaction.sender());
             return Some(transaction);
         }
@@ -2849,6 +2860,26 @@ mod tests {
         assert_eq!(pool.remove_transactions(&[removed_hash]).len(), 1);
 
         assert_eq!(evicted_hashes(&mut pool), vec![cheapest_hash, replacement_hash, richest_hash]);
+    }
+
+    #[test]
+    fn nonce_free_replacement_after_a_base_fee_change_leaves_no_stale_candidate() {
+        let mut pool = capped_pool(0);
+        let signer = signer();
+        let replaced = valid_pool_transaction(signed_nonce_free_tx(&signer, 1, 0, 600));
+        let underpriced = valid_pool_transaction(signed_nonce_free_tx(&signer, 2, 0, 800));
+        let underpriced_hash = *underpriced.hash();
+        pool.insert_validated(replaced, 0).unwrap();
+        pool.insert_validated(underpriced, 0).unwrap();
+
+        // The replaced transaction drops below the base fee before it is replaced.
+        pool.set_base_fee(1_000);
+        let replacement = valid_pool_transaction(signed_nonce_free_tx(&signer, 1, 0, 5_000));
+        let replacement_hash = *replacement.hash();
+        pool.insert_validated(replacement, 0).unwrap();
+
+        assert_eq!(evicted_hashes(&mut pool), vec![underpriced_hash, replacement_hash]);
+        assert!(pool.eviction_order.is_empty() && pool.nonce_free_candidates.is_empty());
     }
 
     fn sponsored_by(
