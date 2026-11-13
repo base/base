@@ -1,21 +1,19 @@
 //! Result tracking for submitted transactions and inclusion observations.
 
 use std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
-    sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    collections::BTreeSet,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, TxHash};
-use parking_lot::RwLock;
+use alloy_primitives::{
+    Address, TxHash,
+    map::{AddressMap, B256Map, B256Set},
+};
 
 use super::SubmitCohort;
 use crate::metrics::TransactionMetrics;
 
-/// Maximum terminal batch timestamps retained after refill timeouts.
-const MAX_COMPLETED_BATCH_CACHE_SIZE: usize = 4_096;
-
-/// A transaction accepted by a submission RPC.
+/// A transaction entering submission.
 #[derive(Debug, Clone, Copy)]
 pub struct SentTransaction {
     /// Transaction hash.
@@ -71,9 +69,8 @@ pub struct MeasurementWindow {
     pub block_count: u64,
 }
 
-/// Canonical receipt data for a transaction, fetched in a single batch pass at the
-/// end of the load test (not during the run). Used to backfill gas, effective gas
-/// price, and revert status.
+/// Canonical receipt data for a transaction. Used to backfill gas, effective gas price, and
+/// revert status, and sampled during the run for gas calibration.
 #[derive(Debug, Clone, Copy)]
 pub struct BlockReceipt {
     /// Transaction hash.
@@ -88,39 +85,51 @@ pub struct BlockReceipt {
     pub success: bool,
 }
 
-/// Tracks submitted transactions and turns inclusion observations into metrics.
-#[derive(Debug, Clone)]
-pub struct ResultsTracker {
-    inner: Arc<RwLock<ResultsTrackerInner>>,
+/// Lifecycle of the measured window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Measurement {
+    /// Before measurement: landings feed only the live display.
+    Warmup,
+    /// Measured submission is running. `end_block` is set for block-count runs.
+    Measuring {
+        /// Exclusive block number immediately before measured submission started.
+        start_block: u64,
+        /// Inclusive canonical block that ends measurement.
+        end_block: Option<u64>,
+    },
+    /// The configured end block has been observed.
+    Finished {
+        /// Exclusive block number immediately before measured submission started.
+        start_block: u64,
+        /// Inclusive canonical block that ended measurement.
+        end_block: u64,
+    },
 }
 
+/// Tracks submitted transactions and turns inclusion observations into metrics.
+///
+/// Owned exclusively by the run coordinator; every other task reports through its inbox.
 #[derive(Debug)]
-struct ResultsTrackerInner {
-    pending: HashMap<TxHash, PendingTransaction>,
-    unreported_confirmations: VecDeque<TransactionMetrics>,
-    in_flight_per_sender: HashMap<Address, u64>,
+pub struct ResultsTracker {
+    pending: B256Map<PendingTransaction>,
+    unreported_confirmations: Vec<TransactionMetrics>,
+    sender_indices: AddressMap<usize>,
+    in_flight: Vec<u64>,
     total_in_flight: u64,
     unconfirmed_gas: u128,
     confirmed_gas: u128,
     /// Block numbers in which at least one of our transactions landed, used to scope
     /// the end-of-run `eth_getBlockReceipts` pass to only relevant blocks.
     landed_blocks: BTreeSet<u64>,
-    measurement_started: bool,
-    measurement_start_block: Option<u64>,
-    measurement_end_block: Option<u64>,
-    measurement_target_count: Option<u64>,
-    measurement_finished: bool,
-    measured_landed: HashSet<TxHash>,
-    completed_batches: HashMap<u64, Instant>,
-    pending_refills: VecDeque<PendingRefill>,
-    completed_refill_lags: VecDeque<Duration>,
+    measurement: Measurement,
+    measured_landed: B256Set,
     observed_gas_total: u128,
     observed_gas_count: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct PendingTransaction {
-    from: Address,
+    sender: usize,
     submit_time: Instant,
     /// Wall-clock time a submission RPC last accepted the transaction (registration time until
     /// then), comparable with block timestamps.
@@ -132,120 +141,95 @@ struct PendingTransaction {
     cohort: SubmitCohort,
 }
 
-#[derive(Debug)]
-struct PendingRefill {
-    batch_ids: Vec<u64>,
-    started_at: Instant,
-}
-
-impl ResultsTrackerInner {
-    fn resolve_pending_refills(&mut self) {
-        for index in (0..self.pending_refills.len()).rev() {
-            let refill = &self.pending_refills[index];
-            if refill.batch_ids.iter().any(|id| !self.completed_batches.contains_key(id)) {
-                continue;
-            }
-
-            let latest = refill
-                .batch_ids
-                .iter()
-                .filter_map(|id| self.completed_batches.remove(id))
-                .max()
-                .expect("pending refill contains at least one batch");
-            let refill = self.pending_refills.swap_remove_back(index).expect("index is in bounds");
-            self.completed_refill_lags
-                .push_back(latest.saturating_duration_since(refill.started_at));
-        }
-    }
-}
-
 impl ResultsTracker {
-    /// Creates a new tracker for the given sender addresses.
+    /// Creates a tracker for the given senders, indexed by their position.
     pub fn new(sender_addresses: &[Address]) -> Self {
-        let in_flight_per_sender =
-            sender_addresses.iter().copied().map(|address| (address, 0)).collect();
         Self {
-            inner: Arc::new(RwLock::new(ResultsTrackerInner {
-                pending: HashMap::new(),
-                unreported_confirmations: VecDeque::new(),
-                in_flight_per_sender,
-                total_in_flight: 0,
-                unconfirmed_gas: 0,
-                confirmed_gas: 0,
-                landed_blocks: BTreeSet::new(),
-                measurement_started: false,
-                measurement_start_block: None,
-                measurement_end_block: None,
-                measurement_target_count: None,
-                measurement_finished: false,
-                measured_landed: HashSet::new(),
-                completed_batches: HashMap::new(),
-                pending_refills: VecDeque::new(),
-                completed_refill_lags: VecDeque::new(),
-                observed_gas_total: 0,
-                observed_gas_count: 0,
-            })),
+            pending: B256Map::default(),
+            unreported_confirmations: Vec::new(),
+            sender_indices: sender_addresses
+                .iter()
+                .enumerate()
+                .map(|(index, address)| (*address, index))
+                .collect(),
+            in_flight: vec![0; sender_addresses.len()],
+            total_in_flight: 0,
+            unconfirmed_gas: 0,
+            confirmed_gas: 0,
+            landed_blocks: BTreeSet::new(),
+            measurement: Measurement::Warmup,
+            measured_landed: B256Set::default(),
+            observed_gas_total: 0,
+            observed_gas_count: 0,
         }
     }
 
-    /// Restamps pending transactions a submission RPC accepted with the start of that attempt,
-    /// so a retried batch is measured from the send that succeeded rather than its first one.
-    pub fn accepted_transactions(&self, tx_hashes: &[TxHash], sent_at: SystemTime) {
-        let mut inner = self.inner.write();
-        for tx_hash in tx_hashes {
-            if let Some(pending) = inner.pending.get_mut(tx_hash) {
-                pending.submitted_at = sent_at;
-            }
-        }
+    /// Returns the index of a tracked sender.
+    pub fn sender_index(&self, address: &Address) -> Option<usize> {
+        self.sender_indices.get(address).copied()
     }
 
-    /// Records signed transactions entering submission.
-    pub fn sent_transactions(&self, transactions: Vec<SentTransaction>) {
-        let submit_time = Instant::now();
-        let submitted_at = SystemTime::now();
-        let mut inner = self.inner.write();
-
+    /// Records transactions a sender worker picked up at `submit_time`.
+    pub fn sent_transactions(
+        &mut self,
+        transactions: Vec<SentTransaction>,
+        submit_time: Instant,
+        submitted_at: SystemTime,
+    ) {
+        let measuring = self.measurement != Measurement::Warmup;
         for transaction in transactions {
-            if inner.pending.contains_key(&transaction.tx_hash) {
+            let Some(sender) = self.sender_index(&transaction.from) else {
                 continue;
-            }
-
-            let measured = transaction.measured && inner.measurement_started;
-            inner.pending.insert(
-                transaction.tx_hash,
-                PendingTransaction {
-                    from: transaction.from,
-                    submit_time,
-                    submitted_at,
-                    measured,
-                    gas_limit: transaction.gas_limit,
-                    priority_fee: transaction.priority_fee,
-                    estimated_gas: transaction.estimated_gas,
-                    cohort: transaction.cohort,
-                },
-            );
-            inner
-                .in_flight_per_sender
-                .entry(transaction.from)
-                .and_modify(|count| *count = count.saturating_add(1))
-                .or_insert(1);
-            inner.total_in_flight = inner.total_in_flight.saturating_add(1);
-            inner.unconfirmed_gas =
-                inner.unconfirmed_gas.saturating_add(u128::from(transaction.estimated_gas));
+            };
+            let std::collections::hash_map::Entry::Vacant(entry) =
+                self.pending.entry(transaction.tx_hash)
+            else {
+                continue;
+            };
+            entry.insert(PendingTransaction {
+                sender,
+                submit_time,
+                submitted_at,
+                measured: transaction.measured && measuring,
+                gas_limit: transaction.gas_limit,
+                priority_fee: transaction.priority_fee,
+                estimated_gas: transaction.estimated_gas,
+                cohort: transaction.cohort,
+            });
+            self.in_flight[sender] = self.in_flight[sender].saturating_add(1);
+            self.total_in_flight = self.total_in_flight.saturating_add(1);
+            self.unconfirmed_gas =
+                self.unconfirmed_gas.saturating_add(u128::from(transaction.estimated_gas));
         }
     }
 
-    /// Removes a transaction that the submission RPC explicitly rejected.
-    pub fn discard_transaction(&self, tx_hash: TxHash) -> bool {
-        let mut inner = self.inner.write();
-        let Some(pending) = inner.pending.remove(&tx_hash) else {
+    /// Restamps a pending transaction with the start of the attempt that was accepted, so a
+    /// retried batch is measured from the send that succeeded rather than its first one.
+    pub fn accepted_transaction(&mut self, tx_hash: &TxHash, sent_at: SystemTime) {
+        if let Some(pending) = self.pending.get_mut(tx_hash) {
+            pending.submitted_at = sent_at;
+        }
+    }
+
+    /// Tracks a pending transaction under the hash the node reported for it, restamping it with
+    /// the start of the accepting attempt.
+    pub fn rehash_transaction(&mut self, local: &TxHash, server: TxHash, sent_at: SystemTime) {
+        if let Some(mut pending) = self.pending.remove(local) {
+            pending.submitted_at = sent_at;
+            self.pending.insert(server, pending);
+        }
+    }
+
+    /// Removes a transaction the node definitively does not hold.
+    pub fn discard_transaction(&mut self, tx_hash: &TxHash) -> bool {
+        let Some(pending) = self.pending.remove(tx_hash) else {
             return false;
         };
-        inner.decrement_in_flight(&pending.from, pending.estimated_gas);
+        self.release(&pending);
         true
     }
 
-    /// Records the transaction hashes observed in a newly polled canonical block.
+    /// Records the transaction hashes observed in a canonical block.
     ///
     /// This is the in-run landing detector: the first time one of our pending
     /// transactions is seen in a block's transaction list, its landing latency
@@ -256,15 +240,14 @@ impl ResultsTracker {
     ///
     /// Returns the count and estimated gas of matching pending submissions.
     pub fn on_new_block_hashes(
-        &self,
+        &mut self,
         block: BlockObservation,
-        tx_hashes: Vec<TxHash>,
+        tx_hashes: &[TxHash],
     ) -> BlockMatch {
-        let mut inner = self.inner.write();
-        inner.observe_measurement_block(block.number);
+        self.observe_measurement_block(block.number);
         let mut block_match = BlockMatch::default();
         for tx_hash in tx_hashes {
-            if let Some(estimated_gas) = inner.land_if_pending(tx_hash, &block) {
+            if let Some(estimated_gas) = self.land_if_pending(*tx_hash, &block) {
                 block_match.matched = block_match.matched.saturating_add(1);
                 block_match.included_gas =
                     block_match.included_gas.saturating_add(u128::from(estimated_gas));
@@ -273,68 +256,49 @@ impl ResultsTracker {
         block_match
     }
 
-    /// Expires submitted transactions that were not observed in a canonical block.
-    ///
-    /// Removes all pending entries older than `max_age` and releases their in-flight
-    /// slots. Returns the number of measured entries removed.
-    pub fn expire_pending(&self, max_age: Duration) -> u64 {
-        let now = Instant::now();
-        let mut inner = self.inner.write();
-        let expired: Vec<_> = inner
-            .pending
-            .iter()
-            .filter_map(|(tx_hash, pending)| {
-                (now.duration_since(pending.submit_time) > max_age).then_some(*tx_hash)
-            })
-            .collect();
-
-        let mut unconfirmed_count = 0u64;
-        for tx_hash in expired {
-            if let Some(pending) = inner.pending.remove(&tx_hash) {
-                inner.decrement_in_flight(&pending.from, pending.estimated_gas);
-                if pending.measured {
-                    unconfirmed_count += 1;
-                }
-            }
-        }
-
-        unconfirmed_count
+    /// Stops tracking every pending transaction, returning the measured count and gas removed.
+    pub fn drain_pending(&mut self) -> (u64, u128) {
+        let inventory = self.measured_unconfirmed_inventory();
+        self.pending.clear();
+        self.in_flight.fill(0);
+        self.total_in_flight = 0;
+        self.unconfirmed_gas = 0;
+        inventory
     }
 
     /// Drains confirmed metrics that have not yet been consumed by the runner.
-    pub fn drain_confirmed_metrics(&self) -> Vec<TransactionMetrics> {
-        let mut inner = self.inner.write();
-        inner.unreported_confirmations.drain(..).collect()
+    pub fn drain_confirmed_metrics(&mut self) -> std::vec::Drain<'_, TransactionMetrics> {
+        self.unreported_confirmations.drain(..)
     }
 
     /// Returns the current pending transaction count.
     pub fn pending_count(&self) -> usize {
-        self.inner.read().pending.len()
+        self.pending.len()
     }
 
-    /// Returns the in-flight count for a specific sender.
-    pub fn in_flight_for(&self, address: &Address) -> u64 {
-        self.inner.read().in_flight_per_sender.get(address).copied().unwrap_or(0)
+    /// Returns in-flight counts indexed by sender.
+    pub fn in_flight_by_sender(&self) -> &[u64] {
+        &self.in_flight
     }
 
     /// Returns the total in-flight count.
-    pub fn total_in_flight(&self) -> u64 {
-        self.inner.read().total_in_flight
+    pub const fn total_in_flight(&self) -> u64 {
+        self.total_in_flight
     }
 
     /// Returns estimated execution gas not yet observed in a canonical block.
-    pub fn unconfirmed_gas(&self) -> u128 {
-        self.inner.read().unconfirmed_gas
+    pub const fn unconfirmed_gas(&self) -> u128 {
+        self.unconfirmed_gas
     }
 
     /// Returns estimated measured gas observed since measurement began.
-    pub fn confirmed_gas(&self) -> u128 {
-        self.inner.read().confirmed_gas
+    pub const fn confirmed_gas(&self) -> u128 {
+        self.confirmed_gas
     }
 
     /// Returns measured transactions and gas still awaiting canonical inclusion.
     pub fn measured_unconfirmed_inventory(&self) -> (u64, u128) {
-        self.inner.read().pending.values().filter(|pending| pending.measured).fold(
+        self.pending.values().filter(|pending| pending.measured).fold(
             (0u64, 0u128),
             |(count, gas), pending| {
                 (count.saturating_add(1), gas.saturating_add(u128::from(pending.estimated_gas)))
@@ -342,94 +306,49 @@ impl ResultsTracker {
         )
     }
 
-    /// Records terminal completion of one submission batch.
-    pub fn record_batch_completed(&self, id: u64, completed_at: Instant) {
-        let mut inner = self.inner.write();
-        if inner.completed_batches.len() >= MAX_COMPLETED_BATCH_CACHE_SIZE {
-            let oldest_retained = id.saturating_sub((MAX_COMPLETED_BATCH_CACHE_SIZE / 2) as u64);
-            inner.completed_batches.retain(|batch_id, _| *batch_id >= oldest_retained);
-        }
-        inner.completed_batches.insert(id, completed_at);
-        inner.resolve_pending_refills();
-    }
-
-    /// Registers batches whose acknowledgement completed after the synchronous refill budget.
-    pub fn register_pending_refill(&self, batch_ids: Vec<u64>, started_at: Instant) {
-        if batch_ids.is_empty() {
-            return;
-        }
-        let mut inner = self.inner.write();
-        if inner.pending_refills.len() >= MAX_COMPLETED_BATCH_CACHE_SIZE {
-            inner.pending_refills.pop_front();
-        }
-        inner.pending_refills.push_back(PendingRefill { batch_ids, started_at });
-        inner.resolve_pending_refills();
-    }
-
-    /// Drains exact acknowledgement latencies for refills that completed asynchronously.
-    pub fn drain_completed_refill_lags(&self) -> Vec<Duration> {
-        self.inner.write().completed_refill_lags.drain(..).collect()
-    }
-
-    /// Removes completed entries for `batch_ids`, returning the latest completion time.
-    pub fn take_completed_batches(&self, batch_ids: &[u64]) -> Option<Instant> {
-        let mut inner = self.inner.write();
-        if batch_ids.iter().any(|id| !inner.completed_batches.contains_key(id)) {
-            return None;
-        }
-        let mut latest = None;
-        for id in batch_ids {
-            let completed_at = inner.completed_batches.remove(id).expect("presence checked above");
-            latest =
-                Some(latest.map_or(completed_at, |current: Instant| current.max(completed_at)));
-        }
-        latest
-    }
-
     /// Starts measurement. Transactions already accepted remain warmup transactions.
-    pub fn begin_measurement(&self, start_block: u64, measurement_blocks: Option<u64>) {
-        let mut inner = self.inner.write();
-        inner.measurement_started = true;
-        inner.measurement_start_block = Some(start_block);
-        inner.measurement_target_count = measurement_blocks;
-        inner.measurement_end_block =
-            measurement_blocks.map(|count| start_block.saturating_add(count));
-        inner.measurement_finished = false;
-        inner.unreported_confirmations.clear();
-        inner.landed_blocks.clear();
-        inner.measured_landed.clear();
-        inner.observed_gas_total = 0;
-        inner.observed_gas_count = 0;
-        inner.confirmed_gas = 0;
+    pub fn begin_measurement(&mut self, start_block: u64, measurement_blocks: Option<u64>) {
+        self.measurement = Measurement::Measuring {
+            start_block,
+            end_block: measurement_blocks.map(|count| start_block.saturating_add(count)),
+        };
+        self.unreported_confirmations.clear();
+        self.landed_blocks.clear();
+        self.measured_landed.clear();
+        self.observed_gas_total = 0;
+        self.observed_gas_count = 0;
+        self.confirmed_gas = 0;
     }
 
-    /// Returns whether this block contains a measured transaction awaiting canonical inclusion.
-    pub fn has_measured_pending(&self, tx_hashes: &[TxHash]) -> bool {
-        let inner = self.inner.read();
-        tx_hashes.iter().any(|hash| inner.pending.get(hash).is_some_and(|pending| pending.measured))
+    /// Returns the measurement lifecycle state.
+    pub const fn measurement(&self) -> Measurement {
+        self.measurement
+    }
+
+    /// Returns whether any measured transaction landed in `block_number`.
+    pub fn landed_in_block(&self, block_number: u64) -> bool {
+        self.landed_blocks.contains(&block_number)
     }
 
     /// Records canonical receipt gas for recently landed measured transactions.
-    pub fn observe_live_receipts(&self, receipts: &[BlockReceipt]) {
-        let mut inner = self.inner.write();
+    pub fn observe_live_receipts(&mut self, receipts: &[BlockReceipt]) {
         for receipt in receipts {
-            if inner.measured_landed.remove(&receipt.tx_hash) {
-                inner.observed_gas_total =
-                    inner.observed_gas_total.saturating_add(u128::from(receipt.gas_used));
-                inner.observed_gas_count = inner.observed_gas_count.saturating_add(1);
+            if self.measured_landed.remove(&receipt.tx_hash) {
+                self.observed_gas_total =
+                    self.observed_gas_total.saturating_add(u128::from(receipt.gas_used));
+                self.observed_gas_count = self.observed_gas_count.saturating_add(1);
             }
         }
     }
 
     /// Returns total canonical receipt gas and the count of measured transactions it covers.
-    pub fn observed_gas(&self) -> (u128, u64) {
-        let inner = self.inner.read();
-        (inner.observed_gas_total, inner.observed_gas_count)
+    pub const fn observed_gas(&self) -> (u128, u64) {
+        (self.observed_gas_total, self.observed_gas_count)
     }
 
     /// Returns the number of senders at or above the given in-flight limit.
     pub fn senders_at_limit(&self, limit: u64) -> usize {
-        self.inner.read().in_flight_per_sender.values().filter(|&&count| count >= limit).count()
+        self.in_flight.iter().filter(|&&count| count >= limit).count()
     }
 
     /// Returns the sorted set of block numbers in which our transactions landed.
@@ -437,35 +356,45 @@ impl ResultsTracker {
     /// Used to scope the end-of-run `eth_getBlockReceipts` pass to only the blocks
     /// that actually contained our transactions.
     pub fn landed_block_numbers(&self) -> Vec<u64> {
-        self.inner.read().landed_blocks.iter().copied().collect()
+        self.landed_blocks.iter().copied().collect()
     }
 
     /// Returns whether the configured measurement block target has been observed.
-    pub fn measurement_finished(&self) -> bool {
-        self.inner.read().measurement_finished
+    pub const fn measurement_finished(&self) -> bool {
+        matches!(self.measurement, Measurement::Finished { .. })
     }
 
     /// Records that a canonical head was observed, independently of transaction hash scanning.
-    pub fn observe_measurement_block(&self, block_number: u64) {
-        self.inner.write().observe_measurement_block(block_number);
+    pub const fn observe_measurement_block(&mut self, block_number: u64) {
+        if let Measurement::Measuring { start_block, end_block: Some(end_block) } = self.measurement
+            && block_number >= end_block
+        {
+            self.measurement = Measurement::Finished { start_block, end_block };
+        }
     }
 
     /// Returns the configured measurement window boundaries.
-    pub fn measurement_window(&self) -> MeasurementWindow {
-        let inner = self.inner.read();
-        let block_count = inner
-            .measurement_start_block
-            .zip(inner.measurement_end_block)
-            .map_or(0, |(start, end)| end.saturating_sub(start));
-        MeasurementWindow {
-            start_block: inner.measurement_start_block,
-            end_block: inner.measurement_end_block,
-            block_count,
+    pub const fn measurement_window(&self) -> MeasurementWindow {
+        match self.measurement {
+            Measurement::Warmup => {
+                MeasurementWindow { start_block: None, end_block: None, block_count: 0 }
+            }
+            Measurement::Measuring { start_block, end_block } => MeasurementWindow {
+                start_block: Some(start_block),
+                end_block,
+                block_count: match end_block {
+                    Some(end_block) => end_block.saturating_sub(start_block),
+                    None => 0,
+                },
+            },
+            Measurement::Finished { start_block, end_block } => MeasurementWindow {
+                start_block: Some(start_block),
+                end_block: Some(end_block),
+                block_count: end_block.saturating_sub(start_block),
+            },
         }
     }
-}
 
-impl ResultsTrackerInner {
     /// Milliseconds from a block's timestamp to a submission; negative when submitted before it.
     fn submit_offset_ms(submitted_at: SystemTime, block_timestamp_ms: u64) -> Option<i64> {
         let submitted_ms =
@@ -473,25 +402,23 @@ impl ResultsTrackerInner {
         Some(submitted_ms - i64::try_from(block_timestamp_ms).ok()?)
     }
 
-    /// Records the first observation of `tx_hash` in a polled block, emitting its
-    /// landing metrics. Idempotent: a tx is removed from `pending` on first landing,
-    /// so later blocks containing the same hash are ignored.
+    /// Records the first observation of `tx_hash` in a block, emitting its landing metrics.
+    /// Idempotent: a tx is removed from `pending` on first landing, so later blocks
+    /// containing the same hash are ignored.
     ///
     /// Returns the estimated gas when `tx_hash` was pending and is now settled.
     fn land_if_pending(&mut self, tx_hash: TxHash, block: &BlockObservation) -> Option<u64> {
         let pending = self.pending.remove(&tx_hash)?;
-
-        let block_latency = block.observed_at.checked_duration_since(pending.submit_time);
-        self.decrement_in_flight(&pending.from, pending.estimated_gas);
+        self.release(&pending);
 
         // Measured txs always emit metrics. Pre-measurement txs emit only before
         // begin_measurement so live TUI/headroom can see inclusions; after
         // begin_measurement they only release in-flight (already handled above).
-        let emit_metrics = pending.measured || !self.measurement_started;
-        if !emit_metrics {
+        if !pending.measured && self.measurement != Measurement::Warmup {
             return Some(pending.estimated_gas);
         }
 
+        let block_latency = block.observed_at.checked_duration_since(pending.submit_time);
         let mut metrics = TransactionMetrics::new(tx_hash, block_latency, 0, 0, Some(block.number));
         metrics.cohort = pending.cohort.to_metric_label();
         metrics.gas_limit = pending.gas_limit;
@@ -501,7 +428,7 @@ impl ResultsTrackerInner {
         metrics.submit_offset_ms = block
             .timestamp_ms
             .and_then(|timestamp_ms| Self::submit_offset_ms(pending.submitted_at, timestamp_ms));
-        self.unreported_confirmations.push_back(metrics);
+        self.unreported_confirmations.push(metrics);
 
         if pending.measured {
             self.landed_blocks.insert(block.number);
@@ -512,28 +439,18 @@ impl ResultsTrackerInner {
         Some(pending.estimated_gas)
     }
 
-    fn decrement_in_flight(&mut self, from: &Address, estimated_gas: u64) {
-        if let Some(count) = self.in_flight_per_sender.get_mut(from) {
-            *count = count.saturating_sub(1);
-        }
+    fn release(&mut self, pending: &PendingTransaction) {
+        self.in_flight[pending.sender] = self.in_flight[pending.sender].saturating_sub(1);
         self.total_in_flight = self.total_in_flight.saturating_sub(1);
-        self.unconfirmed_gas = self.unconfirmed_gas.saturating_sub(u128::from(estimated_gas));
-    }
-
-    const fn observe_measurement_block(&mut self, observed_block: u64) {
-        if !self.measurement_started || self.measurement_finished {
-            return;
-        }
-        if let Some(target_end_block) = self.measurement_end_block
-            && observed_block >= target_end_block
-        {
-            self.measurement_finished = true;
-        }
+        self.unconfirmed_gas =
+            self.unconfirmed_gas.saturating_sub(u128::from(pending.estimated_gas));
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     fn addr() -> Address {
@@ -556,23 +473,37 @@ mod tests {
         }
     }
 
+    fn send(tracker: &mut ResultsTracker, tx: SentTransaction) {
+        tracker.sent_transactions(vec![tx], Instant::now(), SystemTime::now());
+    }
+
     #[test]
     fn discard_pending_transaction_releases_in_flight_once() {
         let from = addr();
         let tx_hash = TxHash::repeat_byte(0xd0);
-        let tracker = ResultsTracker::new(&[from]);
+        let mut tracker = ResultsTracker::new(&[from]);
 
-        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+        send(&mut tracker, sent(tx_hash, from, true));
         assert_eq!(tracker.pending_count(), 1);
         assert_eq!(tracker.total_in_flight(), 1);
+        assert_eq!(tracker.in_flight_by_sender(), &[1]);
         assert_eq!(tracker.unconfirmed_gas(), 21_000);
 
-        assert!(tracker.discard_transaction(tx_hash));
+        assert!(tracker.discard_transaction(&tx_hash));
         assert_eq!(tracker.pending_count(), 0);
         assert_eq!(tracker.total_in_flight(), 0);
+        assert_eq!(tracker.in_flight_by_sender(), &[0]);
         assert_eq!(tracker.unconfirmed_gas(), 0);
 
-        assert!(!tracker.discard_transaction(tx_hash), "second discard must be idempotent");
+        assert!(!tracker.discard_transaction(&tx_hash), "second discard must be idempotent");
+        assert_eq!(tracker.total_in_flight(), 0);
+    }
+
+    #[test]
+    fn untracked_sender_is_ignored() {
+        let mut tracker = ResultsTracker::new(&[addr()]);
+        send(&mut tracker, sent(TxHash::repeat_byte(1), Address::with_last_byte(9), true));
+        assert_eq!(tracker.pending_count(), 0);
         assert_eq!(tracker.total_in_flight(), 0);
     }
 
@@ -580,41 +511,34 @@ mod tests {
     fn records_submission_offset_from_block_timestamp() {
         let from = addr();
         let tx_hash = TxHash::repeat_byte(1);
-        let tracker = ResultsTracker::new(&[from]);
+        let mut tracker = ResultsTracker::new(&[from]);
         tracker.begin_measurement(6, Some(1));
-        let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
-        let after = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        let submitted_at = UNIX_EPOCH + Duration::from_millis(4_000_000_000_000);
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)], Instant::now(), submitted_at);
 
-        let block_timestamp_ms = before + 150;
         let block = BlockObservation {
             number: 7,
             observed_at: Instant::now(),
-            timestamp_ms: Some(block_timestamp_ms),
+            timestamp_ms: Some(4_000_000_000_150),
             base_fee: 0,
         };
-        tracker.on_new_block_hashes(block, vec![tx_hash]);
+        tracker.on_new_block_hashes(block, &[tx_hash]);
 
-        let offset = tracker.drain_confirmed_metrics()[0].submit_offset_ms.unwrap();
-        let earliest = before as i64 - block_timestamp_ms as i64;
-        let latest = after as i64 - block_timestamp_ms as i64;
-        assert!(
-            (earliest..=latest).contains(&offset),
-            "offset {offset} outside {earliest}..={latest}"
-        );
+        let offset = tracker.drain_confirmed_metrics().next().unwrap().submit_offset_ms;
+        assert_eq!(offset, Some(-150));
     }
 
     #[test]
     fn acceptance_restamps_submission_time() {
         let from = addr();
         let tx_hash = TxHash::repeat_byte(1);
-        let tracker = ResultsTracker::new(&[from]);
+        let mut tracker = ResultsTracker::new(&[from]);
         tracker.begin_measurement(6, Some(1));
-        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+        send(&mut tracker, sent(tx_hash, from, true));
         // A retried send that succeeded 30 ms before the block timestamp, long after registration.
         let block_timestamp_ms = 4_000_000_000_000;
         let sent_at = UNIX_EPOCH + Duration::from_millis(block_timestamp_ms - 30);
-        tracker.accepted_transactions(&[tx_hash], sent_at);
+        tracker.accepted_transaction(&tx_hash, sent_at);
 
         let block = BlockObservation {
             number: 7,
@@ -622,24 +546,38 @@ mod tests {
             timestamp_ms: Some(block_timestamp_ms),
             base_fee: 0,
         };
-        tracker.on_new_block_hashes(block, vec![tx_hash]);
+        tracker.on_new_block_hashes(block, &[tx_hash]);
 
-        assert_eq!(tracker.drain_confirmed_metrics()[0].submit_offset_ms, Some(-30));
+        assert_eq!(tracker.drain_confirmed_metrics().next().unwrap().submit_offset_ms, Some(-30));
+    }
+
+    #[test]
+    fn rehashed_transaction_lands_under_server_hash() {
+        let from = addr();
+        let local = TxHash::repeat_byte(1);
+        let server = TxHash::repeat_byte(2);
+        let mut tracker = ResultsTracker::new(&[from]);
+        send(&mut tracker, sent(local, from, true));
+
+        tracker.rehash_transaction(&local, server, SystemTime::now());
+        assert_eq!(tracker.on_new_block_hashes(block_at(3, Instant::now()), &[local]).matched, 0);
+        assert_eq!(tracker.on_new_block_hashes(block_at(4, Instant::now()), &[server]).matched, 1);
+        assert_eq!(tracker.total_in_flight(), 0);
     }
 
     #[test]
     fn confirms_pending_transaction_from_block_hashes() {
         let from = addr();
         let tx_hash = TxHash::repeat_byte(1);
-        let tracker = ResultsTracker::new(&[from]);
+        let mut tracker = ResultsTracker::new(&[from]);
         tracker.begin_measurement(6, Some(1));
 
-        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+        send(&mut tracker, sent(tx_hash, from, true));
         assert_eq!(tracker.unconfirmed_gas(), 21_000);
         let observed_at = Instant::now() + Duration::from_millis(250);
-        tracker.on_new_block_hashes(block_at(7, observed_at), vec![tx_hash]);
+        tracker.on_new_block_hashes(block_at(7, observed_at), &[tx_hash]);
 
-        let metrics = tracker.drain_confirmed_metrics();
+        let metrics: Vec<_> = tracker.drain_confirmed_metrics().collect();
         assert_eq!(metrics.len(), 1, "landed tx should produce exactly one metric");
         assert_eq!(metrics[0].tx_hash, tx_hash);
         assert_eq!(metrics[0].block_number, Some(7), "block number from polled block");
@@ -666,84 +604,53 @@ mod tests {
     fn second_block_with_same_hash_is_ignored() {
         let from = addr();
         let tx_hash = TxHash::repeat_byte(7);
-        let tracker = ResultsTracker::new(&[from]);
+        let mut tracker = ResultsTracker::new(&[from]);
         tracker.begin_measurement(10, Some(2));
 
-        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+        send(&mut tracker, sent(tx_hash, from, true));
         let now = Instant::now();
-        tracker.on_new_block_hashes(block_at(11, now + Duration::from_millis(100)), vec![tx_hash]);
-        tracker.on_new_block_hashes(block_at(12, now + Duration::from_millis(300)), vec![tx_hash]);
+        tracker.on_new_block_hashes(block_at(11, now + Duration::from_millis(100)), &[tx_hash]);
+        let duplicate =
+            tracker.on_new_block_hashes(block_at(12, now + Duration::from_millis(300)), &[tx_hash]);
 
-        let metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(duplicate, BlockMatch::default(), "settled tx must not match again");
+        let metrics: Vec<_> = tracker.drain_confirmed_metrics().collect();
         assert_eq!(metrics.len(), 1, "tx should land exactly once despite reappearing");
         assert_eq!(metrics[0].block_number, Some(11), "first-seen block wins");
         assert_eq!(tracker.landed_block_numbers(), vec![11], "only first block tracked");
-    }
-
-    #[test]
-    fn second_block_with_same_hash_does_not_double_release() {
-        let from = addr();
-        let tx_hash = TxHash::repeat_byte(5);
-        let tracker = ResultsTracker::new(&[from]);
-
-        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
-        assert_eq!(tracker.total_in_flight(), 1);
-
-        let first = tracker.on_new_block_hashes(block_at(10, Instant::now()), vec![tx_hash]);
-        assert_eq!(first.matched, 1);
-        assert_eq!(first.included_gas, 21_000);
-        assert_eq!(tracker.total_in_flight(), 0);
-
-        let duplicate = tracker.on_new_block_hashes(block_at(11, Instant::now()), vec![tx_hash]);
-        assert_eq!(duplicate, BlockMatch::default(), "settled tx must not match again");
         assert_eq!(tracker.total_in_flight(), 0, "duplicate block should not underflow");
     }
 
     #[test]
-    fn expire_pending_counts_measured_transactions_and_releases_in_flight() {
+    fn drain_pending_counts_measured_transactions_and_releases_in_flight() {
         let from = addr();
-        let tx_hash = TxHash::repeat_byte(0xe0);
-        let tracker = ResultsTracker::new(&[from]);
+        let mut tracker = ResultsTracker::new(&[from]);
+        send(&mut tracker, sent(TxHash::repeat_byte(0xe1), from, false));
         tracker.begin_measurement(0, None);
+        send(&mut tracker, sent(TxHash::repeat_byte(0xe0), from, true));
+        assert_eq!(tracker.pending_count(), 2);
 
-        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
-        assert_eq!(tracker.pending_count(), 1);
-        assert_eq!(tracker.total_in_flight(), 1);
-
-        let expired = tracker.expire_pending(Duration::ZERO);
-        assert_eq!(expired, 1, "unconfirmed measured tx is a failure");
+        assert_eq!(tracker.drain_pending(), (1, 21_000), "only measured inventory is reported");
         assert_eq!(tracker.pending_count(), 0);
         assert_eq!(tracker.total_in_flight(), 0);
+        assert_eq!(tracker.in_flight_by_sender(), &[0]);
         assert_eq!(tracker.unconfirmed_gas(), 0);
-    }
-
-    #[test]
-    fn expired_setup_transaction_is_not_a_measured_failure() {
-        let from = addr();
-        let tx_hash = TxHash::repeat_byte(0xe1);
-        let tracker = ResultsTracker::new(&[from]);
-
-        tracker.sent_transactions(vec![sent(tx_hash, from, false)]);
-        tracker.begin_measurement(0, None);
-
-        assert_eq!(tracker.expire_pending(Duration::ZERO), 0);
-        assert_eq!(tracker.pending_count(), 0);
-        assert_eq!(tracker.total_in_flight(), 0);
     }
 
     #[test]
     fn warmup_landing_emits_metrics_before_measurement() {
         let from = addr();
         let tx_hash = TxHash::repeat_byte(0xe2);
-        let tracker = ResultsTracker::new(&[from]);
+        let mut tracker = ResultsTracker::new(&[from]);
 
-        tracker.sent_transactions(vec![sent(tx_hash, from, false)]);
-        assert_eq!(tracker.total_in_flight(), 1);
-
-        tracker.on_new_block_hashes(block_at(3, Instant::now()), vec![tx_hash]);
+        send(&mut tracker, sent(tx_hash, from, false));
+        tracker.on_new_block_hashes(block_at(3, Instant::now()), &[tx_hash]);
         assert_eq!(tracker.total_in_flight(), 0);
-        let metrics = tracker.drain_confirmed_metrics();
-        assert_eq!(metrics.len(), 1, "warmup landing should emit live confirmation metrics");
+        assert_eq!(
+            tracker.drain_confirmed_metrics().count(),
+            1,
+            "warmup landing should emit live confirmation metrics"
+        );
         assert!(tracker.landed_block_numbers().is_empty(), "warmup must not scope receipt pass");
     }
 
@@ -751,43 +658,33 @@ mod tests {
     fn warmup_landing_after_measurement_does_not_pollute_metrics() {
         let from = addr();
         let tx_hash = TxHash::repeat_byte(0xe3);
-        let tracker = ResultsTracker::new(&[from]);
+        let mut tracker = ResultsTracker::new(&[from]);
 
-        tracker.sent_transactions(vec![sent(tx_hash, from, false)]);
+        send(&mut tracker, sent(tx_hash, from, false));
         tracker.begin_measurement(3, Some(1));
-        tracker.on_new_block_hashes(block_at(4, Instant::now()), vec![tx_hash]);
+        tracker.on_new_block_hashes(block_at(4, Instant::now()), &[tx_hash]);
 
         assert_eq!(tracker.total_in_flight(), 0);
-        assert!(
-            tracker.drain_confirmed_metrics().is_empty(),
+        assert_eq!(
+            tracker.drain_confirmed_metrics().count(),
+            0,
             "warmup landing after measurement must not enter the measured summary"
         );
     }
 
     #[test]
-    fn preserves_late_refill_acknowledgement_latency() {
-        let tracker = ResultsTracker::new(&[]);
-        let started_at = Instant::now();
-        tracker.register_pending_refill(vec![10, 11], started_at);
-
-        tracker.record_batch_completed(10, started_at + Duration::from_millis(120));
-        assert!(tracker.drain_completed_refill_lags().is_empty());
-        tracker.record_batch_completed(11, started_at + Duration::from_millis(145));
-
-        assert_eq!(tracker.drain_completed_refill_lags(), vec![Duration::from_millis(145)]);
-    }
-
-    #[test]
     fn measurement_window_counts_exact_target_with_empty_blocks() {
-        let tracker = ResultsTracker::new(&[]);
+        let mut tracker = ResultsTracker::new(&[]);
+        tracker.observe_measurement_block(500);
+        assert_eq!(tracker.measurement(), Measurement::Warmup, "warmup ignores heads");
         tracker.begin_measurement(100, Some(4));
 
-        tracker.on_new_block_hashes(block_at(101, Instant::now()), Vec::new());
-        tracker.on_new_block_hashes(block_at(102, Instant::now()), Vec::new());
-        tracker.on_new_block_hashes(block_at(103, Instant::now()), Vec::new());
+        for number in 101..=103 {
+            tracker.on_new_block_hashes(block_at(number, Instant::now()), &[]);
+        }
         assert!(!tracker.measurement_finished());
 
-        tracker.on_new_block_hashes(block_at(104, Instant::now()), Vec::new());
+        tracker.on_new_block_hashes(block_at(104, Instant::now()), &[]);
 
         assert_eq!(
             tracker.measurement_window(),
@@ -798,18 +695,30 @@ mod tests {
 
     #[test]
     fn measurement_window_handles_skipped_height_observation_order() {
-        let tracker = ResultsTracker::new(&[]);
+        let mut tracker = ResultsTracker::new(&[]);
         tracker.begin_measurement(200, Some(3));
 
         // Newest block arrives first; skipped heights can be recovered later.
-        tracker.on_new_block_hashes(block_at(204, Instant::now()), Vec::new());
+        tracker.on_new_block_hashes(block_at(204, Instant::now()), &[]);
         assert!(tracker.measurement_finished());
-        tracker.on_new_block_hashes(block_at(202, Instant::now()), Vec::new());
-        tracker.on_new_block_hashes(block_at(203, Instant::now()), Vec::new());
+        tracker.on_new_block_hashes(block_at(202, Instant::now()), &[]);
+        tracker.on_new_block_hashes(block_at(203, Instant::now()), &[]);
 
         assert_eq!(
             tracker.measurement_window(),
             MeasurementWindow { start_block: Some(200), end_block: Some(203), block_count: 3 }
+        );
+    }
+
+    #[test]
+    fn unbounded_measurement_never_finishes() {
+        let mut tracker = ResultsTracker::new(&[]);
+        tracker.begin_measurement(10, None);
+        tracker.observe_measurement_block(u64::MAX);
+        assert!(!tracker.measurement_finished());
+        assert_eq!(
+            tracker.measurement_window(),
+            MeasurementWindow { start_block: Some(10), end_block: None, block_count: 0 }
         );
     }
 }

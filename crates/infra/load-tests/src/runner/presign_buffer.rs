@@ -1,8 +1,6 @@
 //! Nonce-safe buffering of transactions signed ahead of block boundaries.
 
-use std::collections::{HashMap, VecDeque};
-
-use alloy_primitives::Address;
+use std::collections::VecDeque;
 
 use super::SignedTransaction;
 
@@ -44,9 +42,7 @@ impl PresignBuffer {
         if self.sender_generations.get(sender_index).copied() != Some(generation) {
             return;
         }
-        let Some(sender) = self.senders.get_mut(sender_index) else {
-            return;
-        };
+        let sender = &mut self.senders[sender_index];
         for tx in txs {
             self.buffered_gas = self.buffered_gas.saturating_add(u128::from(tx.estimated_gas));
             sender.push_back(tx);
@@ -57,74 +53,48 @@ impl PresignBuffer {
     ///
     /// This repairs only local presigned state: the producer receives the returned generation,
     /// refetches that sender's pending nonce, and resumes signing new work in the new generation.
-    pub fn reset_sender(&mut self, sender_index: usize, address: Address) -> Option<u64> {
+    pub fn reset_sender(&mut self, sender_index: usize) -> Option<u64> {
         let generation = self.sender_generations.get_mut(sender_index)?;
         *generation = generation.wrapping_add(1);
-        let generation = *generation;
-
-        for sender in &mut self.senders {
-            let mut removed_gas = 0u128;
-            sender.retain(|tx| {
-                if tx.from == address {
-                    removed_gas = removed_gas.saturating_add(u128::from(tx.estimated_gas));
-                    false
-                } else {
-                    true
-                }
-            });
-            self.buffered_gas = self.buffered_gas.saturating_sub(removed_gas);
-        }
-
-        Some(generation)
+        let removed_gas = self.senders[sender_index]
+            .drain(..)
+            .fold(0u128, |gas, tx| gas.saturating_add(u128::from(tx.estimated_gas)));
+        self.buffered_gas = self.buffered_gas.saturating_sub(removed_gas);
+        Some(*generation)
     }
 
-    /// Takes transactions round-robin until at least `budget_gas` is selected.
+    /// Takes transactions round-robin until at least `budget_gas` is selected, at most
+    /// `max_transactions` in total and at most `sender_slots[i]` from sender `i`.
     ///
-    /// The final transaction may exceed the budget because transactions cannot be split.
-    pub fn take_gas(&mut self, budget_gas: u128) -> Vec<SignedTransaction> {
-        let mut unlimited = HashMap::new();
-        self.take_gas_with_sender_slots(budget_gas, &mut unlimited)
-    }
-
-    /// Takes transactions while respecting remaining slots for each sender.
-    ///
-    /// An empty `sender_slots` map means slots are unbounded.
-    pub fn take_gas_with_sender_slots(
-        &mut self,
-        budget_gas: u128,
-        sender_slots: &mut HashMap<Address, u64>,
-    ) -> Vec<SignedTransaction> {
-        self.take_gas_with_limits(budget_gas, sender_slots, usize::MAX)
-    }
-
-    /// Takes up to `max_transactions` while also respecting per-sender slots.
+    /// The final transaction may exceed the budget because transactions cannot be split. Each
+    /// call visits each sender at most once per transaction taken plus one idle lap.
     pub fn take_gas_with_limits(
         &mut self,
         budget_gas: u128,
-        sender_slots: &mut HashMap<Address, u64>,
+        sender_slots: &mut [u64],
         max_transactions: usize,
     ) -> Vec<SignedTransaction> {
-        if budget_gas == 0 || self.senders.is_empty() {
-            return Vec::new();
-        }
-
+        let sender_count = self.senders.len();
         let mut selected = Vec::new();
         let mut selected_gas = 0u128;
-        while selected_gas < budget_gas && selected.len() < max_transactions {
-            let Some(sender_index) = self.next_eligible_sender(sender_slots) else {
-                break;
-            };
-            let tx = self.senders[sender_index]
-                .pop_front()
-                .expect("next_nonempty_sender returned a non-empty queue");
-            let from = tx.from;
-            selected_gas = selected_gas.saturating_add(u128::from(tx.estimated_gas));
-            self.buffered_gas = self.buffered_gas.saturating_sub(u128::from(tx.estimated_gas));
-            selected.push(tx);
-            if let Some(slots) = sender_slots.get_mut(&from) {
-                *slots = slots.saturating_sub(1);
+        let mut index = self.cursor;
+        let mut idle_visits = 0;
+        while selected_gas < budget_gas
+            && selected.len() < max_transactions
+            && idle_visits < sender_count
+        {
+            let slots = &mut sender_slots[index];
+            if let Some(tx) = (*slots > 0).then(|| self.senders[index].pop_front()).flatten() {
+                *slots -= 1;
+                selected_gas = selected_gas.saturating_add(u128::from(tx.estimated_gas));
+                self.buffered_gas = self.buffered_gas.saturating_sub(u128::from(tx.estimated_gas));
+                selected.push(tx);
+                idle_visits = 0;
+                self.cursor = (index + 1) % sender_count;
+            } else {
+                idle_visits += 1;
             }
-            self.cursor = (sender_index + 1) % self.senders.len();
+            index = (index + 1) % sender_count;
         }
         selected
     }
@@ -132,25 +102,6 @@ impl PresignBuffer {
     /// Returns gas currently ready for immediate submission.
     pub const fn buffered_gas(&self) -> u128 {
         self.buffered_gas
-    }
-
-    /// Returns the next sender with buffered work from the round-robin cursor.
-    pub fn next_nonempty_sender(&self) -> Option<usize> {
-        (0..self.senders.len())
-            .map(|offset| (self.cursor + offset) % self.senders.len())
-            .find(|&index| !self.senders[index].is_empty())
-    }
-
-    /// Returns the next sender whose head transaction has an available pool slot.
-    pub fn next_eligible_sender(&self, sender_slots: &HashMap<Address, u64>) -> Option<usize> {
-        (0..self.senders.len()).map(|offset| (self.cursor + offset) % self.senders.len()).find(
-            |&index| {
-                self.senders[index].front().is_some_and(|tx| {
-                    sender_slots.is_empty()
-                        || sender_slots.get(&tx.from).is_some_and(|slots| *slots > 0)
-                })
-            },
-        )
     }
 }
 
@@ -184,17 +135,39 @@ mod tests {
         }
     }
 
+    fn take(buffer: &mut PresignBuffer, budget_gas: u128) -> Vec<SignedTransaction> {
+        let mut unlimited = vec![u64::MAX; buffer.senders.len()];
+        buffer.take_gas_with_limits(budget_gas, &mut unlimited, usize::MAX)
+    }
+
     #[test]
     fn preserves_nonce_order_across_partial_takes() {
         let mut buffer = PresignBuffer::new(2);
         buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000), tx(1, 1, 21_000)]);
         buffer.push_sender_batch(1, 0, vec![tx(2, 0, 21_000), tx(2, 1, 21_000)]);
 
-        let first = buffer.take_gas(42_000);
-        let second = buffer.take_gas(42_000);
+        let first = take(&mut buffer, 42_000);
+        let second = take(&mut buffer, 42_000);
 
         assert_eq!(first.iter().map(|tx| tx.nonce).collect::<Vec<_>>(), vec![0, 0]);
         assert_eq!(second.iter().map(|tx| tx.nonce).collect::<Vec<_>>(), vec![1, 1]);
+    }
+
+    #[test]
+    fn round_robin_resumes_after_last_taken_sender() {
+        let mut buffer = PresignBuffer::new(3);
+        for sender in 0..3 {
+            buffer.push_sender_batch(sender, 0, vec![tx(sender as u8 + 1, 0, 21_000)]);
+            buffer.push_sender_batch(sender, 0, vec![tx(sender as u8 + 1, 1, 21_000)]);
+        }
+
+        let first = take(&mut buffer, 42_000);
+        let second = take(&mut buffer, 42_000);
+
+        let senders =
+            |txs: &[SignedTransaction]| txs.iter().map(|tx| tx.from.0[19]).collect::<Vec<_>>();
+        assert_eq!(senders(&first), vec![1, 2]);
+        assert_eq!(senders(&second), vec![3, 1]);
     }
 
     #[test]
@@ -202,7 +175,7 @@ mod tests {
         let mut buffer = PresignBuffer::new(1);
         buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000)]);
 
-        let selected = buffer.take_gas(100_000);
+        let selected = take(&mut buffer, 100_000);
 
         assert_eq!(selected.len(), 1);
         assert_eq!(buffer.buffered_gas(), 0);
@@ -220,26 +193,25 @@ mod tests {
             ],
         );
 
-        let selected = buffer.take_gas(150_000);
+        let selected = take(&mut buffer, 150_000);
 
         assert_eq!(selected.len(), 2);
         assert_eq!(buffer.buffered_gas(), 0);
     }
 
     #[test]
-    fn skips_sender_without_available_pool_slots() {
+    fn respects_per_sender_slots() {
         let mut buffer = PresignBuffer::new(2);
-        let blocked = Address::with_last_byte(1);
-        let available = Address::with_last_byte(2);
         buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000)]);
-        buffer.push_sender_batch(1, 0, vec![tx(2, 0, 21_000)]);
-        let mut slots = HashMap::from([(blocked, 0), (available, 1)]);
+        buffer.push_sender_batch(1, 0, vec![tx(2, 0, 21_000), tx(2, 1, 21_000)]);
+        let mut slots = vec![0, 1];
 
-        let selected = buffer.take_gas_with_sender_slots(21_000, &mut slots);
+        let selected = buffer.take_gas_with_limits(u128::MAX, &mut slots, usize::MAX);
 
         assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].from, available);
-        assert_eq!(buffer.buffered_gas(), 21_000);
+        assert_eq!(selected[0].from, Address::with_last_byte(2));
+        assert_eq!(slots, vec![0, 0]);
+        assert_eq!(buffer.buffered_gas(), 42_000);
     }
 
     #[test]
@@ -247,7 +219,7 @@ mod tests {
         let mut buffer = PresignBuffer::new(2);
         buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000), tx(1, 1, 21_000)]);
         buffer.push_sender_batch(1, 0, vec![tx(2, 0, 21_000), tx(2, 1, 21_000)]);
-        let mut slots = HashMap::new();
+        let mut slots = vec![u64::MAX; 2];
 
         let selected = buffer.take_gas_with_limits(84_000, &mut slots, 2);
 
@@ -256,18 +228,30 @@ mod tests {
     }
 
     #[test]
-    fn resetting_sender_drops_stale_tail_and_accepts_new_generation() {
+    fn empty_buffer_or_zero_budget_takes_nothing() {
+        let mut buffer = PresignBuffer::new(0);
+        assert!(take(&mut buffer, 21_000).is_empty());
         let mut buffer = PresignBuffer::new(1);
-        let address = Address::with_last_byte(1);
-        buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000), tx(1, 1, 21_000)]);
+        buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000)]);
+        assert!(take(&mut buffer, 0).is_empty());
+    }
 
-        let generation = buffer.reset_sender(0, address).expect("sender exists");
+    #[test]
+    fn resetting_sender_drops_stale_tail_and_accepts_new_generation() {
+        let mut buffer = PresignBuffer::new(2);
+        buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000), tx(1, 1, 21_000)]);
+        buffer.push_sender_batch(1, 0, vec![tx(2, 0, 21_000)]);
+
+        let generation = buffer.reset_sender(0).expect("sender exists");
         buffer.push_sender_batch(0, 0, vec![tx(1, 2, 21_000)]);
         buffer.push_sender_batch(0, generation, vec![tx(1, 0, 21_000)]);
 
-        assert_eq!(buffer.buffered_gas(), 21_000);
-        let selected = buffer.take_gas(21_000);
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].nonce, 0);
+        assert_eq!(buffer.buffered_gas(), 42_000, "other senders keep their work");
+        let selected = take(&mut buffer, 42_000);
+        assert_eq!(
+            selected.iter().map(|tx| (tx.from.0[19], tx.nonce)).collect::<Vec<_>>(),
+            vec![(1, 0), (2, 0)]
+        );
+        assert_eq!(buffer.reset_sender(2), None);
     }
 }

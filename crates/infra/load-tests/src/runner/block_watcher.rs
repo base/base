@@ -1,15 +1,12 @@
 //! Block watching and transaction landing detection via `eth_getBlockByNumber`.
 //!
-//! The watcher polls for new canonical blocks and reports the transaction hashes
-//! contained in each block to the [`ResultsTracker`], which records landing latency.
-//! Canonical receipts are sampled during the run for gas calibration and fetched again
-//! in a complete end-of-run pass for final metrics.
+//! The watcher polls for new canonical blocks and sends the transaction hashes contained in
+//! each block to the run coordinator, which records landing latency. Canonical receipts are
+//! sampled during the run for gas calibration and fetched again in a complete end-of-run pass
+//! for final metrics.
 
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -19,11 +16,14 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use base_common_network::Base;
 use futures::{StreamExt, stream};
-use tokio::sync::{Semaphore, mpsc};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use super::{BlockObservation, BlockReceipt, InclusionPulse, ResultsTracker};
+use super::{BlockObservation, BlockReceipt, CanonicalBlock, RunEvent};
 
 /// Delay between probes while a scheduled block is becoming visible over RPC.
 const BLOCK_AVAILABILITY_PROBE_INTERVAL: Duration = Duration::from_millis(10);
@@ -135,63 +135,91 @@ impl BlockClock {
     }
 }
 
-#[derive(Debug)]
-struct ObservedBlock {
-    observation: BlockObservation,
-    tx_hashes: Vec<TxHash>,
-    gas_used: u64,
-    gas_limit: u64,
-    base_fee: u128,
-    timestamp_ms: u64,
-}
-
 /// Polls canonical blocks and reports their transaction hashes for landing detection.
 #[derive(Debug)]
 pub struct BlockWatcher {
     provider: RootProvider<Base>,
-    results_tracker: ResultsTracker,
     block_time: Duration,
-    pulse_tx: mpsc::Sender<InclusionPulse>,
+    events: mpsc::Sender<RunEvent>,
+    base_fee: watch::Sender<u128>,
     cancel_token: CancellationToken,
 }
 
 impl BlockWatcher {
-    /// Creates a new [`BlockWatcher`].
+    /// Creates a new [`BlockWatcher`] that publishes each new head's base fee to `base_fee`.
     pub const fn new(
         provider: RootProvider<Base>,
-        results_tracker: ResultsTracker,
         block_time: Duration,
-        pulse_tx: mpsc::Sender<InclusionPulse>,
+        events: mpsc::Sender<RunEvent>,
+        base_fee: watch::Sender<u128>,
         cancel_token: CancellationToken,
     ) -> Self {
-        Self { provider, results_tracker, block_time, pulse_tx, cancel_token }
+        Self { provider, block_time, events, base_fee, cancel_token }
     }
 
     /// Spawns the watcher as a background task.
-    pub fn start(self) -> tokio::task::JoinHandle<()> {
+    pub fn start(self) -> JoinHandle<()> {
         tokio::spawn(async move {
             self.run().await;
         })
+    }
+
+    /// Spawns the live receipt sampler and returns its request queue.
+    ///
+    /// The queue holds one block number, so with one fetch in flight the sampler never stacks
+    /// receipt requests. Callers submit with `try_send` and skip the sample when it is full.
+    pub fn start_receipt_sampler(
+        provider: RootProvider<Base>,
+        events: mpsc::Sender<RunEvent>,
+        cancel_token: CancellationToken,
+    ) -> (mpsc::Sender<u64>, JoinHandle<()>) {
+        let (requests, mut pending) = mpsc::channel(1);
+        let sampler = tokio::spawn(async move {
+            loop {
+                let block_number = tokio::select! {
+                    biased;
+                    () = cancel_token.cancelled() => break,
+                    block_number = pending.recv() => match block_number {
+                        Some(block_number) => block_number,
+                        None => break,
+                    },
+                };
+                let (receipts, _) = tokio::select! {
+                    biased;
+                    () = cancel_token.cancelled() => break,
+                    result = Self::fetch_block_receipts(&provider, block_number) => result,
+                };
+                if events.send(RunEvent::Receipts(receipts)).await.is_err() {
+                    break;
+                }
+            }
+        });
+        (requests, sampler)
+    }
+
+    /// Returns whether a block holding measured transactions should be sampled for gas
+    /// calibration, given how many measured transactions already have receipt gas.
+    pub const fn samples_receipts(block_number: u64, observed_transactions: u64) -> bool {
+        block_number.is_multiple_of(LIVE_RECEIPT_SAMPLE_BLOCKS)
+            || observed_transactions < LIVE_RECEIPT_WARMUP_TRANSACTIONS
     }
 
     async fn run(&self) {
         info!("started block watcher");
 
         let baseline = self.establish_tip_baseline().await;
-        let mut last_seen_block = baseline.as_ref().map(|block| block.observation.number);
+        let mut last_seen_block = baseline.as_ref().map(|(block, _)| block.observation.number);
         let mut clock = baseline.as_ref().map_or_else(
             || BlockClock::from_now(self.block_time, Instant::now()),
-            |block| {
+            |(_, timestamp_ms)| {
                 BlockClock::from_block_timestamp_ms(
                     self.block_time,
-                    block.timestamp_ms,
+                    *timestamp_ms,
                     SystemTime::now(),
                     Instant::now(),
                 )
             },
         );
-        let live_receipt_fetch = Arc::new(Semaphore::new(1));
-        let mut last_progress_log = Instant::now();
         let mut last_availability_warning =
             Instant::now().checked_sub(Duration::from_secs(15)).unwrap_or_else(Instant::now);
         let mut consecutive_probe_failures = 0u64;
@@ -210,9 +238,9 @@ impl BlockWatcher {
             let mut availability_miss_logged = false;
             let mut required_retry = false;
             let latest = loop {
-                match self.fetch_block(BlockNumberOrTag::Latest, BLOCK_RPC_TIMEOUT).await {
+                match self.fetch_latest().await {
                     Ok(block) => {
-                        if let Some(block) = block
+                        if let Some((block, _)) = block
                             && last_seen_block.is_none_or(|seen| block.observation.number > seen)
                         {
                             if consecutive_probe_failures > 0 {
@@ -233,7 +261,6 @@ impl BlockWatcher {
                             warn!(
                                 error = %error,
                                 failed_probes = consecutive_probe_failures,
-                                pending = self.results_tracker.pending_count(),
                                 "block availability probes failing"
                             );
                             last_probe_warning = Instant::now();
@@ -265,11 +292,10 @@ impl BlockWatcher {
                 }
             };
 
-            let Some(latest) = latest else {
+            let Some(mut latest) = latest else {
                 continue;
             };
             let latest_number = latest.observation.number;
-            let latest_tx_count = latest.tx_hashes.len();
             let blocks_advanced =
                 last_seen_block.map_or(1, |seen| latest_number.saturating_sub(seen).max(1));
             let pulse_expected_boundary = expected_boundary
@@ -296,122 +322,36 @@ impl BlockWatcher {
                 clock.correct_earlier();
             }
 
-            // Process and publish the newest block first. Confirmation recovery for any
-            // missed intermediate blocks must not delay refilling for the next block.
-            let has_measured_pending = self.results_tracker.has_measured_pending(&latest.tx_hashes);
-            let block_match =
-                self.results_tracker.on_new_block_hashes(latest.observation, latest.tx_hashes);
-            let block_pulse = BlockPulse {
-                number: latest_number,
-                gas_used: latest.gas_used,
-                gas_limit: latest.gas_limit,
-                base_fee: latest.base_fee,
-                our_included_gas: block_match.included_gas,
-                expected_boundary: pulse_expected_boundary,
-                observed_at: latest.observation.observed_at,
-            };
-            if self
-                .pulse_tx
-                .send(InclusionPulse::canonical(block_pulse, block_match.included_gas))
-                .await
-                .is_err()
-            {
+            // Publish the newest block first. Confirmation recovery for any missed
+            // intermediate blocks must not delay refilling for the next block.
+            self.base_fee.send_replace(latest.observation.base_fee);
+            latest.expected_boundary = pulse_expected_boundary;
+            if self.events.send(RunEvent::Canonical(latest)).await.is_err() {
                 return;
             }
 
-            if has_measured_pending
-                && (latest_number.is_multiple_of(LIVE_RECEIPT_SAMPLE_BLOCKS)
-                    || self.results_tracker.observed_gas().1 < LIVE_RECEIPT_WARMUP_TRANSACTIONS)
-                && let Ok(permit) = Arc::clone(&live_receipt_fetch).try_acquire_owned()
-            {
-                let provider = self.provider.clone();
-                let results_tracker = self.results_tracker.clone();
-                let cancel_token = self.cancel_token.clone();
-                tokio::spawn(async move {
-                    tokio::select! {
-                        biased;
-                        _ = cancel_token.cancelled() => {}
-                        result = Self::fetch_block_receipts(&provider, latest_number) => {
-                            results_tracker.observe_live_receipts(&result.0);
-                        }
+            // Without a baseline, transactions may already have landed in blocks this watcher
+            // never saw, so the first success always looks back over the startup window.
+            let catchup_first =
+                match last_seen_block {
+                    Some(previous) if latest_number > previous.saturating_add(1) => {
+                        Some(previous.saturating_add(1).max(latest_number.saturating_sub(
+                            Self::catchup_blocks(LIVE_CATCHUP_WINDOW, self.block_time),
+                        )))
                     }
-                    drop(permit);
-                });
-            }
-
-            if block_match.matched > 0 {
-                debug!(
-                    matched = block_match.matched,
-                    included_gas = block_match.included_gas,
-                    pending = self.results_tracker.pending_count(),
-                    block = latest_number,
-                    "block watcher matched pending transactions"
-                );
-            } else if last_progress_log.elapsed() >= Duration::from_secs(15)
-                && self.results_tracker.pending_count() > 0
-            {
-                let (measured_pending, measured_pending_gas) =
-                    self.results_tracker.measured_unconfirmed_inventory();
-                warn!(
-                    pending = self.results_tracker.pending_count(),
-                    in_flight = self.results_tracker.total_in_flight(),
-                    measured_pending,
-                    measured_pending_gas,
-                    latest = latest_number,
-                    latest_txs = latest_tx_count,
-                    latest_gas_used = latest.gas_used,
-                    latest_gas_limit = latest.gas_limit,
-                    blocks_advanced,
-                    block_has_measured_pending = has_measured_pending,
-                    "block watcher scanned block but matched no pending hashes"
-                );
-                last_progress_log = Instant::now();
-            }
-
-            let catchup_first = match last_seen_block {
-                Some(previous) if latest_number > previous.saturating_add(1) => {
-                    Some(previous.saturating_add(1).max(latest_number.saturating_sub(
-                        Self::catchup_blocks(LIVE_CATCHUP_WINDOW, self.block_time),
-                    )))
-                }
-                None if self.results_tracker.pending_count() > 0 => {
-                    Some(latest_number.saturating_sub(Self::catchup_blocks(
+                    Some(_) => None,
+                    None => Some(latest_number.saturating_sub(Self::catchup_blocks(
                         STARTUP_CATCHUP_WINDOW,
                         self.block_time,
-                    )))
-                }
-                _ => None,
-            };
+                    ))),
+                };
             if let Some(first) = catchup_first {
-                let last = latest_number.saturating_sub(1);
-                let provider = self.provider.clone();
-                let results_tracker = self.results_tracker.clone();
-                let cancel_token = self.cancel_token.clone();
-                tokio::spawn(async move {
-                    for block_number in first..=last {
-                        let result = tokio::select! {
-                            biased;
-                            () = cancel_token.cancelled() => break,
-                            result = Self::fetch_block_hashes(
-                                &provider,
-                                BlockNumberOrTag::Number(block_number),
-                            ) => result,
-                        };
-                        match result {
-                            Ok(Some((observation, hashes))) => {
-                                results_tracker.on_new_block_hashes(observation, hashes);
-                            }
-                            Ok(None) => {}
-                            Err(error) => {
-                                warn!(
-                                    block = block_number,
-                                    error = %error,
-                                    "failed to recover skipped canonical block"
-                                );
-                            }
-                        }
-                    }
-                });
+                tokio::spawn(Self::recover_blocks(
+                    self.provider.clone(),
+                    self.events.clone(),
+                    self.cancel_token.clone(),
+                    first..latest_number,
+                ));
             }
             last_seen_block = Some(latest_number);
         }
@@ -419,20 +359,57 @@ impl BlockWatcher {
         debug!("block watcher stopped");
     }
 
+    /// Scans skipped canonical blocks in order and sends their hashes to the coordinator.
+    async fn recover_blocks(
+        provider: RootProvider<Base>,
+        events: mpsc::Sender<RunEvent>,
+        cancel_token: CancellationToken,
+        blocks: std::ops::Range<u64>,
+    ) {
+        for block_number in blocks {
+            let result = tokio::select! {
+                biased;
+                () = cancel_token.cancelled() => return,
+                result = Self::fetch_block_hashes(
+                    &provider,
+                    BlockNumberOrTag::Number(block_number),
+                ) => result,
+            };
+            match result {
+                Ok(Some((observation, tx_hashes))) => {
+                    if events.send(RunEvent::Recovered { observation, tx_hashes }).await.is_err() {
+                        return;
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    warn!(
+                        block = block_number,
+                        error = %error,
+                        "failed to recover skipped canonical block"
+                    );
+                }
+            }
+        }
+    }
+
     /// Fetches the current tip so incremental scans begin at tip+1 after startup.
     ///
     /// Returns `None` if the tip cannot be read before cancellation or the short
     /// startup budget expires; the main loop then falls back to
     /// [`STARTUP_CATCHUP_WINDOW`] on its first success.
-    async fn establish_tip_baseline(&self) -> Option<ObservedBlock> {
+    async fn establish_tip_baseline(&self) -> Option<(CanonicalBlock, u64)> {
         let started = Instant::now();
         let budget = Duration::from_secs(3);
         let mut backoff = Duration::from_millis(100);
 
         while !self.cancel_token.is_cancelled() && started.elapsed() < budget {
-            match self.fetch_block(BlockNumberOrTag::Latest, BLOCK_RPC_TIMEOUT).await {
+            match self.fetch_latest().await {
                 Ok(Some(block)) => {
-                    info!(tip = block.observation.number, "block watcher tip baseline established");
+                    info!(
+                        tip = block.0.observation.number,
+                        "block watcher tip baseline established"
+                    );
                     return Some(block);
                 }
                 Ok(None) => {}
@@ -457,37 +434,37 @@ impl BlockWatcher {
         None
     }
 
-    async fn fetch_block(
-        &self,
-        block: impl Into<BlockNumberOrTag>,
-        timeout: Duration,
-    ) -> std::result::Result<Option<ObservedBlock>, String> {
-        let block = tokio::time::timeout(timeout, async {
-            self.provider.get_block_by_number(block.into()).hashes().await
+    /// Fetches the latest block and its millisecond timestamp. The returned block's expected
+    /// boundary is its observation time until the caller aligns it to the block clock.
+    async fn fetch_latest(&self) -> std::result::Result<Option<(CanonicalBlock, u64)>, String> {
+        let block = tokio::time::timeout(BLOCK_RPC_TIMEOUT, async {
+            self.provider.get_block_by_number(BlockNumberOrTag::Latest).hashes().await
         })
         .await
-        .map_err(|_| format!("eth_getBlockByNumber timed out after {timeout:?}"))?
+        .map_err(|_| format!("eth_getBlockByNumber timed out after {BLOCK_RPC_TIMEOUT:?}"))?
         .map_err(|e| e.to_string())?;
         let Some(block) = block else {
             return Ok(None);
         };
         let observed_at = Instant::now();
 
-        let base_fee = u128::from(block.header.base_fee_per_gas.unwrap_or_default());
-        Ok(Some(ObservedBlock {
-            observation: BlockObservation {
-                number: block.header.number,
-                observed_at,
-                // Second-resolution fallbacks would put up to 999 ms of error into 10 ms buckets.
-                timestamp_ms: block.header.timestamp_ms,
-                base_fee,
+        Ok(Some((
+            CanonicalBlock {
+                observation: BlockObservation {
+                    number: block.header.number,
+                    observed_at,
+                    // Second-resolution fallbacks would put up to 999 ms of error into 10 ms
+                    // buckets.
+                    timestamp_ms: block.header.timestamp_ms,
+                    base_fee: u128::from(block.header.base_fee_per_gas.unwrap_or_default()),
+                },
+                tx_hashes: block.transactions.hashes().collect(),
+                gas_used: block.header.gas_used,
+                gas_limit: block.header.gas_limit,
+                expected_boundary: observed_at,
             },
-            tx_hashes: block.transactions.hashes().collect(),
-            gas_used: block.header.gas_used,
-            gas_limit: block.header.gas_limit,
-            base_fee,
-            timestamp_ms: Self::block_timestamp_ms(&block),
-        }))
+            Self::block_timestamp_ms(&block),
+        )))
     }
 
     /// Returns the full RPC millisecond timestamp, or derives it from legacy seconds.

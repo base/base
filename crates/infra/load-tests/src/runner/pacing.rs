@@ -1,11 +1,9 @@
 //! Inventory headroom, presign streaming, and measured enqueue pacing.
 
 use std::{
-    collections::{HashMap, HashSet},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    collections::HashMap,
+    path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -24,46 +22,39 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::{
-    BlockPulse, BlockWatcher, CanonicalHeadWatcher, DisplaySnapshot, GasEstimate, GasPricer,
-    InclusionPulse, InclusionSource, LoadRunner, LoadTestDisplay, LoadTestStage,
-    PipelineStartConfig, PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker,
-    SignedBatch, SignedTransaction, SubmissionPipeline, SubmitCohort, SubmitEvent, TxType,
-    ValidityRouter,
+    BlockPulse, BlockWatcher, CanonicalHeadWatcher, GasEstimate, GasPricer, LoadRunner,
+    LoadTestStage, PipelineStartConfig, PreparedTransaction, PresignBuffer, ProgressReport,
+    RefillTrigger, ResultsTracker, RunCoordinator, SignedTransaction, SubmissionPipeline,
+    SubmitCohort, TxType, ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
-    metrics::{MetricsCollector, MetricsSummary, PacingCycleObservation, PacingCycleSource},
+    metrics::{MetricsSummary, PacingCycleObservation, PacingCycleSource},
     rpc::{BaseFeeExt, QueryProvider},
     workload::{KeyStream, SeededRng, SelectedPayload, WorkloadGenerator},
 };
 
 const SUBMIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
-const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(200);
 const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(200);
-/// How long the post-run drain waits for progress (a confirmation or a shrinking
-/// pending count) before force-expiring whatever is left and returning early.
-///
-/// Without this, a straggler submitted near the end of the run effectively gets
-/// its own full `PENDING_CONFIRMATION_TIMEOUT` window measured from `drain_start`
-/// (not from when it was submitted), because `drain_expiry` only shrinks to zero
-/// at `drain_start + PENDING_CONFIRMATION_TIMEOUT`. Stuck inventory can therefore
-/// hold up the whole drain for ~200s even on a short test.
+/// How long the post-run drain waits for a landing before it stops tracking the remaining
+/// inventory, so stuck stragglers cannot hold a short test for the full drain timeout.
 const DRAIN_STALL_TIMEOUT: Duration = Duration::from_secs(20);
+const WATCHER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const SIGNED_BATCH_SIZE: usize = 200;
 const PRESIGN_CHANNEL_BUFFER: usize = 2;
+/// Run coordinator inbox capacity. Every task blocks on a full inbox, which bounds the
+/// coordinator's backlog instead of letting events pile up.
+const RUN_EVENT_BUFFER: usize = 4096;
+/// How long a refill cycle waits for its batches to be acknowledged before turning late.
+const REFILL_ACK_BUDGET: Duration = Duration::from_millis(100);
 /// Multiple of the target rate a steady-submission cycle may send over the time since the previous
 /// cycle: late cycles still catch up, while a backlog left by a stall drains at twice the target
 /// rate rather than in one burst.
 const STEADY_CATCHUP_RATE: u128 = 2;
-const IDLE_SLEEP: Duration = Duration::from_millis(10);
-const PRESIGN_RECHECK_INTERVAL: Duration = Duration::from_millis(100);
 const PREFILL_TIMEOUT: Duration = Duration::from_secs(300);
-/// Adaptive open-loop target update cadence, matching closed-loop rate-limiter updates.
-/// TUI / snapshot refresh cadence while the enqueue loop owns the collector.
-const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
-/// Structured progress reporting cadence for long-running stages.
-const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
+const START_FILE_TIMEOUT: Duration = Duration::from_secs(300);
+const START_FILE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 struct SenderJob {
@@ -72,13 +63,6 @@ struct SenderJob {
     from: Address,
     start_nonce: u64,
     prepared_txs: Vec<PreparedTransaction>,
-}
-
-#[derive(Debug)]
-struct SignedSender {
-    sender_index: usize,
-    generation: u64,
-    signed_txs: Vec<SignedTransaction>,
 }
 
 #[derive(Debug)]
@@ -91,13 +75,20 @@ struct PresignProducerState {
     recipient_rng: SeededRng,
 }
 
+/// Producer-owned nonce lane of one sender.
+#[derive(Debug, Clone, Copy)]
+struct ProducerSender {
+    address: Address,
+    next_nonce: u64,
+    /// Bumped when submission reports a terminal rejection so stale signed chunks cannot be
+    /// enqueued after a nonce resync.
+    generation: u64,
+}
+
 struct PresignConfig {
-    sender_addresses: Vec<Address>,
-    sender_next_nonces: Vec<u64>,
-    /// Generation paired with `sender_next_nonces`; bumped when submission reports a terminal
-    /// rejection so stale signed chunks cannot be enqueued after a nonce resync.
-    sender_generations: Vec<u64>,
-    signers: Arc<HashMap<Address, PrivateKeySigner>>,
+    senders: Vec<ProducerSender>,
+    /// Sender keys indexed like `senders`.
+    signers: Arc<[PrivateKeySigner]>,
     chain_id: u64,
     base_fee_rx: watch::Receiver<u128>,
     max_gas_price: u128,
@@ -109,7 +100,8 @@ struct PresignConfig {
     nonce_reset_rx: mpsc::Receiver<SenderNonceReset>,
     validity_router: ValidityRouter,
     /// Query provider used to read the current block height per prepare round
-    /// when resolving offset-based `block_number` validity predicates.
+    /// when resolving offset-based `block_number` validity predicates, and pending nonces
+    /// on resync.
     query_client: QueryProvider,
 }
 
@@ -123,110 +115,36 @@ struct PresignedSenderBatch {
 #[derive(Debug)]
 struct SenderNonceReset {
     sender_index: usize,
-    address: Address,
     /// New generation that the producer must adopt after refetching the sender's pending nonce.
     generation: u64,
 }
 
-struct EnqueueProgress {
+/// Enqueue-side presign state, owned by the coordinator task.
+struct PresignEnqueueState<'a> {
+    pipeline: &'a SubmissionPipeline,
+    chunks: mpsc::Receiver<Vec<PresignedSenderBatch>>,
+    nonce_resets: mpsc::Sender<SenderNonceReset>,
+    buffer: PresignBuffer,
     presigned_generated: u64,
     offered_gas: u128,
-    /// When the previous refill cycle ran.
     last_cycle_at: Option<Instant>,
+    gas_estimate: GasEstimate,
+    /// Per-sender free slots, reused across refill cycles.
+    sender_slots: Vec<u64>,
 }
 
-/// Live TUI / snapshot updates while the enqueue loop owns the collector.
-struct EnqueueProgressDisplay<'a> {
-    display: Option<&'a LoadTestDisplay>,
-    last_update: Instant,
-    last_log: Instant,
-    start: Instant,
-    duration: Option<Duration>,
-    stage: LoadTestStage,
-    max_in_flight_per_sender: usize,
-    account_count: usize,
-    gas_price_gwei: f64,
-    target_gps: Option<u64>,
-}
-
-impl EnqueueProgressDisplay<'_> {
-    fn maybe_refresh(
-        &mut self,
-        collector: &mut MetricsCollector,
-        results_tracker: &ResultsTracker,
-    ) {
-        let should_render =
-            self.display.is_some() && self.last_update.elapsed() >= DISPLAY_RENDER_INTERVAL;
-        let should_log = self.last_log.elapsed() >= PROGRESS_REPORT_INTERVAL;
-        if !should_render && !should_log {
-            return;
-        }
-        let elapsed = self.start.elapsed();
-        collector.sample_throughput(elapsed);
-
-        let (p50, p99) = collector.rolling_p50_p99();
-        if should_log {
-            info!(
-                stage = self.stage.as_str(),
-                elapsed_secs = elapsed.as_secs(),
-                remaining_secs =
-                    self.duration.map(|duration| duration.saturating_sub(elapsed).as_secs()),
-                submitted = collector.submitted_count(),
-                confirmed = collector.confirmed_count(),
-                failed = collector.failed_count(),
-                in_flight = results_tracker.total_in_flight(),
-                rolling_gps = collector.rolling_gps(),
-                "load test progress"
+impl PresignEnqueueState<'_> {
+    fn buffer_chunk(&mut self, chunk: Vec<PresignedSenderBatch>) {
+        for sender_batch in chunk {
+            self.presigned_generated =
+                self.presigned_generated.saturating_add(sender_batch.txs.len() as u64);
+            self.buffer.push_sender_batch(
+                sender_batch.sender_index,
+                sender_batch.generation,
+                sender_batch.txs,
             );
-            self.last_log = Instant::now();
-        }
-        if !should_render {
-            return;
-        }
-        self.last_update = Instant::now();
-        let snap = DisplaySnapshot {
-            elapsed,
-            duration: self.duration,
-            stage: self.stage,
-            submitted: collector.submitted_count(),
-            confirmed: collector.confirmed_count(),
-            failed: collector.failed_count(),
-            in_flight: results_tracker.total_in_flight(),
-            senders_blocked: results_tracker.senders_at_limit(self.max_in_flight_per_sender as u64),
-            total_senders: self.account_count,
-            rolling_tps: collector.rolling_tps(),
-            rolling_gps: collector.rolling_gps(),
-            target_gps: self.target_gps,
-            p50_latency: p50,
-            p99_latency: p99,
-            gas_price_gwei: self.gas_price_gwei,
-        };
-        if let Some(display) = self.display {
-            display.update(&snap);
         }
     }
-}
-
-struct EnqueueDrainState<'a> {
-    submit_event_rx: &'a mut mpsc::Receiver<SubmitEvent>,
-    queued_per_sender: &'a mut HashMap<Address, u64>,
-    rejected_senders: &'a mut HashSet<Address>,
-    queued_gas: &'a mut u128,
-    collector: &'a mut MetricsCollector,
-    results_tracker: &'a ResultsTracker,
-    progress_display: Option<EnqueueProgressDisplay<'a>>,
-}
-
-struct PresignEnqueueState<'a> {
-    submission_pipeline: &'a SubmissionPipeline,
-    next_submit_batch_id: &'a AtomicU64,
-    signed_chunk_rx: &'a mut mpsc::Receiver<Vec<PresignedSenderBatch>>,
-    nonce_reset_tx: &'a mpsc::Sender<SenderNonceReset>,
-    sender_indices: &'a HashMap<Address, usize>,
-    buffer: &'a mut PresignBuffer,
-    progress: &'a mut EnqueueProgress,
-    base_fee_tx: &'a watch::Sender<u128>,
-    gas_estimate: &'a GasEstimate,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -237,57 +155,9 @@ struct BlockAlignedEnqueueConfig {
     /// Fixed refill cadence that replaces block-driven refills (`steady_submission_interval`).
     steady_submission_interval: Option<Duration>,
     presign_target_gas: u128,
-    max_in_flight_per_sender: usize,
+    max_in_flight_per_sender: u64,
     max_total_in_flight: usize,
     deadline: Option<Instant>,
-}
-
-impl EnqueueDrainState<'_> {
-    fn apply_submit_event(&mut self, event: SubmitEvent) {
-        LoadRunner::apply_submit_event(
-            event,
-            self.queued_per_sender,
-            self.rejected_senders,
-            self.queued_gas,
-            self.collector,
-            self.results_tracker,
-        );
-        self.record_completed_refills();
-    }
-
-    fn drain_run_events(&mut self) {
-        LoadRunner::drain_run_events(
-            self.submit_event_rx,
-            self.queued_per_sender,
-            self.rejected_senders,
-            self.queued_gas,
-            self.collector,
-            self.results_tracker,
-        );
-        self.record_completed_refills();
-        if let Some(progress) = self.progress_display.as_mut() {
-            progress.maybe_refresh(self.collector, self.results_tracker);
-        }
-    }
-
-    fn record_completed_refills(&mut self) {
-        for lag in self.results_tracker.drain_completed_refill_lags() {
-            self.collector.record_completed_refill_lag(lag);
-        }
-    }
-
-    fn mempool_depth_gas(&self) -> u128 {
-        // Local submission backlog has not reached the node yet. Counting it as
-        // mempool inventory can starve the RPC pipeline while acknowledgements lag.
-        self.results_tracker.unconfirmed_gas()
-    }
-
-    fn remaining_transaction_slots(&self, capacity: usize) -> usize {
-        let queued =
-            self.queued_per_sender.values().fold(0u64, |total, count| total.saturating_add(*count));
-        let occupied = self.results_tracker.total_in_flight().saturating_add(queued);
-        capacity.saturating_sub(usize::try_from(occupied).unwrap_or(usize::MAX))
-    }
 }
 
 /// Constraint that limited a block-aligned injection plan.
@@ -503,43 +373,40 @@ impl LoadRunner {
         self.derive_reverse_swap_amounts().await?;
 
         self.collector.reset();
-        self.cancel_token = CancellationToken::new();
 
-        self.base_fee = self.client.get_base_fee().await?;
-        info!(base_fee = self.base_fee, "fetched current base fee");
+        let base_fee = self.client.get_base_fee().await?;
+        info!(base_fee, "fetched current base fee");
 
         if !self.validity_router.is_disabled() {
             self.probe_validity_endpoint().await?;
         }
 
-        const SUBMIT_CHANNEL_BUFFER: usize = 32_768;
-        let (submit_event_tx, mut submit_event_rx) =
-            mpsc::channel::<SubmitEvent>(SUBMIT_CHANNEL_BUFFER);
+        let sender_addresses: Vec<Address> =
+            self.accounts.accounts().iter().map(|account| account.address).collect();
+        let sender_count = sender_addresses.len();
+        let (events, inbox) = mpsc::channel(RUN_EVENT_BUFFER);
+        let (base_fee_tx, base_fee_rx) = watch::channel(base_fee);
 
-        let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
-        const INCLUSION_PULSE_BUFFER: usize = 1_024;
-        let (inclusion_pulse_tx, mut inclusion_pulse_rx) =
-            mpsc::channel::<InclusionPulse>(INCLUSION_PULSE_BUFFER);
-        let results_tracker = ResultsTracker::new(&sender_addresses);
-
+        // Watchers outlive a stop request: the confirmation drain still needs their blocks.
         let receipt_provider = RootProvider::<Base>::new_http(self.config.query_rpc.clone());
-        let watcher_cancel = self.cancel_token.child_token();
+        let watcher_cancel = CancellationToken::new();
         let _watcher_cancel_guard = watcher_cancel.clone().drop_guard();
-        let block_watcher_task = Some(
-            BlockWatcher::new(
-                receipt_provider.clone(),
-                results_tracker.clone(),
-                self.config.block_time,
-                inclusion_pulse_tx.clone(),
-                watcher_cancel.clone(),
-            )
-            .start(),
-        );
+        let block_watcher_task = BlockWatcher::new(
+            receipt_provider.clone(),
+            self.config.block_time,
+            events.clone(),
+            base_fee_tx,
+            watcher_cancel.clone(),
+        )
+        .start();
         let canonical_head_watcher_task = self.config.canonical_heads_ws.clone().map(|ws_url| {
-            CanonicalHeadWatcher::new(ws_url, results_tracker.clone(), watcher_cancel.clone())
-                .start()
+            CanonicalHeadWatcher::new(ws_url, events.clone(), watcher_cancel.clone()).start()
         });
-        drop(inclusion_pulse_tx);
+        let (receipt_sampler, receipt_sampler_task) = BlockWatcher::start_receipt_sampler(
+            receipt_provider.clone(),
+            events.clone(),
+            watcher_cancel.clone(),
+        );
 
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
@@ -549,10 +416,9 @@ impl LoadRunner {
         // gas figure before canonical receipt gas lands.
         self.collector.set_estimated_gas(initial_avg_gas);
         let mut start = Instant::now();
-        let account_count = self.accounts.len();
 
         info!(
-            sender_count = account_count,
+            sender_count,
             sender_worker_count = SubmissionPipeline::sender_worker_count(
                 self.submission_batch_rpcs.len(),
                 self.config.max_concurrent_submit_requests,
@@ -570,68 +436,26 @@ impl LoadRunner {
             "load test started"
         );
 
-        let signers = Arc::clone(&self.signers);
-        let submission_batch_rpcs = Arc::clone(&self.submission_batch_rpcs);
         let mut submission_pipeline = SubmissionPipeline::start(
-            signers,
-            submission_batch_rpcs,
-            results_tracker.clone(),
-            submit_event_tx.clone(),
+            Arc::clone(&self.submission_batch_rpcs),
+            events,
             PipelineStartConfig {
-                chain_id: self.config.chain_id,
-                max_concurrent_submit_requests: self.config.max_concurrent_submit_requests,
                 validity_signing: self.config.validity_signing,
+                max_concurrent_submit_requests: self.config.max_concurrent_submit_requests,
             },
         );
-        let next_submit_batch_id = AtomicU64::new(0);
-        let mut queued_per_sender: HashMap<Address, u64> =
-            self.accounts.accounts().iter().map(|a| (a.address, 0)).collect();
-        let mut rejected_senders = HashSet::new();
-        let mut queued_gas = 0u128;
-
-        let mut last_base_fee_refresh = Instant::now();
-        // Refresh once per block so the cached base fee tracks the climb the load
-        // test itself induces; a stale fee mints underwater (unincludable) txs.
-        const BASE_FEE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
-
-        let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
-
-        // Emit an initial snapshot immediately so the TUI renders live
-        // metrics (submitted/in-flight/failed counters) without waiting
-        // for the first confirmation to arrive.
-        if use_live_display {
-            let snap = self.build_snapshot(
-                start,
-                &results_tracker,
-                max_in_flight_per_sender,
-                account_count,
-                LoadTestStage::Submitting,
-            );
-            if let Some(ref d) = self.display {
-                d.update(&snap);
-            }
-        }
 
         let mut open_loop_enqueue_error: Option<BaselineError> = None;
         let pre_sign_started = Instant::now();
-        let sender_addresses: Vec<Address> =
-            self.accounts.accounts().iter().map(|account| account.address).collect();
-        let sender_indices: HashMap<Address, usize> = sender_addresses
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(index, address)| (address, index))
-            .collect();
         let nonce_initialization_started = Instant::now();
         let sender_start_nonces = Self::pending_nonces(&self.client, &sender_addresses).await?;
-        let sender_count = sender_addresses.len();
         info!(
             sender_count,
             elapsed_ms = nonce_initialization_started.elapsed().as_millis(),
             "sender nonces initialized"
         );
 
-        let capacity = self.config.effective_in_flight_capacity(account_count);
+        let capacity = self.config.effective_in_flight_capacity(sender_count);
         if let Some(max_total) = self.config.max_total_in_flight {
             info!(
                 max_total_in_flight = max_total,
@@ -669,12 +493,12 @@ impl LoadRunner {
                 "per-block gas target exceeds block gas limit; clamping to block capacity"
             );
         }
-        let target = Self::mempool_target_transactions(
+        let initial_target_in_flight = Self::mempool_target_transactions(
             u64::try_from(floor_gas).unwrap_or(u64::MAX),
             initial_avg_gas,
             capacity as u64,
         )?;
-        let initial_target_in_flight = target;
+        let capacity_gas = u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas));
 
         let replacement_generator = WorkloadGenerator::from_tx_configs(
             self.workload_config(),
@@ -690,24 +514,8 @@ impl LoadRunner {
         let producer_recipient_keys = self.recipient_keys.take();
         let producer_recipient_rng = std::mem::take(&mut self.recipient_rng);
 
-        let (signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(PRESIGN_CHANNEL_BUFFER);
+        let (signed_chunk_tx, signed_chunk_rx) = mpsc::channel(PRESIGN_CHANNEL_BUFFER);
         let (nonce_reset_tx, nonce_reset_rx) = mpsc::channel(sender_count.max(1));
-        let (base_fee_tx, base_fee_rx) = watch::channel(self.base_fee);
-        let pacing_base_fee_tx = base_fee_tx.clone();
-        let base_fee_client = self.client.clone();
-        let base_fee_cancel = self.cancel_token.clone();
-        let base_fee_task = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    () = base_fee_cancel.cancelled() => break,
-                    () = tokio::time::sleep(Duration::from_secs(1)) => {
-                        if let Ok(base_fee) = base_fee_client.get_base_fee().await {
-                            base_fee_tx.send_replace(base_fee);
-                        }
-                    }
-                }
-            }
-        });
         let producer_task = tokio::spawn(Self::stream_presigned_transactions(
             PresignProducerState {
                 generator: producer_generator,
@@ -716,12 +524,18 @@ impl LoadRunner {
                 recipient_rng: producer_recipient_rng,
             },
             PresignConfig {
-                sender_addresses,
-                sender_next_nonces: sender_start_nonces,
-                sender_generations: vec![0; sender_count],
-                signers: Arc::clone(&self.signers),
+                senders: sender_addresses
+                    .iter()
+                    .zip(sender_start_nonces)
+                    .map(|(&address, next_nonce)| ProducerSender {
+                        address,
+                        next_nonce,
+                        generation: 0,
+                    })
+                    .collect(),
+                signers: self.accounts.accounts().iter().map(|a| a.signer.clone()).collect(),
                 chain_id: self.config.chain_id,
-                base_fee_rx,
+                base_fee_rx: base_fee_rx.clone(),
                 max_gas_price: self.config.max_gas_price,
                 validity_priority_lead_multiplier: self.config.validity_priority_lead_multiplier,
                 validity_priority_fee_divisor: self.config.validity_priority_fee_divisor,
@@ -734,196 +548,127 @@ impl LoadRunner {
             },
         ));
 
-        let mut progress =
-            EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
-        let mut presign_buffer = PresignBuffer::new(sender_count);
+        let mut coordinator = RunCoordinator::new(
+            inbox,
+            ResultsTracker::new(&sender_addresses),
+            &mut self.collector,
+            receipt_sampler,
+            ProgressReport {
+                display: self.display.as_ref(),
+                stage: LoadTestStage::Prefill,
+                start,
+                duration: None,
+                max_in_flight_per_sender: max_in_flight_per_sender as u64,
+                account_count: sender_count,
+                target_gps: self.config.target_gps,
+                base_fee: base_fee_rx,
+                last_log: Instant::now(),
+            },
+        );
+        // Render immediately so the live counters appear before the first confirmation.
+        coordinator.report();
 
-        if let Some(display) = self.display.as_ref() {
-            display.set_stage(LoadTestStage::Prefill);
-        }
-        let prefill_deadline = Instant::now() + PREFILL_TIMEOUT;
+        let mut enqueue_state = PresignEnqueueState {
+            pipeline: &submission_pipeline,
+            chunks: signed_chunk_rx,
+            nonce_resets: nonce_reset_tx,
+            buffer: PresignBuffer::new(sender_count),
+            presigned_generated: 0,
+            offered_gas: 0,
+            last_cycle_at: None,
+            gas_estimate,
+            sender_slots: Vec::with_capacity(sender_count),
+        };
         let prefill_result = Self::enqueue_prefill_transactions(
-            &mut PresignEnqueueState {
-                submission_pipeline: &submission_pipeline,
-                next_submit_batch_id: &next_submit_batch_id,
-                signed_chunk_rx: &mut signed_chunk_rx,
-                nonce_reset_tx: &nonce_reset_tx,
-                sender_indices: &sender_indices,
-                buffer: &mut presign_buffer,
-                progress: &mut progress,
-                base_fee_tx: &pacing_base_fee_tx,
-                gas_estimate: &gas_estimate,
-            },
-            floor_gas.min(u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas))),
-            max_in_flight_per_sender,
+            &mut enqueue_state,
+            &mut coordinator,
+            floor_gas.min(capacity_gas),
+            max_in_flight_per_sender as u64,
             capacity,
-            prefill_deadline,
+            Instant::now() + PREFILL_TIMEOUT,
             &self.stop,
-            &mut EnqueueDrainState {
-                submit_event_rx: &mut submit_event_rx,
-                queued_per_sender: &mut queued_per_sender,
-                rejected_senders: &mut rejected_senders,
-                queued_gas: &mut queued_gas,
-                collector: &mut self.collector,
-                results_tracker: &results_tracker,
-                progress_display: Some(EnqueueProgressDisplay {
-                    display: self.display.as_ref(),
-                    last_update: Instant::now()
-                        .checked_sub(DISPLAY_RENDER_INTERVAL)
-                        .unwrap_or_else(Instant::now),
-                    last_log: Instant::now(),
-                    start,
-                    duration: None,
-                    stage: LoadTestStage::Prefill,
-                    max_in_flight_per_sender,
-                    account_count,
-                    gas_price_gwei: self.base_fee as f64 / 1e9,
-                    target_gps: self.config.target_gps,
-                }),
-            },
         )
         .await;
 
-        if prefill_result.is_ok() {
-            let drain_started = Instant::now();
-            while submission_pipeline.pending_batches() > 0
-                && drain_started.elapsed() < SUBMIT_DRAIN_TIMEOUT
-                && !self.stop.is_cancelled()
-            {
-                Self::drain_run_events(
-                    &mut submit_event_rx,
-                    &mut queued_per_sender,
-                    &mut rejected_senders,
-                    &mut queued_gas,
-                    &mut self.collector,
-                    &results_tracker,
-                );
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-            Self::drain_run_events(
-                &mut submit_event_rx,
-                &mut queued_per_sender,
-                &mut rejected_senders,
-                &mut queued_gas,
-                &mut self.collector,
-                &results_tracker,
+        if prefill_result.is_ok()
+            && !coordinator
+                .pump_while(Instant::now() + SUBMIT_DRAIN_TIMEOUT, |c| {
+                    c.outstanding_batches() > 0 && !self.stop.is_cancelled()
+                })
+                .await
+        {
+            warn!(
+                pending_batches = coordinator.outstanding_batches(),
+                "warmup submission pipeline is still draining; continuing as a measured bottleneck"
             );
-            let pending_batches = submission_pipeline.pending_batches();
-            if pending_batches > 0 {
-                warn!(
-                    pending_batches,
-                    "warmup submission pipeline is still draining; continuing as a measured bottleneck"
-                );
-            }
         }
 
-        if prefill_result.is_ok() {
-            let ready_file = self.config.separate_setup.as_deref().map(|dir| dir.join("ready"));
-            Self::publish_handshake(ready_file.as_deref())?;
-            self.wait_for_start_file().await?;
-            Self::drain_run_events(
-                &mut submit_event_rx,
-                &mut queued_per_sender,
-                &mut rejected_senders,
-                &mut queued_gas,
-                &mut self.collector,
-                &results_tracker,
-            );
-            while inclusion_pulse_rx.try_recv().is_ok() {}
-            let measurement_start_block =
-                receipt_provider.get_block_number().await.map_err(|e| {
-                    BaselineError::Rpc(format!(
-                        "failed to read latest block number for measurement start: {e}"
-                    ))
-                })?;
-            results_tracker
-                .begin_measurement(measurement_start_block, self.config.measurement_blocks);
-            self.collector.reset();
-            self.collector.set_estimated_gas(initial_avg_gas);
-            start = Instant::now();
-            let started_file = self.config.separate_setup.as_deref().map(|dir| dir.join("started"));
-            Self::publish_handshake(started_file.as_deref())?;
-        }
+        let enqueue_result = match prefill_result {
+            Err(err) => Err(err),
+            Ok(()) => {
+                async {
+                    let control_dir = self.config.separate_setup.as_deref();
+                    Self::publish_handshake(control_dir.map(|dir| dir.join("ready")).as_deref())?;
+                    Self::wait_for_start_file(control_dir, &mut coordinator, &self.stop).await?;
+                    let measurement_start_block = coordinator
+                        .pump_until(receipt_provider.get_block_number())
+                        .await
+                        .map_err(|e| {
+                            BaselineError::Rpc(format!(
+                                "failed to read latest block number for measurement start: {e}"
+                            ))
+                        })?;
+                    coordinator
+                        .tracker
+                        .begin_measurement(measurement_start_block, self.config.measurement_blocks);
+                    coordinator.collector.reset();
+                    coordinator.collector.set_estimated_gas(initial_avg_gas);
+                    start = Instant::now();
+                    Self::publish_handshake(control_dir.map(|dir| dir.join("started")).as_deref())?;
 
-        let enqueue_deadline = self.config.duration.map(|d| start + d);
-        let enqueue_result = if let Err(err) = prefill_result {
-            Err(err)
-        } else {
-            if let Some(display) = self.display.as_ref() {
-                display.set_stage(LoadTestStage::Submitting);
+                    coordinator.set_stage(LoadTestStage::Submitting);
+                    coordinator.report.start = start;
+                    coordinator.report.duration = self.config.duration;
+                    info!(
+                        initial_target_in_flight,
+                        duration_secs = ?self.config.duration.map(|d| d.as_secs()),
+                        "starting open-loop measured enqueue"
+                    );
+                    Self::enqueue_block_aligned_transactions(
+                        &mut enqueue_state,
+                        BlockAlignedEnqueueConfig {
+                            controller: MempoolDepthController::new(
+                                self.config.target_gps,
+                                self.config.block_time,
+                                capacity_gas,
+                                start,
+                            )
+                            .with_steady_submission(self.config.steady_submission_interval),
+                            fallback_block_gas_limit: block_gas_limit,
+                            block_time: self.config.block_time,
+                            steady_submission_interval: self.config.steady_submission_interval,
+                            presign_target_gas: floor_gas.saturating_mul(2).min(capacity_gas),
+                            max_in_flight_per_sender: max_in_flight_per_sender as u64,
+                            max_total_in_flight: capacity,
+                            deadline: self.config.duration.map(|d| start + d),
+                        },
+                        &mut coordinator,
+                        &self.stop,
+                    )
+                    .await
+                }
+                .await
             }
-            info!(
-                initial_target_in_flight,
-                duration_secs = ?self.config.duration.map(|d| d.as_secs()),
-                "starting open-loop measured enqueue"
-            );
-            let depth_controller = MempoolDepthController::new(
-                self.config.target_gps,
-                self.config.block_time,
-                u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas)),
-                start,
-            )
-            .with_steady_submission(self.config.steady_submission_interval);
-            Self::enqueue_block_aligned_transactions(
-                &mut PresignEnqueueState {
-                    submission_pipeline: &submission_pipeline,
-                    next_submit_batch_id: &next_submit_batch_id,
-                    signed_chunk_rx: &mut signed_chunk_rx,
-                    nonce_reset_tx: &nonce_reset_tx,
-                    sender_indices: &sender_indices,
-                    buffer: &mut presign_buffer,
-                    progress: &mut progress,
-                    base_fee_tx: &pacing_base_fee_tx,
-                    gas_estimate: &gas_estimate,
-                },
-                BlockAlignedEnqueueConfig {
-                    controller: depth_controller,
-                    fallback_block_gas_limit: block_gas_limit,
-                    block_time: self.config.block_time,
-                    steady_submission_interval: self.config.steady_submission_interval,
-                    presign_target_gas: floor_gas.saturating_mul(2).min(
-                        u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas)),
-                    ),
-                    max_in_flight_per_sender,
-                    max_total_in_flight: capacity,
-                    deadline: enqueue_deadline,
-                },
-                &mut inclusion_pulse_rx,
-                &self.stop,
-                &mut EnqueueDrainState {
-                    submit_event_rx: &mut submit_event_rx,
-                    queued_per_sender: &mut queued_per_sender,
-                    rejected_senders: &mut rejected_senders,
-                    queued_gas: &mut queued_gas,
-                    collector: &mut self.collector,
-                    results_tracker: &results_tracker,
-                    progress_display: Some(EnqueueProgressDisplay {
-                        display: self.display.as_ref(),
-                        last_update: Instant::now()
-                            .checked_sub(DISPLAY_RENDER_INTERVAL)
-                            .unwrap_or_else(Instant::now),
-                        last_log: Instant::now(),
-                        start,
-                        duration: self.config.duration,
-                        stage: LoadTestStage::Submitting,
-                        max_in_flight_per_sender,
-                        account_count,
-                        gas_price_gwei: self.base_fee as f64 / 1e9,
-                        target_gps: self.config.target_gps,
-                    }),
-                },
-            )
-            .await
         };
-        self.collector.set_pacing_duration(start.elapsed());
+        coordinator.collector.set_pacing_duration(start.elapsed());
 
         let finished_file = self.config.separate_setup.as_deref().map(|dir| dir.join("finished"));
         Self::publish_handshake(finished_file.as_deref())?;
 
-        // The producer may be blocked sending its next chunk after enqueue stops at the
-        // measurement cutoff. Close its receiver before awaiting it so that send unblocks.
-        drop(signed_chunk_rx);
-        match producer_task.await {
+        let (presigned_generated, offered_gas) =
+            (enqueue_state.presigned_generated, enqueue_state.offered_gas);
+        drop(enqueue_state);
+        match coordinator.pump_until(producer_task).await {
             Ok(Ok(producer_state)) => {
                 self.generator = producer_state.generator;
                 self.recipient_keys = producer_state.recipient_keys;
@@ -931,97 +676,41 @@ impl LoadRunner {
             }
             Ok(Err(err)) => {
                 warn!(error = %err, "open-loop pre-sign producer failed");
-                if open_loop_enqueue_error.is_none() {
-                    open_loop_enqueue_error = Some(err);
-                }
+                open_loop_enqueue_error.get_or_insert(err);
             }
             Err(join_error) => {
                 let err = BaselineError::Transaction(format!(
                     "open-loop pre-sign producer task failed: {join_error}"
                 ));
                 warn!(error = %err, "open-loop pre-sign producer task failed");
-                if open_loop_enqueue_error.is_none() {
-                    open_loop_enqueue_error = Some(err);
-                }
+                open_loop_enqueue_error.get_or_insert(err);
             }
         }
-        base_fee_task.abort();
 
         if let Err(err) = enqueue_result {
             warn!(
                 error = %err,
-                presigned_generated = progress.presigned_generated,
+                presigned_generated,
                 "open-loop enqueue aborted; proceeding to drain and shutdown"
             );
             open_loop_enqueue_error = Some(err);
         } else {
             info!(
-                submitted = self.collector.submitted_count(),
-                offered_gas = progress.offered_gas,
+                submitted = coordinator.collector.submitted_count(),
+                offered_gas,
                 elapsed_secs = pre_sign_started.elapsed().as_secs_f64(),
                 "load test enqueue complete"
             );
         }
 
-        while self.config.duration.is_none_or(|d| start.elapsed() < d)
-            && !self.stop.is_cancelled()
-            && open_loop_enqueue_error.is_none()
-            && !results_tracker.measurement_finished()
-        {
-            // --- Housekeeping (runs once per batch iteration) ---
-
-            if last_base_fee_refresh.elapsed() >= BASE_FEE_REFRESH_INTERVAL {
-                if let Ok(new_base_fee) = self.client.get_base_fee().await
-                    && new_base_fee != self.base_fee
-                {
-                    debug!(old_base_fee = self.base_fee, new_base_fee, "base fee updated");
-                    self.base_fee = new_base_fee;
-                }
-                last_base_fee_refresh = Instant::now();
-            }
-
-            Self::drain_run_events(
-                &mut submit_event_rx,
-                &mut queued_per_sender,
-                &mut rejected_senders,
-                &mut queued_gas,
-                &mut self.collector,
-                &results_tracker,
-            );
-
-            // Drain confirmed metrics non-blocking so the rolling window stays
-            // current during the run (not just during the post-run drain).
-            for metrics in results_tracker.drain_confirmed_metrics() {
-                self.collector.record_confirmed(metrics);
-            }
-            let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
-            if expired > 0 {
-                self.collector.record_failures("expired without confirmation", expired);
-            }
-
-            tokio::time::sleep(IDLE_SLEEP).await;
-        }
-
         submission_pipeline.close_input();
-
         let stop_at_measurement_cutoff = self.config.measurement_blocks.is_some();
-        let drain_started = Instant::now();
-        while submission_pipeline.pending_batches() > 0
-            && !stop_at_measurement_cutoff
-            && drain_started.elapsed() < SUBMIT_DRAIN_TIMEOUT
-        {
-            Self::drain_submit_events(
-                &mut submit_event_rx,
-                &mut queued_per_sender,
-                &mut rejected_senders,
-                &mut queued_gas,
-                &mut self.collector,
-                &results_tracker,
-            );
-            tokio::time::sleep(Duration::from_millis(25)).await;
+        if !stop_at_measurement_cutoff {
+            coordinator
+                .pump_while(Instant::now() + SUBMIT_DRAIN_TIMEOUT, |c| c.outstanding_batches() > 0)
+                .await;
         }
-
-        let pending_submit_batches = submission_pipeline.pending_batches();
+        let pending_submit_batches = coordinator.outstanding_batches();
         if pending_submit_batches > 0 {
             if stop_at_measurement_cutoff {
                 warn!(pending_submit_batches, "closing submit queue at measured block cutoff");
@@ -1031,156 +720,63 @@ impl LoadRunner {
                     "timed out waiting for submit queue to drain, closing submit queue"
                 );
             }
-            let failures =
-                submission_pipeline.close_and_fail_queued("submit queue abandoned").await;
-            Self::apply_queued_submit_failures(
-                failures,
-                &mut queued_per_sender,
-                &mut self.collector,
-            );
+            coordinator.abandon(submission_pipeline.abandon_queued(), "submit queue abandoned");
         }
-        submission_pipeline.shutdown_and_join(SUBMIT_WORKER_SHUTDOWN_TIMEOUT).await;
+        coordinator
+            .pump_until(submission_pipeline.shutdown_and_join(SUBMIT_WORKER_SHUTDOWN_TIMEOUT))
+            .await;
         drop(submission_pipeline);
+        coordinator.drain_inbox();
 
-        // Close the channel so the drain below cannot miss late events.
-        drop(submit_event_tx);
+        coordinator.set_stage(LoadTestStage::DrainingConfirmations);
 
-        Self::drain_submit_events(
-            &mut submit_event_rx,
-            &mut queued_per_sender,
-            &mut rejected_senders,
-            &mut queued_gas,
-            &mut self.collector,
-            &results_tracker,
-        );
-        for lag in results_tracker.drain_completed_refill_lags() {
-            self.collector.record_completed_refill_lag(lag);
-        }
-
-        self.set_display_stage(LoadTestStage::DrainingConfirmations);
-
-        let submitted = self.collector.submitted_count();
-        let in_flight = results_tracker.total_in_flight();
+        let submitted = coordinator.collector.submitted_count();
         let elapsed = start.elapsed();
         info!(
             submitted,
-            in_flight,
+            in_flight = coordinator.tracker.total_in_flight(),
             elapsed_secs = elapsed.as_secs(),
             actual_tps = submitted as f64 / elapsed.as_secs_f64(),
             "load test complete, draining confirmations"
         );
 
-        let drain_start = Instant::now();
-        let confirmation_drain_timeout = if open_loop_enqueue_error.is_some() {
+        let drain_began = start.elapsed();
+        let last_confirmed = if open_loop_enqueue_error.is_some() {
             warn!("skipping confirmation drain after open-loop enqueue failure");
-            Duration::ZERO
+            let (undrained, undrained_gas) = coordinator.tracker.drain_pending();
+            coordinator.collector.record_undrained_inventory(undrained, undrained_gas);
+            None
         } else {
-            CONFIRMATION_DRAIN_TIMEOUT
+            coordinator.drain_confirmations(CONFIRMATION_DRAIN_TIMEOUT, DRAIN_STALL_TIMEOUT).await
         };
-        let results_poll_interval = Duration::from_millis(600);
-        let mut last_confirmed_at = start.elapsed();
-        let mut last_pending_count = results_tracker.pending_count();
-        let mut last_drain_progress = Instant::now();
-        let mut last_drain_report = Instant::now();
+        let last_confirmed_at =
+            last_confirmed.map_or(drain_began, |at| at.saturating_duration_since(start));
 
-        while drain_start.elapsed() < confirmation_drain_timeout {
-            let metrics = results_tracker.drain_confirmed_metrics();
-            let has_confirmed = !metrics.is_empty();
-            if has_confirmed {
-                last_confirmed_at = start.elapsed();
-                for metrics in metrics {
-                    self.collector.record_confirmed(metrics);
-                }
-            }
-            if self.display.as_ref().is_some_and(LoadTestDisplay::is_active) {
-                let snap = self.build_snapshot(
-                    start,
-                    &results_tracker,
-                    max_in_flight_per_sender,
-                    account_count,
-                    LoadTestStage::DrainingConfirmations,
-                );
-                if let Some(display) = &self.display {
-                    display.update(&snap);
-                }
-            }
-
-            let pending_count = results_tracker.pending_count();
-            if pending_count == 0 {
-                break;
-            }
-            if pending_count < last_pending_count || has_confirmed {
-                last_pending_count = pending_count;
-                last_drain_progress = Instant::now();
-            } else if last_drain_progress.elapsed() >= DRAIN_STALL_TIMEOUT {
-                // No confirmations and no shrinkage for a while: the remainder is
-                // expected mempool inventory at the measurement cutoff. Remove it
-                // from tracking without classifying it as a failed transaction.
-                let (stalled, undrained_gas) = results_tracker.measured_unconfirmed_inventory();
-                results_tracker.expire_pending(Duration::ZERO);
-                self.collector.record_undrained_inventory(stalled, undrained_gas);
-                info!(
-                    stalled,
-                    undrained_gas,
-                    stall_secs = DRAIN_STALL_TIMEOUT.as_secs(),
-                    "confirmation drain stopped with expected undrained inventory"
-                );
-                break;
-            }
-            if last_drain_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
-                info!(
-                    stage = LoadTestStage::DrainingConfirmations.as_str(),
-                    elapsed_secs = drain_start.elapsed().as_secs(),
-                    remaining_secs = Option::<u64>::None,
-                    submitted = self.collector.submitted_count(),
-                    confirmed = self.collector.confirmed_count(),
-                    failed = self.collector.failed_count(),
-                    in_flight = results_tracker.total_in_flight(),
-                    rolling_gps = self.collector.rolling_gps(),
-                    "load test progress"
-                );
-                last_drain_report = Instant::now();
-            }
-
-            tokio::time::sleep(results_poll_interval).await;
-        }
-
-        if results_tracker.pending_count() > 0 {
-            let (undrained, undrained_gas) = results_tracker.measured_unconfirmed_inventory();
-            results_tracker.expire_pending(Duration::ZERO);
-            self.collector.record_undrained_inventory(undrained, undrained_gas);
-        }
-
-        for metrics in results_tracker.drain_confirmed_metrics() {
-            self.collector.record_confirmed(metrics);
-            last_confirmed_at = start.elapsed();
-        }
-
-        // Now safe to stop background watcher tasks.
-        self.cancel_token.cancel();
-
-        if let Some(task) = block_watcher_task {
-            match tokio::time::timeout(Duration::from_secs(2), task).await {
-                Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
-                _ => {}
-            }
-        }
-        if let Some(task) = canonical_head_watcher_task {
-            match tokio::time::timeout(Duration::from_secs(2), task).await {
-                Ok(Err(error)) if error.is_panic() => {
-                    warn!(error = %error, "canonical head watcher panicked");
-                }
-                _ => {}
+        watcher_cancel.cancel();
+        let watchers = [
+            ("block watcher", Some(block_watcher_task)),
+            ("canonical head watcher", canonical_head_watcher_task),
+            ("receipt sampler", Some(receipt_sampler_task)),
+        ];
+        for (watcher, task) in watchers {
+            let Some(task) = task else {
+                continue;
+            };
+            if let Ok(Err(error)) =
+                coordinator.pump_until(tokio::time::timeout(WATCHER_SHUTDOWN_TIMEOUT, task)).await
+                && error.is_panic()
+            {
+                warn!(watcher, error = %error, "watcher panicked");
             }
         }
 
-        let confirmed = self.collector.confirmed_count();
+        let confirmed = coordinator.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
         // Fetch canonical receipts in a single batch pass, scoped to only the blocks
         // our transactions landed in, to backfill gas and revert status. This can be
         // slow on large runs, so notify the user before starting.
-        let landed_blocks = results_tracker.landed_block_numbers();
+        let landed_blocks = coordinator.tracker.landed_block_numbers();
         if open_loop_enqueue_error.is_none() && !landed_blocks.is_empty() {
             println!(
                 "Fetching receipts for {} block(s) to compute gas and reverts (this may take a while)...",
@@ -1191,7 +787,11 @@ impl LoadRunner {
                 BlockWatcher::fetch_receipts(&receipt_provider, &landed_blocks).await;
             let receipts_by_hash: HashMap<TxHash, _> =
                 receipts.into_iter().map(|receipt| (receipt.tx_hash, receipt)).collect();
-            self.collector.apply_receipts(&receipts_by_hash, landed_blocks.len(), failed_blocks);
+            coordinator.collector.apply_receipts(
+                &receipts_by_hash,
+                landed_blocks.len(),
+                failed_blocks,
+            );
             info!(
                 blocks = landed_blocks.len(),
                 failed_blocks,
@@ -1200,13 +800,14 @@ impl LoadRunner {
                 "end-of-run receipt pass complete"
             );
         }
+        let measurement_window = coordinator.tracker.measurement_window();
+        drop(coordinator);
 
         let mut summary = self.collector.summarize_with_fresh_recipient_count(
             last_confirmed_at,
             self.config_summary.clone(),
             self.fresh_recipient_count(),
         );
-        let measurement_window = results_tracker.measurement_window();
         summary.measurement_start_block = measurement_window.start_block;
         summary.measurement_end_block = measurement_window.end_block;
         summary.measurement_block_count = measurement_window.block_count;
@@ -1225,6 +826,37 @@ impl LoadRunner {
         Ok(summary)
     }
 
+    /// Waits for the external `start` handshake file while the coordinator keeps draining.
+    async fn wait_for_start_file(
+        control_dir: Option<&Path>,
+        coordinator: &mut RunCoordinator<'_>,
+        stop: &CancellationToken,
+    ) -> Result<()> {
+        let Some(control_dir) = control_dir else {
+            return Ok(());
+        };
+        let path = control_dir.join("start");
+        let deadline = Instant::now() + START_FILE_TIMEOUT;
+        // ponytail: polls the filesystem; a file appearing has no portable async notification.
+        let mut poll = tokio::time::interval(START_FILE_POLL_INTERVAL);
+        while !path.exists() {
+            if stop.is_cancelled() {
+                return Err(BaselineError::Transaction(
+                    "stopped while waiting for start handshake".into(),
+                ));
+            }
+            if Instant::now() >= deadline {
+                return Err(BaselineError::Timeout {
+                    operation: "start handshake file".into(),
+                    duration: START_FILE_TIMEOUT,
+                });
+            }
+            coordinator.pump_until(poll.tick()).await;
+        }
+        Ok(())
+    }
+
+    /// Reads a sender's pending nonce, which follows transactions the node already holds.
     /// Bounded by the query client's [`RPC_TIMEOUT`](crate::rpc::RPC_TIMEOUT).
     async fn pending_nonce(client: &QueryProvider, sender: Address) -> Result<u64> {
         // The transport error can embed a credential-bearing RPC URL, so it is not formatted.
@@ -1280,30 +912,16 @@ impl LoadRunner {
         txs_per_sender: usize,
         current_block: u64,
     ) -> Result<Vec<SenderJob>> {
-        if config.sender_addresses.len() != config.sender_next_nonces.len() {
-            return Err(BaselineError::Transaction(format!(
-                "open-loop sender nonce set mismatch: {} addresses vs {} nonces",
-                config.sender_addresses.len(),
-                config.sender_next_nonces.len(),
-            )));
-        }
-        if config.sender_addresses.len() != config.sender_generations.len() {
-            return Err(BaselineError::Transaction(format!(
-                "open-loop sender generation set mismatch: {} addresses vs {} generations",
-                config.sender_addresses.len(),
-                config.sender_generations.len(),
-            )));
-        }
-
-        let sender_count = config.sender_addresses.len();
+        let sender_count = config.senders.len();
         if sender_count == 0 {
             return Ok(Vec::new());
         }
         let mut sender_jobs = Vec::with_capacity(sender_count);
-        for (sender_index, from) in config.sender_addresses.iter().copied().enumerate() {
-            let ring_recipient = config.sender_addresses[(sender_index + 1) % sender_count];
+        for (sender_index, sender) in config.senders.iter().enumerate() {
+            let from = sender.address;
+            let ring_recipient = config.senders[(sender_index + 1) % sender_count].address;
             let pair_index = Self::b20_partner_index(sender_index, sender_count);
-            let pair_recipient = config.sender_addresses[pair_index];
+            let pair_recipient = config.senders[pair_index].address;
             let cohort = config.validity_router.cohort_for_sender(from);
             let fixed_payload = match cohort {
                 SubmitCohort::ValidityPassPriorityLead => lead_payload,
@@ -1352,8 +970,8 @@ impl LoadRunner {
             sender_jobs.push(SenderJob {
                 sender_index,
                 from,
-                start_nonce: config.sender_next_nonces[sender_index],
-                generation: config.sender_generations[sender_index],
+                start_nonce: sender.next_nonce,
+                generation: sender.generation,
                 prepared_txs,
             });
         }
@@ -1363,7 +981,7 @@ impl LoadRunner {
 
     async fn sign_sender_jobs(
         sender_jobs: Vec<SenderJob>,
-        signers: Arc<HashMap<Address, PrivateKeySigner>>,
+        signers: Arc<[PrivateKeySigner]>,
         chain_id: u64,
         base_fee: u128,
         max_gas_price: u128,
@@ -1383,25 +1001,15 @@ impl LoadRunner {
         let mut sender_jobs = sender_jobs.into_iter();
         let mut signing_tasks = Vec::with_capacity(signing_worker_count);
         loop {
-            let jobs = sender_jobs
-                .by_ref()
-                .take(jobs_per_task)
-                .map(|sender_job| {
-                    let signer = signers.get(&sender_job.from).cloned().ok_or_else(|| {
-                        BaselineError::Transaction(format!(
-                            "missing signer for sender {}",
-                            sender_job.from
-                        ))
-                    })?;
-                    Ok((sender_job, signer))
-                })
-                .collect::<Result<Vec<_>>>()?;
+            let jobs: Vec<SenderJob> = sender_jobs.by_ref().take(jobs_per_task).collect();
             if jobs.is_empty() {
                 break;
             }
+            let signers = Arc::clone(&signers);
             signing_tasks.push(task::spawn_blocking(move || {
                 jobs.into_iter()
-                    .map(|(sender_job, signer)| {
+                    .map(|sender_job| {
+                        let signer = &signers[sender_job.sender_index];
                         Self::sign_sender_job(
                             sender_job,
                             signer,
@@ -1416,60 +1024,35 @@ impl LoadRunner {
             }));
         }
 
-        let mut signed_by_sender: Vec<Option<SignedSender>> =
-            std::iter::repeat_with(|| None).take(sender_count).collect();
-
+        // Jobs are built in sender order and each task keeps its slice in order.
+        let mut chunk = Vec::with_capacity(sender_count);
         for signing_task in signing_tasks {
-            let signed_senders = signing_task.await.map_err(|e| {
+            chunk.extend(signing_task.await.map_err(|e| {
                 BaselineError::Transaction(format!("open-loop signing task failed: {e}"))
-            })??;
-            for signed_sender in signed_senders {
-                let sender_index = signed_sender.sender_index;
-                if signed_by_sender[sender_index].is_some() {
-                    return Err(BaselineError::Transaction(format!(
-                        "duplicate signed sender result for index {sender_index}"
-                    )));
-                }
-                signed_by_sender[sender_index] = Some(signed_sender);
-            }
+            })??);
         }
-
-        let mut ordered_signed_txs = Vec::with_capacity(sender_count);
-        for (sender_index, signed_sender) in signed_by_sender.into_iter().enumerate() {
-            let signed_sender = signed_sender.ok_or_else(|| {
-                BaselineError::Transaction(format!(
-                    "missing signed transaction set for sender index {sender_index}"
-                ))
-            })?;
-            ordered_signed_txs.push(PresignedSenderBatch {
-                sender_index,
-                generation: signed_sender.generation,
-                txs: signed_sender.signed_txs,
-            });
-        }
-
-        Ok(ordered_signed_txs)
+        Ok(chunk)
     }
 
     async fn stream_presigned_transactions(
         mut producer_state: PresignProducerState,
         mut config: PresignConfig,
     ) -> Result<PresignProducerState> {
-        if config.sender_addresses.is_empty() {
+        if config.senders.is_empty() {
             return Ok(producer_state);
         }
 
-        let sender_count = config.sender_addresses.len();
-        let chunk_per_sender = (SIGNED_BATCH_SIZE / sender_count).max(1);
+        let chunk_per_sender = (SIGNED_BATCH_SIZE / config.senders.len()).max(1);
+        let nonce_increment = chunk_per_sender as u64;
 
         // The producer streams indefinitely and only stops when the consumer drops
         // `signed_chunk_rx` (detected below via the `send(...).is_err()` check), which
         // happens once the enqueue loop returns (deadline reached or channel closed).
         loop {
-            // Terminal rejections create a local nonce gap for already-presigned work. Drain reset
+            // Terminal rejections create a local nonce gap for already-presigned work. Apply reset
             // requests before building the next chunk so affected senders resume from the node's
             // pending nonce instead of being removed from the active sender set.
-            Self::drain_nonce_reset_requests(&mut config).await?;
+            Self::apply_nonce_resets(&mut config).await?;
 
             // Resolve offset-based block_number predicates against the chain
             // height once per prepare round (not per transaction). Skip the
@@ -1491,7 +1074,7 @@ impl LoadRunner {
             )?;
 
             let base_fee = *config.base_fee_rx.borrow_and_update();
-            let signed_by_sender = Self::sign_sender_jobs(
+            let chunk = Self::sign_sender_jobs(
                 sender_jobs,
                 Arc::clone(&config.signers),
                 config.chain_id,
@@ -1502,17 +1085,12 @@ impl LoadRunner {
             )
             .await?;
 
-            if config.signed_chunk_tx.send(signed_by_sender).await.is_err() {
+            if config.signed_chunk_tx.send(chunk).await.is_err() {
                 break;
             }
 
-            let nonce_increment = u64::try_from(chunk_per_sender).map_err(|e| {
-                BaselineError::Transaction(format!(
-                    "failed to convert open-loop chunk size to nonce increment: {e}"
-                ))
-            })?;
-            for (sender_index, next_nonce) in config.sender_next_nonces.iter_mut().enumerate() {
-                *next_nonce = next_nonce.checked_add(nonce_increment).ok_or_else(|| {
+            for (sender_index, sender) in config.senders.iter_mut().enumerate() {
+                sender.next_nonce = sender.next_nonce.checked_add(nonce_increment).ok_or_else(|| {
                     BaselineError::Transaction(format!(
                         "nonce overflow while advancing open-loop producer sender index {sender_index}"
                     ))
@@ -1523,33 +1101,23 @@ impl LoadRunner {
         Ok(producer_state)
     }
 
-    async fn drain_nonce_reset_requests(config: &mut PresignConfig) -> Result<()> {
+    async fn apply_nonce_resets(config: &mut PresignConfig) -> Result<()> {
         while let Ok(reset) = config.nonce_reset_rx.try_recv() {
-            let Some(address) = config.sender_addresses.get(reset.sender_index).copied() else {
+            let Some(sender) = config.senders.get_mut(reset.sender_index) else {
                 continue;
             };
-            if address != reset.address {
+            if sender.generation >= reset.generation {
                 continue;
             }
-            if config
-                .sender_generations
-                .get(reset.sender_index)
-                .is_some_and(|generation| *generation >= reset.generation)
-            {
-                continue;
-            }
-
             // The pending nonce restarts after transactions the node already accepted while
-            // avoiding the rejected stale tail.
-            let next_nonce = Self::pending_nonce(&config.query_client, reset.address).await?;
-
-            config.sender_next_nonces[reset.sender_index] = next_nonce;
-            config.sender_generations[reset.sender_index] = reset.generation;
+            // skipping the rejected stale tail.
+            sender.next_nonce = Self::pending_nonce(&config.query_client, sender.address).await?;
+            sender.generation = reset.generation;
             info!(
-                sender = %reset.address,
+                sender = %sender.address,
                 sender_index = reset.sender_index,
                 generation = reset.generation,
-                next_nonce,
+                next_nonce = sender.next_nonce,
                 "resynced open-loop sender after terminal rejection"
             );
         }
@@ -1559,13 +1127,14 @@ impl LoadRunner {
 
     fn sign_sender_job(
         sender_job: SenderJob,
-        signer: PrivateKeySigner,
+        signer: &PrivateKeySigner,
         chain_id: u64,
         base_fee: u128,
         max_gas_price: u128,
         validity_priority_lead_multiplier: u128,
         validity_priority_fee_divisor: u128,
-    ) -> Result<SignedSender> {
+    ) -> Result<PresignedSenderBatch> {
+        let pricer = GasPricer::new(max_gas_price);
         let mut signed_txs = Vec::with_capacity(sender_job.prepared_txs.len());
 
         for (nonce_offset, prepared) in sender_job.prepared_txs.into_iter().enumerate() {
@@ -1579,47 +1148,40 @@ impl LoadRunner {
                 ))
             })?;
 
-            let fees = GasPricer::new(max_gas_price).fees_for_cohort(
+            let fees = pricer.fees_for_cohort(
                 base_fee,
                 prepared.cohort,
                 validity_priority_fee_divisor,
                 validity_priority_lead_multiplier,
             );
-            signed_txs.push(SubmissionPipeline::sign_at_nonce(
-                &signer, &prepared, chain_id, nonce, fees,
-            )?);
+            let mut signed =
+                SubmissionPipeline::sign_at_nonce(signer, &prepared, chain_id, nonce, fees)?;
+            // Authorized up front so sender workers never hold keys; attached only when the
+            // signing mode or the endpoint asks for it.
+            signed.authorize_validity(signer, chain_id)?;
+            signed_txs.push(signed);
         }
 
-        Ok(SignedSender {
+        Ok(PresignedSenderBatch {
             sender_index: sender_job.sender_index,
             generation: sender_job.generation,
-            signed_txs,
+            txs: signed_txs,
         })
     }
 
-    async fn enqueue_signed_while_draining(
-        submission_pipeline: &SubmissionPipeline,
-        batch: SignedBatch,
-        drain_state: &mut EnqueueDrainState<'_>,
-    ) -> std::result::Result<(), SignedBatch> {
-        let enqueue = submission_pipeline.enqueue_signed(batch);
-        tokio::pin!(enqueue);
-
+    /// Splits `selected` into submit batches and enqueues them. A closed queue means the run is
+    /// ending, so the unqueued remainder is dropped.
+    async fn enqueue_selected(
+        pipeline: &SubmissionPipeline,
+        coordinator: &mut RunCoordinator<'_>,
+        selected: Vec<SignedTransaction>,
+        measured: bool,
+    ) {
+        let mut txs = selected.into_iter();
         loop {
-            tokio::select! {
-                result = enqueue.as_mut() => {
-                    drain_state.drain_run_events();
-                    return result;
-                }
-                maybe_event = drain_state.submit_event_rx.recv() => {
-                    match maybe_event {
-                        Some(event) => {
-                            drain_state.apply_submit_event(event);
-                            drain_state.drain_run_events();
-                        }
-                        None => return enqueue.as_mut().await,
-                    }
-                }
+            let batch: Vec<_> = txs.by_ref().take(SIGNED_BATCH_SIZE).collect();
+            if batch.is_empty() || !coordinator.enqueue(pipeline, batch, measured).await {
+                return;
             }
         }
     }
@@ -1627,15 +1189,18 @@ impl LoadRunner {
     async fn enqueue_block_aligned_transactions(
         enqueue_state: &mut PresignEnqueueState<'_>,
         config: BlockAlignedEnqueueConfig,
-        inclusion_pulse_rx: &mut mpsc::Receiver<InclusionPulse>,
+        coordinator: &mut RunCoordinator<'_>,
         stop: &CancellationToken,
-        drain_state: &mut EnqueueDrainState<'_>,
     ) -> Result<()> {
         let safety_interval = config.steady_submission_interval.unwrap_or_else(|| {
             (config.block_time / 4).clamp(Duration::from_millis(1), Duration::from_millis(250))
         });
         let mut safety_tick = tokio::time::interval(safety_interval);
         safety_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let deadline = futures::future::OptionFuture::from(
+            config.deadline.map(|deadline| tokio::time::sleep_until(deadline.into())),
+        );
+        tokio::pin!(deadline);
         let mut last_block_gas_limit = config.fallback_block_gas_limit;
         // Canonical RPC observations are routinely delayed beyond a 200ms block interval. Keep
         // submitting at the finer safety cadence until one arrives, otherwise a delayed
@@ -1644,70 +1209,51 @@ impl LoadRunner {
         let fallback_refill_interval = safety_interval;
         let mut last_pulse_at =
             Instant::now().checked_sub(fallback_refill_interval).unwrap_or_else(Instant::now);
-        let measurement_window = drain_state.results_tracker.measurement_window();
-        let measurement_end_block = measurement_window.end_block;
-        let mut last_recorded_canonical_block = measurement_window.start_block;
+        let mut last_recorded_canonical_block =
+            coordinator.tracker.measurement_window().start_block;
 
         loop {
-            drain_state.drain_run_events();
-            if stop.is_cancelled()
-                || config.deadline.is_some_and(|deadline| Instant::now() >= deadline)
+            coordinator.drain_inbox();
+            if stop.is_cancelled() || config.deadline.is_some_and(|d| Instant::now() >= d) {
+                return Ok(());
+            }
+            let finished = coordinator.tracker.measurement_finished();
+            if finished
+                && last_recorded_canonical_block
+                    .zip(coordinator.tracker.measurement_window().end_block)
+                    .is_some_and(|(recorded, end)| recorded >= end)
             {
                 return Ok(());
             }
 
-            if drain_state.results_tracker.measurement_finished() {
-                if last_recorded_canonical_block
-                    .zip(measurement_end_block)
-                    .is_some_and(|(recorded, end)| recorded >= end)
-                {
-                    return Ok(());
-                }
-
-                let Some(pulse) = inclusion_pulse_rx.recv().await else {
-                    return Ok(());
-                };
-                let Some(canonical) = pulse.canonical else {
+            // After measurement ends, canonical blocks are recorded without refilling.
+            if let Some(pulse) = coordinator.pop_pulse() {
+                last_recorded_canonical_block = Some(pulse.number);
+                if finished {
+                    Self::record_terminal_canonical_cycle(pulse, &config, coordinator);
                     continue;
-                };
-                enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
-                Self::record_terminal_canonical_cycle(canonical, &config, drain_state);
-                last_recorded_canonical_block = Some(canonical.number);
+                }
+                last_block_gas_limit = pulse.gas_limit;
+                last_pulse_at = pulse.observed_at;
+                Self::run_refill_cycle(
+                    enqueue_state,
+                    RefillTrigger::Canonical(pulse),
+                    last_block_gas_limit,
+                    &config,
+                    coordinator,
+                )
+                .await;
                 continue;
             }
 
+            let buffer_wanted =
+                !finished && enqueue_state.buffer.buffered_gas() < config.presign_target_gas;
             tokio::select! {
                 biased;
-                maybe_pulse = inclusion_pulse_rx.recv() => {
-                    let Some(pulse) = maybe_pulse else {
-                        return Ok(());
-                    };
-                    if let Some(canonical) = pulse.canonical {
-                        last_block_gas_limit = canonical.gas_limit;
-                        enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
-                    }
-                    last_pulse_at = pulse.observed_at;
-                    if drain_state.results_tracker.measurement_finished() {
-                        if let Some(canonical) = pulse.canonical {
-                            Self::record_terminal_canonical_cycle(canonical, &config, drain_state);
-                            last_recorded_canonical_block = Some(canonical.number);
-                        }
-                        continue;
-                    }
-                    let canonical_block = pulse.canonical.map(|block| block.number);
-                    Self::run_refill_cycle(
-                        enqueue_state,
-                        pulse,
-                        last_block_gas_limit,
-                        &config,
-                        drain_state,
-                    )
-                    .await?;
-                    if canonical_block.is_some() {
-                        last_recorded_canonical_block = canonical_block;
-                    }
-                }
-                _ = safety_tick.tick() => {
+                () = stop.cancelled() => return Ok(()),
+                _ = &mut deadline, if config.deadline.is_some() => return Ok(()),
+                alive = coordinator.next_event() => if !alive { return Ok(()) },
+                _ = safety_tick.tick(), if !finished => {
                     // Steady submission refills on every tick, so arrivals do not depend on
                     // when canonical blocks are observed.
                     if config.steady_submission_interval.is_some()
@@ -1715,25 +1261,20 @@ impl LoadRunner {
                     {
                         Self::run_refill_cycle(
                             enqueue_state,
-                            InclusionPulse::safety(Instant::now()),
+                            RefillTrigger::Safety(Instant::now()),
                             last_block_gas_limit,
                             &config,
-                            drain_state,
+                            coordinator,
                         )
-                        .await?;
+                        .await;
                         last_pulse_at = Instant::now();
                     }
                 }
-                maybe_chunk = enqueue_state.signed_chunk_rx.recv(),
-                    if enqueue_state.buffer.buffered_gas() < config.presign_target_gas => {
-                    let Some(chunk) = maybe_chunk else {
+                chunk = enqueue_state.chunks.recv(), if buffer_wanted => {
+                    let Some(chunk) = chunk else {
                         return Ok(());
                     };
-                    Self::buffer_presigned_chunk(
-                        enqueue_state.buffer,
-                        enqueue_state.progress,
-                        chunk,
-                    );
+                    enqueue_state.buffer_chunk(chunk);
                 }
             }
         }
@@ -1744,20 +1285,22 @@ impl LoadRunner {
     fn record_terminal_canonical_cycle(
         canonical: BlockPulse,
         config: &BlockAlignedEnqueueConfig,
-        drain_state: &mut EnqueueDrainState<'_>,
+        coordinator: &mut RunCoordinator<'_>,
     ) {
         let plan_started = Instant::now();
-        let depth_gas = drain_state.mempool_depth_gas();
-        let (_, canonical_p99) = drain_state.collector.rolling_p50_p99();
+        let depth_gas = coordinator.tracker.unconfirmed_gas();
+        let confirmed_gas = coordinator.tracker.confirmed_gas();
+        let queued_gas = coordinator.queued_gas();
+        let (_, canonical_p99) = coordinator.collector.rolling_p50_p99();
         let plan = config.controller.with_confirmation_latency(canonical_p99).plan(
             canonical.observed_at,
             canonical.gas_limit,
             depth_gas,
-            drain_state.results_tracker.confirmed_gas(),
+            confirmed_gas,
             0,
         );
         let plan_time = plan_started.elapsed();
-        drain_state.collector.record_pacing_cycle(PacingCycleObservation {
+        coordinator.collector.record_pacing_cycle(PacingCycleObservation {
             elapsed: canonical
                 .observed_at
                 .saturating_duration_since(config.controller.measurement_started_at),
@@ -1768,7 +1311,7 @@ impl LoadRunner {
             our_included_gas: canonical.our_included_gas,
             pre_refill_depth_gas: depth_gas,
             post_refill_depth_gas: depth_gas,
-            queued_gas: *drain_state.queued_gas,
+            queued_gas,
             floor_gas: plan.floor_gas,
             offered_gas: 0,
             capacity_limited: false,
@@ -1783,83 +1326,74 @@ impl LoadRunner {
         });
     }
 
-    fn buffer_presigned_chunk(
-        buffer: &mut PresignBuffer,
-        progress: &mut EnqueueProgress,
-        chunk: Vec<PresignedSenderBatch>,
+    /// Resets senders whose submissions failed: their buffered work is stale and the producer
+    /// must restart them from the node's pending nonce.
+    fn reset_rejected_senders(
+        enqueue_state: &mut PresignEnqueueState<'_>,
+        coordinator: &mut RunCoordinator<'_>,
     ) {
-        for sender_batch in chunk {
-            progress.presigned_generated =
-                progress.presigned_generated.saturating_add(sender_batch.txs.len() as u64);
-            buffer.push_sender_batch(
-                sender_batch.sender_index,
-                sender_batch.generation,
-                sender_batch.txs,
-            );
+        let mut reset_sender_count = 0usize;
+        for sender_index in coordinator.take_rejected_senders() {
+            let Some(generation) = enqueue_state.buffer.reset_sender(sender_index) else {
+                continue;
+            };
+            // The coordinator owns the presign buffer and generation filter, while the producer
+            // owns future nonce assignment. A full queue means the producer has not caught up
+            // yet; the sender is retried next cycle and its newer generation supersedes.
+            match enqueue_state.nonce_resets.try_send(SenderNonceReset { sender_index, generation })
+            {
+                Ok(()) => reset_sender_count += 1,
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    coordinator.requeue_rejected_sender(sender_index);
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    warn!(
+                        sender_index,
+                        generation, "presign producer stopped before sender nonce reset"
+                    );
+                }
+            }
+        }
+        if reset_sender_count > 0 {
+            warn!(reset_sender_count, "reset senders after terminal nonce rejection");
         }
     }
 
     async fn run_refill_cycle(
         enqueue_state: &mut PresignEnqueueState<'_>,
-        pulse: InclusionPulse,
+        trigger: RefillTrigger,
         fallback_block_gas_limit: u64,
         config: &BlockAlignedEnqueueConfig,
-        drain_state: &mut EnqueueDrainState<'_>,
-    ) -> Result<()> {
-        let cycle_started = pulse.observed_at;
-        let canonical = pulse.canonical;
+        coordinator: &mut RunCoordinator<'_>,
+    ) {
+        let cycle_started = trigger.observed_at();
+        let canonical = trigger.block();
         while enqueue_state.buffer.buffered_gas() < config.presign_target_gas {
-            let Ok(chunk) = enqueue_state.signed_chunk_rx.try_recv() else {
+            let Ok(chunk) = enqueue_state.chunks.try_recv() else {
                 break;
             };
-            Self::buffer_presigned_chunk(enqueue_state.buffer, enqueue_state.progress, chunk);
+            enqueue_state.buffer_chunk(chunk);
         }
-        drain_state.drain_run_events();
-        let mut reset_sender_count = 0usize;
-        for sender in drain_state.rejected_senders.drain() {
-            let Some(&sender_index) = enqueue_state.sender_indices.get(&sender) else {
-                continue;
-            };
-            let Some(generation) = enqueue_state.buffer.reset_sender(sender_index, sender) else {
-                continue;
-            };
-            // Reset is split across the enqueue and producer tasks: the enqueue side owns the
-            // presign buffer and generation filter, while the producer owns future nonce
-            // assignment. The control message stitches those two local state machines together.
-            if enqueue_state
-                .nonce_reset_tx
-                .send(SenderNonceReset { sender_index, address: sender, generation })
-                .await
-                .is_err()
-            {
-                warn!(
-                    sender = %sender,
-                    sender_index,
-                    generation,
-                    "presign producer stopped before sender nonce reset"
-                );
-                continue;
-            }
-            reset_sender_count = reset_sender_count.saturating_add(1);
-        }
-        if reset_sender_count > 0 {
-            warn!(reset_sender_count, "reset senders after terminal nonce rejection");
-        }
+        coordinator.drain_inbox();
+        Self::reset_rejected_senders(enqueue_state, coordinator);
 
         let plan_started = Instant::now();
-        let (observed_gas, observed_count) = drain_state.results_tracker.observed_gas();
+        let (observed_gas, observed_count) = coordinator.tracker.observed_gas();
         let previous_estimate = enqueue_state.gas_estimate.get();
         let estimated_gas = enqueue_state.gas_estimate.update(observed_gas, observed_count);
         if estimated_gas != previous_estimate {
-            drain_state.collector.set_estimated_gas(estimated_gas);
+            coordinator.collector.set_estimated_gas(estimated_gas);
             info!(
                 estimated_gas,
                 previous_estimate, observed_count, "corrected pacing gas estimate from receipt gas"
             );
         }
-        let depth_gas = drain_state.mempool_depth_gas();
+        // Local submission backlog has not reached the node yet. Counting it as mempool
+        // inventory can starve the RPC pipeline while acknowledgements lag.
+        let depth_gas = coordinator.tracker.unconfirmed_gas();
+        let confirmed_gas = coordinator.tracker.confirmed_gas();
         let block_gas_limit = canonical.map_or(fallback_block_gas_limit, |block| block.gas_limit);
-        let (_, canonical_p99) = drain_state.collector.rolling_p50_p99();
+        let (_, canonical_p99) = coordinator.collector.rolling_p50_p99();
         let plan = config
             .controller
             .with_capacity_gas(
@@ -1867,42 +1401,28 @@ impl LoadRunner {
                     .saturating_mul(u128::from(estimated_gas)),
             )
             .with_confirmation_latency(canonical_p99)
-            .with_previous_cycle(enqueue_state.progress.last_cycle_at)
+            .with_previous_cycle(enqueue_state.last_cycle_at)
             .plan(
                 cycle_started,
                 block_gas_limit,
                 depth_gas,
-                drain_state.results_tracker.confirmed_gas(),
-                enqueue_state.progress.offered_gas,
+                confirmed_gas,
+                enqueue_state.offered_gas,
             );
-        enqueue_state.progress.last_cycle_at = Some(cycle_started);
+        enqueue_state.last_cycle_at = Some(cycle_started);
         let buffered_before = enqueue_state.buffer.buffered_gas();
-        let mut sender_slots: HashMap<Address, u64> = drain_state
-            .queued_per_sender
-            .iter()
-            .map(|(from, queued)| {
-                let occupied =
-                    queued.saturating_add(drain_state.results_tracker.in_flight_for(from));
-                (
-                    *from,
-                    u64::try_from(config.max_in_flight_per_sender)
-                        .unwrap_or(u64::MAX)
-                        .saturating_sub(occupied),
-                )
-            })
-            .collect();
+        coordinator.sender_slots(config.max_in_flight_per_sender, &mut enqueue_state.sender_slots);
         let remaining_transaction_slots =
-            drain_state.remaining_transaction_slots(config.max_total_in_flight);
-        let mut selected = enqueue_state.buffer.take_gas_with_limits(
+            coordinator.remaining_transaction_slots(config.max_total_in_flight);
+        let selected = enqueue_state.buffer.take_gas_with_limits(
             plan.inject_gas,
-            &mut sender_slots,
+            &mut enqueue_state.sender_slots,
             remaining_transaction_slots,
         );
         let selected_gas = selected
             .iter()
             .fold(0u128, |total, tx| total.saturating_add(u128::from(tx.estimated_gas)));
-        enqueue_state.progress.offered_gas =
-            enqueue_state.progress.offered_gas.saturating_add(selected_gas);
+        enqueue_state.offered_gas = enqueue_state.offered_gas.saturating_add(selected_gas);
         let sender_capacity_limited = selected_gas < plan.inject_gas
             && (buffered_before >= plan.inject_gas || remaining_transaction_slots == 0);
         let presign_starved = selected_gas < plan.inject_gas && !sender_capacity_limited;
@@ -1922,42 +1442,26 @@ impl LoadRunner {
         let plan_time = plan_started.elapsed();
 
         let submit_started = Instant::now();
-        let first_batch_id = enqueue_state.next_submit_batch_id.load(Ordering::SeqCst);
-        while !selected.is_empty() {
-            if !Self::enqueue_signed_batch(
-                enqueue_state.submission_pipeline,
-                enqueue_state.next_submit_batch_id,
-                &mut selected,
-                SIGNED_BATCH_SIZE,
-                true,
-                drain_state,
-            )
-            .await
-            {
-                break;
-            }
+        let first_batch_id = coordinator.next_batch_id();
+        let batch_count = selected.len().div_ceil(SIGNED_BATCH_SIZE) as u64;
+        let batches = first_batch_id..first_batch_id + batch_count;
+        coordinator.ledger.open(batches.clone(), cycle_started);
+        Self::enqueue_selected(enqueue_state.pipeline, coordinator, selected, true).await;
+        for unsent in coordinator.next_batch_id()..batches.end {
+            coordinator.ledger.abandon(unsent);
         }
-        let batch_ids: Vec<u64> =
-            (first_batch_id..enqueue_state.next_submit_batch_id.load(Ordering::SeqCst)).collect();
-        let refill_lag = Self::wait_for_batch_completions(
-            &batch_ids,
-            cycle_started,
-            Duration::from_millis(100),
-            drain_state,
-        )
-        .await;
+        let refill_lag =
+            coordinator.wait_for_refill(batches, cycle_started + REFILL_ACK_BUDGET).await;
         let submit_time = refill_lag
             .map(|lag| lag.saturating_sub(submit_started.saturating_duration_since(cycle_started)));
-        if !batch_ids.is_empty() && refill_lag.is_none() {
-            drain_state.results_tracker.register_pending_refill(batch_ids.clone(), cycle_started);
-        }
-        let resulting_depth_gas = drain_state.mempool_depth_gas();
-        drain_state.collector.record_pacing_cycle(PacingCycleObservation {
+        let resulting_depth_gas = coordinator.tracker.unconfirmed_gas();
+        let queued_gas = coordinator.queued_gas();
+        coordinator.collector.record_pacing_cycle(PacingCycleObservation {
             elapsed: cycle_started
                 .saturating_duration_since(config.controller.measurement_started_at),
-            source: match pulse.source {
-                InclusionSource::Canonical => PacingCycleSource::Canonical,
-                InclusionSource::Safety => PacingCycleSource::Safety,
+            source: match trigger {
+                RefillTrigger::Canonical(_) => PacingCycleSource::Canonical,
+                RefillTrigger::Safety(_) => PacingCycleSource::Safety,
             },
             block_observed: canonical.is_some(),
             block_gas_used: canonical.map_or(0, |block| block.gas_used),
@@ -1965,7 +1469,7 @@ impl LoadRunner {
             our_included_gas: canonical.map_or(0, |block| block.our_included_gas),
             pre_refill_depth_gas: depth_gas,
             post_refill_depth_gas: resulting_depth_gas,
-            queued_gas: *drain_state.queued_gas,
+            queued_gas,
             floor_gas: plan.floor_gas,
             offered_gas: selected_gas,
             capacity_limited: matches!(plan.limited_by, InjectLimit::Capacity)
@@ -1978,280 +1482,216 @@ impl LoadRunner {
             submit_time,
             refill_lag,
         });
-        Ok(())
-    }
-
-    async fn wait_for_batch_completions(
-        batch_ids: &[u64],
-        cycle_started: Instant,
-        budget: Duration,
-        drain_state: &mut EnqueueDrainState<'_>,
-    ) -> Option<Duration> {
-        if batch_ids.is_empty() {
-            return Some(Duration::ZERO);
-        }
-
-        let deadline = cycle_started + budget;
-        loop {
-            drain_state.drain_run_events();
-            if let Some(completed_at) =
-                drain_state.results_tracker.take_completed_batches(batch_ids)
-            {
-                return Some(completed_at.saturating_duration_since(cycle_started));
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return None;
-            }
-            match tokio::time::timeout(remaining, drain_state.submit_event_rx.recv()).await {
-                Ok(Some(event)) => drain_state.apply_submit_event(event),
-                Ok(None) | Err(_) => return None,
-            }
-        }
     }
 
     async fn enqueue_prefill_transactions(
         enqueue_state: &mut PresignEnqueueState<'_>,
+        coordinator: &mut RunCoordinator<'_>,
         target_gas: u128,
-        max_in_flight_per_sender: usize,
+        max_in_flight_per_sender: u64,
         max_total_in_flight: usize,
         deadline: Instant,
         stop: &CancellationToken,
-        drain_state: &mut EnqueueDrainState<'_>,
     ) -> Result<()> {
+        let deadline = tokio::time::sleep_until(deadline.into());
+        tokio::pin!(deadline);
         while enqueue_state.buffer.buffered_gas() < target_gas {
-            drain_state.drain_run_events();
-            if stop.is_cancelled() {
-                return Err(BaselineError::Transaction("stopped during open-loop enqueue".into()));
+            tokio::select! {
+                biased;
+                () = stop.cancelled() => {
+                    return Err(BaselineError::Transaction(
+                        "stopped during open-loop enqueue".into(),
+                    ));
+                }
+                () = &mut deadline => break,
+                _ = coordinator.next_event() => {}
+                chunk = enqueue_state.chunks.recv() => {
+                    let Some(chunk) = chunk else {
+                        break;
+                    };
+                    enqueue_state.buffer_chunk(chunk);
+                }
             }
-            if Instant::now() >= deadline {
-                break;
-            }
-            let chunk = match tokio::time::timeout(
-                PRESIGN_RECHECK_INTERVAL,
-                enqueue_state.signed_chunk_rx.recv(),
-            )
-            .await
-            {
-                Ok(Some(chunk)) => chunk,
-                Ok(None) => break,
-                Err(_) => continue,
-            };
-            Self::buffer_presigned_chunk(enqueue_state.buffer, enqueue_state.progress, chunk);
         }
-
-        let mut sender_slots: HashMap<Address, u64> = drain_state
-            .queued_per_sender
-            .keys()
-            .map(|from| (*from, u64::try_from(max_in_flight_per_sender).unwrap_or(u64::MAX)))
-            .collect();
-        let mut selected = enqueue_state.buffer.take_gas_with_limits(
+        coordinator.sender_slots(max_in_flight_per_sender, &mut enqueue_state.sender_slots);
+        let selected = enqueue_state.buffer.take_gas_with_limits(
             target_gas,
-            &mut sender_slots,
-            drain_state.remaining_transaction_slots(max_total_in_flight),
+            &mut enqueue_state.sender_slots,
+            coordinator.remaining_transaction_slots(max_total_in_flight),
         );
-        while !selected.is_empty() {
-            if !Self::enqueue_signed_batch(
-                enqueue_state.submission_pipeline,
-                enqueue_state.next_submit_batch_id,
-                &mut selected,
-                SIGNED_BATCH_SIZE,
-                false,
-                drain_state,
-            )
-            .await
-            {
-                break;
-            }
-        }
-
+        Self::enqueue_selected(enqueue_state.pipeline, coordinator, selected, false).await;
         Ok(())
-    }
-
-    async fn enqueue_signed_batch(
-        submission_pipeline: &SubmissionPipeline,
-        next_submit_batch_id: &AtomicU64,
-        pending_signed_batch: &mut Vec<SignedTransaction>,
-        max_batch_len: usize,
-        measured: bool,
-        drain_state: &mut EnqueueDrainState<'_>,
-    ) -> bool {
-        let batch_len = pending_signed_batch.len().min(max_batch_len);
-        let signed_txs: Vec<SignedTransaction> = pending_signed_batch.drain(..batch_len).collect();
-        let batch_id = next_submit_batch_id.fetch_add(1, Ordering::SeqCst);
-
-        for signed_tx in &signed_txs {
-            drain_state
-                .queued_per_sender
-                .entry(signed_tx.from)
-                .and_modify(|count| *count = count.saturating_add(1))
-                .or_insert(1);
-            *drain_state.queued_gas =
-                drain_state.queued_gas.saturating_add(u128::from(signed_tx.estimated_gas));
-        }
-
-        let batch = SignedBatch { id: batch_id, attempt: 0, measured, txs: signed_txs };
-        match Self::enqueue_signed_while_draining(submission_pipeline, batch, drain_state).await {
-            Ok(()) => true,
-            Err(batch) => {
-                warn!(
-                    batch_id,
-                    batch_len, "submit queue closed while enqueuing open-loop signed batch"
-                );
-                let failed_count = batch.txs.len() as u64;
-                for signed_tx in &batch.txs {
-                    if let Some(count) = drain_state.queued_per_sender.get_mut(&signed_tx.from) {
-                        *count = count.saturating_sub(1);
-                    }
-                    *drain_state.queued_gas =
-                        drain_state.queued_gas.saturating_sub(u128::from(signed_tx.estimated_gas));
-                }
-                drain_state.collector.record_failures("submit queue closed", failed_count);
-                false
-            }
-        }
-    }
-
-    fn build_snapshot(
-        &mut self,
-        start: Instant,
-        results_tracker: &ResultsTracker,
-        max_in_flight_per_sender: usize,
-        account_count: usize,
-        stage: LoadTestStage,
-    ) -> DisplaySnapshot {
-        let (p50, p99) = self.collector.rolling_p50_p99();
-        DisplaySnapshot {
-            elapsed: start.elapsed(),
-            duration: self.config.duration,
-            stage,
-            submitted: self.collector.submitted_count(),
-            confirmed: self.collector.confirmed_count(),
-            failed: self.collector.failed_count(),
-            in_flight: results_tracker.total_in_flight(),
-            senders_blocked: results_tracker.senders_at_limit(max_in_flight_per_sender as u64),
-            total_senders: account_count,
-            rolling_tps: self.collector.rolling_tps(),
-            rolling_gps: self.collector.rolling_gps(),
-            target_gps: self.config.target_gps,
-            p50_latency: p50,
-            p99_latency: p99,
-            gas_price_gwei: self.base_fee as f64 / 1e9,
-        }
-    }
-
-    fn apply_submit_event(
-        event: SubmitEvent,
-        queued_per_sender: &mut HashMap<Address, u64>,
-        rejected_senders: &mut HashSet<Address>,
-        queued_gas: &mut u128,
-        collector: &mut MetricsCollector,
-        results_tracker: &ResultsTracker,
-    ) {
-        match event {
-            SubmitEvent::Submitted(tx_hash) => collector.record_submitted(tx_hash),
-            SubmitEvent::Failed(reason) => {
-                collector.record_failed(TxHash::ZERO, &reason);
-            }
-            SubmitEvent::Released { from, estimated_gas, accepted } => {
-                if let Some(count) = queued_per_sender.get_mut(&from) {
-                    *count = count.saturating_sub(1);
-                }
-                *queued_gas = queued_gas.saturating_sub(u128::from(estimated_gas));
-                if !accepted {
-                    rejected_senders.insert(from);
-                }
-            }
-            SubmitEvent::BatchCompleted { id, completed_at } => {
-                results_tracker.record_batch_completed(id, completed_at);
-            }
-        }
-    }
-
-    fn drain_submit_events(
-        submit_event_rx: &mut mpsc::Receiver<SubmitEvent>,
-        queued_per_sender: &mut HashMap<Address, u64>,
-        rejected_senders: &mut HashSet<Address>,
-        queued_gas: &mut u128,
-        collector: &mut MetricsCollector,
-        results_tracker: &ResultsTracker,
-    ) {
-        while let Ok(event) = submit_event_rx.try_recv() {
-            Self::apply_submit_event(
-                event,
-                queued_per_sender,
-                rejected_senders,
-                queued_gas,
-                collector,
-                results_tracker,
-            );
-        }
-    }
-
-    fn drain_run_events(
-        submit_event_rx: &mut mpsc::Receiver<SubmitEvent>,
-        queued_per_sender: &mut HashMap<Address, u64>,
-        rejected_senders: &mut HashSet<Address>,
-        queued_gas: &mut u128,
-        collector: &mut MetricsCollector,
-        results_tracker: &ResultsTracker,
-    ) {
-        while let Ok(event) = submit_event_rx.try_recv() {
-            Self::apply_submit_event(
-                event,
-                queued_per_sender,
-                rejected_senders,
-                queued_gas,
-                collector,
-                results_tracker,
-            );
-        }
-        for metrics in results_tracker.drain_confirmed_metrics() {
-            collector.record_confirmed(metrics);
-        }
-    }
-
-    fn apply_queued_submit_failures(
-        failures: QueuedSubmitFailures,
-        queued_per_sender: &mut HashMap<Address, u64>,
-        collector: &mut MetricsCollector,
-    ) {
-        for (from, released) in failures.released_by_sender {
-            if let Some(count) = queued_per_sender.get_mut(&from) {
-                *count = count.saturating_sub(released);
-            }
-        }
-        if failures.failed_count > 0 {
-            collector.record_failures(failures.reason, failures.failed_count);
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{HashMap, HashSet},
-        sync::{Arc, atomic::AtomicU64},
+        sync::Arc,
         time::{Duration, Instant},
     };
 
-    use alloy_primitives::{Address, Bytes, TxHash, U256};
-    use tokio::sync::mpsc;
+    use alloy_primitives::{Address, U256};
+    use tokio::sync::{mpsc, watch};
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        BlockAlignedEnqueueConfig, EnqueueDrainState, EnqueueProgress, InclusionPulse, InjectLimit,
-        LoadRunner, MempoolDepthController, PresignBuffer, PresignEnqueueState,
+        BlockAlignedEnqueueConfig, InjectLimit, LoadRunner, MempoolDepthController, PresignBuffer,
+        PresignEnqueueState, ProducerSender,
     };
     use crate::{
-        metrics::MetricsCollector,
+        BatchRpcClient,
+        config::ValiditySigningMode,
+        metrics::{MetricsCollector, MetricsSummary},
         runner::{
-            BlockObservation, BlockPulse, PipelineStartConfig, ResultsTracker,
-            SUBMIT_BATCH_QUEUE_BUFFER, SignedBatch, SignedTransaction, SubmissionPipeline,
-            SubmitCohort, SubmitEvent,
+            BlockObservation, CanonicalBlock, GasEstimate, LoadTestStage, PipelineStartConfig,
+            ProgressReport, ResultsTracker, RunCoordinator, RunEvent, SubmissionPipeline,
+            SubmitCohort,
         },
         workload::SelectedPayload,
     };
+
+    /// Runs the block-aligned loop for one sender with an empty presign buffer, after queueing
+    /// `events` in the coordinator inbox. Returns the summary and whether measurement finished.
+    async fn run_block_aligned(
+        tracker: ResultsTracker,
+        config: BlockAlignedEnqueueConfig,
+        events: Vec<RunEvent>,
+    ) -> (MetricsSummary, bool) {
+        let (events_tx, inbox) = mpsc::channel(16);
+        for event in events {
+            events_tx.send(event).await.expect("inbox has room");
+        }
+        let rpc = BatchRpcClient::new("http://127.0.0.1:1".parse().expect("valid url"))
+            .expect("client builds");
+        let pipeline = SubmissionPipeline::start(
+            Arc::from([rpc]),
+            events_tx,
+            PipelineStartConfig {
+                validity_signing: ValiditySigningMode::Adaptive,
+                max_concurrent_submit_requests: None,
+            },
+        );
+        let (_chunk_tx, chunks) = mpsc::channel(1);
+        let (nonce_resets, _nonce_reset_rx) = mpsc::channel(1);
+        let (receipt_sampler, _receipt_rx) = mpsc::channel(1);
+        let (_base_fee_tx, base_fee) = watch::channel(1);
+        let mut collector = MetricsCollector::new();
+        let mut coordinator = RunCoordinator::new(
+            inbox,
+            tracker,
+            &mut collector,
+            receipt_sampler,
+            ProgressReport {
+                display: None,
+                stage: LoadTestStage::Submitting,
+                start: Instant::now(),
+                duration: None,
+                max_in_flight_per_sender: 1,
+                account_count: 1,
+                target_gps: None,
+                base_fee,
+                last_log: Instant::now(),
+            },
+        );
+        let mut enqueue_state = PresignEnqueueState {
+            pipeline: &pipeline,
+            chunks,
+            nonce_resets,
+            buffer: PresignBuffer::new(1),
+            presigned_generated: 0,
+            offered_gas: 0,
+            last_cycle_at: None,
+            gas_estimate: GasEstimate::new(21_000),
+            sender_slots: Vec::new(),
+        };
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            LoadRunner::enqueue_block_aligned_transactions(
+                &mut enqueue_state,
+                config,
+                &mut coordinator,
+                &CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("enqueue loop stops on its own")
+        .expect("enqueue loop exits cleanly");
+        let finished = coordinator.tracker.measurement_finished();
+        drop(coordinator);
+        (collector.summarize(Duration::from_secs(1), None), finished)
+    }
+
+    fn block_aligned_config(
+        block_time: Duration,
+        deadline: Option<Instant>,
+    ) -> BlockAlignedEnqueueConfig {
+        BlockAlignedEnqueueConfig {
+            controller: MempoolDepthController::new(
+                None,
+                Duration::from_secs(2),
+                1_000_000,
+                Instant::now(),
+            ),
+            fallback_block_gas_limit: 30_000_000,
+            block_time,
+            steady_submission_interval: None,
+            presign_target_gas: 0,
+            max_in_flight_per_sender: 1,
+            max_total_in_flight: 1,
+            deadline,
+        }
+    }
+
+    fn canonical(number: u64) -> RunEvent {
+        let observed_at = Instant::now();
+        RunEvent::Canonical(CanonicalBlock {
+            observation: BlockObservation { number, observed_at, timestamp_ms: None, base_fee: 1 },
+            tx_hashes: Vec::new(),
+            gas_used: 1,
+            gas_limit: 30_000_000,
+            expected_boundary: observed_at,
+        })
+    }
+
+    #[tokio::test]
+    async fn enqueue_block_aligned_stops_when_measurement_end_is_observed() {
+        let mut tracker = ResultsTracker::new(&[Address::repeat_byte(0x21)]);
+        tracker.begin_measurement(10, Some(2));
+
+        let (summary, finished) = run_block_aligned(
+            tracker,
+            block_aligned_config(Duration::from_secs(2), None),
+            vec![canonical(11), canonical(12)],
+        )
+        .await;
+
+        assert_eq!(summary.pacing.canonical_cycles, 2);
+        assert_eq!(summary.pacing.blocks_observed, 2);
+        assert!(finished);
+    }
+
+    #[tokio::test]
+    async fn enqueue_block_aligned_refills_at_safety_cadence_when_canonical_pulses_are_late() {
+        let mut tracker = ResultsTracker::new(&[Address::repeat_byte(0x22)]);
+        tracker.begin_measurement(10, Some(100));
+
+        // The 200ms block interval gets a 50ms safety cadence. With no canonical pulses, this
+        // performs the immediate safety refill plus periodic refills before the deadline.
+        let (summary, finished) = run_block_aligned(
+            tracker,
+            block_aligned_config(
+                Duration::from_millis(200),
+                Some(Instant::now() + Duration::from_millis(210)),
+            ),
+            Vec::new(),
+        )
+        .await;
+
+        assert_eq!(summary.pacing.canonical_cycles, 0);
+        assert!(summary.pacing.safety_cycles >= 3, "{:?}", summary.pacing);
+        assert!(!finished);
+    }
 
     /// Native envelope selection and fresh-recipient values survive preparation.
     #[tokio::test]
@@ -2271,10 +1711,12 @@ mod tests {
         let (signed_chunk_tx, _) = mpsc::channel(1);
         let (_, nonce_reset_rx) = mpsc::channel(1);
         let presign = super::PresignConfig {
-            sender_addresses: addresses.clone(),
-            sender_next_nonces: vec![7, 9],
-            sender_generations: vec![0, 0],
-            signers: Arc::clone(&runner.signers),
+            senders: addresses
+                .iter()
+                .zip([7, 9])
+                .map(|(&address, next_nonce)| ProducerSender { address, next_nonce, generation: 0 })
+                .collect(),
+            signers: runner.accounts.accounts().iter().map(|a| a.signer.clone()).collect(),
             chain_id: config.chain_id,
             base_fee_rx: rx,
             max_gas_price: config.max_gas_price,
@@ -2364,10 +1806,11 @@ mod tests {
         let (signed_chunk_tx, _) = mpsc::channel(1);
         let (_, nonce_reset_rx) = mpsc::channel(1);
         let presign = super::PresignConfig {
-            sender_addresses: addresses.clone(),
-            sender_next_nonces: vec![0; addresses.len()],
-            sender_generations: vec![0; addresses.len()],
-            signers: Arc::clone(&runner.signers),
+            senders: addresses
+                .iter()
+                .map(|&address| ProducerSender { address, next_nonce: 0, generation: 0 })
+                .collect(),
+            signers: runner.accounts.accounts().iter().map(|a| a.signer.clone()).collect(),
             chain_id: config.chain_id,
             base_fee_rx: rx,
             max_gas_price: config.max_gas_price,
@@ -2437,107 +1880,6 @@ mod tests {
         assert_eq!(LoadRunner::mempool_target_transactions(300, 70, 4).unwrap(), 4);
         assert!(LoadRunner::mempool_target_transactions(300, 0, 10).is_err());
     }
-
-    fn test_pipeline(
-        results_tracker: &ResultsTracker,
-        submit_event_tx: mpsc::Sender<SubmitEvent>,
-    ) -> SubmissionPipeline {
-        SubmissionPipeline::start(
-            Arc::new(HashMap::new()),
-            Arc::new(Vec::new()),
-            results_tracker.clone(),
-            submit_event_tx,
-            PipelineStartConfig {
-                chain_id: 1,
-                max_concurrent_submit_requests: None,
-                validity_signing: crate::config::ValiditySigningMode::Adaptive,
-            },
-        )
-    }
-
-    fn test_signed_batch(id: u64, from: Address) -> SignedBatch {
-        SignedBatch {
-            id,
-            attempt: 0,
-            measured: true,
-            txs: vec![SignedTransaction {
-                raw: Bytes::new(),
-                tx_hash: TxHash::repeat_byte((id % 0xff) as u8),
-                from,
-                nonce: id,
-                gas_limit: 21_000,
-                priority_fee: 0,
-                estimated_gas: 21_000,
-                validity: Vec::new(),
-                cohort: SubmitCohort::Plain,
-                validity_signature: None,
-            }],
-        }
-    }
-
-    #[tokio::test]
-    async fn enqueue_signed_while_draining_makes_progress_when_enqueue_is_backpressured() {
-        let sender = Address::repeat_byte(0x11);
-        let tracked_senders = vec![sender];
-        let results_tracker = ResultsTracker::new(&tracked_senders);
-        let mut collector = MetricsCollector::new();
-        let mut queued_per_sender = HashMap::from([(sender, 1_u64)]);
-        let mut rejected_senders = HashSet::new();
-        let mut queued_gas = 21_000u128;
-
-        let (submit_event_tx, mut submit_event_rx) = mpsc::channel(1);
-        let mut submission_pipeline = test_pipeline(&results_tracker, submit_event_tx.clone());
-
-        submission_pipeline.shutdown_and_join(Duration::from_secs(1)).await;
-
-        for batch_id in 0..SUBMIT_BATCH_QUEUE_BUFFER {
-            submission_pipeline
-                .enqueue_signed(test_signed_batch(batch_id as u64, sender))
-                .await
-                .expect("signed queue should accept up to capacity");
-        }
-
-        submit_event_tx
-            .send(SubmitEvent::Released { from: sender, estimated_gas: 21_000, accepted: true })
-            .await
-            .expect("event queue should accept first event");
-
-        let release_after_event_drain = async {
-            submit_event_tx
-                .send(SubmitEvent::Submitted(TxHash::repeat_byte(0xaa)))
-                .await
-                .expect("second send should unblock only after event drain");
-            let _ = submission_pipeline.close_and_fail_queued("test queue close").await;
-        };
-
-        let (enqueue_result, ()) = {
-            let mut drain_state = EnqueueDrainState {
-                submit_event_rx: &mut submit_event_rx,
-                queued_per_sender: &mut queued_per_sender,
-                rejected_senders: &mut rejected_senders,
-                queued_gas: &mut queued_gas,
-                collector: &mut collector,
-                results_tracker: &results_tracker,
-
-                progress_display: None,
-            };
-            let enqueue_attempt = LoadRunner::enqueue_signed_while_draining(
-                &submission_pipeline,
-                test_signed_batch((SUBMIT_BATCH_QUEUE_BUFFER + 1) as u64, sender),
-                &mut drain_state,
-            );
-            tokio::time::timeout(Duration::from_secs(2), async {
-                tokio::join!(enqueue_attempt, release_after_event_drain)
-            })
-            .await
-            .expect("enqueue should complete once event drain unblocks it")
-        };
-
-        assert!(enqueue_result.is_err(), "enqueue should fail after queue is closed");
-        assert_eq!(queued_per_sender.get(&sender).copied(), Some(0));
-        assert_eq!(collector.submitted_count(), 1);
-    }
-
     /// The latency allowance is independent of short blocks and remains bounded.
     #[test]
     fn canonical_latency_window_is_bounded() {
@@ -2857,219 +2199,6 @@ mod tests {
         assert_eq!(plan.floor_gas, 30_000_000);
         assert_eq!(plan.desired_gas, 60_000_000);
         assert_eq!(plan.inject_gas, 60_000_000);
-    }
-
-    #[tokio::test]
-    async fn enqueue_block_aligned_stops_when_measurement_end_is_observed() {
-        let sender = Address::repeat_byte(0x21);
-        let results_tracker = ResultsTracker::new(&[sender]);
-        results_tracker.begin_measurement(10, Some(2));
-        let mut collector = MetricsCollector::new();
-        let mut queued_per_sender = HashMap::from([(sender, 0_u64)]);
-        let mut rejected_senders = HashSet::new();
-        let mut queued_gas = 0u128;
-        let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
-        let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
-        let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
-        let mut progress =
-            EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
-        let mut presign_buffer = PresignBuffer::new(1);
-        let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
-        let next_submit_batch_id = AtomicU64::new(0);
-        let stop = CancellationToken::new();
-        let (pulse_tx, mut pulse_rx) = mpsc::channel(8);
-        let (nonce_reset_tx, _nonce_reset_rx) = mpsc::channel(1);
-        let sender_indices = HashMap::from([(sender, 0usize)]);
-
-        let mut enqueue_state = PresignEnqueueState {
-            submission_pipeline: &pipeline,
-            next_submit_batch_id: &next_submit_batch_id,
-            signed_chunk_rx: &mut signed_chunk_rx,
-            nonce_reset_tx: &nonce_reset_tx,
-            sender_indices: &sender_indices,
-            buffer: &mut presign_buffer,
-            progress: &mut progress,
-            base_fee_tx: &base_fee_tx,
-            gas_estimate: &super::GasEstimate::new(21_000),
-        };
-        let mut drain_state = EnqueueDrainState {
-            submit_event_rx: &mut submit_event_rx,
-            queued_per_sender: &mut queued_per_sender,
-            rejected_senders: &mut rejected_senders,
-            queued_gas: &mut queued_gas,
-            collector: &mut collector,
-            results_tracker: &results_tracker,
-            progress_display: None,
-        };
-
-        let (run_result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
-            tokio::join!(
-                LoadRunner::enqueue_block_aligned_transactions(
-                    &mut enqueue_state,
-                    BlockAlignedEnqueueConfig {
-                        controller: MempoolDepthController::new(
-                            None,
-                            Duration::from_secs(2),
-                            1_000_000,
-                            Instant::now(),
-                        ),
-                        fallback_block_gas_limit: 30_000_000,
-                        block_time: Duration::from_secs(2),
-                        steady_submission_interval: None,
-                        presign_target_gas: 0,
-                        max_in_flight_per_sender: 1,
-                        max_total_in_flight: 1,
-                        deadline: None,
-                    },
-                    &mut pulse_rx,
-                    &stop,
-                    &mut drain_state,
-                ),
-                async {
-                    let first_observed_at = Instant::now();
-                    results_tracker.on_new_block_hashes(
-                        BlockObservation {
-                            number: 11,
-                            observed_at: first_observed_at,
-                            timestamp_ms: None,
-                            base_fee: 0,
-                        },
-                        Vec::new(),
-                    );
-                    pulse_tx
-                        .send(InclusionPulse::canonical(
-                            BlockPulse {
-                                number: 11,
-                                gas_used: 1,
-                                gas_limit: 30_000_000,
-                                base_fee: 1,
-                                our_included_gas: 0,
-                                expected_boundary: first_observed_at,
-                                observed_at: first_observed_at,
-                            },
-                            0,
-                        ))
-                        .await
-                        .expect("first pulse should send");
-                    tokio::task::yield_now().await;
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-
-                    let second_observed_at = Instant::now();
-                    results_tracker.on_new_block_hashes(
-                        BlockObservation {
-                            number: 12,
-                            observed_at: second_observed_at,
-                            timestamp_ms: None,
-                            base_fee: 0,
-                        },
-                        Vec::new(),
-                    );
-                    pulse_tx
-                        .send(InclusionPulse::canonical(
-                            BlockPulse {
-                                number: 12,
-                                gas_used: 1,
-                                gas_limit: 30_000_000,
-                                base_fee: 1,
-                                our_included_gas: 0,
-                                expected_boundary: second_observed_at,
-                                observed_at: second_observed_at,
-                            },
-                            0,
-                        ))
-                        .await
-                        .expect("second pulse should send");
-                }
-            )
-        })
-        .await
-        .expect("enqueue loop should stop at measurement end");
-        run_result.expect("enqueue loop should exit cleanly");
-
-        let summary = collector.summarize(Duration::from_secs(1), None);
-        assert_eq!(summary.pacing.canonical_cycles, 2);
-        assert_eq!(summary.pacing.blocks_observed, 2);
-        assert!(results_tracker.measurement_finished());
-    }
-
-    #[tokio::test]
-    async fn enqueue_block_aligned_refills_at_safety_cadence_when_canonical_pulses_are_late() {
-        let sender = Address::repeat_byte(0x22);
-        let results_tracker = ResultsTracker::new(&[sender]);
-        results_tracker.begin_measurement(10, Some(100));
-        let mut collector = MetricsCollector::new();
-        let mut queued_per_sender = HashMap::from([(sender, 0_u64)]);
-        let mut rejected_senders = HashSet::new();
-        let mut queued_gas = 0u128;
-        let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
-        let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
-        let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
-        let mut progress =
-            EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
-        let mut presign_buffer = PresignBuffer::new(1);
-        let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
-        let next_submit_batch_id = AtomicU64::new(0);
-        let stop = CancellationToken::new();
-        let (_pulse_tx, mut pulse_rx) = mpsc::channel(1);
-        let (nonce_reset_tx, _nonce_reset_rx) = mpsc::channel(1);
-        let sender_indices = HashMap::from([(sender, 0usize)]);
-
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            LoadRunner::enqueue_block_aligned_transactions(
-                &mut PresignEnqueueState {
-                    submission_pipeline: &pipeline,
-                    next_submit_batch_id: &next_submit_batch_id,
-                    signed_chunk_rx: &mut signed_chunk_rx,
-                    nonce_reset_tx: &nonce_reset_tx,
-                    sender_indices: &sender_indices,
-                    buffer: &mut presign_buffer,
-                    progress: &mut progress,
-                    base_fee_tx: &base_fee_tx,
-                    gas_estimate: &super::GasEstimate::new(21_000),
-                },
-                BlockAlignedEnqueueConfig {
-                    controller: MempoolDepthController::new(
-                        None,
-                        Duration::from_secs(2),
-                        1_000_000,
-                        Instant::now(),
-                    ),
-                    fallback_block_gas_limit: 30_000_000,
-                    block_time: Duration::from_millis(200),
-                    steady_submission_interval: None,
-                    presign_target_gas: 0,
-                    max_in_flight_per_sender: 1,
-                    max_total_in_flight: 1,
-                    // The 200ms block interval gets a 50ms safety cadence. With no canonical
-                    // pulses, this should perform the immediate safety refill plus a periodic
-                    // refill before the deadline. The old 300ms fallback only
-                    // performed the initial refill here, which allowed 200ms slots to go empty.
-                    deadline: Some(Instant::now() + Duration::from_millis(210)),
-                },
-                &mut pulse_rx,
-                &stop,
-                &mut EnqueueDrainState {
-                    submit_event_rx: &mut submit_event_rx,
-                    queued_per_sender: &mut queued_per_sender,
-                    rejected_senders: &mut rejected_senders,
-                    queued_gas: &mut queued_gas,
-                    collector: &mut collector,
-                    results_tracker: &results_tracker,
-                    progress_display: None,
-                },
-            ),
-        )
-        .await
-        .expect("enqueue loop should stop when deadline is reached")
-        .expect("enqueue loop should exit cleanly");
-
-        let summary = collector.summarize(Duration::from_secs(1), None);
-        assert_eq!(summary.pacing.canonical_cycles, 0);
-        // The immediate refill and the interval's first tick both run at the start, so a third
-        // cycle means the periodic refill fired before the deadline.
-        assert!(summary.pacing.safety_cycles >= 3);
-        assert!(!results_tracker.measurement_finished());
     }
 
     #[tokio::test]
