@@ -25,10 +25,14 @@ impl MerkleStageDefaults {
     /// Replaces reth's default `rebuild_threshold` in the `reth.toml` at `path` with
     /// [`Self::REBUILD_THRESHOLD`], keeping any other value an operator chose.
     ///
-    /// A missing file is created with reth's defaults first, as node startup does.
+    /// The default is also kept when lowered hashing clean thresholds would prune the changesets
+    /// that incremental runs up to [`Self::REBUILD_THRESHOLD`] blocks read. A missing file is
+    /// created with reth's defaults first, as node startup does.
     pub fn apply(path: &Path) -> Result<()> {
         let mut config = Config::from_path(path)?;
-        if config.stages.merkle.rebuild_threshold != MerkleConfig::default().rebuild_threshold {
+        if config.stages.merkle.rebuild_threshold != MerkleConfig::default().rebuild_threshold
+            || config.stages.execution_external_clean_threshold() < Self::REBUILD_THRESHOLD
+        {
             return Ok(());
         }
         config.stages.merkle.rebuild_threshold = Self::REBUILD_THRESHOLD;
@@ -86,5 +90,19 @@ mod tests {
         let loaded = Config::from_path(&path).unwrap();
         assert_eq!(loaded.stages.merkle.rebuild_threshold, 250_000);
         assert_eq!(loaded.stages.merkle.incremental_threshold, 1_000);
+    }
+
+    #[test]
+    fn keeps_default_when_changesets_are_pruned_sooner() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reth.toml");
+        let mut config = Config::default();
+        config.stages.account_hashing.clean_threshold = 200_000;
+        config.stages.storage_hashing.clean_threshold = 200_000;
+        config.save(&path).unwrap();
+
+        MerkleStageDefaults::apply(&path).unwrap();
+
+        assert_eq!(rebuild_threshold(&path), MerkleConfig::default().rebuild_threshold);
     }
 }
