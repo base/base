@@ -43,7 +43,7 @@ use crate::{
     StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
-        InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
+        Bid, InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
     },
 };
 
@@ -547,6 +547,10 @@ where
     /// pending run from that anchor. Returns the transactions discarded for
     /// falling below a cursor.
     ///
+    /// It also re-syncs every validity lane of the senders whose sidecar
+    /// coinbase tip backing changed since the last call: a lane behind such a
+    /// sender's sidecar run ranks by that run's bid, which the backing moves.
+    ///
     /// Anchors only move forward unless `authoritative_account_nonces` is set:
     /// then the reported account nonces come from canonical state that may
     /// have moved back (a reorg, or reth's resync of drifted accounts), and a
@@ -567,8 +571,15 @@ where
             self.protocol_admission_lock.is_locked(),
             "validity lanes are re-anchored under the admission lock"
         );
+        let backing_changes = self.sidecar.pool.write().take_backing_changes();
+        let rebid_lanes: Vec<_> = {
+            let validity = self.validity.pool.read();
+            backing_changes.iter().flat_map(|sender| validity.sender_lanes(sender)).collect()
+        };
         let mut targets: HashMap<LaneId, Option<u64>> = HashMap::new();
-        for (lane_id, nonce) in lanes {
+        for (lane_id, nonce) in
+            lanes.into_iter().chain(rebid_lanes.into_iter().map(|lane| (lane, None)))
+        {
             let entry = targets.entry(lane_id).or_default();
             *entry = (*entry).max(nonce);
         }
@@ -1251,23 +1262,23 @@ where
     }
 
     /// A validity lane's cursor at `state_nonce` behind the standard store's
-    /// run up to `next_nonce`, carrying that run's lowest fee cap so eviction
-    /// ranks the lane by what blocks it.
+    /// run up to `next_nonce`, carrying that run's [`Bid`] so eviction ranks
+    /// the lane by what blocks it.
     fn validity_cursor(&self, lane_id: LaneId, state_nonce: u64, next_nonce: u64) -> LaneCursor {
         let run = state_nonce..next_nonce;
-        let run_fee_cap = if run.is_empty() {
+        let run_bid = if run.is_empty() {
             None
         } else if lane_id.1.is_zero() {
-            self.protocol_pool
-                .get_transactions_by_sender(lane_id.0)
-                .iter()
-                .filter(|transaction| run.contains(&transaction.nonce()))
-                .map(|transaction| transaction.max_fee_per_gas())
-                .min()
+            Bid::of_run(
+                self.protocol_pool
+                    .get_transactions_by_sender(lane_id.0)
+                    .iter()
+                    .filter(|transaction| run.contains(&transaction.nonce())),
+            )
         } else {
-            self.sidecar.pool.read().lane_lowest_fee_cap(&lane_id, run)
+            self.sidecar.pool.read().lane_run_bid(&lane_id, run)
         };
-        LaneCursor { state_nonce, next_nonce, run_fee_cap }
+        LaneCursor { state_nonce, next_nonce, run_bid }
     }
 
     /// Undoes a lane insertion that a post-insert check rejected: removes the
@@ -2962,6 +2973,7 @@ mod tests {
         signed_8130(signer, nonce_key, nonce_sequence, 0, max_fee_per_gas, 50_000)
     }
 
+    /// Tips its whole fee cap, so a full store evicts the lowest fee cap first.
     fn signed_8130(
         signer: &PrivateKeySigner,
         nonce_key: U256,
@@ -2977,7 +2989,7 @@ mod tests {
             nonce_sequence,
             valid_after: 0,
             valid_before,
-            max_priority_fee_per_gas: 0,
+            max_priority_fee_per_gas: max_fee_per_gas,
             max_fee_per_gas,
             gas_limit,
             account_changes: Vec::new(),
@@ -5715,12 +5727,13 @@ mod tests {
         }]
     }
 
+    /// Tips its whole fee cap, so a full store evicts the lowest fee cap first.
     fn validity_1559(
         signer: &PrivateKeySigner,
         nonce: u64,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        signed_1559_with_fees(signer, nonce, max_fee_per_gas, 0)
+        signed_1559_with_fees(signer, nonce, max_fee_per_gas, max_fee_per_gas)
             .with_validity_predicates(resting_predicates())
     }
 
@@ -5881,8 +5894,16 @@ mod tests {
         assert!(is_pending(&pool, validity2) && is_pending(&pool, validity3));
         assert_eq!(
             pool.validity.pool.read().lane_cursor(&(signer.address(), U256::ZERO)),
-            Some(LaneCursor { state_nonce: 0, next_nonce: 2, run_fee_cap: Some(1_000) }),
-            "the lane carries the lowest fee cap of the standard run in front of it"
+            Some(LaneCursor {
+                state_nonce: 0,
+                next_nonce: 2,
+                run_bid: Bid::of_run(
+                    [standard0, standard1]
+                        .map(|hash| pool.protocol_pool.get(&hash).unwrap())
+                        .iter()
+                ),
+            }),
+            "the lane carries the bid of the standard run in front of it"
         );
         assert_eq!(best_hashes(&pool), vec![standard0, standard1, validity2, validity3]);
         assert_eq!(
@@ -6077,7 +6098,8 @@ mod tests {
     async fn protocol_nonce_slot_is_exclusive_across_stores_under_the_price_bump() {
         let (pool, client) = build_integration_pool();
         let signer = funded_signer(&client);
-        let validity = validity_1559(&signer, 0, 1_000);
+        let validity = signed_1559_with_fees(&signer, 0, 1_000, 0)
+            .with_validity_predicates(resting_predicates());
         let validity_hash = *validity.hash();
         let mut validity_events = pool
             .add_transaction_and_subscribe(TransactionOrigin::External, validity)
@@ -6163,7 +6185,11 @@ mod tests {
         assert!(is_pending(&pool, validity1));
         assert_eq!(
             pool.validity.pool.read().lane_cursor(&lane),
-            Some(LaneCursor { state_nonce: 0, next_nonce: 1, run_fee_cap: Some(1_000) })
+            Some(LaneCursor {
+                state_nonce: 0,
+                next_nonce: 1,
+                run_bid: Bid::of_run(pool.sidecar.pool.read().get(&sidecar0).as_ref()),
+            })
         );
 
         // A sidecar successor behind the validity transaction is gapped.
@@ -6470,6 +6496,56 @@ mod tests {
         assert_store(&pool, honest, PoolStore::Validity);
         assert_gone(&pool, spam2);
         assert_store(&pool, spam1, PoolStore::Validity);
+        assert_store(&pool, head, PoolStore::Sidecar);
+    }
+
+    #[tokio::test]
+    async fn validity_lanes_behind_a_zero_tip_standard_run_are_evicted_first() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_txs(1));
+        let idle = funded_signer(&client);
+        // Its inflated fee cap tips nothing, so the builder never picks it while blocks are full.
+        let head = add(&pool, signed_1559_with_fees(&idle, 0, 1_000_000, 0)).await;
+        let behind_idle = add(&pool, validity_1559(&idle, 1, 1_000_000)).await;
+        assert!(is_pending(&pool, behind_idle), "the standard head makes the lane executable");
+
+        let tipping = add(&pool, validity_1559(&funded_signer(&client), 0, 2_000)).await;
+
+        assert_store(&pool, tipping, PoolStore::Validity);
+        assert_gone(&pool, behind_idle);
+        assert!(in_protocol_pool(&pool, head));
+    }
+
+    #[tokio::test]
+    async fn a_validity_lane_is_re_ranked_when_the_sidecar_run_in_front_loses_its_tip_backing() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_txs(1));
+        let tipper = signer();
+        let balance = U256::from(100) * tipping_fees();
+        client.add_account(tipper.address(), ExtendedAccount::new(0, balance));
+        // The balance backs the head's tip, so the lane behind it bids its own 2_000.
+        let head =
+            tipping_channel_8130(&tipper, None, 0, balance - U256::from(50) * tipping_fees());
+        let head = add(&pool, head).await;
+        let behind_head = tipping_8130_with_fees(
+            &tipper,
+            None,
+            TIPPING_NONCE_KEY,
+            1,
+            0,
+            U256::ZERO,
+            (2_000, 2_000),
+        )
+        .with_validity_predicates(resting_predicates());
+        let behind_head = add(&pool, behind_head).await;
+        assert!(is_pending(&pool, behind_head), "the sidecar head makes the lane executable");
+
+        // A nonce-free tip over-commits the balance: the head now tips nothing.
+        add(&pool, tipping_nonce_free_8130(&tipper, 0, U256::from(49) * tipping_fees())).await;
+        let honest = add(&pool, validity_1559(&funded_signer(&client), 0, 1_500)).await;
+
+        assert_store(&pool, honest, PoolStore::Validity);
+        assert_gone(&pool, behind_head);
         assert_store(&pool, head, PoolStore::Sidecar);
     }
 
