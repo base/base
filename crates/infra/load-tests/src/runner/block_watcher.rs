@@ -62,8 +62,6 @@ pub struct BlockPulse {
     pub gas_used: u64,
     /// Block gas limit.
     pub gas_limit: u64,
-    /// Block base fee in wei.
-    pub base_fee: u128,
     /// Gas limit of this load test's transactions matched in the block.
     pub our_included_gas: u128,
     /// Predicted canonical boundary for this block.
@@ -308,7 +306,6 @@ impl BlockWatcher {
                 number: latest_number,
                 gas_used: latest.gas_used,
                 gas_limit: latest.gas_limit,
-                base_fee: latest.base_fee,
                 our_included_gas: block_match.included_gas,
                 expected_boundary: pulse_expected_boundary,
                 observed_at: latest.observation.observed_at,
