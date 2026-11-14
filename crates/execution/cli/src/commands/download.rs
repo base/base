@@ -13,7 +13,7 @@ use eyre::Result;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::download::DownloadCommand;
-use tracing::info;
+use tracing::{info, warn};
 
 mod proofs;
 pub use proofs::{
@@ -60,12 +60,22 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
         let config_path = data_dir.config();
         let config_modified_before = modified_at(&config_path);
 
-        inner.execute::<N>().await?;
+        let manifest_download = inner.execute::<N>().await?.is_some();
 
-        // Reth generates reth.toml only for a new or cleared datadir and keeps an existing one.
+        // Only manifest downloads generate reth.toml, and only for a new or cleared datadir; a
+        // `--url` archive may ship its own.
         let config_modified_after = modified_at(&config_path);
-        if config_modified_after.is_some() && config_modified_after != config_modified_before {
-            MerkleStageDefaults::apply(&config_path)?;
+        if manifest_download
+            && config_modified_after.is_some()
+            && config_modified_after != config_modified_before
+            && let Err(error) = MerkleStageDefaults::apply(&config_path)
+        {
+            warn!(
+                target: "reth::cli",
+                %error,
+                path = %config_path.display(),
+                "failed to write merkle stage defaults to reth.toml"
+            );
         }
 
         if proofs {
