@@ -235,6 +235,7 @@ impl Discv5Driver {
             };
 
             // Step 4: Run the core driver loop.
+            let mut events_open = true;
             loop {
                 tokio::select! {
                     msg = req_recv.recv() => {
@@ -279,13 +280,17 @@ impl Discv5Driver {
                                 },
                             }
                             None => {
-                                trace!(target: "discovery", "Receiver `None` peer enr");
+                                debug!(target: "discovery", "Handler channel closed, stopping discovery service");
+                                return;
                             }
                         }
                     }
-                    event = event_stream.recv() => {
+                    event = event_stream.recv(), if events_open => {
                         let Some(event) = event else {
-                            trace!(target: "discovery", "Received `None` event");
+                            // Stop polling the closed stream instead of spinning on it; requests
+                            // and shutdown are still served.
+                            warn!(target: "discovery", "discv5 event stream closed");
+                            events_open = false;
                             continue;
                         };
                         match event {
@@ -461,6 +466,34 @@ mod tests {
         .expect("Failed to build discovery service");
         let (handle, _) = discovery.start();
         assert_eq!(handle.chain_id, ChainConfig::sepolia().chain_id);
+    }
+
+    #[tokio::test]
+    async fn discv5_driver_stops_when_handler_is_dropped() {
+        const CHAIN_ID_WITHOUT_BOOTNODES: u64 = 9_999_999;
+        let bootstore_dir = tempdir().unwrap();
+        let CombinedKey::Secp256k1(secret_key) = CombinedKey::generate_secp256k1() else {
+            unreachable!()
+        };
+        let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+        let mut discovery = Discv5Driver::builder(
+            LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::LOCALHOST), 0, 0),
+            CHAIN_ID_WITHOUT_BOOTNODES,
+            ConfigBuilder::new(socket.into()).build(),
+        )
+        .build()
+        .expect("Failed to build discovery service");
+        discovery.bootstore =
+            Some(BootStoreFile::Custom(bootstore_dir.path().join("bootstore.json")));
+
+        let (handler, mut enr_recv) = discovery.start();
+        drop(handler);
+
+        // The driver task owns the ENR sender, so the receiver closes once the task exits.
+        let closed = tokio::time::timeout(Duration::from_secs(10), enr_recv.recv())
+            .await
+            .expect("discovery task should exit after its handler is dropped");
+        assert!(closed.is_none());
     }
 
     #[tokio::test]
