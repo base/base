@@ -208,7 +208,7 @@ services:
       - bootnode
       - --l2-config-file
       - /genesis/l2/rollup.json
-      - --v4-addr=0.0.0.0:${L2_EL_BOOTNODE_P2P_PORT}
+      - --addr=0.0.0.0:${L2_EL_BOOTNODE_P2P_PORT}
       - --nat=extip:${L2_EL_BOOTNODE_ADVERTISE_IP}
       - --p2p-secret-key=/genesis/l2/el-bootnode-p2p-key.txt
       - --p2p.listen.tcp
