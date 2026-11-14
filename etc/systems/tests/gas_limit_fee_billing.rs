@@ -61,6 +61,8 @@ const RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const FUNDING_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the L2 may take to reflect an L1 `SystemConfig` update in its `L1Block` predeploy.
 const SYSTEM_CONFIG_PROPAGATION_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long the validator may take to re-derive a block the builder has already produced.
+const VALIDATOR_CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Operator fee parameters seeded through the L1 `SystemConfig`. The devnet genesis leaves both
 /// at zero, which would make the operator-fee term of the post-Everest identities vacuous.
 const OPERATOR_FEE_SCALAR: u32 = 1;
@@ -214,27 +216,16 @@ impl EverestSystem {
         .wrap_err_with(|| format!("timed out waiting for Everest at {}", self.everest_timestamp))?
     }
 
-    /// Asserts the validator re-derived `block_numbers` to the same hashes as the builder.
+    /// Waits until the validator re-derived each of `block_numbers` to the builder's hash.
     async fn assert_validator_agrees(
         &self,
         block_numbers: impl IntoIterator<Item = u64>,
     ) -> Result<()> {
         for number in block_numbers {
-            wait_for_block(&self.client, number).await?;
-            let builder_block = self
-                .builder
-                .get_block_by_number(BlockNumberOrTag::Number(number))
-                .await?
-                .ok_or_eyre("builder block missing")?;
-            let client_block = self
-                .client
-                .get_block_by_number(BlockNumberOrTag::Number(number))
-                .await?
-                .ok_or_eyre("client block missing")?;
-            assert_eq!(
-                builder_block.header.hash, client_block.header.hash,
-                "builder and validator disagree on block {number}"
-            );
+            self.client
+                .wait_for_convergence(&self.builder, number, VALIDATOR_CONVERGENCE_TIMEOUT)
+                .await
+                .wrap_err_with(|| format!("builder and validator disagree on block {number}"))?;
         }
         Ok(())
     }
