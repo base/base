@@ -1447,8 +1447,12 @@ where
             let mut resting_woken = Vec::new();
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
+            // Execution takes the transaction by value, so read what the rest of this iteration
+            // needs from it first instead of cloning the whole transaction a second time.
+            let (signer, nonce, gas_limit) = (tx.signer(), tx.nonce(), tx.gas_limit());
+            let effective_tip = tx.effective_tip_per_gas(base_fee);
             let gas_output = match builder.execute_transaction_with_commit_condition(
-                WithEncoded::new(tx_encoded, tx.clone()),
+                WithEncoded::new(tx_encoded, tx),
                 |result| {
                     let result_and_state = result.result();
                     let decision = resource_metering.check_executed_usage(
@@ -1497,7 +1501,7 @@ where
                                 .is_some_and(|decision| decision.is_permanent()),
                         );
                     }
-                    Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
+                    Self::skip_current(&mut best_txs, signer, nonce, replay_independent);
                     continue;
                 }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
@@ -1505,7 +1509,7 @@ where
                     ..
                 })) => {
                     if error.is_nonce_too_low() {
-                        trace!(target: "payload_builder", %error, ?tx, "skipping nonce too low transaction");
+                        trace!(target: "payload_builder", %error, %tx_hash, "skipping nonce too low transaction");
                         if has_validity_predicates {
                             self.emit_validity_rejection(
                                 tx_hash,
@@ -1517,7 +1521,7 @@ where
                         }
                         best_txs.mark_current_committed();
                     } else {
-                        trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
+                        trace!(target: "payload_builder", %error, %tx_hash, "skipping invalid transaction and its descendants");
                         if has_validity_predicates {
                             self.emit_validity_rejection(
                                 tx_hash,
@@ -1527,12 +1531,7 @@ where
                                 false,
                             );
                         }
-                        Self::skip_current(
-                            &mut best_txs,
-                            tx.signer(),
-                            tx.nonce(),
-                            replay_independent,
-                        );
+                        Self::skip_current(&mut best_txs, signer, nonce, replay_independent);
                     }
                     continue;
                 }
@@ -1637,9 +1636,7 @@ where
                     .record(predicate_rescan_start.elapsed().as_secs_f64());
             }
 
-            let miner_fee = tx
-                .effective_tip_per_gas(base_fee)
-                .expect("fee is always valid; execution succeeded");
+            let miner_fee = effective_tip.expect("fee is always valid; execution succeeded");
             let gas_used = gas_output.tx_gas_used();
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
             // The tip is a phase-0 transfer, so it is revenue only if that phase
@@ -1678,7 +1675,7 @@ where
                     tx_hash,
                     validity_consideration_index,
                     {
-                        "tx_gas_limit" => tx.gas_limit(),
+                        "tx_gas_limit" => gas_limit,
                         "gas_used" => gas_used,
                         "metered_gas_used" => metered_gas.map(|metered| metered.gas_used),
                         "payer_auth_gas_reserved" =>
