@@ -11,6 +11,7 @@ aliases for building modular node extensions.
 - **`BaseNodeExtension`**: Trait for node extensions that can apply additional wiring to the builder.
 - **`FromExtensionConfig`**: Trait for extensions that can be constructed from a configuration type.
 - **`BaseNodeRunner`**: Orchestrates Base node wiring and launch.
+- **`MerkleStageDefaults`**: Writes a merkle `rebuild_threshold` suited to 200ms blocks when a `reth.toml` is created, by `BaseNodeRunner` before launch or by `snapshot download`.
 - **`NodeHooks`**: Hook accumulator used by extensions to register RPC and node-start hooks.
 - **`BaseNodeBuilder`**: Type alias for the node builder with launch context.
 - **`BaseProvider`**: Type alias for the blockchain provider instance.
