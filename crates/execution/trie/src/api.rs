@@ -411,13 +411,15 @@ pub trait BaseProofsInitialStateStore: Send + Sync + Debug {
 
     /// Store storage trie branches for multiple addresses in a single batch operation.
     ///
-    /// The default implementation loops and calls [`Self::store_storage_branches`] per address.
+    /// The default implementation calls [`Self::store_storage_branches`] per address in ascending
+    /// address order, so a crash mid-batch leaves only addresses above the resume key unwritten.
     /// Override this method on backends that can merge all writes into one durable commit (e.g.
     /// a single `RocksDB` `WriteBatch`) to avoid the per-address fsync cost during initialization.
     fn store_storage_branches_bulk(
         &self,
-        entries: StorageBranchEntries,
+        mut entries: StorageBranchEntries,
     ) -> BaseProofsStorageResult<()> {
+        entries.sort_by_key(|(hashed_address, _)| *hashed_address);
         for (hashed_address, nodes) in entries {
             self.store_storage_branches(hashed_address, nodes)?;
         }
@@ -439,13 +441,15 @@ pub trait BaseProofsInitialStateStore: Send + Sync + Debug {
 
     /// Store hashed storage slots for multiple addresses in a single batch operation.
     ///
-    /// The default implementation loops and calls [`Self::store_hashed_storages`] per address.
+    /// The default implementation calls [`Self::store_hashed_storages`] per address in ascending
+    /// address order, so a crash mid-batch leaves only addresses above the resume key unwritten.
     /// Override this method on backends that can merge all writes into one durable commit (e.g.
     /// a single `RocksDB` `WriteBatch`) to avoid the per-address fsync cost during initialization.
     fn store_hashed_storages_bulk(
         &self,
-        entries: Vec<(B256, Vec<(B256, U256)>)>,
+        mut entries: Vec<(B256, Vec<(B256, U256)>)>,
     ) -> BaseProofsStorageResult<()> {
+        entries.sort_by_key(|(hashed_address, _)| *hashed_address);
         for (hashed_address, storages) in entries {
             self.store_hashed_storages(hashed_address, storages)?;
         }
