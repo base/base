@@ -17,10 +17,10 @@ use jsonrpsee::RpcModule;
 use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
 use reth_provider::providers::BlockchainProvider;
 use tokio::sync::broadcast;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
-    BaseNodeBuilder, BaseNodeExtension, FromExtensionConfig, NodeHooks,
+    BaseNodeBuilder, BaseNodeExtension, FromExtensionConfig, MerkleStageDefaults, NodeHooks,
     node::BaseNode,
     service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder},
 };
@@ -172,6 +172,18 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// handle without waiting for shutdown.
     pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
         info!(target: "base-runner", "starting custom Base node");
+        let node_config = builder.config();
+        let config_path =
+            node_config.config.clone().unwrap_or_else(|| node_config.datadir().config());
+        // A failed write must not block startup; reth then creates the file with its own defaults.
+        if let Err(error) = MerkleStageDefaults::create(&config_path) {
+            warn!(
+                target: "base-runner",
+                %error,
+                path = %config_path.display(),
+                "failed to create reth.toml with merkle stage defaults"
+            );
+        }
 
         let Self {
             rollup_args,
