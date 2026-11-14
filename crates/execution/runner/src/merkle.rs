@@ -3,10 +3,10 @@
 use std::path::Path;
 
 use eyre::Result;
-use reth_config::{Config, config::MerkleConfig};
+use reth_config::Config;
 use tracing::info;
 
-/// Merkle stage settings tuned for Base's 200ms blocks.
+/// Merkle stage settings tuned for Base's 200ms blocks, written when a `reth.toml` is created.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct MerkleStageDefaults;
 
@@ -18,36 +18,31 @@ impl MerkleStageDefaults {
     /// about 5.5 hours of 200ms blocks, so each rebuild ends more than 100,000 blocks behind and
     /// the next pipeline round rebuilds again: a node restored from a snapshot older than that
     /// never reaches the tip. 450,000 blocks (25 hours) keeps day-old snapshots incremental and
-    /// stays below the 500,000-block hashing clean threshold, past which pruned nodes skip the
-    /// changesets an incremental run reads.
+    /// stays below reth's default 500,000-block hashing clean threshold, past which pruned nodes
+    /// skip the changesets an incremental run reads.
     pub const REBUILD_THRESHOLD: u64 = 450_000;
 
-    /// Sets `rebuild_threshold` in the `reth.toml` at `path` to [`Self::REBUILD_THRESHOLD`] when it
-    /// holds reth's default, keeping any other value an operator chose.
+    /// Creates the `reth.toml` at `path` with reth's defaults and [`Self::REBUILD_THRESHOLD`].
     ///
-    /// When lowered hashing clean thresholds would prune the changesets that incremental runs up
-    /// to [`Self::REBUILD_THRESHOLD`] blocks read, reth's default is kept, or restored if an earlier
-    /// start raised it. A missing file is created with reth's defaults first, as node startup does.
-    pub fn apply(path: &Path) -> Result<()> {
-        let mut config = Config::from_path(path)?;
-        let reth_default = MerkleConfig::default().rebuild_threshold;
-        let current = config.stages.merkle.rebuild_threshold;
-        let target = if config.stages.execution_external_clean_threshold() < Self::REBUILD_THRESHOLD
-        {
-            reth_default
-        } else {
-            Self::REBUILD_THRESHOLD
-        };
-        if current == target || ![reth_default, Self::REBUILD_THRESHOLD].contains(&current) {
+    /// An existing file is left as it is.
+    pub fn create(path: &Path) -> Result<()> {
+        if path.exists() {
             return Ok(());
         }
-        config.stages.merkle.rebuild_threshold = target;
+        Self::apply(path)
+    }
+
+    /// Sets [`Self::REBUILD_THRESHOLD`] in the `reth.toml` at `path`, creating it with reth's
+    /// defaults when missing. Call only on a file that was just generated.
+    pub fn apply(path: &Path) -> Result<()> {
+        let mut config = Config::from_path(path)?;
+        config.stages.merkle.rebuild_threshold = Self::REBUILD_THRESHOLD;
         config.save(path)?;
         info!(
             target: "base-runner",
             path = %path.display(),
-            rebuild_threshold = target,
-            "set merkle stage rebuild threshold"
+            rebuild_threshold = Self::REBUILD_THRESHOLD,
+            "wrote merkle stage rebuild threshold"
         );
         Ok(())
     }
@@ -55,6 +50,8 @@ impl MerkleStageDefaults {
 
 #[cfg(test)]
 mod tests {
+    use reth_config::config::MerkleConfig;
+
     use super::*;
 
     fn rebuild_threshold(path: &Path) -> u64 {
@@ -62,68 +59,38 @@ mod tests {
     }
 
     #[test]
-    fn raises_reth_default() {
+    fn create_writes_base_threshold_to_missing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reth.toml");
+
+        MerkleStageDefaults::create(&path).unwrap();
+
+        assert_eq!(rebuild_threshold(&path), MerkleStageDefaults::REBUILD_THRESHOLD);
+    }
+
+    #[test]
+    fn create_leaves_existing_config_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("reth.toml");
         Config::default().save(&path).unwrap();
 
-        MerkleStageDefaults::apply(&path).unwrap();
+        MerkleStageDefaults::create(&path).unwrap();
 
-        assert_eq!(rebuild_threshold(&path), MerkleStageDefaults::REBUILD_THRESHOLD);
+        assert_eq!(rebuild_threshold(&path), MerkleConfig::default().rebuild_threshold);
     }
 
     #[test]
-    fn creates_missing_config_with_base_threshold() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("reth.toml");
-
-        MerkleStageDefaults::apply(&path).unwrap();
-
-        assert_eq!(rebuild_threshold(&path), MerkleStageDefaults::REBUILD_THRESHOLD);
-    }
-
-    #[test]
-    fn keeps_operator_threshold_and_other_settings() {
+    fn apply_sets_base_threshold_and_keeps_other_settings() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("reth.toml");
         let mut config = Config::default();
-        config.stages.merkle.rebuild_threshold = 250_000;
         config.stages.merkle.incremental_threshold = 1_000;
         config.save(&path).unwrap();
 
         MerkleStageDefaults::apply(&path).unwrap();
 
         let loaded = Config::from_path(&path).unwrap();
-        assert_eq!(loaded.stages.merkle.rebuild_threshold, 250_000);
+        assert_eq!(loaded.stages.merkle.rebuild_threshold, MerkleStageDefaults::REBUILD_THRESHOLD);
         assert_eq!(loaded.stages.merkle.incremental_threshold, 1_000);
-    }
-
-    #[test]
-    fn keeps_default_when_changesets_are_pruned_sooner() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("reth.toml");
-        let mut config = Config::default();
-        config.stages.account_hashing.clean_threshold = 200_000;
-        config.stages.storage_hashing.clean_threshold = 200_000;
-        config.save(&path).unwrap();
-
-        MerkleStageDefaults::apply(&path).unwrap();
-
-        assert_eq!(rebuild_threshold(&path), MerkleConfig::default().rebuild_threshold);
-    }
-
-    #[test]
-    fn restores_default_when_changesets_are_pruned_sooner_after_raise() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("reth.toml");
-        let mut config = Config::default();
-        config.stages.merkle.rebuild_threshold = MerkleStageDefaults::REBUILD_THRESHOLD;
-        config.stages.account_hashing.clean_threshold = 200_000;
-        config.stages.storage_hashing.clean_threshold = 200_000;
-        config.save(&path).unwrap();
-
-        MerkleStageDefaults::apply(&path).unwrap();
-
-        assert_eq!(rebuild_threshold(&path), MerkleConfig::default().rebuild_threshold);
     }
 }

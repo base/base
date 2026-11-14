@@ -175,13 +175,13 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         let node_config = builder.config();
         let config_path =
             node_config.config.clone().unwrap_or_else(|| node_config.datadir().config());
-        // Read-only config mounts must not block startup; reth then uses the file as is.
-        if let Err(error) = MerkleStageDefaults::apply(&config_path) {
+        // A failed write must not block startup; reth then creates the file with its own defaults.
+        if let Err(error) = MerkleStageDefaults::create(&config_path) {
             warn!(
                 target: "base-runner",
                 %error,
                 path = %config_path.display(),
-                "failed to set merkle stage rebuild threshold"
+                "failed to create reth.toml with merkle stage defaults"
             );
         }
 
