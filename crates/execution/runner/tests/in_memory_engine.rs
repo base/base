@@ -24,7 +24,7 @@ use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadReady};
 use base_consensus_engine::{EngineClient, EngineClientBuilder, EngineEndpoint, InMemoryTransport};
 use base_consensus_providers::L1_RPC_TIMEOUT;
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::args::RollupArgs;
+use base_node_core::{TestNodeRuntime, args::RollupArgs};
 use base_node_runner::{
     BaseNodeRunner,
     test_utils::{BLOCK_TIME_SECONDS, L1_BLOCK_INFO_DEPOSIT_TX},
@@ -39,7 +39,6 @@ use reth_node_core::{
     args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
     dirs::{DataDirPath, MaybePlatformPath},
 };
-use reth_tasks::Runtime;
 use serde_json::json;
 
 /// Seals one block through the in-memory Engine API and reads it back over both transports.
@@ -101,12 +100,15 @@ async fn seal_one_block(denim: bool, no_tx_pool: bool) -> Result<()> {
     )
     .wrap_err("Failed to create test database")?;
 
-    let runtime = Runtime::test();
-    let mut launched = BaseNodeRunner::new(RollupArgs::default())
-        .launch(
-            NodeBuilder::new(node_config).with_database(db).with_launch_context(runtime.clone()),
-        )
-        .await?;
+    let mut runtime = TestNodeRuntime::default();
+    runtime.rocksdb_path = Some(node_config.datadir().rocksdb());
+    runtime.cleanup_paths.push(data_path);
+    let launch = BaseNodeRunner::new(RollupArgs::default()).launch(
+        NodeBuilder::new(node_config)
+            .with_database(db)
+            .with_launch_context(runtime.runtime.clone()),
+    );
+    let mut launched = runtime.runtime.handle().spawn(launch).await??;
     let http_addr = launched
         .handle
         .node
@@ -246,9 +248,6 @@ async fn seal_one_block(denim: bool, no_tx_pool: bool) -> Result<()> {
     assert_eq!(typed.0, i64::from(INVALID_PARAMS_CODE));
     assert_eq!((typed.0, &typed.1), (json.0, &json.1));
 
-    drop(launched);
-    drop(runtime);
-    let _ = std::fs::remove_dir_all(data_path);
     Ok(())
 }
 

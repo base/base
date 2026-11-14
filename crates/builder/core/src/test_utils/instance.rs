@@ -3,7 +3,6 @@ use core::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
-    time::Duration,
 };
 use std::{
     path::PathBuf,
@@ -16,7 +15,7 @@ use base_common_evm::BaseUpgrade;
 use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::BasePooledTransaction;
-use base_node_core::args::RollupArgs;
+use base_node_core::{TestNodeRuntime, args::RollupArgs};
 use base_node_runner::{
     BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks,
     PayloadServiceBuilder as BasePayloadServiceBuilder, test_utils::init_silenced_tracing,
@@ -29,7 +28,7 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
+use reth_tasks::{RuntimeBuilder, RuntimeConfig};
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -66,14 +65,12 @@ pub fn clear_otel_env_vars() {
 pub struct LocalInstance {
     node_config: NodeConfig<BaseChainSpec>,
     builder_config: BuilderConfig,
-    runtime: Option<Runtime>,
     exit_future: NodeExitFuture,
-    node_handle: Option<Box<dyn Any + Send>>,
-    pool_handle: Option<Arc<dyn ExternalTransactionPool>>,
+    _node_handle: Box<dyn Any + Send>,
+    pool_handle: Arc<dyn ExternalTransactionPool>,
     pool_observer: TransactionPoolObserver,
     metering_provider: SharedMeteringProvider,
-    /// Temporary directory backing the node's database, removed on drop.
-    db_dir: PathBuf,
+    _runtime: TestNodeRuntime,
 }
 
 struct PoolHandle<P> {
@@ -201,7 +198,14 @@ impl LocalInstance {
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
         init_silenced_tracing();
-        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
+        let mut runtime = TestNodeRuntime {
+            runtime: RuntimeBuilder::new(RuntimeConfig::default()).build()?,
+            rocksdb_path: Some(node_config.datadir().rocksdb()),
+            cleanup_paths: vec![
+                PathBuf::from(node_config.datadir().to_string()),
+                node_config.datadir().rocksdb(),
+            ],
+        };
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -222,10 +226,11 @@ impl LocalInstance {
         // The node types fix the database to the concrete `DatabaseEnv`, so the test database must
         // be a bare `DatabaseEnv` (not a `TempDatabase`) for the extension hook types to line up.
         let (db, db_dir) = create_test_db_env(node_config.clone())?;
+        runtime.cleanup_paths.push(db_dir);
 
         let builder = NodeBuilder::<_, BaseChainSpec>::new(node_config.clone())
             .with_database(db)
-            .with_launch_context(runtime.clone())
+            .with_launch_context(runtime.runtime.clone())
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(components)
             .with_add_ons(base_node.add_ons())
@@ -246,7 +251,8 @@ impl LocalInstance {
             Ok(())
         });
 
-        let node_handle = hooks.apply_to(builder).launch().await?;
+        let node_handle =
+            runtime.runtime.handle().spawn(hooks.apply_to(builder).launch()).await??;
         let exit_future = node_handle.node_exit_future;
         let node_handle: Box<dyn Any + Send> = Box::new(node_handle.node);
 
@@ -258,12 +264,11 @@ impl LocalInstance {
             builder_config,
             node_config,
             exit_future,
-            node_handle: Some(node_handle),
-            pool_handle: Some(pool_handle),
-            runtime: Some(runtime),
+            _node_handle: node_handle,
+            pool_handle,
+            _runtime: runtime,
             pool_observer: TransactionPoolObserver::new(pool_monitor),
             metering_provider,
-            db_dir,
         })
     }
 
@@ -299,7 +304,7 @@ impl LocalInstance {
 
     /// Returns a cloned handle for submitting external transactions to the pool.
     pub fn pool_handle(&self) -> Arc<dyn ExternalTransactionPool> {
-        Arc::clone(self.pool_handle.as_ref().expect("pool handle present"))
+        Arc::clone(&self.pool_handle)
     }
 
     /// Returns a reference to the shared metering provider.
@@ -318,43 +323,6 @@ impl LocalInstance {
             .connect_ipc(self.rpc_ipc().to_string().into())
             .await
             .map_err(|e| eyre::eyre!("Failed to connect to provider: {e}"))
-    }
-}
-
-impl Drop for LocalInstance {
-    fn drop(&mut self) {
-        if let Some(runtime) = self.runtime.take() {
-            // Tokio runtimes cannot perform their blocking shutdown while they are being dropped
-            // from another runtime's async context. `LocalInstance` is commonly owned directly by
-            // async tests, so shut down and drop its runtime on a plain thread before cleaning up
-            // the resources it owns. The node and pool hold `Runtime` clones (it is an `Arc`), so
-            // they must be dropped on that thread too, or the last reference, and with it the
-            // tokio runtime, is released here in async context. Dropping them also releases their
-            // database handles before the backing files are removed below.
-            let node_handle = self.node_handle.take();
-            let pool_handle = self.pool_handle.take();
-            let shutdown = std::thread::spawn(move || {
-                runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
-                drop(node_handle);
-                drop(pool_handle);
-                drop(runtime);
-            });
-            if let Err(panic) = shutdown.join() {
-                std::panic::resume_unwind(panic);
-            }
-            if let Err(e) = std::fs::remove_dir_all(self.node_config().datadir().to_string()) {
-                eprintln!(
-                    "Warning: failed to remove temporary data directory {}: {e}",
-                    self.node_config().datadir()
-                );
-            }
-            if let Err(e) = std::fs::remove_dir_all(&self.db_dir) {
-                eprintln!(
-                    "Warning: failed to remove temporary database directory {}: {e}",
-                    self.db_dir.display()
-                );
-            }
-        }
     }
 }
 
@@ -442,4 +410,22 @@ pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseC
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network)
+}
+
+#[cfg(test)]
+mod tests {
+    use reth_provider::providers::RocksDBProvider;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn dropping_local_instance_closes_rocksdb() {
+        let instance = LocalInstance::new(BuilderConfig::for_tests()).await.unwrap();
+        let path = instance.node_config().datadir().rocksdb();
+        assert!(RocksDBProvider::new(&path).is_err());
+        drop(instance);
+        let reopened = RocksDBProvider::new(&path).expect("builder teardown must close RocksDB");
+        drop(reopened);
+        std::fs::remove_dir_all(path).unwrap();
+    }
 }

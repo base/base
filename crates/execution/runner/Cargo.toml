@@ -23,7 +23,6 @@ reth-provider.workspace = true
 reth-node-builder.workspace = true
 reth-ipc = { workspace = true, optional = true }
 reth-tracing = { workspace = true, optional = true }
-reth-tasks = { workspace = true, optional = true }
 reth-node-core = { workspace = true, optional = true }
 reth-rpc-layer = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
@@ -73,6 +72,7 @@ base-common-evm.workspace = true
 base-common-genesis.workspace = true
 base-consensus-engine.workspace = true
 base-consensus-providers.workspace = true
+reth-tasks = { workspace = true, features = ["test-utils"] }
 base-node-runner = { path = ".", features = ["test-utils"] }
 serde_json.workspace = true
 tokio-tungstenite.workspace = true
@@ -99,7 +99,6 @@ test-utils = [
 	"dep:reth-node-core",
 	"dep:reth-primitives-traits",
 	"dep:reth-rpc-layer",
-	"dep:reth-tasks",
 	"dep:reth-tracing",
 	"dep:tower",
 	"dep:tracing-subscriber",
@@ -108,5 +107,4 @@ test-utils = [
 	"reth-node-builder/test-utils",
 	"reth-primitives-traits?/test-utils",
 	"reth-provider/test-utils",
-	"reth-tasks?/test-utils",
 ]
