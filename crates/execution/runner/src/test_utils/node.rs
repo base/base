@@ -13,15 +13,18 @@ use reth_db::{
 };
 use reth_node_builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
-    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
+    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, PruningArgs, RpcServerArgs, StaticFilesArgs},
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
+use reth_rpc_layer::JwtSecret;
 use reth_tasks::Runtime;
 
 use crate::{
-    BaseNodeExtension, BaseProvider, NodeHooks, node::BaseNode, test_utils::engine::EngineApi,
+    BaseNodeExtension, BaseProvider, NodeHooks,
+    node::BaseNode,
+    test_utils::{DEFAULT_JWT_SECRET, engine::EngineApi},
 };
 
 /// Convenience alias for the local blockchain provider type.
@@ -34,6 +37,8 @@ pub struct LocalNode {
     engine_ipc_path: String,
     /// WebSocket API address of the local node.
     pub ws_api_addr: SocketAddr,
+    /// Authenticated (engine) HTTP RPC address, signed with [`DEFAULT_JWT_SECRET`].
+    pub auth_api_addr: SocketAddr,
     provider: LocalNodeProvider,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
@@ -53,20 +58,35 @@ impl fmt::Debug for LocalNode {
         f.debug_struct("LocalNode")
             .field("http_api_addr", &self.http_api_addr)
             .field("ws_api_addr", &self.ws_api_addr)
+            .field("auth_api_addr", &self.auth_api_addr)
             .field("engine_ipc_path", &self.engine_ipc_path)
             .finish_non_exhaustive()
     }
 }
 
+/// Prune and static-file settings for a test node that keeps only recent history.
+///
+/// Static-file segments are pruned a whole file at a time, so a short retention window only
+/// takes effect with small `blocks_per_file_*` values.
+#[derive(Debug, Clone, Default)]
+pub struct LocalNodeRetention {
+    /// `--prune.*` settings.
+    pub pruning: PruningArgs,
+    /// `--static-files.*` settings.
+    pub static_files: StaticFilesArgs,
+}
+
 impl LocalNode {
     /// Launch a new local node with the provided extensions and chain spec, and
     /// `rpc_gas_cap` as its `--rpc.gascap` and `engine_api_store` as its
-    /// `--debug.engine-api-store` when set.
+    /// `--debug.engine-api-store` when set. `retention` replaces the default (archive) prune
+    /// and static-file settings when set.
     pub async fn new(
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<BaseChainSpec>,
         rpc_gas_cap: Option<u64>,
         engine_api_store: Option<PathBuf>,
+        retention: Option<LocalNodeRetention>,
     ) -> Result<Self> {
         let exec = Runtime::test();
 
@@ -85,6 +105,7 @@ impl LocalNode {
         let mut rpc_args =
             RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
         rpc_args.auth_ipc_path = unique_ipc_path;
+        rpc_args.auth_jwtsecret_hex = Some(JwtSecret::from_hex(DEFAULT_JWT_SECRET.to_string())?);
         if let Some(rpc_gas_cap) = rpc_gas_cap {
             rpc_args.rpc_gas_cap = rpc_gas_cap;
         }
@@ -104,6 +125,10 @@ impl LocalNode {
         // that reth 2.3.0 now consults during state-root/proof work.
         node_config.engine.persistence_threshold = 0;
         node_config.debug.engine_api_store = engine_api_store;
+        if let Some(retention) = retention {
+            node_config = node_config.with_pruning(retention.pruning);
+            node_config.static_files = retention.static_files;
+        }
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
         node_config = node_config
@@ -134,12 +159,15 @@ impl LocalNode {
             .ws_local_addr()
             .ok_or_else(|| eyre::eyre!("Failed to get websocket api address"))?;
 
+        let auth_api_addr = node_handle.auth_server_handle().local_addr();
+
         let engine_ipc_path = node_config.rpc.auth_ipc_path;
         let provider = node_handle.provider().clone();
 
         Ok(Self {
             http_api_addr,
             ws_api_addr,
+            auth_api_addr,
             engine_ipc_path,
             provider,
             _node_exit_future: node_exit_future,
@@ -178,6 +206,12 @@ impl LocalNode {
     /// Clone the underlying blockchain provider so callers can inspect chain state.
     pub fn blockchain_provider(&self) -> LocalNodeProvider {
         self.provider.clone()
+    }
+
+    /// HTTP URL of the authenticated (engine) RPC server; requests must carry a JWT signed with
+    /// [`DEFAULT_JWT_SECRET`].
+    pub fn auth_url(&self) -> String {
+        format!("http://{}", self.auth_api_addr)
     }
 
     /// Websocket URL for the local node.

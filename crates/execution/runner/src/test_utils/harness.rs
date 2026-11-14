@@ -25,7 +25,7 @@ use crate::{
     test_utils::{
         BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, NODE_STARTUP_DELAY_MS,
         engine::{EngineApi, IpcEngine},
-        node::{LocalNode, LocalNodeProvider},
+        node::{LocalNode, LocalNodeProvider, LocalNodeRetention},
         tracing::init_silenced_tracing,
     },
 };
@@ -49,6 +49,7 @@ pub struct TestHarnessBuilder {
     chain_spec: Option<Arc<BaseChainSpec>>,
     rpc_gas_cap: Option<u64>,
     engine_api_store: Option<PathBuf>,
+    retention: Option<LocalNodeRetention>,
 }
 
 impl TestHarnessBuilder {
@@ -92,6 +93,13 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Prune the node's history as `--prune.*` and `--static-files.*` flags would, for tests
+    /// of short-retention nodes.
+    pub fn with_retention(mut self, retention: LocalNodeRetention) -> Self {
+        self.retention = Some(retention);
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
@@ -101,9 +109,14 @@ impl TestHarnessBuilder {
             Arc::new(BaseChainSpec::from_genesis(genesis))
         });
 
-        let node =
-            LocalNode::new(self.extensions, chain_spec, self.rpc_gas_cap, self.engine_api_store)
-                .await?;
+        let node = LocalNode::new(
+            self.extensions,
+            chain_spec,
+            self.rpc_gas_cap,
+            self.engine_api_store,
+            self.retention,
+        )
+        .await?;
         let engine = node.engine_api()?;
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
@@ -150,6 +163,12 @@ impl TestHarness {
     /// HTTP URL for sending JSON-RPC requests to the local node.
     pub fn rpc_url(&self) -> String {
         format!("http://{}", self.node.http_api_addr)
+    }
+
+    /// HTTP URL of the node's authenticated (engine) RPC server, for clients that sign
+    /// requests with [`crate::test_utils::DEFAULT_JWT_SECRET`].
+    pub fn auth_url(&self) -> String {
+        self.node.auth_url()
     }
 
     /// Websocket URL for subscribing to JSON-RPC notifications.

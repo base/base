@@ -1,0 +1,88 @@
+[package]
+name = "base-history-store"
+description = "Shared chain history store: archive segments, SlateDB indexes, writer, pruner and reader"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-execution-chainspec.workspace = true
+base-execution-consensus.workspace = true
+base-common-consensus = { workspace = true, features = ["reth", "serde"] }
+
+# reth
+reth-codecs.workspace = true
+reth-db-api.workspace = true
+reth-provider.workspace = true
+reth-rpc-layer.workspace = true
+reth-storage-api.workspace = true
+reth-primitives-traits = { workspace = true, features = ["secp256k1"] }
+
+# alloy
+alloy-rlp.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+
+# test-utils
+alloy-signer = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
+
+# storage
+roaring.workspace = true
+slatedb = { workspace = true, features = ["wal_disable"] }
+object_store = { workspace = true, features = ["fs", "aws"] }
+
+# rpc
+tower.workspace = true
+jsonrpsee = { workspace = true, features = ["macros", "server", "http-client"] }
+
+# async
+futures.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["fs", "rt", "sync", "time", "io-util"] }
+
+# misc
+lru.workspace = true
+sha2 = { workspace = true, features = ["std"] }
+chrono.workspace = true
+tracing.workspace = true
+tempfile.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+
+[dev-dependencies]
+mockall.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+criterion.workspace = true
+
+[[test]]
+name = "minio"
+required-features = ["test-utils"]
+
+[[bench]]
+name = "history_store"
+harness = false
+required-features = ["test-utils"]
+
+[features]
+test-utils = [
+	"dep:alloy-signer",
+	"dep:alloy-signer-local",
+	"reth-codecs/test-utils",
+	"reth-db-api/test-utils",
+	"reth-primitives-traits/test-utils",
+	"reth-provider/test-utils",
+]

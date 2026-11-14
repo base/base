@@ -173,6 +173,10 @@ skip = [
     # mach2 version mismatch: tracing-samply uses 0.5.0, metrics-process uses 0.6.0
     "mach2",
 
+    # slatedb (base-history-store) pulls heck 0.4 and rand_xoshiro 0.8 alongside newer versions
+    "heck",
+    "rand_xoshiro",
+
     # reqwest version mismatch: alloy use 0.12.x, newer deps use 0.13.x
     "reqwest",
 
