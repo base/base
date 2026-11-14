@@ -40,7 +40,7 @@ use crate::{
     ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
     PredicateContext, StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
-    two_d_nonce_pool::{InsertOutcome, LaneCursor, LaneId, LaneUpdate, TwoDNoncePool},
+    two_d_nonce_pool::{Bid, InsertOutcome, LaneCursor, LaneId, LaneUpdate, TwoDNoncePool},
 };
 
 const SIDE_CAR_EVENT_CHANNEL_SIZE: usize = 1024;
@@ -1147,23 +1147,23 @@ where
     }
 
     /// A validity lane's cursor at `state_nonce` behind the standard store's
-    /// run up to `next_nonce`, carrying that run's lowest fee cap so eviction
-    /// ranks the lane by what blocks it.
+    /// run up to `next_nonce`, carrying that run's [`Bid`] so eviction ranks
+    /// the lane by what blocks it.
     fn validity_cursor(&self, lane_id: LaneId, state_nonce: u64, next_nonce: u64) -> LaneCursor {
         let run = state_nonce..next_nonce;
-        let run_fee_cap = if run.is_empty() {
+        let run_bid = if run.is_empty() {
             None
         } else if lane_id.1.is_zero() {
-            self.protocol_pool
-                .get_transactions_by_sender(lane_id.0)
-                .iter()
-                .filter(|transaction| run.contains(&transaction.nonce()))
-                .map(|transaction| transaction.max_fee_per_gas())
-                .min()
+            Bid::of_run(
+                self.protocol_pool
+                    .get_transactions_by_sender(lane_id.0)
+                    .iter()
+                    .filter(|transaction| run.contains(&transaction.nonce())),
+            )
         } else {
-            self.sidecar.pool.read().lane_lowest_fee_cap(&lane_id, run)
+            self.sidecar.pool.read().lane_run_bid(&lane_id, run)
         };
-        LaneCursor { state_nonce, next_nonce, run_fee_cap }
+        LaneCursor { state_nonce, next_nonce, run_bid }
     }
 
     /// Undoes a lane insertion that a post-insert check rejected: removes the
@@ -2825,6 +2825,7 @@ mod tests {
         signed_8130(signer, nonce_key, nonce_sequence, 0, max_fee_per_gas, 50_000)
     }
 
+    /// Tips its whole fee cap, so a full store evicts the lowest fee cap first.
     fn signed_8130(
         signer: &PrivateKeySigner,
         nonce_key: U256,
@@ -2840,7 +2841,7 @@ mod tests {
             nonce_sequence,
             valid_after: 0,
             valid_before,
-            max_priority_fee_per_gas: 0,
+            max_priority_fee_per_gas: max_fee_per_gas,
             max_fee_per_gas,
             gas_limit,
             account_changes: Vec::new(),
@@ -4004,12 +4005,13 @@ mod tests {
         }]
     }
 
+    /// Tips its whole fee cap, so a full store evicts the lowest fee cap first.
     fn validity_1559(
         signer: &PrivateKeySigner,
         nonce: u64,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        signed_1559_with_fees(signer, nonce, max_fee_per_gas, 0)
+        signed_1559_with_fees(signer, nonce, max_fee_per_gas, max_fee_per_gas)
             .with_validity_predicates(resting_predicates())
     }
 
@@ -4170,8 +4172,16 @@ mod tests {
         assert!(is_pending(&pool, validity2) && is_pending(&pool, validity3));
         assert_eq!(
             pool.validity.pool.read().lane_cursor(&(signer.address(), U256::ZERO)),
-            Some(LaneCursor { state_nonce: 0, next_nonce: 2, run_fee_cap: Some(1_000) }),
-            "the lane carries the lowest fee cap of the standard run in front of it"
+            Some(LaneCursor {
+                state_nonce: 0,
+                next_nonce: 2,
+                run_bid: Bid::of_run(
+                    [standard0, standard1]
+                        .map(|hash| pool.protocol_pool.get(&hash).unwrap())
+                        .iter()
+                ),
+            }),
+            "the lane carries the bid of the standard run in front of it"
         );
         assert_eq!(best_hashes(&pool), vec![standard0, standard1, validity2, validity3]);
         assert_eq!(
@@ -4366,7 +4376,8 @@ mod tests {
     async fn protocol_nonce_slot_is_exclusive_across_stores_under_the_price_bump() {
         let (pool, client) = build_integration_pool();
         let signer = funded_signer(&client);
-        let validity = validity_1559(&signer, 0, 1_000);
+        let validity = signed_1559_with_fees(&signer, 0, 1_000, 0)
+            .with_validity_predicates(resting_predicates());
         let validity_hash = *validity.hash();
         let mut validity_events = pool
             .add_transaction_and_subscribe(TransactionOrigin::External, validity)
@@ -4452,7 +4463,11 @@ mod tests {
         assert!(is_pending(&pool, validity1));
         assert_eq!(
             pool.validity.pool.read().lane_cursor(&lane),
-            Some(LaneCursor { state_nonce: 0, next_nonce: 1, run_fee_cap: Some(1_000) })
+            Some(LaneCursor {
+                state_nonce: 0,
+                next_nonce: 1,
+                run_bid: Bid::of_run(pool.sidecar.pool.read().get(&sidecar0).as_ref()),
+            })
         );
 
         // A sidecar successor behind the validity transaction is gapped.
@@ -4749,6 +4764,46 @@ mod tests {
         assert_gone(&pool, spam2);
         assert_store(&pool, spam1, PoolStore::Validity);
         assert_store(&pool, head, PoolStore::Sidecar);
+    }
+
+    #[tokio::test]
+    async fn validity_lanes_behind_a_zero_tip_standard_run_are_evicted_first() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_txs(1));
+        let idle = funded_signer(&client);
+        // Its inflated fee cap tips nothing, so the builder never picks it while blocks are full.
+        let head = add(&pool, signed_1559_with_fees(&idle, 0, 1_000_000, 0)).await;
+        let behind_idle = add(&pool, validity_1559(&idle, 1, 1_000_000)).await;
+        assert!(is_pending(&pool, behind_idle), "the standard head makes the lane executable");
+
+        let tipping = add(&pool, validity_1559(&funded_signer(&client), 0, 2_000)).await;
+
+        assert_store(&pool, tipping, PoolStore::Validity);
+        assert_gone(&pool, behind_idle);
+        assert!(in_protocol_pool(&pool, head));
+    }
+
+    /// A full validity pool keeps the transaction that tips more, not the one
+    /// with the higher fee cap: a fee cap can be inflated for free.
+    #[tokio::test]
+    async fn full_validity_pool_evicts_by_tip_not_fee_cap() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_txs(1));
+        let inflated = signed_1559_with_fees(&funded_signer(&client), 0, 1_000_000, 0)
+            .with_validity_predicates(resting_predicates());
+        let inflated = add(&pool, inflated).await;
+        let tipping = signed_1559_with_fees(&funded_signer(&client), 0, 2_000, 1_000)
+            .with_validity_predicates(resting_predicates());
+        let tipping = add(&pool, tipping).await;
+
+        assert_store(&pool, tipping, PoolStore::Validity);
+        assert_gone(&pool, inflated);
+
+        let cheap = signed_1559_with_fees(&funded_signer(&client), 0, 1_000_000, 1)
+            .with_validity_predicates(resting_predicates());
+        let error = add_err(&pool, cheap).await;
+        assert!(matches!(error, PoolErrorKind::DiscardedOnInsert), "{error:?}");
+        assert_store(&pool, tipping, PoolStore::Validity);
     }
 
     #[tokio::test]
