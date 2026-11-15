@@ -13,6 +13,8 @@ use base_tx_manager::TxManagerError;
 use jsonrpsee::core::client::Error as JsonRpcClientError;
 use thiserror::Error;
 
+use crate::GateError;
+
 /// Error returned when a CLI block reference cannot be parsed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
@@ -531,6 +533,19 @@ pub enum ConductorCommandError {
     /// The shared conductor source or node lookup failed.
     #[error("conductor {0}")]
     NodeLookup(#[from] NodeLookupError),
+    /// Direct leader transfer is disabled because an approval gateway is configured.
+    #[error(
+        "conductor leader transfer requires approval through the configured gateway; run `basectl conductor transfer propose --to <TARGET> --reason <TEXT>`; a different engineer approves it at the review URL; then run `basectl conductor transfer execute <ID>`"
+    )]
+    GateRequired,
+    /// A gateway command ran without a configured gateway.
+    #[error(
+        "no approval gateway configured; pass --gate-url, set BASECTL_GATE_URL, or set `gate_url` in config"
+    )]
+    GateNotConfigured,
+    /// The approval gateway request failed.
+    #[error(transparent)]
+    Gate(#[from] GateError),
 }
 
 /// Error returned by sequencer command validation and preflight checks.
@@ -668,6 +683,12 @@ mod tests {
     use std::error::Error as _;
 
     use super::*;
+
+    #[test]
+    fn gate_errors_read_as_the_gateway_error() {
+        let error = ConductorCommandError::from(crate::GateError::ReasonRequired);
+        assert_eq!(error.to_string(), "reason required");
+    }
 
     #[test]
     fn rpc_error_variants_preserve_source_chain() {

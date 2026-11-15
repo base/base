@@ -11,7 +11,10 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use super::ConsensusClient;
-use crate::config::{ConductorNodeConfig, ConductorSource};
+use crate::{
+    ClusterResponse, ConductorFeed,
+    config::{ConductorNodeConfig, ConductorSource},
+};
 
 /// Live status snapshot for a single node in an HA conductor cluster.
 #[derive(Debug, Clone)]
@@ -876,6 +879,11 @@ pub enum ConductorPollUpdate {
     /// change. Subscribers may use this to update displayed config without
     /// restarting the poller.
     NodeListRefreshed(Vec<ConductorNodeConfig>),
+    /// Latest cluster view from the approval gateway (gateway feed only).
+    GateSnapshot(Box<ClusterResponse>),
+    /// Why the approval gateway's cluster view could not be refreshed
+    /// (gateway feed only); the last snapshot stays on screen.
+    GateNotice(String),
 }
 
 type ConductorClientTuple = (
@@ -1016,7 +1024,8 @@ async fn fetch_conductor_statuses(
     .await
 }
 
-/// Polls every conductor in the active source every 200 ms and forwards updates.
+/// Polls every conductor in the active source every
+/// [`ConductorFeed::DIRECT_POLL_INTERVAL`] and forwards updates.
 ///
 /// Builds one pair of HTTP clients per node (conductor RPC + CL RPC) so connection
 /// setup cost is paid only once per node lifetime. Each poll fires all per-node
@@ -1029,7 +1038,6 @@ async fn fetch_conductor_statuses(
 /// update. For `Discover` sources, the synthesised peer list is rebuilt from the
 /// new membership and the per-node clients are recreated in place.
 pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<ConductorPollUpdate>) {
-    const POLL_INTERVAL: Duration = Duration::from_millis(200);
     const RPC_TIMEOUT: Duration = Duration::from_millis(500);
 
     let discovered = source.is_discover();
@@ -1042,7 +1050,7 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
     let mut last_membership: Option<Arc<ClusterMembership>> = None;
     let mut membership_round_robin: usize = 0;
 
-    let mut interval = tokio::time::interval(POLL_INTERVAL);
+    let mut interval = tokio::time::interval(ConductorFeed::DIRECT_POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {

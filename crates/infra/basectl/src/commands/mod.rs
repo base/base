@@ -20,6 +20,11 @@ pub use conductor::{
     ConductorStatusArgs, ConductorStatusJson, PausedSummaryJson,
 };
 
+mod gate;
+pub use gate::{
+    TransferCommand, TransferCommands, TransferExecuteArgs, TransferProposeArgs, TransferStatusArgs,
+};
+
 mod doctor;
 pub use doctor::DoctorCommand;
 

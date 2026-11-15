@@ -1,6 +1,9 @@
 //! Implementation of the `basectl conductor` command group.
 
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+};
 
 use anyhow::Result;
 use base_consensus_rpc::ServerSuffrage;
@@ -12,8 +15,8 @@ use url::Url;
 use crate::{
     CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorControl,
     ConductorFanoutAction, ConductorFanoutReport, ConductorNodeConfig, ConductorNodeFailure,
-    ConductorNodeStatus, ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
-    NodeMetricsJson, OptionalValue,
+    ConductorNodeStatus, ConductorSource, Confirm, GateSettings, JsonOutput, KeyValueTable,
+    MonitoringConfig, NodeMetricsJson, OptionalValue, TransferCommand,
 };
 
 /// Inspect and control an HA conductor cluster.
@@ -22,6 +25,13 @@ pub struct ConductorCommand {
     /// Conductor operation to run.
     #[command(subcommand)]
     pub command: ConductorCommands,
+    /// Leader-transfer approval gateway URL (also `BASECTL_GATE_URL` or config
+    /// `gate_url`). When set, `transfer-leader` is refused.
+    #[arg(long, global = true)]
+    pub gate_url: Option<Url>,
+    /// File holding the approval gateway bearer token.
+    #[arg(long, global = true)]
+    pub gate_token_file: Option<PathBuf>,
 }
 
 /// HA conductor inspection and control commands.
@@ -31,6 +41,9 @@ pub enum ConductorCommands {
     Status(ConductorStatusArgs),
     /// Transfer raft leadership away from the current leader or to a target node.
     TransferLeader(ConductorLeaderArgs),
+    /// Leader transfer through the approval gateway: propose, approval by a
+    /// different operator at the review URL, then execute.
+    Transfer(TransferCommand),
     /// Pause op-conductor's control loop on one node.
     Pause(ConductorNodeActionArgs),
     /// Resume op-conductor's control loop on one node.
@@ -190,24 +203,38 @@ impl ConductorCommand {
         config: MonitoringConfig,
         conductor_rpc: Option<Url>,
     ) -> Result<CommandOutcome> {
+        // Gateway errors only surface in the leader-transfer arms, so status and
+        // pause commands keep working whatever the gateway settings. An invalid
+        // setting still fails both transfer commands rather than turning the
+        // gateway off.
+        let gate = GateSettings::resolve(&config, self.gate_url, self.gate_token_file)
+            .map_err(ConductorCommandError::from);
+        // Gateway commands never resolve a conductor source: the gateway finds the leader.
+        // Errors only surface in arms that need a source, so gateway commands
+        // work without conductor config.
         let source =
-            config.resolve_conductor_source(conductor_rpc).map_err(ConductorCommandError::from)?;
+            config.resolve_conductor_source(conductor_rpc).map_err(ConductorCommandError::from);
         match self.command {
-            ConductorCommands::Status(args) => run_status(config, source, args).await,
-            ConductorCommands::TransferLeader(args) => {
-                run_transfer_leader(config, source, args).await
+            ConductorCommands::Transfer(command) => {
+                let gate = gate?.ok_or(ConductorCommandError::GateNotConfigured)?;
+                command.run(&gate).await
             }
+            ConductorCommands::TransferLeader(args) => match gate? {
+                Some(_) => Err(ConductorCommandError::GateRequired.into()),
+                None => run_transfer_leader(config, source?, args).await,
+            },
+            ConductorCommands::Status(args) => run_status(config, source?, args).await,
             ConductorCommands::Pause(args) => {
-                run_node_action(config, source, args, ConductorAction::Pause).await
+                run_node_action(config, source?, args, ConductorAction::Pause).await
             }
             ConductorCommands::Unpause(args) => {
-                run_node_action(config, source, args, ConductorAction::Unpause).await
+                run_node_action(config, source?, args, ConductorAction::Unpause).await
             }
             ConductorCommands::PauseAll(args) => {
-                run_cluster_action(config, source, args, ConductorAction::Pause).await
+                run_cluster_action(config, source?, args, ConductorAction::Pause).await
             }
             ConductorCommands::UnpauseAll(args) => {
-                run_cluster_action(config, source, args, ConductorAction::Unpause).await
+                run_cluster_action(config, source?, args, ConductorAction::Unpause).await
             }
         }
     }
@@ -866,5 +893,112 @@ mod tests {
             }) if requested_node == "op-conductor-1"
                 && available_nodes == vec!["op-conductor-0".to_string()]
         ));
+    }
+
+    #[tokio::test]
+    async fn transfer_leader_is_refused_when_gateway_is_configured() {
+        let mut config = crate::MonitoringConfig::mainnet();
+        config.gate_url = Some(Url::parse("http://127.0.0.1:9").unwrap());
+        let command = super::ConductorCommand {
+            command: super::ConductorCommands::TransferLeader(super::ConductorLeaderArgs {
+                target: None,
+                yes: true,
+                json: false,
+            }),
+            gate_url: None,
+            gate_token_file: None,
+        };
+
+        let error = command.run(config, None).await.unwrap_err();
+
+        assert_eq!(
+            error.downcast_ref::<ConductorCommandError>(),
+            Some(&ConductorCommandError::GateRequired)
+        );
+        assert!(error.to_string().ends_with(
+            "run `basectl conductor transfer propose --to <TARGET> --reason <TEXT>`; a different engineer approves it at the review URL; then run `basectl conductor transfer execute <ID>`"
+        ));
+    }
+
+    /// A config whose gateway URL is rejected by `GateSettings::resolve`
+    /// (cleartext http to a non-loopback host) and which has no conductor
+    /// source, so no subcommand can reach the network.
+    fn config_with_invalid_gateway() -> crate::MonitoringConfig {
+        let mut config = crate::MonitoringConfig::mainnet();
+        config.gate_url = Some(Url::parse("http://gateway.invalid").unwrap());
+        config.conductors = None;
+        config.discovery = None;
+        config
+    }
+
+    fn conductor_command(command: super::ConductorCommands) -> super::ConductorCommand {
+        super::ConductorCommand { command, gate_url: None, gate_token_file: None }
+    }
+
+    fn is_gate_resolve_error(error: &anyhow::Error) -> bool {
+        matches!(
+            error.downcast_ref::<ConductorCommandError>(),
+            Some(ConductorCommandError::Gate(crate::GateError::InsecureUrl(_)))
+        )
+    }
+
+    #[tokio::test]
+    async fn invalid_gateway_does_not_block_non_gateway_commands() {
+        let node_args = || super::ConductorNodeActionArgs {
+            node: "op-conductor-0".to_string(),
+            yes: true,
+            json: false,
+        };
+        let cluster_args = || super::ConductorClusterActionArgs { yes: true, json: false };
+        let commands = [
+            super::ConductorCommands::Status(super::ConductorStatusArgs { json: false }),
+            super::ConductorCommands::Pause(node_args()),
+            super::ConductorCommands::Unpause(node_args()),
+            super::ConductorCommands::PauseAll(cluster_args()),
+            super::ConductorCommands::UnpauseAll(cluster_args()),
+        ];
+
+        for command in commands {
+            let name = format!("{command:?}");
+            let error = conductor_command(command)
+                .run(config_with_invalid_gateway(), None)
+                .await
+                .unwrap_err();
+
+            assert!(!is_gate_resolve_error(&error), "{name} failed on gateway resolution: {error}");
+            assert!(
+                matches!(
+                    error.downcast_ref::<ConductorCommandError>(),
+                    Some(ConductorCommandError::NodeLookup(NodeLookupError::MissingSource { .. }))
+                ),
+                "{name} should reach conductor source resolution, got: {error}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn transfer_leader_fails_on_invalid_gateway_instead_of_transferring_directly() {
+        let command = conductor_command(super::ConductorCommands::TransferLeader(
+            super::ConductorLeaderArgs { target: None, yes: true, json: false },
+        ));
+
+        let error = command.run(config_with_invalid_gateway(), None).await.unwrap_err();
+
+        assert!(is_gate_resolve_error(&error), "expected the gateway resolve error, got: {error}");
+    }
+
+    #[tokio::test]
+    async fn transfer_fails_on_invalid_gateway() {
+        let command =
+            conductor_command(super::ConductorCommands::Transfer(crate::TransferCommand {
+                command: crate::TransferCommands::Status(crate::TransferStatusArgs {
+                    id: "abc".to_string(),
+                    json: false,
+                }),
+            }));
+
+        let error = command.run(config_with_invalid_gateway(), None).await.unwrap_err();
+
+        assert!(is_gate_resolve_error(&error), "expected the gateway resolve error, got: {error}");
     }
 }

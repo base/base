@@ -4,7 +4,16 @@ mod command_center;
 pub use command_center::CommandCenterView;
 
 mod conductor;
-pub use conductor::{ActionMenuItem, ConductorView, ConfirmButton, Overlay, PendingAction};
+pub use conductor::{
+    ActionMenuItem, ConductorView, ConfirmButton, MenuAvailability, MenuMode, Overlay,
+    PendingAction,
+};
+
+mod conductor_gate;
+pub use conductor_gate::{GateEvent, GateOverlay, GateProposals};
+
+#[cfg(test)]
+mod conductor_test_utils;
 
 mod config;
 pub use config::ConfigView;
