@@ -142,7 +142,15 @@ impl LoginListener {
             let mut connections = JoinSet::new();
             loop {
                 tokio::select! {
-                    Some(Ok(Some(token))) = connections.join_next() => return token,
+                    // Match any finished task: a refutable pattern would disable this
+                    // branch for the rest of the `select!` after a rejected request,
+                    // leaving a later valid callback unjoined. An empty set yields
+                    // `None`, which disables the branch and waits on `accept`.
+                    Some(joined) = connections.join_next() => {
+                        if let Ok(Some(token)) = joined {
+                            return token;
+                        }
+                    }
                     accepted = this.listener.accept() => match accepted {
                         Ok((stream, _)) => {
                             let this = Arc::clone(&this);
@@ -401,6 +409,47 @@ mod tests {
 
         assert!(ok.starts_with("HTTP/1.1 200"), "{ok}");
         assert_eq!(waiting.await.unwrap().unwrap().token, "tok");
+    }
+
+    #[tokio::test]
+    async fn rejected_request_finishing_first_does_not_stall_the_callback() {
+        let token_url = Url::parse("https://login.example/token").unwrap();
+        let listener = LoginListener::bind(&token_url).await.unwrap();
+        let callback = listener.callback_url().unwrap();
+        let waiting = tokio::spawn(listener.wait(Duration::from_secs(3)));
+
+        let (rejected, ok) = tokio::task::spawn_blocking(move || {
+            let port = Url::parse(&callback).unwrap().port().unwrap();
+            // The valid callback connects first and sends only its request line.
+            let mut valid = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            valid.write_all(format!("POST {} HTTP/1.1\r\n", target(&callback)).as_bytes()).unwrap();
+            // A wrong-state request is accepted after it and completes first.
+            let rejected = post_to(
+                &callback,
+                "/callback?state=00000000000000000000000000000000",
+                "application/json",
+                r#"{"token":"planted"}"#,
+            );
+            std::thread::sleep(Duration::from_millis(200));
+            let body = r#"{"token":"tok"}"#;
+            valid
+                .write_all(format!("Content-Length: {}\r\n\r\n{body}", body.len()).as_bytes())
+                .unwrap();
+            let mut ok = String::new();
+            valid.read_to_string(&mut ok).unwrap();
+            (rejected, ok)
+        })
+        .await
+        .unwrap();
+
+        assert!(rejected.starts_with("HTTP/1.1 403"), "{rejected}");
+        assert!(ok.starts_with("HTTP/1.1 200"), "{ok}");
+        let received = tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .expect("wait returns once the valid callback is answered")
+            .unwrap()
+            .unwrap();
+        assert_eq!(received.token, "tok");
     }
 
     #[tokio::test]
