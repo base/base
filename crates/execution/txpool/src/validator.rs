@@ -2164,7 +2164,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::BasePooledTransaction;
+    use crate::{BasePooledTransaction, InvalidationIndex};
 
     type TestValidator = BaseTransactionValidator<
         MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
@@ -3855,6 +3855,103 @@ mod tests {
             assert_eq!(state.manifest.effective_expiry(), deadline);
             assert!(state.watch_set.contains(&InvalidationKey::Expiry(deadline)));
         }
+    }
+
+    /// At Zenith, actor expiries (Unix seconds, inclusive) and pending unlocks
+    /// (Unix seconds, exclusive) reach the guard and the builder precheck as the
+    /// last block millisecond at which they hold, for the sender and a distinct
+    /// payer alike.
+    #[test]
+    fn keystore_expiry_and_unlock_deadlines_are_block_milliseconds() {
+        let now = 1_700_000_000;
+        let sender_signer = PrivateKeySigner::random();
+        let payer_signer = PrivateKeySigner::random();
+        let (sender, payer) = (sender_signer.address(), payer_signer.address());
+        // Packs an account-state word with the given flags, lock union and inline
+        // self-key expiry (see `AccountState`).
+        let state_word = |flags: u8, lock_union: u64, default_eoa_expiry: u64| {
+            (U256::from(flags) << 128)
+                | (U256::from(lock_union) << 136)
+                | (U256::from(default_eoa_expiry) << 184)
+        };
+        let pending_unlock =
+            Eip8130Constants::FLAG_LOCKED | Eip8130Constants::FLAG_UNLOCK_INITIATED;
+        let validate = |sender_word: U256, payer_word: Option<U256>| {
+            let chain_spec = zenith_chain_spec();
+            let client = MockEthProvider::<BasePrimitives>::new()
+                .with_chain_spec(Arc::clone(&chain_spec))
+                .with_genesis_block();
+            let funded = ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64));
+            client.add_account(sender, funded.clone());
+            client.add_account(payer, funded);
+            let mut storage =
+                vec![(AccountConfigurationStorage::account_state_slot(sender), sender_word)];
+            storage.extend(
+                payer_word
+                    .map(|word| (AccountConfigurationStorage::account_state_slot(payer), word)),
+            );
+            client.add_account(
+                AccountConfigurationStorage::ADDRESS,
+                ExtendedAccount::new(0, U256::ZERO).extend_storage(storage),
+            );
+            let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+            let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+                .no_shanghai()
+                .no_cancun()
+                .build(InMemoryBlobStore::default());
+            let validator: TestValidator =
+                BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
+            let header = alloy_consensus::Header { timestamp: now, ..Default::default() };
+            validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
+
+            let tx = TxEip8130 {
+                gas_limit: 100_000,
+                payer: payer_word.map(|_| payer),
+                ..minimal_valid_eoa_tx()
+            };
+            let sender_auth = sender_signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+            let payer_auth = payer_word.map_or_else(Bytes::new, |_| {
+                k1_auth_blob(&payer_signer, tx.payer_signature_hash(sender))
+            });
+            let signed =
+                Eip8130Signed::new(tx, Bytes::from(sender_auth.as_bytes().to_vec()), payer_auth);
+            validator.validate_eip8130_full(&signed).expect("valid tx")
+        };
+        // The guard drops the transaction at the first block strictly after
+        // `deadline`, never at `deadline` itself.
+        let assert_fires_after = |state: &Eip8130ValidationState, deadline: u64| {
+            let mut index = InvalidationIndex::new();
+            index.insert(B256::ZERO, state.watch_set.clone());
+            assert!(index.due_expiries(deadline).is_empty());
+            assert_eq!(index.due_expiries(deadline + 1), vec![InvalidationKey::Expiry(deadline)]);
+        };
+
+        // Sender and distinct-payer actor expiries hold through the whole
+        // expiry second; the manifest keeps the earlier one.
+        let sender_expiry = now + 10;
+        let state = validate(state_word(0, 0, sender_expiry), None);
+        assert_eq!(state.manifest.effective_expiry(), sender_expiry * 1000 + 999);
+        assert_fires_after(&state, sender_expiry * 1000 + 999);
+
+        let payer_expiry = now + 5;
+        let state = validate(state_word(0, 0, sender_expiry), Some(state_word(0, 0, payer_expiry)));
+        assert_eq!(state.payer, payer);
+        assert_eq!(state.manifest.effective_expiry(), payer_expiry * 1000 + 999);
+        assert_fires_after(&state, payer_expiry * 1000 + 999);
+
+        // A pending unlock one second away keeps the account locked at
+        // admission, and the guard drops the transaction at the first block of
+        // the unlock second, when that classification lapses.
+        let unlocks_at = now + 1;
+        let state = validate(state_word(pending_unlock, unlocks_at, 0), None);
+        assert!(state.sender_locked);
+        assert_eq!(state.manifest.effective_expiry(), u64::MAX);
+        assert_fires_after(&state, unlocks_at * 1000 - 1);
+
+        let state = validate(state_word(0, 0, 0), Some(state_word(pending_unlock, unlocks_at, 0)));
+        assert!(!state.sender_locked);
+        assert!(state.payer_locked);
+        assert_fires_after(&state, unlocks_at * 1000 - 1);
     }
 
     /// Builds a K1 authenticator-prefixed auth blob (`K1(20) || r || s || v`,
