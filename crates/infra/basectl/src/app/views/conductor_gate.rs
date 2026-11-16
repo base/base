@@ -344,6 +344,16 @@ impl GateProposals {
         }
     }
 
+    /// Sender for background request results, creating the channel on first use.
+    fn sender(&mut self) -> mpsc::Sender<GateEvent> {
+        if let Some(tx) = &self.tx {
+            return tx.clone();
+        }
+        let (tx, rx) = mpsc::channel(16);
+        self.rx = Some(rx);
+        self.tx.insert(tx).clone()
+    }
+
     /// Runs one gateway request off the event loop on the shared client; the
     /// result arrives in `tick`, or `failed` if no client could be built.
     /// Returns `false` when no gateway is configured and nothing was started.
@@ -362,14 +372,7 @@ impl GateProposals {
             Ok(None) => return false,
             Err(error) => Err(error),
         };
-        let tx = match &self.tx {
-            Some(tx) => tx.clone(),
-            None => {
-                let (tx, rx) = mpsc::channel(16);
-                self.rx = Some(rx);
-                self.tx.insert(tx).clone()
-            }
-        };
+        let tx = self.sender();
         let shared = Arc::clone(&self.client);
         tokio::spawn(async move {
             let client = match gate {
@@ -422,7 +425,8 @@ impl GateProposals {
         self.fetch_status(resources, id);
     }
 
-    /// Starts a status request for `id`, within the shared cap.
+    /// Starts a status request for `id`, within the shared cap. A request
+    /// still waiting for a slot when this session is dropped is not sent.
     fn fetch_status(&mut self, resources: &Resources, id: String) {
         self.status_seq += 1;
         let seq = self.status_seq;
@@ -432,9 +436,13 @@ impl GateProposals {
             self.status_slots
                 .get_or_insert_with(|| Arc::new(Semaphore::new(Self::MAX_STATUS_REQUESTS))),
         );
+        let tx = self.sender();
         self.spawn(resources, GateEvent::Failed, move |client| async move {
             let _mark = mark;
-            let _slot = slots.acquire_owned().await;
+            let slot = slots.acquire_owned().await;
+            if slot.is_err() || tx.is_closed() {
+                return GateEvent::Failed("proposal view closed".to_string());
+            }
             client.status(&id).await.map_or_else(
                 |e| GateEvent::Failed(e.tui_message()),
                 |status| GateEvent::Status(seq, Box::new(status)),
@@ -740,6 +748,28 @@ mod tests {
         wait_for("in-flight mark clears", || refreshing.lock().unwrap().is_empty()).await;
         gate.handle_key(key(KeyCode::Char('r')), &mut resources);
         wait_for("second refresh reaches the gateway", || hits.load(Ordering::SeqCst) == 2).await;
+    }
+
+    #[tokio::test]
+    async fn queued_status_requests_are_not_sent_after_the_session_is_dropped() {
+        let (mut resources, hits) = delayed_gateway(Duration::from_millis(300)).await;
+        let proposals = (0..12)
+            .map(|i| serde_json::from_value(serde_json::json!({"id": format!("rev_{i}")})).unwrap())
+            .collect();
+        let mut gate = GateProposals {
+            overlay: GateOverlay::Proposals { cursor: 0 },
+            proposals,
+            ..Default::default()
+        };
+
+        gate.handle_key(key(KeyCode::Char('r')), &mut resources);
+        let max = GateProposals::MAX_STATUS_REQUESTS;
+        wait_for("capped refreshes reach the gateway", || hits.load(Ordering::SeqCst) == max).await;
+        let refreshing = Arc::clone(&gate.refreshing);
+        drop(gate);
+        wait_for("in-flight marks clear", || refreshing.lock().unwrap().is_empty()).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(hits.load(Ordering::SeqCst), max);
     }
 
     #[tokio::test]
