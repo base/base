@@ -40,7 +40,7 @@ use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, GuardLimits,
     GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
     ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
-    StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
+    StateDiffInvalidation, UnixMillis, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
         Bid, InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
@@ -773,23 +773,20 @@ where
         }
     }
 
-    /// Invalidates guarded transactions whose effective expiry has elapsed as of
-    /// `now` (the committed block timestamp).
+    /// Invalidates guarded transactions whose effective expiry has passed at
+    /// `now`, the committed block's exact millisecond time.
     ///
-    /// The horizon is `now / EXPIRY_BUCKET_SECS`, so a bucket fires once its
-    /// window has started — no forward lookahead, which would over-evict still
-    /// valid transactions when blocks are produced faster than the bucket width.
-    /// Driven from `on_canonical_state_change`, so eviction rides block cadence;
-    /// inclusion safety does not depend on it, since the builder's manifest
-    /// precheck drops any past-expiry transaction against the exact build
-    /// timestamp. This path is pure guard hygiene: it frees `PayerBook`
-    /// reservations and count-cap slots held by expired transactions.
-    fn expire_due_buckets(&self, now: u64) {
+    /// Driven from `on_canonical_state_change`, so a transaction is evicted at
+    /// the first canonical block past its deadline and never before it. The
+    /// builder's manifest precheck applies the same deadline to the block being
+    /// built, so a transaction that expires between canonical blocks is not
+    /// attempted. Eviction frees the `PayerBook` reservations and count-cap
+    /// slots held by expired transactions.
+    fn expire_due(&self, now: UnixMillis) {
         // Do not expire a protocol reservation between guard and reth insertion.
         let _admission_guard = self.protocol_admission_lock.lock();
-        let horizon = now / InvalidationKey::EXPIRY_BUCKET_SECS;
-        let (dropped, bucket_count) = self.guard.write().invalidate_expiry_buckets_through(horizon);
-        GuardMetrics::expiry_buckets_fired().increment(bucket_count as u64);
+        let (dropped, deadline_count) = self.guard.write().invalidate_expired(now);
+        GuardMetrics::expiry_buckets_fired().increment(deadline_count as u64);
         let removed = self.remove_from_stores(dropped, RemoveMode::Exact);
         GuardMetrics::record_expiry_invalidations(removed.len());
         if !removed.is_empty() {
@@ -2456,7 +2453,6 @@ where
         update: reth_transaction_pool::CanonicalStateUpdate<'_, Self::Block>,
     ) {
         let block_hash = update.hash();
-        let now = update.timestamp();
         let block_number = update.number();
         let mined_transactions = update.mined_transactions.clone();
         let reorg = update.update_kind == PoolUpdateKind::Reorg;
@@ -2531,7 +2527,7 @@ where
                 self.sync_validity_lanes(touched_lanes, false);
             }
         }
-        self.expire_due_buckets(now);
+        self.expire_due(UnixMillis::from_millis(now_ms));
         self.expire_by_block(block_number);
         self.reconcile_guard();
         GuardMetrics::tracked().set(self.guard.read().len() as f64);

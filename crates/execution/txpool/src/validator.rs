@@ -51,8 +51,8 @@ use revm::{
 };
 
 use crate::{
-    BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, ValidatorMetrics, WatchManifest,
-    WatchSet,
+    BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, UnixMillis, ValidatorMetrics,
+    WatchManifest, WatchSet,
 };
 
 /// Base-specific transaction pool validation errors.
@@ -1294,12 +1294,13 @@ where
         })?;
 
         let nonce_free = signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX;
+        // Every expiry predicate as the last block millisecond at which it holds,
+        // so the guard and the builder precheck share one inclusive deadline.
         let transaction_expiry =
-            Self::tx_valid_before_secs(signed.tx().valid_before_ms(), nonce_free);
-        let sender_expiry = Self::expiry_or_unbounded(sender_actor.expiry);
-        let payer_expiry = Self::expiry_or_unbounded(payer_actor.map_or(0, |actor| actor.expiry));
-        let effective_expiry =
-            [transaction_expiry, sender_expiry, payer_expiry].into_iter().min().unwrap_or(u64::MAX);
+            signed.tx().last_valid_ms().map_or(UnixMillis::MAX, UnixMillis::from_millis);
+        let sender_expiry = Self::actor_last_valid_ms(sender_actor.expiry);
+        let payer_expiry = Self::actor_last_valid_ms(payer_actor.map_or(0, |actor| actor.expiry));
+        let effective_expiry = transaction_expiry.min(sender_expiry).min(payer_expiry);
         let mut watch_set = WatchSet::new().watch(InvalidationKey::Balance(payer));
         for read in &config_reads {
             watch_set
@@ -1308,8 +1309,8 @@ where
         for address in authorization_code_reads {
             watch_set.push(InvalidationKey::CodeHash(address));
         }
-        if effective_expiry != u64::MAX {
-            watch_set.push(InvalidationKey::expiry_bucket(effective_expiry));
+        if effective_expiry != UnixMillis::MAX {
+            watch_set.push(InvalidationKey::Expiry(effective_expiry));
         }
         let nonce_key = signed.tx().nonce_key;
         if nonce_key.is_zero() {
@@ -1359,16 +1360,13 @@ where
             (LockStatus::UNLOCKED, LockStatus::UNLOCKED)
         };
         // Only a pending unlock has a knowable timestamp; a hard lock reports
-        // `UNLOCKS_AT_MAX`, which must never surface as a timed expiry-bucket (it
-        // does not unlock on a schedule), so gate on `has_initiated_unlock`.
+        // `UNLOCKS_AT_MAX`, which must never surface as a timed expiry (it does
+        // not unlock on a schedule), so gate on `has_initiated_unlock`.
         let sender_unlocks_at =
             sender_status.has_initiated_unlock.then_some(sender_status.unlocks_at);
         let payer_unlocks_at = payer_status.has_initiated_unlock.then_some(payer_status.unlocks_at);
-        let lock_horizon = now.saturating_add(2 * InvalidationKey::EXPIRY_BUCKET_SECS);
-        let sender_locked = sender_status.locked
-            && sender_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
-        let payer_locked = payer_status.locked
-            && payer_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
+        let sender_locked = sender_status.locked;
+        let payer_locked = payer_status.locked;
         for (account, locked, unlocks_at) in [
             (sender, sender_locked, sender_unlocks_at),
             (payer, payer != sender && payer_locked, payer_unlocks_at),
@@ -1378,8 +1376,11 @@ where
                     address: AccountConfigurationStorage::ADDRESS,
                     slot: Self::account_state_slot(account),
                 });
+                // The account unlocks at the first block whose header second
+                // reaches `unlocks_at`, so the lock last holds one millisecond
+                // before that second starts.
                 if let Some(unlocks_at) = unlocks_at {
-                    watch_set.push(InvalidationKey::expiry_bucket(unlocks_at));
+                    watch_set.push(InvalidationKey::Expiry(UnixMillis::before_second(unlocks_at)));
                 }
             }
         }
@@ -1429,17 +1430,7 @@ where
             )
             .into());
         }
-        // All three predicates are now inclusive block-timestamp *second* bounds
-        // (`now <= bound`): the transaction's millisecond window is folded onto
-        // the seconds axis by `tx_valid_before_secs`, which is nonce-mode-aware
-        // (inclusive `floor(valid_before / 1000)` for nonce-bearing, exclusive
-        // `floor((valid_before - 1) / 1000)` for nonce-free to match the replay
-        // ring's admission window), matching the inclusive actor expiry.
-        // Store the last timestamp at which all three remain valid so
-        // `WatchManifest` can use one boundary.
-        let manifest_expiry =
-            [transaction_expiry, sender_expiry, payer_expiry].into_iter().min().unwrap_or(u64::MAX);
-        let manifest = WatchManifest::new(config_reads, payer, payer_max_cost, manifest_expiry);
+        let manifest = WatchManifest::new(config_reads, payer, payer_max_cost, effective_expiry);
 
         Ok(Eip8130ValidationState {
             sender,
@@ -1465,38 +1456,14 @@ where
         })
     }
 
-    const fn expiry_or_unbounded(expiry: u64) -> u64 {
-        if expiry == 0 { u64::MAX } else { expiry }
-    }
-
-    /// Converts a transaction's `valid_before` (Unix **milliseconds**; `0` = no
-    /// expiry) to the last block-timestamp *second* at which it is still
-    /// includable, folding onto the inclusive-seconds axis (`now_secs <= bound`)
-    /// used by the invalidation buckets and the manifest boundary.
+    /// Converts an actor's `expiry` (Unix seconds; `0` = none) to the last block
+    /// millisecond at which it holds, or [`UnixMillis::MAX`] when unbounded.
     ///
-    /// The boundary depends on the nonce mode, matching `validate_timestamp`:
-    /// - **Nonce-bearing** (`nonce_free == false`): the upper bound is
-    ///   **inclusive** — valid while `now_ms <= valid_before` — so the last
-    ///   second containing an includable millisecond is `floor(valid_before / 1000)`.
-    /// - **Nonce-free** (`nonce_free == true`): the nonce-manager replay ring
-    ///   admits only a strictly-future `valid_before`, so the bound is
-    ///   **exclusive** — valid while `now_ms < valid_before` — and the last such
-    ///   second is `floor((valid_before - 1) / 1000)`. Without the `- 1` a
-    ///   `valid_before` that is an exact multiple of 1000 would linger one second
-    ///   past its on-chain expiry.
-    ///
-    /// Sub-second blocks later in that second may already reject the
-    /// transaction; execution enforces the exact millisecond bound, so eviction
-    /// at second granularity only lets an expired transaction linger for under a
+    /// Execution checks actor expiry against the header second (valid while
+    /// `block.timestamp <= expiry`), so it holds in every block of its expiry
     /// second.
-    const fn tx_valid_before_secs(valid_before: u64, nonce_free: bool) -> u64 {
-        if valid_before == 0 {
-            u64::MAX
-        } else if nonce_free {
-            (valid_before - 1) / 1_000
-        } else {
-            valid_before / 1_000
-        }
+    const fn actor_last_valid_ms(expiry: u64) -> UnixMillis {
+        if expiry == 0 { UnixMillis::MAX } else { UnixMillis::last_of_second(expiry) }
     }
 
     /// Minimum configured unlock delay (seconds) for a hard-locked payer to
@@ -2198,7 +2165,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::BasePooledTransaction;
+    use crate::{BasePooledTransaction, InvalidationIndex};
 
     type TestValidator = BaseTransactionValidator<
         MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
@@ -3847,27 +3814,13 @@ mod tests {
     }
 
     #[test]
-    fn nonce_free_manifest_uses_transaction_validity_window() {
+    fn expiry_deadline_is_the_last_valid_block_millisecond() {
         let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         // Realistic seconds clock; `now * 1000` stays >= TIMESTAMP_MS_THRESHOLD so
-        // the millisecond `valid_before` below is not re-scaled by normalization.
+        // the millisecond `valid_before` bounds below are not re-scaled by
+        // normalization.
         let now = 1_700_000_000;
-        // `valid_before` is in milliseconds; at the admission-window edge it is
-        // `now * 1000 + NONCE_FREE_MAX_EXPIRY_WINDOW`. The on-chain bound is
-        // exclusive, so the manifest boundary folds it onto the seconds axis as
-        // `floor((valid_before - 1) / 1000)`.
-        let valid_before = now * 1000 + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
-        let tx = TxEip8130 {
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            nonce_sequence: 0,
-            valid_before,
-            ..minimal_valid_eoa_tx()
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -3885,8 +3838,133 @@ mod tests {
         let header = alloy_consensus::Header { timestamp: now, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
 
-        let state = validator.validate_eip8130_full(&signed).expect("valid nonce-free tx");
-        assert_eq!(state.manifest.effective_expiry(), (valid_before - 1) / 1000);
+        // A sub-second nonce-bearing bound is inclusive. A nonce-free bound at the
+        // admission-window edge is exclusive, so the deadline is one millisecond
+        // earlier.
+        let nonce_free_valid_before = now * 1000 + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
+        for (nonce_key, valid_before, deadline) in [
+            (U256::ZERO, now * 1000 + 1_300, now * 1000 + 1_300),
+            (Eip8130Constants::NONCE_KEY_MAX, nonce_free_valid_before, nonce_free_valid_before - 1),
+        ] {
+            let tx =
+                TxEip8130 { nonce_key, nonce_sequence: 0, valid_before, ..minimal_valid_eoa_tx() };
+            let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+            let signed =
+                Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+
+            let state = validator.validate_eip8130_full(&signed).expect("valid tx");
+            let deadline = UnixMillis::from_millis(deadline);
+            assert_eq!(state.manifest.effective_expiry(), deadline);
+            assert!(state.watch_set.contains(&InvalidationKey::Expiry(deadline)));
+        }
+    }
+
+    /// At Zenith, actor expiries (Unix seconds, inclusive) reach the guard and
+    /// the builder precheck, and pending unlocks (Unix seconds, exclusive) reach
+    /// the guard only, as the last block millisecond at which they hold, for the
+    /// sender and a distinct payer alike.
+    #[test]
+    fn keystore_expiry_and_unlock_deadlines_are_block_milliseconds() {
+        let now = 1_700_000_000;
+        let sender_signer = PrivateKeySigner::random();
+        let payer_signer = PrivateKeySigner::random();
+        let (sender, payer) = (sender_signer.address(), payer_signer.address());
+        // Packs an account-state word with the given flags, lock union and inline
+        // self-key expiry (see `AccountState`).
+        let state_word = |flags: u8, lock_union: u64, default_eoa_expiry: u64| {
+            (U256::from(flags) << 128)
+                | (U256::from(lock_union) << 136)
+                | (U256::from(default_eoa_expiry) << 184)
+        };
+        let pending_unlock =
+            Eip8130Constants::FLAG_LOCKED | Eip8130Constants::FLAG_UNLOCK_INITIATED;
+        let validate = |sender_word: U256, payer_word: Option<U256>| {
+            let chain_spec = zenith_chain_spec();
+            let client = MockEthProvider::<BasePrimitives>::new()
+                .with_chain_spec(Arc::clone(&chain_spec))
+                .with_genesis_block();
+            let funded = ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64));
+            client.add_account(sender, funded.clone());
+            client.add_account(payer, funded);
+            let mut storage =
+                vec![(AccountConfigurationStorage::account_state_slot(sender), sender_word)];
+            storage.extend(
+                payer_word
+                    .map(|word| (AccountConfigurationStorage::account_state_slot(payer), word)),
+            );
+            client.add_account(
+                AccountConfigurationStorage::ADDRESS,
+                ExtendedAccount::new(0, U256::ZERO).extend_storage(storage),
+            );
+            let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+            let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+                .no_shanghai()
+                .no_cancun()
+                .build(InMemoryBlobStore::default());
+            let validator: TestValidator =
+                BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
+            let header = alloy_consensus::Header { timestamp: now, ..Default::default() };
+            validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
+
+            let tx = TxEip8130 {
+                gas_limit: 100_000,
+                payer: payer_word.map(|_| payer),
+                ..minimal_valid_eoa_tx()
+            };
+            let sender_auth = sender_signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+            let payer_auth = payer_word.map_or_else(Bytes::new, |_| {
+                k1_auth_blob(&payer_signer, tx.payer_signature_hash(sender))
+            });
+            let signed =
+                Eip8130Signed::new(tx, Bytes::from(sender_auth.as_bytes().to_vec()), payer_auth);
+            validator.validate_eip8130_full(&signed).expect("valid tx")
+        };
+        // The guard drops the transaction at the first block strictly after
+        // `deadline`, never at `deadline` itself.
+        let assert_fires_after = |state: &Eip8130ValidationState, deadline_ms: u64| {
+            let deadline = UnixMillis::from_millis(deadline_ms);
+            let mut index = InvalidationIndex::new();
+            index.insert(B256::ZERO, state.watch_set.clone());
+            assert!(index.due_expiries(deadline).is_empty());
+            assert_eq!(
+                index.due_expiries(UnixMillis::from_millis(deadline_ms + 1)),
+                vec![InvalidationKey::Expiry(deadline)]
+            );
+        };
+
+        // Sender and distinct-payer actor expiries hold through the whole
+        // expiry second; the manifest keeps the earlier one.
+        let sender_expiry = now + 10;
+        let state = validate(state_word(0, 0, sender_expiry), None);
+        assert_eq!(
+            state.manifest.effective_expiry(),
+            UnixMillis::from_millis(sender_expiry * 1000 + 999)
+        );
+        assert_fires_after(&state, sender_expiry * 1000 + 999);
+
+        let payer_expiry = now + 5;
+        let state = validate(state_word(0, 0, sender_expiry), Some(state_word(0, 0, payer_expiry)));
+        assert_eq!(state.payer, payer);
+        assert_eq!(
+            state.manifest.effective_expiry(),
+            UnixMillis::from_millis(payer_expiry * 1000 + 999)
+        );
+        assert_fires_after(&state, payer_expiry * 1000 + 999);
+
+        // A pending unlock one second away keeps the account locked at
+        // admission, and the guard drops the transaction at the first block of
+        // the unlock second, when that classification lapses. The manifest
+        // carries no unlock deadline, so the builder precheck never sees it.
+        let unlocks_at = now + 1;
+        let state = validate(state_word(pending_unlock, unlocks_at, 0), None);
+        assert!(state.sender_locked);
+        assert_eq!(state.manifest.effective_expiry(), UnixMillis::MAX);
+        assert_fires_after(&state, unlocks_at * 1000 - 1);
+
+        let state = validate(state_word(0, 0, 0), Some(state_word(pending_unlock, unlocks_at, 0)));
+        assert!(!state.sender_locked);
+        assert!(state.payer_locked);
+        assert_fires_after(&state, unlocks_at * 1000 - 1);
     }
 
     /// Builds a K1 authenticator-prefixed auth blob (`K1(20) || r || s || v`,

@@ -1493,24 +1493,21 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         PruneMinedOutcome { removed, lanes }
     }
 
-    /// Removes nonce-free transactions whose validity window has elapsed at
-    /// `now` (Unix **milliseconds**, i.e. `block.timestamp * 1000`).
+    /// Removes nonce-free transactions whose `valid_before` has passed at
+    /// `now_ms`, the block's exact millisecond time (see
+    /// `TxEip8130::is_expired_at`).
     ///
-    /// A nonce-free transaction is invalid when `valid_before <= now`, matching
-    /// its structural validation rule. The bound is normalized to milliseconds
-    /// (seconds are scaled by 1000) so it lines up with the millisecond `now`.
-    /// Finite channels are unaffected; their optional window is handled by normal
-    /// transaction validation until the state-keyed expiry index is introduced.
+    /// Finite channels are unaffected; the guard's expiry index evicts them.
     pub(crate) fn remove_expired_nonce_free(
         &mut self,
-        now: u64,
+        now_ms: u64,
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let expired: Vec<TxHash> = self
             .nonce_free
             .values()
             .filter_map(|transaction| {
                 let signed = transaction.transaction.as_eip8130()?;
-                (signed.tx().valid_before_ms() <= now).then_some(*transaction.hash())
+                signed.tx().is_expired_at(now_ms).then_some(*transaction.hash())
             })
             .collect();
         self.remove_transactions(&expired)
