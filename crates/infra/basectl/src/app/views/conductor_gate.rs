@@ -22,7 +22,8 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 use super::conductor::{CONFIRM_KEYS, render_confirm};
 use crate::{
     ConfirmButton, ExecuteResponse, GateClient, GateError, GateOutcomeKind, GateSettings,
-    ProposalStatusResponse, ProposeResponse, app::Resources, output::COLOR_BASE_BLUE, tui::Toast,
+    ProposalStatusResponse, ProposeResponse, ToastState, app::Resources, output::COLOR_BASE_BLUE,
+    tui::Toast,
 };
 
 /// Result of a background approval gateway request.
@@ -96,6 +97,9 @@ pub struct GateProposals {
     /// Whether the last frame showed the selected proposal's details whole;
     /// `x` asks for confirmation only then.
     details_shown: Cell<bool>,
+    /// Whether a toast was drawn over the last frame, where it may cover the
+    /// details; `x` then only clears the toasts.
+    toast_shown: Cell<bool>,
     /// Gateway client shared by every request, built on first use (building
     /// it may run `gate_token_command`). Rebuilt when the resolved settings
     /// change or after a failed request, so an expired token is replaced.
@@ -274,6 +278,8 @@ impl GateProposals {
                             resources.toasts.push(Toast::warning(format!(
                                 "Details for {id} do not fit on screen. Enlarge the terminal, or run: basectl conductor transfer execute {id}"
                             )));
+                        } else if self.toast_shown.get() {
+                            resources.toasts.clear();
                         } else if let Some(status) = selected {
                             self.overlay = GateOverlay::ConfirmExecute {
                                 target: status
@@ -313,7 +319,8 @@ impl GateProposals {
     }
 
     /// Draws the open gateway overlay, if any.
-    pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
+    /// `toasts` are the ones drawn over it afterwards.
+    pub fn render(&self, frame: &mut Frame<'_>, area: Rect, toasts: &ToastState) {
         match &self.overlay {
             GateOverlay::None => {}
             GateOverlay::ProposalForm { target, reason } => {
@@ -331,7 +338,10 @@ impl GateProposals {
                     Self::render_popup(frame, area, 60, 3, " Open proposal by ID ".to_string());
                 frame.render_widget(Paragraph::new(format!("ID: {input}")), inner);
             }
-            GateOverlay::Proposals { cursor } => self.render_proposals(frame, area, *cursor),
+            GateOverlay::Proposals { cursor } => {
+                self.toast_shown.set(toasts.current().is_some());
+                self.render_proposals(frame, area, *cursor);
+            }
             GateOverlay::ConfirmExecute { target, button, .. } => {
                 let description =
                     format!("Executing will transfer leadership to {} now.", target.escape_debug());
@@ -643,7 +653,7 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         },
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use crossterm::event::KeyCode;
@@ -699,7 +709,22 @@ mod tests {
     /// The proposals list drawn on a `width`x`height` terminal, one string per row.
     fn screen(gate: &GateProposals, width: u16, height: u16) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| gate.render(frame, frame.area())).unwrap();
+        terminal.draw(|frame| gate.render(frame, frame.area(), &ToastState::new())).unwrap();
+        rows(terminal.backend().buffer())
+    }
+
+    /// The proposals list on an 80x24 terminal with the toasts drawn over it,
+    /// polled and drawn as the app's draw loop does, one string per row.
+    fn screen_with_toasts(gate: &GateProposals, resources: &mut Resources) -> Vec<String> {
+        resources.toasts.poll();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                gate.render(frame, area, &resources.toasts);
+                resources.toasts.render(frame, area);
+            })
+            .unwrap();
         rows(terminal.backend().buffer())
     }
 
@@ -786,6 +811,40 @@ mod tests {
         assert!(
             matches!(&gate.overlay, GateOverlay::ConfirmExecute { id, .. } if *id == long_id(22))
         );
+    }
+
+    #[test]
+    fn x_while_a_toast_shows_only_clears_the_toasts() {
+        let refresh = || Toast::warning("refresh failed: approval gateway returned HTTP 503");
+        let cases =
+            [vec![refresh()], vec![Toast::sticky_info("copy me")], vec![refresh(), refresh()]];
+        for toasts in cases {
+            let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+            let mut gate = listed(22, 21, "planned");
+            for toast in toasts {
+                resources.toasts.push(toast);
+            }
+            let shown = screen_with_toasts(&gate, &mut resources).join("\n");
+            assert!(shown.contains('⚠') || shown.contains('ℹ'), "{shown}");
+            assert!(!press_x(&mut gate, &mut resources), "{shown}");
+            assert!(matches!(gate.overlay, GateOverlay::Proposals { cursor: 21 }));
+            assert!(resources.toasts.current().is_none());
+            screen_with_toasts(&gate, &mut resources);
+            assert!(press_x(&mut gate, &mut resources));
+            assert!(
+                matches!(&gate.overlay, GateOverlay::ConfirmExecute { id, .. } if *id == long_id(22))
+            );
+        }
+    }
+
+    #[test]
+    fn a_toast_expired_by_draw_time_does_not_block_x() {
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let created_at = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
+        resources.toasts.push(Toast { created_at, ..Toast::warning("refresh failed") });
+        let mut gate = listed(22, 21, "planned");
+        screen_with_toasts(&gate, &mut resources);
+        assert!(press_x(&mut gate, &mut resources));
     }
 
     #[test]
