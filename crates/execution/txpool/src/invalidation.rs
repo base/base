@@ -173,7 +173,9 @@ impl InvalidationIndex {
 
     /// Upper bound on the bytes the index holds for one transaction registered
     /// with `watch`: its stored watch set and, for each key, the transaction's
-    /// hash plus a key bucket in case no other transaction shares the key.
+    /// hash plus a key bucket in case no other transaction shares the key, and,
+    /// for each [`InvalidationKey::Expiry`], an entry in the ordered deadline
+    /// set.
     #[must_use]
     pub fn registration_size(watch: &WatchSet) -> usize {
         let watch_set = core::mem::size_of::<TxHash>()
@@ -182,7 +184,12 @@ impl InvalidationIndex {
         let per_key = core::mem::size_of::<TxHash>()
             + core::mem::size_of::<InvalidationKey>()
             + core::mem::size_of::<HashSet<TxHash>>();
-        watch_set + watch.len() * per_key
+        // B-tree nodes other than the root stay at least about half full, so a
+        // deadline costs under four times its own size in node storage.
+        let per_expiry = 4 * core::mem::size_of::<u64>();
+        let expiries =
+            watch.keys().iter().filter(|key| matches!(key, InvalidationKey::Expiry(_))).count();
+        watch_set + watch.len() * per_key + expiries * per_expiry
     }
 
     /// Registers `hash` under every key in `watch`. If `hash` is already present
@@ -379,6 +386,19 @@ mod tests {
         assert!(index.watchers(&new_slot).expect("new key linked").contains(&tx));
         assert_eq!(index.len(), 1);
         assert_eq!(index.key_count(), 1);
+    }
+
+    #[test]
+    fn registration_size_charges_each_expiry_deadline() {
+        let base = WatchSet::new().watch(InvalidationKey::ProtocolNonce(addr(1)));
+        let with_expiry = base.clone().watch(InvalidationKey::Expiry(7));
+        let with_code_hash = base.watch(InvalidationKey::CodeHash(addr(2)));
+
+        // An expiry key costs its ordered-set entry on top of any other key.
+        assert_eq!(
+            InvalidationIndex::registration_size(&with_expiry),
+            InvalidationIndex::registration_size(&with_code_hash) + 4 * core::mem::size_of::<u64>(),
+        );
     }
 
     #[test]
