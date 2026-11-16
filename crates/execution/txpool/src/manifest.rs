@@ -66,11 +66,12 @@ impl WatchManifest {
         self.payer_max_cost
     }
 
-    /// Returns the last timestamp at which all captured expiry predicates hold.
+    /// Returns the last block time, in Unix milliseconds, at which all captured
+    /// expiry predicates hold.
     ///
-    /// Transaction expiry is exclusive while actor expiry is inclusive, so this
-    /// may be one less than the transaction's wire expiry. `u64::MAX` means
-    /// unbounded.
+    /// This is the minimum of the transaction's `TxEip8130::last_valid_ms` and
+    /// the last millisecond of each relied-on actor's expiry second. `u64::MAX`
+    /// means unbounded.
     #[must_use]
     pub const fn effective_expiry(&self) -> u64 {
         self.effective_expiry
@@ -84,7 +85,8 @@ impl WatchManifest {
 
     /// Conservatively rechecks the captured predicates against build-time state.
     ///
-    /// A positively observed slot change, payer shortfall, or expired deadline
+    /// `now_ms` is the exact millisecond time of the block being built. A
+    /// positively observed slot change, payer shortfall, or expired deadline
     /// returns an error so the builder can drop the stale transaction before
     /// execution. Storage and account read errors fail open because execution
     /// remains authoritative and a transient read failure must not evict an
@@ -94,9 +96,9 @@ impl WatchManifest {
     /// `revm::Database` requires mutable access for reads. These reads may warm
     /// the EVM cache or add storage proofs in witness mode, but do not modify
     /// execution state.
-    pub fn revalidate<DB: Database>(&self, db: &mut DB, now: u64) -> Result<(), ManifestStale> {
-        if self.effective_expiry != u64::MAX && now > self.effective_expiry {
-            return Err(ManifestStale::Expired { deadline: self.effective_expiry, now });
+    pub fn revalidate<DB: Database>(&self, db: &mut DB, now_ms: u64) -> Result<(), ManifestStale> {
+        if now_ms > self.effective_expiry {
+            return Err(ManifestStale::Expired { deadline_ms: self.effective_expiry, now_ms });
         }
 
         for slot in &self.config_slots {
@@ -148,10 +150,10 @@ pub enum ManifestStale {
     },
     /// The effective expiry deadline has passed.
     Expired {
-        /// Effective expiry deadline in Unix seconds.
-        deadline: u64,
-        /// Build timestamp that passed the deadline.
-        now: u64,
+        /// Last valid block time, in Unix milliseconds.
+        deadline_ms: u64,
+        /// Millisecond time of the block being built.
+        now_ms: u64,
     },
 }
 
@@ -242,12 +244,14 @@ mod tests {
 
     #[test]
     fn revalidate_drops_only_after_expiry() {
-        let manifest = WatchManifest::new(vec![], PAYER, U256::ZERO, 100);
+        // A sub-second deadline inside a header second shared by several blocks.
+        let deadline_ms = 1_700_000_000_300;
+        let manifest = WatchManifest::new(vec![], PAYER, U256::ZERO, deadline_ms);
         let mut db = db_with(EXPECTED, 1_000);
-        assert_eq!(manifest.revalidate(&mut db, 100), Ok(()));
+        assert_eq!(manifest.revalidate(&mut db, deadline_ms), Ok(()));
         assert_eq!(
-            manifest.revalidate(&mut db, 101),
-            Err(ManifestStale::Expired { deadline: 100, now: 101 })
+            manifest.revalidate(&mut db, 1_700_000_000_400),
+            Err(ManifestStale::Expired { deadline_ms, now_ms: 1_700_000_000_400 })
         );
     }
 

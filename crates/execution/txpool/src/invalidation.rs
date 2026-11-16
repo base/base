@@ -54,34 +54,21 @@ pub enum InvalidationKey {
         /// Storage slot key within `address`.
         slot: B256,
     },
-    /// A coarse wall-clock expiry bucket (`effective_expiry / EXPIRY_BUCKET_SECS`).
+    /// The last block time, in Unix milliseconds, at which the transaction
+    /// still holds (inclusive).
     ///
-    /// A transaction's effective expiry is the minimum of its own `expiry` and
-    /// the expiries of the sender/payer key authorizations it relies on. Expiry
-    /// is a time surface, not a state surface: no storage diff reports it, so the
-    /// pool fires the due bucket(s) each block. Occupied buckets are kept in a
-    /// sparse ordered set, so canonical timestamp jumps visit only buckets that
-    /// contain transactions. Exact-match semantics (a fired bucket drops every
-    /// member).
-    ExpiryBucket(u64),
+    /// A transaction's effective expiry is the minimum of its own `valid_before`
+    /// bound and the expiries of the sender/payer key authorizations it relies
+    /// on, all on the block's exact millisecond time. Expiry is a time surface,
+    /// not a state surface: no storage diff reports it, so the pool fires the
+    /// keys strictly before each canonical block's millisecond time. Occupied
+    /// deadlines are kept in a sparse ordered set, so canonical timestamp jumps
+    /// visit only deadlines that have transactions. Exact-match semantics (a
+    /// fired deadline drops every watcher).
+    Expiry(u64),
 }
 
 impl InvalidationKey {
-    /// Width, in seconds, of an [`InvalidationKey::ExpiryBucket`] chunk —
-    /// approximately one block-time. Coarse enough that each canonical update
-    /// fires only the newly-due bucket(s); a bucket fires at its window start, so
-    /// guard eviction is at most ~one chunk early. Inclusion is unaffected: the
-    /// builder's manifest precheck enforces the exact expiry against the build
-    /// timestamp regardless of when the guard drops the transaction.
-    pub const EXPIRY_BUCKET_SECS: u64 = 2;
-
-    /// Returns the [`InvalidationKey::ExpiryBucket`] for an absolute Unix-seconds
-    /// expiry timestamp.
-    #[must_use]
-    pub const fn expiry_bucket(expiry_secs: u64) -> Self {
-        Self::ExpiryBucket(expiry_secs / Self::EXPIRY_BUCKET_SECS)
-    }
-
     /// Returns `true` for keys with threshold semantics (currently only
     /// [`InvalidationKey::Balance`]), where a change must be re-evaluated rather
     /// than triggering an unconditional drop.
@@ -174,7 +161,7 @@ impl WatchSet {
 pub struct InvalidationIndex {
     by_key: HashMap<InvalidationKey, HashSet<TxHash>>,
     watch_sets: HashMap<TxHash, WatchSet>,
-    expiry_buckets: BTreeSet<u64>,
+    expiries: BTreeSet<u64>,
 }
 
 impl InvalidationIndex {
@@ -206,8 +193,8 @@ impl InvalidationIndex {
         let was_present = self.remove(&hash).is_some();
         for key in watch.keys() {
             self.by_key.entry(*key).or_default().insert(hash);
-            if let InvalidationKey::ExpiryBucket(bucket) = key {
-                self.expiry_buckets.insert(*bucket);
+            if let InvalidationKey::Expiry(deadline) = key {
+                self.expiries.insert(*deadline);
             }
         }
         self.watch_sets.insert(hash, watch);
@@ -224,8 +211,8 @@ impl InvalidationIndex {
                 bucket.remove(hash);
                 if bucket.is_empty() {
                     self.by_key.remove(key);
-                    if let InvalidationKey::ExpiryBucket(bucket) = key {
-                        self.expiry_buckets.remove(bucket);
+                    if let InvalidationKey::Expiry(deadline) = key {
+                        self.expiries.remove(deadline);
                     }
                 }
             }
@@ -269,12 +256,13 @@ impl InvalidationIndex {
         self.by_key.len()
     }
 
-    /// Returns the occupied expiry buckets at or below `horizon`.
+    /// Returns the occupied [`InvalidationKey::Expiry`] keys whose deadline has
+    /// passed at the block millisecond time `now_ms`.
     ///
-    /// Work is proportional to the number of buckets containing transactions,
-    /// not the wall-clock distance to `horizon`.
-    pub fn due_expiry_buckets(&self, horizon: u64) -> Vec<InvalidationKey> {
-        self.expiry_buckets.range(..=horizon).copied().map(InvalidationKey::ExpiryBucket).collect()
+    /// Work is proportional to the number of due deadlines with transactions,
+    /// not the wall-clock distance they span.
+    pub fn due_expiries(&self, now_ms: u64) -> Vec<InvalidationKey> {
+        self.expiries.range(..now_ms).copied().map(InvalidationKey::Expiry).collect()
     }
 
     /// Collects every transaction that must be dropped because one of the given
@@ -317,17 +305,7 @@ mod tests {
 
         assert!(InvalidationKey::ProtocolNonce(addr(1)).is_exact());
         assert!(InvalidationKey::Slot { address: addr(1), slot: B256::repeat_byte(2) }.is_exact());
-        assert!(InvalidationKey::ExpiryBucket(5).is_exact());
-    }
-
-    #[test]
-    fn expiry_bucket_quantizes_by_chunk() {
-        let chunk = InvalidationKey::EXPIRY_BUCKET_SECS;
-        // Expiries within the same chunk share a bucket; the next chunk differs.
-        assert_eq!(InvalidationKey::expiry_bucket(0), InvalidationKey::ExpiryBucket(0));
-        assert_eq!(InvalidationKey::expiry_bucket(chunk - 1), InvalidationKey::expiry_bucket(0));
-        assert_eq!(InvalidationKey::expiry_bucket(chunk), InvalidationKey::ExpiryBucket(1));
-        assert_ne!(InvalidationKey::expiry_bucket(0), InvalidationKey::expiry_bucket(chunk));
+        assert!(InvalidationKey::Expiry(5).is_exact());
     }
 
     #[test]
@@ -404,32 +382,44 @@ mod tests {
     }
 
     #[test]
-    fn due_expiry_buckets_are_sparse_across_large_timestamp_gaps() {
+    fn due_expiries_are_sparse_across_large_timestamp_gaps() {
         let mut index = InvalidationIndex::new();
-        let near = InvalidationKey::ExpiryBucket(1);
-        let far = InvalidationKey::ExpiryBucket(850_000_000);
-        let future = InvalidationKey::ExpiryBucket(900_000_000);
+        let near = InvalidationKey::Expiry(1);
+        let far = InvalidationKey::Expiry(1_700_000_000_000);
+        let future = InvalidationKey::Expiry(1_800_000_000_000);
 
         index.insert(hash(1), WatchSet::new().watch(near));
         index.insert(hash(2), WatchSet::new().watch(far));
         index.insert(hash(3), WatchSet::new().watch(future));
 
-        assert_eq!(index.due_expiry_buckets(850_000_000), vec![near, far]);
+        assert_eq!(index.due_expiries(1_700_000_000_001), vec![near, far]);
     }
 
     #[test]
-    fn removing_last_expiry_watcher_prunes_ordered_bucket() {
+    fn expiry_fires_only_once_the_deadline_has_passed() {
         let mut index = InvalidationIndex::new();
-        let bucket = InvalidationKey::ExpiryBucket(7);
+        let deadline = InvalidationKey::Expiry(1_700_000_000_300);
+        index.insert(hash(1), WatchSet::new().watch(deadline));
+
+        // Still valid at the deadline millisecond itself.
+        assert!(index.due_expiries(1_700_000_000_200).is_empty());
+        assert!(index.due_expiries(1_700_000_000_300).is_empty());
+        assert_eq!(index.due_expiries(1_700_000_000_301), vec![deadline]);
+    }
+
+    #[test]
+    fn removing_last_expiry_watcher_prunes_ordered_deadline() {
+        let mut index = InvalidationIndex::new();
+        let deadline = InvalidationKey::Expiry(7);
         let (first, second) = (hash(1), hash(2));
 
-        index.insert(first, WatchSet::new().watch(bucket));
-        index.insert(second, WatchSet::new().watch(bucket));
+        index.insert(first, WatchSet::new().watch(deadline));
+        index.insert(second, WatchSet::new().watch(deadline));
         index.remove(&first);
-        assert_eq!(index.due_expiry_buckets(7), vec![bucket]);
+        assert_eq!(index.due_expiries(8), vec![deadline]);
 
         index.remove(&second);
-        assert!(index.due_expiry_buckets(u64::MAX).is_empty());
+        assert!(index.due_expiries(u64::MAX).is_empty());
     }
 
     #[test]

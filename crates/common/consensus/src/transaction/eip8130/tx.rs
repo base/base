@@ -69,14 +69,16 @@ pub struct TxEip8130 {
     pub valid_after: u64,
     /// Upper bound of the validity window: a Unix timestamp in **seconds or
     /// milliseconds** (auto-detected; see [`Self::valid_before_ms`]). After
-    /// normalization the bound is inclusive — the transaction is still valid at
-    /// `block.timestamp * 1000 == valid_before_ms` and invalid only once
-    /// `block.timestamp * 1000 > valid_before_ms`; `0` means no expiry. It MUST be
-    /// non-zero for nonce-free (`nonce_key == NONCE_KEY_MAX`) transactions, which
-    /// additionally require `valid_before` to be strictly in the future when the
-    /// nonce is recorded: the nonce-manager replay ring's admission window is
-    /// `(now, now + NONCE_FREE_MAX_EXPIRY_WINDOW]`, so a nonce-free transaction
-    /// cannot actually be included exactly at `valid_before`.
+    /// normalization the bound is compared against the block's exact millisecond
+    /// time and is inclusive — the transaction is still valid at
+    /// `block_ms == valid_before_ms` and invalid only once
+    /// `block_ms > valid_before_ms` (see [`Self::is_expired_at`]); `0` means no
+    /// expiry. It MUST be non-zero for nonce-free (`nonce_key == NONCE_KEY_MAX`)
+    /// transactions, which additionally require `valid_before` to be strictly in
+    /// the future when the nonce is recorded: the nonce-manager replay ring's
+    /// admission window is `(now, now + NONCE_FREE_MAX_EXPIRY_WINDOW]`, so a
+    /// nonce-free transaction cannot actually be included exactly at
+    /// `valid_before`.
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub valid_before: u64,
     /// Max priority fee per gas (tip) the sender is willing to pay.
@@ -140,6 +142,37 @@ impl TxEip8130 {
     #[must_use]
     pub const fn valid_before_ms(&self) -> u64 {
         Eip8130Constants::normalize_timestamp_ms(self.valid_before)
+    }
+
+    /// The last block time, in Unix **milliseconds**, at which `valid_before`
+    /// still admits the transaction, or `None` when it has no expiry.
+    ///
+    /// The block time is the block's exact millisecond timestamp
+    /// (`block.timestamp * 1000` plus the `BaseTime` millisecond part). A
+    /// nonce-bearing transaction is valid through `valid_before_ms` inclusive.
+    /// A nonce-free transaction must be recorded by the nonce-manager replay
+    /// ring, which only accepts a strictly-future `valid_before`, so its last
+    /// valid millisecond is `valid_before_ms - 1`.
+    #[must_use]
+    pub fn last_valid_ms(&self) -> Option<u64> {
+        let valid_before = self.valid_before_ms();
+        if valid_before == 0 {
+            None
+        } else if self.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            Some(valid_before - 1)
+        } else {
+            Some(valid_before)
+        }
+    }
+
+    /// Whether `valid_before` has passed at the block millisecond time `now_ms`.
+    ///
+    /// This is the single EIP-8130 expiry rule: admission, mempool eviction,
+    /// the builder precheck and execution all decide expiry with it. See
+    /// [`Self::last_valid_ms`].
+    #[must_use]
+    pub fn is_expired_at(&self, now_ms: u64) -> bool {
+        self.last_valid_ms().is_some_and(|last_valid| now_ms > last_valid)
     }
 
     /// Encodes an `Option<Address>` as the AA wire format: zero-length byte
@@ -798,6 +831,32 @@ mod tests {
         tx.valid_before = 1_700_000_020_000;
         assert_eq!(tx.valid_after_ms(), 1_700_000_000_000);
         assert_eq!(tx.valid_before_ms(), 1_700_000_020_000);
+    }
+
+    #[test]
+    fn expiry_is_inclusive_for_nonce_bearing_and_exclusive_for_nonce_free() {
+        let mut tx = sample_tx();
+        tx.valid_before = 0;
+        assert_eq!(tx.last_valid_ms(), None);
+        assert!(!tx.is_expired_at(u64::MAX));
+
+        // Sub-second bound: five 200 ms blocks share header second 1_700_000_000.
+        tx.valid_before = 1_700_000_000_300;
+        assert_eq!(tx.last_valid_ms(), Some(1_700_000_000_300));
+        assert!(!tx.is_expired_at(1_700_000_000_200));
+        assert!(!tx.is_expired_at(1_700_000_000_300));
+        assert!(tx.is_expired_at(1_700_000_000_301));
+
+        tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+        assert_eq!(tx.last_valid_ms(), Some(1_700_000_000_299));
+        assert!(!tx.is_expired_at(1_700_000_000_299));
+        assert!(tx.is_expired_at(1_700_000_000_300));
+
+        // A seconds bound is normalized before the comparison.
+        tx.nonce_key = U256::ZERO;
+        tx.valid_before = 1_700_000_020;
+        assert!(!tx.is_expired_at(1_700_000_020_000));
+        assert!(tx.is_expired_at(1_700_000_020_001));
     }
 
     #[test]

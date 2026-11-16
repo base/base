@@ -15,7 +15,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm::{BaseSpecId, L1BlockInfo, MeteredGas};
+use base_common_evm::{BaseSpecId, BaseTime, L1BlockInfo, MeteredGas};
 use base_common_rpc_types_engine::PayloadReady;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
@@ -1101,6 +1101,22 @@ where
         let can_finalize_early = self.is_one_shot_building_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
+        // Only deposits write the `BaseTime` predeploy, so the millisecond part left in state by
+        // the sequencer transactions is this block's for every pool candidate, as in execution. A
+        // failed read falls back to the start of the header second, which can only let the
+        // manifest precheck pass a transaction that execution then rejects.
+        let timestamp_millis_part = BaseTime::fetch_timestamp_millis_part(
+            builder.evm_mut().db_mut(),
+        )
+        .unwrap_or_else(|error| {
+            warn!(
+                target: "payload_builder",
+                error = %error,
+                "failed to load BaseTime millisecond part for the manifest precheck"
+            );
+            0
+        });
+        let block_timestamp_ms = BaseTime { timestamp_millis_part }.timestamp_ms(block_timestamp);
         // Only deposits can write the L1 block info predeploy, so the scalar left in state by the
         // sequencer transactions holds for every pool candidate in this scan.
         let da_footprint_gas_scalar = self
@@ -1271,7 +1287,8 @@ where
 
             if self.builder_config.manifest_precheck_enabled
                 && let Some(manifest) = tx.watch_manifest()
-                && let Err(stale) = manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
+                && let Err(stale) =
+                    manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp_ms)
             {
                 trace!(
                     target: "payload_builder",
@@ -1752,7 +1769,8 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        BasePooledTransaction, BestTransactionsHold, ValidityOperator, ValidityPredicate,
+        BasePooledTransaction, BasePooledTx, BestTransactionsHold, ValidityOperator,
+        ValidityPredicate, WatchManifest,
     };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
@@ -2421,6 +2439,55 @@ mod tests {
         };
 
         assert!(payload.block().body().transactions.is_empty());
+    }
+
+    #[test]
+    fn manifest_precheck_applies_expiry_at_the_block_millisecond() {
+        // Blocks are 200 ms apart, so several share a header second: the precheck must compare
+        // the deadline against the block's exact millisecond time, as execution does.
+        const MILLIS_PART: u16 = 400;
+        let block_ms = DENIM_TIMESTAMP * 1_000 + u64::from(MILLIS_PART);
+        let included = |deadline_ms: u64| {
+            let transaction = pool_transaction_to(0, Address::repeat_byte(0x8a), U256::ZERO);
+            transaction.set_watch_manifest(WatchManifest::new(
+                Vec::new(),
+                Address::ZERO,
+                U256::ZERO,
+                deadline_ms,
+            ));
+            let mut provider = funded_provider(&[transaction.sender()]);
+            let mut base_time_storage = HashMap::default();
+            base_time_storage.insert(
+                StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+                U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+            );
+            base_time_storage.insert(
+                StorageKey::from(BaseTime::TIMESTAMP_MILLIS_PART_SLOT.to_be_bytes::<32>()),
+                U256::from(MILLIS_PART),
+            );
+            provider.insert_account(
+                Predeploys::BASE_TIME,
+                Account::default(),
+                Some(BaseTime::proxy_bytecode()),
+                base_time_storage,
+            );
+            let BuildOutcomeKind::Freeze(payload) =
+                Builder::new(|_, _| TestParkableTransactions::new(vec![transaction]))
+                    .build(
+                        StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                        &provider,
+                        Some(state_root_handle()),
+                        pool_payload_context(DENIM_TIMESTAMP),
+                    )
+                    .expect("payload must build")
+            else {
+                panic!("Denim payload must freeze")
+            };
+            payload.block().body().transactions.len() == 1
+        };
+
+        assert!(!included(block_ms - 100), "a deadline earlier in the same second has passed");
+        assert!(included(block_ms), "a transaction is valid through its deadline millisecond");
     }
 
     #[test]

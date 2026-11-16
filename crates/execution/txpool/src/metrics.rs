@@ -24,7 +24,7 @@ base_metrics::define_metrics! {
         ]
     )]
     invalidated: counter,
-    #[describe("Occupied expiry buckets fired on canonical state updates")]
+    #[describe("Distinct expiry deadlines fired on canonical state updates")]
     expiry_buckets_fired: counter,
     #[describe("Transactions currently tracked by the admission/invalidation guard")]
     tracked: gauge,
@@ -58,7 +58,7 @@ impl GuardMetrics {
         }
     }
 
-    /// Records invalidations attributed to expiry-bucket firing.
+    /// Records invalidations attributed to expiry deadlines passing.
     pub fn record_expiry_invalidations(count: usize) {
         if count > 0 {
             Self::invalidated("expiry").increment(count as u64);
