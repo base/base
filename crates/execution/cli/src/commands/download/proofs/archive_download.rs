@@ -283,10 +283,13 @@ impl ProofsArchiveDownload {
             "Downloading proofs archive"
         );
 
+        // HTTP/2 would multiplex every piece onto one TCP connection and cap the download at a
+        // single connection's throughput. HTTP/1.1 opens one connection per in-flight piece.
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(30))
             .read_timeout(DOWNLOAD_READ_TIMEOUT)
             .pool_max_idle_per_host(self.concurrency)
+            .http1_only()
             .build()?;
         let progress = AtomicU64::new(initial);
         let next = AtomicUsize::new(0);
