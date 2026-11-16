@@ -14,7 +14,7 @@ pub use guard::{
 };
 
 mod invalidation;
-pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet};
+pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet, Watchers};
 
 mod manifest;
 pub use manifest::{ConfigSlot, ManifestStale, WatchManifest};

@@ -160,14 +160,17 @@ impl WatchSet {
 
 /// The transactions watching one key. Most keys have a single watcher, which
 /// is stored inline rather than in a set allocation.
-#[derive(Debug)]
-enum Watchers {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Watchers {
+    /// The key's only watcher.
     One(TxHash),
+    /// Two or more watchers.
     Many(HashSet<TxHash>),
 }
 
 impl Watchers {
-    fn insert(&mut self, hash: TxHash) {
+    /// Adds `hash`, switching to [`Self::Many`] when it is a second watcher.
+    pub fn insert(&mut self, hash: TxHash) {
         match self {
             Self::One(one) if *one == hash => {}
             Self::One(one) => *self = Self::Many([*one, hash].into_iter().collect()),
@@ -177,8 +180,10 @@ impl Watchers {
         }
     }
 
-    /// Removes `hash`, returning `true` if no watcher is left.
-    fn remove(&mut self, hash: &TxHash) -> bool {
+    /// Removes `hash`, returning `true` if no watcher is left, in which case
+    /// the caller drops the key. A [`Self::One`] holding another hash is
+    /// unchanged.
+    pub fn remove(&mut self, hash: &TxHash) -> bool {
         match self {
             Self::One(one) => one == hash,
             Self::Many(many) => {
@@ -188,7 +193,8 @@ impl Watchers {
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = &TxHash> {
+    /// Iterates the watching hashes.
+    pub fn iter(&self) -> impl Iterator<Item = &TxHash> {
         let (one, many) = match self {
             Self::One(one) => (Some(one), None),
             Self::Many(many) => (None, Some(many)),
@@ -395,6 +401,19 @@ mod tests {
         assert!(!index.contains(&tx));
         assert!(index.is_empty());
         assert_eq!(index.key_count(), 0, "empty key buckets must be pruned");
+    }
+
+    #[test]
+    fn watchers_grow_to_many_and_report_when_empty() {
+        let mut watchers = Watchers::One(hash(1));
+        watchers.insert(hash(1));
+        assert_eq!(watchers, Watchers::One(hash(1)));
+        assert!(!watchers.remove(&hash(2)), "another hash leaves a lone watcher in place");
+
+        watchers.insert(hash(2));
+        assert!(matches!(watchers, Watchers::Many(_)));
+        assert!(!watchers.remove(&hash(1)));
+        assert!(watchers.remove(&hash(2)));
     }
 
     #[test]
