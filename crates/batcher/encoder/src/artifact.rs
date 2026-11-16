@@ -1,7 +1,7 @@
 //! Immutable DA artifacts and the ledger tracking their submission state.
 
 use std::{
-    collections::{VecDeque, vec_deque},
+    collections::{HashMap, VecDeque, vec_deque},
     sync::Arc,
 };
 
@@ -74,22 +74,36 @@ impl DaArtifact {
     }
 }
 
+/// Retained artifact counts for one channel.
+#[derive(Debug, Default, Clone, Copy)]
+struct ChannelArtifactCounts {
+    /// Retained artifacts carrying the channel's frames.
+    retained: usize,
+    /// Retained artifacts not yet confirmed.
+    unconfirmed: usize,
+}
+
 /// Ledger of immutable DA artifacts, in creation order.
 ///
 /// Artifacts are appended [`ArtifactState::Ready`], leased to one in-flight
 /// submission at a time, and retained until the channels they carry are safe.
+/// Per-channel counts are kept in step with every change, so
+/// [`Self::all_confirmed_for`] answers without scanning the ledger: the encoder
+/// asks it for every buffered channel on each driver iteration.
 #[derive(Debug, Default)]
 pub struct DaArtifacts {
     /// Artifacts in creation order.
     artifacts: VecDeque<DaArtifact>,
+    /// Counts for every channel with at least one retained artifact.
+    channels: HashMap<ChannelId, ChannelArtifactCounts>,
     /// Next stable artifact identifier.
     next_id: u64,
 }
 
 impl DaArtifacts {
     /// Creates an empty ledger.
-    pub const fn new() -> Self {
-        Self { artifacts: VecDeque::new(), next_id: 0 }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Returns the number of retained artifacts.
@@ -106,6 +120,11 @@ impl DaArtifacts {
     pub fn push(&mut self, payload: DaArtifactPayload, channel_ids: Vec<ChannelId>) -> ArtifactId {
         let id = ArtifactId(self.next_id);
         self.next_id += 1;
+        for channel_id in &channel_ids {
+            let counts = self.channels.entry(*channel_id).or_default();
+            counts.retained += 1;
+            counts.unconfirmed += 1;
+        }
         self.artifacts.push_back(DaArtifact {
             id,
             payload,
@@ -165,7 +184,16 @@ impl DaArtifacts {
     pub fn confirm(&mut self, artifact_ids: &[ArtifactId]) -> Vec<ChannelId> {
         let mut channel_ids = Vec::new();
 
-        for artifact in self.select_mut(artifact_ids) {
+        let listed =
+            self.artifacts.iter_mut().filter(|artifact| artifact_ids.contains(&artifact.id));
+        for artifact in listed {
+            if artifact.state != ArtifactState::Confirmed {
+                for channel_id in &artifact.channel_ids {
+                    if let Some(counts) = self.channels.get_mut(channel_id) {
+                        counts.unconfirmed -= 1;
+                    }
+                }
+            }
             artifact.state = ArtifactState::Confirmed;
             for channel_id in &artifact.channel_ids {
                 if !channel_ids.contains(channel_id) {
@@ -181,8 +209,17 @@ impl DaArtifacts {
     pub fn requeue(&mut self, artifact_ids: &[ArtifactId]) -> usize {
         let mut frame_count = 0;
 
-        for artifact in self.select_mut(artifact_ids) {
+        let listed =
+            self.artifacts.iter_mut().filter(|artifact| artifact_ids.contains(&artifact.id));
+        for artifact in listed {
             frame_count += artifact.payload.frame_count();
+            if artifact.state == ArtifactState::Confirmed {
+                for channel_id in &artifact.channel_ids {
+                    if let Some(counts) = self.channels.get_mut(channel_id) {
+                        counts.unconfirmed += 1;
+                    }
+                }
+            }
             artifact.state = ArtifactState::Ready;
         }
 
@@ -191,13 +228,7 @@ impl DaArtifacts {
 
     /// Returns whether `channel_id` has artifacts and all of them are confirmed.
     pub fn all_confirmed_for(&self, channel_id: ChannelId) -> bool {
-        let mut artifacts =
-            self.artifacts.iter().filter(|artifact| artifact.channel_ids.contains(&channel_id));
-
-        artifacts.next().is_some_and(|first| {
-            first.state == ArtifactState::Confirmed
-                && artifacts.all(|artifact| artifact.state == ArtifactState::Confirmed)
-        })
+        self.channels.get(&channel_id).is_some_and(|counts| counts.unconfirmed == 0)
     }
 
     /// Drops safe channel references, and artifacts left without any channel.
@@ -206,11 +237,31 @@ impl DaArtifacts {
             artifact.channel_ids.retain(|id| !channel_ids.contains(id));
         }
         self.artifacts.retain(|artifact| !artifact.channel_ids.is_empty());
+        for channel_id in channel_ids {
+            self.channels.remove(channel_id);
+        }
     }
 
     /// Removes the listed artifacts.
     pub fn invalidate(&mut self, artifact_ids: &[ArtifactId]) {
-        self.artifacts.retain(|artifact| !artifact_ids.contains(&artifact.id));
+        self.artifacts.retain(|artifact| {
+            if !artifact_ids.contains(&artifact.id) {
+                return true;
+            }
+            for channel_id in &artifact.channel_ids {
+                let Some(counts) = self.channels.get_mut(channel_id) else {
+                    continue;
+                };
+                counts.retained -= 1;
+                if artifact.state != ArtifactState::Confirmed {
+                    counts.unconfirmed -= 1;
+                }
+                if counts.retained == 0 {
+                    self.channels.remove(channel_id);
+                }
+            }
+            false
+        });
     }
 
     /// Returns whether `artifact_id` is still retained.
@@ -221,16 +272,12 @@ impl DaArtifacts {
     /// Clears every artifact while preserving monotonic artifact identifiers.
     pub fn clear(&mut self) {
         self.artifacts.clear();
+        self.channels.clear();
     }
 
     /// Returns every artifact available for a new submission.
     fn ready(&self) -> impl Iterator<Item = &DaArtifact> {
         self.artifacts.iter().filter(|artifact| artifact.state == ArtifactState::Ready)
-    }
-
-    /// Returns the listed artifacts, in creation order.
-    fn select_mut(&mut self, artifact_ids: &[ArtifactId]) -> impl Iterator<Item = &mut DaArtifact> {
-        self.artifacts.iter_mut().filter(|artifact| artifact_ids.contains(&artifact.id))
     }
 
     /// Leases consecutive ready blobs as one transaction, once the run is complete.
@@ -412,5 +459,81 @@ mod tests {
 
         let retained: Vec<_> = artifacts.into_iter().map(DaArtifact::channel_ids).collect();
         assert_eq!(retained, [[SECOND]]);
+    }
+
+    /// A channel counts as confirmed only while it has retained artifacts and every one of them
+    /// is confirmed, through each change to the ledger.
+    #[test]
+    fn all_confirmed_for_follows_every_ledger_change() {
+        let mut artifacts = DaArtifacts::new();
+        assert!(!artifacts.all_confirmed_for(FIRST), "no artifacts yet");
+
+        artifacts.push(blob(FIRST, false), vec![FIRST]);
+        artifacts.push(blob(FIRST, true), vec![FIRST, SECOND]);
+        let second_only = artifacts.push(blob(SECOND, true), vec![SECOND]);
+        let first_run = lease(&mut artifacts).expect("the first channel's blobs");
+        assert!(!artifacts.all_confirmed_for(FIRST), "leased");
+
+        artifacts.requeue(&first_run);
+        assert!(!artifacts.all_confirmed_for(FIRST), "requeued");
+
+        let first_run = lease(&mut artifacts).expect("the requeued blobs");
+        artifacts.confirm(&first_run);
+        artifacts.confirm(&first_run);
+        assert!(artifacts.all_confirmed_for(FIRST), "confirmed, twice");
+        assert!(!artifacts.all_confirmed_for(SECOND), "its own blob is still ready");
+
+        artifacts.prune_channels(&[FIRST]);
+        assert!(!artifacts.all_confirmed_for(FIRST), "pruned");
+        assert!(!artifacts.all_confirmed_for(SECOND), "the shared blob stays counted");
+
+        let second_run = lease(&mut artifacts).expect("the second channel's blob");
+        assert_eq!(second_run, [second_only]);
+        artifacts.confirm(&second_run);
+        assert!(artifacts.all_confirmed_for(SECOND), "every blob confirmed");
+
+        artifacts.invalidate(&second_run);
+        assert!(artifacts.all_confirmed_for(SECOND), "the confirmed shared blob remains");
+
+        let shared: Vec<_> = artifacts.into_iter().map(DaArtifact::id).collect();
+        artifacts.invalidate(&shared);
+        assert!(!artifacts.all_confirmed_for(SECOND), "no artifacts left");
+
+        artifacts.push(blob(SECOND, true), vec![SECOND]);
+        artifacts.clear();
+        assert!(!artifacts.all_confirmed_for(SECOND), "cleared");
+    }
+
+    /// Requeueing a confirmed artifact makes its channel unconfirmed again until it is
+    /// reconfirmed.
+    #[test]
+    fn requeueing_a_confirmed_artifact_unconfirms_its_channel() {
+        let mut artifacts = DaArtifacts::new();
+        artifacts.push(blob(FIRST, true), vec![FIRST]);
+        let run = lease(&mut artifacts).expect("the channel's blob");
+        artifacts.confirm(&run);
+        assert!(artifacts.all_confirmed_for(FIRST));
+
+        artifacts.requeue(&run);
+        assert!(!artifacts.all_confirmed_for(FIRST), "requeued");
+
+        let run = lease(&mut artifacts).expect("the requeued blob");
+        artifacts.confirm(&run);
+        assert!(artifacts.all_confirmed_for(FIRST), "reconfirmed");
+    }
+
+    /// Invalidating a channel's only unconfirmed artifact leaves it confirmed when a
+    /// confirmed artifact remains.
+    #[test]
+    fn invalidating_the_last_unconfirmed_artifact_confirms_its_channel() {
+        let mut artifacts = DaArtifacts::new();
+        artifacts.push(blob(FIRST, true), vec![FIRST]);
+        let confirmed = lease(&mut artifacts).expect("the first blob");
+        artifacts.confirm(&confirmed);
+        let unconfirmed = artifacts.push(blob(FIRST, true), vec![FIRST]);
+        assert!(!artifacts.all_confirmed_for(FIRST));
+
+        artifacts.invalidate(&[unconfirmed]);
+        assert!(artifacts.all_confirmed_for(FIRST));
     }
 }
