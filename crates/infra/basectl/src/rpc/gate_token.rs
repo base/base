@@ -359,10 +359,11 @@ mod tests {
         assert_eq!(status, None);
         let elapsed = started.elapsed();
         assert!(elapsed >= Duration::from_millis(200) && elapsed < Duration::from_secs(5));
-        // Reaped, not a zombie: the Child holds the status `wait` collected,
-        // and it was the kill.
-        let reaped = child.try_wait().unwrap().expect("opener reaped");
-        assert_eq!(std::os::unix::process::ExitStatusExt::signal(&reaped), Some(9));
+        // Reaped by `wait_bounded`, not a zombie: `kill -0` still finds a
+        // zombie, but not a process that has been reaped. (`try_wait` here
+        // would reap it itself, so it cannot tell.)
+        let alive = Command::new("kill").args(["-0", &child.id().to_string()]).output().unwrap();
+        assert!(!alive.status.success(), "opener left unreaped");
 
         // Through the opener path a stalled opener counts as opened; one that
         // exits non-zero or cannot start is an error.
