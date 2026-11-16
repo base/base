@@ -215,6 +215,7 @@ pub(super) mod tests {
 
     use alloy_eips::BlockNumHash;
     use base_common_genesis::{SystemConfig, UpgradeConfig};
+    use base_protocol::DERIVATION_VERSION_0;
 
     use super::*;
     use crate::test_utils::TestFrameQueueProvider;
@@ -267,6 +268,24 @@ pub(super) mod tests {
         let assert = crate::test_utils::FrameQueueBuilder::new()
             .with_origin(BlockInfo::default())
             .with_raw_frames(Bytes::from(vec![0x00, 0x01]))
+            .with_expected_err(PipelineError::NotEnoughData.temp())
+            .build();
+        assert.holocene_active(false);
+        assert.next_frames().await;
+    }
+
+    #[tokio::test]
+    async fn test_frame_queue_drops_transaction_with_invalid_is_last() {
+        let valid = crate::frame!(0xFF, 0, vec![0xDD; 50], false);
+        let mut invalid = crate::frame!(0xFF, 1, vec![0xDD; 50], true).encode();
+        *invalid.last_mut().unwrap() = 2;
+        let mut data = vec![DERIVATION_VERSION_0];
+        data.extend_from_slice(&valid.encode());
+        data.extend_from_slice(&invalid);
+
+        let assert = crate::test_utils::FrameQueueBuilder::new()
+            .with_origin(BlockInfo::default())
+            .with_raw_frames(Bytes::from(data))
             .with_expected_err(PipelineError::NotEnoughData.temp())
             .build();
         assert.holocene_active(false);

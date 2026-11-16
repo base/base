@@ -69,6 +69,9 @@ pub enum FrameDecodingError {
     /// Error decoding the frame data length.
     #[error("Invalid frame data length")]
     InvalidDataLength,
+    /// The final-frame flag byte is neither `0` nor `1`.
+    #[error("Invalid is_last byte: {0}")]
+    InvalidIsLast(u8),
 }
 
 /// Frame parsing error.
@@ -235,7 +238,11 @@ impl Frame {
         }
 
         let data = encoded[22..22 + data_len].to_vec();
-        let is_last = encoded[22 + data_len] == 1;
+        let is_last = match encoded[22 + data_len] {
+            0 => false,
+            1 => true,
+            byte => return Err(FrameDecodingError::InvalidIsLast(byte)),
+        };
         Ok((Self::ENCODED_OVERHEAD + data_len, Self { id, number, data, is_last }))
     }
 
@@ -337,6 +344,32 @@ mod tests {
         encoded[18..22].copy_from_slice(&valid_data_len.to_be_bytes());
         let (_, frame_decoded) = Frame::decode(&encoded).unwrap();
         assert_eq!(frame, frame_decoded);
+    }
+
+    #[test]
+    fn test_decode_invalid_is_last() {
+        let frame = Frame { id: [0xFF; 16], number: 0xEE, data: vec![0xDD; 50], is_last: true };
+        let mut encoded = frame.encode();
+        let is_last_index = encoded.len() - 1;
+
+        for byte in [2, 0x80, 0xFF] {
+            encoded[is_last_index] = byte;
+            let err = Frame::decode(&encoded).unwrap_err();
+            assert_eq!(err, FrameDecodingError::InvalidIsLast(byte));
+        }
+    }
+
+    #[test]
+    fn test_parse_frames_rejects_transaction_with_invalid_is_last() {
+        let frame = Frame { id: [0xFF; 16], number: 0, data: vec![0xDD; 50], is_last: false };
+        let mut bytes = vec![DERIVATION_VERSION_0];
+        bytes.extend_from_slice(&frame.encode());
+        let mut invalid = Frame { number: 1, ..frame }.encode();
+        *invalid.last_mut().unwrap() = 2;
+        bytes.extend_from_slice(&invalid);
+
+        let err = Frame::parse_frames(&bytes).unwrap_err();
+        assert_eq!(err, FrameParseError::FrameDecodingError(FrameDecodingError::InvalidIsLast(2)));
     }
 
     #[test]
