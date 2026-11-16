@@ -95,7 +95,7 @@ fn modified_at(path: &Path) -> Option<SystemTime> {
 }
 
 /// Matches reth's `--download-concurrency` default.
-const DEFAULT_DOWNLOAD_CONCURRENCY: usize = 8;
+const DEFAULT_DOWNLOAD_CONCURRENCY: usize = 32;
 
 /// Extracts `--download-concurrency` so proofs use the same parallel budget as reth.
 fn resolve_download_concurrency_arg(args: impl IntoIterator<Item = OsString>) -> usize {
