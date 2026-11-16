@@ -11,30 +11,33 @@ use base_consensus_derive::ChainProvider;
 use base_proof_mpt::{OrderedListWalker, TrieNode, TrieProvider};
 use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use base_protocol::BlockInfo;
+use spin::Mutex;
 
 use crate::{HintType, errors::OracleProviderError};
 
 /// The oracle-backed L1 chain provider for the client program.
+///
+/// Clones share one [`ChainProvider::block_info_by_number`] cache, so a cache warmed by one
+/// pipeline stage serves every other stage holding a clone.
 #[derive(Debug, Clone)]
 pub struct OracleL1ChainProvider<T: CommsClient> {
-    /// The L1 head hash.
-    pub l1_head: B256,
+    /// The L1 head hash. Private and fixed at construction because the shared cache is only
+    /// valid for the chain rooted at this head.
+    l1_head: B256,
     /// The preimage oracle client.
     pub oracle: Arc<T>,
-    /// [`BlockInfo`] by number for every ancestor of [`Self::l1_head`] visited by
-    /// [`ChainProvider::block_info_by_number`].
+    /// [`BlockInfo`] by number for every ancestor of `l1_head` visited by
+    /// [`ChainProvider::block_info_by_number`], always including the head once non-empty.
     ///
-    /// The chain rooted at `l1_head` is fixed, so entries never need invalidation as long as
-    /// `l1_head` is not reassigned after the first lookup. Unbounded: it holds one small entry
-    /// per L1 block between the head and the lowest block looked up, which is the same set of
-    /// headers the walk-back already decodes once.
-    block_info_by_number: BTreeMap<u64, BlockInfo>,
+    /// Unbounded: it holds one small entry per L1 block between the head and the lowest block
+    /// looked up, which is the same set of headers the walk-back already decodes once.
+    block_info_by_number: Arc<Mutex<BTreeMap<u64, BlockInfo>>>,
 }
 
 impl<T: CommsClient> OracleL1ChainProvider<T> {
     /// Creates a new [`OracleL1ChainProvider`] with the given boot information and oracle client.
-    pub const fn new(l1_head: B256, oracle: Arc<T>) -> Self {
-        Self { l1_head, oracle, block_info_by_number: BTreeMap::new() }
+    pub fn new(l1_head: B256, oracle: Arc<T>) -> Self {
+        Self { l1_head, oracle, block_info_by_number: Arc::default() }
     }
 }
 
@@ -52,33 +55,39 @@ impl<T: CommsClient + Sync + Send> ChainProvider for OracleL1ChainProvider<T> {
     }
 
     async fn block_info_by_number(&mut self, block_number: u64) -> Result<BlockInfo, Self::Error> {
-        if let Some(cached) = self.block_info_by_number.get(&block_number) {
-            return Ok(*cached);
-        }
+        // The lock is never held across an await. The highest cached entry is the head, so a
+        // target past it fails without fetching the head again.
+        let cached_descendant = {
+            let cache = self.block_info_by_number.lock();
+            if let Some(cached) = cache.get(&block_number) {
+                return Ok(*cached);
+            }
+            if let Some((&head_number, _)) = cache.last_key_value()
+                && block_number > head_number
+            {
+                return Err(OracleProviderError::BlockNumberPastHead(block_number, head_number));
+            }
+            cache.range(block_number..).next().map(|(_, info)| *info)
+        };
 
         // Resume from the closest cached descendant of the target, or from the head if none.
-        // Every cached entry is at or below the head, so a target past the head always falls
-        // through to the head check below.
-        let cached_descendant = block_number
-            .checked_add(1)
-            .and_then(|n| self.block_info_by_number.range(n..).next().map(|(_, info)| *info));
         let mut current = match cached_descendant {
             Some(info) => info,
             None => {
                 let header = self.header_by_hash(self.l1_head).await?;
-                if block_number > header.number {
-                    return Err(OracleProviderError::BlockNumberPastHead(
-                        block_number,
-                        header.number,
-                    ));
-                }
                 let info = BlockInfo {
                     hash: self.l1_head,
                     number: header.number,
                     parent_hash: header.parent_hash,
                     timestamp: header.timestamp,
                 };
-                self.block_info_by_number.insert(info.number, info);
+                self.block_info_by_number.lock().insert(info.number, info);
+                if block_number > header.number {
+                    return Err(OracleProviderError::BlockNumberPastHead(
+                        block_number,
+                        header.number,
+                    ));
+                }
                 info
             }
         };
@@ -94,7 +103,7 @@ impl<T: CommsClient + Sync + Send> ChainProvider for OracleL1ChainProvider<T> {
                 parent_hash: header.parent_hash,
                 timestamp: header.timestamp,
             };
-            self.block_info_by_number.insert(current.number, current);
+            self.block_info_by_number.lock().insert(current.number, current);
         }
 
         Ok(current)
@@ -191,8 +200,8 @@ mod tests {
 
     /// In-memory oracle serving RLP-encoded headers keyed by their hash and counting `get` calls.
     ///
-    /// Hand-rolled because `base-proof-preimage` exposes no mocks outside its own crate, and the
-    /// tests need real header preimages plus a fetch count shared across clones of the provider.
+    /// Hand-rolled because `CommsClient` (from the separate `base-proof-preimage` crate) requires
+    /// `Clone` on top of two oracle traits, which mockall mocks do not implement.
     #[derive(Clone, Debug, Default)]
     struct HeaderOracle {
         preimages: Arc<BTreeMap<PreimageKey, Vec<u8>>>,
@@ -287,16 +296,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn block_info_by_number_rejects_numbers_past_head_with_warm_cache() {
+    async fn block_info_by_number_rejects_numbers_past_head_cold_and_warm() {
         let (_, mut provider, _) = chain(5);
-        provider.block_info_by_number(0).await.unwrap();
+        let assert_past_head = async |provider: &mut OracleL1ChainProvider<HeaderOracle>| {
+            for number in [5, u64::MAX] {
+                let err = provider.block_info_by_number(number).await.unwrap_err();
+                assert!(
+                    matches!(err, OracleProviderError::BlockNumberPastHead(n, 4) if n == number),
+                    "block {number}: {err:?}"
+                );
+            }
+        };
 
-        for number in [5, u64::MAX] {
-            let err = provider.block_info_by_number(number).await.unwrap_err();
-            assert!(
-                matches!(err, OracleProviderError::BlockNumberPastHead(n, 4) if n == number),
-                "block {number}: {err:?}"
-            );
+        assert_past_head(&mut provider).await;
+        provider.block_info_by_number(0).await.unwrap();
+        assert_past_head(&mut provider).await;
+    }
+
+    #[tokio::test]
+    async fn block_info_by_number_returns_head_on_cold_cache() {
+        let (headers, mut provider, gets) = chain(5);
+
+        assert_eq!(
+            provider.block_info_by_number(4).await.unwrap(),
+            uncached_block_info(&headers, 4)
+        );
+        assert_eq!(gets.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn block_info_by_number_cache_is_shared_across_clones() {
+        let (_, mut provider, gets) = chain(10);
+        let mut clone = provider.clone();
+
+        provider.block_info_by_number(0).await.unwrap();
+        let warm = gets.load(Ordering::SeqCst);
+        for number in 0..10 {
+            clone.block_info_by_number(number).await.unwrap();
         }
+        assert_eq!(gets.load(Ordering::SeqCst), warm);
     }
 }
