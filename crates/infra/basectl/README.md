@@ -73,7 +73,8 @@ a paste prompt is the fallback.
 
 - **Explicit sources win.** `--gate-token-file`, then `BASECTL_GATE_TOKEN`,
   then `gate_token_command`. They never trigger the browser, the prompt, or the
-  cache; a 401 for them just fails.
+  cache. In a one-shot command a 401 for them just fails; the TUI's cluster
+  view reads the source again (see **TUI** below).
 - **Browser login.** With no explicit source and no usable cached token, the
   request is sent without a token. The gateway's 401 body may carry a
   `token_url` (`https://`, or `http://` on loopback). basectl then listens once
@@ -99,14 +100,21 @@ a paste prompt is the fallback.
   `0700` directory with a `0600` file written atomically. A looser file is
   tightened before use, and older bare-token caches are still read. A cached
   token is reused until 5 minutes before `expiresAt` (ISO 8601, or epoch
-  seconds or milliseconds), or its JWT `exp` when absent, or until a 401. If
-  the cache can't be written, a warning is logged and the new token is still
-  used for this run.
+  seconds or milliseconds), or its JWT `exp` when absent, or until a 401. A
+  new token is used at once and the cache is written in the background; a
+  one-shot command waits up to 2 s for that write before it exits. A failed
+  or abandoned write logs a warning, leaves the previous cache file intact,
+  and costs one more sign-in next run.
 - **TUI.** The TUI never prompts. Its proposal actions ask you to run
   `basectl conductor transfer status <ID>` once in a shell to log in, or to
   set an explicit token source. In gateway mode (below), a 401 on the cluster
-  view starts one browser login and pauses polling until a token is available
-  (from that login or the cache); a failed login is not retried for 5 minutes.
+  view pauses polling. Without an explicit source it starts one browser login,
+  and polling resumes when a token is available (from that login or the
+  cache); a failed login is not retried for 5 minutes. With an explicit
+  source it reads that source again instead, at most once per 5 minutes,
+  never falling back to the browser, the prompt, or the cache. A source that
+  returns the rejected token waits for the next window, so the gateway sees
+  at most one request per window with it.
 
 The gateway URL is a base URL; the client appends the paths below. Every
 request sends `Authorization: Bearer <token>`.

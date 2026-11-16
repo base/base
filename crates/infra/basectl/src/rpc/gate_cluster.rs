@@ -296,8 +296,11 @@ impl GateClusterPoller {
     /// login succeeds or a cached token appears. A failed login is not
     /// retried for [`Self::LOGIN_RETRY_AFTER`], so the browser never opens on
     /// every poll. With an explicit token source the "login" reads that
-    /// source again under the same bound; a source that returns the rejected
-    /// token is not retried with it.
+    /// source again under the same bound. A source that keeps returning the
+    /// rejected token is not retried with it within the window; when the
+    /// window ends, the poller sends one request with the current token
+    /// before reading the source again, so that token costs one request per
+    /// window.
     pub async fn run(source: Arc<dyn ClusterSource>, tx: mpsc::Sender<ConductorPollUpdate>) {
         let mut interval = tokio::time::interval(ConductorFeed::GATEWAY_POLL_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -933,7 +936,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unchanged_rejected_token_is_not_sent_again() {
+    async fn unchanged_rejected_token_is_not_sent_again_within_the_retry_window() {
         let dir = tempfile::tempdir().unwrap();
         let (mut rx, seen, runs) = poll_with_command("tok-stale", dir.path()).await;
 
