@@ -65,8 +65,9 @@ pub enum InvalidationKey {
     /// not a state surface: no storage diff reports it, so the pool fires the
     /// keys strictly before each canonical block's millisecond time. Occupied
     /// deadlines are kept in a sparse ordered set, so canonical timestamp jumps
-    /// visit only deadlines that have transactions. Exact-match semantics (a
-    /// fired deadline drops every watcher).
+    /// visit only deadlines that have transactions. A passed deadline drops
+    /// every watcher, but only through [`InvalidationIndex::take_expired`]:
+    /// expiry keys are not in the reverse index that `affected_exact` reads.
     Expiry(UnixMillis),
 }
 
@@ -163,7 +164,8 @@ impl WatchSet {
 pub struct InvalidationIndex {
     by_key: HashMap<InvalidationKey, HashSet<TxHash>>,
     watch_sets: HashMap<TxHash, WatchSet>,
-    expiries: BTreeSet<UnixMillis>,
+    /// `(deadline, hash)` per [`InvalidationKey::Expiry`]; never in `by_key`.
+    expiries: BTreeSet<(UnixMillis, TxHash)>,
 }
 
 impl InvalidationIndex {
@@ -177,7 +179,7 @@ impl InvalidationIndex {
     /// with `watch`: its stored watch set and, for each key, the transaction's
     /// hash plus a key bucket in case no other transaction shares the key, and,
     /// for each [`InvalidationKey::Expiry`], an entry in the ordered deadline
-    /// set.
+    /// set instead.
     #[must_use]
     pub fn registration_size(watch: &WatchSet) -> usize {
         let watch_set = core::mem::size_of::<TxHash>()
@@ -186,12 +188,12 @@ impl InvalidationIndex {
         let per_key = core::mem::size_of::<TxHash>()
             + core::mem::size_of::<InvalidationKey>()
             + core::mem::size_of::<HashSet<TxHash>>();
-        // B-tree nodes other than the root stay at least about half full, so a
-        // deadline costs under four times its own size in node storage.
-        let per_expiry = 4 * core::mem::size_of::<UnixMillis>();
+        // B-tree nodes other than the root stay at least about half full, so an
+        // entry costs under four times its own size in node storage.
+        let per_expiry = 4 * core::mem::size_of::<(UnixMillis, TxHash)>();
         let expiries =
             watch.keys().iter().filter(|key| matches!(key, InvalidationKey::Expiry(_))).count();
-        watch_set + watch.len() * per_key + expiries * per_expiry
+        watch_set + (watch.len() - expiries) * per_key + expiries * per_expiry
     }
 
     /// Registers `hash` under every key in `watch`. If `hash` is already present
@@ -201,9 +203,10 @@ impl InvalidationIndex {
     pub fn insert(&mut self, hash: TxHash, watch: WatchSet) -> bool {
         let was_present = self.remove(&hash).is_some();
         for key in watch.keys() {
-            self.by_key.entry(*key).or_default().insert(hash);
             if let InvalidationKey::Expiry(deadline) = key {
-                self.expiries.insert(*deadline);
+                self.expiries.insert((*deadline, hash));
+            } else {
+                self.by_key.entry(*key).or_default().insert(hash);
             }
         }
         self.watch_sets.insert(hash, watch);
@@ -216,13 +219,12 @@ impl InvalidationIndex {
     pub fn remove(&mut self, hash: &TxHash) -> Option<WatchSet> {
         let watch = self.watch_sets.remove(hash)?;
         for key in watch.keys() {
-            if let Some(bucket) = self.by_key.get_mut(key) {
+            if let InvalidationKey::Expiry(deadline) = key {
+                self.expiries.remove(&(*deadline, *hash));
+            } else if let Some(bucket) = self.by_key.get_mut(key) {
                 bucket.remove(hash);
                 if bucket.is_empty() {
                     self.by_key.remove(key);
-                    if let InvalidationKey::Expiry(deadline) = key {
-                        self.expiries.remove(deadline);
-                    }
                 }
             }
         }
@@ -265,13 +267,11 @@ impl InvalidationIndex {
         self.by_key.len()
     }
 
-    /// Returns the occupied [`InvalidationKey::Expiry`] keys whose deadline has
-    /// passed at the block time `now`.
-    ///
-    /// Work is proportional to the number of due deadlines with transactions,
-    /// not the wall-clock distance they span.
-    pub fn due_expiries(&self, now: UnixMillis) -> Vec<InvalidationKey> {
-        self.expiries.range(..now).copied().map(InvalidationKey::Expiry).collect()
+    /// Unregisters and returns, in deadline order, the expiry registrations
+    /// passed at block time `now`; their other keys stay registered.
+    pub fn take_expired(&mut self, now: UnixMillis) -> Vec<(UnixMillis, TxHash)> {
+        let live = self.expiries.split_off(&(now, TxHash::ZERO));
+        core::mem::replace(&mut self.expiries, live).into_iter().collect()
     }
 
     /// Collects every transaction that must be dropped because one of the given
@@ -285,6 +285,10 @@ impl InvalidationIndex {
     {
         let mut affected = HashSet::new();
         for key in changed {
+            debug_assert!(
+                !matches!(key, InvalidationKey::Expiry(_)),
+                "expiry fires via take_expired"
+            );
             if key.is_exact()
                 && let Some(bucket) = self.by_key.get(&key)
             {
@@ -394,44 +398,45 @@ mod tests {
     fn registration_size_charges_each_expiry_deadline() {
         let base = WatchSet::new().watch(InvalidationKey::ProtocolNonce(addr(1)));
         let with_expiry = base.clone().watch(InvalidationKey::Expiry(UnixMillis::from_millis(7)));
-        let with_code_hash = base.watch(InvalidationKey::CodeHash(addr(2)));
 
-        // An expiry key costs its ordered-set entry on top of any other key.
+        // An expiry key costs its stored key plus an ordered-set entry.
         assert_eq!(
             InvalidationIndex::registration_size(&with_expiry),
-            InvalidationIndex::registration_size(&with_code_hash)
-                + 4 * core::mem::size_of::<UnixMillis>(),
+            InvalidationIndex::registration_size(&base)
+                + core::mem::size_of::<InvalidationKey>()
+                + 4 * core::mem::size_of::<(UnixMillis, TxHash)>(),
         );
     }
 
     #[test]
-    fn due_expiries_are_sparse_across_large_timestamp_gaps() {
+    fn take_expired_is_sparse_across_large_timestamp_gaps() {
         let mut index = InvalidationIndex::new();
-        let near = InvalidationKey::Expiry(UnixMillis::from_millis(1));
-        let far = InvalidationKey::Expiry(UnixMillis::from_millis(1_700_000_000_000));
-        let future = InvalidationKey::Expiry(UnixMillis::from_millis(1_800_000_000_000));
+        let ms = UnixMillis::from_millis;
+        for (byte, deadline) in [(1, 1), (2, 1_700_000_000_000), (3, 1_800_000_000_000)] {
+            index.insert(hash(byte), WatchSet::new().watch(InvalidationKey::Expiry(ms(deadline))));
+        }
 
-        index.insert(hash(1), WatchSet::new().watch(near));
-        index.insert(hash(2), WatchSet::new().watch(far));
-        index.insert(hash(3), WatchSet::new().watch(future));
-
-        assert_eq!(index.due_expiries(UnixMillis::from_millis(1_700_000_000_001)), vec![near, far]);
+        assert_eq!(
+            index.take_expired(ms(1_700_000_000_001)),
+            vec![(ms(1), hash(1)), (ms(1_700_000_000_000), hash(2))]
+        );
     }
 
     #[test]
     fn expiry_fires_only_once_the_deadline_has_passed() {
         let mut index = InvalidationIndex::new();
-        let deadline = InvalidationKey::Expiry(UnixMillis::from_millis(1_700_000_000_300));
-        index.insert(hash(1), WatchSet::new().watch(deadline));
+        let ms = UnixMillis::from_millis;
+        let deadline = 1_700_000_000_300;
+        index.insert(hash(1), WatchSet::new().watch(InvalidationKey::Expiry(ms(deadline))));
 
         // Still valid at the deadline millisecond itself.
-        assert!(index.due_expiries(UnixMillis::from_millis(1_700_000_000_200)).is_empty());
-        assert!(index.due_expiries(UnixMillis::from_millis(1_700_000_000_300)).is_empty());
-        assert_eq!(index.due_expiries(UnixMillis::from_millis(1_700_000_000_301)), vec![deadline]);
+        assert!(index.take_expired(ms(deadline - 100)).is_empty());
+        assert!(index.take_expired(ms(deadline)).is_empty());
+        assert_eq!(index.take_expired(ms(deadline + 1)), vec![(ms(deadline), hash(1))]);
     }
 
     #[test]
-    fn removing_last_expiry_watcher_prunes_ordered_deadline() {
+    fn removing_a_watcher_unregisters_its_deadline() {
         let mut index = InvalidationIndex::new();
         let deadline = InvalidationKey::Expiry(UnixMillis::from_millis(7));
         let (first, second) = (hash(1), hash(2));
@@ -439,10 +444,10 @@ mod tests {
         index.insert(first, WatchSet::new().watch(deadline));
         index.insert(second, WatchSet::new().watch(deadline));
         index.remove(&first);
-        assert_eq!(index.due_expiries(UnixMillis::from_millis(8)), vec![deadline]);
-
-        index.remove(&second);
-        assert!(index.due_expiries(UnixMillis::MAX).is_empty());
+        assert_eq!(
+            index.take_expired(UnixMillis::from_millis(8)),
+            vec![(UnixMillis::from_millis(7), second)]
+        );
     }
 
     #[test]
