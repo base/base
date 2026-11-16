@@ -904,14 +904,24 @@ impl GateClient {
                 eprintln!("Log in to the approval gateway at: {login_url}");
             }
             shown_url = Some(login_url.to_string());
-            // The opener waits for `open`/`xdg-open` to exit; a misconfigured
-            // one can block, so it runs off the async workers.
+            // The opener waits for `open`/`xdg-open` to exit, which can take
+            // as long as the browser stays open, so it runs off the async
+            // workers while the callback is served; the login timeout bounds
+            // the whole login. Only an opener that failed falls back early.
             let prompter = Arc::clone(&self.prompter);
             let url = login_url.to_string();
-            let opened = tokio::task::spawn_blocking(move || prompter.open_browser(&url)).await;
-            if matches!(opened, Ok(Ok(())))
-                && let Ok(received) = listener.wait(self.login_timeout).await
-            {
+            let mut opener = tokio::task::spawn_blocking(move || prompter.open_browser(&url));
+            let wait = listener.wait(self.login_timeout);
+            tokio::pin!(wait);
+            let received = tokio::select! {
+                received = &mut wait => received,
+                opened = &mut opener => match opened {
+                    Ok(Ok(())) => wait.await,
+                    Ok(Err(error)) => Err(error),
+                    Err(error) => Err(GateError::Token(error.to_string())),
+                },
+            };
+            if let Ok(received) = received {
                 Self::cache_or_warn(cache, &received.token, received.expires_at);
                 return Ok(received.token);
             }
@@ -1722,6 +1732,64 @@ mod tests {
 
         assert_eq!(*seen.lock().unwrap(), vec!["Bearer stale", "Bearer fresh"]);
         assert_eq!(cache.load(Utc::now()).as_deref(), Some("fresh"));
+    }
+
+    #[tokio::test]
+    async fn callback_is_served_while_the_opener_is_still_running() {
+        let (url, seen) = auth_gateway("fresh", LoginUrl::Loopback).await;
+        let root = tempfile::tempdir().unwrap();
+        // The opener posts the callback, then stays in the foreground (as
+        // `xdg-open` can while the browser runs) until the test releases it.
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let held = Mutex::new(held);
+        let mut prompter = MockTokenPrompter::new();
+        prompter.expect_can_open_browser().return_const(true);
+        prompter.expect_is_interactive().return_const(false);
+        prompter.expect_prompt().never();
+        prompter.expect_open_browser().times(1).returning(move |login_url| {
+            let login_url = login_url.to_string();
+            std::thread::spawn(move || post_callback(&login_url, "fresh"));
+            let _ = held.lock().unwrap().recv_timeout(Duration::from_secs(30));
+            Ok(())
+        });
+        let client = settings(url, None, Some(root.path()))
+            .client_with_prompter(Arc::new(prompter))
+            .await
+            .unwrap()
+            .with_login_timeout(Duration::from_secs(2));
+
+        let status = tokio::time::timeout(Duration::from_secs(5), client.status(ID)).await;
+        let _ = release.send(());
+
+        status.expect("the login timeout bounds the login").unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec!["", "Bearer fresh"]);
+    }
+
+    #[tokio::test]
+    async fn failed_opener_falls_back_to_prompt_without_waiting() {
+        let (url, seen) = auth_gateway("pasted", LoginUrl::Loopback).await;
+        let root = tempfile::tempdir().unwrap();
+        let mut prompter = MockTokenPrompter::new();
+        prompter.expect_can_open_browser().return_const(true);
+        prompter.expect_is_interactive().return_const(true);
+        prompter
+            .expect_open_browser()
+            .times(1)
+            .returning(|_| Err(GateError::Token("no opener".to_string())));
+        prompter.expect_prompt().times(1).returning(|_| Ok("pasted".to_string()));
+        // A login timeout far beyond the check below: the fallback must not
+        // wait it out.
+        let client = settings(url, None, Some(root.path()))
+            .client_with_prompter(Arc::new(prompter))
+            .await
+            .unwrap()
+            .with_login_timeout(Duration::from_secs(60));
+
+        tokio::time::timeout(Duration::from_secs(5), client.status(ID))
+            .await
+            .expect("a failed opener falls back at once")
+            .unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec!["", "Bearer pasted"]);
     }
 
     #[tokio::test]

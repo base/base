@@ -6,7 +6,9 @@ use std::{
     fs::{self, DirBuilder, OpenOptions},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -28,6 +30,7 @@ pub trait TokenPrompter: Send + Sync {
     fn can_open_browser(&self) -> bool;
 
     /// Opens `url` in the browser; an error means it could not be opened.
+    /// May block while the opener runs; the login is served meanwhile.
     fn open_browser(&self, url: &str) -> Result<(), GateError>;
 
     /// Whether a prompt can be shown (stdin is a terminal and nothing else
@@ -47,21 +50,13 @@ impl TokenPrompter for TerminalPrompter {
         true
     }
 
-    /// Runs the platform opener with the URL as a single argument, no shell.
+    /// Runs the platform opener with the URL as a single argument, no shell,
+    /// for at most [`Self::OPENER_TIMEOUT`].
     fn open_browser(&self, url: &str) -> Result<(), GateError> {
         let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-        let status = Command::new(opener)
-            .arg(url)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|error| GateError::Token(format!("{opener}: {error}")))?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(GateError::Token(format!("{opener} exited with {status}")))
-        }
+        let mut command = Command::new(opener);
+        command.arg(url);
+        Self::run_opener(opener, &mut command, Self::OPENER_TIMEOUT)
     }
 
     fn is_interactive(&self) -> bool {
@@ -84,6 +79,60 @@ impl TokenPrompter for TerminalPrompter {
 }
 
 impl TerminalPrompter {
+    /// How long the opener may run. `open` and a backgrounding `xdg-open`
+    /// exit within a second or two, but `xdg-open` can stay in the foreground
+    /// for as long as the browser it started, so this only caps the thread
+    /// and child process, not the login.
+    pub const OPENER_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// How often a running opener is checked for exit.
+    const OPENER_POLL: Duration = Duration::from_millis(20);
+
+    /// Runs `command` with null stdio. A spawn failure or non-zero exit is an
+    /// error. An opener still running after `timeout` is killed and reaped
+    /// and counts as opened: the browser it started may well be showing the
+    /// login page, and the login timeout still bounds the wait.
+    fn run_opener(name: &str, command: &mut Command, timeout: Duration) -> Result<(), GateError> {
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| GateError::Token(format!("{name}: {error}")))?;
+        match Self::wait_bounded(&mut child, timeout)
+            .map_err(|error| GateError::Token(format!("{name}: {error}")))?
+        {
+            Some(status) if status.success() => Ok(()),
+            Some(status) => Err(GateError::Token(format!("{name} exited with {status}"))),
+            None => {
+                tracing::debug!(opener = name, "browser opener still running; stopped it");
+                Ok(())
+            }
+        }
+    }
+
+    /// Waits up to `timeout` for `child` to exit. Returns `None` after
+    /// killing and reaping a child that was still running.
+    fn wait_bounded(
+        child: &mut Child,
+        timeout: Duration,
+    ) -> io::Result<Option<std::process::ExitStatus>> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return Ok(Some(status));
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                // Kill fails only if it already exited; `wait` reaps either way.
+                let _ = child.kill();
+                child.wait()?;
+                return Ok(None);
+            }
+            thread::sleep(Self::OPENER_POLL.min(deadline - now));
+        }
+    }
+
     fn read_hidden() -> Result<String, GateError> {
         let mut token = String::new();
         loop {
@@ -292,6 +341,46 @@ mod tests {
     use url::Url;
 
     use super::TokenCache;
+
+    #[cfg(unix)]
+    #[test]
+    fn stalled_opener_is_killed_and_reaped_at_its_bound() {
+        use std::{
+            process::{Command, Stdio},
+            time::{Duration, Instant},
+        };
+
+        use super::TerminalPrompter;
+
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = child.id().to_string();
+        let started = Instant::now();
+        let status =
+            TerminalPrompter::wait_bounded(&mut child, Duration::from_millis(200)).unwrap();
+        assert_eq!(status, None);
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_millis(200) && elapsed < Duration::from_secs(5));
+        // Reaped, not a zombie: `kill -0` fails once the pid is gone.
+        let alive = Command::new("kill")
+            .args(["-0", &pid])
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(!alive, "opener {pid} still exists");
+
+        // Through the opener path a stalled opener counts as opened; one that
+        // exits non-zero or cannot start is an error.
+        let mut stalled = Command::new("sleep");
+        stalled.arg("30");
+        TerminalPrompter::run_opener("sleep", &mut stalled, Duration::from_millis(100)).unwrap();
+        let mut failing = Command::new("false");
+        TerminalPrompter::run_opener("false", &mut failing, Duration::from_secs(5)).unwrap_err();
+        let mut missing = Command::new("basectl-test-no-such-opener");
+        TerminalPrompter::run_opener("missing", &mut missing, Duration::from_secs(5)).unwrap_err();
+        let mut quick = Command::new("true");
+        TerminalPrompter::run_opener("true", &mut quick, Duration::from_secs(5)).unwrap();
+    }
 
     /// Unsigned JWT with the given `exp`.
     fn jwt(exp: i64) -> String {
