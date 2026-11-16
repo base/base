@@ -40,7 +40,7 @@ use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, GuardLimits,
     GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
     ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
-    StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
+    StateDiffInvalidation, UnixMillis, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
         Bid, InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
@@ -774,7 +774,7 @@ where
     }
 
     /// Invalidates guarded transactions whose effective expiry has passed at
-    /// `now_ms`, the committed block's exact millisecond time.
+    /// `now`, the committed block's exact millisecond time.
     ///
     /// Driven from `on_canonical_state_change`, so a transaction is evicted at
     /// the first canonical block past its deadline and never before it. The
@@ -782,10 +782,10 @@ where
     /// built, so a transaction that expires between canonical blocks is not
     /// attempted. Eviction frees the `PayerBook` reservations and count-cap
     /// slots held by expired transactions.
-    fn expire_due(&self, now_ms: u64) {
+    fn expire_due(&self, now: UnixMillis) {
         // Do not expire a protocol reservation between guard and reth insertion.
         let _admission_guard = self.protocol_admission_lock.lock();
-        let (dropped, deadline_count) = self.guard.write().invalidate_expired(now_ms);
+        let (dropped, deadline_count) = self.guard.write().invalidate_expired(now);
         GuardMetrics::expiry_buckets_fired().increment(deadline_count as u64);
         let removed = self.remove_from_stores(dropped, RemoveMode::Exact);
         GuardMetrics::record_expiry_invalidations(removed.len());
@@ -2527,7 +2527,7 @@ where
                 self.sync_validity_lanes(touched_lanes, false);
             }
         }
-        self.expire_due(now_ms);
+        self.expire_due(UnixMillis::from_millis(now_ms));
         self.expire_by_block(block_number);
         self.reconcile_guard();
         GuardMetrics::tracked().set(self.guard.read().len() as f64);

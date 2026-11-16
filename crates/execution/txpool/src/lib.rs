@@ -19,6 +19,9 @@ pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet};
 mod manifest;
 pub use manifest::{ConfigSlot, ManifestStale, WatchManifest};
 
+mod unix_millis;
+pub use unix_millis::UnixMillis;
+
 mod limits;
 pub use limits::{InflightCounters, PayerBook};
 

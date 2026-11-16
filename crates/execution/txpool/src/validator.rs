@@ -51,8 +51,8 @@ use revm::{
 };
 
 use crate::{
-    BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, ValidatorMetrics, WatchManifest,
-    WatchSet,
+    BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, UnixMillis, ValidatorMetrics,
+    WatchManifest, WatchSet,
 };
 
 /// Base-specific transaction pool validation errors.
@@ -1296,11 +1296,11 @@ where
         let nonce_free = signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX;
         // Every expiry predicate as the last block millisecond at which it holds,
         // so the guard and the builder precheck share one inclusive deadline.
-        let transaction_expiry = signed.tx().last_valid_ms().unwrap_or(u64::MAX);
+        let transaction_expiry =
+            signed.tx().last_valid_ms().map_or(UnixMillis::MAX, UnixMillis::from_millis);
         let sender_expiry = Self::actor_last_valid_ms(sender_actor.expiry);
         let payer_expiry = Self::actor_last_valid_ms(payer_actor.map_or(0, |actor| actor.expiry));
-        let effective_expiry =
-            [transaction_expiry, sender_expiry, payer_expiry].into_iter().min().unwrap_or(u64::MAX);
+        let effective_expiry = transaction_expiry.min(sender_expiry).min(payer_expiry);
         let mut watch_set = WatchSet::new().watch(InvalidationKey::Balance(payer));
         for read in &config_reads {
             watch_set
@@ -1309,7 +1309,7 @@ where
         for address in authorization_code_reads {
             watch_set.push(InvalidationKey::CodeHash(address));
         }
-        if effective_expiry != u64::MAX {
+        if effective_expiry != UnixMillis::MAX {
             watch_set.push(InvalidationKey::Expiry(effective_expiry));
         }
         let nonce_key = signed.tx().nonce_key;
@@ -1380,9 +1380,7 @@ where
                 // reaches `unlocks_at`, so the lock last holds one millisecond
                 // before that second starts.
                 if let Some(unlocks_at) = unlocks_at {
-                    watch_set.push(InvalidationKey::Expiry(
-                        unlocks_at.saturating_mul(1_000).saturating_sub(1),
-                    ));
+                    watch_set.push(InvalidationKey::Expiry(UnixMillis::before_second(unlocks_at)));
                 }
             }
         }
@@ -1458,11 +1456,14 @@ where
         })
     }
 
-    /// Converts an actor's `expiry` (Unix seconds, valid while
-    /// `block.timestamp <= expiry`; `0` = none) to the last block millisecond at
-    /// which it holds, or `u64::MAX` when unbounded.
-    const fn actor_last_valid_ms(expiry: u64) -> u64 {
-        if expiry == 0 { u64::MAX } else { expiry.saturating_mul(1_000).saturating_add(999) }
+    /// Converts an actor's `expiry` (Unix seconds; `0` = none) to the last block
+    /// millisecond at which it holds, or [`UnixMillis::MAX`] when unbounded.
+    ///
+    /// Execution checks actor expiry against the header second (valid while
+    /// `block.timestamp <= expiry`), so it holds in every block of its expiry
+    /// second.
+    const fn actor_last_valid_ms(expiry: u64) -> UnixMillis {
+        if expiry == 0 { UnixMillis::MAX } else { UnixMillis::last_of_second(expiry) }
     }
 
     /// Minimum configured unlock delay (seconds) for a hard-locked payer to
@@ -3852,6 +3853,7 @@ mod tests {
                 Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
 
             let state = validator.validate_eip8130_full(&signed).expect("valid tx");
+            let deadline = UnixMillis::from_millis(deadline);
             assert_eq!(state.manifest.effective_expiry(), deadline);
             assert!(state.watch_set.contains(&InvalidationKey::Expiry(deadline)));
         }
@@ -3919,24 +3921,34 @@ mod tests {
         };
         // The guard drops the transaction at the first block strictly after
         // `deadline`, never at `deadline` itself.
-        let assert_fires_after = |state: &Eip8130ValidationState, deadline: u64| {
+        let assert_fires_after = |state: &Eip8130ValidationState, deadline_ms: u64| {
+            let deadline = UnixMillis::from_millis(deadline_ms);
             let mut index = InvalidationIndex::new();
             index.insert(B256::ZERO, state.watch_set.clone());
             assert!(index.due_expiries(deadline).is_empty());
-            assert_eq!(index.due_expiries(deadline + 1), vec![InvalidationKey::Expiry(deadline)]);
+            assert_eq!(
+                index.due_expiries(UnixMillis::from_millis(deadline_ms + 1)),
+                vec![InvalidationKey::Expiry(deadline)]
+            );
         };
 
         // Sender and distinct-payer actor expiries hold through the whole
         // expiry second; the manifest keeps the earlier one.
         let sender_expiry = now + 10;
         let state = validate(state_word(0, 0, sender_expiry), None);
-        assert_eq!(state.manifest.effective_expiry(), sender_expiry * 1000 + 999);
+        assert_eq!(
+            state.manifest.effective_expiry(),
+            UnixMillis::from_millis(sender_expiry * 1000 + 999)
+        );
         assert_fires_after(&state, sender_expiry * 1000 + 999);
 
         let payer_expiry = now + 5;
         let state = validate(state_word(0, 0, sender_expiry), Some(state_word(0, 0, payer_expiry)));
         assert_eq!(state.payer, payer);
-        assert_eq!(state.manifest.effective_expiry(), payer_expiry * 1000 + 999);
+        assert_eq!(
+            state.manifest.effective_expiry(),
+            UnixMillis::from_millis(payer_expiry * 1000 + 999)
+        );
         assert_fires_after(&state, payer_expiry * 1000 + 999);
 
         // A pending unlock one second away keeps the account locked at
@@ -3946,7 +3958,7 @@ mod tests {
         let unlocks_at = now + 1;
         let state = validate(state_word(pending_unlock, unlocks_at, 0), None);
         assert!(state.sender_locked);
-        assert_eq!(state.manifest.effective_expiry(), u64::MAX);
+        assert_eq!(state.manifest.effective_expiry(), UnixMillis::MAX);
         assert_fires_after(&state, unlocks_at * 1000 - 1);
 
         let state = validate(state_word(0, 0, 0), Some(state_word(pending_unlock, unlocks_at, 0)));

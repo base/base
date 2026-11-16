@@ -17,7 +17,9 @@ use std::collections::HashMap;
 
 use alloy_primitives::{Address, TxHash, U256};
 
-use crate::{InflightCounters, InvalidationIndex, InvalidationKey, PayerBook, WatchSet};
+use crate::{
+    InflightCounters, InvalidationIndex, InvalidationKey, PayerBook, UnixMillis, WatchSet,
+};
 
 /// Default cap on inflight signatures per unlocked account.
 pub const DEFAULT_SIGNATURE_LIMIT: u32 = 4;
@@ -542,10 +544,10 @@ impl MempoolGuard {
     }
 
     /// Invalidates every transaction whose expiry deadline has passed at the
-    /// block millisecond time `now_ms`, returning the dropped hashes and the
+    /// block time `now`, returning the dropped hashes and the
     /// number of distinct deadlines fired.
-    pub fn invalidate_expired(&mut self, now_ms: u64) -> (Vec<TxHash>, usize) {
-        let due = self.index.due_expiries(now_ms);
+    pub fn invalidate_expired(&mut self, now: UnixMillis) -> (Vec<TxHash>, usize) {
+        let due = self.index.due_expiries(now);
         let deadline_count = due.len();
         (self.invalidate_exact(due), deadline_count)
     }
@@ -857,7 +859,8 @@ mod tests {
     fn expiry_invalidation_fires_only_passed_deadlines() {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let make = |id, deadline| Admission {
-            watch_set: WatchSet::new().watch(InvalidationKey::Expiry(deadline)),
+            watch_set: WatchSet::new()
+                .watch(InvalidationKey::Expiry(UnixMillis::from_millis(deadline))),
             ..self_pay(id, addr(id), 10)
         };
 
@@ -865,7 +868,8 @@ mod tests {
         assert!(guard.try_admit(make(2, 1_700_000_000_200)).is_ok());
         assert!(guard.try_admit(make(3, 1_700_000_000_400)).is_ok());
 
-        let (mut dropped, deadlines) = guard.invalidate_expired(1_700_000_000_400);
+        let (mut dropped, deadlines) =
+            guard.invalidate_expired(UnixMillis::from_millis(1_700_000_000_400));
         dropped.sort_unstable();
         assert_eq!(dropped, vec![hash(1), hash(2)]);
         assert_eq!(deadlines, 2);

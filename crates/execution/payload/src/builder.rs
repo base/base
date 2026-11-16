@@ -19,7 +19,7 @@ use base_common_evm::{BaseSpecId, BaseTime, L1BlockInfo, MeteredGas};
 use base_common_rpc_types_engine::PayloadReady;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
+    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, UnixMillis,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
@@ -1116,7 +1116,9 @@ where
             );
             0
         });
-        let block_timestamp_ms = BaseTime { timestamp_millis_part }.timestamp_ms(block_timestamp);
+        let block_timestamp_ms = UnixMillis::from_millis(
+            BaseTime { timestamp_millis_part }.timestamp_ms(block_timestamp),
+        );
         // Only deposits can write the L1 block info predeploy, so the scalar left in state by the
         // sequencer transactions holds for every pool candidate in this scan.
         let da_footprint_gas_scalar = self
@@ -1769,7 +1771,7 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        BasePooledTransaction, BasePooledTx, BestTransactionsHold, ValidityOperator,
+        BasePooledTransaction, BasePooledTx, BestTransactionsHold, UnixMillis, ValidityOperator,
         ValidityPredicate, WatchManifest,
     };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
@@ -2447,13 +2449,13 @@ mod tests {
         // the deadline against the block's exact millisecond time, as execution does.
         const MILLIS_PART: u16 = 400;
         let block_ms = DENIM_TIMESTAMP * 1_000 + u64::from(MILLIS_PART);
-        let included = |deadline_ms: u64| {
+        let included = |deadline: UnixMillis| {
             let transaction = pool_transaction_to(0, Address::repeat_byte(0x8a), U256::ZERO);
             transaction.set_watch_manifest(WatchManifest::new(
                 Vec::new(),
                 Address::ZERO,
                 U256::ZERO,
-                deadline_ms,
+                deadline,
             ));
             let mut provider = funded_provider(&[transaction.sender()]);
             let mut base_time_storage = HashMap::default();
@@ -2486,8 +2488,14 @@ mod tests {
             payload.block().body().transactions.len() == 1
         };
 
-        assert!(!included(block_ms - 100), "a deadline earlier in the same second has passed");
-        assert!(included(block_ms), "a transaction is valid through its deadline millisecond");
+        assert!(
+            !included(UnixMillis::from_millis(block_ms - 100)),
+            "a deadline earlier in the same second has passed"
+        );
+        assert!(
+            included(UnixMillis::from_millis(block_ms)),
+            "a transaction is valid through its deadline millisecond"
+        );
     }
 
     #[test]
