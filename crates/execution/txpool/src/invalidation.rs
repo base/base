@@ -21,9 +21,12 @@
 //! The index is a pure data structure: it does not decide *whether* a watched
 //! transaction is still valid, only *which* transactions watch a changed key.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 
-use alloy_primitives::{Address, B256, TxHash};
+use alloy_primitives::{
+    Address, B256, TxHash,
+    map::{HashMap, HashSet},
+};
 
 use crate::UnixMillis;
 
@@ -283,7 +286,7 @@ impl InvalidationIndex {
     where
         I: IntoIterator<Item = InvalidationKey>,
     {
-        let mut affected = HashSet::new();
+        let mut affected = HashSet::default();
         for key in changed {
             debug_assert!(
                 !matches!(key, InvalidationKey::Expiry(_)),

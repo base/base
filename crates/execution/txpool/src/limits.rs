@@ -16,9 +16,9 @@
 //! balance. For a trusted account ETH can only leave through gas it sponsors, so
 //! `Σ max_cost ≤ balance` is a true upper bound on the only drain.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_primitives::{Address, TxHash, U256, map::HashMap};
 
 /// Per-account inflight transaction counters with a caller-supplied cap.
 ///
@@ -98,7 +98,7 @@ impl PayerBook {
             balance,
             reserved: U256::ZERO,
             by_priority: BTreeMap::new(),
-            entries: HashMap::new(),
+            entries: HashMap::default(),
         }
     }
 
