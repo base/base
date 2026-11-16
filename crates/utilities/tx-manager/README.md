@@ -115,10 +115,13 @@ still pending after `resubmission_timeout`, it is replaced only if an L1 block o
 `resubmission_timeout` priced it out: the block's base fee or blob base fee was above its fee
 caps, or blob transactions that paid builders more per blob, as tip times gas used, left no
 room for its blobs. Otherwise it is sent again as it is: a block without blobs, or with room
-it did not use, is not something a higher fee fixes. The check walks back from the latest L1
-block, fetches a block's receipts only when its blobs leave no room, and reads the maximum
-blobs per block and the blob base fee parameters from the built-in blob schedule of the L1
-chain at the block's timestamp. When the check fails, as on an RPC error or an L1 chain with
+it did not use, is not something a higher fee fixes. After three such resends in a row, it is
+replaced at the next `resubmission_timeout` anyway: builders can also leave it out for reasons
+a higher fee fixes that blocks do not show, such as a tip under their minimum, and it holds
+back every later nonce. The check walks back from the latest L1 block, fetches a block's
+receipts only when its blobs leave no room, and reads the maximum blobs per block and the
+blob base fee parameters from the built-in blob schedule of the L1 chain at the block's
+timestamp. When the check fails, as on an RPC error or an L1 chain with
 no built-in schedule, the transaction is replaced. After an RPC error or no
 answer, such as a network error, the same signed transaction is sent again every
 `publish_retry_delay`, up to `publish_max_retries` times, without raising any fee. Once a

@@ -76,6 +76,12 @@ use crate::{
 /// well under this threshold, so the conversion preserves full precision.
 const WEI_PER_GWEI: f64 = 1_000_000_000.0;
 
+/// Number of resubmission timeouts in a row at which a pending blob transaction that no L1
+/// block priced out is sent again as it is; at the next one, it is replaced anyway. Builders
+/// can leave it out for reasons a higher fee fixes that blocks do not show, such as a tip
+/// under their minimum, and a pending transaction holds back every later nonce.
+const MAX_BLOB_RESENDS: u32 = 3;
+
 /// A signed transaction together with the fee values that were applied
 /// during construction.
 ///
@@ -139,12 +145,15 @@ struct BumpState {
     /// Hash and `max_priority_fee_per_gas` of every published version, any of
     /// which may land.
     published: Vec<(B256, u128)>,
+    /// Number of resubmission timeouts at which the most recent version was sent again as
+    /// it is because no L1 block priced it out.
+    resends: u32,
 }
 
 impl BumpState {
     /// Constructs a [`BumpState`] from the first published version.
     fn new(prepared: PreparedTx, tx_hash: B256) -> Self {
-        Self { published: vec![(tx_hash, prepared.gas_tip_cap)], prepared, tx_hash }
+        Self { published: vec![(tx_hash, prepared.gas_tip_cap)], prepared, tx_hash, resends: 0 }
     }
 
     /// Records a published replacement.
@@ -152,6 +161,7 @@ impl BumpState {
         self.published.push((tx_hash, prepared.gas_tip_cap));
         self.prepared = prepared;
         self.tx_hash = tx_hash;
+        self.resends = 0;
     }
 }
 
@@ -1151,9 +1161,11 @@ where
     /// A blob transaction is replaced only when an L1 block of the last resubmission timeout
     /// priced it out ([`blob_tx_priced_out`](Self::blob_tx_priced_out)), or when that check
     /// fails, so that a pending transaction is still replaced as before when the L1 node
-    /// cannot tell. Otherwise, as when no replacement exists within the fee limit, the last
-    /// version is sent again as it is: it may never have reached a mempool (its publish got
-    /// no answer) or may have been dropped from it, and nothing else would publish it again.
+    /// cannot tell, or once its last version was sent again as it is at [`MAX_BLOB_RESENDS`]
+    /// timeouts in a row. Otherwise, as when no replacement exists within the fee limit, the
+    /// last version is sent again as it is: it may never have reached a mempool (its publish
+    /// got no answer) or may have been dropped from it, and nothing else would publish it
+    /// again.
     async fn try_fee_bump(
         &self,
         candidate: &TxCandidate,
@@ -1171,7 +1183,7 @@ where
             return;
         }
 
-        if candidate.is_blob() {
+        if candidate.is_blob() && state.resends < MAX_BLOB_RESENDS {
             let blob_count = candidate.blobs.len() as u128;
             let priced_out =
                 self.blob_tx_priced_out(&state.prepared, blob_count).await.unwrap_or_else(|error| {
@@ -1179,7 +1191,8 @@ where
                     true
                 });
             if !priced_out {
-                info!(tx_hash = %state.tx_hash, "blob transaction not priced out, resending it as is");
+                state.resends += 1;
+                info!(tx_hash = %state.tx_hash, resends = state.resends, "blob transaction not priced out, resending it as is");
                 // `publish_tx` logs and records the outcome; a failure is retried next tick.
                 let _ =
                     self.publish_tx(send_state, &state.prepared.raw_tx, Some(state.tx_hash)).await;
@@ -2043,7 +2056,7 @@ mod tests {
         layer::{Context as LayerContext, SubscriberExt},
     };
 
-    use super::{PreparedTx, SimpleTxManager, TxEnvelope};
+    use super::{MAX_BLOB_RESENDS, PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
         BlobFeePolicy, BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendOutcome,
         SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError, metrics::MockTxMetrics,
@@ -3254,6 +3267,43 @@ mod tests {
 
             assert_eq!(asserter.read_q().len(), 3, "no replacement should be signed");
             assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 10_000_000);
+        });
+    }
+
+    /// A blob tx that L1 blocks with room keep leaving out is sent again as it is at
+    /// [`MAX_BLOB_RESENDS`] resubmission timeouts in a row, then replaced at the next one
+    /// without checking L1 blocks: a higher fee may be what gets it in.
+    #[test]
+    fn a_blob_tx_left_out_by_blocks_with_room_is_replaced_after_its_resends() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let asserter = Asserter::new();
+            push_pending_blob_tx(&asserter);
+            for _ in 0..MAX_BLOB_RESENDS {
+                // A block with room for its blob, then one older than the timeout.
+                asserter.push_success(&Some(&l1_block(24, 20)));
+                asserter.push_success(&Some(&l1_block(12, 21)));
+                asserter.push_failure_msg("already known");
+            }
+            // The replacement.
+            push_blob_pricing(&asserter);
+            asserter.push_success(&B256::with_last_byte(2));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().times(1).return_const(());
+            let manager =
+                blob_manager(&ctx, mocked(&asserter), (10_000_000, 10_000_000_000), metrics).await;
+            let mut send = Box::pin(manager.send(blob_candidate()));
+            assert!(futures::poll!(&mut send).is_pending());
+
+            for _ in 0..MAX_BLOB_RESENDS {
+                ctx.sleep(BLOB_RESUBMISSION_TIMEOUT + Duration::from_nanos(1)).await;
+                assert!(futures::poll!(&mut send).is_pending());
+                assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 10_000_000);
+            }
+            ctx.sleep(BLOB_RESUBMISSION_TIMEOUT + Duration::from_nanos(1)).await;
+            assert!(futures::poll!(&mut send).is_pending());
+
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+            assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 20_000_000);
         });
     }
 
