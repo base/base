@@ -108,7 +108,7 @@ mod tests {
         Evm::new(
             spec,
             BlockEnv::<BaseEvmTypes>::default(),
-            BaseEvmTypes::tx_registry(),
+            BaseEvmTypes::tx_registry(spec),
             db,
             Precompiles::base(spec.into()),
         )

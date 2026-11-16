@@ -77,7 +77,7 @@ fn build_evm2(upgrade: BaseUpgrade, balance: U256) -> Evm<'static, BaseEvmTypes>
         ext: l1_fee_params(),
         ..Default::default()
     };
-    Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+    Evm::new(spec, block, BaseEvmTypes::tx_registry(spec), db, Precompiles::base(spec.into()))
 }
 
 fn balance(evm: &mut Evm<'static, BaseEvmTypes>, addr: Address) -> U256 {

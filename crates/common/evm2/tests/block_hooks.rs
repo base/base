@@ -48,7 +48,7 @@ fn evm_with_stubs(
     Evm::new(
         spec,
         BlockEnv::<BaseEvmTypes> { number: U256::from(number), ..Default::default() },
-        BaseEvmTypes::tx_registry(),
+        BaseEvmTypes::tx_registry(spec),
         db,
         Precompiles::base(spec.into()),
     )
