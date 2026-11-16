@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 
 use alloy_primitives::{
     Address, B256, TxHash,
-    map::{Entry, HashMap, HashSet},
+    map::{B256Map, B256Set, Entry, HashMap, HashSet},
 };
 
 use crate::UnixMillis;
@@ -165,7 +165,7 @@ pub enum Watchers {
     /// The key's only watcher.
     One(TxHash),
     /// Two or more watchers.
-    Many(HashSet<TxHash>),
+    Many(B256Set),
 }
 
 impl Watchers {
@@ -211,7 +211,7 @@ impl Watchers {
 #[derive(Debug, Default)]
 pub struct InvalidationIndex {
     by_key: HashMap<InvalidationKey, Watchers>,
-    watch_sets: HashMap<TxHash, WatchSet>,
+    watch_sets: B256Map<WatchSet>,
     /// `(deadline, hash)` per [`InvalidationKey::Expiry`]; never in `by_key`.
     expiries: BTreeSet<(UnixMillis, TxHash)>,
 }

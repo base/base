@@ -13,7 +13,10 @@
 //! stream. The guard returns the hashes it has dropped so the pool can evict the
 //! corresponding transactions.
 
-use alloy_primitives::{Address, TxHash, U256, map::HashMap};
+use alloy_primitives::{
+    Address, TxHash, U256,
+    map::{AddressMap, B256Map},
+};
 
 use crate::{
     InflightCounters, InvalidationIndex, InvalidationKey, PayerBook, UnixMillis, WatchSet,
@@ -166,8 +169,8 @@ pub struct MempoolGuard {
     index: InvalidationIndex,
     signature_counts: InflightCounters,
     payment_counts: InflightCounters,
-    payer_books: HashMap<Address, PayerBook>,
-    records: HashMap<TxHash, AdmissionRecord>,
+    payer_books: AddressMap<PayerBook>,
+    records: B256Map<AdmissionRecord>,
     limits: GuardLimits,
 }
 
@@ -192,8 +195,8 @@ impl MempoolGuard {
             index: InvalidationIndex::new(),
             signature_counts: InflightCounters::new(),
             payment_counts: InflightCounters::new(),
-            payer_books: HashMap::default(),
-            records: HashMap::default(),
+            payer_books: AddressMap::default(),
+            records: B256Map::default(),
             limits,
         }
     }
