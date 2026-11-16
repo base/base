@@ -28,7 +28,7 @@ use reqwest::{
     header::{CONTENT_RANGE, HeaderMap, RANGE},
 };
 use tokio::{
-    io::{AsyncSeekExt, AsyncWriteExt},
+    io::{AsyncSeekExt, AsyncWriteExt, BufWriter},
     sync::Mutex,
 };
 use tracing::{debug, info};
@@ -43,6 +43,9 @@ const MAX_IDLE_DOWNLOAD_ATTEMPTS: u32 = 8;
 
 /// Idle read timeout so a stalled CDN socket fails into retry instead of hanging.
 const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Bytes a piece download buffers before each write to the shared `.part` file.
+const PIECE_WRITE_BUFFER_SIZE: usize = 8 << 20;
 
 /// Header of the piece bitmap sidecar format.
 const PIECE_SIDECAR_VERSION: &str = "pieces-v1";
@@ -398,6 +401,10 @@ impl ProofsArchiveDownload {
             let content_length = response.content_length();
             let mut file = tokio::fs::OpenOptions::new().write(true).open(&self.part_path).await?;
             file.seek(SeekFrom::Start(start)).await?;
+            // ext4 takes an exclusive per-inode lock for every buffered write, so pieces writing
+            // each small chunk into the shared `.part` file contend on that lock.
+            file.set_max_buf_size(PIECE_WRITE_BUFFER_SIZE);
+            let mut file = BufWriter::with_capacity(PIECE_WRITE_BUFFER_SIZE, file);
 
             let attempt_start = written;
             let mut stream_error = None;
