@@ -13,6 +13,7 @@ use std::{
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
+    buffer::CellWidth,
     layout::Rect,
     prelude::*,
     widgets::{Block, Borders, Clear, List, ListState, Paragraph, Wrap},
@@ -576,8 +577,11 @@ impl GateProposals {
         let rows = u16::try_from(rows.max(proposals.len() + need + 2)).unwrap_or(u16::MAX);
         let inner = Self::render_popup(f, area, WIDTH, rows, title);
         let height = usize::from(inner.height);
-        let fits =
-            need < height && details.iter().all(|line| line.width() <= usize::from(inner.width));
+        let fits = need < height
+            && details.iter().all(|line| {
+                line.spans.iter().map(|span| Self::cells(&span.content)).sum::<usize>()
+                    <= usize::from(inner.width)
+            });
         self.details_shown.set(fits);
         let list_rows = if fits {
             height - need
@@ -619,23 +623,28 @@ impl GateProposals {
         f.render_widget(Paragraph::new(details), details_area);
     }
 
-    /// `text` wrapped to `width` display columns: at spaces where it can,
-    /// within a word where a word is wider than a row.
+    /// Width of `text` in terminal cells, measured as the renderer draws it:
+    /// grapheme by grapheme, control characters dropped.
+    fn cells(text: &str) -> usize {
+        let span = Span::raw(text);
+        span.styled_graphemes(Style::default()).map(|g| usize::from(g.symbol.cell_width())).sum()
+    }
+
+    /// `text` wrapped to `width` terminal cells: at spaces where it can,
+    /// between graphemes where a word is wider than a row.
     fn wrap(text: &str, width: usize) -> Vec<String> {
-        let cols = |s: &str| Span::raw(s).width();
         let (mut rows, mut row) = (Vec::new(), String::new());
         for word in text.split_inclusive(' ') {
-            if !row.is_empty() && cols(&row) + cols(word.trim_end()) > width {
+            if !row.is_empty() && Self::cells(&row) + Self::cells(word.trim_end()) > width {
                 rows.push(std::mem::take(&mut row).trim_end().to_string());
             }
-            for c in word.chars() {
-                let mut buf = [0; 4];
-                let c = &*c.encode_utf8(&mut buf);
-                if !row.is_empty() && cols(&row) + cols(c) > width {
+            for grapheme in Span::raw(word).styled_graphemes(Style::default()) {
+                let g = grapheme.symbol;
+                if !row.is_empty() && Self::cells(&row) + Self::cells(g) > width {
                     rows.push(std::mem::take(&mut row).trim_end().to_string());
                 }
-                if !(row.is_empty() && c == " ") {
-                    row.push_str(c);
+                if !(row.is_empty() && g == " ") {
+                    row.push_str(g);
                 }
             }
         }
@@ -682,6 +691,13 @@ mod tests {
             (0..16).map(|i| format!("justify{i:02}word")).collect::<Vec<_>>().join(" ");
         reason.truncate(GateClient::MAX_REASON_CHARS);
         reason
+    }
+
+    /// A reason ending in "\u{FF76}\u{FF9E}" (halfwidth katakana KA and its
+    /// voiced sound mark): one grapheme the renderer draws two cells wide,
+    /// though its plain unicode width is one.
+    fn sound_mark_reason() -> String {
+        "a".repeat(72) + "\u{FF76}\u{FF9E}Z"
     }
 
     /// `count` approved proposals with long IDs, the list open at `cursor`.
@@ -792,8 +808,8 @@ mod tests {
     #[test]
     fn execute_needs_the_complete_details_on_screen() {
         let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
-        let reason = long_reason();
-        for reason in ["planned", &reason] {
+        let (reason, marked) = (long_reason(), sound_mark_reason());
+        for reason in ["planned", &reason, &marked] {
             for (width, height) in (20..=80).flat_map(|w| (6..=24).map(move |h| (w, h))) {
                 let mut gate = listed(22, 21, reason);
                 let shown = screen(&gate, width, height).concat();
@@ -845,6 +861,27 @@ mod tests {
         let mut gate = listed(22, 21, "planned");
         screen_with_toasts(&gate, &mut resources);
         assert!(press_x(&mut gate, &mut resources));
+    }
+
+    #[test]
+    fn a_halfwidth_sound_mark_is_drawn_whole_or_execute_is_refused() {
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let mut gate = listed(1, 0, &sound_mark_reason());
+        let rows = screen(&gate, 80, 24);
+        let complete = flat(&rows.concat()).contains(&flat(&sound_mark_reason()));
+        assert!(complete || !press_x(&mut gate, &mut resources), "{}", rows.join("\n"));
+    }
+
+    #[test]
+    fn wrap_keeps_graphemes_whole_within_the_width_in_cells() {
+        // "\u{FF76}\u{FF9E}": halfwidth KA and its sound mark, two cells.
+        let text = "aaa \u{FF76}\u{FF9E}b \u{FF76}\u{FF9E}\u{FF76}\u{FF9E}Z long-word-here";
+        for width in 2..=40 {
+            let rows = GateProposals::wrap(text, width);
+            assert!(rows.iter().all(|row| GateProposals::cells(row) <= width), "{width}: {rows:?}");
+            assert!(rows.iter().all(|row| !row.starts_with('\u{FF9E}')), "{width}: {rows:?}");
+            assert_eq!(rows.concat().replace(' ', ""), text.replace(' ', ""), "{width}");
+        }
     }
 
     #[test]
