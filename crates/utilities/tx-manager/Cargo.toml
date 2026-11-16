@@ -21,8 +21,8 @@ alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 alloy-transport-http.workspace = true
 alloy-sol-types = { workspace = true, features = ["std"] }
-alloy-eips = { workspace = true, features = ["std", "kzg"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std", "kzg", "serde"] }
 
 # base
 base-metrics.workspace = true
