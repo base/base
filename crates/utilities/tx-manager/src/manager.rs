@@ -43,7 +43,7 @@ use std::{fmt::Debug, future::IntoFuture, sync::Arc, time::Duration};
 use alloy_consensus::TxEnvelope;
 use alloy_eips::{
     BlockNumberOrTag, Decodable2718, Encodable2718, eip4844::DATA_GAS_PER_BLOB,
-    eip7594::BlobTransactionSidecarEip7594, eip7910::EthConfig,
+    eip7594::BlobTransactionSidecarEip7594,
 };
 use alloy_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
@@ -54,6 +54,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types_eth::{Block, TransactionReceipt, TransactionRequest};
 use alloy_transport::{TransportError, TransportResult};
 use backon::{ConstantBuilder, Retryable};
+use base_common_chains::L1_CONFIGS;
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
@@ -1386,28 +1387,32 @@ where
     /// transactions that paid more per blob ([`BlobFeePolicy::is_outbid`]). Blocks are walked
     /// back from the latest one through their parents, so the walk covers at most one block
     /// per second of the timeout, and their receipts are fetched only when their blobs leave
-    /// no room for `tx`. The blob schedule comes from the L1 node (`eth_config`).
+    /// no room for `tx`. The blob parameters of each block come from the built-in blob
+    /// schedule of the L1 chain ([`L1_CONFIGS`]), at the block's timestamp.
     ///
     /// # Errors
     ///
-    /// Returns the error of an RPC call.
+    /// Returns [`TxManagerError::Unsupported`] when the chain has no built-in L1 config, or
+    /// the error of an RPC call.
     async fn blob_tx_priced_out(&self, tx: &PreparedTx, blob_count: u128) -> TxManagerResult<bool> {
-        let blob_params = RuntimeTimeout::run(
-            &self.runtime,
-            self.config.network_timeout,
-            self.provider.raw_request::<_, EthConfig>("eth_config".into(), ()),
-        )
-        .await
-        .map_err(|_| self.rpc_error("eth_config timed out"))?
-        .map_err(|e| self.classify_and_record_rpc(&e))?
-        .current
-        .blob_schedule;
+        let l1 = L1_CONFIGS.get(&self.chain_id).ok_or_else(|| {
+            TxManagerError::Unsupported(format!("no blob schedule for chain {}", self.chain_id))
+        })?;
+        let schedule = l1.blob_schedule_blob_params();
+        let blob_params_at =
+            |timestamp| match schedule.active_scheduled_params_at_timestamp(timestamp) {
+                Some(params) => *params,
+                None if l1.osaka_time.is_some_and(|time| time <= timestamp) => schedule.osaka,
+                None if l1.prague_time.is_some_and(|time| time <= timestamp) => schedule.prague,
+                None => schedule.cancun,
+            };
         let mut block =
             self.fetch_block(self.provider.get_block_by_number(BlockNumberOrTag::Latest)).await?;
         let latest = block.header.timestamp;
         while Duration::from_secs(latest.saturating_sub(block.header.timestamp))
             < self.config.resubmission_timeout
         {
+            let blob_params = blob_params_at(block.header.timestamp);
             if !BlobFeePolicy::is_affordable(tx, &block.header, blob_params) {
                 return Ok(true);
             }
@@ -2006,6 +2011,7 @@ mod tests {
         Encodable2718,
         eip4844::{Blob, DATA_GAS_PER_BLOB},
     };
+    use alloy_hardforks::mainnet::MAINNET_BPO2_TIMESTAMP;
     use alloy_json_rpc::{RequestPacket, ResponsePacket};
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
@@ -3003,22 +3009,7 @@ mod tests {
         let mut block: Block = Block::default();
         block.header.timestamp = u64::MAX;
         block.header.base_fee_per_gas = Some(1_000_000_000_000);
-        asserter.push_success(&eth_config());
         asserter.push_success(&Some(&block));
-    }
-
-    /// An `eth_config` answer with the mainnet blob schedule of 21 blobs per block at most.
-    fn eth_config() -> serde_json::Value {
-        serde_json::json!({
-            "current": {
-                "activationTime": 0,
-                "blobSchedule": { "target": 14, "max": 21, "baseFeeUpdateFraction": 11_684_671 },
-                "chainId": "0x1",
-                "forkId": "0x00000000",
-                "precompiles": {},
-                "systemContracts": {},
-            },
-        })
     }
 
     /// Metrics that accept every record a blob send makes, except the landed blob tx and the
@@ -3195,10 +3186,11 @@ mod tests {
         asserter.push_success(&Option::<TransactionReceipt>::None);
     }
 
-    /// A block mined at `timestamp`, with a 1 gwei base fee and `blobs` blobs.
-    fn l1_block(timestamp: u64, blobs: u64) -> Block {
+    /// A mainnet block mined `seconds` after BPO2, which allows 21 blobs per block, with a
+    /// 1 gwei base fee and `blobs` blobs.
+    fn l1_block(seconds: u64, blobs: u64) -> Block {
         let mut block: Block = Block::default();
-        block.header.timestamp = timestamp;
+        block.header.timestamp = MAINNET_BPO2_TIMESTAMP + seconds;
         block.header.base_fee_per_gas = Some(1_000_000_000);
         block.header.blob_gas_used = Some(blobs * DATA_GAS_PER_BLOB);
         block
@@ -3234,7 +3226,6 @@ mod tests {
         Runner::start(Config::seeded(0), move |ctx| async move {
             let asserter = Asserter::new();
             push_pending_blob_tx(&asserter);
-            asserter.push_success(&eth_config());
             match l1 {
                 "blocks_with_room" => {
                     asserter.push_success(&Some(&l1_block(24, 20)));
@@ -3269,7 +3260,7 @@ mod tests {
     /// A blob tx still pending after the resubmission timeout is replaced when an L1 block
     /// of the last resubmission timeout priced it out, found behind a later block with room:
     /// its base fee was above the tx's cap, or blob txs paying more per blob filled it. It
-    /// is also replaced when the L1 node cannot tell, as when it does not serve `eth_config`.
+    /// is also replaced when the check fails, here because the latest block cannot be read.
     #[rstest]
     #[case::above_the_fee_caps("above_the_fee_caps")]
     #[case::outbid("outbid")]
@@ -3282,18 +3273,16 @@ mod tests {
                 "above_the_fee_caps" => {
                     let mut priced_out = l1_block(16, 0);
                     priced_out.header.base_fee_per_gas = Some(1_000_000_000_000);
-                    asserter.push_success(&eth_config());
                     asserter.push_success(&Some(&l1_block(24, 0)));
                     asserter.push_success(&Some(&priced_out));
                 }
                 "outbid" => {
-                    asserter.push_success(&eth_config());
                     asserter.push_success(&Some(&l1_block(24, 0)));
                     asserter.push_success(&Some(&l1_block(16, 21)));
                     // Its receipts: a 21-blob tx paying 0.1 gwei per blob.
                     asserter.push_success(&l1_receipts(2_100_000_000, 21));
                 }
-                _ => asserter.push_failure_msg("the method eth_config does not exist"),
+                _ => asserter.push_failure_msg("connection reset by peer"),
             }
             // The replacement.
             push_blob_pricing(&asserter);

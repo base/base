@@ -6426,6 +6426,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.5.0",
  "alloy-eips 2.5.0",
+ "alloy-hardforks 0.4.11",
  "alloy-json-rpc 2.5.0",
  "alloy-network 2.5.0",
  "alloy-node-bindings",
@@ -6440,6 +6441,7 @@ dependencies = [
  "alloy-transport-http",
  "async-trait",
  "backon",
+ "base-common-chains",
  "base-common-signer",
  "base-metrics",
  "base-runtime",
