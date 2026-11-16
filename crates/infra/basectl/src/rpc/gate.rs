@@ -5,6 +5,7 @@
 //! gateway returns, and only then does execute transfer leadership.
 
 use std::{
+    collections::BTreeMap,
     fmt,
     path::PathBuf,
     sync::{
@@ -663,12 +664,9 @@ pub struct GateClient {
     announce_login: bool,
 }
 
-/// Token cache writes for one client. Each write gets a generation; a write
-/// that a newer one superseded is skipped.
+/// Token cache writes for one client and its clones.
 #[derive(Default)]
 struct CacheWrites {
-    /// Generation of the newest write.
-    latest: AtomicU64,
     /// Completion of the newest write, until [`GateClient::flush_cache`] takes it.
     pending: Mutex<Option<oneshot::Receiver<Result<(), GateError>>>>,
     /// Runs before a write takes the lock, so tests can hold it there.
@@ -683,6 +681,13 @@ type StoreHook = Arc<dyn Fn(&str) + Send + Sync>;
 /// Held while a cache write runs, so no two writes in this process share
 /// the cache's temp file.
 static CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Generation of every cache write started in this process, from any client.
+static CACHE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Newest write generation started for each cache file. A write that a newer
+/// one for the same file superseded is skipped, whichever client started it.
+static NEWEST_CACHE_WRITE: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
 
 impl fmt::Debug for GateClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1017,7 +1022,10 @@ impl GateClient {
         let generation = {
             let mut slot = writes.pending.lock().unwrap_or_else(PoisonError::into_inner);
             *slot = Some(pending);
-            writes.latest.fetch_add(1, Ordering::SeqCst) + 1
+            let mut newest = NEWEST_CACHE_WRITE.lock().unwrap_or_else(PoisonError::into_inner);
+            let generation = CACHE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+            newest.insert(cache.path.clone(), generation);
+            generation
         };
         let (cache, token) = (cache.clone(), token.to_string());
         // A thread that cannot start drops `done`; the flush reports that.
@@ -1027,11 +1035,10 @@ impl GateClient {
                 hook(&token);
             }
             let _serial = CACHE_WRITE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
-            let result = if writes.latest.load(Ordering::SeqCst) == generation {
-                cache.store(&token, expires_at)
-            } else {
-                Ok(())
-            };
+            let newest = NEWEST_CACHE_WRITE.lock().unwrap_or_else(PoisonError::into_inner);
+            let current = newest.get(&cache.path) == Some(&generation);
+            drop(newest);
+            let result = if current { cache.store(&token, expires_at) } else { Ok(()) };
             let _ = done.send(result);
         });
     }
@@ -1879,23 +1886,40 @@ mod tests {
     async fn an_older_cache_write_never_overwrites_a_newer_one() {
         let url = Url::parse("http://127.0.0.1:1/").unwrap();
         let root = tempfile::tempdir().unwrap();
-        let mut client = settings(url.clone(), None, Some(root.path()))
-            .client_with_prompter(never_prompts(false))
-            .await
-            .unwrap();
-        let release = hold_cache_writes(&mut client, "older", Duration::from_secs(10));
+        let client = || async {
+            settings(url.clone(), None, Some(root.path()))
+                .client_with_prompter(never_prompts(false))
+                .await
+                .unwrap()
+        };
+        let (mut held, other) = (client().await, client().await);
+        let release = hold_cache_writes(&mut held, "older", Duration::from_secs(10));
         let cache = TokenCache::for_gate(root.path(), &url);
+        let elsewhere =
+            TokenCache::for_gate(root.path(), &Url::parse("http://other.example").unwrap());
+        let run_held = |cache: &TokenCache| {
+            held.cache_in_background(cache, "older", None);
+            held.cache_writes.pending.lock().unwrap().take().unwrap()
+        };
 
-        client.cache_in_background(&cache, "older", None);
-        let older = client.cache_writes.pending.lock().unwrap().take().unwrap();
-        client.cache_in_background(&cache, "newer", None);
-        client.flush_cache().await;
+        // Another client caches a newer token for the same gateway while the
+        // older write is held: the older write is skipped when it runs.
+        let older = run_held(&cache);
+        other.cache_in_background(&cache, "newer", None);
+        other.flush_cache().await;
         assert_eq!(cache.load(Utc::now()).as_deref(), Some("newer"));
-
-        // The older write runs after the newer one and is skipped.
         release.send(()).unwrap();
         older.await.unwrap().unwrap();
         assert_eq!(cache.load(Utc::now()).as_deref(), Some("newer"));
+
+        // A later write to a different cache file does not supersede it.
+        let older = run_held(&elsewhere);
+        other.cache_in_background(&cache, "newest", None);
+        other.flush_cache().await;
+        release.send(()).unwrap();
+        older.await.unwrap().unwrap();
+        assert_eq!(elsewhere.load(Utc::now()).as_deref(), Some("older"));
+        assert_eq!(cache.load(Utc::now()).as_deref(), Some("newest"));
     }
 
     #[tokio::test]
