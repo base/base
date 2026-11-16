@@ -138,21 +138,12 @@ struct BumpState {
     /// Hash and `max_priority_fee_per_gas` of every published version, any of
     /// which may land.
     published: Vec<(B256, u128)>,
-    /// Unix time, in seconds, up to which L1 blocks were checked for pricing out a blob
-    /// transaction: the first publication, then the latest block of the last check.
-    l1_checked_until: u64,
 }
 
 impl BumpState {
-    /// Constructs a [`BumpState`] from the first version, published at `published_at`, a
-    /// Unix time in seconds.
-    fn new(prepared: PreparedTx, tx_hash: B256, published_at: u64) -> Self {
-        Self {
-            published: vec![(tx_hash, prepared.gas_tip_cap)],
-            prepared,
-            tx_hash,
-            l1_checked_until: published_at,
-        }
+    /// Constructs a [`BumpState`] from the first published version.
+    fn new(prepared: PreparedTx, tx_hash: B256) -> Self {
+        Self { published: vec![(tx_hash, prepared.gas_tip_cap)], prepared, tx_hash }
     }
 
     /// Records a published replacement.
@@ -1076,8 +1067,7 @@ where
         send_state.record_assigned_nonce(prepared.nonce);
         let (prepared, tx_hash) =
             self.publish_version(candidate, send_state, prepared, None).await?;
-        let mut bump =
-            BumpState::new(prepared, tx_hash, self.runtime.wall_clock_unix_millis() / 1_000);
+        let mut bump = BumpState::new(prepared, tx_hash);
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
         // new wait tasks with different tx hashes.
@@ -1157,11 +1147,12 @@ where
     /// A failed bump is logged and the send keeps waiting, because a version published
     /// earlier may still be mined. Aborting is left to [`SendState::critical_error_at`].
     ///
-    /// A blob transaction is replaced only when an L1 block mined since the last check priced
-    /// it out ([`blob_tx_priced_out`](Self::blob_tx_priced_out)). Otherwise, as when the check
-    /// fails or no replacement exists within the fee limit, the last version is sent again as
-    /// it is: it may never have reached a mempool (its publish got no answer) or may have
-    /// been dropped from it, and nothing else would publish it again.
+    /// A blob transaction is replaced only when an L1 block of the last resubmission timeout
+    /// priced it out ([`blob_tx_priced_out`](Self::blob_tx_priced_out)), or when that check
+    /// fails, so that a pending transaction is still replaced as before when the L1 node
+    /// cannot tell. Otherwise, as when no replacement exists within the fee limit, the last
+    /// version is sent again as it is: it may never have reached a mempool (its publish got
+    /// no answer) or may have been dropped from it, and nothing else would publish it again.
     async fn try_fee_bump(
         &self,
         candidate: &TxCandidate,
@@ -1181,12 +1172,10 @@ where
 
         if candidate.is_blob() {
             let blob_count = candidate.blobs.len() as u128;
-            let priced_out = self
-                .blob_tx_priced_out(&state.prepared, blob_count, &mut state.l1_checked_until)
-                .await
-                .unwrap_or_else(|error| {
-                    warn!(error = %error, "checking whether L1 blocks priced out the blob transaction failed");
-                    false
+            let priced_out =
+                self.blob_tx_priced_out(&state.prepared, blob_count).await.unwrap_or_else(|error| {
+                    warn!(error = %error, "checking whether L1 blocks priced out the blob transaction failed, replacing it");
+                    true
                 });
             if !priced_out {
                 info!(tx_hash = %state.tx_hash, "blob transaction not priced out, resending it as is");
@@ -1391,23 +1380,18 @@ where
         }
     }
 
-    /// Returns whether an L1 block mined after `checked_until`, a Unix time in seconds,
+    /// Returns whether an L1 block of the last resubmission timeout, up to the latest block,
     /// priced out `tx`, a blob transaction with `blob_count` blobs: it could not include `tx`
     /// at its fee caps ([`BlobFeePolicy::is_affordable`]), or filled its blob space with blob
-    /// transactions paying more per blob ([`BlobFeePolicy::is_outbid`]). Blocks are walked
-    /// back from the latest one through their parents, and fetched with their transactions
-    /// only when their blobs leave no room for `tx`. The blob schedule comes from the L1
-    /// node (`eth_config`). On success, `checked_until` moves to the latest block.
+    /// transactions that paid more per blob ([`BlobFeePolicy::is_outbid`]). Blocks are walked
+    /// back from the latest one through their parents, so the walk covers at most one block
+    /// per second of the timeout, and their receipts are fetched only when their blobs leave
+    /// no room for `tx`. The blob schedule comes from the L1 node (`eth_config`).
     ///
     /// # Errors
     ///
-    /// Returns the error of an RPC call, and leaves `checked_until` as it was.
-    async fn blob_tx_priced_out(
-        &self,
-        tx: &PreparedTx,
-        blob_count: u128,
-        checked_until: &mut u64,
-    ) -> TxManagerResult<bool> {
+    /// Returns the error of an RPC call.
+    async fn blob_tx_priced_out(&self, tx: &PreparedTx, blob_count: u128) -> TxManagerResult<bool> {
         let blob_params = RuntimeTimeout::run(
             &self.runtime,
             self.config.network_timeout,
@@ -1421,31 +1405,37 @@ where
         let mut block =
             self.fetch_block(self.provider.get_block_by_number(BlockNumberOrTag::Latest)).await?;
         let latest = block.header.timestamp;
-        let priced_out = loop {
-            if block.header.timestamp <= *checked_until {
-                break false;
-            }
+        while Duration::from_secs(latest.saturating_sub(block.header.timestamp))
+            < self.config.resubmission_timeout
+        {
             if !BlobFeePolicy::is_affordable(tx, &block.header, blob_params) {
-                break true;
+                return Ok(true);
             }
             let blobs = block.header.blob_gas_used.unwrap_or_default() / DATA_GAS_PER_BLOB;
             if u128::from(blobs) + blob_count > u128::from(blob_params.max_blob_count) {
-                let full =
-                    self.fetch_block(self.provider.get_block_by_hash(block.header.hash).full());
+                let receipts = RuntimeTimeout::run(
+                    &self.runtime,
+                    self.config.network_timeout,
+                    self.provider.get_block_receipts(block.header.hash.into()),
+                )
+                .await
+                .map_err(|_| self.rpc_error("eth_getBlockReceipts timed out"))?
+                .map_err(|e| self.classify_and_record_rpc(&e))?
+                .ok_or_else(|| self.rpc_error("block receipts not found"))?;
                 if BlobFeePolicy::is_outbid(
                     tx,
                     blob_count,
-                    &full.await?,
+                    block.header.base_fee_per_gas.unwrap_or_default(),
+                    &receipts,
                     blob_params.max_blob_count,
                 ) {
-                    break true;
+                    return Ok(true);
                 }
             }
             block =
                 self.fetch_block(self.provider.get_block_by_hash(block.header.parent_hash)).await?;
-        };
-        *checked_until = latest;
-        Ok(priced_out)
+        }
+        Ok(false)
     }
 
     /// Fetches a block with `request`, such as `get_block_by_hash`.
@@ -3195,10 +3185,6 @@ mod tests {
         });
     }
 
-    /// Unix time, in seconds, of the deterministic runtime's wall clock when a test starts,
-    /// which is when its first blob tx version is published.
-    const PUBLISHED_AT: u64 = 1_700_000_000;
-
     /// Pushes the responses that publish a first blob tx version and poll its receipt once.
     fn push_pending_blob_tx(asserter: &Asserter) {
         asserter.push_success(&1u64);
@@ -3209,50 +3195,59 @@ mod tests {
         asserter.push_success(&Option::<TransactionReceipt>::None);
     }
 
-    /// A block with a 1 gwei base fee and `blobs` blobs, mined `secs_after` seconds after the
-    /// first blob tx version was published.
-    fn l1_block(secs_after: u64, blobs: u64) -> Block {
+    /// A block mined at `timestamp`, with a 1 gwei base fee and `blobs` blobs.
+    fn l1_block(timestamp: u64, blobs: u64) -> Block {
         let mut block: Block = Block::default();
-        block.header.timestamp = PUBLISHED_AT + secs_after;
+        block.header.timestamp = timestamp;
         block.header.base_fee_per_gas = Some(1_000_000_000);
         block.header.blob_gas_used = Some(blobs * DATA_GAS_PER_BLOB);
         block
     }
 
+    /// The receipts of a block with a 1 gwei base fee holding one blob tx with `blobs` blobs
+    /// that paid a tip of `tip` wei per gas over 21,000 gas.
+    fn l1_receipts(tip: u128, blobs: u64) -> Option<Vec<TransactionReceipt>> {
+        Some(vec![TransactionReceipt {
+            inner: ReceiptEnvelope::Eip4844(ReceiptWithBloom::default()),
+            transaction_hash: B256::ZERO,
+            transaction_index: None,
+            block_hash: None,
+            block_number: None,
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000 + tip,
+            blob_gas_used: Some(blobs * DATA_GAS_PER_BLOB),
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: None,
+            contract_address: None,
+        }])
+    }
+
     /// A blob tx still pending after the resubmission timeout is not replaced but sent again
-    /// as it is when no L1 block mined since its publication priced it out: none was mined,
+    /// as it is when no L1 block of the last resubmission timeout, here 10 s, priced it out:
     /// the blocks left room for its blob, or a block without room held no blob tx paying
-    /// more per blob. The same holds when the L1 check fails.
+    /// more per blob. The older block that ends the walk is not checked.
     #[rstest]
-    #[case::no_new_block("no_new_block")]
     #[case::blocks_with_room("blocks_with_room")]
     #[case::full_block_of_cheaper_txs("full_block_of_cheaper_txs")]
-    #[case::check_failed("check_failed")]
     fn a_blob_tx_no_l1_block_priced_out_is_resent_as_it_is(#[case] l1: &'static str) {
         Runner::start(Config::seeded(0), move |ctx| async move {
             let asserter = Asserter::new();
             push_pending_blob_tx(&asserter);
-            // The L1 check at the resubmission timeout, walking back to the publication.
+            asserter.push_success(&eth_config());
             match l1 {
-                "no_new_block" => {
-                    asserter.push_success(&eth_config());
-                    asserter.push_success(&Some(&l1_block(0, 21)));
-                }
                 "blocks_with_room" => {
-                    asserter.push_success(&eth_config());
-                    asserter.push_success(&Some(&l1_block(8, 20)));
-                    asserter.push_success(&Some(&l1_block(4, 0)));
-                    asserter.push_success(&Some(&l1_block(0, 21)));
+                    asserter.push_success(&Some(&l1_block(24, 20)));
+                    asserter.push_success(&Some(&l1_block(16, 0)));
                 }
-                "full_block_of_cheaper_txs" => {
-                    asserter.push_success(&eth_config());
-                    asserter.push_success(&Some(&l1_block(8, 21)));
-                    // The block with its transactions, of which no blob tx pays more.
-                    asserter.push_success(&Some(&l1_block(8, 21)));
-                    asserter.push_success(&Some(&l1_block(0, 21)));
+                _ => {
+                    asserter.push_success(&Some(&l1_block(24, 21)));
+                    // Its receipts: a 21-blob tx paying 0.001 gwei per blob, under the
+                    // 0.01 gwei per blob of the pending tx.
+                    asserter.push_success(&l1_receipts(21_000_000, 21));
                 }
-                _ => asserter.push_failure_msg("connection reset by peer"),
             }
+            asserter.push_success(&Some(&l1_block(12, 21)));
             asserter.push_failure_msg("already known");
             // What a replacement would read first.
             push_blob_pricing(&asserter);
@@ -3271,18 +3266,35 @@ mod tests {
         });
     }
 
-    /// The L1 check walks back to the publication of the blob tx: a block that priced it out
-    /// is found behind a later block with room, and the tx is replaced.
-    #[test]
-    fn a_blob_tx_priced_out_by_an_earlier_block_is_replaced() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let mut priced_out = l1_block(4, 0);
-            priced_out.header.base_fee_per_gas = Some(1_000_000_000_000);
+    /// A blob tx still pending after the resubmission timeout is replaced when an L1 block
+    /// of the last resubmission timeout priced it out, found behind a later block with room:
+    /// its base fee was above the tx's cap, or blob txs paying more per blob filled it. It
+    /// is also replaced when the L1 node cannot tell, as when it does not serve `eth_config`.
+    #[rstest]
+    #[case::above_the_fee_caps("above_the_fee_caps")]
+    #[case::outbid("outbid")]
+    #[case::check_failed("check_failed")]
+    fn a_blob_tx_priced_out_is_replaced(#[case] l1: &'static str) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
             let asserter = Asserter::new();
             push_pending_blob_tx(&asserter);
-            asserter.push_success(&eth_config());
-            asserter.push_success(&Some(&l1_block(8, 0)));
-            asserter.push_success(&Some(&priced_out));
+            match l1 {
+                "above_the_fee_caps" => {
+                    let mut priced_out = l1_block(16, 0);
+                    priced_out.header.base_fee_per_gas = Some(1_000_000_000_000);
+                    asserter.push_success(&eth_config());
+                    asserter.push_success(&Some(&l1_block(24, 0)));
+                    asserter.push_success(&Some(&priced_out));
+                }
+                "outbid" => {
+                    asserter.push_success(&eth_config());
+                    asserter.push_success(&Some(&l1_block(24, 0)));
+                    asserter.push_success(&Some(&l1_block(16, 21)));
+                    // Its receipts: a 21-blob tx paying 0.1 gwei per blob.
+                    asserter.push_success(&l1_receipts(2_100_000_000, 21));
+                }
+                _ => asserter.push_failure_msg("the method eth_config does not exist"),
+            }
             // The replacement.
             push_blob_pricing(&asserter);
             asserter.push_success(&B256::with_last_byte(2));

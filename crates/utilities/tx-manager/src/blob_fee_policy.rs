@@ -2,9 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use alloy_consensus::Transaction;
-use alloy_eips::eip7840::BlobParams;
-use alloy_rpc_types_eth::{Block, Header};
+use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip7840::BlobParams};
+use alloy_rpc_types_eth::{Header, TransactionReceipt};
 
 use crate::{FeeCalculator, FeeOverride, PreparedTx, TxManagerError, TxManagerResult};
 
@@ -18,7 +17,7 @@ use crate::{FeeCalculator, FeeOverride, PreparedTx, TxManagerError, TxManagerRes
 /// A transaction still pending after the resubmission timeout is replaced only when an L1
 /// block mined meanwhile priced it out: the block could not include it at its fee caps
 /// ([`is_affordable`](Self::is_affordable)), or filled its blob space with blob transactions
-/// paying more per blob ([`is_outbid`](Self::is_outbid)). A block without blobs, or with
+/// that paid builders more per blob ([`is_outbid`](Self::is_outbid)). A block without blobs, or with
 /// room left for it, says nothing a higher fee would fix.
 ///
 /// A replacement doubles all three fields, the minimum L1 nodes accept to replace a blob
@@ -147,25 +146,32 @@ impl BlobFeePolicy {
                 .is_none_or(|blob_base_fee| blob_base_fee <= tx.blob_fee_cap.unwrap_or_default())
     }
 
-    /// Returns whether `block`, with its full transactions, left no room for `tx`, a blob
-    /// transaction with `blob_count` blobs, at its `max_priority_fee_per_gas`: its blob
-    /// transactions paying more per blob than `tx` hold more than `max_blob_count` minus
-    /// `blob_count` blobs. Each transaction pays the tip it would at the block's base fee.
+    /// Returns whether a block with `base_fee` and `receipts` left no room for `tx`, a blob
+    /// transaction with `blob_count` blobs: its blob transactions that paid builders more
+    /// per blob than `tx` would hold more than `max_blob_count` minus `blob_count` blobs.
+    ///
+    /// A builder earns a transaction's tip times the gas it uses, so bids are compared as
+    /// `tip × gas used / blobs`. A mined transaction's tip is its effective gas price above
+    /// `base_fee`. `tx` bids the tip it would pay at `base_fee` over its gas limit, which is
+    /// the gas a blob transaction to an account uses.
     pub fn is_outbid(
         tx: &PreparedTx,
         blob_count: u128,
-        block: &Block,
+        base_fee: u64,
+        receipts: &[TransactionReceipt],
         max_blob_count: u64,
     ) -> bool {
-        let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
         let tip = tx.gas_tip_cap.min(tx.gas_fee_cap.saturating_sub(u128::from(base_fee)));
-        let outbidding_blobs: u128 = block
-            .transactions
-            .txns()
+        let bid = tip.saturating_mul(u128::from(tx.gas_limit));
+        let outbidding_blobs: u128 = receipts
+            .iter()
             .filter_map(|other| {
-                let other_blobs = other.blob_versioned_hashes()?.len() as u128;
-                let other_tip = other.effective_tip_per_gas(base_fee)?;
-                (other_tip.saturating_mul(blob_count) > tip.saturating_mul(other_blobs))
+                let other_blobs = u128::from(other.blob_gas_used? / DATA_GAS_PER_BLOB);
+                let other_bid = other
+                    .effective_gas_price
+                    .saturating_sub(u128::from(base_fee))
+                    .saturating_mul(u128::from(other.gas_used));
+                (other_bid.saturating_mul(blob_count) > bid.saturating_mul(other_blobs))
                     .then_some(other_blobs)
             })
             .sum();
@@ -196,11 +202,8 @@ impl BlobFeePolicy {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{
-        Signed, TxEip4844, TxEip4844Variant, TxEnvelope, transaction::Recovered,
-    };
-    use alloy_primitives::{Address, B256, Bytes, Signature};
-    use alloy_rpc_types_eth::{BlockTransactions, Transaction as RpcTransaction};
+    use alloy_consensus::{ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_primitives::{Address, B256, Bytes};
     use rstest::rstest;
 
     use super::*;
@@ -234,36 +237,23 @@ mod tests {
         (fees.gas_tip_cap, fees.gas_fee_cap, fees.blob_fee_cap)
     }
 
-    /// A mined blob transaction with `blob_count` blobs and the given fees, in wei.
-    fn mined(
-        max_priority_fee_per_gas: u128,
-        max_fee_per_gas: u128,
-        blob_count: usize,
-    ) -> RpcTransaction {
-        let tx = TxEip4844 {
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            blob_versioned_hashes: vec![B256::ZERO; blob_count],
-            ..Default::default()
-        };
-        let signed =
-            Signed::new_unhashed(TxEip4844Variant::TxEip4844(tx), Signature::test_signature());
-        RpcTransaction {
-            inner: Recovered::new_unchecked(TxEnvelope::Eip4844(signed), Address::ZERO),
+    /// The receipt of a transaction with `blob_count` blobs, mined in a block with a 1 gwei
+    /// base fee, that paid a tip of `tip` wei per gas over `gas_used` gas.
+    fn mined(tip: u128, gas_used: u64, blob_count: u64) -> TransactionReceipt {
+        TransactionReceipt {
+            inner: ReceiptEnvelope::Eip4844(ReceiptWithBloom::default()),
+            transaction_hash: B256::ZERO,
+            transaction_index: None,
             block_hash: None,
             block_number: None,
-            transaction_index: None,
-            effective_gas_price: None,
-            block_timestamp: None,
+            gas_used,
+            effective_gas_price: GWEI + tip,
+            blob_gas_used: (blob_count > 0).then_some(blob_count * DATA_GAS_PER_BLOB),
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: None,
+            contract_address: None,
         }
-    }
-
-    /// A block with a 1 gwei base fee and `transactions`.
-    fn block(transactions: Vec<RpcTransaction>) -> Block {
-        let mut block: Block = Block::default();
-        block.header.base_fee_per_gas = Some(GWEI as u64);
-        block.transactions = BlockTransactions::Full(transactions);
-        block
     }
 
     #[rstest]
@@ -438,22 +428,24 @@ mod tests {
         assert_eq!(BlobFeePolicy::is_affordable(&tx, &header, BlobParams::bpo2()), expected);
     }
 
-    /// A 6-blob tx paying 0.1 gwei per blob, in a block of 21 blobs at most, is outbid only
-    /// when blob txs paying more per blob, at the block's base fee, leave no room for it.
+    /// A 6-blob tx with 21,000 gas paying 0.6 gwei per gas, 2,100 gwei per blob, in a block
+    /// with a 1 gwei base fee and 21 blobs at most, is outbid only when blob txs that paid
+    /// more per blob, as tip times gas used, leave no room for it.
     #[rstest]
-    #[case::room_left(vec![mined(GWEI * 12 / 10, 3 * GWEI, 6), mined(GWEI * 18 / 10, 3 * GWEI, 9)], false)]
-    #[case::filled_by_higher_payers(vec![mined(GWEI * 12 / 10, 3 * GWEI, 6), mined(GWEI * 2, 3 * GWEI, 10)], true)]
-    #[case::cheaper_txs_leave_room(vec![mined(3 * GWEI, 5 * GWEI, 15), mined(GWEI / 100, 3 * GWEI, 6)], false)]
-    #[case::equal_per_blob_leaves_room(vec![mined(GWEI * 6 / 10, 3 * GWEI, 6), mined(GWEI, 3 * GWEI, 10)], false)]
-    #[case::compared_per_blob(vec![mined(GWEI / 5, 3 * GWEI, 1); 16], true)]
-    #[case::capped_by_max_fee(vec![mined(10 * GWEI, GWEI + GWEI / 100, 1); 16], false)]
+    #[case::room_left(vec![mined(GWEI * 12 / 10, 21_000, 6), mined(GWEI * 18 / 10, 21_000, 9)], false)]
+    #[case::filled_by_higher_payers(vec![mined(GWEI * 12 / 10, 21_000, 6), mined(GWEI * 2, 21_000, 10)], true)]
+    #[case::cheaper_txs_leave_room(vec![mined(3 * GWEI, 21_000, 15), mined(GWEI / 100, 21_000, 6)], false)]
+    #[case::equal_per_blob_leaves_room(vec![mined(GWEI * 6 / 10, 21_000, 6), mined(GWEI, 21_000, 10)], false)]
+    #[case::compared_per_blob(vec![mined(GWEI / 5, 21_000, 1); 16], true)]
+    #[case::compared_over_gas_used(vec![mined(GWEI / 100, 300_000, 1); 16], true)]
+    #[case::txs_without_blobs_hold_none(vec![mined(3 * GWEI, 21_000, 15), mined(10 * GWEI, 21_000, 0)], false)]
     fn a_block_outbids_a_tx_only_when_higher_payers_fill_it(
-        #[case] transactions: Vec<RpcTransaction>,
+        #[case] receipts: Vec<TransactionReceipt>,
         #[case] expected: bool,
     ) {
         let tx = sent(6 * GWEI / 10, 3 * GWEI, 1);
 
-        assert_eq!(BlobFeePolicy::is_outbid(&tx, 6, &block(transactions), 21), expected);
+        assert_eq!(BlobFeePolicy::is_outbid(&tx, 6, GWEI as u64, &receipts, 21), expected);
     }
 
     /// A tx whose `max_fee_per_gas` leaves less than its `max_priority_fee_per_gas` above the
@@ -465,7 +457,8 @@ mod tests {
         assert!(BlobFeePolicy::is_outbid(
             &tx,
             6,
-            &block(vec![mined(GWEI / 20, 2 * GWEI, 1); 16]),
+            GWEI as u64,
+            &vec![mined(GWEI / 20, 21_000, 1); 16],
             21
         ));
     }

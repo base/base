@@ -111,15 +111,15 @@ When it lands:
 ```
 
 A blob transaction is replaced right away when the node refuses it for its fees. When it is
-still pending after `resubmission_timeout`, it is replaced only if an L1 block mined since
-the last check priced it out: the block's base fee or blob base fee was above its fee caps,
-or blob transactions paying more per blob, at the block's base fee, left no room for its
-blobs. Otherwise it is sent again as it is: a block without blobs, or with room it did not
-use, is not something a higher fee fixes. The check walks back from the latest L1 block to
-the previous check, fetches a block's transactions only when its blobs leave no room, and
-reads the maximum blobs per block from the node's `eth_config` (EIP-7910); when it fails,
-the transaction is sent again as it is. After an RPC error or no answer, such
-as a network error, the same signed transaction is sent again every `publish_retry_delay`,
+still pending after `resubmission_timeout`, it is replaced only if an L1 block of the last
+`resubmission_timeout` priced it out: the block's base fee or blob base fee was above its fee
+caps, or blob transactions that paid builders more per blob, as tip times gas used, left no
+room for its blobs. Otherwise it is sent again as it is: a block without blobs, or with room
+it did not use, is not something a higher fee fixes. The check walks back from the latest L1
+block, fetches a block's receipts only when its blobs leave no room, and reads the maximum
+blobs per block from the node's `eth_config` (EIP-7910). When the check fails, as when the
+node does not serve `eth_config`, the transaction is replaced. After an RPC error or no
+answer, such as a network error, the same signed transaction is sent again every `publish_retry_delay`,
 up to `publish_max_retries` times, without raising any fee. Once a publish got no answer,
 that transaction is followed as published even if no resend is accepted, and a fee refusal
 no longer replaces it right away. Doubling every fee is the minimum L1
