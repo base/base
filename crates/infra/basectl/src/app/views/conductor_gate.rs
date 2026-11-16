@@ -5,7 +5,7 @@
 //! gateway requests; [`ConductorView`](super::ConductorView) delegates to it.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{Arc, PoisonError},
 };
 
@@ -93,27 +93,35 @@ pub struct GateProposals {
     /// it may run `gate_token_command`). Rebuilt when the resolved settings
     /// change or after a failed request, so an expired token is replaced.
     client: Arc<Mutex<Option<(GateSettings, GateClient)>>>,
-    /// Proposal IDs with a status request in flight; a refresh of one of
-    /// them is dropped, since the in-flight request will report.
-    refreshing: Arc<std::sync::Mutex<HashSet<String>>>,
+    /// Proposal IDs with a status request in flight, each with the number
+    /// of the newest one; a user refresh of one of them is dropped, since
+    /// the in-flight request will report.
+    refreshing: Arc<std::sync::Mutex<HashMap<String, u64>>>,
     /// Shared cap on concurrent status requests, built on first use.
     status_slots: Option<Arc<Semaphore>>,
     /// Number of the last status request started.
     status_seq: u64,
-    /// Number of the newest status applied, per proposal ID.
-    status_applied: HashMap<String, u64>,
+    /// Per proposal ID, the number at or below which a status reply is
+    /// discarded: the newest one applied, or the last one started before
+    /// the proposal changed state.
+    status_floor: HashMap<String, u64>,
 }
 
 /// Clears a proposal's in-flight mark when its status request ends, whether
-/// it succeeds, fails, or is dropped before it runs.
+/// it succeeds, fails, or is dropped before it runs, unless a newer request
+/// for the same proposal has taken the mark over.
 struct Refreshing {
-    ids: Arc<std::sync::Mutex<HashSet<String>>>,
+    ids: Arc<std::sync::Mutex<HashMap<String, u64>>>,
     id: String,
+    seq: u64,
 }
 
 impl Drop for Refreshing {
     fn drop(&mut self) {
-        self.ids.lock().unwrap_or_else(PoisonError::into_inner).remove(&self.id);
+        let mut ids = self.ids.lock().unwrap_or_else(PoisonError::into_inner);
+        if ids.get(&self.id) == Some(&self.seq) {
+            ids.remove(&self.id);
+        }
     }
 }
 
@@ -401,16 +409,29 @@ impl GateProposals {
     /// Fetches fresh status for proposal `id`, unless a status request for
     /// it is already in flight.
     fn refresh(&mut self, resources: &Resources, id: String) {
-        if !self.refreshing.lock().unwrap_or_else(PoisonError::into_inner).insert(id.clone()) {
+        if self.refreshing.lock().unwrap_or_else(PoisonError::into_inner).contains_key(&id) {
             return;
         }
-        let mark = Refreshing { ids: Arc::clone(&self.refreshing), id: id.clone() };
+        self.fetch_status(resources, id);
+    }
+
+    /// Fetches fresh status for proposal `id` after this session changed its
+    /// state, discarding any reply to a request started before.
+    fn refresh_after_change(&mut self, resources: &Resources, id: String) {
+        self.status_floor.insert(id.clone(), self.status_seq);
+        self.fetch_status(resources, id);
+    }
+
+    /// Starts a status request for `id`, within the shared cap.
+    fn fetch_status(&mut self, resources: &Resources, id: String) {
+        self.status_seq += 1;
+        let seq = self.status_seq;
+        self.refreshing.lock().unwrap_or_else(PoisonError::into_inner).insert(id.clone(), seq);
+        let mark = Refreshing { ids: Arc::clone(&self.refreshing), id: id.clone(), seq };
         let slots = Arc::clone(
             self.status_slots
                 .get_or_insert_with(|| Arc::new(Semaphore::new(Self::MAX_STATUS_REQUESTS))),
         );
-        self.status_seq += 1;
-        let seq = self.status_seq;
         self.spawn(resources, GateEvent::Failed, move |client| async move {
             let _mark = mark;
             let _slot = slots.acquire_owned().await;
@@ -425,11 +446,11 @@ impl GateProposals {
     fn apply_event(&mut self, event: GateEvent, resources: &mut Resources) {
         match event {
             GateEvent::Status(seq, status) => {
-                let applied = self.status_applied.entry(status.id.clone()).or_default();
-                if seq <= *applied {
+                let floor = self.status_floor.entry(status.id.clone()).or_default();
+                if seq <= *floor {
                     return;
                 }
-                *applied = seq;
+                *floor = seq;
                 match self.proposals.iter_mut().find(|known| known.id == status.id) {
                     Some(known) => *known = *status,
                     None => self.proposals.push(*status),
@@ -444,7 +465,7 @@ impl GateProposals {
                 resources.toasts.push(Toast::sticky_info(format!(
                     "Proposed {id}. Ask a different engineer to approve it {approve_at}\nthen: basectl conductor transfer execute {id}\n(any key closes)"
                 )));
-                self.refresh(resources, created.id);
+                self.refresh_after_change(resources, created.id);
             }
             GateEvent::Executed(result) => {
                 self.executing = None;
@@ -454,7 +475,7 @@ impl GateProposals {
                 } else {
                     Toast::warning(message)
                 });
-                self.refresh(resources, result.id);
+                self.refresh_after_change(resources, result.id);
             }
             GateEvent::Failed(message) => resources.toasts.push(Toast::warning(message)),
             GateEvent::ExecuteFailed(message) => {
@@ -739,6 +760,106 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(hits.load(Ordering::SeqCst), max);
         assert_eq!(gate.refreshing.lock().unwrap().len(), 12);
+    }
+
+    #[tokio::test]
+    async fn refresh_after_execute_supersedes_a_status_request_in_flight() {
+        // Status: the first request waits for `release` and reports the
+        // pre-execute state; later ones report the executed outcome.
+        let hits = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let late_sent = Arc::new(AtomicUsize::new(0));
+        let (counter, gate_open, sent) =
+            (Arc::clone(&hits), Arc::clone(&release), Arc::clone(&late_sent));
+        let approved = serde_json::json!({
+            "id": "rev_1", "status": "approved", "author": "alice",
+            "action": {"target_id": "sequencer-1"}, "approval": {"approvers": ["bob"]},
+        });
+        let mut executed = approved.clone();
+        executed["outcome"] = serde_json::json!({"caller": "alice", "outcome": "SUCCEEDED"});
+        let first = approved.to_string();
+        let router = axum::Router::new()
+            .route(
+                "/admin/conductor/proposals/{id}",
+                axum::routing::get(move || {
+                    let (n, gate_open) =
+                        (counter.fetch_add(1, Ordering::SeqCst), Arc::clone(&gate_open));
+                    let sent = Arc::clone(&sent);
+                    let (first, later) = (first.clone(), executed.to_string());
+                    async move {
+                        if n == 0 {
+                            gate_open.notified().await;
+                            sent.store(1, Ordering::SeqCst);
+                            return first;
+                        }
+                        later
+                    }
+                }),
+            )
+            .route(
+                "/admin/conductor/proposals/{id}/execute",
+                axum::routing::post(|| async {
+                    serde_json::json!({"id": "rev_1", "outcome": "SUCCEEDED"}).to_string()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let mut config = crate::MonitoringConfig::mainnet();
+        config.gate_url = Some(url::Url::parse(&format!("http://{address}/")).unwrap());
+        config.gate_token_command = Some("echo tok".to_string());
+        let mut resources = Resources::new(config);
+        let mut gate = GateProposals {
+            overlay: GateOverlay::Proposals { cursor: 0 },
+            proposals: vec![serde_json::from_value(approved).unwrap()],
+            ..Default::default()
+        };
+
+        gate.handle_key(key(KeyCode::Char('r')), &mut resources);
+        wait_for("the slow refresh starts", || hits.load(Ordering::SeqCst) == 1).await;
+        gate.handle_key(key(KeyCode::Char('x')), &mut resources);
+        gate.handle_key(key(KeyCode::Char('y')), &mut resources);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while gate.executing.is_some() || gate.proposals[0].outcome.is_none() {
+            assert!(tokio::time::Instant::now() < deadline, "no post-execute status applied");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            gate.tick(&mut resources);
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 2, "a post-execute status request was sent");
+        let after_execute = gate.proposals.clone();
+
+        // The pre-execute reply arrives last and changes nothing.
+        release.notify_one();
+        wait_for("the late reply is sent", || late_sent.load(Ordering::SeqCst) == 1).await;
+        let refreshing = Arc::clone(&gate.refreshing);
+        wait_for("its mark clears", || refreshing.lock().unwrap().is_empty()).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        gate.tick(&mut resources);
+        assert_eq!(gate.proposals, after_execute);
+        let screen = screen(&gate, 80, 24).join("\n");
+        assert!(screen.contains("unavailable: Already executed"), "{screen}");
+    }
+
+    #[test]
+    fn a_state_change_discards_replies_to_earlier_requests() {
+        // Request 1 is in flight when the proposal changes state; its reply
+        // is discarded although nothing newer has been applied yet.
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let mut gate = GateProposals { status_seq: 1, ..Default::default() };
+        gate.refresh_after_change(&resources, "rev_1".to_string());
+        let reply = serde_json::from_value(serde_json::json!({"id": "rev_1"})).unwrap();
+        gate.apply_event(GateEvent::Status(1, Box::new(reply)), &mut resources);
+        assert!(gate.proposals.is_empty());
+    }
+
+    #[test]
+    fn an_older_request_ending_keeps_a_newer_ones_mark() {
+        let ids = Arc::new(std::sync::Mutex::new(HashMap::from([("rev_1".to_string(), 2)])));
+        let mark = |seq| Refreshing { ids: Arc::clone(&ids), id: "rev_1".to_string(), seq };
+        drop(mark(1));
+        assert_eq!(ids.lock().unwrap().get("rev_1"), Some(&2));
+        drop(mark(2));
+        assert!(ids.lock().unwrap().is_empty());
     }
 
     #[test]
