@@ -3925,10 +3925,10 @@ mod tests {
             let deadline = UnixMillis::from_millis(deadline_ms);
             let mut index = InvalidationIndex::new();
             index.insert(B256::ZERO, state.watch_set.clone());
-            assert!(index.due_expiries(deadline).is_empty());
+            assert!(index.take_expired(deadline).is_empty());
             assert_eq!(
-                index.due_expiries(UnixMillis::from_millis(deadline_ms + 1)),
-                vec![InvalidationKey::Expiry(deadline)]
+                index.take_expired(UnixMillis::from_millis(deadline_ms + 1)),
+                vec![(deadline, B256::ZERO)]
             );
         };
 

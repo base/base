@@ -547,9 +547,12 @@ impl MempoolGuard {
     /// block time `now`, returning the dropped hashes and the
     /// number of distinct deadlines fired.
     pub fn invalidate_expired(&mut self, now: UnixMillis) -> (Vec<TxHash>, usize) {
-        let due = self.index.due_expiries(now);
-        let deadline_count = due.len();
-        (self.invalidate_exact(due), deadline_count)
+        let due = self.index.take_expired(now);
+        let deadline_count = due.chunk_by(|a, b| a.0 == b.0).count();
+        // `release` is false for a hash already dropped via an earlier deadline.
+        let dropped =
+            due.into_iter().filter_map(|(_, hash)| self.release(&hash).then_some(hash)).collect();
+        (dropped, deadline_count)
     }
 
     /// Re-evaluates a payer's balance against its sponsored transactions.
@@ -867,12 +870,16 @@ mod tests {
         assert!(guard.try_admit(make(1, 1)).is_ok());
         assert!(guard.try_admit(make(2, 1_700_000_000_200)).is_ok());
         assert!(guard.try_admit(make(3, 1_700_000_000_400)).is_ok());
+        // Two passed deadlines still drop the transaction once.
+        let mut twice = make(4, 5);
+        twice.watch_set.push(InvalidationKey::Expiry(UnixMillis::from_millis(1_700_000_000_100)));
+        assert!(guard.try_admit(twice).is_ok());
 
         let (mut dropped, deadlines) =
             guard.invalidate_expired(UnixMillis::from_millis(1_700_000_000_400));
         dropped.sort_unstable();
-        assert_eq!(dropped, vec![hash(1), hash(2)]);
-        assert_eq!(deadlines, 2);
+        assert_eq!(dropped, vec![hash(1), hash(2), hash(4)]);
+        assert_eq!(deadlines, 4);
         assert!(guard.contains(&hash(3)), "valid through its deadline millisecond");
     }
 
