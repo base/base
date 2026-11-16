@@ -3,14 +3,16 @@ use std::{collections::HashMap, str::FromStr};
 use alloy_primitives::B256;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
     prelude::*,
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap},
 };
 use tokio::sync::mpsc;
 
+use super::conductor_gate::GateProposals;
 use crate::{
-    app::{Action, Resources, View},
+    GateSettings,
+    app::{Action, GatewayClusterView, Resources, View},
     output::COLOR_BASE_BLUE,
     rpc::{
         ConductorNodeStatus, PausedPeers, ValidatorNodeStatus, conductor_pause_all_nodes,
@@ -24,7 +26,8 @@ use crate::{
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "←/→", description: "Select node" },
     Keybinding { key: "Enter", description: "Open action menu" },
-    Keybinding { key: "t", description: "Transfer leader (any)" },
+    Keybinding { key: "t", description: "Transfer leader (any); propose via gateway when set" },
+    Keybinding { key: "p", description: "Approval gateway proposals (gateway mode)" },
     Keybinding { key: "P", description: "Pause conductor on all nodes" },
     Keybinding { key: "R", description: "Resume conductor on all nodes" },
     Keybinding { key: "Esc", description: "Back to home" },
@@ -108,6 +111,82 @@ impl ActionMenuItem {
             Self::TransferLeaderAny => true,
         }
     }
+
+    /// Whether the action can run in `mode`; if not, how the menu shows and
+    /// refuses it. This is the one place these rules live.
+    ///
+    /// With an approval gateway, a transfer needs a target, so "any peer" is
+    /// refused and the menu closes. The gateway's cluster view only supports
+    /// proposing a transfer to a node; everything else needs direct
+    /// conductor RPC access and is greyed out.
+    pub fn available(
+        self,
+        node: &ConductorNodeStatus,
+        is_p2p_isolated: bool,
+        mode: MenuMode,
+    ) -> MenuAvailability {
+        match (mode, self) {
+            (MenuMode::Gateway | MenuMode::DirectWithGate, Self::TransferLeaderAny) => {
+                MenuAvailability::Blocked {
+                    toast: Some(ConductorView::NEEDS_TARGET),
+                    close_menu: true,
+                    greyed: mode == MenuMode::Gateway,
+                }
+            }
+            (MenuMode::Gateway, item) if item != Self::TransferLeaderHere => {
+                MenuAvailability::Blocked {
+                    toast: Some(ConductorView::NEEDS_DIRECT_ACCESS),
+                    close_menu: false,
+                    greyed: true,
+                }
+            }
+            _ if !self.enabled(node, is_p2p_isolated) => {
+                MenuAvailability::Blocked { toast: None, close_menu: false, greyed: true }
+            }
+            _ => MenuAvailability::Allowed,
+        }
+    }
+}
+
+/// Where the conductor view's data comes from and where actions go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuMode {
+    /// Direct conductor RPC, no approval gateway.
+    Direct,
+    /// The approval gateway's cluster view, with no conductor RPC access.
+    Gateway,
+    /// Direct conductor RPC for reads, with leader transfers proposed through
+    /// the approval gateway.
+    DirectWithGate,
+}
+
+impl MenuMode {
+    /// The mode for the current config and data source.
+    pub fn of(resources: &Resources) -> Self {
+        if resources.conductor.gateway.is_some() {
+            Self::Gateway
+        } else if GateSettings::configured(&resources.config) {
+            Self::DirectWithGate
+        } else {
+            Self::Direct
+        }
+    }
+}
+
+/// Whether an action menu item can run, from [`ActionMenuItem::available`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuAvailability {
+    /// The item can run.
+    Allowed,
+    /// The item can't run.
+    Blocked {
+        /// Shown when the item is chosen, saying why.
+        toast: Option<&'static str>,
+        /// Whether choosing the item closes the menu.
+        close_menu: bool,
+        /// Whether the menu shows the item greyed out.
+        greyed: bool,
+    },
 }
 
 /// Yes / No selector inside the confirmation overlay.
@@ -240,7 +319,7 @@ pub enum Overlay {
 /// poll snapshot.
 #[derive(Debug, Default)]
 pub struct ConductorView {
-    selected: usize,
+    pub(super) selected: usize,
     overlay: Overlay,
     op_pending: bool,
     /// In-flight result channel for any mutation returning `Result<String, String>`
@@ -258,20 +337,38 @@ pub struct ConductorView {
     /// Saved peer lists for each soft-isolated node, keyed by node name.
     /// Presence in this map means the node is currently P2P-isolated.
     paused_node_peers: HashMap<String, PausedPeers>,
+    /// Approval gateway proposals, their overlays and requests.
+    pub(super) gate: GateProposals,
 }
 
 impl ConductorView {
+    /// Shown when `t` is pressed in gateway mode before the cluster view arrives.
+    pub const NO_GATEWAY_NODES: &str =
+        "No nodes yet: waiting for the approval gateway's cluster view";
+    /// Shown when a leader transfer is requested with nowhere to send it.
+    pub const NO_CONDUCTOR_CONFIG: &str = "Leader transfer needs a conductor config (`conductors` or `--conductor-rpc`) or an approval gateway (`gate_url`)";
+    /// Shown when "Transfer leader (any peer)" is chosen with an approval gateway.
+    pub const NEEDS_TARGET: &str = "The approval gateway needs a target: use Transfer leader here";
+    /// Shown when `t` is pressed with an approval gateway on a node that is the
+    /// leader or whose role is unknown.
+    pub const NEEDS_FOLLOWER: &str =
+        "Leader transfer needs a selected node that is known not to be the leader";
+    /// Shown when an action needs direct conductor RPC access in gateway mode.
+    pub const NEEDS_DIRECT_ACCESS: &str =
+        "Not available via the approval gateway: this action needs direct conductor RPC access";
+
     /// Creates a new conductor view with no overlay open.
     pub fn new() -> Self {
         Self::default()
     }
 
     const fn is_overlay_open(&self) -> bool {
-        !matches!(self.overlay, Overlay::None)
+        !matches!(self.overlay, Overlay::None) || self.gate.is_open()
     }
 
-    fn close_overlay(&mut self) {
+    pub(super) fn close_overlay(&mut self) {
         self.overlay = Overlay::None;
+        self.gate.close();
     }
 
     fn selected_node<'a>(
@@ -285,17 +382,21 @@ impl ConductorView {
         self.overlay = Overlay::ActionMenu { cursor: 0 };
     }
 
-    /// Resolves a menu item into an overlay transition (or a no-op).
+    /// Resolves an allowed menu item into an overlay transition. With an
+    /// approval gateway, "Transfer leader here" opens the proposal form.
     fn select_menu_item(
         &mut self,
         item: ActionMenuItem,
         node: &ConductorNodeStatus,
         is_p2p_isolated: bool,
+        mode: MenuMode,
     ) {
-        if !item.enabled(node, is_p2p_isolated) {
+        let name = node.name.clone();
+        if mode != MenuMode::Direct && item == ActionMenuItem::TransferLeaderHere {
+            self.overlay = Overlay::None;
+            self.gate.open_form(name);
             return;
         }
-        let name = node.name.clone();
         let action = match item {
             ActionMenuItem::TransferLeaderAny => Some(PendingAction::TransferAny),
             ActionMenuItem::TransferLeaderHere => Some(PendingAction::TransferTo(name)),
@@ -323,9 +424,16 @@ impl ConductorView {
     }
 
     /// Spawns the mutation behind a confirmed action and switches to single-flight.
-    fn execute(&mut self, action: PendingAction, resources: &Resources) {
+    fn execute(&mut self, action: PendingAction, resources: &mut Resources) {
         let nodes_cfg = resources.conductor.nodes_config();
         if nodes_cfg.is_empty() {
+            self.close_overlay();
+            let message = if resources.conductor.gateway.is_some() {
+                Self::NEEDS_DIRECT_ACCESS
+            } else {
+                Self::NO_CONDUCTOR_CONFIG
+            };
+            resources.toasts.push(Toast::warning(message));
             return;
         }
         self.op_pending = true;
@@ -443,6 +551,8 @@ impl View for ConductorView {
     }
 
     fn tick(&mut self, resources: &mut Resources) -> Action {
+        self.gate.tick(resources);
+
         if let Some(ref mut rx) = self.op_rx
             && let Ok(result) = rx.try_recv()
         {
@@ -490,6 +600,11 @@ impl View for ConductorView {
 
     fn handle_key(&mut self, key: KeyEvent, resources: &mut Resources) -> Action {
         let node_count = resources.conductor.nodes.len();
+
+        if self.gate.is_open() {
+            self.gate.handle_key(key, resources);
+            return Action::None;
+        }
 
         match &mut self.overlay {
             Overlay::HashInput { node: target, input, cursor, prefilled } => {
@@ -595,7 +710,20 @@ impl View for ConductorView {
                         {
                             let item = MENU_ITEMS[cursor_idx];
                             let is_p2p_isolated = self.paused_node_peers.contains_key(&node.name);
-                            self.select_menu_item(item, &node, is_p2p_isolated);
+                            let mode = MenuMode::of(resources);
+                            match item.available(&node, is_p2p_isolated, mode) {
+                                MenuAvailability::Allowed => {
+                                    self.select_menu_item(item, &node, is_p2p_isolated, mode);
+                                }
+                                MenuAvailability::Blocked { toast, close_menu, .. } => {
+                                    if let Some(message) = toast {
+                                        resources.toasts.push(Toast::warning(message));
+                                    }
+                                    if close_menu {
+                                        self.close_overlay();
+                                    }
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -616,10 +744,41 @@ impl View for ConductorView {
                 self.open_action_menu();
             }
             KeyCode::Char('t') if !self.op_pending => {
-                self.overlay = Overlay::Confirm {
-                    action: PendingAction::TransferAny,
-                    button: ConfirmButton::No,
-                };
+                let mode = MenuMode::of(resources);
+                let gate_enabled = mode != MenuMode::Direct;
+                match self.selected_node(&resources.conductor.nodes) {
+                    Some(node) if gate_enabled => {
+                        let is_p2p_isolated = self.paused_node_peers.contains_key(&node.name);
+                        match ActionMenuItem::TransferLeaderHere.available(
+                            node,
+                            is_p2p_isolated,
+                            mode,
+                        ) {
+                            MenuAvailability::Allowed => self.gate.open_form(node.name.clone()),
+                            MenuAvailability::Blocked { toast, .. } => resources
+                                .toasts
+                                .push(Toast::warning(toast.unwrap_or(Self::NEEDS_FOLLOWER))),
+                        }
+                    }
+                    _ if gate_enabled => {
+                        resources.toasts.push(Toast::warning(Self::NO_GATEWAY_NODES));
+                    }
+                    _ if resources.conductor.nodes_config().is_empty() => {
+                        resources.toasts.push(Toast::warning(Self::NO_CONDUCTOR_CONFIG));
+                    }
+                    _ => {
+                        self.overlay = Overlay::Confirm {
+                            action: PendingAction::TransferAny,
+                            button: ConfirmButton::No,
+                        };
+                    }
+                }
+            }
+            KeyCode::Char('p') if GateSettings::configured(&resources.config) => {
+                self.gate.open_list(resources);
+            }
+            KeyCode::Char('P' | 'R') if resources.conductor.gateway.is_some() => {
+                resources.toasts.push(Toast::warning(Self::NEEDS_DIRECT_ACCESS));
             }
             KeyCode::Char('P') if !self.op_pending && node_count > 0 => {
                 self.overlay = Overlay::Confirm {
@@ -650,10 +809,11 @@ impl View for ConductorView {
 
         let nodes = &resources.conductor.nodes;
         let validators = &resources.validators.nodes;
+        let gateway = resources.conductor.gateway.as_ref();
 
         if validators.is_empty() {
             if nodes.is_empty() {
-                render_unconfigured(frame, content_area);
+                render_unconfigured(frame, content_area, gateway);
             } else {
                 let selected = self.selected.min(nodes.len().saturating_sub(1));
                 render_cluster_table(
@@ -663,6 +823,7 @@ impl View for ConductorView {
                     selected,
                     self.op_pending,
                     &self.paused_node_peers,
+                    gateway,
                 );
             }
         } else {
@@ -673,7 +834,7 @@ impl View for ConductorView {
                 .split(content_area);
 
             if nodes.is_empty() {
-                render_unconfigured(frame, sections[0]);
+                render_unconfigured(frame, sections[0], gateway);
             } else {
                 let selected = self.selected.min(nodes.len().saturating_sub(1));
                 render_cluster_table(
@@ -683,28 +844,44 @@ impl View for ConductorView {
                     selected,
                     self.op_pending,
                     &self.paused_node_peers,
+                    gateway,
                 );
             }
             render_validator_table(frame, sections[1], validators);
         }
 
-        render_footer(frame, footer_area, &self.overlay, self.op_pending);
+        render_footer(
+            frame,
+            footer_area,
+            &self.overlay,
+            self.gate.footer_keys(),
+            self.op_pending,
+            gateway.is_some(),
+        );
 
         match &self.overlay {
             Overlay::None => {}
             Overlay::ActionMenu { cursor } => {
                 if let Some(node) = self.selected_node(nodes) {
                     let is_p2p_isolated = self.paused_node_peers.contains_key(&node.name);
-                    render_action_menu(frame, area, node, *cursor, is_p2p_isolated);
+                    let mode = MenuMode::of(resources);
+                    render_action_menu(frame, area, node, *cursor, is_p2p_isolated, gateway, mode);
                 }
             }
             Overlay::Confirm { action, button } => {
-                render_confirm(frame, area, action, *button);
+                render_confirm(
+                    frame,
+                    area,
+                    &action.description(),
+                    action.is_destructive(),
+                    *button,
+                );
             }
             Overlay::HashInput { node, input, cursor, prefilled } => {
                 render_hash_input(frame, area, node, input, *cursor, *prefilled);
             }
         }
+        self.gate.render(frame, area);
     }
 }
 
@@ -713,9 +890,10 @@ fn parse_hex_hash(input: &str) -> Option<B256> {
     B256::from_str(input).ok()
 }
 
-fn render_unconfigured(f: &mut Frame<'_>, area: Rect) {
+fn render_unconfigured(f: &mut Frame<'_>, area: Rect, gateway: Option<&GatewayClusterView>) {
+    let title = if gateway.is_some() { GATEWAY_TITLE } else { " HA Conductor " };
     let block = Block::default()
-        .title(" HA Conductor ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(COLOR_BASE_BLUE));
 
@@ -727,14 +905,32 @@ fn render_unconfigured(f: &mut Frame<'_>, area: Rect) {
         .constraints([Constraint::Min(0), Constraint::Length(1), Constraint::Min(0)])
         .split(inner);
 
-    let msg = Paragraph::new("Conductor monitoring requires a config with conductor endpoints.")
-        .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::DarkGray));
+    let msg = match gateway {
+        Some(GatewayClusterView { notice: Some(notice), .. }) => {
+            Paragraph::new(notice.escape_debug().to_string()).style(Style::default().fg(Color::Red))
+        }
+        Some(_) => Paragraph::new("Waiting for the approval gateway's cluster view…")
+            .style(Style::default().fg(Color::DarkGray)),
+        None => Paragraph::new("Conductor monitoring requires a config with conductor endpoints.")
+            .style(Style::default().fg(Color::DarkGray)),
+    }
+    .alignment(Alignment::Center);
 
     f.render_widget(msg, chunks[1]);
 }
 
-fn render_footer(f: &mut Frame<'_>, area: Rect, overlay: &Overlay, op_pending: bool) {
+/// Footer keys while a Yes/No confirmation is shown.
+pub(super) const CONFIRM_KEYS: &[(&str, &str)] =
+    &[("←/→", "Yes / No"), ("Enter", "confirm"), ("y/n", "shortcut"), ("Esc", "cancel")];
+
+fn render_footer(
+    f: &mut Frame<'_>,
+    area: Rect,
+    overlay: &Overlay,
+    gate_keys: Option<&[(&'static str, &'static str)]>,
+    op_pending: bool,
+    gateway_feed: bool,
+) {
     let key_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let desc_style = Style::default().fg(Color::DarkGray);
     let sep = Span::styled("  │  ", desc_style);
@@ -746,7 +942,17 @@ fn render_footer(f: &mut Frame<'_>, area: Rect, overlay: &Overlay, op_pending: b
         spans.push(Span::styled(desc, desc_style));
     };
 
+    let push_pairs = |spans: &mut Vec<Span<'_>>, pairs: &[(&'static str, &'static str)]| {
+        for (i, (key, desc)) in pairs.iter().enumerate() {
+            if i > 0 {
+                spans.push(sep.clone());
+            }
+            push_pair(spans, key, desc);
+        }
+    };
+
     match overlay {
+        _ if let Some(keys) = gate_keys => push_pairs(&mut spans, keys),
         Overlay::None => {
             push_pair(&mut spans, "Esc", "back");
             spans.push(sep.clone());
@@ -754,6 +960,12 @@ fn render_footer(f: &mut Frame<'_>, area: Rect, overlay: &Overlay, op_pending: b
             spans.push(sep.clone());
             if op_pending {
                 spans.push(Span::styled("working…", Style::default().fg(Color::Yellow)));
+            } else if gateway_feed {
+                push_pair(&mut spans, "Enter", "actions");
+                spans.push(sep.clone());
+                push_pair(&mut spans, "t", "propose transfer");
+                spans.push(sep.clone());
+                push_pair(&mut spans, "p", "proposals");
             } else {
                 push_pair(&mut spans, "Enter", "actions");
                 spans.push(sep.clone());
@@ -771,15 +983,7 @@ fn render_footer(f: &mut Frame<'_>, area: Rect, overlay: &Overlay, op_pending: b
             spans.push(sep.clone());
             push_pair(&mut spans, "Esc", "cancel");
         }
-        Overlay::Confirm { .. } => {
-            push_pair(&mut spans, "←/→", "Yes / No");
-            spans.push(sep.clone());
-            push_pair(&mut spans, "Enter", "confirm");
-            spans.push(sep.clone());
-            push_pair(&mut spans, "y/n", "shortcut");
-            spans.push(sep.clone());
-            push_pair(&mut spans, "Esc", "cancel");
-        }
+        Overlay::Confirm { .. } => push_pairs(&mut spans, CONFIRM_KEYS),
         Overlay::HashInput { .. } => {
             push_pair(&mut spans, "0-9 a-f", "hex");
             spans.push(sep.clone());
@@ -804,16 +1008,28 @@ fn render_action_menu(
     node: &ConductorNodeStatus,
     cursor: usize,
     is_p2p_isolated: bool,
+    gateway: Option<&GatewayClusterView>,
+    mode: MenuMode,
 ) {
-    let popup_w = 44u16.min(area.width.saturating_sub(4));
-    let popup_h = (MENU_ITEMS.len() as u16 + 5).min(area.height.saturating_sub(4));
+    // The table cell ellipsizes the gateway's error; the panel shows it in full.
+    let error = gateway
+        .and_then(|gateway| gateway.cluster.as_ref())
+        .and_then(|cluster| cluster.error_for(&node.name))
+        .map(|error| format!("Error: {}", error.escape_debug()));
+    let popup_w = if error.is_some() { 64u16 } else { 44 }.min(area.width.saturating_sub(4));
+    let error_rows = error.as_ref().map_or(0, |error| {
+        // One extra row absorbs word-wrap slack.
+        let text_w = usize::from(popup_w.saturating_sub(2)).max(1);
+        error.chars().count().div_ceil(text_w) as u16 + 2
+    });
+    let popup_h = (MENU_ITEMS.len() as u16 + 5 + error_rows).min(area.height.saturating_sub(4));
     let x = area.x + area.width.saturating_sub(popup_w) / 2;
     let y = area.y + area.height.saturating_sub(popup_h) / 2;
     let popup = Rect { x, y, width: popup_w, height: popup_h };
 
     f.render_widget(Clear, popup);
 
-    let title = format!(" Actions: {} ", node.name);
+    let title = format!(" Actions: {} ", node.name.escape_debug());
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -823,7 +1039,10 @@ fn render_action_menu(
 
     let mut lines: Vec<Line<'_>> = Vec::with_capacity(MENU_ITEMS.len() + 2);
     for (i, item) in MENU_ITEMS.iter().enumerate() {
-        let enabled = item.enabled(node, is_p2p_isolated);
+        let enabled = !matches!(
+            item.available(node, is_p2p_isolated, mode),
+            MenuAvailability::Blocked { greyed: true, .. }
+        );
         let label = item.label(node, is_p2p_isolated);
         let marker = if i == cursor { "› " } else { "  " };
         let style = match (i == cursor, enabled) {
@@ -842,11 +1061,45 @@ fn render_action_menu(
         "  ↑/↓ move   Enter select   Esc cancel",
         Style::default().fg(Color::DarkGray),
     )]));
+    if let Some(error) = error {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(error, Style::default().fg(Color::Red)));
+    }
 
-    f.render_widget(Paragraph::new(lines), inner);
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
-fn render_confirm(f: &mut Frame<'_>, area: Rect, action: &PendingAction, button: ConfirmButton) {
+/// Shortens `text` to at most `width` display columns, ending with `…` when
+/// anything was cut.
+fn ellipsize(text: &str, width: usize) -> String {
+    if Line::raw(text).width() <= width {
+        return text.to_string();
+    }
+    let mut kept = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let char_width = Span::raw(c.to_string()).width();
+        if used + char_width + 1 > width {
+            break;
+        }
+        used += char_width;
+        kept.push(c);
+    }
+    if width > 0 {
+        kept.push('…');
+    }
+    kept
+}
+
+/// Draws a centered Yes/No confirmation for `description`; a destructive
+/// action gets a red Yes button.
+pub(super) fn render_confirm(
+    f: &mut Frame<'_>,
+    area: Rect,
+    description: &str,
+    destructive: bool,
+    button: ConfirmButton,
+) {
     let popup_w = 60u16.min(area.width.saturating_sub(4));
     let popup_h = 8u16.min(area.height.saturating_sub(4));
     let x = area.x + area.width.saturating_sub(popup_w) / 2;
@@ -862,7 +1115,7 @@ fn render_confirm(f: &mut Frame<'_>, area: Rect, action: &PendingAction, button:
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    let body = Paragraph::new(action.description())
+    let body = Paragraph::new(description)
         .style(Style::default().fg(Color::White))
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });
@@ -879,7 +1132,7 @@ fn render_confirm(f: &mut Frame<'_>, area: Rect, action: &PendingAction, button:
 
     f.render_widget(body, layout[0]);
 
-    let yes_color = if action.is_destructive() { Color::Red } else { Color::Green };
+    let yes_color = if destructive { Color::Red } else { Color::Green };
     let yes_style = match button {
         ConfirmButton::Yes => {
             Style::default().fg(yes_color).add_modifier(Modifier::BOLD | Modifier::REVERSED)
@@ -1025,8 +1278,14 @@ fn render_cluster_table(
     selected: usize,
     op_pending: bool,
     paused_nodes: &HashMap<String, PausedPeers>,
+    gateway: Option<&GatewayClusterView>,
 ) {
-    let title = if op_pending { " HA Conductor [working…] " } else { " HA Conductor " };
+    let title = match (gateway.is_some(), op_pending) {
+        (true, true) => " HA Conductor · via approval gateway [working…] ",
+        (true, false) => GATEWAY_TITLE,
+        (false, true) => " HA Conductor [working…] ",
+        (false, false) => " HA Conductor ",
+    };
 
     let block = Block::default()
         .title(title)
@@ -1040,7 +1299,10 @@ fn render_cluster_table(
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Min(0)])
         .split(inner);
-    render_pause_all_banner(f, inner_chunks[0], nodes, op_pending);
+    render_pause_all_banner(f, inner_chunks[0], nodes, op_pending, gateway.is_none());
+    if let Some(gateway) = gateway {
+        render_gateway_status(f, inner_chunks[1], gateway);
+    }
     let inner = inner_chunks[2];
 
     debug_assert!(!nodes.is_empty(), "render_cluster_table requires at least one node");
@@ -1079,7 +1341,8 @@ fn render_cluster_table(
             mods |= Modifier::UNDERLINED;
         }
         let style = Style::default().fg(role_color).add_modifier(mods);
-        let label = if node.discovered { format!("{} (d)", node.name) } else { node.name.clone() };
+        let name = node.name.escape_debug();
+        let label = if node.discovered { format!("{name} (d)") } else { name.to_string() };
         header_cells.push(Cell::from(label).style(style));
     }
     let header = Row::new(header_cells)
@@ -1328,6 +1591,55 @@ fn render_cluster_table(
     let el_section = section_row("EL", node_count);
     let spacer = Row::new(vec![Cell::from("")]).height(1);
 
+    // The gateway serves conductor state, heads, the unsafe hash, L1
+    // derivation and CL peers, but not the safe hash or anything EL, so
+    // those rows (which would all read `?`) are hidden; its per-node errors
+    // get their own row.
+    if let Some(gateway) = gateway {
+        // Same column layout as the table's, so long errors can be ellipsized
+        // to their cell instead of being cut mid-word.
+        let columns = Layout::horizontal(constraints.clone())
+            .flex(Flex::Start)
+            .spacing(TABLE_COLUMN_SPACING)
+            .split(inner);
+        let mut error_cells = vec![Cell::from("  Error").style(label_style)];
+        for (i, node) in nodes.iter().enumerate() {
+            let error = gateway.cluster.as_ref().and_then(|cluster| cluster.error_for(&node.name));
+            let cell_width = columns.get(i + 1).map_or(0, |column| usize::from(column.width));
+            error_cells.push(error.map_or_else(
+                || Cell::from("   -").style(Style::default().fg(Color::DarkGray)),
+                |error| {
+                    let text = format!("   {}", error.escape_debug());
+                    Cell::from(ellipsize(&text, cell_width)).style(Style::default().fg(Color::Red))
+                },
+            ));
+        }
+        let rows = vec![
+            role_row,
+            active_row,
+            paused_row,
+            stopped_row,
+            healthy_row,
+            seq_active_row,
+            Row::new(error_cells).height(1),
+            spacer,
+            section_row("Heads", node_count),
+            l2_row,
+            l2_hash_row,
+            safe_l2_row,
+            finalized_l2_row,
+            l1_row,
+            cl_peers_row,
+        ];
+        let table = Table::new(rows, constraints)
+            .header(header)
+            .flex(Flex::Start)
+            .column_spacing(TABLE_COLUMN_SPACING)
+            .row_highlight_style(Style::default());
+        f.render_stateful_widget(table, inner, &mut TableState::default());
+        return;
+    }
+
     let rows = vec![
         // ── Conductor ────────────────────────────────────────────────────
         role_row,
@@ -1358,16 +1670,48 @@ fn render_cluster_table(
     f.render_stateful_widget(table, inner, &mut TableState::default());
 }
 
+/// Gap between cluster table columns (ratatui's default, set explicitly so the
+/// error row's ellipsis width matches the table layout).
+const TABLE_COLUMN_SPACING: u16 = 1;
+
+/// Block title in gateway mode.
+const GATEWAY_TITLE: &str = " HA Conductor · via approval gateway ";
+
+/// Renders the gateway's refresh error, or where the data came from.
+fn render_gateway_status(f: &mut Frame<'_>, area: Rect, gateway: &GatewayClusterView) {
+    let line = gateway.notice.as_ref().map_or_else(
+        || {
+            let cluster = gateway.cluster.as_ref();
+            let mut parts = Vec::new();
+            if let Some(network) = cluster.and_then(|c| c.network.as_deref()) {
+                parts.push(network.escape_debug().to_string());
+            }
+            if let Some(version) = cluster.and_then(|c| c.membership_version) {
+                parts.push(format!("membership v{version}"));
+            }
+            if let Some(as_of) = cluster.and_then(|c| c.as_of) {
+                parts.push(format!("as of {}", as_of.to_rfc3339()));
+            }
+            Line::styled(parts.join("  ·  "), Style::default().fg(Color::DarkGray))
+        },
+        |notice| Line::styled(notice.escape_debug().to_string(), Style::default().fg(Color::Red)),
+    );
+    f.render_widget(Paragraph::new(line).alignment(Alignment::Center), area);
+}
+
 /// Renders the cluster-wide control-loop status and the always-visible
 /// `[ P ] Pause all` / `[ R ] Resume all` button strip.
 ///
 /// The status segment summarises `conductor_paused` across every node so the
-/// affordance for "pause all" is obvious without remembering a shortcut.
+/// affordance for "pause all" is obvious without remembering a shortcut. The
+/// buttons are hidden when `show_controls` is false (gateway mode, where
+/// pausing needs direct conductor RPC access).
 fn render_pause_all_banner(
     f: &mut Frame<'_>,
     area: Rect,
     nodes: &[ConductorNodeStatus],
     op_pending: bool,
+    show_controls: bool,
 ) {
     let total = nodes.len();
     let paused = nodes.iter().filter(|n| n.conductor_paused == Some(true)).count();
@@ -1398,14 +1742,17 @@ fn render_pause_all_banner(
     let dim = Style::default().fg(Color::DarkGray);
     let working = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
 
-    let mut spans: Vec<Span<'_>> = vec![
-        Span::styled(status_label, Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
-        Span::styled("   ·   ", dim),
-    ];
+    let mut spans: Vec<Span<'_>> = vec![Span::styled(
+        status_label,
+        Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+    )];
 
-    if op_pending {
+    if show_controls {
+        spans.push(Span::styled("   ·   ", dim));
+    }
+    if show_controls && op_pending {
         spans.push(Span::styled("[ working… ]", working));
-    } else {
+    } else if show_controls {
         spans.push(Span::styled(" P ", key_style));
         spans.push(Span::raw(" "));
         spans.push(Span::styled("Pause all", label_style));
@@ -1662,6 +2009,13 @@ fn section_row(label: &str, node_count: usize) -> Row<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        app::views::{
+            GateOverlay,
+            conductor_test_utils::{draw, fg_of, gateway_resources, key, rows},
+        },
+        gate_cluster_fixtures::{CLUSTER_HEALTHY, CLUSTER_PARTIAL, CLUSTER_WITH_CL},
+    };
 
     const SAMPLE_HEX: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -1762,5 +2116,360 @@ mod tests {
         let baseline = latest_block(&nodes, |node| node.unsafe_l2_block);
 
         assert_eq!(baseline, Some(12));
+    }
+
+    #[tokio::test]
+    async fn menu_blocks_the_same_items_with_the_same_toasts_in_each_mode() {
+        let mut node = conductor_status("node-1", Some(false), None);
+        node.conductor_paused = Some(false);
+        node.sequencer_active = Some(true);
+        node.discovered = false;
+        let direct = ConductorView::NEEDS_DIRECT_ACCESS;
+        let target = ConductorView::NEEDS_TARGET;
+        // Items not listed for a mode are allowed; `None` is disabled for
+        // this node (no toast).
+        // Items not listed for a mode are allowed. Each entry is (item, toast,
+        // closes the menu, greyed out).
+        let disabled = (None, false, true);
+        let needs_direct = (Some(direct), false, true);
+        let blocked = [
+            (
+                MenuMode::Direct,
+                vec![
+                    (ActionMenuItem::ConductorResume, disabled),
+                    (ActionMenuItem::StartSequencer, disabled),
+                ],
+            ),
+            (
+                MenuMode::DirectWithGate,
+                vec![
+                    (ActionMenuItem::TransferLeaderAny, (Some(target), true, false)),
+                    (ActionMenuItem::ConductorResume, disabled),
+                    (ActionMenuItem::StartSequencer, disabled),
+                ],
+            ),
+            (
+                MenuMode::Gateway,
+                vec![
+                    (ActionMenuItem::TransferLeaderAny, (Some(target), true, true)),
+                    (ActionMenuItem::ConductorPause, needs_direct),
+                    (ActionMenuItem::ConductorResume, needs_direct),
+                    (ActionMenuItem::StartSequencer, needs_direct),
+                    (ActionMenuItem::StopSequencer, needs_direct),
+                    (ActionMenuItem::P2PToggle, needs_direct),
+                    (ActionMenuItem::RestartContainers, needs_direct),
+                ],
+            ),
+        ];
+
+        for (mode, blocked) in blocked {
+            for (index, item) in MENU_ITEMS.iter().enumerate() {
+                let expected = blocked.iter().find(|(blocked, _)| blocked == item).map_or(
+                    MenuAvailability::Allowed,
+                    |(_, (toast, close_menu, greyed))| MenuAvailability::Blocked {
+                        toast: *toast,
+                        close_menu: *close_menu,
+                        greyed: *greyed,
+                    },
+                );
+                assert_eq!(item.available(&node, false, mode), expected, "{mode:?} {item:?}");
+
+                // Enter on the item shows exactly that toast.
+                let mut resources = match mode {
+                    MenuMode::Gateway => gateway_resources(None),
+                    MenuMode::DirectWithGate => {
+                        let mut config = crate::MonitoringConfig::mainnet();
+                        config.gate_url = Some(url::Url::parse("https://gate.example").unwrap());
+                        Resources::new(config)
+                    }
+                    MenuMode::Direct => Resources::new(crate::MonitoringConfig::mainnet()),
+                };
+                resources.conductor.nodes = vec![node.clone()];
+                assert_eq!(MenuMode::of(&resources), mode);
+                let mut view = ConductorView::new();
+                view.overlay = Overlay::ActionMenu { cursor: index };
+                view.handle_key(key(KeyCode::Enter), &mut resources);
+                let toast = resources.toasts.current().map(|toast| toast.message.clone());
+                if let MenuAvailability::Blocked { toast: expected_toast, close_menu, .. } =
+                    expected
+                {
+                    assert_eq!(toast.as_deref(), expected_toast, "{mode:?} {item:?}");
+                    let menu_open = matches!(view.overlay, Overlay::ActionMenu { .. });
+                    assert_eq!(menu_open, !close_menu, "{mode:?} {item:?}");
+                } else {
+                    assert_eq!(toast, None, "{mode:?} {item:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transfer_here_opens_proposal_form_in_gateway_mode() {
+        let node = conductor_status("node-1", Some(false), None);
+        let mut view = ConductorView::new();
+
+        view.select_menu_item(
+            ActionMenuItem::TransferLeaderHere,
+            &node,
+            false,
+            MenuMode::DirectWithGate,
+        );
+        assert!(matches!(
+            view.gate.overlay(),
+            GateOverlay::ProposalForm { target, reason } if target == "node-1" && reason.is_empty()
+        ));
+
+        view.select_menu_item(ActionMenuItem::TransferLeaderHere, &node, false, MenuMode::Direct);
+        assert!(matches!(
+            &view.overlay,
+            Overlay::Confirm { action: PendingAction::TransferTo(target), .. } if target == "node-1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn gateway_mode_renders_the_gateway_cluster_view() {
+        let resources = gateway_resources(Some(CLUSTER_HEALTHY));
+        let buffer = draw(&mut ConductorView::new(), &resources);
+        let rows = rows(&buffer);
+        let screen = rows.join("\n");
+
+        assert!(rows[0].contains("HA Conductor · via approval gateway"), "{screen}");
+        assert!(rows[1].contains("control loop: ALL ACTIVE (2/2)"), "{screen}");
+        assert!(!screen.contains("Pause all"), "{screen}");
+        assert!(
+            rows[2].contains("base-mainnet  ·  membership v7  ·  as of 2026-11-10T12:00:00+00:00")
+        );
+        for shown in [
+            "★  LEADER",
+            "follower",
+            "Seq active",
+            "Unsafe L2",
+            "1204310",
+            "Safe L2",
+            "1204250",
+            "Finalized L2",
+            "1203900",
+        ] {
+            assert!(screen.contains(shown), "{shown} missing:\n{screen}");
+        }
+        for hidden in ["── CL", "── EL", "EL Peers", "Safe Hash", "Syncing", "  Block "] {
+            assert!(!screen.contains(hidden), "{hidden} shown:\n{screen}");
+        }
+        let error_row = rows.iter().find(|row| row.contains("  Error")).unwrap();
+        assert_eq!(error_row.matches(" - ").count(), 2, "{error_row}");
+        assert!(rows[33].contains("[t] propose transfer") && rows[33].contains("[p] proposals"));
+    }
+
+    #[tokio::test]
+    async fn gateway_mode_shows_the_cl_rows_like_the_direct_view() {
+        let row_of = |rows: &[String], label: &str| {
+            rows.iter().find(|row| row.contains(label)).cloned().unwrap_or_default()
+        };
+
+        let resources = gateway_resources(Some(CLUSTER_WITH_CL));
+        let buffer = draw(&mut ConductorView::new(), &resources);
+        let shown = rows(&buffer);
+        let screen = shown.join("\n");
+        let hash = row_of(&shown, "  Unsafe Hash");
+        assert!(hash.contains("   0xabcdef01…") && hash.contains("   ?"), "{screen}");
+        let l1 = row_of(&shown, "  L1 Derived");
+        assert!(l1.contains("   21000000 / 21000004") && l1.contains("   ? / ?"), "{screen}");
+        let peers = row_of(&shown, "  CL Peers");
+        assert!(peers.contains("   12") && peers.contains("   ?"), "{screen}");
+        assert_eq!(fg_of(&buffer, "0xabcdef01…"), Color::Yellow);
+        assert_eq!(fg_of(&buffer, "21000000 / 21000004"), Color::Green);
+        assert_eq!(fg_of(&buffer, "? / ?"), Color::DarkGray);
+        assert_eq!(fg_of(&buffer, "   12 "), Color::Green);
+
+        // An older gateway without the fields shows the direct view's placeholders.
+        let resources = gateway_resources(Some(CLUSTER_HEALTHY));
+        let older = rows(&draw(&mut ConductorView::new(), &resources));
+        assert_eq!(row_of(&older, "  Unsafe Hash").matches("   ?").count(), 2);
+        assert_eq!(row_of(&older, "  L1 Derived").matches("   ? / ?").count(), 2);
+        assert_eq!(row_of(&older, "  CL Peers").matches("   ?").count(), 2);
+    }
+
+    #[tokio::test]
+    async fn gateway_mode_shows_a_node_error_in_the_error_style() {
+        let resources = gateway_resources(Some(CLUSTER_PARTIAL));
+        let buffer = draw(&mut ConductorView::new(), &resources);
+        let screen = rows(&buffer).join("\n");
+
+        assert!(screen.contains("via approval gateway"), "{screen}");
+        assert_eq!(fg_of(&buffer, "conductor rpc: context deadline exceeded"), Color::Red);
+        assert_eq!(fg_of(&buffer, "offline"), Color::Red);
+        assert!(!screen.contains("EL Peers"), "{screen}");
+    }
+
+    #[tokio::test]
+    async fn long_node_error_is_ellipsized_in_the_table_and_full_in_the_actions_panel() {
+        let full = "admin_sequencerActive: unreachable: dial tcp 10.0.0.12:7545: connect: connection refused after 3 attempts";
+        let fixture = CLUSTER_PARTIAL.replace("conductor rpc: context deadline exceeded", full);
+        let resources = gateway_resources(Some(&fixture));
+        let mut view = ConductorView::new();
+
+        let buffer = draw(&mut view, &resources);
+        let table_rows = rows(&buffer);
+        let error_row = table_rows.iter().find(|row| row.contains("  Error")).unwrap();
+        let start = error_row.find("admin_sequencerActive").unwrap();
+        let shown = error_row[start..].split('…').next().unwrap();
+        assert!(error_row[start..].contains('…'), "{error_row}");
+        assert!(full.starts_with(shown) && shown.len() < full.len(), "{error_row}");
+        assert_eq!(fg_of(&buffer, "admin_sequencerActive"), Color::Red);
+        assert_eq!(fg_of(&buffer, "…"), Color::Red);
+
+        view.selected = 1;
+        view.overlay = Overlay::ActionMenu { cursor: 0 };
+        let buffer = draw(&mut view, &resources);
+        let rows = rows(&buffer);
+        let (first, row) =
+            rows.iter().enumerate().find(|(_, row)| row.contains("Error: admin_")).unwrap();
+        let left = row[..row.find("Error: admin_").unwrap()].chars().count();
+        let panel_text = rows[first..]
+            .iter()
+            .map(|row| row.chars().skip(left).take_while(|c| *c != '│').collect::<String>())
+            .map(|text| text.trim().to_string())
+            .take_while(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(panel_text, format!("Error: {full}"), "{}", rows.join("\n"));
+        assert_eq!(fg_of(&buffer, "Error: admin_"), Color::Red);
+    }
+
+    #[tokio::test]
+    async fn gateway_node_names_render_escaped() {
+        let fixture =
+            CLUSTER_HEALTHY.replace(r#""id": "sequencer-1""#, r#""id": "evil\u001b[2Jx""#);
+        let resources = gateway_resources(Some(&fixture));
+        let mut view = ConductorView::new();
+        view.selected = 1;
+        view.overlay = Overlay::ActionMenu { cursor: 0 };
+        let buffer = draw(&mut view, &resources);
+        let rows = rows(&buffer);
+        let screen = rows.join("\n");
+
+        assert!(!screen.contains('\u{1b}'), "{screen}");
+        assert!(rows.iter().any(|row| row.contains(" Actions: evil\\u{1b}[2Jx ")), "{screen}");
+        assert!(
+            rows.iter().any(|row| row.contains("evil\\u{1b}[2Jx") && !row.contains("Actions:")),
+            "{screen}"
+        );
+    }
+
+    #[tokio::test]
+    async fn gateway_mode_enables_transfer_here_from_gateway_data() {
+        let resources = gateway_resources(Some(CLUSTER_HEALTHY));
+        let mut view = ConductorView::new();
+        view.selected = 1;
+        view.overlay = Overlay::ActionMenu { cursor: 0 };
+        let buffer = draw(&mut view, &resources);
+
+        assert_eq!(fg_of(&buffer, "Transfer leader here"), Color::White);
+        assert_eq!(fg_of(&buffer, "Conductor pause"), Color::DarkGray);
+        assert_eq!(fg_of(&buffer, "Restart containers"), Color::DarkGray);
+
+        // The erroring node's role is unknown, so it can't be a target.
+        let resources = gateway_resources(Some(CLUSTER_PARTIAL));
+        let buffer = draw(&mut view, &resources);
+        assert_eq!(fg_of(&buffer, "Transfer leader here"), Color::DarkGray);
+    }
+
+    #[tokio::test]
+    async fn t_explains_why_it_cannot_transfer() {
+        let mut resources = gateway_resources(None);
+        let mut view = ConductorView::new();
+        view.handle_key(key(KeyCode::Char('t')), &mut resources);
+        assert!(matches!(view.overlay, Overlay::None));
+        assert_eq!(resources.toasts.current().unwrap().message, ConductorView::NO_GATEWAY_NODES);
+
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        view.handle_key(key(KeyCode::Char('t')), &mut resources);
+        assert!(matches!(view.overlay, Overlay::None));
+        assert_eq!(resources.toasts.current().unwrap().message, ConductorView::NO_CONDUCTOR_CONFIG);
+    }
+
+    #[tokio::test]
+    async fn t_with_a_gateway_proposes_only_to_a_known_follower() {
+        for mode in [MenuMode::Gateway, MenuMode::DirectWithGate] {
+            for (is_leader, opens_form) in [(Some(true), false), (None, false), (Some(false), true)]
+            {
+                let mut resources = if mode == MenuMode::Gateway {
+                    gateway_resources(None)
+                } else {
+                    let mut config = crate::MonitoringConfig::mainnet();
+                    config.gate_url = Some(url::Url::parse("https://gate.example").unwrap());
+                    Resources::new(config)
+                };
+                resources.conductor.nodes = vec![conductor_status("node-1", is_leader, None)];
+                assert_eq!(MenuMode::of(&resources), mode);
+                let mut view = ConductorView::new();
+
+                view.handle_key(key(KeyCode::Char('t')), &mut resources);
+
+                let toast = resources.toasts.current().map(|toast| toast.message.clone());
+                assert!(matches!(view.overlay, Overlay::None), "{mode:?} {is_leader:?}");
+                if opens_form {
+                    assert!(
+                        matches!(
+                            view.gate.overlay(),
+                            GateOverlay::ProposalForm { target, .. } if target == "node-1"
+                        ),
+                        "{mode:?} {is_leader:?}"
+                    );
+                    assert_eq!(toast, None, "{mode:?} {is_leader:?}");
+                } else {
+                    assert!(
+                        matches!(view.gate.overlay(), GateOverlay::None),
+                        "{mode:?} {is_leader:?}"
+                    );
+                    assert_eq!(
+                        toast.as_deref(),
+                        Some(ConductorView::NEEDS_FOLLOWER),
+                        "{mode:?} {is_leader:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn t_without_a_gateway_confirms_a_transfer_to_any_peer_whatever_is_selected() {
+        for is_leader in [Some(true), None, Some(false)] {
+            let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+            resources.conductor.set_nodes_config(vec![crate::ConductorNodeConfig {
+                name: "node-1".to_string(),
+                conductor_rpc: url::Url::parse("http://127.0.0.1:6545").unwrap(),
+                cl_rpc: url::Url::parse("http://127.0.0.1:7545").unwrap(),
+                server_id: "node-1".to_string(),
+                raft_addr: "node-1:5050".to_string(),
+                el_rpc: None,
+                docker_conductor: None,
+                docker_el: None,
+                docker_cl: None,
+            }]);
+            resources.conductor.nodes = vec![conductor_status("node-1", is_leader, None)];
+            assert_eq!(MenuMode::of(&resources), MenuMode::Direct);
+            let mut view = ConductorView::new();
+
+            view.handle_key(key(KeyCode::Char('t')), &mut resources);
+
+            assert!(
+                matches!(view.overlay, Overlay::Confirm { action: PendingAction::TransferAny, .. }),
+                "{is_leader:?}"
+            );
+            assert!(matches!(view.gate.overlay(), GateOverlay::None), "{is_leader:?}");
+            assert!(resources.toasts.current().is_none(), "{is_leader:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_mode_refuses_direct_rpc_actions_with_a_message() {
+        let mut resources = gateway_resources(Some(CLUSTER_HEALTHY));
+        let mut view = ConductorView::new();
+
+        view.handle_key(key(KeyCode::Char('P')), &mut resources);
+
+        assert!(matches!(view.overlay, Overlay::None));
+        assert_eq!(resources.toasts.current().unwrap().message, ConductorView::NEEDS_DIRECT_ACCESS);
     }
 }

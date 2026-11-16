@@ -18,9 +18,10 @@ pub use commands::{
     ProofsSubmitArgs, ProofsSubmitJson, SequencerAction, SequencerActionJson, SequencerCommand,
     SequencerCommands, SequencerNodeActionArgs, SequencerNodeJson, SequencerRole,
     SequencerStartArgs, SequencerStatusArgs, SequencerStatusJson, SyncStatusCommand,
-    SyncStatusJson, TipReferenceJson, TipStatus, TxpoolClearArgs, TxpoolClearJson, TxpoolCommand,
-    TxpoolCommands, TxpoolReadArgs, TxpoolReadJson, UnsafeHeadSource, UpgradeReadinessCommand,
-    ZkBackendOption,
+    SyncStatusJson, TipReferenceJson, TipStatus, TransferCommand, TransferCommands,
+    TransferExecuteArgs, TransferProposeArgs, TransferStatusArgs, TxpoolClearArgs, TxpoolClearJson,
+    TxpoolCommand, TxpoolCommands, TxpoolReadArgs, TxpoolReadJson, UnsafeHeadSource,
+    UpgradeReadinessCommand, ZkBackendOption,
 };
 
 mod denim;
@@ -36,11 +37,11 @@ mod app;
 pub use app::{
     Action, ActionMenuItem, App, BLOB_SIZE, BlockContribution, CommandCenterView, ConductorState,
     ConductorView, ConfigView, ConfirmButton, DaMonitorView, DaState, DaTracker,
-    EVENT_POLL_TIMEOUT, HomeView, L1_BLOCK_WINDOW, L1Block, L1BlockFilter, LoadingState,
-    MAX_HISTORY, Overlay, PendingAction, PodsState, PodsView, ProofsState, ProofsView,
-    RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, RateTracker, Resources, Router, SourceLabel,
-    TransactionPane, UpgradesView, ValidatorState, View, ViewId, create_view, run_app,
-    start_background_services,
+    EVENT_POLL_TIMEOUT, GateEvent, GateOverlay, GateProposals, GatewayClusterView, HomeView,
+    L1_BLOCK_WINDOW, L1Block, L1BlockFilter, LoadingState, MAX_HISTORY, MenuAvailability, MenuMode,
+    Overlay, PendingAction, PodsState, PodsView, ProofsState, ProofsView, RATE_WINDOW_2M,
+    RATE_WINDOW_5M, RATE_WINDOW_30S, RateTracker, Resources, Router, SourceLabel, TransactionPane,
+    UpgradesView, ValidatorState, View, ViewId, create_view, run_app, start_background_services,
 };
 
 mod output;
@@ -72,20 +73,27 @@ pub use errors::{
 };
 
 mod rpc;
+#[cfg(test)]
+pub use rpc::MockTokenPrompter;
 pub use rpc::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BaseTxpoolContent, BaseTxpoolContentFrom,
-    BatcherClient, BatcherStatus, BlockDaInfo, ClInfoReport, ClNodeIdentity,
-    ConductorClusterSnapshot, ConductorControl, ConductorFanoutAction, ConductorFanoutReport,
-    ConductorNodeFailure, ConductorNodeStatus, ConductorPollUpdate, ConsensusClient, DiscoveryInfo,
-    EXPECTED_RESOLUTION_NEVER, ElInfoReport, ElNodeIdentity, GameDetails, GameListFilter,
-    GameStatus, GameSummary, GamesClient, InitialBacklog, L1BlockInfo, L1ConnectionMode,
-    LatestProposal, NodeEndpoint, NodeInfoReport, PausedPeers, PeerDirection, PeerListReport,
+    BatcherClient, BatcherStatus, BlockDaInfo, BrowserLogin, ClInfoReport, ClNodeIdentity,
+    ClusterConductorState, ClusterHeads, ClusterResponse, ClusterSequencerState, ClusterServer,
+    ClusterSource, ConductorClusterSnapshot, ConductorControl, ConductorFanoutAction,
+    ConductorFanoutReport, ConductorFeed, ConductorNodeFailure, ConductorNodeStatus,
+    ConductorPollUpdate, ConsensusClient, DiscoveryInfo, EXPECTED_RESOLUTION_NEVER, ElInfoReport,
+    ElNodeIdentity, ExecuteResponse, GameDetails, GameListFilter, GameStatus, GameSummary,
+    GamesClient, GateClient, GateClusterPoller, GateError, GateOutcomeKind, GateSettings,
+    InitialBacklog, L1BlockInfo, L1ConnectionMode, LatestProposal, Lenient, LoginListener,
+    NoPrompt, NodeEndpoint, NodeInfoReport, PausedPeers, PeerDirection, PeerListReport,
     PeerStatsReport, PeerSummary, PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot,
-    ProofProposeRequest, ProofsClient, ProofsSnapshot, ProposalProofSubmitter, RawInfoReport,
-    RawPeerCounts, RawPeersReport, ReachabilityOutcome, ReachabilityResponse, SnarkPlonkProofBytes,
+    ProofProposeRequest, ProofsClient, ProofsSnapshot, ProposalProofSubmitter,
+    ProposalStatusResponse, ProposeResponse, RawInfoReport, RawPeerCounts, RawPeersReport,
+    ReachabilityOutcome, ReachabilityResponse, ReceivedToken, ReviewApproval, SnarkPlonkProofBytes,
     SubmittedProof, SubmitterKey, SyncStatusReport, TelemetryApiError, TelemetryClient,
-    TelemetryClientError, TelemetryErrorResponse, TxSummary, TxpoolClient, TxpoolCounts,
-    TxpoolReport, TxpoolScope, TxpoolSenderSummary, TxpoolTransactionPool, TxpoolTransactionRow,
+    TelemetryClientError, TelemetryErrorResponse, TerminalPrompter, TokenCache, TokenPrompter,
+    TransferAction, TransferOutcome, TxSummary, TxpoolClient, TxpoolCounts, TxpoolReport,
+    TxpoolScope, TxpoolSenderSummary, TxpoolTransactionPool, TxpoolTransactionRow,
     ValidatorNodeStatus, add_peer, ban_el_peer, conductor_pause_all_nodes, conductor_pause_node,
     conductor_resume_all_nodes, conductor_resume_node, el_peer_is_trusted, fetch_block,
     fetch_block_transactions, fetch_cl_info, fetch_connected_peers, fetch_el_info,
@@ -97,9 +105,11 @@ pub use rpc::{
     run_safe_head_poller, run_validator_poller, start_sequencer_node, stop_sequencer_node,
     transfer_conductor_leader, unban_el_peer, unpause_sequencer_node,
 };
+#[cfg(test)]
+pub use rpc::{MockClusterSource, gate_cluster_fixtures};
 
 mod tui;
 pub use tui::{
-    AppFrame, AppLayout, Browser, Keybinding, Toast, ToastLevel, ToastState, restore_terminal,
-    setup_terminal,
+    AppFrame, AppLayout, Browser, ConsensusBadge, Keybinding, Toast, ToastLevel, ToastState,
+    restore_terminal, setup_terminal,
 };

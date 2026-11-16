@@ -246,6 +246,12 @@ Conductor inspection and control commands for HA sequencer clusters.
   node in the cluster.
 - `basectl conductor unpause-all` resumes op-conductor's control loop on every
   node in the cluster.
+- `basectl conductor transfer propose --to <TARGET> --reason <TEXT>`,
+  `transfer status <ID> [--json]`, and `transfer execute <ID>` use an optional
+  approval gateway; proposals are approved by a different operator at the
+  review URL the gateway returns. When a gateway is configured,
+  `transfer-leader` is refused. See the
+  [`basectl-cli` README](../../crates/infra/basectl/README.md).
 
 Conductor commands use the selected config's hardcoded `conductors` list when
 present. Otherwise they discover the cluster via the `--conductor-rpc` bootstrap

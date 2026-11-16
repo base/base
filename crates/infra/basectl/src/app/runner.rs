@@ -5,15 +5,16 @@ use base_common_genesis::SystemConfig;
 use tokio::sync::mpsc;
 use url::Url;
 
-use super::{App, Resources, SourceLabel, ViewId, views::create_view};
+use super::{App, GatewayClusterView, Resources, SourceLabel, ViewId, views::create_view};
 use crate::{
     config::{ConductorSource, MonitoringConfig},
     rpc::{
-        BacklogFetchResult, BlockDaInfo, ConductorPollUpdate, L1BlockInfo, L1ConnectionMode,
-        PodsSnapshot, ProofsSnapshot, ValidatorNodeStatus, fetch_full_system_config,
-        fetch_initial_backlog_with_progress, run_block_fetcher, run_conductor_poller,
-        run_l1_blob_watcher, run_latest_head_poller, run_pods_poller, run_proofs_poller,
-        run_rollup_config_poller, run_safe_head_poller, run_validator_poller,
+        BacklogFetchResult, BlockDaInfo, ConductorFeed, ConductorPollUpdate, GateClusterPoller,
+        GateSettings, L1BlockInfo, L1ConnectionMode, PodsSnapshot, ProofsSnapshot,
+        ValidatorNodeStatus, fetch_full_system_config, fetch_initial_backlog_with_progress,
+        run_block_fetcher, run_conductor_poller, run_l1_blob_watcher, run_latest_head_poller,
+        run_pods_poller, run_proofs_poller, run_rollup_config_poller, run_safe_head_poller,
+        run_validator_poller,
     },
     tui::Toast,
 };
@@ -28,6 +29,8 @@ pub async fn run_app(
     conductor_rpc: Option<Url>,
 ) -> Result<()> {
     let mut config = MonitoringConfig::load(network).await?;
+    // Fail before the TUI starts on a set but invalid BASECTL_GATE_URL.
+    GateSettings::resolve(&config, None, None)?;
     if config.conductors.is_none()
         && let Some(source) = config.conductor_source(conductor_rpc.clone())
         && let ConductorSource::Discover { bootstrap, .. } = source
@@ -134,26 +137,40 @@ pub fn start_background_services(
         .abort_handle(),
     );
 
-    if let Some(source) = config.conductor_source(conductor_rpc) {
-        let (conductor_tx, conductor_rx) = mpsc::channel::<ConductorPollUpdate>(8);
-        resources.conductor.set_channel(conductor_rx);
-        resources.conductor.set_source_label(match &source {
-            ConductorSource::Static(_) => SourceLabel::Static,
-            ConductorSource::Discover { bootstrap, .. } => SourceLabel::Discovered {
-                bootstrap: bootstrap.clone(),
-                last_refresh: Instant::now(),
-            },
-        });
-        match &source {
-            ConductorSource::Static(nodes) => resources.conductor.set_nodes_config(nodes.clone()),
-            ConductorSource::Discover { .. } => {
-                if let Some(bootstrap) = source.bootstrap_node() {
-                    resources.conductor.set_nodes_config(vec![bootstrap]);
+    match ConductorFeed::resolve(config, conductor_rpc) {
+        Ok(Some(ConductorFeed::Direct(source))) => {
+            let (conductor_tx, conductor_rx) = mpsc::channel::<ConductorPollUpdate>(8);
+            resources.conductor.set_channel(conductor_rx);
+            resources.conductor.set_source_label(match &source {
+                ConductorSource::Static(_) => SourceLabel::Static,
+                ConductorSource::Discover { bootstrap, .. } => SourceLabel::Discovered {
+                    bootstrap: bootstrap.clone(),
+                    last_refresh: Instant::now(),
+                },
+            });
+            match &source {
+                ConductorSource::Static(nodes) => {
+                    resources.conductor.set_nodes_config(nodes.clone())
+                }
+                ConductorSource::Discover { .. } => {
+                    if let Some(bootstrap) = source.bootstrap_node() {
+                        resources.conductor.set_nodes_config(vec![bootstrap]);
+                    }
                 }
             }
+            background_tasks
+                .push(tokio::spawn(run_conductor_poller(source, conductor_tx)).abort_handle());
         }
-        background_tasks
-            .push(tokio::spawn(run_conductor_poller(source, conductor_tx)).abort_handle());
+        Ok(Some(ConductorFeed::Gateway(settings))) => {
+            let (conductor_tx, conductor_rx) = mpsc::channel::<ConductorPollUpdate>(8);
+            resources.conductor.set_channel(conductor_rx);
+            resources.conductor.gateway = Some(GatewayClusterView::default());
+            background_tasks.push(
+                tokio::spawn(GateClusterPoller::start(settings, conductor_tx)).abort_handle(),
+            );
+        }
+        Ok(None) => {}
+        Err(error) => resources.toasts.push(Toast::warning(error.to_string())),
     }
 
     if let Some(validator_nodes) = config.validators.clone() {

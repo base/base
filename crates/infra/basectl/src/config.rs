@@ -406,6 +406,16 @@ pub struct MonitoringConfig {
     /// Kubernetes pod groups to display in the pods view.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pods: Option<PodsConfig>,
+    /// Optional leader-transfer approval gateway. When set, direct leader
+    /// transfers are refused and go through the gateway instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_url: Option<Url>,
+    /// Shell command whose trimmed stdout is the approval gateway bearer token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_token_command: Option<String>,
+    /// Approval gateway per-request timeout in seconds (default 150).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_timeout_secs: Option<u64>,
 }
 
 impl MonitoringConfig {
@@ -552,6 +562,9 @@ struct MonitoringConfigOverride {
     validators: Option<Vec<ValidatorNodeConfig>>,
     proofs: Option<ProofsConfig>,
     pods: Option<PodsConfig>,
+    gate_url: Option<Url>,
+    gate_token_command: Option<String>,
+    gate_timeout_secs: Option<u64>,
 }
 
 impl MonitoringConfig {
@@ -604,6 +617,9 @@ impl MonitoringConfig {
             validators: None,
             proofs: None,
             pods: None,
+            gate_url: None,
+            gate_token_command: None,
+            gate_timeout_secs: None,
         }
     }
 
@@ -632,6 +648,9 @@ impl MonitoringConfig {
             validators: None,
             proofs: None,
             pods: None,
+            gate_url: None,
+            gate_token_command: None,
+            gate_timeout_secs: None,
         }
     }
 
@@ -716,6 +735,9 @@ impl MonitoringConfig {
             discovery: None,
             proofs: None,
             pods: None,
+            gate_url: None,
+            gate_token_command: None,
+            gate_timeout_secs: None,
         }
     }
 
@@ -825,6 +847,9 @@ impl MonitoringConfig {
             validators: overrides.validators.or(base.validators),
             proofs: overrides.proofs.or(base.proofs),
             pods: overrides.pods.or(base.pods),
+            gate_url: overrides.gate_url.or(base.gate_url),
+            gate_token_command: overrides.gate_token_command.or(base.gate_token_command),
+            gate_timeout_secs: overrides.gate_timeout_secs.or(base.gate_timeout_secs),
         })
     }
 

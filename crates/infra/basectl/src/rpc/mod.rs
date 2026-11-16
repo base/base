@@ -62,6 +62,30 @@ pub use rollup::{
 mod submit;
 pub use submit::{ProposalProofSubmitter, SnarkPlonkProofBytes, SubmittedProof, SubmitterKey};
 
+mod gate;
+pub use gate::{
+    ExecuteResponse, GateClient, GateError, GateOutcomeKind, GateSettings, Lenient,
+    ProposalStatusResponse, ProposeResponse, ReviewApproval, TransferAction, TransferOutcome,
+};
+
+mod gate_cluster;
+#[cfg(test)]
+pub use gate_cluster::MockClusterSource;
+#[cfg(test)]
+pub use gate_cluster::test_utils as gate_cluster_fixtures;
+pub use gate_cluster::{
+    ClusterConductorState, ClusterHeads, ClusterResponse, ClusterSequencerState, ClusterServer,
+    ClusterSource, ConductorFeed, GateClusterPoller,
+};
+
+mod gate_login;
+pub use gate_login::{LoginListener, ReceivedToken};
+
+mod gate_token;
+#[cfg(test)]
+pub use gate_token::MockTokenPrompter;
+pub use gate_token::{BrowserLogin, NoPrompt, TerminalPrompter, TokenCache, TokenPrompter};
+
 mod telemetry;
 pub use telemetry::{
     ReachabilityOutcome, ReachabilityResponse, TelemetryApiError, TelemetryClient,

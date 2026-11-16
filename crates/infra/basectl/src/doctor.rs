@@ -1433,6 +1433,9 @@ mod tests {
             validators: None,
             proofs: None,
             pods: None,
+            gate_url: None,
+            gate_token_command: None,
+            gate_timeout_secs: None,
         }
     }
 
