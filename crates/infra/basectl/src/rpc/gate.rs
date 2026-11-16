@@ -257,8 +257,8 @@ impl GateSettings {
         &self,
         prompter: Arc<dyn TokenPrompter>,
     ) -> Result<GateClient, GateError> {
-        let (token, cache) = match self.explicit_token().await? {
-            Some(token) => (Some(token), None),
+        let (token, cache, explicit) = match self.explicit_token().await? {
+            Some(token) => (Some(token), None, Some(Arc::new(self.clone()))),
             None => {
                 let cache = self
                     .cache_root
@@ -267,7 +267,7 @@ impl GateSettings {
                     .ok_or(GateError::MissingToken)?;
                 // With no usable cached token, the first request goes out
                 // unauthenticated so the gateway's 401 can say how to log in.
-                (cache.load(Utc::now()), Some(cache))
+                (cache.load(Utc::now()), Some(cache), None)
             }
         };
         // Never follow redirects: requests carry a bearer token, execute is a
@@ -280,6 +280,7 @@ impl GateSettings {
             base: self.url.clone(),
             token: Arc::new(Mutex::new(token)),
             cache,
+            explicit,
             prompter,
             http,
             retry_backoff: GateClient::RETRY_BACKOFF,
@@ -644,6 +645,9 @@ pub struct GateClient {
     token: Arc<Mutex<Option<String>>>,
     /// Where a cached or prompted token is stored; `None` for explicit sources.
     cache: Option<TokenCache>,
+    /// The explicit token source the token came from, read again by
+    /// [`Self::relogin`]; `None` when the token is cached or prompted.
+    explicit: Option<Arc<GateSettings>>,
     prompter: Arc<dyn TokenPrompter>,
     http: reqwest::Client,
     retry_backoff: Duration,
@@ -780,17 +784,31 @@ impl GateClient {
         .await
     }
 
-    /// Logs in after a 401 (see [`Self::login`]) and uses the new token for
-    /// later requests.
+    /// Obtains a new token after a 401 and uses it for later requests. With
+    /// an explicit token source, reads that source again and fails if it
+    /// returns the rejected token; it never falls back to the browser, a
+    /// prompt or the cache. Otherwise logs in (see [`Self::login`]).
     pub async fn relogin(&self, token_url: Option<String>) -> Result<String, GateError> {
-        let fresh = self.login(token_url).await?;
+        let fresh = match &self.explicit {
+            Some(settings) => {
+                let fresh = settings.explicit_token().await?.ok_or(GateError::MissingToken)?;
+                if self.current_token().as_deref() == Some(fresh.as_str()) {
+                    return Err(GateError::Token(
+                        "the token source returned the token the gateway rejected".to_string(),
+                    ));
+                }
+                fresh
+            }
+            None => self.login(token_url).await?,
+        };
         *self.token.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(fresh.clone());
         Ok(fresh)
     }
 
     /// Picks up a usable cached token that differs from the current one, for
     /// example one cached by a CLI login while the TUI was waiting. Returns
-    /// whether the token changed. Explicit token sources never change.
+    /// whether the token changed. Explicit token sources are not read here;
+    /// see [`Self::relogin`].
     pub fn reload_cached_token(&self) -> bool {
         let Some(cached) = self.cache.as_ref().and_then(|cache| cache.load(Utc::now())) else {
             return false;
@@ -801,6 +819,12 @@ impl GateClient {
         }
         *token = Some(cached);
         true
+    }
+
+    /// Whether the token comes from an explicit source (token file,
+    /// `BASECTL_GATE_TOKEN` or `gate_token_command`) rather than the cache.
+    pub const fn has_explicit_source(&self) -> bool {
+        self.explicit.is_some()
     }
 
     /// Transfers leadership for an approved proposal. Never retried automatically.
