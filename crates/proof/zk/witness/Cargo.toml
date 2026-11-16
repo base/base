@@ -14,6 +14,7 @@ base-proof-zk-utils.workspace = true
 
 # op-alloy
 base-common-network.workspace = true
+base-common-consensus.workspace = true
 
 # base proof/consensus
 base-consensus-derive.workspace = true
@@ -43,6 +44,10 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+alloy-transport.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

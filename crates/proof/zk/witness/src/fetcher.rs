@@ -2,17 +2,17 @@ use std::{
     env, fmt, fs,
     num::NonZeroU64,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alloy_consensus::Header;
+use alloy_consensus::{BlockHeader, EMPTY_ROOT_HASH, Header};
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_sol_types::SolValue;
 use anyhow::{Context, Result, bail};
+use base_common_consensus::Predeploys;
 use base_common_genesis::{BaseFeature, RollupConfig};
 use base_common_network::Base;
 use base_proof_host::HostConfig;
@@ -360,14 +360,9 @@ impl OPSuccinctDataFetcher {
             .ok_or_else(|| anyhow::anyhow!("Block not found for block number {l2_start_block}"))?;
         let l2_output_state_root = l2_output_block.header.state_root;
         let agreed_l2_head_hash = l2_output_block.header.hash;
-        let l2_output_storage_hash = l2_provider
-            .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
-            .block_id(l2_start_block.into())
-            .await
-            .with_context(|| {
-                format!("eth_getProof L2ToL1MessagePasser at L2 block {l2_start_block}")
-            })?
-            .storage_hash;
+        let l2_output_storage_hash = self
+            .l2_to_l1_message_passer_storage_root(rollup_config, &l2_output_block.header)
+            .await?;
 
         let l2_output_encoded = L2Output {
             zero: 0,
@@ -385,14 +380,9 @@ impl OPSuccinctDataFetcher {
             .ok_or_else(|| anyhow::anyhow!("Block not found for block number {l2_end_block}"))?;
         let l2_claim_state_root = l2_claim_block.header.state_root;
         let l2_claim_hash = l2_claim_block.header.hash;
-        let l2_claim_storage_hash = l2_provider
-            .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
-            .block_id(l2_end_block.into())
-            .await
-            .with_context(|| {
-                format!("eth_getProof L2ToL1MessagePasser at L2 block {l2_end_block}")
-            })?
-            .storage_hash;
+        let l2_claim_storage_hash = self
+            .l2_to_l1_message_passer_storage_root(rollup_config, &l2_claim_block.header)
+            .await?;
 
         let l2_claim_encoded = L2Output {
             zero: 0,
@@ -456,11 +446,115 @@ impl OPSuccinctDataFetcher {
 
         Ok(HostConfig { request, prover, data_dir: None })
     }
+
+    /// Returns the storage root of the L2-to-L1 message passer at `header`.
+    ///
+    /// After Isthmus the header's `withdrawals_root` is this storage root, so no RPC call is
+    /// needed. Pre-Isthmus headers carry the empty trie root there, so they (and any header
+    /// missing the field) fall back to `eth_getProof`.
+    pub async fn l2_to_l1_message_passer_storage_root(
+        &self,
+        rollup_config: &RollupConfig,
+        header: &impl BlockHeader,
+    ) -> Result<B256> {
+        if rollup_config.is_isthmus_active(header.timestamp())
+            && let Some(root) = header.withdrawals_root()
+            && root != EMPTY_ROOT_HASH
+        {
+            return Ok(root);
+        }
+
+        let block_number = header.number();
+        Ok(self
+            .l2_provider
+            .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Vec::new())
+            .block_id(block_number.into())
+            .await
+            .with_context(|| {
+                format!("eth_getProof L2ToL1MessagePasser at L2 block {block_number}")
+            })?
+            .storage_hash)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloy_transport::mock::Asserter;
+    use base_common_genesis::UpgradeConfig;
+
     use super::*;
+
+    const ISTHMUS_TIME: u64 = 100;
+
+    fn mocked_fetcher(l2: Asserter) -> OPSuccinctDataFetcher {
+        OPSuccinctDataFetcher {
+            rpc_config: rpc_config(None, None),
+            l1_provider: Arc::new(
+                ProviderBuilder::default().connect_mocked_client(Asserter::new()),
+            ),
+            l2_provider: Arc::new(ProviderBuilder::default().connect_mocked_client(l2)),
+            rollup_config: None,
+            rollup_config_path: None,
+            l1_config_path: None,
+        }
+    }
+
+    fn isthmus_config() -> RollupConfig {
+        RollupConfig {
+            upgrades: UpgradeConfig { isthmus_time: Some(ISTHMUS_TIME), ..Default::default() },
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn message_passer_root_uses_withdrawals_root_after_isthmus() {
+        let withdrawals_root = B256::repeat_byte(0xAB);
+        let header = Header {
+            number: 7,
+            timestamp: ISTHMUS_TIME,
+            withdrawals_root: Some(withdrawals_root),
+            ..Default::default()
+        };
+
+        // No mocked responses: any eth_getProof call would fail.
+        let root = mocked_fetcher(Asserter::new())
+            .l2_to_l1_message_passer_storage_root(&isthmus_config(), &header)
+            .await
+            .unwrap();
+
+        assert_eq!(root, withdrawals_root);
+    }
+
+    #[tokio::test]
+    async fn message_passer_root_falls_back_to_get_proof() {
+        let storage_hash = B256::repeat_byte(0xCD);
+        let cases = [
+            ("pre-isthmus", ISTHMUS_TIME - 1, Some(B256::repeat_byte(0xAB))),
+            ("empty root", ISTHMUS_TIME, Some(EMPTY_ROOT_HASH)),
+            ("missing root", ISTHMUS_TIME, None),
+        ];
+
+        for (name, timestamp, withdrawals_root) in cases {
+            let header = Header { number: 7, timestamp, withdrawals_root, ..Default::default() };
+            let asserter = Asserter::new();
+            asserter.push_success(&json!({
+                "address": Predeploys::L2_TO_L1_MESSAGE_PASSER,
+                "balance": "0x0",
+                "codeHash": B256::ZERO,
+                "nonce": "0x0",
+                "storageHash": storage_hash,
+                "accountProof": [],
+                "storageProof": [],
+            }));
+
+            let root = mocked_fetcher(asserter)
+                .l2_to_l1_message_passer_storage_root(&isthmus_config(), &header)
+                .await
+                .unwrap();
+
+            assert_eq!(root, storage_hash, "{name}");
+        }
+    }
 
     fn rpc_config(l1: Option<PathBuf>, l2: Option<PathBuf>) -> RPCConfig {
         RPCConfig {
