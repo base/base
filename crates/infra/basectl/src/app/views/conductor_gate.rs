@@ -836,8 +836,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
         gate.tick(&mut resources);
         assert_eq!(gate.proposals, after_execute);
-        let screen = screen(&gate, 80, 24).join("\n");
-        assert!(screen.contains("unavailable: Already executed"), "{screen}");
+        let hint = gate.proposals[0].execute_hint().unwrap_or_default();
+        assert!(hint.starts_with("Already executed"), "{hint}");
     }
 
     #[test]
