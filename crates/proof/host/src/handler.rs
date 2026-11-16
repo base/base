@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::Header;
+use alloy_consensus::{EMPTY_ROOT_HASH, Header};
 use alloy_eips::{
     BlockId, BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB,
 };
@@ -1243,15 +1243,27 @@ async fn handle_hint_inner(
                 .await?;
             let header = Header::decode(&mut raw_header.as_ref())?;
 
-            let l2_to_l1_message_passer = providers
-                .l2
-                .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Default::default())
-                .block_id(cfg.request.agreed_l2_head_hash.into())
-                .await?;
+            // After Isthmus the header's withdrawals root is the message passer storage root.
+            let message_passer_storage_root = match header.withdrawals_root {
+                Some(root)
+                    if cfg.prover.rollup_config.is_isthmus_active(header.timestamp)
+                        && root != EMPTY_ROOT_HASH =>
+                {
+                    root
+                }
+                _ => {
+                    providers
+                        .l2
+                        .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Default::default())
+                        .block_id(cfg.request.agreed_l2_head_hash.into())
+                        .await?
+                        .storage_hash
+                }
+            };
 
             let output_root = OutputRoot::from_parts(
                 header.state_root,
-                l2_to_l1_message_passer.storage_hash,
+                message_passer_storage_root,
                 cfg.request.agreed_l2_head_hash,
             );
             let output_root_hash = output_root.hash();
@@ -1775,6 +1787,67 @@ mod tests {
         }
         assert!(kv.read().await.get(PreimageKey::new_keccak256(*requested_hash).into()).is_none());
         assert!(kv.read().await.get(PreimageKey::new_keccak256(*actual_hash).into()).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_starting_l2_output_reads_message_passer_root_from_header_after_isthmus() {
+        const ISTHMUS_TIME: u64 = 100;
+        let proof_storage_hash = B256::repeat_byte(0xCD);
+        let isthmus_root = B256::repeat_byte(0xEE);
+        // (timestamp, withdrawals_root, whether eth_getProof is answered, expected storage root)
+        let cases = [
+            (ISTHMUS_TIME, Some(isthmus_root), false, isthmus_root),
+            (ISTHMUS_TIME - 1, Some(isthmus_root), true, proof_storage_hash),
+            (ISTHMUS_TIME, Some(EMPTY_ROOT_HASH), true, proof_storage_hash),
+        ];
+
+        for (timestamp, withdrawals_root, serve_proof, storage_root) in cases {
+            let header = Header {
+                timestamp,
+                withdrawals_root,
+                // RLP needs every earlier optional field set for `withdrawals_root` to decode.
+                base_fee_per_gas: Some(1),
+                state_root: B256::repeat_byte(0x01),
+                ..Default::default()
+            };
+            let mut encoded_header = Vec::new();
+            header.encode(&mut encoded_header);
+            let asserter = Asserter::new();
+            asserter.push_success(&Bytes::from(encoded_header));
+            if serve_proof {
+                asserter.push_success(&serde_json::json!({
+                    "address": Predeploys::L2_TO_L1_MESSAGE_PASSER,
+                    "balance": "0x0",
+                    "codeHash": B256::ZERO,
+                    "nonce": "0x0",
+                    "storageHash": proof_storage_hash,
+                    "accountProof": [],
+                    "storageProof": [],
+                }));
+            }
+            let providers =
+                test_providers(provider_builder::<Base>().connect_mocked_client(asserter));
+            let mut cfg = test_cfg();
+            cfg.prover.rollup_config.upgrades.isthmus_time = Some(ISTHMUS_TIME);
+            let output_root = OutputRoot::from_parts(
+                header.state_root,
+                storage_root,
+                cfg.request.agreed_l2_head_hash,
+            );
+            cfg.request.agreed_l2_output_root = output_root.hash();
+            let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+            let hint = HintType::StartingL2Output
+                .with_data(&[cfg.request.agreed_l2_output_root.as_slice()]);
+
+            handle_hint(hint, &cfg, &providers, Arc::clone(&kv)).await.unwrap();
+
+            let stored = kv
+                .read()
+                .await
+                .get(PreimageKey::new_keccak256(*output_root.hash()).into())
+                .unwrap();
+            assert_eq!(stored, output_root.encode().to_vec(), "timestamp {timestamp}");
+        }
     }
 
     #[tokio::test]
