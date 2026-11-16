@@ -3857,10 +3857,10 @@ mod tests {
         }
     }
 
-    /// At Zenith, actor expiries (Unix seconds, inclusive) and pending unlocks
-    /// (Unix seconds, exclusive) reach the guard and the builder precheck as the
-    /// last block millisecond at which they hold, for the sender and a distinct
-    /// payer alike.
+    /// At Zenith, actor expiries (Unix seconds, inclusive) reach the guard and
+    /// the builder precheck, and pending unlocks (Unix seconds, exclusive) reach
+    /// the guard only, as the last block millisecond at which they hold, for the
+    /// sender and a distinct payer alike.
     #[test]
     fn keystore_expiry_and_unlock_deadlines_are_block_milliseconds() {
         let now = 1_700_000_000;
@@ -3941,7 +3941,8 @@ mod tests {
 
         // A pending unlock one second away keeps the account locked at
         // admission, and the guard drops the transaction at the first block of
-        // the unlock second, when that classification lapses.
+        // the unlock second, when that classification lapses. The manifest
+        // carries no unlock deadline, so the builder precheck never sees it.
         let unlocks_at = now + 1;
         let state = validate(state_word(pending_unlock, unlocks_at, 0), None);
         assert!(state.sender_locked);
