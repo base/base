@@ -3742,8 +3742,9 @@ mod tests {
 
     /// A blob tx whose doubled `max_priority_fee_per_gas` would pass the upper bound is not
     /// replaced: at each resubmission timeout, even when an L1 block priced it out, nothing is
-    /// signed, and the same version is sent again. Here its publishes get no answer until the endpoint recovers,
-    /// as in an outage that outlasts the fee bumps, so the resend is what reaches the node.
+    /// signed, and the same version is sent again. Here its publishes get no answer until the
+    /// endpoint recovers, as in an outage that outlasts the fee bumps, so the resend is what
+    /// reaches the node.
     #[test]
     fn a_blob_tx_at_the_upper_bound_is_resent_as_it_is() {
         Runner::start(Config::seeded(0), |ctx| async move {

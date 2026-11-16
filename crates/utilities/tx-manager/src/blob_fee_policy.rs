@@ -15,10 +15,10 @@ use crate::{FeeCalculator, FeeOverride, PreparedTx, TxManagerError, TxManagerRes
 /// fee, and a `max_fee_per_blob_gas` of twice the blob base fee ([`fees`](Self::fees)).
 ///
 /// A transaction still pending after the resubmission timeout is replaced only when an L1
-/// block mined meanwhile priced it out: the block could not include it at its fee caps
-/// ([`is_affordable`](Self::is_affordable)), or filled its blob space with blob transactions
-/// that paid builders more per blob ([`is_outbid`](Self::is_outbid)). A block without blobs, or with
-/// room left for it, says nothing a higher fee would fix.
+/// block of the last resubmission timeout priced it out: the block could not include it at
+/// its fee caps ([`is_affordable`](Self::is_affordable)), or filled its blob space with blob
+/// transactions that paid builders more per blob ([`is_outbid`](Self::is_outbid)). A block
+/// without blobs, or with room left for it, says nothing a higher fee would fix.
 ///
 /// A replacement doubles all three fields, the minimum L1 nodes accept to replace a blob
 /// transaction ([`replacement`](Self::replacement)), and is signed with these as a floor
