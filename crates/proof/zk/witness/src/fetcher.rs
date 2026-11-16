@@ -6,10 +6,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alloy_consensus::{BlockHeader, EMPTY_ROOT_HASH, Header};
+use alloy_consensus::{EMPTY_ROOT_HASH, Header};
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, keccak256};
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{
+    Provider, ProviderBuilder, RootProvider, network::primitives::HeaderResponse,
+};
 use alloy_sol_types::SolValue;
 use anyhow::{Context, Result, bail};
 use base_common_consensus::Predeploys;
@@ -449,13 +451,14 @@ impl OPSuccinctDataFetcher {
 
     /// Returns the storage root of the L2-to-L1 message passer at `header`.
     ///
-    /// After Isthmus the header's `withdrawals_root` is this storage root, so no RPC call is
-    /// needed. Pre-Isthmus headers carry the empty trie root there, so they (and any header
-    /// missing the field) fall back to `eth_getProof`.
+    /// Returns `header.withdrawals_root()` without an RPC call when Isthmus is active at
+    /// `header.timestamp()` and the root is present and not [`EMPTY_ROOT_HASH`]. Otherwise
+    /// queries `eth_getProof` pinned to `header.hash()`, so the result cannot come from a
+    /// different block at the same height.
     pub async fn l2_to_l1_message_passer_storage_root(
         &self,
         rollup_config: &RollupConfig,
-        header: &impl BlockHeader,
+        header: &impl HeaderResponse,
     ) -> Result<B256> {
         if rollup_config.is_isthmus_active(header.timestamp())
             && let Some(root) = header.withdrawals_root()
@@ -464,14 +467,17 @@ impl OPSuccinctDataFetcher {
             return Ok(root);
         }
 
-        let block_number = header.number();
+        let block_hash = header.hash();
         Ok(self
             .l2_provider
             .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Vec::new())
-            .block_id(block_number.into())
+            .block_id(block_hash.into())
             .await
             .with_context(|| {
-                format!("eth_getProof L2ToL1MessagePasser at L2 block {block_number}")
+                format!(
+                    "eth_getProof L2ToL1MessagePasser at L2 block {} ({block_hash})",
+                    header.number()
+                )
             })?
             .storage_hash)
     }
@@ -479,80 +485,142 @@ impl OPSuccinctDataFetcher {
 
 #[cfg(test)]
 mod tests {
-    use alloy_transport::mock::Asserter;
+    use std::sync::Mutex;
+
+    use alloy_eips::BlockNumberOrTag;
+    use alloy_json_rpc::{RequestPacket, ResponsePacket};
+    use alloy_provider::transport::{TransportError, TransportFut};
+    use alloy_rpc_client::RpcClient;
     use base_common_genesis::UpgradeConfig;
+    use base_protocol::OutputRoot;
+    use tower::{ServiceExt, service_fn};
 
     use super::*;
 
     const ISTHMUS_TIME: u64 = 100;
+    const PROOF_STORAGE_HASH: B256 = B256::repeat_byte(0xCD);
 
-    fn mocked_fetcher(l2: Asserter) -> OPSuccinctDataFetcher {
-        OPSuccinctDataFetcher {
-            rpc_config: rpc_config(None, None),
-            l1_provider: Arc::new(
-                ProviderBuilder::default().connect_mocked_client(Asserter::new()),
-            ),
-            l2_provider: Arc::new(ProviderBuilder::default().connect_mocked_client(l2)),
-            rollup_config: None,
-            rollup_config_path: None,
-            l1_config_path: None,
-        }
+    fn rpc_block(header: &Header) -> Value {
+        let mut block = serde_json::to_value(header).unwrap();
+        block["hash"] = json!(header.hash_slow());
+        block["transactions"] = json!([]);
+        block["uncles"] = json!([]);
+        block
     }
 
-    fn isthmus_config() -> RollupConfig {
-        RollupConfig {
-            upgrades: UpgradeConfig { isthmus_time: Some(ISTHMUS_TIME), ..Default::default() },
-            ..Default::default()
-        }
+    /// Serves `blocks` by number or hash, answers every `eth_getProof` with
+    /// [`PROOF_STORAGE_HASH`], and records the block each proof was requested at.
+    fn scripted_client(blocks: Vec<Header>, proof_blocks: Arc<Mutex<Vec<BlockId>>>) -> RpcClient {
+        let transport = service_fn(move |request: RequestPacket| {
+            let blocks = blocks.clone();
+            let proof_blocks = Arc::clone(&proof_blocks);
+            async move {
+                let RequestPacket::Single(request) = request else { panic!("unexpected batch") };
+                let params: Value =
+                    serde_json::from_str(request.params().map_or("[]", |p| p.get())).unwrap();
+                let result = match request.method() {
+                    "eth_getBlockByNumber" => {
+                        let number: BlockNumberOrTag =
+                            serde_json::from_value(params[0].clone()).unwrap();
+                        rpc_block(
+                            blocks.iter().find(|h| Some(h.number) == number.as_number()).unwrap(),
+                        )
+                    }
+                    "eth_getBlockByHash" => {
+                        let hash: B256 = serde_json::from_value(params[0].clone()).unwrap();
+                        rpc_block(blocks.iter().find(|h| h.hash_slow() == hash).unwrap())
+                    }
+                    "eth_getProof" => {
+                        proof_blocks
+                            .lock()
+                            .unwrap()
+                            .push(serde_json::from_value(params[2].clone()).unwrap());
+                        json!({
+                            "address": Predeploys::L2_TO_L1_MESSAGE_PASSER,
+                            "balance": "0x0",
+                            "codeHash": B256::ZERO,
+                            "nonce": "0x0",
+                            "storageHash": PROOF_STORAGE_HASH,
+                            "accountProof": [],
+                            "storageProof": [],
+                        })
+                    }
+                    method => panic!("unexpected RPC method {method}"),
+                };
+                let response = json!({ "jsonrpc": "2.0", "id": request.id(), "result": result });
+                Ok::<_, TransportError>(serde_json::from_value::<ResponsePacket>(response).unwrap())
+            }
+        })
+        .map_future(|future| Box::pin(future) as TransportFut<'static>);
+        RpcClient::new(transport, true)
     }
 
     #[tokio::test]
-    async fn message_passer_root_uses_withdrawals_root_after_isthmus() {
-        let withdrawals_root = B256::repeat_byte(0xAB);
-        let header = Header {
-            number: 7,
-            timestamp: ISTHMUS_TIME,
-            withdrawals_root: Some(withdrawals_root),
-            ..Default::default()
-        };
-
-        // No mocked responses: any eth_getProof call would fail.
-        let root = mocked_fetcher(Asserter::new())
-            .l2_to_l1_message_passer_storage_root(&isthmus_config(), &header)
-            .await
-            .unwrap();
-
-        assert_eq!(root, withdrawals_root);
-    }
-
-    #[tokio::test]
-    async fn message_passer_root_falls_back_to_get_proof() {
-        let storage_hash = B256::repeat_byte(0xCD);
+    async fn host_args_read_message_passer_root_from_header_after_isthmus() {
+        let isthmus_root = B256::repeat_byte(0xEE);
         let cases = [
-            ("pre-isthmus", ISTHMUS_TIME - 1, Some(B256::repeat_byte(0xAB))),
-            ("empty root", ISTHMUS_TIME, Some(EMPTY_ROOT_HASH)),
-            ("missing root", ISTHMUS_TIME, None),
+            ("isthmus root", Some(isthmus_root), isthmus_root, 1),
+            ("empty root", Some(EMPTY_ROOT_HASH), PROOF_STORAGE_HASH, 2),
+            ("missing root", None, PROOF_STORAGE_HASH, 2),
         ];
 
-        for (name, timestamp, withdrawals_root) in cases {
-            let header = Header { number: 7, timestamp, withdrawals_root, ..Default::default() };
-            let asserter = Asserter::new();
-            asserter.push_success(&json!({
-                "address": Predeploys::L2_TO_L1_MESSAGE_PASSER,
-                "balance": "0x0",
-                "codeHash": B256::ZERO,
-                "nonce": "0x0",
-                "storageHash": storage_hash,
-                "accountProof": [],
-                "storageProof": [],
-            }));
+        for (name, end_withdrawals_root, expected_end_storage, expected_proofs) in cases {
+            // The start block is pre-Isthmus, so its withdrawals_root must be ignored.
+            let start = Header {
+                number: 5,
+                timestamp: ISTHMUS_TIME - 2,
+                state_root: B256::repeat_byte(0x01),
+                withdrawals_root: Some(B256::repeat_byte(0xAB)),
+                ..Default::default()
+            };
+            let end = Header {
+                number: 7,
+                timestamp: ISTHMUS_TIME,
+                state_root: B256::repeat_byte(0x02),
+                withdrawals_root: end_withdrawals_root,
+                ..Default::default()
+            };
+            let l1_head = Header { number: 1_000, ..Default::default() };
+            let (start_hash, end_hash, l1_head_hash) =
+                (start.hash_slow(), end.hash_slow(), l1_head.hash_slow());
 
-            let root = mocked_fetcher(asserter)
-                .l2_to_l1_message_passer_storage_root(&isthmus_config(), &header)
-                .await
-                .unwrap();
+            let proof_blocks = Arc::new(Mutex::new(Vec::new()));
+            let client = scripted_client(
+                vec![start.clone(), end.clone(), l1_head],
+                Arc::clone(&proof_blocks),
+            );
+            let fetcher = OPSuccinctDataFetcher {
+                rpc_config: rpc_config(None, None),
+                l1_provider: Arc::new(RootProvider::new(client.clone())),
+                l2_provider: Arc::new(RootProvider::new(client)),
+                rollup_config: Some(RollupConfig {
+                    l1_chain_id: 1,
+                    upgrades: UpgradeConfig {
+                        isthmus_time: Some(ISTHMUS_TIME),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                rollup_config_path: None,
+                l1_config_path: None,
+            };
 
-            assert_eq!(root, storage_hash, "{name}");
+            let host_args =
+                fetcher.get_host_args(5, 7, l1_head_hash, None, NonZeroU64::MIN).await.unwrap();
+
+            assert_eq!(
+                host_args.request.agreed_l2_output_root,
+                OutputRoot::from_parts(start.state_root, PROOF_STORAGE_HASH, start_hash).hash(),
+                "{name}"
+            );
+            assert_eq!(
+                host_args.request.claimed_l2_output_root,
+                OutputRoot::from_parts(end.state_root, expected_end_storage, end_hash).hash(),
+                "{name}"
+            );
+            let expected_proof_blocks: Vec<BlockId> =
+                [start_hash, end_hash].into_iter().take(expected_proofs).map(Into::into).collect();
+            assert_eq!(*proof_blocks.lock().unwrap(), expected_proof_blocks, "{name}");
         }
     }
 

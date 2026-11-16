@@ -5670,10 +5670,11 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.5.0",
  "alloy-eips 2.5.0",
+ "alloy-json-rpc 2.5.0",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rpc-client",
  "alloy-sol-types",
- "alloy-transport",
  "anyhow",
  "async-trait",
  "base-common-chains",
@@ -5694,6 +5695,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tower 0.5.3",
  "tracing",
 ]
 

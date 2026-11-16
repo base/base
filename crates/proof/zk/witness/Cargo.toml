@@ -46,7 +46,9 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-alloy-transport.workspace = true
+tower.workspace = true
+alloy-json-rpc.workspace = true
+alloy-rpc-client.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
