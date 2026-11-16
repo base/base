@@ -346,28 +346,23 @@ mod tests {
     #[test]
     fn stalled_opener_is_killed_and_reaped_at_its_bound() {
         use std::{
-            process::{Command, Stdio},
+            process::Command,
             time::{Duration, Instant},
         };
 
         use super::TerminalPrompter;
 
         let mut child = Command::new("sleep").arg("30").spawn().unwrap();
-        let pid = child.id().to_string();
         let started = Instant::now();
         let status =
             TerminalPrompter::wait_bounded(&mut child, Duration::from_millis(200)).unwrap();
         assert_eq!(status, None);
         let elapsed = started.elapsed();
         assert!(elapsed >= Duration::from_millis(200) && elapsed < Duration::from_secs(5));
-        // Reaped, not a zombie: `kill -0` fails once the pid is gone.
-        let alive = Command::new("kill")
-            .args(["-0", &pid])
-            .stderr(Stdio::null())
-            .status()
-            .unwrap()
-            .success();
-        assert!(!alive, "opener {pid} still exists");
+        // Reaped, not a zombie: the Child holds the status `wait` collected,
+        // and it was the kill.
+        let reaped = child.try_wait().unwrap().expect("opener reaped");
+        assert_eq!(std::os::unix::process::ExitStatusExt::signal(&reaped), Some(9));
 
         // Through the opener path a stalled opener counts as opened; one that
         // exits non-zero or cannot start is an error.

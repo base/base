@@ -663,6 +663,12 @@ impl GateClient {
     pub const MAX_RETRIES: usize = 3;
     /// Delay between those attempts.
     pub const RETRY_BACKOFF: Duration = Duration::from_secs(1);
+    /// After the browser opener fails, how long the login listener may still
+    /// finish a callback already in progress (an opener can exit non-zero
+    /// after the browser opened). A loopback callback that is being read or
+    /// answered completes in well under a millisecond; this leaves room for a
+    /// busy scheduler while a visibly failed opener still falls back promptly.
+    pub const OPENER_FAILED_DRAIN: Duration = Duration::from_millis(200);
     /// Route segment under `/admin/conductor` for proposals.
     pub const PROPOSALS: &str = "proposals";
     /// Maximum proposal ID length.
@@ -913,12 +919,17 @@ impl GateClient {
             let mut opener = tokio::task::spawn_blocking(move || prompter.open_browser(&url));
             let wait = listener.wait(self.login_timeout);
             tokio::pin!(wait);
+            // Biased: a callback that is ready wins over an opener result.
             let received = tokio::select! {
+                biased;
                 received = &mut wait => received,
                 opened = &mut opener => match opened {
                     Ok(Ok(())) => wait.await,
-                    Ok(Err(error)) => Err(error),
-                    Err(error) => Err(GateError::Token(error.to_string())),
+                    // Failed or panicked: finish a callback in progress, then
+                    // fall back.
+                    _ => tokio::time::timeout(Self::OPENER_FAILED_DRAIN, wait)
+                        .await
+                        .unwrap_or_else(|_| Err(GateError::Token("browser opener failed".to_string()))),
                 },
             };
             if let Ok(received) = received {
@@ -1763,6 +1774,72 @@ mod tests {
 
         status.expect("the login timeout bounds the login").unwrap();
         assert_eq!(*seen.lock().unwrap(), vec!["", "Bearer fresh"]);
+    }
+
+    #[tokio::test]
+    async fn received_callback_wins_over_a_failing_opener() {
+        // The opener delivers a valid callback, reads its 200, then fails, as
+        // `xdg-open` can after the browser opened. The token must be used.
+        let (url, _) = auth_gateway("fresh", LoginUrl::Loopback).await;
+        let root = tempfile::tempdir().unwrap();
+        let mut prompter = MockTokenPrompter::new();
+        prompter.expect_can_open_browser().return_const(true);
+        prompter.expect_is_interactive().return_const(false);
+        prompter.expect_prompt().never();
+        prompter.expect_open_browser().returning(|login_url| {
+            post_callback(login_url, "fresh");
+            Err(GateError::Token("opener exited with 1".to_string()))
+        });
+        let client = settings(url.clone(), None, Some(root.path()))
+            .client_with_prompter(Arc::new(prompter))
+            .await
+            .unwrap()
+            .with_login_timeout(Duration::from_secs(5));
+
+        let token_url = format!("{url}login?app=basectl");
+        let mut lost = 0;
+        for _ in 0..200 {
+            if client.relogin(Some(token_url.clone())).await.ok().as_deref() != Some("fresh") {
+                lost += 1;
+            }
+        }
+        assert_eq!(lost, 0, "{lost} of 200 received tokens were dropped");
+    }
+
+    #[tokio::test]
+    async fn stalled_opener_without_callback_falls_back_at_the_login_timeout() {
+        let (url, _) = auth_gateway("fresh", LoginUrl::Loopback).await;
+        let root = tempfile::tempdir().unwrap();
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let held = Mutex::new(held);
+        let mut prompter = MockTokenPrompter::new();
+        prompter.expect_can_open_browser().return_const(true);
+        prompter.expect_is_interactive().return_const(false);
+        prompter.expect_prompt().never();
+        prompter.expect_open_browser().times(1).returning(move |_| {
+            let _ = held.lock().unwrap().recv_timeout(Duration::from_secs(30));
+            Ok(())
+        });
+        let client = settings(url.clone(), None, Some(root.path()))
+            .client_with_prompter(Arc::new(prompter))
+            .await
+            .unwrap()
+            .with_login_timeout(Duration::from_millis(300));
+
+        let started = std::time::Instant::now();
+        let login = client.relogin(Some(format!("{url}login?app=basectl")));
+        let result = tokio::time::timeout(Duration::from_secs(5), login).await;
+        let elapsed = started.elapsed();
+        let _ = release.send(());
+
+        let error = result.expect("the login timeout bounds the login").unwrap_err();
+        match error {
+            GateError::LoginRequired { url: Some(shown) } => {
+                assert!(shown.starts_with(&format!("{url}login?app=basectl&callback_url=")));
+            }
+            other => panic!("expected LoginRequired with the URL, got {other:?}"),
+        }
+        assert!(elapsed >= Duration::from_millis(300) && elapsed < Duration::from_secs(3));
     }
 
     #[tokio::test]
