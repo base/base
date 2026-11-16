@@ -3272,7 +3272,8 @@ mod tests {
 
     /// A blob tx that L1 blocks with room keep leaving out is sent again as it is at
     /// [`MAX_BLOB_RESENDS`] resubmission timeouts in a row, then replaced at the next one
-    /// without checking L1 blocks: a higher fee may be what gets it in.
+    /// without checking L1 blocks: a higher fee may be what gets it in. The replacement
+    /// starts its own resends.
     #[test]
     fn a_blob_tx_left_out_by_blocks_with_room_is_replaced_after_its_resends() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -3284,9 +3285,15 @@ mod tests {
                 asserter.push_success(&Some(&l1_block(12, 21)));
                 asserter.push_failure_msg("already known");
             }
-            // The replacement.
+            // The replacement, whose receipt is polled once.
             push_blob_pricing(&asserter);
             asserter.push_success(&B256::with_last_byte(2));
+            asserter.push_success(&1u64);
+            asserter.push_success(&Option::<TransactionReceipt>::None);
+            // The replacement left out by a block with room is sent again as it is.
+            asserter.push_success(&Some(&l1_block(24, 20)));
+            asserter.push_success(&Some(&l1_block(12, 21)));
+            asserter.push_failure_msg("already known");
             let mut metrics = blob_send_metrics();
             metrics.expect_record_gas_bump().times(1).return_const(());
             let manager =
@@ -3299,6 +3306,8 @@ mod tests {
                 assert!(futures::poll!(&mut send).is_pending());
                 assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 10_000_000);
             }
+            ctx.sleep(BLOB_RESUBMISSION_TIMEOUT + Duration::from_nanos(1)).await;
+            assert!(futures::poll!(&mut send).is_pending());
             ctx.sleep(BLOB_RESUBMISSION_TIMEOUT + Duration::from_nanos(1)).await;
             assert!(futures::poll!(&mut send).is_pending());
 
