@@ -1094,23 +1094,18 @@ impl Eip8130Executor {
         let valid_after = tx.valid_after_ms();
         let valid_before = tx.valid_before_ms();
 
-        // Consensus-level validity window. The transaction is includable only
-        // within the inclusive interval `[valid_after, valid_before]` on the
-        // millisecond axis (`now_ms`, the block's millisecond timestamp). Per the
-        // EIP a transaction is still valid at `now_ms == valid_before`, so the
-        // upper bound is inclusive: reject only once `now_ms` is strictly past
-        // `valid_before`.
-        // Enforced here so a block that includes a transaction outside its window
-        // is invalid at execution, not merely filtered by the mempool; both bounds
-        // apply to nonce-free and nonce-bearing transactions alike (`0` disables
-        // the respective bound). The nonce-free replay ring separately enforces
-        // its own admission window (`valid_before > now_ms`) when it records the
-        // nonce, so a nonce-free transaction at the boundary still fails there.
+        // Consensus-level validity window on the millisecond axis (`now_ms`, the
+        // block's millisecond timestamp). Enforced here so a block that includes
+        // a transaction outside its window is invalid at execution, not merely
+        // filtered by the mempool (`0` disables the respective bound). The upper
+        // bound is the shared expiry rule (`TxEip8130::is_expired_at`): inclusive
+        // for nonce-bearing transactions, exclusive for nonce-free ones, whose
+        // replay ring only records a strictly-future `valid_before`.
         let keystore = ctx.cfg().spec().is_feature_enabled(BaseFeature::Keystore);
         if valid_after != 0 && now_ms < valid_after {
             return Err(BaseTransactionError::eip8130("transaction is not yet valid").into());
         }
-        if valid_before != 0 && now_ms > valid_before {
+        if tx.is_expired_at(now_ms) {
             return Err(
                 BaseTransactionError::eip8130("transaction validity window has expired").into()
             );
@@ -4954,8 +4949,8 @@ mod tests {
         assert_eq!(transact(false, 0, now_ms), Ok(true));
         assert_eq!(
             rejection(transact(true, 0, now_ms)),
-            "Revert",
-            "the replay ring requires `valid_before` strictly after `now_ms`"
+            "transaction validity window has expired",
+            "a nonce-free `valid_before` must be strictly after `now_ms`"
         );
     }
 

@@ -323,15 +323,9 @@ impl Eip8130Signed {
             if valid_after != 0 && now < valid_after {
                 return Err(Eip8130TimestampError::NotYetValid);
             }
-            // Exclusive on purpose: nonce-free replay protection is the
-            // nonce-manager ring, whose admission window is `(now, now + WINDOW]`
-            // (`check_and_mark_expiring_nonce` rejects `valid_before <= now`). A
-            // nonce-free transaction therefore needs a strictly-future
-            // `valid_before` to be recordable, so admitting one exactly at the
-            // boundary would only fail later in the ring. This is stricter than
-            // the inclusive validity-window upper bound applied to nonce-bearing
-            // transactions below.
-            if valid_before <= now {
+            // Exclusive for nonce-free transactions (see `last_valid_ms`): the
+            // nonce-manager ring only records a strictly-future `valid_before`.
+            if tx.is_expired_at(now) {
                 return Err(Eip8130TimestampError::NonceFreeExpired);
             }
             if valid_before > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW) {
@@ -341,10 +335,9 @@ impl Eip8130Signed {
             if valid_after != 0 && now < valid_after {
                 return Err(Eip8130TimestampError::NotYetValid);
             }
-            // Inclusive upper bound (matches the execution-path check and the EIP):
-            // a transaction at exactly `valid_before` is still valid, so reject
-            // only once `now` is strictly past it.
-            if valid_before != 0 && now > valid_before {
+            // Inclusive upper bound (matches execution and the EIP): a transaction
+            // at exactly `valid_before` is still valid.
+            if tx.is_expired_at(now) {
                 return Err(Eip8130TimestampError::Expired);
             }
         }
