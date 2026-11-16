@@ -339,76 +339,76 @@ alloy-network-primitives = { version = "2.3.0", default-features = false }
 # reth
 reth-zstd-compressors = { version = "0.8.2", default-features = false }
 reth-primitives-traits = { version = "0.8.2", default-features = false }
-reth-db = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-cli = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-ipc = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-evm = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-rpc = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-revm = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-trie = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-exex = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-tasks = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-ecies = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-config = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-errors = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-db-api = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-discv4 = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-discv5 = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-trie-db = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-rpc-api = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-network = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-net-nat = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-tracing = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-eth-wire = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-provider = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-cli-util = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-node-api = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-db-common = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-rpc-layer = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-node-core = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-consensus = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-chainspec = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-cli-runner = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-rpc-convert = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-network-api = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-network-p2p = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-storage-api = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-rpc-eth-api = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-chain-state = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-trie-common = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-engine-tree = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
+reth-db = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-cli = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-ipc = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-evm = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-rpc = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-revm = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-trie = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-exex = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-tasks = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-ecies = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-config = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-errors = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-db-api = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-discv4 = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-discv5 = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-trie-db = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-rpc-api = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-network = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-net-nat = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-tracing = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-eth-wire = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-provider = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-cli-util = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-node-api = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-db-common = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-rpc-layer = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-node-core = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-consensus = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-chainspec = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-cli-runner = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-rpc-convert = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-network-api = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-network-p2p = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-storage-api = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-rpc-eth-api = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-chain-state = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-trie-common = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-engine-tree = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
 reth-codecs = { version = "0.8.2", default-features = false, features = ["alloy"] }
-reth-payload-util = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-node-builder = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-node-metrics = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-cli-commands = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-evm-ethereum = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-tracing-otlp = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-testing-utils = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-rpc-eth-types = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-network-peers = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-node-ethereum = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-trie-parallel = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-rpc-engine-api = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-e2e-test-utils = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-eth-wire-types = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-payload-builder = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-execution-types = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-execution-cache = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-exex-test-utils = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-rpc-server-types = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-transaction-pool = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-execution-errors = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-payload-validator = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-payload-primitives = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-ethereum-primitives = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-basic-payload-builder = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-payload-builder-primitives = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e" }
-reth-prune-types = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e", default-features = false }
-reth-stages-types = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e", default-features = false }
-reth-storage-errors = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e", default-features = false }
-reth-ethereum-forks = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e", default-features = false }
-reth-consensus-common = { git = "https://github.com/base/reth", rev = "2940449a0e738e13963559af143e73422a1d444e", default-features = false }
+reth-payload-util = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-node-builder = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-node-metrics = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-cli-commands = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-evm-ethereum = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-tracing-otlp = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-testing-utils = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-rpc-eth-types = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-network-peers = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-node-ethereum = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-trie-parallel = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-rpc-engine-api = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-e2e-test-utils = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-eth-wire-types = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-payload-builder = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-execution-types = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-execution-cache = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-exex-test-utils = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-rpc-server-types = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-transaction-pool = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-execution-errors = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-payload-validator = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-payload-primitives = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-ethereum-primitives = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-basic-payload-builder = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-payload-builder-primitives = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4" }
+reth-prune-types = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4", default-features = false }
+reth-stages-types = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4", default-features = false }
+reth-storage-errors = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4", default-features = false }
+reth-ethereum-forks = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4", default-features = false }
+reth-consensus-common = { git = "https://github.com/base/reth", rev = "346a2298a82732d64fd556ebb7d809f3694a03b4", default-features = false }
 
 # tokio
 tokio = "1.53.1"
