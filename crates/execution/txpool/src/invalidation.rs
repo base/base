@@ -65,8 +65,9 @@ pub enum InvalidationKey {
     /// not a state surface: no storage diff reports it, so the pool fires the
     /// keys strictly before each canonical block's millisecond time. Occupied
     /// deadlines are kept in a sparse ordered set, so canonical timestamp jumps
-    /// visit only deadlines that have transactions. Exact-match semantics (a
-    /// fired deadline drops every watcher).
+    /// visit only deadlines that have transactions. A passed deadline drops
+    /// every watcher, but only through [`InvalidationIndex::take_expired`]:
+    /// expiry keys are not in the reverse index that `affected_exact` reads.
     Expiry(UnixMillis),
 }
 
@@ -284,6 +285,10 @@ impl InvalidationIndex {
     {
         let mut affected = HashSet::new();
         for key in changed {
+            debug_assert!(
+                !matches!(key, InvalidationKey::Expiry(_)),
+                "expiry fires via take_expired"
+            );
             if key.is_exact()
                 && let Some(bucket) = self.by_key.get(&key)
             {
