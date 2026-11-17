@@ -135,7 +135,7 @@ jobs:
               crates/common/bundles/
               crates/common/chains/
               crates/common/consensus/
-              crates/common/eip8130/
+              crates/common/base-tx/
               crates/common/evm/
               crates/common/flz/
               crates/common/genesis/
@@ -151,7 +151,7 @@ jobs:
               crates/consensus/upgrades/
               crates/execution/chainspec/
               crates/execution/consensus/
-              crates/execution/eip8130/
+              crates/execution/base-tx/
               crates/execution/evm/
               crates/execution/exex/
               crates/execution/node/

@@ -1,4 +1,4 @@
-//! EIP-8130 2D nonce manager native precompile.
+//! Base transaction 2D nonce manager native precompile.
 
 mod abi;
 pub use abi::INonceManager;

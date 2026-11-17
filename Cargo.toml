@@ -169,7 +169,7 @@ base-common-evm2 = { path = "crates/common/evm2", default-features = false }
 base-common-blobs = { path = "crates/common/blobs", default-features = false }
 base-common-l1-fees = { path = "crates/common/l1-fees", default-features = false }
 base-common-genesis = { path = "crates/common/genesis", default-features = false }
-base-common-eip8130 = { path = "crates/common/eip8130", default-features = false }
+base-common-base-tx = { path = "crates/common/base-tx", default-features = false }
 base-common-consensus = { path = "crates/common/consensus", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
 base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
@@ -215,10 +215,10 @@ base-execution-consensus = { path = "crates/execution/consensus" }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
 base-execution-payer-rpc = { path = "crates/execution/payer-rpc" }
-base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc" }
+base-execution-base-tx-rpc = { path = "crates/execution/base-tx-rpc" }
 base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db" }
-base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
-base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
+base-execution-base-tx-rpc-node = { path = "crates/execution/base-tx-rpc-node" }
+base-execution-base-tx = { path = "crates/execution/base-tx", default-features = false }
 
 # Infra
 base-acceptance = { path = "acceptance" }

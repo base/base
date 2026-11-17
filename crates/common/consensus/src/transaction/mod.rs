@@ -6,18 +6,16 @@ pub use canonical::decode_2718_canonical;
 mod deposit;
 pub use deposit::{DepositTransaction, TxDeposit};
 
-mod eip8130;
+mod base_tx;
 #[cfg(feature = "serde")]
-pub use eip8130::Eip8130PayerSerde;
-pub use eip8130::{
-    AccountChange, AccountChangeChannel, Call, ChangeType, CoinbaseTip, CreateEntry, Delegation,
-    Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StaticError, Eip8130StructuralError,
-    Eip8130Structure, Eip8130TimestampError, IDefaultAccount, InitialActor, SignedAccountChanges,
-    SignedChange, TxEip8130,
+pub use base_tx::TxBasePayerSerde;
+pub use base_tx::{
+    AccountChange, Call, CoinbaseTip, Delegation, TxBase, TxBaseConstants, TxBaseSigned,
+    TxBaseStaticError, TxBaseStructuralError, TxBaseStructure, TxBaseTimestampError,
 };
 
 mod tx_type;
-pub use tx_type::{DEPOSIT_TX_TYPE_ID, EIP8130_REJECTION_MSG, EIP8130_TX_TYPE_ID};
+pub use tx_type::{BASE_TX_REJECTION_MSG, BASE_TX_TYPE_ID, DEPOSIT_TX_TYPE_ID};
 
 mod envelope;
 pub use envelope::{BaseTransaction, BaseTxEnvelope, OpTxType};

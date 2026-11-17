@@ -1,7 +1,7 @@
 //! Differential parity harness for the transition-block hooks.
 //!
-//! Runs each Base transition hook (Canyon create2-deployer, Everest EIP-8130 system-account stub,
-//! Denim `BaseTime` predeploy) through the `base-common-evm2` executor and, on an equivalent
+//! Runs each Base transition hook (Canyon create2-deployer, Everest Base transaction system-account
+//! stub, Denim `BaseTime` predeploy) through the `base-common-evm2` executor and, on an equivalent
 //! database, through the revm-based `base-common-evm` reference function, asserting the two engines
 //! install byte-identical state (the affected account code hashes and, for `BaseTime`, the linked
 //! EIP-1967 implementation slot).
@@ -9,7 +9,7 @@
 use alloy_primitives::{Address, B256, Bytes, U256, address, uint};
 use base_common_consensus::Predeploys;
 use base_common_evm::{
-    BaseTime as RevmBaseTime, ensure_create2_deployer, ensure_eip8130_system_accounts,
+    BaseTime as RevmBaseTime, ensure_base_tx_system_accounts, ensure_create2_deployer,
 };
 use base_common_evm2::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmTypes, BaseSpecId, BaseTime,
@@ -115,7 +115,7 @@ fn everest_system_account_stub_matches_revm() {
 
     // revm reference.
     let mut db = RevmDb::default();
-    ensure_eip8130_system_accounts(revm_schedule(BaseUpgrade::Everest), ACTIVATION_TS, &mut db)
+    ensure_base_tx_system_accounts(revm_schedule(BaseUpgrade::Everest), ACTIVATION_TS, &mut db)
         .expect("reference applies");
     let revm_hash = revm_code_hash(&mut db, NONCE_MANAGER);
 

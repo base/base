@@ -107,7 +107,7 @@ impl BaseTransactionBuilder {
             enveloped_tx: self.enveloped_tx,
             enveloped_tx_fastlz_size: None,
             deposit: self.deposit,
-            eip8130: None,
+            base_tx: None,
         }
     }
 
@@ -140,7 +140,7 @@ impl BaseTransactionBuilder {
             enveloped_tx: self.enveloped_tx,
             enveloped_tx_fastlz_size: None,
             deposit: self.deposit,
-            eip8130: None,
+            base_tx: None,
         })
     }
 }

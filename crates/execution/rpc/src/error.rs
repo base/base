@@ -6,7 +6,7 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
-use base_common_consensus::Eip8130CommittedPhasesError;
+use base_common_consensus::TxBaseCommittedPhasesError;
 use base_common_evm::{BaseHaltReason, BaseTransactionError};
 use base_common_rpc_types::BaseTxEnvError;
 use base_execution_evm::BaseBlockExecutionError;
@@ -41,10 +41,10 @@ pub enum BaseEthApiError {
     /// Sequencer client error.
     #[error(transparent)]
     Sequencer(#[from] SequencerClientError),
-    /// A stored EIP-8130 receipt carries a committed phase count that violates the receipt
+    /// A stored Base transaction receipt carries a committed phase count that violates the receipt
     /// invariant.
-    #[error("invalid EIP-8130 receipt: {0}")]
-    Eip8130CommittedPhases(#[from] Eip8130CommittedPhasesError),
+    #[error("invalid Base transaction receipt: {0}")]
+    TxBaseCommittedPhases(#[from] TxBaseCommittedPhasesError),
 }
 
 impl AsEthApiError for BaseEthApiError {
@@ -64,7 +64,7 @@ impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
             BaseEthApiError::Evm(_)
             | BaseEthApiError::L1BlockFeeError
             | BaseEthApiError::L1BlockGasError
-            | BaseEthApiError::Eip8130CommittedPhases(_) => internal_rpc_err(err.to_string()),
+            | BaseEthApiError::TxBaseCommittedPhases(_) => internal_rpc_err(err.to_string()),
             BaseEthApiError::Sequencer(err) => err.into(),
         }
     }
@@ -82,20 +82,20 @@ pub enum BaseInvalidTransactionError {
     /// The encoded transaction was missing during evm execution.
     #[error("missing enveloped transaction bytes")]
     MissingEnvelopedTx,
-    /// An EIP-8130 (account-abstraction) transaction was submitted via
+    /// A Base transaction was submitted via
     /// `eth_sendRawTransaction` before the Everest fork was active.
     ///
     /// The transaction type byte (`0x79`) is recognised by the consensus layer for
     /// decoding/serialization purposes, but RPC admission is rejected until the
     /// Everest fork is active. The txpool validator enforces the same fork gate for
     /// transactions arriving over devp2p.
-    #[error("{}", base_common_consensus::EIP8130_REJECTION_MSG)]
-    Eip8130NotAccepted,
-    /// An EIP-8130 (account-abstraction) transaction was rejected during its
+    #[error("{}", base_common_consensus::BASE_TX_REJECTION_MSG)]
+    TxBaseNotAccepted,
+    /// A Base transaction was rejected during its
     /// enshrined execution pipeline (authorization, nonce, intrinsic gas, fee, or
     /// account-change apply). The string carries the underlying rejection reason.
-    #[error("EIP-8130 transaction rejected: {0}")]
-    Eip8130Rejected(String),
+    #[error("Base transaction rejected: {0}")]
+    TxBaseRejected(String),
 }
 
 impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
@@ -104,8 +104,8 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
             BaseInvalidTransactionError::DepositSystemTxPostRegolith
             | BaseInvalidTransactionError::HaltedDepositPostRegolith
             | BaseInvalidTransactionError::MissingEnvelopedTx
-            | BaseInvalidTransactionError::Eip8130NotAccepted
-            | BaseInvalidTransactionError::Eip8130Rejected(_) => {
+            | BaseInvalidTransactionError::TxBaseNotAccepted
+            | BaseInvalidTransactionError::TxBaseRejected(_) => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
         }
@@ -122,7 +122,7 @@ impl TryFrom<BaseTransactionError> for BaseInvalidTransactionError {
             }
             BaseTransactionError::HaltedDepositPostRegolith => Ok(Self::HaltedDepositPostRegolith),
             BaseTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
-            BaseTransactionError::Eip8130(reason) => Ok(Self::Eip8130Rejected(reason)),
+            BaseTransactionError::TxBase(reason) => Ok(Self::TxBaseRejected(reason)),
             BaseTransactionError::Base(err) => Err(err),
         }
     }
@@ -204,7 +204,7 @@ impl From<BaseTxEnvError> for BaseEthApiError {
     fn from(value: BaseTxEnvError) -> Self {
         match value {
             BaseTxEnvError::Eth(error) => error.into(),
-            BaseTxEnvError::Eip8130Unsupported => {
+            BaseTxEnvError::TxBaseUnsupported => {
                 Self::Eth(EthApiError::InvalidParams(value.to_string()))
             }
         }

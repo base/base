@@ -1,11 +1,11 @@
-//! Precompile entry point for the EIP-8130 transaction context.
+//! Precompile entry point for the Base transaction context.
 
 use alloy_evm::precompiles::PrecompilesMap;
 use base_common_genesis::BaseUpgrade;
 
 use crate::{TxContextStorage, UpgradeGatedStorageFeatures, macros::base_precompile};
 
-/// Entry point for the EIP-8130 transaction context precompile.
+/// Entry point for the Base transaction context precompile.
 ///
 /// Only installed at Cobalt or later (see `BasePrecompiles::install_with_observer`).
 /// The caller passes the active `upgrade` through the constructor, and the wrapper

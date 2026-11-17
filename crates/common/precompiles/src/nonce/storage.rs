@@ -1,13 +1,13 @@
-//! Storage layout and constants for the EIP-8130 2D nonce manager precompile.
+//! Storage layout and constants for the Base transaction 2D nonce manager precompile.
 
 use alloy_primitives::{Address, B256, U256};
-use base_common_eip8130::NonceManagerSlots;
+use base_common_base_tx::NonceManagerSlots;
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 
 use crate::INonceManager;
 
-/// Persistent 2D nonce manager for EIP-8130 account-abstraction transactions.
+/// Persistent 2D nonce manager for Base transactions.
 ///
 /// Mirrors a Solidity contract with the layout:
 ///
@@ -46,8 +46,8 @@ pub struct NonceManagerStorage {
 impl NonceManagerStorage<'_> {
     /// 2D nonce manager precompile address.
     ///
-    /// Pinned to `NONCE_MANAGER_ADDRESS` from the EIP-8130 constant table
-    /// (`0x8130…aa01`, in the `0x8130…` / EIP-number namespace for EIP-8130
+    /// Pinned to `NONCE_MANAGER_ADDRESS` from the EIP-8430 constant table
+    /// (`0x8130…aa01`, in the `0x8130…` namespace of the Base transaction
     /// system precompiles). Sourced from the engine-neutral [`NonceManagerSlots`]
     /// so the precompile and the revm/EVM2 engines share one address.
     pub const ADDRESS: Address = NonceManagerSlots::ADDRESS;
@@ -68,7 +68,7 @@ impl NonceManagerStorage<'_> {
         NonceManagerSlots::EXPIRING_NONCE_SEEN_BASE_SLOT;
 
     /// Fixed capacity of the nonce-free `replay_id` ring buffer
-    /// (`REPLAY_BUFFER_CAPACITY` in the EIP-8130 constant table).
+    /// (`REPLAY_BUFFER_CAPACITY` in the Base transaction constant table).
     ///
     /// A consensus chain parameter: identical for every node on the chain, not a
     /// per-node choice. An entry recorded at block time `t` expires by
@@ -89,7 +89,7 @@ impl NonceManagerStorage<'_> {
     pub const REPLAY_BUFFER_CAPACITY: u32 = 340_000;
 
     /// Maximum validity-window span accepted for a nonce-free transaction, in
-    /// **milliseconds** (`NONCE_FREE_EXPIRY_WINDOW` in the EIP-8130 constant
+    /// **milliseconds** (`NONCE_FREE_EXPIRY_WINDOW` in the Base transaction constant
     /// table).
     ///
     /// A consensus chain parameter (not a per-node choice), sized together with
@@ -147,10 +147,8 @@ impl NonceManagerStorage<'_> {
     /// the value written is always `storage + 1` — callers cannot supply a
     /// stale `current`.
     ///
-    /// Intended for the EIP-8130 execution layer; not reachable through ABI
-    /// dispatch. Emits no log: the increment is a protocol write, and receipt
-    /// logs for EIP-8130 transactions are limited to the account-configuration
-    /// events.
+    /// Intended for the Base transaction execution layer; not reachable through ABI
+    /// dispatch. Emits no log: the increment is a protocol write.
     ///
     /// # Errors
     /// - [`INonceManager::InvalidNonceKey`] — `nonce_key` is `0` (the protocol
@@ -186,9 +184,9 @@ impl NonceManagerStorage<'_> {
     }
 
     /// Validates and records an expiring-nonce transaction, providing replay
-    /// protection for nonce-free EIP-8130 transactions.
+    /// protection for nonce-free Base transactions.
     ///
-    /// `expiring_nonce_hash` is the canonical `TxEip8130::replay_id`:
+    /// `expiring_nonce_hash` is the canonical `TxBase::replay_id`:
     /// `keccak256(REPLAY_ID_TYPE || rlp([chain_id, resolved_sender, valid_after,
     /// valid_before, account_changes, calls, metadata, payer]))`. Fees, nonce
     /// fields, and authentication blobs are omitted, so fee-bumped or re-signed
@@ -201,7 +199,7 @@ impl NonceManagerStorage<'_> {
     /// authoritative inclusion-time replay check (cf. the advisory
     /// [`Self::is_expiring_nonce_seen`] used by the mempool).
     ///
-    /// Intended for the EIP-8130 execution layer; not reachable through ABI
+    /// Intended for the Base transaction execution layer; not reachable through ABI
     /// dispatch.
     ///
     /// # Errors
@@ -282,7 +280,7 @@ impl NonceManagerStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
-    use base_common_eip8130::Eip8130GasSchedule;
+    use base_common_base_tx::TxBaseGasSchedule;
     use base_precompile_storage::{
         BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx, StorageKey,
     };
@@ -640,10 +638,10 @@ mod tests {
         const BLOCK_GAS_LIMIT: u64 = 600_000_000;
         const BLOCK_TIME_SECS: u64 = 2;
         // The cheapest nonce-free transaction, before its payload bytes.
-        const MIN_TX_GAS: u64 = Eip8130GasSchedule::AA_BASE_COST
-            + Eip8130GasSchedule::NONCE_FREE_COST
-            + Eip8130GasSchedule::AUTH_EXEC_K1
-            + Eip8130GasSchedule::COLD_SLOAD;
+        const MIN_TX_GAS: u64 = TxBaseGasSchedule::AA_BASE_COST
+            + TxBaseGasSchedule::NONCE_FREE_COST
+            + TxBaseGasSchedule::AUTH_EXEC_K1
+            + TxBaseGasSchedule::COLD_SLOAD;
 
         let max_txs_per_block = BLOCK_GAS_LIMIT / MIN_TX_GAS;
         // NONCE_FREE_EXPIRY_WINDOW is in milliseconds; the block cadence is in

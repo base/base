@@ -1,12 +1,12 @@
-//! ABI definitions for the EIP-8130 transaction context precompile.
+//! ABI definitions for the Base transaction context precompile.
 
 use alloy_sol_types::sol;
 
 sol! {
-    /// Read-only EIP-8130 transaction context ABI.
+    /// Read-only Base transaction context ABI.
     ///
     /// Exposes the resolved sender, payer, and sender actor id for the
-    /// in-flight EIP-8130 transaction. On non-EIP-8130 transactions the
+    /// in-flight Base transaction. On non-Base transactions the
     /// backing transient slots are unset and the getters fall back to the
     /// ambient origin: `getTransactionSender` and `getTransactionPayer`
     /// return `tx.origin`, and `getTransactionSenderActorId` returns
@@ -27,7 +27,8 @@ sol! {
         /// Equal to the sender when the transaction is self-paying.
         function getTransactionPayer() external view returns (address);
 
-        /// Returns the actor id resolved while authenticating the sender.
+        /// Returns the sender actor id: the resolved sender address, right-aligned
+        /// in a 32-byte word (`bytes32(uint256(uint160(sender)))`).
         function getTransactionSenderActorId() external view returns (bytes32);
     }
 }

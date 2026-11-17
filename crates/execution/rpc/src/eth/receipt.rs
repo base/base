@@ -289,13 +289,13 @@ pub struct BaseReceiptBuilder {
     pub core_receipt: TransactionReceipt<ReceiptWithBloom<BaseReceipt<BaseLogResponse>>>,
     /// Additional Base receipt fields.
     pub receipt_fields: TransactionReceiptFields,
-    /// EIP-8130 gas payer (sender for self-pay, specified payer for sponsored). `None` for
-    /// non-EIP-8130 transactions.
+    /// Base transaction gas payer (sender for self-pay, specified payer for sponsored). `None` for
+    /// non-Base transactions.
     pub payer: Option<Address>,
-    /// EIP-8130 per-phase execution statuses. `None` for non-EIP-8130 transactions;
-    /// `Some` (possibly empty) for EIP-8130 transactions.
+    /// Base transaction per-phase execution statuses. `None` for non-Base transactions;
+    /// `Some` (possibly empty) for Base transactions.
     pub phase_statuses: Option<Vec<u8>>,
-    /// EIP-8130 opaque transaction metadata. `None` for non-EIP-8130 transactions.
+    /// Base transaction opaque transaction metadata. `None` for non-Base transactions.
     pub metadata: Option<alloy_primitives::Bytes>,
 }
 
@@ -312,37 +312,37 @@ impl BaseReceiptBuilder {
         let timestamp = input.meta.timestamp;
         let tx_signed = *input.tx.inner();
 
-        // EIP-8130 RPC-only fields, derived before `input` is consumed below. The payer is
+        // Base transaction RPC-only fields, derived before `input` is consumed below. The payer is
         // the sender for self-pay, the named payer for sponsored transactions, or the
         // recovered signer in open payer mode; the per-phase statuses are expanded at RPC from
         // the receipt's committed phase count.
         // Recovery of an included open-payer transaction succeeds, since
         // inclusion required it. If it somehow does not, omit the payer rather
         // than report an address that did not pay.
-        let payer = tx_signed.as_eip8130().and_then(|signed| {
+        let payer = tx_signed.as_base_tx().and_then(|signed| {
             signed
                 .resolved_payer(input.tx.signer())
                 .inspect_err(|error| {
                     tracing::error!(
                         error = %error,
-                        "open payer recovery failed while building an EIP-8130 receipt; omitting the payer"
+                        "open payer recovery failed while building a Base transaction receipt; omitting the payer"
                     );
                 })
                 .ok()
         });
         // Omit empty metadata rather than serializing it as `"0x"`. Empty
-        // `phase_statuses` is still serialized as `[]` on EIP-8130 receipts;
+        // `phase_statuses` is still serialized as `[]` on Base transaction receipts;
         // only metadata is skipped when empty.
         let metadata = tx_signed
-            .as_eip8130()
+            .as_base_tx()
             .map(|signed| signed.tx().metadata.clone())
             .filter(|metadata| !metadata.is_empty());
-        // `Some` (possibly empty) marks an EIP-8130 receipt so an empty-`calls`
+        // `Some` (possibly empty) marks a Base transaction receipt so an empty-`calls`
         // transaction still surfaces `"phaseStatuses": []`; `None` omits the field
-        // entirely for non-EIP-8130 receipts.
+        // entirely for non-Base receipts.
         // A stored count that violates the receipt invariant is rejected rather than served.
-        let phase_statuses = match (&input.receipt, tx_signed.as_eip8130()) {
-            (BaseReceipt::Eip8130(receipt), Some(signed)) => {
+        let phase_statuses = match (&input.receipt, tx_signed.as_base_tx()) {
+            (BaseReceipt::Base(receipt), Some(signed)) => {
                 Some(receipt.phase_statuses(signed.tx().calls.len())?)
             }
             _ => None,
@@ -363,13 +363,13 @@ impl BaseReceiptBuilder {
                 BaseReceipt::Eip1559(receipt) => BaseReceipt::Eip1559(map_logs(receipt)),
                 BaseReceipt::Eip7702(receipt) => BaseReceipt::Eip7702(map_logs(receipt)),
                 BaseReceipt::Deposit(receipt) => BaseReceipt::Deposit(receipt.map_inner(map_logs)),
-                BaseReceipt::Eip8130(receipt) => BaseReceipt::Eip8130(receipt.map_inner(map_logs)),
+                BaseReceipt::Base(receipt) => BaseReceipt::Base(receipt.map_inner(map_logs)),
             };
             mapped_receipt.into_with_bloom()
         });
-        // An EIP-8130 transaction has no single recipient; its calls are in
+        // A Base transaction has no single recipient; its calls are in
         // `calls`. Report `to: null`, not the zero address its `kind` carries.
-        if tx_signed.as_eip8130().is_some() {
+        if tx_signed.as_base_tx().is_some() {
             core_receipt.to = None;
         }
         // `build_receipt` derives a creation address from `tx.nonce()`, which is always zero
@@ -428,8 +428,7 @@ mod tests {
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, BaseTypedTransaction, Call,
-        DepositReceipt, Eip8130CommittedPhasesError, Eip8130Receipt, Eip8130Signed, TxDeposit,
-        TxEip8130,
+        DepositReceipt, TxBase, TxBaseCommittedPhasesError, TxBaseReceipt, TxBaseSigned, TxDeposit,
     };
     use base_execution_chainspec::BaseChainSpec;
     use reth_primitives_traits::Recovered;
@@ -737,16 +736,16 @@ mod tests {
         assert_eq!(receipt.inner.contract_address, Some(from.create(deposit_nonce)));
     }
 
-    /// Builds the RPC receipt for a two-phase EIP-8130 transaction whose stored
+    /// Builds the RPC receipt for a two-phase Base transaction whose stored
     /// receipt has the given status and committed phase count.
-    fn two_phase_eip8130_receipt(
+    fn two_phase_base_tx_receipt(
         status: bool,
         committed_phases: u64,
     ) -> Result<BaseReceiptBuilder, BaseEthApiError> {
         let call =
             Call { to: Address::with_last_byte(0xc1), value: U256::ZERO, data: Bytes::new() };
-        let tx = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
-            TxEip8130 { calls: vec![vec![call.clone()], vec![call]], ..Default::default() },
+        let tx = BaseTxEnvelope::Base(TxBaseSigned::new(
+            TxBase { calls: vec![vec![call.clone()], vec![call]], ..Default::default() },
             Bytes::new(),
             Bytes::new(),
         ));
@@ -754,7 +753,7 @@ mod tests {
             &BaseChainSpec::mainnet(),
             ConvertReceiptInput::<BasePrimitives> {
                 tx: Recovered::new_unchecked(&tx, Address::with_last_byte(0x22)),
-                receipt: BaseReceipt::Eip8130(Eip8130Receipt::new(
+                receipt: BaseReceipt::Base(TxBaseReceipt::new(
                     Receipt {
                         status: Eip658Value::Eip658(status),
                         cumulative_gas_used: 100,
@@ -771,17 +770,17 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_receipt_serves_phase_statuses_from_committed_count() {
-        let receipt = two_phase_eip8130_receipt(false, 1).unwrap();
+    fn base_tx_receipt_serves_phase_statuses_from_committed_count() {
+        let receipt = two_phase_base_tx_receipt(false, 1).unwrap();
         assert_eq!(receipt.phase_statuses, Some(vec![0x01, 0x00]));
     }
 
     #[test]
-    fn eip8130_receipt_rejects_inconsistent_committed_count() {
-        let err = two_phase_eip8130_receipt(true, 1).unwrap_err();
+    fn base_tx_receipt_rejects_inconsistent_committed_count() {
+        let err = two_phase_base_tx_receipt(true, 1).unwrap_err();
         assert!(matches!(
             err,
-            BaseEthApiError::Eip8130CommittedPhases(Eip8130CommittedPhasesError::StatusMismatch {
+            BaseEthApiError::TxBaseCommittedPhases(TxBaseCommittedPhasesError::StatusMismatch {
                 status: true
             })
         ));

@@ -17,7 +17,7 @@ use alloy_primitives::{Address, Bytes, Signature, TxHash, U256};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
+use base_common_consensus::{Call, TxBase, TxBaseSigned};
 use base_execution_txpool::{ValidityAuthorization, ValidityPredicate};
 use tokio::{
     sync::{Mutex, Semaphore, mpsc},
@@ -656,7 +656,7 @@ impl SubmissionPipeline {
                     "native EIP-8430 workloads do not support validity submission".into(),
                 ));
             }
-            let tx = TxEip8130 {
+            let tx = TxBase {
                 chain_id,
                 nonce_sequence: nonce,
                 max_fee_per_gas: fees.max_fee,
@@ -678,7 +678,7 @@ impl SubmissionPipeline {
                 BaselineError::Transaction(format!("failed to sign native tx: {e}"))
             })?;
             let signed =
-                Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+                TxBaseSigned::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
             return Ok(SignedTransaction {
                 raw: Bytes::from(signed.encoded_2718()),
                 tx_hash: *signed.hash(),
@@ -1356,7 +1356,7 @@ mod tests {
                 .expect("raw bytes must decode as a Base envelope");
             assert_eq!(signed.nonce, nonce, "allocated protocol nonce must be preserved");
             assert_eq!(signed.tx_hash, decoded.tx_hash(), "tracked hash must match wire hash");
-            if let BaseTxEnvelope::Eip8130(native) = decoded {
+            if let BaseTxEnvelope::Base(native) = decoded {
                 assert!(prepared.native, "only native selections may produce native envelopes");
                 assert_eq!(
                     native.recover_eoa_sender().expect("canonical EOA auth"),

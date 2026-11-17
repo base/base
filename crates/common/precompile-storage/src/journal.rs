@@ -2,9 +2,9 @@
 //!
 //! [`JournalStorageProvider`] wraps a live alloy-evm [`EvmInternals`] journal and
 //! implements [`PrecompileStorageProvider`] without metering any gas. It exists
-//! for the *enshrined* EIP-8130 execution path, which runs at block-executor
+//! for the *enshrined* Base transaction execution path, which runs at block-executor
 //! level (around, not inside, an EVM call) and meters its own gas via the
-//! EIP-8130 intrinsic schedule. Using the metered [`EvmPrecompileStorageProvider`]
+//! Base transaction intrinsic schedule. Using the metered [`EvmPrecompileStorageProvider`]
 //! there would double-count storage gas.
 //!
 //! Reads and writes go through the same [`EvmInternals`] journal that EVM opcodes
@@ -61,7 +61,7 @@ impl<'a> JournalStorageProvider<'a> {
     pub fn new(internals: EvmInternals<'a>, caller: Address) -> Self {
         // Truncating to `u64` is safe: EVM block numbers are bounded far below
         // `u64::MAX` and `block_env().number()` is only `U256` for ABI uniformity.
-        // (Unlike the block *timestamp*, which the EIP-8130 executor converts with
+        // (Unlike the block *timestamp*, which the Base transaction executor converts with
         // a checked `try_into` because it feeds consensus-critical expiry checks,
         // the block number here only backs the `block_number()` getter.)
         let block_number = internals.block_env().number().to::<u64>();
@@ -182,7 +182,7 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         // nonce/balance/code. Code-less enshrined system accounts that hold
         // persistent storage (e.g. the 2D `NonceManager`) are instead made
         // EIP-161-non-empty out of band by a one-byte code stub planted at the
-        // Everest transition (see `ensure_eip8130_system_accounts`), so their
+        // Everest transition (see `ensure_base_tx_system_accounts`), so their
         // storage survives end-of-block state clearing without a per-write guard.
         self.internals
             .sstore(address, key, value)
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(provider.gas_refunded(), 0);
     }
 
-    /// EIP-8130 context publication uses transient writes through this provider;
+    /// Base transaction context publication uses transient writes through this provider;
     /// neither the write nor its backing read may expose opcode gas.
     #[test]
     fn tstore_then_tload_roundtrips_without_gas() {

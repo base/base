@@ -1,12 +1,12 @@
-//! ABI definitions for the EIP-8130 2D nonce manager precompile.
+//! ABI definitions for the Base transaction 2D nonce manager precompile.
 
 use alloy_sol_types::sol;
 
 sol! {
-    /// EIP-8130 2D nonce manager ABI.
+    /// Base transaction 2D nonce manager ABI.
     ///
     /// Exposes the per-`(account, nonceKey)` sequence nonces that enable
-    /// concurrent EIP-8130 transaction execution. Nonce key `0` is reserved for
+    /// concurrent Base transaction execution. Nonce key `0` is reserved for
     /// the protocol nonce and is stored in account state rather than here, so it
     /// is not readable through this precompile.
     interface INonceManager {

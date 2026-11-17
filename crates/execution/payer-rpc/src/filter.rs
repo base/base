@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use alloy_primitives::{Address, hex};
-use base_common_consensus::Eip8130Constants;
+use base_common_consensus::TxBaseConstants;
 use serde_json::{Map, Value};
 use thiserror::Error;
 
@@ -97,7 +97,7 @@ impl PayerRequestFilter {
     }
 
     const fn validate_frames(frames: &[Value]) -> Result<(), PayerRequestError> {
-        if frames.is_empty() || frames.len() > Eip8130Constants::MAX_CALL_PHASES_PER_TX {
+        if frames.is_empty() || frames.len() > TxBaseConstants::MAX_CALL_PHASES_PER_TX {
             return Err(PayerRequestError::InvalidFrames);
         }
         Ok(())
@@ -133,7 +133,7 @@ pub enum PayerRequestError {
     /// A call in `calls` is missing `to`.
     #[error("payer_getTerms calls must be a list of call objects")]
     InvalidCalls,
-    /// `frames` is empty or has more entries than an EIP-8130 transaction has call phases.
+    /// `frames` is empty or has more entries than a Base transaction has call phases.
     #[error("payer_getTerms frames must be a non-empty list")]
     InvalidFrames,
     /// `transaction` is missing, empty, or larger than the size cap.
@@ -198,10 +198,10 @@ mod tests {
     fn get_terms_accepts_frames_up_to_the_call_phase_limit() {
         let mut request = terms();
         request.as_object_mut().unwrap().remove("calls");
-        request["frames"] = json!(vec![json!({}); Eip8130Constants::MAX_CALL_PHASES_PER_TX]);
+        request["frames"] = json!(vec![json!({}); TxBaseConstants::MAX_CALL_PHASES_PER_TX]);
         assert!(PayerRequestFilter::validate_get_terms(&request, CHAIN_ID).is_ok());
 
-        request["frames"] = json!(vec![json!({}); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1]);
+        request["frames"] = json!(vec![json!({}); TxBaseConstants::MAX_CALL_PHASES_PER_TX + 1]);
         assert_eq!(
             PayerRequestFilter::validate_get_terms(&request, CHAIN_ID),
             Err(PayerRequestError::InvalidFrames)

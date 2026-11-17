@@ -1,4 +1,4 @@
-//! Metrics for EIP-8130 admission, invalidation, builder prechecks, and
+//! Metrics for Base transaction admission, invalidation, builder prechecks, and
 //! transaction validation.
 //!
 //! All labels are low-cardinality static categories; addresses and transaction
@@ -7,10 +7,10 @@
 base_metrics::define_metrics! {
     txpool.guard,
     struct = GuardMetrics,
-    #[describe("EIP-8130 transactions rejected at admission by signature/payment limits")]
-    #[label(name = "reason", default = ["sender", "payer", "payment", "payer_balance"])]
+    #[describe("Base transactions rejected at admission by payment limits")]
+    #[label(name = "reason", default = ["payment", "payer_balance"])]
     admission_rejected: counter,
-    #[describe("EIP-8130 transactions invalidated and evicted ahead of the builder")]
+    #[describe("Base transactions invalidated and evicted ahead of the builder")]
     #[label(
         name = "cause",
         default = [
@@ -24,12 +24,12 @@ base_metrics::define_metrics! {
         ]
     )]
     invalidated: counter,
-    #[describe("Occupied expiry buckets fired on canonical state updates")]
+    #[describe("Distinct expiry deadlines fired on canonical state updates")]
     expiry_buckets_fired: counter,
     #[describe("Transactions currently tracked by the admission/invalidation guard")]
     tracked: gauge,
-    #[describe("EIP-8130 drop events from the builder's stateless manifest precheck")]
-    #[label(name = "cause", default = ["config_slot", "payer_balance", "expiry"])]
+    #[describe("Base transaction drop events from the builder's stateless manifest precheck")]
+    #[label(name = "cause", default = ["payer_balance", "expiry"])]
     builder_precheck_dropped: counter,
 }
 
@@ -37,8 +37,6 @@ impl GuardMetrics {
     /// Static label for the `admission_rejected` reason.
     pub const fn rejection_reason(rejection: crate::LimitRejection) -> &'static str {
         match rejection {
-            crate::LimitRejection::SenderLimit => "sender",
-            crate::LimitRejection::PayerLimit => "payer",
             crate::LimitRejection::PaymentLimit => "payment",
             crate::LimitRejection::PayerBalance => "payer_balance",
         }
@@ -58,7 +56,7 @@ impl GuardMetrics {
         }
     }
 
-    /// Records invalidations attributed to expiry-bucket firing.
+    /// Records invalidations attributed to expiry deadlines passing.
     pub fn record_expiry_invalidations(count: usize) {
         if count > 0 {
             Self::invalidated("expiry").increment(count as u64);
@@ -165,14 +163,10 @@ base_metrics::define_metrics! {
     txpool.validator,
     struct = ValidatorMetrics,
     #[describe("End-to-end mempool validation wall time by transaction kind")]
-    #[label(name = "kind", default = ["eip8130", "standard"])]
+    #[label(name = "kind", default = ["base_tx", "standard"])]
     validate_seconds: histogram,
-    #[describe("EIP-8130 authorization wall time by sender authenticator type")]
-    #[label(name = "sig_type", default = ["k1", "p256", "passkey", "delegate", "delegate-k1", "delegate-p256", "delegate-passkey", "other"])]
+    #[describe("Base transaction authorization wall time")]
     auth_seconds: histogram,
-    #[describe("EIP-8130 lock-classification account-state resolutions by read source")]
-    #[label(name = "source", default = ["cache", "prefetch", "sload"])]
-    classification_state_reads: counter,
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ family, [`evm2::EvmTypesHost`], plus a transaction registry and static handler
 hooks. This crate anchors that family for Base as [`BaseEvmTypes`], currently
 mirroring the stock Ethereum configuration.
 
-Base-specific execution — deposit and EIP-8130 transactions (via a
+Base-specific execution — deposit and Base transactions (via a
 `TxRegistry`), OP L1 fee settlement (via `TxHandlerHooks`), the Base spec
 schedule, and L1 block info (via `BlockEnvExt`) — is layered on here in
 follow-up work.

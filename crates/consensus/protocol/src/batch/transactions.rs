@@ -10,8 +10,8 @@ use alloy_rlp::{Buf, Decodable, Encodable};
 use base_common_consensus::{BaseTxEnvelope, OpTxType};
 
 use crate::{
-    SpanBatchBits, SpanBatchEip8130TransactionData, SpanBatchElement, SpanBatchError,
-    SpanBatchTransactionData, SpanDecodingError, read_tx_data,
+    SpanBatchBits, SpanBatchElement, SpanBatchError, SpanBatchTransactionData,
+    SpanBatchTxBaseTransactionData, SpanDecodingError, read_tx_data,
 };
 
 /// This struct contains the decoded information for transactions in a span batch.
@@ -37,9 +37,9 @@ pub struct SpanBatchTransactions {
     pub tx_types: Vec<OpTxType>,
     /// Total legacy transaction count in the span batch.
     pub legacy_tx_count: u64,
-    /// The EIP-8130 auth proofs, one `(sender_proof, payer_proof)` pair per
-    /// EIP-8130 transaction in transaction order.
-    pub eip8130_auth_data: Vec<(Bytes, Bytes)>,
+    /// The Base transaction auth proofs, one `(sender_proof, payer_proof)` pair per
+    /// Base transaction in transaction order.
+    pub base_tx_auth_data: Vec<(Bytes, Bytes)>,
 }
 
 impl SpanBatchTransactions {
@@ -52,7 +52,7 @@ impl SpanBatchTransactions {
         self.encode_tx_nonces(w)?;
         self.encode_tx_gases(w)?;
         self.encode_protected_bits(w)?;
-        self.encode_eip8130_auth_data(w)?;
+        self.encode_base_tx_auth_data(w)?;
         Ok(())
     }
 
@@ -65,7 +65,7 @@ impl SpanBatchTransactions {
         self.decode_tx_nonces(r)?;
         self.decode_tx_gases(r)?;
         self.decode_protected_bits(r)?;
-        self.decode_eip8130_auth_data(r)?;
+        self.decode_base_tx_auth_data(r)?;
         Ok(())
     }
 
@@ -135,14 +135,14 @@ impl SpanBatchTransactions {
         Ok(())
     }
 
-    /// Encode the EIP-8130 auth proofs into a writer. Each bundle is the
+    /// Encode the Base transaction auth proofs into a writer. Each bundle is the
     /// uvarint-prefixed sender proof followed by the uvarint-prefixed payer proof.
-    pub fn encode_eip8130_auth_data(
+    pub fn encode_base_tx_auth_data(
         &self,
         w: &mut dyn bytes::BufMut,
     ) -> Result<(), SpanBatchError> {
         let mut buf = [0u8; 10];
-        for (sender_proof, payer_proof) in &self.eip8130_auth_data {
+        for (sender_proof, payer_proof) in &self.base_tx_auth_data {
             for proof in [sender_proof, payer_proof] {
                 let len = unsigned_varint::encode::u64(proof.len() as u64, &mut buf);
                 w.put_slice(len);
@@ -254,29 +254,29 @@ impl SpanBatchTransactions {
         Ok(())
     }
 
-    /// Decode the EIP-8130 auth proofs from a reader, reading one
-    /// `(sender_proof, payer_proof)` bundle for each EIP-8130 transaction in
+    /// Decode the Base transaction auth proofs from a reader, reading one
+    /// `(sender_proof, payer_proof)` bundle for each Base transaction in
     /// transaction order.
-    pub fn decode_eip8130_auth_data(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
+    pub fn decode_base_tx_auth_data(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
         let mut auth_data = Vec::new();
         for tx_type in &self.tx_types {
-            if !matches!(tx_type, OpTxType::Eip8130) {
+            if !matches!(tx_type, OpTxType::Base) {
                 continue;
             }
-            let sender_proof = Self::decode_eip8130_proof(r)?;
-            let payer_proof = Self::decode_eip8130_proof(r)?;
+            let sender_proof = Self::decode_base_tx_proof(r)?;
+            let payer_proof = Self::decode_base_tx_proof(r)?;
             auth_data.push((sender_proof, payer_proof));
         }
-        self.eip8130_auth_data = auth_data;
+        self.base_tx_auth_data = auth_data;
         Ok(())
     }
 
-    /// Decode a single uvarint-prefixed EIP-8130 auth proof from a reader.
-    fn decode_eip8130_proof(r: &mut &[u8]) -> Result<Bytes, SpanBatchError> {
+    /// Decode a single uvarint-prefixed Base transaction auth proof from a reader.
+    fn decode_base_tx_proof(r: &mut &[u8]) -> Result<Bytes, SpanBatchError> {
         let (n, remaining) = unsigned_varint::decode::u64(r)
             .map_err(|_| SpanBatchError::Decoding(SpanDecodingError::InvalidAuthData))?;
         *r = remaining;
-        if n > SpanBatchEip8130TransactionData::MAX_AUTH_PROOF_BYTES {
+        if n > SpanBatchTxBaseTransactionData::MAX_AUTH_PROOF_BYTES {
             return Err(SpanBatchError::TooBigSpanBatchSize);
         }
         let n = n as usize;
@@ -298,7 +298,7 @@ impl SpanBatchTransactions {
         let mut txs = Vec::new();
         let mut to_idx = 0;
         let mut protected_bit_idx = 0;
-        let mut eip8130_idx = 0;
+        let mut base_tx_idx = 0;
         for idx in 0..self.total_block_tx_count {
             let mut data = self.tx_data[idx as usize].as_slice();
             let tx = SpanBatchTransactionData::decode(&mut data)
@@ -327,18 +327,18 @@ impl SpanBatchTransactions {
                 None
             };
 
-            // EIP-8130 transactions are reassembled from the remainder and the auth proofs
+            // Base transactions are reassembled from the remainder and the auth proofs
             // carried in the trailing column, then re-encoded directly.
-            if let SpanBatchTransactionData::Eip8130(data) = &tx {
+            if let SpanBatchTransactionData::Base(data) = &tx {
                 let (sender_proof, payer_proof) = self
-                    .eip8130_auth_data
-                    .get(eip8130_idx)
+                    .base_tx_auth_data
+                    .get(base_tx_idx)
                     .ok_or(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))?;
-                eip8130_idx += 1;
+                base_tx_idx += 1;
                 let signed =
                     data.to_tx(chain_id, *nonce, *gas, sender_proof.clone(), payer_proof.clone());
                 let mut buf = Vec::new();
-                BaseTxEnvelope::Eip8130(signed).encode_2718(&mut buf);
+                BaseTxEnvelope::Base(signed).encode_2718(&mut buf);
                 txs.push(buf);
                 continue;
             }
@@ -412,24 +412,24 @@ impl SpanBatchTransactions {
                     }
                     (*sig, tx.to(), tx.nonce(), tx.gas_limit())
                 }
-                BaseTxEnvelope::Eip8130(signed) => {
+                BaseTxEnvelope::Base(signed) => {
                     let inner = signed.tx();
                     if inner.chain_id != chain_id {
                         return Err(SpanBatchError::Decoding(
                             SpanDecodingError::InvalidTransactionData,
                         ));
                     }
-                    let sender_proof = SpanBatchEip8130TransactionData::split_auth(
+                    let sender_proof = SpanBatchTxBaseTransactionData::split_auth(
                         signed.sender_auth(),
                         inner.sender.is_some(),
                     )?
                     .1;
-                    let payer_proof = SpanBatchEip8130TransactionData::split_auth(
+                    let payer_proof = SpanBatchTxBaseTransactionData::split_auth(
                         signed.payer_auth(),
-                        SpanBatchEip8130TransactionData::named_payer(inner.payer),
+                        SpanBatchTxBaseTransactionData::named_payer(inner.payer),
                     )?
                     .1;
-                    self.eip8130_auth_data.push((sender_proof, payer_proof));
+                    self.base_tx_auth_data.push((sender_proof, payer_proof));
                     (
                         Signature::new(U256::ZERO, U256::ZERO, false),
                         None,
@@ -471,16 +471,14 @@ mod tests {
     use alloc::vec;
 
     use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy};
-    use alloy_primitives::{B256, Signature, TxKind, address};
+    use alloy_primitives::{Signature, TxKind, address};
     use base_common_consensus::{
-        AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
-        Eip8130Constants, Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange,
-        TxEip8130,
+        AccountChange, Call, Delegation, TxBase, TxBaseConstants, TxBaseSigned,
     };
 
     use super::*;
 
-    const EIP8130_CHAIN_ID: u64 = 8453;
+    const BASE_TX_CHAIN_ID: u64 = 8453;
 
     /// Regression: truncated input to `decode_tx_sigs` must return an error, not panic.
     /// A dishonest batcher can craft a span batch with fewer bytes than the declared tx count
@@ -515,10 +513,10 @@ mod tests {
     /// Regression: a length-prefix uvarint that never terminates must error as
     /// auth data, not as nonce data.
     #[test]
-    fn test_decode_eip8130_proof_truncated_length_prefix() {
+    fn test_decode_base_tx_proof_truncated_length_prefix() {
         let mut buf: &[u8] = &[0xff, 0xff, 0xff];
         assert_eq!(
-            SpanBatchTransactions::decode_eip8130_proof(&mut buf),
+            SpanBatchTransactions::decode_base_tx_proof(&mut buf),
             Err(SpanBatchError::Decoding(SpanDecodingError::InvalidAuthData))
         );
     }
@@ -526,13 +524,13 @@ mod tests {
     /// Regression: a declared proof length above the byte cap fails fast before
     /// any copy is attempted.
     #[test]
-    fn test_decode_eip8130_proof_rejects_oversized_length() {
-        let oversized = SpanBatchEip8130TransactionData::MAX_AUTH_PROOF_BYTES + 1;
+    fn test_decode_base_tx_proof_rejects_oversized_length() {
+        let oversized = SpanBatchTxBaseTransactionData::MAX_AUTH_PROOF_BYTES + 1;
         let mut varint_buf = unsigned_varint::encode::u64_buffer();
         let prefix = unsigned_varint::encode::u64(oversized, &mut varint_buf);
         let mut buf: &[u8] = prefix;
         assert_eq!(
-            SpanBatchTransactions::decode_eip8130_proof(&mut buf),
+            SpanBatchTransactions::decode_base_tx_proof(&mut buf),
             Err(SpanBatchError::TooBigSpanBatchSize)
         );
     }
@@ -587,18 +585,17 @@ mod tests {
         assert_eq!(span_batch_txs.total_block_tx_count, 1);
     }
 
-    /// Encodes an EIP-8130 transaction to its raw EIP-2718 form for round-trip inputs.
-    fn eip8130_raw(tx: TxEip8130, sender_auth: Bytes, payer_auth: Bytes) -> Bytes {
+    /// Encodes a Base transaction to its raw EIP-2718 form for round-trip inputs.
+    fn base_tx_raw(tx: TxBase, sender_auth: Bytes, payer_auth: Bytes) -> Bytes {
         let mut buf = Vec::new();
-        BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, payer_auth))
-            .encode_2718(&mut buf);
+        BaseTxEnvelope::Base(TxBaseSigned::new(tx, sender_auth, payer_auth)).encode_2718(&mut buf);
         Bytes::from(buf)
     }
 
-    /// EOA self-pay EIP-8130 body; variants clone it and override individual fields.
-    fn eip8130_body() -> TxEip8130 {
-        TxEip8130 {
-            chain_id: EIP8130_CHAIN_ID,
+    /// EOA self-pay Base transaction body; variants clone it and override individual fields.
+    fn base_tx_body() -> TxBase {
+        TxBase {
+            chain_id: BASE_TX_CHAIN_ID,
             sender: None,
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
@@ -633,13 +630,13 @@ mod tests {
     }
 
     #[test]
-    fn test_eip8130_span_batch_roundtrip() {
+    fn test_base_tx_span_batch_roundtrip() {
         let sender = address!("00000000000000000000000000000000000000aa");
         let payer = address!("00000000000000000000000000000000000000bb");
 
         // EOA self-pay: no explicit sender/payer, so the whole sender_auth is the proof.
         let eoa = {
-            let mut tx = eip8130_body();
+            let mut tx = base_tx_body();
             tx.nonce_sequence = 7;
             tx.max_priority_fee_per_gas = 1_000_000_000;
             tx.max_fee_per_gas = 5_000_000_000;
@@ -648,14 +645,14 @@ mod tests {
                 value: U256::ZERO,
                 data: bytes!("deadbeef"),
             }]];
-            eip8130_raw(tx, Bytes::from_static(&[0xab; 65]), Bytes::new())
+            base_tx_raw(tx, Bytes::from_static(&[0xab; 65]), Bytes::new())
         };
 
-        // Configured sender and explicit payer: each auth is a 20-byte authenticator
-        // address followed by a proof, which the codec splits across the remainder and
+        // Named sender and explicit payer: each auth is a 20-byte authenticator
+        // selector followed by a proof, which the codec splits across the remainder and
         // the trailing auth column.
-        let configured = {
-            let mut tx = eip8130_body();
+        let named = {
+            let mut tx = base_tx_body();
             tx.sender = Some(sender);
             tx.payer = Some(payer);
             tx.nonce_key = U256::from(0x1234u64);
@@ -666,42 +663,17 @@ mod tests {
             sender_auth.extend_from_slice(&[0xcd; 32]);
             let mut payer_auth = payer.as_slice().to_vec();
             payer_auth.extend_from_slice(&[0xef; 16]);
-            eip8130_raw(tx, Bytes::from(sender_auth), Bytes::from(payer_auth))
+            base_tx_raw(tx, Bytes::from(sender_auth), Bytes::from(payer_auth))
         };
 
-        // Every account-change variant plus multi-phase calls and metadata.
+        // A delegation entry plus multi-phase calls and metadata.
         let rich = {
-            let mut tx = eip8130_body();
+            let mut tx = base_tx_body();
             tx.sender = Some(sender);
             tx.nonce_sequence = 11;
-            tx.account_changes = vec![
-                AccountChange::Create(CreateEntry {
-                    user_salt: B256::repeat_byte(0x01),
-                    code: bytes!("60006000fd"),
-                    initial_actors: vec![InitialActor::owner(
-                        B256::repeat_byte(0x02),
-                        address!("00000000000000000000000000000000000000cc"),
-                    )],
-                }),
-                AccountChange::ConfigChange(SignedAccountChanges {
-                    channel: AccountChangeChannel::Local,
-                    sequence: 1,
-                    changes: vec![
-                        SignedChange {
-                            change_type: ChangeType::AuthorizeActor,
-                            payload: bytes!("aabbcc"),
-                        },
-                        SignedChange {
-                            change_type: ChangeType::RevokeActor,
-                            payload: Bytes::new(),
-                        },
-                    ],
-                    signature: bytes!("c0ffee"),
-                }),
-                AccountChange::Delegation(Delegation {
-                    target: address!("00000000000000000000000000000000000000ee"),
-                }),
-            ];
+            tx.account_changes = vec![AccountChange::Delegation(Delegation {
+                target: address!("00000000000000000000000000000000000000ee"),
+            })];
             tx.calls = vec![
                 vec![
                     Call {
@@ -720,27 +692,27 @@ mod tests {
             tx.metadata = bytes!("decafbad");
             let mut sender_auth = sender.as_slice().to_vec();
             sender_auth.extend_from_slice(&[0x99; 48]);
-            eip8130_raw(tx, Bytes::from(sender_auth), Bytes::new())
+            base_tx_raw(tx, Bytes::from(sender_auth), Bytes::new())
         };
 
         // Minimal body: empty auth, no account changes or calls.
-        let minimal = eip8130_raw(eip8130_body(), Bytes::new(), Bytes::new());
+        let minimal = base_tx_raw(base_tx_body(), Bytes::new(), Bytes::new());
 
         // Open payer: `payer` is the single byte 0x00 and `payer_auth` is a raw
         // signature with no authenticator prefix.
         let open_payer = {
-            let mut tx = eip8130_body();
-            tx.payer = Some(Eip8130Constants::OPEN_PAYER);
-            eip8130_raw(tx, Bytes::from_static(&[0xab; 65]), Bytes::from_static(&[0xcd; 65]))
+            let mut tx = base_tx_body();
+            tx.payer = Some(TxBaseConstants::OPEN_PAYER);
+            base_tx_raw(tx, Bytes::from_static(&[0xab; 65]), Bytes::from_static(&[0xcd; 65]))
         };
 
         // Nonce-free (`NONCE_KEY_MAX`) with a K1-authenticated sender and payer and a
         // value-bearing call.
         let nonce_free = {
-            let mut tx = eip8130_body();
+            let mut tx = base_tx_body();
             tx.sender = Some(sender);
             tx.payer = Some(payer);
-            tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+            tx.nonce_key = TxBaseConstants::NONCE_KEY_MAX;
             tx.valid_before = 1_900_000_020_000;
             tx.max_priority_fee_per_gas = 1_000_000;
             tx.max_fee_per_gas = 2_000_000_000;
@@ -750,28 +722,28 @@ mod tests {
                 value: U256::from(1_000_000_000_000_000u64),
                 data: bytes!("a9059cbb"),
             }]];
-            let mut sender_auth = Eip8130Constants::K1_AUTHENTICATOR.as_slice().to_vec();
+            let mut sender_auth = TxBaseConstants::K1_AUTHENTICATOR.as_slice().to_vec();
             sender_auth.extend_from_slice(&[0x5a; 65]);
-            let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.as_slice().to_vec();
+            let mut payer_auth = TxBaseConstants::K1_AUTHENTICATOR.as_slice().to_vec();
             payer_auth.extend_from_slice(&[0xa5; 65]);
-            eip8130_raw(tx, Bytes::from(sender_auth), Bytes::from(payer_auth))
+            base_tx_raw(tx, Bytes::from(sender_auth), Bytes::from(payer_auth))
         };
 
         assert_span_batch_roundtrip(
-            vec![eoa, configured, rich, minimal, open_payer, nonce_free],
-            EIP8130_CHAIN_ID,
+            vec![eoa, named, rich, minimal, open_payer, nonce_free],
+            BASE_TX_CHAIN_ID,
         );
     }
 
     #[test]
-    fn test_span_batch_mixed_eip8130_roundtrip() {
+    fn test_span_batch_mixed_base_tx_roundtrip() {
         let to = address!("0123456789012345678901234567890123456789");
         let sig = Signature::test_signature();
 
         let mut legacy = Vec::new();
         TxEnvelope::Legacy(Signed::new_unchecked(
             TxLegacy {
-                chain_id: Some(EIP8130_CHAIN_ID),
+                chain_id: Some(BASE_TX_CHAIN_ID),
                 nonce: 1,
                 gas_price: 1_000_000_000,
                 gas_limit: 21_000,
@@ -787,7 +759,7 @@ mod tests {
         let mut eip1559 = Vec::new();
         TxEnvelope::Eip1559(Signed::new_unchecked(
             TxEip1559 {
-                chain_id: EIP8130_CHAIN_ID,
+                chain_id: BASE_TX_CHAIN_ID,
                 nonce: 2,
                 gas_limit: 50_000,
                 max_fee_per_gas: 5_000_000_000,
@@ -804,7 +776,7 @@ mod tests {
         TxEnvelope::Eip7702(Signed::new_unchecked(
             TxEip7702 {
                 to,
-                chain_id: EIP8130_CHAIN_ID,
+                chain_id: BASE_TX_CHAIN_ID,
                 nonce: 3,
                 gas_limit: 60_000,
                 ..Default::default()
@@ -815,28 +787,22 @@ mod tests {
         .encode_2718(&mut eip7702);
 
         let aa_eoa = {
-            let mut tx = eip8130_body();
+            let mut tx = base_tx_body();
             tx.nonce_sequence = 4;
-            eip8130_raw(tx, Bytes::from_static(&[0x01; 65]), Bytes::new())
+            base_tx_raw(tx, Bytes::from_static(&[0x01; 65]), Bytes::new())
         };
-        let aa_configured = {
-            let mut tx = eip8130_body();
+        let aa_named = {
+            let mut tx = base_tx_body();
             tx.sender = Some(to);
             tx.nonce_sequence = 5;
             let mut sender_auth = to.as_slice().to_vec();
             sender_auth.extend_from_slice(&[0x02; 16]);
-            eip8130_raw(tx, Bytes::from(sender_auth), Bytes::new())
+            base_tx_raw(tx, Bytes::from(sender_auth), Bytes::new())
         };
 
         assert_span_batch_roundtrip(
-            vec![
-                Bytes::from(legacy),
-                aa_eoa,
-                Bytes::from(eip1559),
-                aa_configured,
-                Bytes::from(eip7702),
-            ],
-            EIP8130_CHAIN_ID,
+            vec![Bytes::from(legacy), aa_eoa, Bytes::from(eip1559), aa_named, Bytes::from(eip7702)],
+            BASE_TX_CHAIN_ID,
         );
     }
 }

@@ -217,18 +217,14 @@ features! {
         SingularBatchesOnly,
     },
     Everest {
-        /// Execute enshrined EIP-8130 account-abstraction transactions.
-        Eip8130,
+        /// Execute enshrined Base transactions.
+        TxBase,
         /// Expose EIP-8430 payer resolution RPC methods.
         Eip8430,
         /// Plant a nonempty code stub on the native nonce manager to preserve its persistent state.
         NativeNonceManager,
         /// Bill transactions for their full gas limit rather than only the gas they use.
         GasLimitBilling,
-    },
-    Zenith {
-        /// Enable experimental EIP-8130 keystore support on genesis-configured chains only.
-        Keystore,
     },
 }
 

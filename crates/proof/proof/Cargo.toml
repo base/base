@@ -93,5 +93,5 @@ std = [
 	"thiserror/std",
 	"tracing/std",
 ]
-# 8130 without Tokio. Off in guests until Everest; do not pair with `metrics`.
+# Base transactions without Tokio. Off in guests until Everest; do not pair with `metrics`.
 evm-std = [ "base-common-evm/std" ]

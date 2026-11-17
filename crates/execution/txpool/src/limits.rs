@@ -1,34 +1,25 @@
-//! Per-account admission limits: payer balance accounting and inflight counters.
+//! Per-payer admission limits: payer balance accounting and inflight counters.
 //!
-//! Two independent dimensions gate admission:
-//!
-//! * the **sender limit**, bounded by signature/auth-surface stability, and
-//! * the **payer limit**, bounded by balance-drain risk.
-//!
-//! Both are mechanisms here; the *policy* that picks a sender's cap or routes a
-//! payer to count-based vs balance-based limiting (locked / trusted-bytecode
-//! classification) lives in a later layer.
-//!
-//! [`InflightCounters`] backs the count-based dimension (default cap, and the
-//! "unlimited" sender cap for locked accounts). [`PayerBook`] backs the
-//! balance-bounded payer dimension used by trusted accounts, where the sum of
-//! the max cost of all sponsored transactions must not exceed the payer's
-//! balance. For a trusted account ETH can only leave through gas it sponsors, so
-//! `Σ max_cost ≤ balance` is a true upper bound on the only drain.
+//! [`InflightCounters`] backs the count-based payment limit every payer is
+//! held to. [`PayerBook`] additionally bounds an allowlisted payer by its
+//! balance: the sum of the max cost of all the transactions it sponsors must
+//! not exceed that balance. The *policy* that picks a payer's cap lives in the
+//! mempool guard.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_primitives::{
+    Address, TxHash, U256,
+    map::{AddressMap, B256Map},
+};
 
 /// Per-account inflight transaction counters with a caller-supplied cap.
 ///
-/// The counter is dimension-agnostic: callers use one instance for the sender
-/// dimension and another for the count-based payer dimension, passing the
-/// appropriate cap (e.g. `u32::MAX` for a locked account's unlimited sender
-/// limit).
+/// The caller passes the cap on each increment (e.g. `u32::MAX` for a
+/// forced replacement that must never be rejected).
 #[derive(Debug, Default)]
 pub struct InflightCounters {
-    counts: HashMap<Address, u32>,
+    counts: AddressMap<u32>,
 }
 
 impl InflightCounters {
@@ -74,7 +65,7 @@ impl InflightCounters {
     }
 }
 
-/// Aggregate balance accounting for a single balance-bounded (trusted) payer.
+/// Aggregate balance accounting for a single balance-bounded (allowlisted) payer.
 ///
 /// Tracks the payer's cached balance, the reserved sum of sponsored
 /// transactions' max cost, and the sponsored transactions ordered by ascending
@@ -87,7 +78,7 @@ pub struct PayerBook {
     /// Ordered by `(priority, hash)` ascending; the front is evicted first.
     by_priority: BTreeMap<(u128, TxHash), U256>,
     /// `hash -> (priority, max_cost)` for O(1) removal and idempotency checks.
-    entries: HashMap<TxHash, (u128, U256)>,
+    entries: B256Map<(u128, U256)>,
 }
 
 impl PayerBook {
@@ -98,7 +89,7 @@ impl PayerBook {
             balance,
             reserved: U256::ZERO,
             by_priority: BTreeMap::new(),
-            entries: HashMap::new(),
+            entries: B256Map::default(),
         }
     }
 

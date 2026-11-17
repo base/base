@@ -1,0 +1,193 @@
+//! Base transaction `eth_getTransactionCount`, `eth_estimateGas` and `eth_call` overrides.
+
+use alloy_eips::BlockId;
+use alloy_evm::EvmFactory;
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_rpc_types::{
+    BlockOverrides,
+    state::{EvmOverrides, StateOverride},
+};
+use base_common_evm::BaseTransaction as BaseRevm;
+use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::BaseNextBlockEnvAttributes;
+use jsonrpsee::{
+    core::{RpcResult, async_trait},
+    proc_macros::rpc,
+};
+use reth_chainspec::ChainSpecProvider;
+use reth_evm::{ConfigureEvm, EvmFactoryFor, TxEnvFor};
+use reth_rpc_eth_api::{
+    EthApiTypes,
+    helpers::{EthCall, EthState, FullEthApi},
+};
+use revm::context::{BlockEnv, TxEnv};
+use tracing::debug;
+
+use crate::{ChannelNonceReader, TxBaseEverestGate, TxBaseGasEstimator};
+
+/// Eth API overrides for Base transaction `nonce_key` lookups via `eth_getTransactionCount`
+/// and Everest-gated simulation via `eth_estimateGas` and `eth_call`.
+///
+/// Plain estimation and call requests delegate to the standard reth implementation.
+/// This override owns all three methods on the node; no other extension may
+/// register them.
+#[rpc(server, namespace = "eth")]
+pub trait TxBaseEthApiOverride {
+    /// Returns transaction count for an address.
+    ///
+    /// `nonce_key`: when omitted or zero, returns the protocol nonce from
+    /// account state (the standard reth resolution). When non-zero,
+    /// returns the 2D channel nonce `nonces[address][nonce_key]` from the
+    /// Nonce Manager precompile. `nonce_key == NONCE_KEY_MAX` returns
+    /// `INVALID_PARAMS`.
+    ///
+    /// Only canonical state at the requested block is consulted; no
+    /// pending-state delta is applied.
+    #[method(name = "getTransactionCount")]
+    async fn get_transaction_count(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+        nonce_key: Option<U256>,
+    ) -> RpcResult<U256>;
+
+    /// Estimates gas for a transaction.
+    ///
+    /// A request carrying Base transaction fields (account changes, calls, `nonce_key`,
+    /// `valid_after`/`valid_before`, or metadata) is estimated via a single
+    /// read-only Base transaction
+    /// simulation against the block state (gated on the Everest fork). The
+    /// Base transaction pipeline charges deterministic, signature-independent gas, so
+    /// only the call pool is searched inside the simulation, not the whole gas
+    /// limit. A plain request falls through to the standard reth estimator
+    /// unchanged.
+    #[method(name = "estimateGas")]
+    async fn estimate_gas(
+        &self,
+        request: BaseTransactionRequest,
+        block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<U256>;
+
+    /// Executes a call.
+    ///
+    /// A request carrying Base transaction fields (or `type: 0x79`) runs the read-only
+    /// Base transaction simulation once at the request's gas, without the
+    /// `eth_estimateGas` gas-limit search (gated on the Everest fork), and
+    /// returns the output of its final call. A plain request falls
+    /// through to the standard reth `eth_call` unchanged.
+    #[method(name = "call")]
+    async fn call(
+        &self,
+        request: BaseTransactionRequest,
+        block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<Bytes>;
+}
+
+/// Standalone Base transaction `eth_getTransactionCount`, `eth_estimateGas` and `eth_call`
+/// overrides.
+#[derive(Debug)]
+pub struct TxBaseEthApiExt<Eth: EthApiTypes> {
+    eth_api: Eth,
+}
+
+impl<Eth: EthApiTypes> TxBaseEthApiExt<Eth> {
+    /// Creates standalone Base transaction `eth_getTransactionCount`, `eth_estimateGas`
+    /// and `eth_call` overrides over the supplied Eth API.
+    pub const fn new(eth_api: Eth) -> Self {
+        Self { eth_api }
+    }
+}
+
+#[async_trait]
+impl<Eth> TxBaseEthApiOverrideServer for TxBaseEthApiExt<Eth>
+where
+    Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
+    Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+    Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
+    TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
+    EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
+    jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
+{
+    async fn get_transaction_count(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+        nonce_key: Option<U256>,
+    ) -> RpcResult<U256> {
+        debug!(
+            message = "rpc::base_tx::get_transaction_count",
+            address = %address,
+            nonce_key = ?nonce_key,
+        );
+
+        let block_id = block_number.unwrap_or_default();
+
+        // Base transaction channel read. Only `nonce_key != 0` uses the precompile
+        // path; `Some(0)` is the protocol nonce by EIP-8430's reservation
+        // and falls through to the standard resolution. The Everest gate
+        // lives here (not above) so the default hot path — absent
+        // `nonce_key` and `Some(0)` — is not slowed down by a sync header
+        // resolution.
+        if let Some(key) = nonce_key
+            && key != U256::ZERO
+        {
+            TxBaseEverestGate::check(&self.eth_api, block_id)?;
+            return ChannelNonceReader::read(&self.eth_api, address, key, block_id, None).await;
+        }
+
+        // Protocol nonce path. Standard reth resolution against
+        // `account.nonce` at the requested block, with no pending-state delta.
+        EthState::transaction_count(&self.eth_api, address, block_number).await.map_err(Into::into)
+    }
+
+    async fn estimate_gas(
+        &self,
+        request: BaseTransactionRequest,
+        block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<U256> {
+        let block_id = block_number.unwrap_or_default();
+        let overrides = EvmOverrides::new(state_overrides, block_overrides);
+
+        // Plain (non-Base) request: this override replaces the default
+        // `eth_estimateGas`, so the common case must be delegated to the
+        // standard reth estimator unchanged.
+        if request.as_base_tx().is_none() {
+            return EthCall::estimate_gas_at(&self.eth_api, request, block_id, overrides)
+                .await
+                .map_err(Into::into);
+        }
+
+        debug!(message = "rpc::base_tx::estimate_gas", block_id = ?block_id);
+
+        TxBaseEverestGate::check(&self.eth_api, block_id)?;
+        TxBaseGasEstimator::estimate(&self.eth_api, request, block_id, overrides).await
+    }
+
+    async fn call(
+        &self,
+        request: BaseTransactionRequest,
+        block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<Bytes> {
+        let overrides = EvmOverrides::new(state_overrides, block_overrides);
+        if request.as_base_tx().is_none() {
+            return EthCall::call(&self.eth_api, request, block_number, overrides)
+                .await
+                .map_err(Into::into);
+        }
+
+        debug!(message = "rpc::base_tx::call", block_number = ?block_number);
+
+        let block_id = block_number.unwrap_or_default();
+        TxBaseEverestGate::check(&self.eth_api, block_id)?;
+        TxBaseGasEstimator::call(&self.eth_api, request, block_id, overrides).await
+    }
+}

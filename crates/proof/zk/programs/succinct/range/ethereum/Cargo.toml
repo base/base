@@ -11,7 +11,7 @@ repository.workspace = true
 rkyv.workspace = true
 
 # base-consensus / base-proof
-# Cobalt guests stay no_std. `evm-std` (8130 without Tokio) waits for Everest.
+# Cobalt guests stay no_std. `evm-std` (Base transactions without Tokio) waits for Everest.
 base-proof.workspace = true
 
 # sp1

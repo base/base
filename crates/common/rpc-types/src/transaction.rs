@@ -8,7 +8,7 @@ use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
 use serde::{Deserialize, Serialize};
 
 mod request;
-pub use request::{BaseTransactionRequest, Eip8130AuthScheme, Eip8130RequestFields};
+pub use request::{BaseTransactionRequest, TxBaseRequestFields};
 
 /// Base transaction type
 #[derive(
@@ -292,9 +292,10 @@ mod tx_serde {
             // if inner transaction is a deposit, then don't serialize `from` directly
             let from = if inner.as_deposit().is_some() { None } else { Some(inner.signer()) };
 
-            // EIP-8130's consensus serde omits its cached hash so deserialization recomputes it.
-            // Add the canonical hash at the RPC layer without duplicating hashes for other types.
-            let hash = inner.as_eip8130().map(|tx| *tx.hash());
+            // The Base transaction consensus serde omits its cached hash so deserialization
+            // recomputes it. Add the canonical hash at the RPC layer without duplicating hashes for
+            // other types.
+            let hash = inner.as_base_tx().map(|tx| *tx.hash());
 
             // if inner transaction has its own `gasPrice` don't serialize it in this struct.
             let effective_gas_price = effective_gas_price.filter(|_| inner.gas_price().is_none());
@@ -366,7 +367,7 @@ mod tests {
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::Bytes;
-    use base_common_consensus::{Eip8130Signed, TxEip8130};
+    use base_common_consensus::{TxBase, TxBaseSigned};
 
     use super::*;
 
@@ -404,8 +405,8 @@ mod tests {
     }
 
     #[test]
-    fn can_serialize_eip8130() {
-        let tx_body = TxEip8130 {
+    fn can_serialize_base_tx() {
+        let tx_body = TxBase {
             chain_id: 8453,
             sender: Some(Address::with_last_byte(0x11)),
             nonce_key: U256::from(0u64),
@@ -422,14 +423,14 @@ mod tests {
         };
         let sender_auth = Bytes::from_static(&[0xAB; 32]);
         let payer_auth = Bytes::new();
-        let signed = Eip8130Signed::new(tx_body, sender_auth, payer_auth);
+        let signed = TxBaseSigned::new(tx_body, sender_auth, payer_auth);
         let canonical_hash = alloy_primitives::keccak256(signed.encoded_2718());
-        let envelope = BaseTxEnvelope::Eip8130(signed);
+        let envelope = BaseTxEnvelope::Base(signed);
 
         // Wrap the envelope with its explicit sender directly rather than going
         // through `try_into_recovered`, which pulls in secp256k1 signature
         // recovery (the `k256` feature). This test only exercises serialization,
-        // and an EIP-8130 tx with an explicit `sender` recovers to exactly that
+        // and a Base transaction tx with an explicit `sender` recovers to exactly that
         // address, so the unchecked wrapper is equivalent here and keeps the
         // default-feature `cargo test` build working.
         let recovered = Recovered::new_unchecked(envelope, Address::with_last_byte(0x11));
@@ -452,7 +453,7 @@ mod tests {
         assert_eq!(rpc_tx.deposit_receipt_version, None);
         assert_eq!(rpc_tx.inner.inner.signer(), Address::with_last_byte(0x11));
 
-        let serialized = serde_json::to_string(&rpc_tx).expect("serialize eip-8130 rpc tx");
+        let serialized = serde_json::to_string(&rpc_tx).expect("serialize Base transaction rpc tx");
         let value: serde_json::Value = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(value["type"], "0x79", "tx type byte exposed in RPC response");
@@ -462,7 +463,10 @@ mod tests {
         assert_eq!(value["blockTimestampMs"], "0x18bcfe568c8");
         assert_eq!(value["transactionIndex"], "0x0");
 
-        assert!(value.get("tx").is_none(), "EIP-8130 fields are flat, like any transaction");
+        assert!(
+            value.get("tx").is_none(),
+            "Base transaction fields are flat, like any transaction"
+        );
         assert_eq!(value["chainId"], "0x2105");
         assert_eq!(value["nonceKey"], "0x0");
         assert_eq!(value["nonce"], "0x7");
@@ -484,7 +488,7 @@ mod tests {
         assert_eq!(
             reserialized["hash"],
             serde_json::to_value(canonical_hash).unwrap(),
-            "RPC deserialization recomputes the EIP-8130 hash from its payload"
+            "RPC deserialization recomputes the Base transaction hash from its payload"
         );
 
         assert!(value.get("sourceHash").is_none(), "no deposit-only fields leak");

@@ -41,13 +41,13 @@ where
 
 impl BestTransactionLane {
     /// Returns the sequential lane for a transaction, or `None` for an independent nonce-free
-    /// EIP-8130 transaction.
+    /// Base transaction.
     pub fn for_transaction<T>(transaction: &Arc<ValidPoolTransaction<T>>) -> Option<Self>
     where
         T: BasePooledTx,
     {
-        let nonce_key = transaction.transaction.eip8130_nonce_channel_key();
-        if nonce_key.is_none() && transaction.transaction.is_eip8130_nonce_free() {
+        let nonce_key = transaction.transaction.base_tx_nonce_channel_key();
+        if nonce_key.is_none() && transaction.transaction.is_base_tx_nonce_free() {
             return None;
         }
         Some(Self { sender: transaction.sender(), nonce_key: nonce_key.unwrap_or_default() })
@@ -488,8 +488,7 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
-        TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, TxBase, TxBaseConstants, TxBaseSigned,
     };
     use parking_lot::Mutex;
     use reth_primitives_traits::Recovered;
@@ -546,13 +545,13 @@ mod tests {
         priority_fee: u128,
         predicates: Vec<ValidityPredicate>,
     ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
-        let tx = TxEip8130 {
+        let tx = TxBase {
             chain_id: ChainConfig::mainnet().chain_id,
             sender: None,
             nonce_key,
             nonce_sequence: nonce,
             valid_after: 0,
-            valid_before: u64::from(nonce_key == Eip8130Constants::NONCE_KEY_MAX),
+            valid_before: u64::from(nonce_key == TxBaseConstants::NONCE_KEY_MAX),
             max_priority_fee_per_gas: priority_fee,
             max_fee_per_gas: priority_fee + 10,
             gas_limit: 50_000,
@@ -562,8 +561,8 @@ mod tests {
             payer: None,
         };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed = Eip8130Signed::new(tx, Bytes::from(signature.as_bytes()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        let signed = TxBaseSigned::new(tx, Bytes::from(signature.as_bytes()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Base(signed);
         let encoded_length = pooled.encode_2718_len();
         let transaction = BasePooledTransaction::new(
             Recovered::new_unchecked(pooled.into(), signer.address()),
@@ -619,7 +618,7 @@ mod tests {
         let parent = transaction(&signer, channel_one, 0, 100);
         let child = transaction(&signer, channel_one, 1, 90);
         let other_channel = transaction(&signer, channel_two, 0, 50);
-        let nonce_free = transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 40);
+        let nonce_free = transaction(&signer, TxBaseConstants::NONCE_KEY_MAX, 0, 40);
         let parent_hash = *parent.hash();
 
         let inner = StaticBestTransactions::new(vec![

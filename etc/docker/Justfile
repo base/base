@@ -305,7 +305,7 @@ _up-devnet compose_profile mode:
     devnet_mode={{ quote(mode) }}
 
     # Denim is scheduled through devnet-env. Everest mode additionally schedules Everest
-    # (EIP-8130). Zenith mode schedules Everest plus the genesis-only Zenith gate used for
+    # (Base transactions). Zenith mode schedules Everest plus the genesis-only Zenith gate used for
     # future hardfork feature testing.
     case "$devnet_mode" in
       default) ;;

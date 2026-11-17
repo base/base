@@ -13,7 +13,7 @@ use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
-use base_common_consensus::Eip8130Constants;
+use base_common_consensus::TxBaseConstants;
 use base_common_network::Base;
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::{
@@ -1337,7 +1337,7 @@ impl LoadRunner {
                     config.validity_router.predicates_for(cohort, current_block, from, to_addr);
 
                 prepared_txs.push(PreparedTransaction {
-                    native: tx_request.transaction_type == Some(Eip8130Constants::EIP8130_TX_TYPE),
+                    native: tx_request.transaction_type == Some(TxBaseConstants::BASE_TX_TYPE),
                     from,
                     to: to_addr,
                     value,

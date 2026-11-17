@@ -21,18 +21,17 @@ pub use log::BaseLogResponse;
 
 mod receipt;
 pub use receipt::{
-    BaseTransactionReceipt, Eip8130ReceiptFields, L1BlockInfo, TransactionReceiptFields,
+    BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields, TxBaseReceiptFields,
 };
 
-#[cfg(feature = "eip8130")]
-mod eip8130;
-#[cfg(feature = "eip8130")]
-pub use eip8130::{EIP8130_PRE_EVEREST_RPC_ERROR, Eip8130Nonce, Eip8130SimulationRequestError};
+#[cfg(feature = "base-tx")]
+mod base_tx;
+#[cfg(feature = "base-tx")]
+pub use base_tx::{BASE_TX_PRE_EVEREST_RPC_ERROR, TxBaseNonce, TxBaseSimulationRequestError};
 
 mod transaction;
 pub use transaction::{
-    BaseTransactionFields, BaseTransactionRequest, Eip8130AuthScheme, Eip8130RequestFields,
-    Transaction,
+    BaseTransactionFields, BaseTransactionRequest, Transaction, TxBaseRequestFields,
 };
 
 #[cfg(feature = "reth")]

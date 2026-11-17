@@ -292,8 +292,7 @@ mod tests {
             (BaseFeature::DaFootprint, BaseUpgrade::Jovian),
             (BaseFeature::DynamicStorageTailCleanup, BaseUpgrade::Cobalt),
             (BaseFeature::SubsecondBlocks, BaseUpgrade::Denim),
-            (BaseFeature::Eip8130, BaseUpgrade::Everest),
-            (BaseFeature::Keystore, BaseUpgrade::Zenith),
+            (BaseFeature::TxBase, BaseUpgrade::Everest),
             (BaseFeature::GasLimitBilling, BaseUpgrade::Everest),
         ];
         for upgrade in BaseUpgrade::EXECUTION_VARIANTS.into_iter().chain([

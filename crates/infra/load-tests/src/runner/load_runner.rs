@@ -12,7 +12,7 @@ use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
-use base_common_consensus::Eip8130Constants;
+use base_common_consensus::TxBaseConstants;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument};
@@ -303,7 +303,7 @@ impl LoadRunner {
                     .with_max_fee_per_gas(max_fee)
                     .with_max_priority_fee_per_gas(priority_fee);
                 let (success, average) =
-                    if request.transaction_type == Some(Eip8130Constants::EIP8130_TX_TYPE) {
+                    if request.transaction_type == Some(TxBaseConstants::BASE_TX_TYPE) {
                         let prepared = PreparedTransaction {
                             native: true,
                             from,

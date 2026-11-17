@@ -24,21 +24,19 @@ pub use reth_compat::{BaseBlockBody, BasePrimitives, CompactTxDeposit, DepositRe
 mod receipts;
 pub use receipts::{
     BaseReceipt, BaseReceiptEnvelope, BaseTxReceipt, DepositReceipt, DepositReceiptWithBloom,
-    Eip8130CommittedPhasesError, Eip8130Receipt,
+    TxBaseCommittedPhasesError, TxBaseReceipt,
 };
 
 mod transaction;
 pub use transaction::{
-    AccountChange, AccountChangeChannel, BasePooledTransaction, BaseTransaction,
-    BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, Call, ChangeType, CoinbaseTip,
-    CreateEntry, DEPOSIT_TX_TYPE_ID, Delegation, DepositInfo, DepositTransaction,
-    EIP8130_REJECTION_MSG, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    Eip8130StaticError, Eip8130StructuralError, Eip8130Structure, Eip8130TimestampError,
-    IDefaultAccount, InitialActor, OpTxType, SignedAccountChanges, SignedChange, TxDeposit,
-    TxEip8130, decode_2718_canonical,
+    AccountChange, BASE_TX_REJECTION_MSG, BASE_TX_TYPE_ID, BasePooledTransaction, BaseTransaction,
+    BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, Call, CoinbaseTip,
+    DEPOSIT_TX_TYPE_ID, Delegation, DepositInfo, DepositTransaction, OpTxType, TxBase,
+    TxBaseConstants, TxBaseSigned, TxBaseStaticError, TxBaseStructuralError, TxBaseStructure,
+    TxBaseTimestampError, TxDeposit, decode_2718_canonical,
 };
 #[cfg(feature = "serde")]
-pub use transaction::{Eip8130PayerSerde, serde_deposit_tx_rpc};
+pub use transaction::{TxBasePayerSerde, serde_deposit_tx_rpc};
 
 mod extra;
 pub use extra::{EIP1559ParamEncoder, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
