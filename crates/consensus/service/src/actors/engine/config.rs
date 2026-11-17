@@ -9,7 +9,7 @@ use base_common_network::Base;
 use base_consensus_engine::{BaseEngineClient, EngineClient, EngineClientBuilder, EngineEndpoint};
 use backon::Retryable;
 use base_retry::RetryConfig;
-use tracing::warn;
+use tracing::{info, warn};
 use url::Url;
 
 use crate::NodeOperatingMode;
@@ -69,9 +69,13 @@ impl EngineConfig {
     ) -> TransportResult<()> {
         let backoff = RetryConfig::unbounded(Duration::from_secs(1), Duration::from_secs(15))
             .to_backoff_builder();
-        let head = (|| async {
-            tokio::time::timeout(Self::STARTUP_REQUEST_TIMEOUT, client.latest_block_number())
-                .await.map_err(TransportErrorKind::custom)?
+        let mut attempts = 0_u64;
+        let head = (|| {
+            attempts += 1;
+            async {
+                tokio::time::timeout(Self::STARTUP_REQUEST_TIMEOUT, client.latest_block_number())
+                    .await.map_err(TransportErrorKind::custom)?
+            }
         })
         .retry(backoff)
         .when(|error: &TransportError| {
@@ -107,13 +111,17 @@ impl EngineConfig {
             warn!(error = %error, delay = ?delay, "Waiting for execution head before startup admission");
         })
         .await?;
-        genesis_start.check(head, client.cfg().genesis.l2.number).map_err(TransportErrorKind::non_retryable)
+        genesis_start.check(head, client.cfg().genesis.l2.number).map_err(TransportErrorKind::non_retryable)?;
+        if attempts > 1 {
+            info!(attempts, "Execution head admitted after startup retries");
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::{io::{Read, Seek}, sync::{Arc, atomic::{AtomicUsize, Ordering}}};
 
     use alloy_eips::BlockNumberOrTag;
     use base_cli_utils::GenesisStartArgs;
@@ -126,6 +134,7 @@ mod tests {
     use alloy_rpc_types_engine::JwtSecret;
     use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
     use url::Url;
+    use tracing::instrument::WithSubscriber;
 
     use super::EngineConfig;
     use crate::test_utils::FakeEngineClient;
@@ -260,6 +269,41 @@ mod tests {
         let error = result.expect_err("an unsupported connector scheme must remain fatal");
         assert!(format!("{error:?}").contains("scheme is not http"),
             "the original permanent connector cause must be preserved");
+    }
+
+    /// Only successful admission after a retry emits one recovery event with its attempt count.
+    #[tokio::test(start_paused = true)]
+    async fn logs_once_only_after_retried_admission() {
+        for (failures, head, expected_events) in [(0, "0x1", 0), (2, "0x1", 1), (2, "0x0", 0)] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = Arc::clone(&calls);
+            let mut module = RpcModule::new(());
+            module.register_method("eth_blockNumber", move |_, _, _| {
+                if counter.fetch_add(1, Ordering::Relaxed) < failures {
+                    Err(ErrorObjectOwned::owned(-32603, "execution database is opening", None::<()>))
+                } else {
+                    Ok(head)
+                }
+            }).expect("the recovery-log method must register");
+            let client = startup_client(module).await;
+            let mut log = tempfile::tempfile().expect("the private log file must open");
+            let subscriber = tracing_subscriber::fmt().without_time().with_ansi(false)
+                .with_max_level(tracing::Level::INFO)
+                .with_writer(log.try_clone().expect("the log writer must clone")).finish();
+            let result = EngineConfig::check_startup(&client, GenesisStartArgs::default())
+                .with_subscriber(subscriber).await;
+            assert_eq!(result.is_ok(), head != "0x0", "logging must not change admission for head {head}");
+            assert_eq!(calls.load(Ordering::Relaxed), failures + 1, "admission must stop at the first height response");
+            log.rewind().expect("the log must rewind after admission");
+            let mut output = String::new();
+            log.read_to_string(&mut output).expect("the admission log must be readable");
+            let events: Vec<_> = output.lines().filter(|line| line.contains("Execution head admitted after startup retries")).collect();
+            assert_eq!(events.len(), expected_events, "recovery must log once only after retried successful admission");
+            if expected_events == 1 {
+                assert!(events[0].contains("INFO"), "recovery must be an info-level event");
+                assert!(events[0].contains("attempts=3"), "recovery must record exactly three attempts");
+            }
+        }
     }
 
     /// Recovery must never admit genesis or retry a successful genesis refusal.
