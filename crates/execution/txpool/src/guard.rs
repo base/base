@@ -232,7 +232,7 @@ impl MempoolGuard {
     /// Returns the tracked transactions watching `key`.
     #[must_use]
     pub fn watchers(&self, key: &InvalidationKey) -> Vec<TxHash> {
-        self.index.watchers(key).map(|hashes| hashes.iter().copied().collect()).unwrap_or_default()
+        self.index.watchers(key).copied().collect()
     }
 
     /// Returns the hashes of every currently tracked transaction. Used by the
@@ -571,22 +571,21 @@ impl MempoolGuard {
 
         // Per-transaction threshold for count-limited payers/self-pay. Collect
         // first to avoid borrowing the index while releasing.
-        if let Some(watchers) = self.index.watchers(&InvalidationKey::Balance(account)) {
-            let unaffordable: Vec<TxHash> = watchers
-                .iter()
-                .filter(|hash| {
-                    self.records.get(*hash).is_some_and(|record| {
-                        debug_assert_eq!(
-                            record.payer, account,
-                            "balance watcher must match the transaction payer"
-                        );
-                        !record.payer_booked && record.max_cost > new_balance
-                    })
+        let unaffordable: Vec<TxHash> = self
+            .index
+            .watchers(&InvalidationKey::Balance(account))
+            .filter(|hash| {
+                self.records.get(*hash).is_some_and(|record| {
+                    debug_assert_eq!(
+                        record.payer, account,
+                        "balance watcher must match the transaction payer"
+                    );
+                    !record.payer_booked && record.max_cost > new_balance
                 })
-                .copied()
-                .collect();
-            dropped.extend(unaffordable);
-        }
+            })
+            .copied()
+            .collect();
+        dropped.extend(unaffordable);
 
         dropped.sort_unstable();
         dropped.dedup();
