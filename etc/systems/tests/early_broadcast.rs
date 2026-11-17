@@ -52,7 +52,7 @@ use base_node_runner::{
     BaseNodeRunner, LaunchedBaseNode,
     test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, load_chain_spec},
 };
-use base_protocol::{BlockInfo, DEFAULT_SEAL_OFFSET, L1BlockInfoTx, L2BlockInfo};
+use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use base_system_tests::{ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2};
 use eyre::{OptionExt, Result, bail, eyre};
 use reth_db::{ClientVersion, init_db, mdbx::DatabaseArguments};
@@ -84,6 +84,10 @@ const SEARCHER_ROUND_TRIP_SLACK: Duration = Duration::from_millis(25);
 /// Latest a block may freeze after its build starts and still be the block the design describes:
 /// its mainnet p50 build time.
 const FREEZE_BUDGET: Duration = Duration::from_millis(65);
+/// Seal deadline the sequencer falls back to without a hint. Pinned to the 150 ms deadline
+/// early broadcast was designed against rather than the production default, which leaves an
+/// 85 ms searcher too little margin to model a deadline it reliably misses.
+const SEAL_OFFSET: Duration = Duration::from_millis(150);
 /// Reactions each scenario asserts on.
 const REACTIONS: usize = 3;
 /// Opportunities the searcher may submit to collect [`REACTIONS`] on a busy host.
@@ -401,7 +405,7 @@ async fn searcher_reactions(early_broadcast: bool) -> Result<Vec<Reaction>> {
         shadow_funding: None,
         recovery_mode,
         rollup_config: Arc::clone(&rollup_config),
-        seal_offset: DEFAULT_SEAL_OFFSET,
+        seal_offset: SEAL_OFFSET,
         unsafe_payload_gossip_client: QueuedUnsafePayloadGossipClient::new(gossip_tx),
         sealer: None,
         pending_stop: None,
@@ -466,7 +470,7 @@ async fn searcher_reacting_to_early_broadcast_lands_in_next_block() -> Result<()
     let reactions = timeout(TEST_TIMEOUT, searcher_reactions(true)).await??;
     for reaction in reactions {
         assert!(
-            reaction.gossiped_after < DEFAULT_SEAL_OFFSET,
+            reaction.gossiped_after < SEAL_OFFSET,
             "frozen block waited for the seal deadline: {reaction:?}"
         );
         assert!(
@@ -489,7 +493,7 @@ async fn searcher_reacting_to_deadline_sealed_block_lands_one_block_later() -> R
     let reactions = timeout(TEST_TIMEOUT, searcher_reactions(false)).await??;
     for reaction in reactions {
         assert!(
-            reaction.gossiped_after >= DEFAULT_SEAL_OFFSET,
+            reaction.gossiped_after >= SEAL_OFFSET,
             "block was gossiped before the seal deadline without a hint: {reaction:?}"
         );
         assert_eq!(
