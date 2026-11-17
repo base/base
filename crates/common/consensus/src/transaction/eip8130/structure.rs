@@ -18,7 +18,8 @@ pub enum Eip8130StructuralError {
     /// `payer_auth` is missing, unexpected, or has the wrong shape for its mode.
     #[error("malformed payer authorization")]
     MalformedPayerAuth,
-    /// The transaction carries more than one delegation entry.
+    /// More account changes than
+    /// [`Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`].
     #[error("malformed account change")]
     MalformedAccountChange,
 }
@@ -67,12 +68,12 @@ impl Eip8130Structure {
         if well_formed { Ok(()) } else { Err(Eip8130StructuralError::MalformedPayerAuth) }
     }
 
-    /// Allows at most one account change: delegation is the only type, and a
-    /// transaction sets or clears at most one.
+    /// Allows at most [`Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`] account
+    /// changes.
     pub const fn validate_account_changes(
         signed: &Eip8130Signed,
     ) -> Result<(), Eip8130StructuralError> {
-        if signed.tx().account_changes.len() > 1 {
+        if signed.tx().account_changes.len() > Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX {
             return Err(Eip8130StructuralError::MalformedAccountChange);
         }
         Ok(())

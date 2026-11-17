@@ -160,6 +160,12 @@ impl Eip8130Constants {
     /// of single-byte empty RLP lists from amplifying into unbounded allocations
     /// before transaction-pool admission limits run.
     pub const MAX_CALL_PHASES_PER_TX: usize = 1_024;
+
+    /// Maximum number of `account_changes` entries accepted in one transaction.
+    ///
+    /// Delegation is the only account change type, and a transaction sets or
+    /// clears at most one delegation.
+    pub const MAX_ACCOUNT_CHANGES_PER_TX: usize = 1;
 }
 
 #[cfg(test)]

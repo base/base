@@ -164,19 +164,18 @@ impl TransactionAuthorizer {
     ///
     /// # Errors
     /// Returns [`TxAuthError::MultipleDelegations`] when `signed` carries more
-    /// than one delegation entry.
+    /// than [`Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`] account changes.
     pub fn delegation(
         signed: &Eip8130Signed,
         sender: Address,
     ) -> Result<Option<DelegationEffect>, TxAuthError> {
-        let mut delegation = None;
-        for AccountChange::Delegation(Delegation { target }) in &signed.tx().account_changes {
-            if delegation.is_some() {
-                return Err(TxAuthError::MultipleDelegations);
-            }
-            delegation = Some(DelegationEffect::new(sender, *target));
+        let changes = &signed.tx().account_changes;
+        if changes.len() > Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX {
+            return Err(TxAuthError::MultipleDelegations);
         }
-        Ok(delegation)
+        Ok(changes.first().map(|AccountChange::Delegation(Delegation { target })| {
+            DelegationEffect::new(sender, *target)
+        }))
     }
 
     /// Recovers `auth` (`K1_AUTHENTICATOR || r || s || v`) over `hash` and
@@ -238,7 +237,7 @@ mod tests {
         let payer_key = key(0x62);
         let sender = addr(&sender_key);
         let payer = addr(&payer_key);
-        let p256 = address!("0x0000000000000000000000000000000000000100");
+        let unsupported_authenticator = address!("0x0000000000000000000000000000000000000100");
         let delegation = AccountChange::Delegation(Delegation { target: payer });
 
         let eoa = eoa_signed(tx_with(None, None, vec![delegation]), &sender_key);
@@ -263,24 +262,24 @@ mod tests {
         let open = Eip8130Signed::new(open_tx, Bytes::from(sender_auth), Bytes::from(payer_auth));
         assert_eq!(authorize(&open).unwrap().payer, payer);
 
-        let p256_sender = Eip8130Signed::new(
+        let unsupported_sender = Eip8130Signed::new(
             tx_with(Some(sender), None, Vec::new()),
-            auth_blob(p256, &[0; 64]),
+            auth_blob(unsupported_authenticator, &[0; 64]),
             Bytes::new(),
         );
         assert_eq!(
-            TransactionAuthorizer::check(&p256_sender),
+            TransactionAuthorizer::check(&unsupported_sender),
             Err(TxAuthError::UnsupportedAuthenticator)
         );
-        assert_eq!(authorize(&p256_sender), Err(TxAuthError::UnsupportedAuthenticator));
+        assert_eq!(authorize(&unsupported_sender), Err(TxAuthError::UnsupportedAuthenticator));
 
-        let p256_payer = Eip8130Signed::new(
+        let unsupported_payer = Eip8130Signed::new(
             tx_with(None, Some(payer), Vec::new()),
             Bytes::from(sig(&sender_key, B256::ZERO)),
-            auth_blob(p256, &[0; 64]),
+            auth_blob(unsupported_authenticator, &[0; 64]),
         );
         assert_eq!(
-            TransactionAuthorizer::check(&p256_payer),
+            TransactionAuthorizer::check(&unsupported_payer),
             Err(TxAuthError::UnsupportedAuthenticator)
         );
     }

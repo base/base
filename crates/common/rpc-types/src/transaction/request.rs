@@ -136,16 +136,16 @@ impl Eip8130RequestFields {
             || self.payer_auth.is_some()
     }
 
-    /// Maximum `accountChanges` entries: delegation is the only account change
-    /// type, and a transaction carries at most one.
-    pub const MAX_ACCOUNT_CHANGES: usize = 1;
-
     /// Deserializes `accountChanges`, rejecting more than
-    /// [`Self::MAX_ACCOUNT_CHANGES`] entries while decoding.
+    /// [`Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`] entries while decoding.
     pub fn deserialize_account_changes<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Vec<AccountChange>>, D::Error> {
-        Self::deserialize_bounded(deserializer, Self::MAX_ACCOUNT_CHANGES, "accountChanges")
+        Self::deserialize_bounded(
+            deserializer,
+            Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX,
+            "accountChanges",
+        )
     }
 
     /// Deserializes `calls`, rejecting more than
@@ -798,7 +798,7 @@ mod tests {
             )
         };
         let max_calls = Eip8130Constants::MAX_CALL_PHASES_PER_TX;
-        let max_changes = Eip8130RequestFields::MAX_ACCOUNT_CHANGES;
+        let max_changes = Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX;
 
         let request = decode(max_calls, max_changes).unwrap();
         let fields = request.as_eip8130().unwrap();
