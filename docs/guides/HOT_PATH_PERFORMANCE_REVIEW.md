@@ -31,7 +31,7 @@ closures, trait impls, `Drop`, metrics recorders, and tracing layers.
 
 ## Cost model
 
-After Denim the sequencer requests each native block about 150 ms into its
+After Denim the sequencer requests each native block about 100 ms into its
 200 ms slot, and the state root and import must fit in what remains. Per-candidate work multiplies:
 1 µs per candidate at 10^9 candidates/day is ~17 CPU-minutes per day spent inside
 the latency-critical build loop and directly steals transactions from blocks.
