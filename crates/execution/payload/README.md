@@ -30,9 +30,14 @@ let payload = builder.build_payload(attrs, best_payload)?;
 ## Sealed-block observations
 
 Every block the builder composes from the transaction pool emits one `sealed block observation`
-log line (target `payload_builder`, level `info`) and one sample on each `base_builder_sealed_block_*`
-histogram. The observation joins the block's state-root time to what drove it, so resource
-metering can be calibrated against builder state-root cost:
+log line (target `payload_builder`) and one sample on each `base_builder_sealed_block_*` histogram.
+The line logs at `debug`, or at `warn` with `slow=true` when the state-root time meets or exceeds
+`BaseBuilderConfig::slow_block_state_root` (`--builder.slow-block-state-root-ms`, default
+`DEFAULT_SLOW_BLOCK_STATE_ROOT`, 50 ms), so slow blocks are logged with their contents by default.
+Metrics are recorded for every block regardless of level.
+
+The observation joins the block's state-root time to what drove it, so resource metering can be
+calibrated against builder state-root cost:
 
 - block number, hash, transaction count, and gas used;
 - state-root time from the end of execution to the sealed block, the part of it spent waiting on
@@ -48,7 +53,7 @@ on the first observation and reuses them for the builder's lifetime. The counts 
 maps once and never run in the per-candidate loop.
 
 ```text
-INFO payload_builder: sealed block observation block_number=7 block_hash=0xabababababababababababababababababababababababababababababababab tx_count=2 gas_used=42000 state_root_source=task state_root_us=900 state_root_wait_us=250 hashed_accounts=3 hashed_storages=2 hashed_storage_slots=4 largest_storage_slots=3 largest_storage_address=0x0101010101010101010101010101010101010101 trie_account_nodes=2 trie_storage_tries=2 trie_storage_nodes=3 trie_removed_nodes=3 resource_usage=cpu=5,state_root=11
+WARN payload_builder: sealed block observation block_number=7 block_hash=0xabababababababababababababababababababababababababababababababab tx_count=2 gas_used=42000 slow=true state_root_source=task state_root_us=140000 state_root_wait_us=250 hashed_accounts=3 hashed_storages=2 hashed_storage_slots=4 largest_storage_slots=3 largest_storage_address=0x0101010101010101010101010101010101010101 trie_account_nodes=2 trie_storage_tries=2 trie_storage_nodes=3 trie_removed_nodes=3 resource_usage=cpu=5,state_root=11
 ```
 
 ## License

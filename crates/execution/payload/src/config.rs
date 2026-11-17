@@ -17,9 +17,10 @@ use revm::state::EvmState;
 use tracing::{debug, warn};
 
 use crate::{
-    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
-    RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
-    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, DEFAULT_SLOW_BLOCK_STATE_ROOT, MeteringProvider,
+    NoopMeteringProvider, RejectionCache, ResourceMeteringError, ResourceMeteringMetrics,
+    ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision,
+    SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -57,6 +58,9 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// State-root time at or above which a composed block's sealed-block observation logs at
+    /// `warn` instead of `debug`.
+    pub slow_block_state_root: Duration,
 }
 
 impl Default for BaseBuilderConfig {
@@ -71,6 +75,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            slow_block_state_root: DEFAULT_SLOW_BLOCK_STATE_ROOT,
         }
     }
 }
@@ -92,6 +97,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            slow_block_state_root: DEFAULT_SLOW_BLOCK_STATE_ROOT,
         }
     }
 

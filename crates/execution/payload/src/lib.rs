@@ -50,8 +50,9 @@ pub use resting::{
 
 mod sealed_block;
 pub use sealed_block::{
-    DimensionUsage, LargestStorage, SealedBlockMetricHandles, SealedBlockMetrics,
-    SealedBlockObservation, SealedBlockRecorder, StateDiffSizes, StateRootSource, StateRootTiming,
+    DEFAULT_SLOW_BLOCK_STATE_ROOT, DimensionUsage, HistogramHandle, LargestStorage,
+    SealedBlockMetricHandles, SealedBlockMetrics, SealedBlockObservation, SealedBlockRecorder,
+    StateDiffSizes, StateRootSource, StateRootTiming,
 };
 
 mod inclusion;

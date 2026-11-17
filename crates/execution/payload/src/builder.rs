@@ -745,7 +745,11 @@ impl<Txs> Builder<'_, Txs> {
                 // Block usage is final once the block is sealed.
                 resource_usage: std::mem::take(&mut info.resource_metering_usage),
             };
-            sealed_blocks.record(&observation, dimensions);
+            sealed_blocks.record(
+                &observation,
+                dimensions,
+                ctx.builder_config.slow_block_state_root,
+            );
         }
 
         // create the executed block data
