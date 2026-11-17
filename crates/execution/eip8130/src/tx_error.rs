@@ -1,7 +1,5 @@
 //! Errors returned by transaction authorization.
 
-use crate::DelegationError;
-
 /// Reason a transaction's sender or payer could not be authorized.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TxAuthError {
@@ -43,11 +41,8 @@ pub enum TxAuthError {
     #[error("secp256k1 signature does not recover to the named account")]
     SignerMismatch,
 
-    /// More than one delegation entry in a single transaction.
+    /// More than [`base_common_consensus::Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`]
+    /// account changes in a single transaction.
     #[error("at most one delegation entry is allowed")]
     MultipleDelegations,
-
-    /// The delegation could not be installed on the sender.
-    #[error("delegation failed: {0}")]
-    Delegation(#[from] DelegationError),
 }

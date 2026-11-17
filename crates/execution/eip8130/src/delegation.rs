@@ -8,7 +8,7 @@ use base_common_consensus::Eip8130Constants;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::state::Bytecode;
 
-/// Reason a delegation could not be installed.
+/// Reason a delegation entry is rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DelegationError {
     /// Reading the account's code or writing the indicator failed.
@@ -52,19 +52,31 @@ impl DelegationEffect {
         code.is_empty() || code.starts_with(&Eip8130Constants::DELEGATION_INDICATOR_PREFIX)
     }
 
-    /// Installs or clears this delegation after verifying the account's current
-    /// code is delegatable.
+    /// Checks that the account's current code may be replaced by this
+    /// delegation, as [`Self::can_replace_code`] defines.
     ///
-    /// The current full bytecode is read before any code write. Ordinary
-    /// contract bytecode is left unchanged and rejected with
-    /// [`DelegationError::NonDelegatableCode`].
-    pub fn install(&self, sctx: StorageCtx<'_>) -> Result<(), DelegationError> {
+    /// Mempool admission and execution both apply this check.
+    ///
+    /// # Errors
+    /// Returns [`DelegationError::NonDelegatableCode`] when the account holds
+    /// ordinary contract bytecode, or [`DelegationError::Storage`] when its
+    /// code cannot be read.
+    pub fn check(&self, sctx: StorageCtx<'_>) -> Result<(), DelegationError> {
         let can_replace = sctx.with_account_code(self.account, |code| {
             Ok(Self::can_replace_code(code.original_bytes().as_ref()))
         })?;
         if !can_replace {
             return Err(DelegationError::NonDelegatableCode { account: self.account });
         }
+        Ok(())
+    }
+
+    /// Installs or clears this delegation after [`Self::check`] accepts the
+    /// account's current code.
+    ///
+    /// Ordinary contract bytecode is left unchanged.
+    pub fn install(&self, sctx: StorageCtx<'_>) -> Result<(), DelegationError> {
+        self.check(sctx)?;
 
         let code = if self.target.is_zero() {
             Bytecode::default()

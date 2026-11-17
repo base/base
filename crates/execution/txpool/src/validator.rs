@@ -19,8 +19,8 @@ use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
-    DelegationEffect, DelegationError, FeeCheck, IntrinsicGas, NonceError, NonceMode,
-    NonceValidator, ResolvedSender, TransactionAuthorizer, TxAuthError,
+    DelegationError, FeeCheck, IntrinsicGas, NonceError, NonceMode, NonceValidator, ResolvedSender,
+    TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -694,9 +694,12 @@ where
             .record(auth_start.elapsed().as_secs_f64());
         let authorized = auth_result.map_err(Self::map_tx_auth_error)?;
         let (sender, payer) = (authorized.sender, authorized.payer);
-        if authorized.delegation.is_some() {
-            Self::validate_delegatable(&*state, local_chain_id, now, sender)
-                .map_err(Self::map_tx_auth_error)?;
+        // As in execution, a delegation entry may replace only empty code or a
+        // delegation indicator.
+        if let Some(delegation) = &authorized.delegation {
+            let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
+            StorageCtx::enter(&mut storage, |sctx| delegation.check(sctx))
+                .map_err(Self::map_delegation_error)?;
         }
         // Record the validation as soon as the payer is known, so a balance
         // change that lands before admission invalidates it (see
@@ -867,27 +870,6 @@ where
         })
     }
 
-    /// Rejects a delegation over ordinary contract code: as in execution, a
-    /// delegation entry may replace only empty code or a delegation indicator.
-    fn validate_delegatable(
-        state: &dyn StateProvider,
-        local_chain_id: u64,
-        now: u64,
-        account: Address,
-    ) -> Result<(), TxAuthError> {
-        let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
-        let can_replace = StorageCtx::enter(&mut storage, |ctx| {
-            ctx.with_account_code(account, |code| {
-                Ok(DelegationEffect::can_replace_code(code.original_bytes().as_ref()))
-            })
-        })
-        .map_err(DelegationError::from)?;
-        if !can_replace {
-            return Err(DelegationError::NonDelegatableCode { account }.into());
-        }
-        Ok(())
-    }
-
     fn eip8130_sender_nonce(
         &self,
         state: &dyn StateProvider,
@@ -947,12 +929,19 @@ where
                 "secp256k1 signature does not recover to the named account"
             }
             TxAuthError::MultipleDelegations => "at most one delegation is allowed",
-            TxAuthError::Delegation(DelegationError::Storage(_)) => "EIP-8130 state access failed",
-            TxAuthError::Delegation(DelegationError::NonDelegatableCode { .. }) => {
-                "delegation sender has non-delegation code"
-            }
         };
         Self::eip8130_error(reason)
+    }
+
+    fn map_delegation_error(error: DelegationError) -> InvalidPoolTransactionError {
+        match error {
+            DelegationError::Storage(error) => {
+                Self::precompile_storage_error(error, "EIP-8130 state access failed")
+            }
+            DelegationError::NonDelegatableCode { .. } => {
+                Self::eip8130_error("delegation sender has non-delegation code")
+            }
+        }
     }
 
     fn map_nonce_error(error: NonceError) -> InvalidPoolTransactionError {
@@ -1060,9 +1049,9 @@ where
     }
 
     /// Runs the mempool admission checks that apply to EIP-8130 (account
-    /// abstraction) transactions without requiring authenticator dispatch or account
-    /// state lookups. Enforces the Everest fork gate and the structural
-    /// invariants listed in EIP-8130 § Validation and § Nonce-Free Mode.
+    /// abstraction) transactions without account state lookups. Enforces the
+    /// Everest fork gate and the structural invariants listed in EIP-8130
+    /// § Validation and § Nonce-Free Mode.
     fn validate_eip8130_structural(
         &self,
         signed: &Eip8130Signed,
