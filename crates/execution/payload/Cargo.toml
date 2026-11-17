@@ -69,6 +69,7 @@ moka = { workspace = true, features = ["sync"] }
 rstest.workspace = true
 reth-provider.workspace = true
 crossbeam-channel.workspace = true
+tracing-subscriber.workspace = true
 reth-ethereum-forks.workspace = true
 base-execution-chainspec.workspace = true
 metrics-exporter-prometheus.workspace = true
