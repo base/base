@@ -112,6 +112,8 @@ pub enum Fragment {
     Burn,
     /// A call to [`Param::ForwardTarget`] with the calldata tail as input.
     Forward,
+    /// Deep `DUPn`/`SWAPn` slots and pushes of every width, looped [`Param::Loops`] times.
+    Stack,
 }
 
 /// Context for program generation.
@@ -480,7 +482,7 @@ impl Templates {
     /// fails or deploys no code).
     pub fn init_code(rng: &mut Rng, push0: bool, upgrade: BaseUpgrade) -> (Vec<u8>, Option<Bytes>) {
         let shanghai = upgrade.is_feature_enabled(BaseFeature::Create2Deployer);
-        match rng.below(12) {
+        match rng.below(16) {
             0 => {
                 let runtime = Self::logger(push0);
                 (Asm::deployer(&runtime, push0).to_vec(), Some(runtime))
@@ -534,6 +536,19 @@ impl Templates {
                 // EIP-3860: initcode one byte over the limit (zero memory, run from memory).
                 (vec![Op::STOP; 49_153], None)
             }
+            // Constructors that halt exceptionally: a jump to a non-JUMPDEST, a stack
+            // underflow, an undefined opcode, and a memory offset beyond 64 bits.
+            12 => (vec![Op::PUSH1, 0, Op::JUMP], None),
+            13 => (vec![Op::CALLER, Op::ADD], None),
+            14 => {
+                let undefined = *rng.pick(&[0x0c, 0x1f, 0x21, 0x4f, 0xa5, 0xb1, 0xb8, 0xd6, 0xef]);
+                (vec![Op::CALLER, undefined], None)
+            }
+            15 => {
+                let mut asm = Asm::new(push0);
+                asm.push(U256::from(1) << 64).op(Op::MLOAD);
+                (asm.finish().to_vec(), None)
+            }
             _ => {
                 // Constructor with storage writes and a log that deploys a logger.
                 let runtime = Self::logger(push0);
@@ -547,9 +562,47 @@ impl Templates {
             }
         }
     }
+
+    /// Length of an init code of `len` bytes from [`Self::init_code`] with padding appended after
+    /// its last instruction: usually unpadded, otherwise 32 to 16,383 bytes longer on a log scale
+    /// and half the time rounded up to whole words, so creations of every outcome span the init
+    /// code size buckets. Only zero padding may follow an empty init code.
+    pub const fn padded_len(rng: &mut Rng, len: usize) -> usize {
+        if rng.chance(55) {
+            return len;
+        }
+        let bits = rng.range(5, 13);
+        let padded = len + rng.range(1 << bits, (2 << bits) - 1) as usize;
+        if rng.chance(50) { padded.next_multiple_of(32) } else { padded }
+    }
 }
 
 impl Program {
+    /// Binary arithmetic and bitwise opcodes.
+    pub const BINARY: [u8; 21] = [
+        Op::ADD,
+        Op::MUL,
+        Op::SUB,
+        Op::DIV,
+        Op::SDIV,
+        Op::MOD,
+        Op::SMOD,
+        Op::EXP,
+        Op::SIGNEXTEND,
+        Op::LT,
+        Op::GT,
+        Op::SLT,
+        Op::SGT,
+        Op::EQ,
+        Op::AND,
+        Op::OR,
+        Op::XOR,
+        Op::BYTE,
+        Op::SHL,
+        Op::SHR,
+        Op::SAR,
+    ];
+
     /// Generates a program.
     pub fn generate(rng: &mut Rng, ctx: &ProgramCtx) -> Self {
         let push0 = ctx.upgrade.is_feature_enabled(BaseFeature::Create2Deployer);
@@ -582,7 +635,7 @@ impl Program {
     }
 
     fn pick(rng: &mut Rng) -> Fragment {
-        const KINDS: [(Fragment, u64); 14] = [
+        const KINDS: [(Fragment, u64); 15] = [
             (Fragment::Arith, 10),
             (Fragment::Env, 8),
             (Fragment::History, 4),
@@ -592,11 +645,12 @@ impl Program {
             (Fragment::Storage, 12),
             (Fragment::Logs, 6),
             (Fragment::Call, 10),
-            (Fragment::SelfCall, 3),
+            (Fragment::SelfCall, 6),
             (Fragment::Precompile, 14),
             (Fragment::Create, 6),
             (Fragment::Burn, 2),
             (Fragment::Forward, 8),
+            (Fragment::Stack, 10),
         ];
         let weights: Vec<u64> = KINDS.iter().map(|(_, w)| *w).collect();
         KINDS[rng.weighted(&weights)].0
@@ -628,29 +682,6 @@ impl Program {
         let cancun = ctx.upgrade.is_feature_enabled(BaseFeature::BeaconRoots);
         match fragment {
             Fragment::Arith => {
-                const BINARY: [u8; 21] = [
-                    Op::ADD,
-                    Op::MUL,
-                    Op::SUB,
-                    Op::DIV,
-                    Op::SDIV,
-                    Op::MOD,
-                    Op::SMOD,
-                    Op::EXP,
-                    Op::SIGNEXTEND,
-                    Op::LT,
-                    Op::GT,
-                    Op::SLT,
-                    Op::SGT,
-                    Op::EQ,
-                    Op::AND,
-                    Op::OR,
-                    Op::XOR,
-                    Op::BYTE,
-                    Op::SHL,
-                    Op::SHR,
-                    Op::SAR,
-                ];
                 let ops = rng.range(1, 6);
                 for i in 0..ops {
                     match rng.below(10) {
@@ -677,7 +708,7 @@ impl Program {
                         _ => {
                             Self::operand(rng, asm);
                             Self::operand(rng, asm);
-                            asm.op(*rng.pick(&BINARY));
+                            asm.op(*rng.pick(&Self::BINARY));
                         }
                     }
                     asm.sstore_top(slot + i);
@@ -785,6 +816,30 @@ impl Program {
                 }
             }
             Fragment::Memory => {
+                if rng.chance(35) {
+                    // Walk up word by word from a large offset, so each access expands memory
+                    // by one word at a size where the quadratic cost term shows.
+                    let base =
+                        *rng.pick(&[0x2000u64, 0x4000, 0x1_0000, 0x2_2000]) + 32 * rng.below(64);
+                    let words = rng.range(4, 48);
+                    let op = *rng.pick(&[Op::MSTORE, Op::MLOAD, Op::MSTORE8]);
+                    let top = asm.label();
+                    let done = asm.label();
+                    // stack: i (counting down); address = base + 32 * (words - i)
+                    asm.push_u64(words);
+                    asm.place(top);
+                    asm.op(Op::DUP1).op(Op::ISZERO).jumpi(done);
+                    asm.op(Op::DUP1).push_u64(words).op(Op::SUB);
+                    asm.push_u64(32).op(Op::MUL).push_u64(base).op(Op::ADD);
+                    if op == Op::MLOAD {
+                        asm.op(Op::MLOAD).op(Op::POP);
+                    } else {
+                        asm.op(Op::DUP2).op(Op::SWAP1).op(op);
+                    }
+                    asm.push_u64(1).op(Op::SWAP1).op(Op::SUB).jump(top);
+                    asm.place(done);
+                    asm.op(Op::POP);
+                }
                 let offset = match rng.below(20) {
                     0..=2 => 0,
                     3..=4 => 31,
@@ -809,7 +864,9 @@ impl Program {
                 asm.op(Op::SWAP1).op(Op::MSTORE8);
                 if cancun || rng.chance(5) {
                     // MCOPY(dst = off + delta, src = off, len)
-                    asm.push_u64(rng.range(0, 200))
+                    let len =
+                        if rng.chance(20) { rng.range(4096, 40_000) } else { rng.range(0, 200) };
+                    asm.push_u64(len)
                         .op(Op::DUP2)
                         .op(Op::DUP1)
                         .push_u64(rng.range(0, 64))
@@ -821,14 +878,16 @@ impl Program {
             }
             Fragment::Copies => {
                 let len = rng.range(0, 160);
-                asm.push_u64(len)
+                // Sometimes a copy large enough that its memory expansion dominates.
+                let calldata_len = if rng.chance(15) { rng.range(8_000, 100_000) } else { len };
+                asm.push_u64(calldata_len)
                     .push_u64(*rng.pick(&[0u64, 4, 31, 500, 1 << 40]))
                     .push_u64(64)
                     .op(Op::CALLDATACOPY);
                 asm.push_u64(len).push_u64(rng.below(400)).push_u64(256).op(Op::CODECOPY);
                 // Fresh returndata from the identity precompile, then copy (possibly out of bounds,
                 // which reverts the frame).
-                let data_len = rng.range(0, 64);
+                let data_len = if rng.chance(25) { rng.range(64, 4096) } else { rng.range(0, 64) };
                 asm.push_u64(32)
                     .push_u64(512)
                     .push_u64(data_len)
@@ -837,8 +896,13 @@ impl Program {
                     .op(Op::GAS)
                     .op(Op::STATICCALL)
                     .op(Op::POP);
-                let copy_len = if rng.chance(85) { rng.range(0, data_len) } else { data_len + 1 };
-                asm.push_u64(copy_len).push_u64(0).push_u64(600).op(Op::RETURNDATACOPY);
+                let copy_len = match rng.below(20) {
+                    0..=2 => data_len + 1,
+                    3..=10 => rng.range(0, data_len.min(320)),
+                    _ => rng.range(0, data_len),
+                };
+                let dest = if rng.chance(50) { 600 } else { rng.below(0x4000) };
+                asm.push_u64(copy_len).push_u64(0).push_u64(dest).op(Op::RETURNDATACOPY);
                 asm.push_u64(700).push_u64(0).op(Op::KECCAK256).sstore_top(slot);
             }
             Fragment::Storage => {
@@ -873,7 +937,12 @@ impl Program {
             }
             Fragment::Logs => {
                 let topics = rng.range(0, 4);
-                let len = rng.range(0, 96);
+                let len = if rng.chance(20) {
+                    let bits = rng.range(8, 13);
+                    rng.range(1 << bits, (2 << bits) - 1)
+                } else {
+                    rng.range(0, 96)
+                };
                 for _ in 0..topics {
                     if rng.chance(50) {
                         Self::param(asm, Param::Topic);
@@ -944,10 +1013,15 @@ impl Program {
                     .push_u64(0x2000)
                     .push_u64(0)
                     .op(Op::ADDRESS);
-                if rng.chance(50) {
-                    asm.op(Op::GAS);
-                } else {
-                    asm.op(Op::GAS).push_u64(2).op(Op::SWAP1).op(Op::DIV);
+                match rng.below(3) {
+                    0 => {
+                        asm.op(Op::GAS);
+                    }
+                    1 => {
+                        asm.op(Op::GAS).push_u64(2).op(Op::SWAP1).op(Op::DIV);
+                    }
+                    // A budget that often runs out partway through the inner frame.
+                    _ => Self::param(asm, Param::CallGas),
                 }
                 asm.op(Op::CALL).sstore_top(slot);
                 asm.place(skip);
@@ -961,12 +1035,13 @@ impl Program {
                 if let Some(runtime) = runtime {
                     created.push(runtime);
                 }
-                let len = init.len() as u64;
+                let mut len = init.len() as u64;
                 if init.iter().any(|b| *b != Op::STOP) {
                     asm.copy_data(init, 0x3000);
+                    // Memory past the init code is padding the constructor never reaches.
+                    len = Templates::padded_len(rng, len as usize) as u64;
                 }
-                let create2 =
-                    ctx.upgrade.is_feature_enabled(BaseFeature::Create2Deployer) || rng.chance(70);
+                let create2 = rng.chance(70);
                 let times = if create2 && rng.chance(30) { 2 } else { 1 };
                 for i in 0..times {
                     if create2 {
@@ -1030,6 +1105,74 @@ impl Program {
                 asm.push_u64(0x400).op(Op::MLOAD).sstore_top(slot + 2);
                 asm.push_u64(0x420).op(Op::MLOAD).sstore_top(slot + 3);
             }
+            Fragment::Stack => {
+                // Each round pushes values of random widths, shuffles them with random DUPn,
+                // SWAPn, and arithmetic (biased to slots 9 to 16), folds them into one value,
+                // and stores it. At least `BASE` values stay above the round counter, out of
+                // reach of DUP16 and SWAP16, and at most `MAX` are pushed.
+                const BASE: usize = 17;
+                const MAX: usize = 40;
+                let clz = ctx.upgrade.is_feature_enabled(BaseFeature::TransactionGasLimitCap)
+                    || rng.chance(5);
+                let value = |rng: &mut Rng, asm: &mut Asm| match rng.below(4) {
+                    0 => Self::operand(rng, asm),
+                    _ => {
+                        let width = rng.range(1, 32) as usize;
+                        asm.push_bytes(&rng.bytes(width));
+                    }
+                };
+                let slot_index = |rng: &mut Rng| {
+                    if rng.chance(60) { rng.range(9, 16) as u8 } else { rng.range(1, 8) as u8 }
+                };
+                let top = asm.label();
+                let done = asm.label();
+                Self::param(asm, Param::Loops);
+                asm.push_u64(31).op(Op::AND).push_u64(1).op(Op::ADD);
+                asm.place(top);
+                asm.op(Op::DUP1).op(Op::ISZERO).jumpi(done);
+                for _ in 0..BASE {
+                    value(rng, asm);
+                }
+                let mut height = BASE;
+                for _ in 0..rng.range(8, 120) {
+                    match rng.below(10) {
+                        0..=2 if height < MAX => {
+                            asm.op(Op::DUP1 + slot_index(rng) - 1);
+                            height += 1;
+                        }
+                        3 if height < MAX => {
+                            value(rng, asm);
+                            height += 1;
+                        }
+                        4 if height > BASE => {
+                            asm.op(Op::POP);
+                            height -= 1;
+                        }
+                        5 if height > BASE => {
+                            asm.op(*rng.pick(&Self::BINARY));
+                            height -= 1;
+                        }
+                        6 => {
+                            let unary: &[u8] = if clz {
+                                &[Op::NOT, Op::ISZERO, Op::CLZ]
+                            } else {
+                                &[Op::NOT, Op::ISZERO]
+                            };
+                            asm.op(*rng.pick(unary));
+                        }
+                        _ => {
+                            asm.op(Op::SWAP1 + slot_index(rng) - 1);
+                        }
+                    }
+                }
+                for _ in 1..height {
+                    asm.op(Op::XOR);
+                }
+                asm.sstore_top(slot);
+                asm.push_u64(1).op(Op::SWAP1).op(Op::SUB).jump(top);
+                asm.place(done);
+                asm.op(Op::POP);
+            }
         }
     }
 
@@ -1066,12 +1209,16 @@ impl Program {
             asm.push_u64(0);
         }
         asm.push(U256::from_be_slice(call.address.as_slice()));
-        match (call.cost, rng.below(4)) {
+        match (call.cost, rng.below(5)) {
             (Some(cost), 0) => {
                 asm.push_u64(cost);
             }
             (Some(cost), 1) => {
                 asm.push_u64(cost.saturating_sub(1));
+            }
+            (_, 2) => {
+                // Far too little gas for most inputs.
+                asm.push_u64(rng.below(300));
             }
             _ => {
                 asm.op(Op::GAS);
@@ -1139,5 +1286,67 @@ impl Program {
     /// The hash of a runtime.
     pub fn code_hash(runtime: &[u8]) -> alloy_primitives::B256 {
         keccak256(runtime)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, U256};
+    use base_common_genesis::BaseUpgrade;
+    use revm::{
+        Context, ExecuteEvm, MainBuilder, MainContext,
+        context::TxEnv,
+        database::{CacheDB, EmptyDB},
+        primitives::hardfork::SpecId,
+        state::{AccountInfo, Bytecode},
+    };
+
+    use super::{Ending, Fragment, Param, Program, ProgramCtx};
+    use crate::r#gen::{
+        asm::{Asm, Op},
+        rng::Rng,
+    };
+
+    /// Stack fragments around a self-call keep the stack balanced: run ten frames deep for 32
+    /// rounds each, the program succeeds and the first inner call succeeds.
+    #[test]
+    fn stack_fragments_run_cleanly_in_nested_frames() {
+        let ctx = ProgramCtx { upgrade: BaseUpgrade::Azul, targets: Vec::new() };
+        let address = Address::with_last_byte(0xc0);
+        let mut params = [U256::ZERO; Param::COUNT];
+        params[Param::Depth as usize - 1] = U256::from(9);
+        params[Param::Loops as usize - 1] = U256::from(31);
+        params[Param::CallGas as usize - 1] = U256::from(5_000_000);
+        let input = Program::calldata(u64::MAX, Ending::Stop, &params, &[]);
+        for seed in 0..32 {
+            let mut rng = Rng::new(&[seed]);
+            let mut asm = Asm::new(true);
+            for (index, fragment) in
+                [Fragment::Stack, Fragment::SelfCall, Fragment::Stack].into_iter().enumerate()
+            {
+                let slot = 0x100 + 0x10 * index as u64;
+                Program::emit(&mut rng, &ctx, &mut asm, fragment, slot, &mut Vec::new());
+            }
+            asm.op(Op::STOP);
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(
+                address,
+                AccountInfo::from_bytecode(Bytecode::new_raw(asm.finish())),
+            );
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::OSAKA))
+                .with_db(db)
+                .build_mainnet();
+            let tx = TxEnv::builder()
+                .kind(address.into())
+                .data(input.clone())
+                .gas_limit(16_000_000)
+                .gas_price(0)
+                .build_fill();
+            let outcome = evm.transact(tx).expect("executes");
+            assert!(outcome.result.is_success(), "seed {seed}: {:?}", outcome.result);
+            let inner = outcome.state[&address].storage[&U256::from(0x110)].present_value;
+            assert_eq!(inner, U256::from(1), "seed {seed}: inner call failed");
+        }
     }
 }

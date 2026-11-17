@@ -28,11 +28,11 @@ pub use mainnet::{MainnetFetcher, RpcClient};
 
 mod r#gen;
 pub use r#gen::{
-    AbiMutation, AbiType, Account, Asm, BlockCtx, Blocks, Bootstrap, Bootstrapped, CHAIN, CREATOR,
-    CREATOR_MAX_NONCE, Caller, ChainGenerator, DESTRUCTOR_TO, DeployedProgram, Ending, Era, FILLER,
-    Fragment, Generator, GeneratorOptions, Genesis, Keys, L1Origin, Native, NativeAbi, NativeCall,
-    NativeTarget, Op, Param, PendingDeploy, PlannedTx, Planner, Policy, PrecompileCall,
-    Precompiles, Program, ProgramCtx, RECURSER, REFUNDER, RELAY, Registry, Rng, Scenarios,
-    Schedule, Shape, SysConfig, Template, TemplateInput, Templates, Token, TrafficMix, TrieBuilder,
-    TxSpec, Txs, WorldState, era_blocks,
+    AbiMutation, AbiType, Account, Asm, BlockCtx, Blocks, Bootstrap, Bootstrapped, CHAIN, COLLIDER,
+    COLLIDER_NONCES, CREATOR, CREATOR_MAX_NONCE, Caller, ChainGenerator, DESTRUCTOR_TO,
+    DeployedProgram, Ending, Era, FILLER, Fragment, Generator, GeneratorOptions, Genesis, Keys,
+    L1Origin, Native, NativeAbi, NativeCall, NativeTarget, Op, Param, PendingDeploy, PlannedTx,
+    Planner, Policy, PrecompileCall, Precompiles, Program, ProgramCtx, RECURSER, REFUNDER, RELAY,
+    Registry, Rng, Scenarios, Schedule, Shape, SysConfig, Template, TemplateInput, Templates,
+    Token, TrafficMix, TrieBuilder, TxSpec, Txs, WorldState, era_blocks,
 };

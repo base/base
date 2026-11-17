@@ -45,6 +45,11 @@ pub const DESTRUCTOR_TO: Address = address!("0x00000000000000000000000000000000d
 pub const REFUNDER: Address = address!("0x00000000000000000000000000000000d1ff0008");
 /// A creator whose nonce is `u64::MAX`.
 pub const CREATOR_MAX_NONCE: Address = address!("0x00000000000000000000000000000000d1ff0100");
+/// A keyless account whose first [`COLLIDER_NONCES`] `CREATE` addresses already exist, so its
+/// creations (as deposits) collide.
+pub const COLLIDER: Address = address!("0x00000000000000000000000000000000d1ff0101");
+/// Nonces of [`COLLIDER`] whose `CREATE` address is taken.
+pub const COLLIDER_NONCES: u64 = 4;
 
 const HISTORY: Address = address!("0x0000F90827F1C53a10cb7A02335B175320002935");
 const HISTORY_SERVE_WINDOW: u64 = 8191;
@@ -148,6 +153,11 @@ impl Genesis {
         state.set_code(CREATOR_MAX_NONCE, Templates::creator(push0));
         state.fund(CREATOR_MAX_NONCE, U256::from(10).pow(U256::from(18)));
         state.accounts.get_mut(&CREATOR_MAX_NONCE).expect("just set").nonce = u64::MAX;
+        for nonce in 0..COLLIDER_NONCES {
+            let taken = COLLIDER.create(nonce);
+            state.fund(taken, U256::from(1));
+            state.accounts.get_mut(&taken).expect("just funded").nonce = 1;
+        }
         // Keys that can never send valid transactions: one at the maximum nonce, one with code
         // that is not a delegation (EIP-3607).
         state.accounts.get_mut(&keys.address(Keys::MAX_NONCE)).expect("funded").nonce = u64::MAX;

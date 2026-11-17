@@ -242,9 +242,19 @@ impl Precompiles {
             if !call.prefix.is_empty() && rng.chance(50) {
                 let cut = rng.index(call.prefix.len());
                 call.prefix.truncate(cut);
+            } else if rng.chance(50) {
+                let words = rng.range(1, 2) as usize;
+                call.prefix.extend(rng.bytes(32 * words));
             } else {
                 call.prefix.extend(rng.bytes_between(1, 40));
             }
+            call.cost = None;
+        } else if rng.chance(5) && call.len() < 1024 {
+            // Zero padding far past what the precompile reads.
+            call.prefix = call.input();
+            call.prefix.resize(rng.range(1024, 3000) as usize, 0);
+            call.unit.clear();
+            call.repeat = 0;
             call.cost = None;
         }
         call

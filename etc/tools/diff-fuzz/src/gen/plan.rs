@@ -14,7 +14,10 @@ use crate::r#gen::{
     abi::{AbiMutation, NativeAbi, NativeTarget},
     asm::Asm,
     block::L1Origin,
-    genesis::{CREATOR, CREATOR_MAX_NONCE, DESTRUCTOR_TO, RECURSER, REFUNDER, RELAY},
+    genesis::{
+        COLLIDER, COLLIDER_NONCES, CREATOR, CREATOR_MAX_NONCE, DESTRUCTOR_TO, RECURSER, REFUNDER,
+        RELAY,
+    },
     keys::Keys,
     native::{Caller, Native, NativeCall},
     precompile::Precompiles,
@@ -450,11 +453,16 @@ impl<'a> Planner<'a> {
         params[Param::Target as usize - 1] = U256::from_be_slice(call_target.as_slice());
         params[Param::CallValue as usize - 1] =
             U256::from(*self.rng.pick(&[0u64, 0, 1, 1000, 1 << 40]));
-        params[Param::CallGas as usize - 1] =
-            U256::from(*self.rng.pick(&[0u64, 2300, 30_000, 100_000, u64::MAX]));
+        // Budgets that run out partway through an inner frame, as well as round numbers.
+        params[Param::CallGas as usize - 1] = U256::from(match self.rng.below(4) {
+            0 => self.rng.range(1, 5_000),
+            1 => self.rng.range(5_000, 200_000),
+            _ => *self.rng.pick(&[0u64, 2300, 30_000, 100_000, u64::MAX]),
+        });
         params[Param::Depth as usize - 1] = U256::from(match self.rng.below(20) {
-            0 => 1100,
-            1..=4 => self.rng.range(1, 8),
+            0 | 1 => 1100,
+            2..=5 => self.rng.range(1, 3),
+            6..=8 => self.rng.range(4, 12),
             _ => 0,
         });
         params[Param::Salt as usize - 1] = U256::from(self.rng.below(4));
@@ -618,7 +626,9 @@ impl<'a> Planner<'a> {
             return self.program_call();
         }
         let label = format!("precompile:{:#x}", call.address);
-        self.call(None, call.address, U256::ZERO, call.input().into(), label)
+        // Now and then far more gas than any input needs, which a failing call consumes.
+        let gas = self.rng.chance(5).then_some(1 << 28);
+        self.call_gas(None, call.address, U256::ZERO, call.input().into(), label, gas)
     }
 
     /// A native-precompile call sent from the intended caller.
@@ -754,8 +764,12 @@ impl<'a> Planner<'a> {
 
     /// A call to a creation template: CREATE or CREATE2 of every init code kind, with value,
     /// repeated salts (collisions), padding past the init code limit, and calls into the new
-    /// contracts; sometimes from the creator whose nonce is exhausted.
+    /// contracts; sometimes from the creator whose nonce is exhausted, and sometimes a creation
+    /// transaction of a padded init code instead.
     pub fn create_case(&mut self) -> Option<()> {
+        if self.rng.chance(25) {
+            return self.create_tx();
+        }
         let target = if self.rng.chance(10) { CREATOR_MAX_NONCE } else { CREATOR };
         let scheme = u64::from(self.rng.chance(50));
         let salt = U256::from(self.rng.below(4));
@@ -766,6 +780,7 @@ impl<'a> Planner<'a> {
             0 => 49_152 - self.rng.below(2) * 200,
             1 => 49_153,
             2 => self.rng.range(1, 2_000),
+            3 => Templates::padded_len(&mut self.rng, 0) as u64,
             _ => 0,
         };
         let call_after = u64::from(kind >= 12 || self.rng.chance(40));
@@ -789,6 +804,42 @@ impl<'a> Planner<'a> {
             return self.call_gas(None, RELAY, tx_value, relayed.into(), label, Some(gas));
         }
         self.call_gas(None, target, tx_value, input.into(), "create".into(), Some(gas))
+    }
+
+    /// A creation transaction of an init code kind (see [`Templates::init_code`]) with padding,
+    /// so top-level creations of every outcome span the init code size buckets.
+    pub fn create_tx(&mut self) -> Option<()> {
+        let key = self.sender(None)?;
+        let sender = Keys::get().address(key);
+        let (mut init, runtime) = {
+            let push0 = self.push0();
+            Templates::init_code(&mut self.rng, push0, self.ctx.upgrade)
+        };
+        init.resize(Templates::padded_len(&mut self.rng, init.len()), 0);
+        let deploy = runtime.map(|runtime| {
+            let deploy = PendingDeploy {
+                address: sender.create(self.nonce(&sender)),
+                code_hash: keccak256(&runtime),
+                fragments: Vec::new(),
+            };
+            self.new_codes.push(runtime);
+            deploy
+        });
+        let value = self.value(&sender);
+        let shape = self.shape();
+        self.send(
+            key,
+            shape,
+            TxKind::Create,
+            value,
+            init.into(),
+            AccessList::default(),
+            Vec::new(),
+            None,
+            true,
+            "create:tx".into(),
+            deploy,
+        )
     }
 
     /// A self-destruct of an existing contract, to itself or to another account, with or
@@ -1163,6 +1214,13 @@ impl<'a> Planner<'a> {
             6 => MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS,
             _ => keys.address(self.rng.range(1, 4) as usize),
         };
+        let create = self.rng.chance(12);
+        // A creation whose address is already taken.
+        let from = if create && self.rng.chance(15) && self.nonce(&COLLIDER) < COLLIDER_NONCES {
+            COLLIDER
+        } else {
+            from
+        };
         let mint: u128 = match self.rng.below(6) {
             0 => 0,
             1 => 1,
@@ -1176,12 +1234,12 @@ impl<'a> Planner<'a> {
             2..=4 => U256::ZERO,
             _ => balance / U256::from(self.rng.range(2, 100)),
         };
-        let create = self.rng.chance(12);
         let (to, input, pending) = if create {
-            let (init, runtime) = {
+            let (mut init, runtime) = {
                 let push0 = self.push0();
                 Templates::init_code(&mut self.rng, push0, self.ctx.upgrade)
             };
+            init.resize(Templates::padded_len(&mut self.rng, init.len()), 0);
             let pending = runtime.as_ref().map(|runtime| PendingDeploy {
                 address: from.create(self.nonce(&from)),
                 code_hash: keccak256(runtime),
@@ -1243,6 +1301,11 @@ impl<'a> Planner<'a> {
             _ => Shape::Eip4844,
         };
         let authorizations = if shape == Shape::Eip7702 {
+            // Some invalid kinds are still included, which applies the delegation, so the
+            // designator must be a known code for the post state.
+            let mut designator = vec![0xef, 0x01, 0x00];
+            designator.extend_from_slice(WETH.as_slice());
+            self.new_codes.push(designator.into());
             vec![Txs::authorization(self.rng.index(Keys::COUNT), 8453, WETH, 0)]
         } else {
             Vec::new()

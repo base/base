@@ -47,7 +47,8 @@ pub use plan::{BlockCtx, PlannedTx, Planner};
 
 mod genesis;
 pub use genesis::{
-    CREATOR, CREATOR_MAX_NONCE, DESTRUCTOR_TO, FILLER, Genesis, RECURSER, REFUNDER, RELAY,
+    COLLIDER, COLLIDER_NONCES, CREATOR, CREATOR_MAX_NONCE, DESTRUCTOR_TO, FILLER, Genesis,
+    RECURSER, REFUNDER, RELAY,
 };
 
 mod template;
