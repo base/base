@@ -65,7 +65,7 @@ Some features include the following.
 - `serde`: Serialization and Deserialization support for `base-consensus-derive` types.
 - `test-utils`: Test utilities for downstream libraries.
 
-By default, `base-consensus-derive` enables the `serde` feature.
+No features are enabled by default.
 
 [ff]: https://github.com/base/base/blob/main/crates/consensus/derive/Cargo.toml
 

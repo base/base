@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Integration tests for the builder's data-availability limits.
 
 use alloy_provider::Provider;
 use base_builder_core::test_utils::{

@@ -47,9 +47,9 @@ The crate supports multiple Engine API versions with automatic version selection
 
 - **Engine Forkchoice Updated**: V2, V3
 - **Engine New Payload**: V2, V3, V4
-- **Engine Get Payload**: V2, V3, V4
+- **Engine Get Payload**: V2, V3, V4, V5
 
-Version selection follows Base upgrade activation times (Bedrock, Canyon, Delta, Ecotone, Isthmus).
+Version selection follows Base upgrade activation times (Bedrock, Canyon, Delta, Ecotone, Isthmus, and the Base Azul network upgrade, which selects `engine_getPayloadV5`).
 
 ## Features
 

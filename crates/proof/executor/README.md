@@ -19,10 +19,12 @@ base-proof-executor = { workspace = true }
 ```
 
 ```rust,ignore
-use base_proof_executor::{StatelessL2Builder, TrieDB};
+use base_proof_executor::StatelessL2Builder;
 
-let builder = StatelessL2Builder::new(trie_db, chain_spec);
-let outcome = builder.execute(attributes)?;
+// `provider` serves trie node preimages and `hinter` sends trie hints to the host.
+let mut builder =
+    StatelessL2Builder::new(&rollup_config, evm_factory, provider, hinter, parent_header);
+let outcome = builder.build_block(attributes)?;
 ```
 
 ## License

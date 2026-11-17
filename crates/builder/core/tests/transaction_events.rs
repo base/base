@@ -1,7 +1,5 @@
 //! Integration tests for AT builder audit-event emission.
 
-#![allow(missing_docs)]
-
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, U256};

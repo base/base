@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Integration tests for the `miner_setGasLimit` block gas limit override.
 
 use alloy_provider::Provider;
 use base_builder_core::test_utils::{BlockTransactionsExt, setup_test_instance};
