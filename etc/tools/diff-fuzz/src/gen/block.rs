@@ -141,7 +141,13 @@ impl L1Origin {
         let header = Header {
             parent_hash: rng.b256(),
             number: 17_000_000 + (l2_timestamp - 1_686_789_347) / 12,
-            timestamp: l2_timestamp.saturating_sub(rng.range(0, 60)),
+            // Usually close to the L2 head; now and then lagging far enough behind for the
+            // origin to advance on several consecutive L2 blocks.
+            timestamp: l2_timestamp.saturating_sub(if rng.chance(25) {
+                rng.range(60, 900)
+            } else {
+                rng.range(0, 60)
+            }),
             base_fee_per_gas: Some(match rng.below(30) {
                 0 => u64::MAX >> 8,
                 1 => 7,

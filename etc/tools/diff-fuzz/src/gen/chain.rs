@@ -2,7 +2,7 @@
 
 use alloy_consensus::Header;
 use alloy_primitives::Address;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use eyre::{bail, ensure};
 
 use crate::{
@@ -16,6 +16,7 @@ use crate::{
         rng::Rng,
         scenario::Scenarios,
         state::WorldState,
+        sysconfig::ConfigLogs,
         template::{Template, TemplateInput},
     },
 };
@@ -43,6 +44,8 @@ pub struct ChainGenerator {
     scenarios: Scenarios,
     pending: Template,
     blocks: u64,
+    /// Further consecutive blocks that start an epoch with a system config update.
+    burst: u64,
 }
 
 impl ChainGenerator {
@@ -86,6 +89,7 @@ impl ChainGenerator {
             scenarios,
             pending: Self::placeholder(),
             blocks: 0,
+            burst: 0,
         };
         chain.pending = chain.plan();
         chain
@@ -102,6 +106,7 @@ impl ChainGenerator {
                 transactions: Vec::new(),
                 witness: Default::default(),
                 trace: None,
+                system_config: None,
             },
             labels: Vec::new(),
             planned: Vec::new(),
@@ -200,15 +205,37 @@ impl ChainGenerator {
         self.blocks += 1;
 
         let schedule = Schedule::mainnet();
+        let parent_timestamp = self.ancestors[0].timestamp;
         let next_timestamp = schedule.timestamp_parts(self.ancestors[0].number + 1).0;
-        self.origin.advance(&mut self.rng, next_timestamp, 35);
-        if self.rng.chance(4) {
-            // An L1 system config update.
-            self.sys = SysConfig::random(&mut self.rng, next_timestamp);
-        } else if schedule.rollup.is_feature_activation_block_cascading(
-            base_common_genesis::BaseFeature::SubsecondBlocks,
+        // Upgrade activation blocks start a new epoch when they can, and usually change the
+        // system config, so config changes land on fork boundaries. A burst gives consecutive
+        // blocks an update each, for as long as the L1 origin can advance every block.
+        let activation = Era::ALL.into_iter().any(|era| {
+            (parent_timestamp + 1..=next_timestamp).contains(&era.activation_timestamp())
+        });
+        let forced = activation || self.burst > 0;
+        self.origin.advance(&mut self.rng, next_timestamp, if forced { 100 } else { 35 });
+        let update = self.origin.sequence_number == 0
+            && (self.burst > 0 || self.rng.chance(if activation { 75 } else { 30 }));
+        self.burst = if update { self.burst.saturating_sub(1) } else { 0 };
+        if update {
+            // The new L1 origin carries system config updates, which derivation applies with
+            // `update_with_receipts` at the first block of the epoch.
+            let receipt =
+                ConfigLogs::chain_update(&mut self.rng, &self.sys.config, parent_timestamp);
+            self.sys.config.update_with_receipts(
+                &[(&receipt).into()],
+                ConfigLogs::address(),
+                schedule.active(BaseFeature::BlobAwareL1Fees, self.origin.header.timestamp),
+            );
+            if self.burst == 0 && self.rng.chance(30) {
+                self.burst = self.rng.range(1, 4);
+            }
+        }
+        if schedule.rollup.is_feature_activation_block_cascading(
+            BaseFeature::SubsecondBlocks,
             next_timestamp,
-            self.ancestors[0].timestamp,
+            parent_timestamp,
         ) {
             // Denim scales the legacy whole-second gas parameters at its activation block.
             let factor = RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR;

@@ -43,7 +43,7 @@ mod block;
 pub use block::{Blocks, L1Origin, SysConfig};
 
 mod sysconfig;
-pub use sysconfig::{ConfigLogs, ConfigUpdate};
+pub use sysconfig::{ChainParam, ConfigLogs, ConfigUpdate};
 
 mod plan;
 pub use plan::{BlockCtx, PlannedTx, Planner};

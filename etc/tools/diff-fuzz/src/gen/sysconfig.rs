@@ -199,39 +199,6 @@ impl ConfigUpdate {
         }
         updates
     }
-
-    /// An update that changes a single parameter of `from` to its value in `to` (one half of a
-    /// two-value kind), or sets the DA footprint gas scalar to zero (its default).
-    pub fn single(rng: &mut Rng, from: &SystemConfig, to: &SystemConfig) -> Self {
-        let half = rng.chance(50);
-        match rng.below(9) {
-            0 => Self::Batcher(to.batcher_address),
-            1 => Self::GasConfig {
-                overhead: if half { to.overhead } else { from.overhead }.into(),
-                scalar: if half { from.scalar } else { to.scalar }.into(),
-            },
-            2 | 3 => Self::GasLimit(to.gas_limit),
-            4 => Self::Eip1559 {
-                denominator: if half { to.eip1559_denominator } else { from.eip1559_denominator }
-                    .unwrap_or_default(),
-                elasticity: if half { from.eip1559_elasticity } else { to.eip1559_elasticity }
-                    .unwrap_or_default(),
-            },
-            5 => Self::OperatorFee {
-                scalar: if half { to.operator_fee_scalar } else { from.operator_fee_scalar }
-                    .unwrap_or_default(),
-                constant: if half { from.operator_fee_constant } else { to.operator_fee_constant }
-                    .unwrap_or_default(),
-            },
-            6 => Self::MinBaseFee(to.min_base_fee.unwrap_or_default()),
-            7 => Self::DaFootprintGasScalar(if half {
-                0
-            } else {
-                to.da_footprint_gas_scalar.unwrap_or_default()
-            }),
-            _ => Self::UnsafeBlockSigner(to.batcher_address),
-        }
-    }
 }
 
 /// Builders of `ConfigUpdate` logs and `systemConfig` requests.
@@ -495,34 +462,184 @@ impl ConfigLogs {
         }
     }
 
-    /// The L1 receipt of a chain's system config change at an L2 block at `timestamp`: a full
-    /// change to a fresh random config, a single-parameter change, or several updates of one
-    /// kind (the last wins), now and then with a malformed log that derivation skips.
+    /// The L1 receipt of a chain's system config change at an L2 block at `timestamp`:
+    ///
+    /// - one L2-affecting parameter set to an edge or a realistic value,
+    /// - two to four parameters at once,
+    /// - one parameter updated twice in the block (the last log wins), or
+    /// - a change of every parameter to a fresh realistic config, which also brings a chain back
+    ///   from extremes.
+    ///
+    /// Parameters sharing an update kind go out in one log, and now and then a malformed log that
+    /// derivation skips sits among them.
     pub fn chain_update(rng: &mut Rng, current: &SystemConfig, timestamp: u64) -> L1Receipt {
-        let target = SysConfig::random(rng, timestamp).config;
-        let mut updates = match rng.below(20) {
-            0..=7 => ConfigUpdate::towards(current, &target),
-            8..=16 => vec![ConfigUpdate::single(rng, current, &target)],
-            _ => {
-                let other = SysConfig::random(rng, timestamp).config;
-                let first = ConfigUpdate::single(rng, current, &other);
-                let mut last = ConfigUpdate::single(rng, current, &target);
-                while last.kind() != first.kind() {
-                    last = ConfigUpdate::single(rng, current, &target);
+        let realistic = SysConfig::random(rng, timestamp).config;
+        let mut target = *current;
+        let mut first = None;
+        match rng.below(20) {
+            0..=8 => ChainParam::any(rng).set(rng, &mut target, &realistic),
+            9..=14 => {
+                for _ in 0..rng.range(2, 4) {
+                    ChainParam::any(rng).set(rng, &mut target, &realistic);
                 }
-                vec![first, last]
             }
-        };
+            15..=17 => {
+                let param = ChainParam::any(rng);
+                let mut earlier = *current;
+                param.set(rng, &mut earlier, &realistic);
+                first = ConfigUpdate::towards(current, &earlier).pop();
+                param.set(rng, &mut target, &realistic);
+            }
+            _ => target = realistic,
+        }
+        let mut updates = ConfigUpdate::towards(current, &target);
         // Order does not matter across kinds; shuffle so no kind always lands first.
         for i in (1..updates.len()).rev() {
             updates.swap(i, rng.index(i + 1));
         }
-        let mut logs: Vec<Log> = updates.iter().map(ConfigUpdate::log).collect();
-        if rng.chance(15) {
-            let update = ConfigUpdate::any(rng);
+        let mut logs: Vec<Log> = first.iter().chain(&updates).map(ConfigUpdate::log).collect();
+        // base/base applies some malformed logs (extra topics, high update type bytes), so the
+        // malformed log carries values L1 could set too.
+        let mut other = *current;
+        ChainParam::any(rng).set(rng, &mut other, &realistic);
+        if let Some(update) = ConfigUpdate::towards(current, &other).pop()
+            && rng.chance(10)
+        {
             logs.insert(rng.index(logs.len() + 1), Self::malformed(rng, &update));
         }
         L1Receipt { status: 1, logs }
+    }
+}
+
+/// A system config parameter that changes how L2 blocks are built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainParam {
+    /// Block gas limit.
+    GasLimit,
+    /// Pre-Ecotone L1 fee overhead.
+    Overhead,
+    /// L1 base fee scalar (the low four bytes of the scalar word).
+    BaseFeeScalar,
+    /// L1 blob base fee scalar (bytes 24..28 of a version 1 scalar word).
+    BlobBaseFeeScalar,
+    /// EIP-1559 denominator.
+    Eip1559Denominator,
+    /// EIP-1559 elasticity.
+    Eip1559Elasticity,
+    /// Operator fee scalar.
+    OperatorFeeScalar,
+    /// Operator fee constant.
+    OperatorFeeConstant,
+    /// Minimum base fee.
+    MinBaseFee,
+    /// DA footprint gas scalar (zero selects the default).
+    DaFootprintGasScalar,
+}
+
+impl ChainParam {
+    /// Every parameter.
+    pub const ALL: [Self; 10] = [
+        Self::GasLimit,
+        Self::Overhead,
+        Self::BaseFeeScalar,
+        Self::BlobBaseFeeScalar,
+        Self::Eip1559Denominator,
+        Self::Eip1559Elasticity,
+        Self::OperatorFeeScalar,
+        Self::OperatorFeeConstant,
+        Self::MinBaseFee,
+        Self::DaFootprintGasScalar,
+    ];
+
+    /// A random parameter.
+    pub fn any(rng: &mut Rng) -> Self {
+        *rng.pick(&Self::ALL)
+    }
+
+    /// Sets this parameter of `config` to an edge value (seven times in ten) or to its value in
+    /// `realistic`. Edges stay within what L1 can set: the EIP-1559 parameters are never zero.
+    pub fn set(self, rng: &mut Rng, config: &mut SystemConfig, realistic: &SystemConfig) {
+        let edge = rng.chance(70);
+        let pick = |rng: &mut Rng, edges: &[u64], realistic: u64| {
+            if edge { *rng.pick(edges) } else { realistic }
+        };
+        let mut scalar = config.scalar.to_be_bytes::<32>();
+        let realistic_scalar = realistic.scalar.to_be_bytes::<32>();
+        let u32_at = |word: &[u8; 32], at: usize| {
+            u64::from(u32::from_be_bytes(word[at..at + 4].try_into().expect("4 bytes")))
+        };
+        match self {
+            Self::GasLimit => {
+                config.gas_limit = pick(
+                    rng,
+                    &[3_000_000, 5_000_000, 36_000_000, 150_000_000, 1_000_000_000, 1 << 40],
+                    realistic.gas_limit,
+                );
+            }
+            Self::Overhead => {
+                config.overhead = U256::from(pick(
+                    rng,
+                    &[0, 188, 2100, u64::from(u32::MAX), u64::MAX],
+                    realistic.overhead.saturating_to(),
+                ));
+            }
+            Self::BaseFeeScalar => {
+                let value =
+                    pick(rng, &[0, 1, 1368, u64::from(u32::MAX)], u32_at(&realistic_scalar, 28));
+                scalar[28..].copy_from_slice(&(value as u32).to_be_bytes());
+            }
+            Self::BlobBaseFeeScalar => {
+                // A version 1 word keeps the base fee scalar and carries the blob one.
+                let value =
+                    pick(rng, &[0, 1, 810_949, u64::from(u32::MAX)], u32_at(&realistic_scalar, 24));
+                scalar[..28].fill(0);
+                scalar[0] = 1;
+                scalar[24..28].copy_from_slice(&(value as u32).to_be_bytes());
+            }
+            Self::Eip1559Denominator => {
+                config.eip1559_denominator = Some(pick(
+                    rng,
+                    &[1, 2, 8, 250, 2_500, u64::from(u32::MAX)],
+                    u64::from(realistic.eip1559_denominator.unwrap_or(250)),
+                ) as u32);
+            }
+            Self::Eip1559Elasticity => {
+                config.eip1559_elasticity = Some(pick(
+                    rng,
+                    &[1, 2, 6, 10, 1_000_000, u64::from(u32::MAX)],
+                    u64::from(realistic.eip1559_elasticity.unwrap_or(6)),
+                ) as u32);
+            }
+            Self::OperatorFeeScalar => {
+                config.operator_fee_scalar = Some(pick(
+                    rng,
+                    &[0, 1, 1_000_000, u64::from(u32::MAX)],
+                    u64::from(realistic.operator_fee_scalar.unwrap_or_default()),
+                ) as u32);
+            }
+            Self::OperatorFeeConstant => {
+                config.operator_fee_constant = Some(pick(
+                    rng,
+                    &[0, 1, 1_000_000_000, 1 << 40, u64::MAX],
+                    realistic.operator_fee_constant.unwrap_or_default(),
+                ));
+            }
+            Self::MinBaseFee => {
+                config.min_base_fee = Some(pick(
+                    rng,
+                    &[0, 1, 1_000_000_000, 1 << 40, u64::MAX],
+                    realistic.min_base_fee.unwrap_or_default(),
+                ));
+            }
+            Self::DaFootprintGasScalar => {
+                config.da_footprint_gas_scalar = Some(pick(
+                    rng,
+                    &[0, 1, 400, u64::from(u16::MAX)],
+                    u64::from(realistic.da_footprint_gas_scalar.unwrap_or_default()),
+                ) as u16);
+            }
+        }
+        config.scalar = U256::from_be_bytes(scalar);
     }
 }
 
@@ -566,6 +683,23 @@ mod tests {
                     config.da_footprint_gas_scalar,
                     Some(if value == 0 { 400 } else { value })
                 ),
+            }
+        }
+    }
+
+    /// Chain updates, malformed logs included, only set values the L1 contract could: base/base
+    /// applies some malformed logs, and a zero EIP-1559 denominator or elasticity makes a Holocene
+    /// header invalid.
+    #[test]
+    fn chain_updates_keep_eip1559_params_nonzero() {
+        let mut rng = Rng::new(&[9]);
+        for _ in 0..20 {
+            let mut config = crate::SysConfig::random(&mut rng, 1_800_000_000).config;
+            for _ in 0..200 {
+                let receipt = ConfigLogs::chain_update(&mut rng, &config, 1_800_000_000);
+                config.update_with_receipts(&[(&receipt).into()], ConfigLogs::address(), true);
+                assert_ne!(config.eip1559_denominator, Some(0), "{receipt:?}");
+                assert_ne!(config.eip1559_elasticity, Some(0), "{receipt:?}");
             }
         }
     }

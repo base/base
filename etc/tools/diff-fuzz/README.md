@@ -14,6 +14,15 @@ post-state, and every header field. The wire format between the harness and an a
   while every adapter agrees, on the reference's response. On a divergence or adapter failure
   the chain stops; its finding directory holds `prefix.jsonl` (the last 32 requests of the chain
   up to the failing one) and a minimized `minimized.json` of the failing block.
+  System config changes reach a chain as L1 `ConfigUpdate` logs at the first block of an epoch,
+  applied with base/base's `SystemConfig::update_with_receipts`. An update sets one L2-affecting
+  parameter (gas limit, overhead, base fee and blob base fee scalars, EIP-1559 denominator and
+  elasticity, operator fee scalar and constant, minimum base fee, DA footprint gas scalar) to an
+  edge or realistic value, sets two to four at once, updates one twice in a block, or resets
+  all of them to a fresh realistic config. Upgrade activation blocks start a new epoch when they
+  can and usually carry an update (Denim's gas parameter scaling then applies on top), and
+  bursts give up to four consecutive blocks an update each while the L1 origin lags far enough
+  behind to advance every block.
 - `system-config --seed S --count N`: `systemConfig` cases `0..N`, L1 `ConfigUpdate` logs applied
   to a system config. Each case is a starting config, an L1 timestamp (often within a few blocks
   of an upgrade activation, Ecotone most of all), and receipts mixing well-formed updates of
