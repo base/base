@@ -103,7 +103,8 @@ where
 
         debug!(
             target: "client_executor",
-            "Recomputed state root: {root}",
+            root = %root,
+            "Recomputed state root"
         );
 
         // Extract the new state root from the root node.

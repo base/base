@@ -388,9 +388,9 @@ impl SpanBatch {
             if batch_epoch < l2_safe_head.l1_origin.number {
                 warn!(
                     target: "batch_span",
-                    "batch L1 origin is before safe head L1 origin, batch_epoch: {}, safe_head_epoch: {:?}",
                     batch_epoch,
-                    l2_safe_head.l1_origin
+                    safe_head_epoch = ?l2_safe_head.l1_origin,
+                    "batch L1 origin is before safe head L1 origin"
                 );
                 return BatchValidity::Drop(BatchDropReason::L1OriginBeforeSafeHead);
             }
@@ -401,9 +401,9 @@ impl SpanBatch {
             else {
                 warn!(
                     target: "batch_span",
-                    "unable to find L1 origin for batch, batch_epoch: {}, batch_timestamp: {}",
                     batch_epoch,
-                    batch_timestamp
+                    batch_timestamp,
+                    "unable to find L1 origin for batch"
                 );
                 return BatchValidity::Drop(BatchDropReason::MissingL1Origin);
             };
@@ -418,10 +418,10 @@ impl SpanBatch {
             if batch_timestamp < l1_origin.timestamp {
                 warn!(
                     target: "batch_span",
-                    "batch timestamp is less than L1 origin timestamp, l2_timestamp: {}, l1_timestamp: {}, origin: {:?}",
-                    batch_timestamp,
-                    l1_origin.timestamp,
-                    l1_origin.id()
+                    l2_timestamp = batch_timestamp,
+                    l1_timestamp = l1_origin.timestamp,
+                    origin = ?l1_origin.id(),
+                    "batch timestamp is less than L1 origin timestamp"
                 );
                 return BatchValidity::Drop(BatchDropReason::TimestampBeforeL1Origin);
             }
@@ -464,8 +464,8 @@ impl SpanBatch {
                     // allowed to include anything past this point without moving to the next epoch.
                     warn!(
                         target: "batch_span",
-                        "batch exceeded sequencer time drift, sequencer must adopt new L1 origin to include transactions again, max_time: {}",
-                        l1_origin.timestamp + max_drift
+                        max_time = l1_origin.timestamp + max_drift,
+                        "batch exceeded sequencer time drift, sequencer must adopt new L1 origin to include transactions again"
                     );
                     return BatchValidity::Drop(BatchDropReason::SequencerDriftExceeded);
                 }
@@ -476,16 +476,16 @@ impl SpanBatch {
                 if tx.is_empty() {
                     warn!(
                         target: "batch_span",
-                        "transaction data must not be empty, but found empty tx, tx_index: {}",
-                        i
+                        tx_index = i,
+                        "transaction data must not be empty, but found empty tx"
                     );
                     return BatchValidity::Drop(BatchDropReason::EmptyTransaction);
                 }
                 if tx.as_ref().first() == Some(&(OpTxType::Deposit as u8)) {
                     warn!(
                         target: "batch_span",
-                        "sequencers may not embed any deposits into batch data, but found tx that has one, tx_index: {}",
-                        i
+                        tx_index = i,
+                        "sequencers may not embed any deposits into batch data, but found tx that has one"
                     );
                     return BatchValidity::Drop(BatchDropReason::DepositTransaction);
                 }
@@ -549,24 +549,27 @@ impl SpanBatch {
                         return BatchValidity::Drop(BatchDropReason::OverlappedTxMismatch);
                     }
                 }
-                let safe_block_ref = match L2BlockInfo::from_block_and_genesis(
-                    &safe_block_payload,
-                    &cfg.genesis,
-                ) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        warn!(
-                            target: "batch_span",
-                            "failed to extract L2BlockInfo from execution payload, hash: {}, err: {e}",
-                            safe_block_payload.header.hash_slow()
-                        );
-                        return BatchValidity::Drop(BatchDropReason::L2BlockInfoExtractionFailed);
-                    }
-                };
+                let safe_block_ref =
+                    match L2BlockInfo::from_block_and_genesis(&safe_block_payload, &cfg.genesis) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            warn!(
+                                target: "batch_span",
+                                hash = %safe_block_payload.header.hash_slow(),
+                                error = %e,
+                                "failed to extract L2BlockInfo from execution payload"
+                            );
+                            return BatchValidity::Drop(
+                                BatchDropReason::L2BlockInfoExtractionFailed,
+                            );
+                        }
+                    };
                 if safe_block_ref.l1_origin.number != self.batches[i as usize].epoch_num {
                     warn!(
-                        "overlapped block's L1 origin number does not match {}, {}",
-                        safe_block_ref.l1_origin.number, self.batches[i as usize].epoch_num
+                        target: "batch_span",
+                        l1_origin_number = safe_block_ref.l1_origin.number,
+                        batch_epoch = self.batches[i as usize].epoch_num,
+                        "overlapped block's L1 origin number does not match batch epoch"
                     );
                     return BatchValidity::Drop(BatchDropReason::OverlappedL1OriginMismatch);
                 }
@@ -614,8 +617,8 @@ impl SpanBatch {
             if l1_origins.len() < 2 {
                 info!(
                     target: "batch_span",
-                    "eager batch wants to advance current epoch {:?}, but could not without more L1 blocks",
-                    epoch.id()
+                    epoch = ?epoch.id(),
+                    "eager batch wants to advance current epoch, but could not without more L1 blocks"
                 );
                 return (BatchValidity::Undecided, None);
             }
@@ -624,9 +627,9 @@ impl SpanBatch {
         if !cfg.is_feature_active_cascading(BaseFeature::SpanBatches, batch_origin.timestamp) {
             warn!(
                 target: "batch_span",
-                "received SpanBatch (id {:?}) with L1 origin (timestamp {}) before Delta upgrade",
-                batch_origin.id(),
-                batch_origin.timestamp
+                origin = ?batch_origin.id(),
+                origin_timestamp = batch_origin.timestamp,
+                "received SpanBatch with L1 origin before Delta upgrade"
             );
             return (BatchValidity::Drop(BatchDropReason::SpanBatchPreDelta), None);
         }
@@ -634,9 +637,9 @@ impl SpanBatch {
         if self.starting_timestamp() > next_timestamp {
             warn!(
                 target: "batch_span",
-                "received out-of-order batch for future processing after next batch ({} > {})",
-                self.starting_timestamp(),
-                next_timestamp
+                starting_timestamp = self.starting_timestamp(),
+                next_timestamp,
+                "received out-of-order batch for future processing after next batch"
             );
 
             // After holocene is activated, gaps are disallowed.
@@ -1287,7 +1290,7 @@ mod tests {
         BatchValidity::Future,
         Some((
             Level::WARN,
-            &["received out-of-order batch for future processing after next batch (21 > 20)"][..],
+            &["received out-of-order batch for future processing after next batch, starting_timestamp: 21, next_timestamp: 20"][..],
         ))
     )]
     #[case::no_new_blocks(
