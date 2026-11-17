@@ -31,8 +31,7 @@ pub use eip8130::{EIP8130_PRE_EVEREST_RPC_ERROR, Eip8130Nonce, Eip8130Simulation
 
 mod transaction;
 pub use transaction::{
-    BaseTransactionFields, BaseTransactionRequest, Eip8130AuthScheme, Eip8130RequestFields,
-    Transaction,
+    BaseTransactionFields, BaseTransactionRequest, Eip8130RequestFields, Transaction,
 };
 
 #[cfg(feature = "reth")]

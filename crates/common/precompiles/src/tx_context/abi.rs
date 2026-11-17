@@ -27,7 +27,8 @@ sol! {
         /// Equal to the sender when the transaction is self-paying.
         function getTransactionPayer() external view returns (address);
 
-        /// Returns the actor id resolved while authenticating the sender.
+        /// Returns the sender actor id: the resolved sender address, right-aligned
+        /// in a 32-byte word (`bytes32(uint256(uint160(sender)))`).
         function getTransactionSenderActorId() external view returns (bytes32);
     }
 }

@@ -45,7 +45,7 @@ pub struct BuilderConfig {
     /// Transactions in this cache are skipped by the iterator without re-evaluation.
     pub rejection_cache: RejectionCache,
 
-    /// Whether to drop EIP-8130 transactions whose captured authorization
+    /// Whether to drop EIP-8130 transactions whose captured payer and expiry
     /// predicates are positively stale before executing them.
     pub manifest_precheck_enabled: bool,
 

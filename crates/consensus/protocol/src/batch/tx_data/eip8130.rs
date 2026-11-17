@@ -13,8 +13,8 @@ use crate::{Channel, SpanBatchError, SpanDecodingError};
 /// The chain id is dropped from the wire and reinjected from the batch chain id;
 /// the nonce sequence and gas limit are carried in the shared nonce and gas
 /// columns; the high-entropy authentication proofs are carried in a separate
-/// trailing column. The two authenticator fields hold the leading 20-byte
-/// account address on the configured-actor path and are empty on the EOA path.
+/// trailing column. Each authenticator field holds the leading 20-byte
+/// authenticator selector when its account is named, and is empty otherwise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpanBatchEip8130TransactionData {
     /// Explicit sender account address, or `None` for the EOA path.
@@ -38,11 +38,11 @@ pub struct SpanBatchEip8130TransactionData {
     pub calls: Vec<Vec<Call>>,
     /// Opaque attribution bytes.
     pub metadata: Bytes,
-    /// Sender authenticator (leading account address on the configured path,
-    /// empty on the EOA path).
+    /// Sender authenticator selector when the sender is named, empty on the
+    /// EOA path.
     pub sender_authenticator: Bytes,
-    /// Payer authenticator (leading account address on the configured path,
-    /// empty on the EOA path).
+    /// Payer authenticator selector when the payer is named, empty for
+    /// self-pay and open payer mode.
     pub payer_authenticator: Bytes,
 }
 
@@ -100,12 +100,12 @@ impl SpanBatchEip8130TransactionData {
 
     /// Splits an authentication blob into its authenticator and proof parts.
     ///
-    /// Inverse of `join_auth`. On the EOA path (`configured` is false)
-    /// the authenticator is empty and the whole blob is the proof. On the
-    /// configured-actor path the blob is `authenticator(20) || proof`; a
-    /// configured blob shorter than 20 bytes is rejected.
-    pub fn split_auth(blob: &Bytes, configured: bool) -> Result<(Bytes, Bytes), SpanBatchError> {
-        if !configured {
+    /// Inverse of `join_auth`. When the account is not named (`named` is
+    /// false) the authenticator is empty and the whole blob is the proof. When
+    /// it is named the blob is `authenticator(20) || proof`; a named blob
+    /// shorter than 20 bytes is rejected.
+    pub fn split_auth(blob: &Bytes, named: bool) -> Result<(Bytes, Bytes), SpanBatchError> {
+        if !named {
             return Ok((Bytes::new(), blob.clone()));
         }
         if blob.len() < 20 {
@@ -124,8 +124,8 @@ impl SpanBatchEip8130TransactionData {
     /// Reassembles an authentication blob from its authenticator and proof parts.
     ///
     /// Inverse of `split_auth`.
-    fn join_auth(authenticator: &Bytes, proof: &Bytes, configured: bool) -> Bytes {
-        if !configured {
+    fn join_auth(authenticator: &Bytes, proof: &Bytes, named: bool) -> Bytes {
+        if !named {
             proof.clone()
         } else if proof.is_empty() {
             authenticator.clone()
@@ -137,18 +137,18 @@ impl SpanBatchEip8130TransactionData {
         }
     }
 
-    /// Enforces the decode-side invariant binding an actor's presence to the
-    /// length of its authenticator column: on the configured path (`configured`)
-    /// the authenticator is exactly the 20-byte leading account address, and on
-    /// the EOA/self-pay path it is empty. This is the counterpart of the split
-    /// [`Self::split_auth`] performs on the encode side, rejecting a span batch
-    /// whose columns disagree instead of silently reconstructing a corrupt auth
-    /// blob in [`Self::to_tx`].
-    fn validate_authenticator(authenticator: &Bytes, configured: bool) -> alloy_rlp::Result<()> {
-        let valid = if configured { authenticator.len() == 20 } else { authenticator.is_empty() };
+    /// Enforces the decode-side invariant binding whether an account is named
+    /// to the length of its authenticator column: a named account (`named`)
+    /// carries exactly the 20-byte authenticator selector, and an unnamed one
+    /// (EOA sender, self-pay or open payer) carries none. This is the
+    /// counterpart of the split [`Self::split_auth`] performs on the encode
+    /// side, rejecting a span batch whose columns disagree instead of silently
+    /// reconstructing a corrupt auth blob in [`Self::to_tx`].
+    fn validate_authenticator(authenticator: &Bytes, named: bool) -> alloy_rlp::Result<()> {
+        let valid = if named { authenticator.len() == 20 } else { authenticator.is_empty() };
         if !valid {
             return Err(alloy_rlp::Error::Custom(
-                "EIP-8130 authenticator length inconsistent with actor presence",
+                "EIP-8130 authenticator length inconsistent with named account",
             ));
         }
         Ok(())
@@ -290,8 +290,8 @@ mod tests {
     }
 
     #[test]
-    fn split_auth_rejects_short_configured_blob() {
-        // A configured-path auth blob shorter than the 20-byte account address
+    fn split_auth_rejects_short_named_blob() {
+        // A named account's auth blob shorter than the 20-byte authenticator selector
         // must error instead of panicking on the slice.
         let blob = Bytes::from(vec![0u8; 19]);
         assert_eq!(
@@ -309,14 +309,14 @@ mod tests {
         assert_eq!(proof, eoa);
         assert_eq!(SpanBatchEip8130TransactionData::join_auth(&auth, &proof, false), eoa);
 
-        // Configured path, exactly 20 bytes: proof empty, join rebuilds the blob.
+        // Named account, exactly 20 bytes: proof empty, join rebuilds the blob.
         let exact = Bytes::from(vec![3u8; 20]);
         let (auth, proof) = SpanBatchEip8130TransactionData::split_auth(&exact, true).unwrap();
         assert_eq!(auth, exact);
         assert!(proof.is_empty());
         assert_eq!(SpanBatchEip8130TransactionData::join_auth(&auth, &proof, true), exact);
 
-        // Configured path, 20-byte authenticator + proof.
+        // Named account, 20-byte authenticator + proof.
         let mut full = vec![1u8; 20];
         full.extend_from_slice(&[9u8; 32]);
         let full = Bytes::from(full);
@@ -327,9 +327,9 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_authenticator_actor_mismatch() {
-        // A configured-sender, self-pay tx with a valid 20-byte sender authenticator.
-        // Each case clones it and breaks exactly one presence<->length invariant, so
+    fn decode_rejects_authenticator_named_mismatch() {
+        // A named-sender, self-pay tx with a valid 20-byte sender authenticator.
+        // Each case clones it and breaks exactly one named<->length invariant, so
         // decoding must reject it rather than reconstruct a corrupt auth blob.
         let base = SpanBatchEip8130TransactionData {
             sender: Some(Address::ZERO),
@@ -354,12 +354,12 @@ mod tests {
         // Sanity: the untampered, consistent tx decodes cleanly.
         assert!(SpanBatchTransactionData::decode(&mut encode(&base).as_slice()).is_ok());
 
-        // Configured sender must carry a 20-byte authenticator, not empty.
+        // A named sender must carry a 20-byte authenticator, not empty.
         let mut sender_empty = base.clone();
         sender_empty.sender_authenticator = Bytes::new();
         assert!(SpanBatchTransactionData::decode(&mut encode(&sender_empty).as_slice()).is_err());
 
-        // Configured sender must carry exactly 20 bytes, not more.
+        // A named sender must carry exactly 20 bytes, not more.
         let mut sender_long = base.clone();
         sender_long.sender_authenticator = Bytes::from_static(&[0u8; 21]);
         assert!(SpanBatchTransactionData::decode(&mut encode(&sender_long).as_slice()).is_err());

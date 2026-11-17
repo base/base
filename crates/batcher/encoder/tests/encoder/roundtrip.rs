@@ -76,7 +76,7 @@ fn derivation_reads_back_the_encoded_blocks(
 /// fails if the encoder drops or alters the transaction.
 #[test]
 fn derivation_reads_back_eip8130_transactions_unchanged() {
-    // A configured sender with a named payer, so every optional field of the encoding is set.
+    // A named sender with a named payer, so every optional field of the encoding is set.
     let tx = TxEip8130 {
         chain_id: 8453,
         sender: Some(Address::repeat_byte(0x11)),
@@ -105,7 +105,7 @@ fn derivation_reads_back_eip8130_transactions_unchanged() {
         metadata: Bytes::from_static(b"metadata"),
         payer: Some(Address::repeat_byte(0x55)),
     };
-    // Configured-actor auth is `authenticator(20) || authenticator_data`.
+    // A named account's auth is `K1_AUTHENTICATOR(20) || r || s || v`.
     let authenticator = Eip8130Constants::K1_AUTHENTICATOR;
     let sender_auth = [authenticator.as_slice(), &Signature::test_signature().as_bytes()].concat();
     let payer_auth = [authenticator.as_slice(), &[0x66; 65]].concat();

@@ -668,7 +668,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-eth",
  "alloy-serde",
- "alloy-sol-types",
  "ambassador",
  "base-common-genesis",
  "bytes",
@@ -685,7 +684,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "base-common-consensus",
- "thiserror",
 ]
 
 [[package]]

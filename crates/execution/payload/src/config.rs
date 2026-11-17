@@ -35,7 +35,7 @@ pub struct BaseBuilderConfig {
     /// the block over the limit are skipped for this block.
     pub max_uncompressed_block_size: Option<u64>,
     /// Whether to drop positively stale EIP-8130 transactions using their
-    /// captured authorization manifest before execution.
+    /// captured payer and expiry predicates before execution.
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,

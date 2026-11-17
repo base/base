@@ -1,20 +1,18 @@
 //! Gas schedule for EIP-8130 intrinsic-gas accounting.
 
-use alloy_primitives::Address;
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_consensus::Eip8130Constants;
 
 /// Per-component gas costs for EIP-8130 intrinsic gas.
 ///
 /// This schedule is a **recommendation at the current point in time**, not a
 /// fixed protocol constant. EIP-8130 lets each chain decide how it prices
-/// intrinsic gas and (enshrined) authenticator execution, so a chain MAY adopt a
-/// different schedule; these are the values Base uses today.
+/// intrinsic gas and authenticator execution, so a chain MAY adopt a different
+/// schedule; these are the values Base uses today.
 ///
 /// The storage primitives are the EIP-2929 access costs and the data-byte costs
 /// are EIP-2028; together they reproduce the EIP-8130 `nonce_key_cost` table
 /// (cold SLOAD + SSTORE set = 22,100; cold SLOAD + warm SSTORE reset = 5,000).
-/// The authenticator execution costs are the chain-policy values for the
-/// enshrined canonical authenticators, set to the EVM precompile costs Base uses.
+/// The k1 authenticator execution cost is the `ECRECOVER` precompile cost.
 /// The revm-backed `gas_primitives_match_evm_reference` test in
 /// `base-execution-eip8130` is a drift tripwire that pins the EVM
 /// primitives to revm's canonical constants, so an upstream repricing is
@@ -33,10 +31,6 @@ impl Eip8130GasSchedule {
     pub const SSTORE_SET: u64 = 20_000;
     /// `SSTORE` of an already non-zero slot to another non-zero value.
     pub const SSTORE_RESET: u64 = 2_900;
-    /// `SSTORE` to a slot already modified earlier in the same transaction (its
-    /// EIP-2200 `original != current` "dirty" case). Repricing a dirty slot only
-    /// adjusts the gas meter, so it costs a warm storage read.
-    pub const SSTORE_DIRTY: u64 = Self::WARM_SLOAD;
     /// Cold account access, charged intrinsically for the first call's target
     /// as EIP-2780 charges `tx.to`. Tracks the EVM's cold account access cost.
     pub const COLD_ACCOUNT_ACCESS: u64 = 2_600;
@@ -64,10 +58,7 @@ impl Eip8130GasSchedule {
     /// EIP-2780's `TX_BASE_COST`: one account access, one nonce write and one
     /// balance write, whichever accounts they land in. A sponsored transaction
     /// also touches the sender's account and pays for that second access in
-    /// `sender_access_cost`. The base also covers the sender's cold
-    /// `policy_manager` SLOAD: whether the sender's actor is policy-gated is
-    /// state, so every transaction pays the read that authorization performs
-    /// for a gated actor.
+    /// `sender_access_cost`.
     pub const AA_BASE_COST: u64 = 12_000;
     /// `nonce_key_cost` for nonce-free (`NONCE_KEY_MAX`) transactions: 13,000 gas
     /// for the enshrined ring-buffer replay state, composed of 2 cold SLOADs, 1
@@ -88,9 +79,8 @@ impl Eip8130GasSchedule {
     /// `nonce_key_cost` for a previously-used sequence nonce key (cold SLOAD +
     /// SSTORE reset).
     pub const NONCE_KEY_EXISTING_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_RESET;
-    /// `bytecode_cost` deployment base for a create entry.
-    pub const CREATE_BASE_COST: u64 = 32_000;
-    /// Code-deposit cost per byte of deployed account bytecode.
+    /// Code-deposit cost per byte of account code, charged on the delegation
+    /// indicator.
     pub const CODE_DEPOSIT_PER_BYTE: u64 = 200;
     /// Compile-time guard that `DELEGATION_INDICATOR_SIZE` fits in `u64`, so the
     /// `as u64` cast in [`Self::DELEGATION_DEPOSIT_COST`] can never truncate
@@ -109,94 +99,11 @@ impl Eip8130GasSchedule {
     /// Account-creation charge for a value-bearing call to an account that does
     /// not exist, charged at dispatch because existence is only known then.
     pub const NEW_ACCOUNT_COST: u64 = 25_000;
-    /// Upper bound on `payer_auth_cost`, which is metered outside `gas_limit`.
-    pub const MAX_AUTHENTICATION_GAS: u64 = 100_000;
-
-    // ── Config-change actor slot writes ──────────────────────────────────────
-    //
-    // `ACTOR_SLOT_SET_COST`, `ACCOUNT_STATE_SET_COST`, and
-    // `CONFIG_CHANGE_STATE_COST` all currently equal one fresh-slot write (cold
-    // SLOAD + SSTORE set = 22,100). They are kept as three distinct named
-    // constants — rather than a single shared `FRESH_SLOT_SET_COST` — because
-    // they price semantically different accesses (an actor/policy slot, the
-    // packed-state bootstrap, and a config-change sequence bump) that may be
-    // repriced independently. `CONFIG_CHANGE_STATE_COST` aliasing
-    // `ACCOUNT_STATE_SET_COST` documents that today they share the conservative
-    // zero-to-nonzero bound; a future reset-vs-set split would touch only the
-    // relevant name.
-    /// Writing a fresh actor slot (`actor_config`, or a policy slot) — cold SLOAD
-    /// + SSTORE set.
-    pub const ACTOR_SLOT_SET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;
-    /// Overwriting an already-set actor slot (e.g. a revoke) — cold SLOAD +
-    /// SSTORE reset.
-    pub const ACTOR_SLOT_RESET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_RESET;
-    /// Touching a cold slot with a zero-to-zero SSTORE: cold access plus the warm
-    /// no-op write cost.
-    pub const COLD_SLOT_NOOP_COST: u64 = Self::COLD_SLOAD + Self::WARM_SLOAD;
-    /// Touching both policy slots with zero-to-zero clears for an ungated actor.
-    pub const POLICY_SLOTS_NOOP_COST: u64 = Self::COLD_SLOT_NOOP_COST * 2;
-    /// Initializing the packed account-state slot. Create entries always perform
-    /// this write, and a config change may be the first state established for an
-    /// otherwise untouched EOA.
-    pub const ACCOUNT_STATE_SET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;
-    /// Conservative cost of a config change's access to the packed
-    /// account-state slot. The same access also supplies the lock status and
-    /// both sequence channels, so those checks must not be charged as extra
-    /// reads.
-    ///
-    /// A previously initialized account, or a slot an earlier entry in the same
-    /// transaction already wrote, costs less, but every config change pays the
-    /// possible cold zero-to-nonzero transition so the charge never depends on
-    /// state or on entry order.
-    pub const CONFIG_CHANGE_STATE_COST: u64 = Self::ACCOUNT_STATE_SET_COST;
-    /// Marginal cost of an `IncrementLocalEpoch` op. The op rewrites the packed
-    /// account-state slot (`local_epoch ‖ local_sequence`) that the config
-    /// change's own channel-sequence advance already touched and modified earlier
-    /// in the transaction, so the epoch bump is a warm **dirty** `SSTORE`
-    /// (EIP-2200 `original != current`) with no extra SLOAD — the ~100-gas
-    /// already-warm write the contract notes for the trailing increment. In the
-    /// rarer unsequenced-and-initialized case the advance performs no write, but
-    /// the change's `CONFIG_CHANGE_STATE_COST` conservatively charged a full
-    /// zero-to-nonzero set for that slot, so adding this marginal cost still never
-    /// undercharges.
-    pub const INCREMENT_LOCAL_EPOCH_COST: u64 = Self::SSTORE_DIRTY;
-    /// Worst-case revoke cost for the actor config and its two policy slots.
-    ///
-    /// Policy slots are cleared on every revoke. Charging all three as resets is
-    /// conservative for ungated actors (whose policy slots are already zero) and
-    /// for an inline secp256k1 self key (whose `actor_config` slot is empty),
-    /// and exact for a policy-bearing actor.
-    pub const ACTOR_REVOKE_COST: u64 = Self::ACTOR_SLOT_RESET_COST * 3;
-
-    // ── Enshrined authenticator execution gas (chain policy) ─────────────────
+    // ── Authentication (chain policy) ─────────────────────────────────────────
     /// secp256k1 (`K1_AUTHENTICATOR` sentinel / EOA path) execution gas — the
     /// `ECRECOVER` precompile cost.
     pub const AUTH_EXEC_K1: u64 = 3_000;
-    /// P-256 authenticator execution gas — the EIP-7951 `P256VERIFY` precompile
-    /// cost.
-    pub const AUTH_EXEC_P256: u64 = 6_900;
-    /// `WebAuthn` authenticator execution gas — P-256 verify plus SHA-256 and
-    /// `clientDataJSON` handling, charged at the same enshrined cost as raw
-    /// P-256.
-    pub const AUTH_EXEC_WEBAUTHN: u64 = 6_900;
-    /// Extra execution overhead for the delegate authenticator: the cold
-    /// `actor_config` SLOAD on the delegate account, on top of the nested
-    /// authenticator's own execution gas.
-    pub const AUTH_EXEC_DELEGATE_OVERHEAD: u64 = Self::COLD_SLOAD;
-
-    /// Execution gas for a leaf (non-delegate) enshrined authenticator, or `None`
-    /// for a non-canonical address (such a transaction is rejected by dispatch
-    /// before its gas is charged).
-    #[must_use]
-    pub fn leaf_auth_exec_gas(authenticator: Address) -> Option<u64> {
-        if authenticator == Eip8130Constants::K1_AUTHENTICATOR {
-            Some(Self::AUTH_EXEC_K1)
-        } else if authenticator == Eip8130Contracts::P256_AUTHENTICATOR {
-            Some(Self::AUTH_EXEC_P256)
-        } else if authenticator == Eip8130Contracts::WEBAUTHN_AUTHENTICATOR {
-            Some(Self::AUTH_EXEC_WEBAUTHN)
-        } else {
-            None
-        }
-    }
+    /// `sender_auth_cost`, and `payer_auth_cost` for a sponsored transaction:
+    /// one secp256k1 recovery plus one cold SLOAD.
+    pub const K1_AUTH_COST: u64 = Self::AUTH_EXEC_K1 + Self::COLD_SLOAD;
 }

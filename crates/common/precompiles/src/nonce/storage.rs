@@ -148,9 +148,7 @@ impl NonceManagerStorage<'_> {
     /// stale `current`.
     ///
     /// Intended for the EIP-8130 execution layer; not reachable through ABI
-    /// dispatch. Emits no log: the increment is a protocol write, and receipt
-    /// logs for EIP-8130 transactions are limited to the account-configuration
-    /// events.
+    /// dispatch. Emits no log: the increment is a protocol write.
     ///
     /// # Errors
     /// - [`INonceManager::InvalidNonceKey`] — `nonce_key` is `0` (the protocol
