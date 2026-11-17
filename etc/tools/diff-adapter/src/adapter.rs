@@ -15,10 +15,11 @@ use alloy_consensus::{
 };
 use alloy_eips::eip2718::WithEncoded;
 use alloy_primitives::{Address, B64, B256, Bytes, U256};
-use base_common_chains::{BaseFeature, Upgrades};
+use base_common_chains::{BaseFeature, ChainConfig, Upgrades};
 use base_common_consensus::{
     BasePrimitives, BaseReceipt, BaseTxEnvelope, BaseTxReceipt, Predeploys, decode_2718_canonical,
 };
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::ExecutionData;
 use base_diff_fuzz::{
     COVERAGE_ENV, Era, HeaderResults, Log, Mode, PostAccount, Receipt, Rejected, Request, Response,
@@ -71,6 +72,8 @@ pub struct DiffAdapter {
     pub consensus: BaseBeaconConsensus,
     /// The node's engine API payload validator.
     pub engine_validator: BaseEngineValidator<BaseTxEnvelope, BaseChainSpec>,
+    /// Base mainnet rollup config, which system config derivation reads.
+    pub rollup_config: RollupConfig,
     /// Whether build-mode responses carry coverage features (see [`Coverage`]).
     pub coverage: bool,
 }
@@ -87,6 +90,7 @@ impl DiffAdapter {
                 Arc::clone(&chain_spec),
             ),
             chain_spec,
+            rollup_config: ChainConfig::mainnet().rollup_config(),
             coverage: std::env::var_os(COVERAGE_ENV).is_some_and(|value| value != "0"),
         }
     }
@@ -132,12 +136,16 @@ impl DiffAdapter {
             receipts: Vec::new(),
             post: BTreeMap::new(),
             coverage: None,
+            system_config: None,
         }
     }
 
     /// Executes a parsed request.
     pub fn execute(&self, request: &Request) -> eyre::Result<Response> {
         ensure!(request.chain == BASE_MAINNET, "unsupported chain {:?}", request.chain);
+        if request.mode == Mode::SystemConfig {
+            return self.system_config(request);
+        }
 
         let ancestors = request
             .ancestors
@@ -186,6 +194,7 @@ impl DiffAdapter {
         let mut outcome = match request.mode {
             Mode::Build => self.build(request, &parent, &state)?,
             Mode::Validate => self.validate(request, &parent, &state)?,
+            Mode::SystemConfig => unreachable!("answered above"),
         };
         if let Some(missing) = state.missing() {
             bail!(missing);
@@ -206,6 +215,7 @@ impl DiffAdapter {
             receipts: outcome.receipts,
             post: outcome.post,
             coverage: outcome.coverage,
+            system_config: None,
         })
     }
 
@@ -942,6 +952,7 @@ mod tests {
                 transactions: vec![raw.clone(), raw],
                 witness: witness(&world).1,
                 trace: None,
+                system_config: None,
             };
 
             let response = adapter.execute(&request).unwrap();
@@ -1040,6 +1051,7 @@ mod tests {
             transactions: vec![raw.clone(), raw],
             witness: witness(&world).1,
             trace: None,
+            system_config: None,
         };
 
         let plain = DiffAdapter::base_mainnet().execute(&request).unwrap();

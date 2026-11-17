@@ -3,7 +3,8 @@
 use std::{fs, path::PathBuf, time::Duration};
 
 use base_diff_fuzz::{
-    AdapterSpec, Campaign, ChainDriver, FuzzConfig, Fuzzer, Generator, GeneratorOptions, Request,
+    AdapterSpec, Campaign, ChainDriver, ConfigLogs, FuzzConfig, Fuzzer, Generator,
+    GeneratorOptions, Request,
 };
 use clap::{Args, Parser, Subcommand};
 use eyre::WrapErr;
@@ -90,6 +91,18 @@ enum Command {
         seed: u64,
         /// Number of cases.
         #[arg(long, default_value_t = 1000)]
+        count: u64,
+    },
+    /// `systemConfig` cases `0..count`: L1 `ConfigUpdate` logs, well-formed and malformed,
+    /// applied to a system config.
+    SystemConfig {
+        #[command(flatten)]
+        common: Common,
+        /// Generator seed.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Number of cases.
+        #[arg(long, default_value_t = 10_000)]
         count: u64,
     },
     /// Multi-block synthetic chains; each advances only while every adapter agrees.
@@ -236,6 +249,11 @@ fn main() -> eyre::Result<()> {
         Command::Gen { common, seed, count } => {
             let generator = Generator::new(seed, GeneratorOptions::default());
             let summary = common.campaign()?.run(count, |i| Ok(Some(generator.case(i))))?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        }
+        Command::SystemConfig { common, seed, count } => {
+            let summary =
+                common.campaign()?.run(count, |i| Ok(Some(ConfigLogs::request(seed, i))))?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
         }
         Command::Chain { common, seed, chains, length, reference, minimize_budget } => {

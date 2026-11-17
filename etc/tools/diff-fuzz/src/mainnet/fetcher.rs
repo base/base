@@ -316,6 +316,7 @@ impl MainnetFetcher {
             transactions,
             witness: Witness { state: witness.state, codes: witness.codes },
             trace: None,
+            system_config: None,
         };
         ensure!(
             keccak256(&request.ancestors[0]) == header.parent_hash,

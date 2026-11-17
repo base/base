@@ -42,6 +42,9 @@ pub use tx::{Shape, TxSpec, Txs};
 mod block;
 pub use block::{Blocks, L1Origin, SysConfig};
 
+mod sysconfig;
+pub use sysconfig::{ConfigLogs, ConfigUpdate};
+
 mod plan;
 pub use plan::{BlockCtx, PlannedTx, Planner};
 

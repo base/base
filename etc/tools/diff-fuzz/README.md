@@ -14,6 +14,13 @@ post-state, and every header field. The wire format between the harness and an a
   while every adapter agrees, on the reference's response. On a divergence or adapter failure
   the chain stops; its finding directory holds `prefix.jsonl` (the last 32 requests of the chain
   up to the failing one) and a minimized `minimized.json` of the failing block.
+- `system-config --seed S --count N`: `systemConfig` cases `0..N`, L1 `ConfigUpdate` logs applied
+  to a system config. Each case is a starting config, an L1 timestamp (often within a few blocks
+  of an upgrade activation, Ecotone most of all), and receipts mixing well-formed updates of
+  every kind with edge values, malformed ones (data pointer, data length word, data size,
+  nonzero value padding, version topic, unknown or high-bit update type, too few or too many
+  topics), and logs that are not config updates (another emitter, another event, no topics,
+  failed receipts); one case in five is a single well-formed update.
 - `fuzz --corpus <dir> --duration 20m`: coverage-guided fuzzing (below).
 
 Each takes `--adapter name=command...` once per client, `--jobs`, and `--out`. Divergences and

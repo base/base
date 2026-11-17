@@ -160,6 +160,30 @@ fn flatten(response: &Response) -> BTreeMap<String, String> {
             }
         }
     }
+    if let Some(output) = &response.system_config {
+        match &output.config {
+            Some(config) => {
+                let Value::Object(fields) =
+                    serde_json::to_value(config).expect("configs serialize")
+                else {
+                    unreachable!("configs serialize to objects")
+                };
+                for (key, value) in fields {
+                    flat.insert(format!("systemConfig.config.{key}"), text(&value));
+                }
+            }
+            None => {
+                flat.insert("systemConfig.config".to_owned(), "absent".to_owned());
+            }
+        }
+        flat.insert("systemConfig.logs.len".to_owned(), output.logs.len().to_string());
+        for (i, log) in output.logs.iter().enumerate() {
+            let outcome = text(&serde_json::to_value(log.outcome).expect("outcomes serialize"));
+            let value =
+                log.kind.map_or_else(|| outcome.clone(), |kind| format!("{outcome}:{kind}"));
+            flat.insert(format!("systemConfig.logs[{i}]"), value);
+        }
+    }
     flat
 }
 

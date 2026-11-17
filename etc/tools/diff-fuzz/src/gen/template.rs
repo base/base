@@ -200,6 +200,7 @@ impl Template {
             transactions,
             witness,
             trace: None,
+            system_config: None,
         };
         Self { request, labels, planned: ordered, new_codes: planner.new_codes }
     }

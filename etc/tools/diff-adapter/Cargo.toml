@@ -20,6 +20,7 @@ path = "src/main.rs"
 base-node-core.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
+base-common-genesis.workspace = true
 base-diff-fuzz = { path = "../diff-fuzz" }
 base-execution-consensus.workspace = true
 base-execution-chainspec.workspace = true

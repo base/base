@@ -3,6 +3,8 @@
 mod adapter;
 pub use adapter::{BASE_MAINNET, BASE_MAINNET_NODE_CHAIN, DiffAdapter, Outcome};
 
+mod system_config;
+
 mod coverage;
 pub use coverage::{Coverage, CoverageFrame};
 

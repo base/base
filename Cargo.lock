@@ -4198,6 +4198,7 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
+ "base-common-genesis",
  "base-common-rpc-types-engine",
  "base-diff-fuzz",
  "base-execution-chainspec",

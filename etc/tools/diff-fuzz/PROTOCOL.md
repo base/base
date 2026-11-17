@@ -12,6 +12,9 @@ One protocol covers both workloads:
 - **validate** mode: real Base mainnet blocks. The adapter executes the canonical block on its
   normal block-import path, every transaction must be valid, and the adapter reports the same
   computed fields plus whether the block passes validation against its canonical header.
+- **systemConfig** mode: L1 `ConfigUpdate` logs. The adapter applies the receipts of an L1
+  block to a system config as its derivation does and reports the resulting config and what it
+  did with every log (see "System config mode").
 
 Pre-state is always a stateless witness (trie nodes and bytecodes) rooted at the parent's
 state root. For fuzz cases the harness builds a full trie of a synthetic genesis allocation,
@@ -82,7 +85,7 @@ so the witness is complete; for mainnet blocks it is the `debug_executionWitness
 | --- | --- |
 | `id` | Opaque case identifier, echoed in the response. |
 | `chain` | Chain configuration. `"base-mainnet"` (chain 8453) is the only value the harness sends today. Fork activation, the subsecond block timestamp schedule, predeploys, and every other chain parameter come from the client's own Base mainnet configuration. The fork in effect is decided by `number` and `timestamp` exactly as on mainnet. |
-| `mode` | `"build"` or `"validate"`. |
+| `mode` | `"build"`, `"validate"`, or `"systemConfig"` (see "System config mode"). |
 | `ancestors` | RLP headers, newest first. `ancestors[0]` is the parent. At most 256 entries; the adapter serves `BLOCKHASH` from them and uses the parent for everything a block derives from its parent (base fee, blob fields, the parent state root that the witness is rooted at, the EIP-2935 and EIP-4788 system calls). |
 | `header` | The block's own header fields. In **build** mode only the inputs are present: `number`, `timestamp`, `coinbase`, `prevRandao`, `gasLimit`, `baseFeePerGas`, `extraData`, `parentBeaconBlockRoot` (and `excessBlobGas` when the fork has it). In **validate** mode every field of the canonical header is present, including the results and `hash`. |
 | `transactions` | The block body, in order. In build mode the harness puts the L1 attributes deposit first (and from Denim the `BaseTime` deposit second), exactly as the sequencer does; the adapter does not add or reorder transactions. |
@@ -191,6 +194,82 @@ For validate mode the harness additionally checks each adapter against the canon
 computed `stateRoot`, `receiptsRoot`, `logsBloom`, `gasUsed`, `blobGasUsed`,
 `withdrawalsRoot`, `requestsHash`, and `hash` must equal the canonical values, and `valid`
 must be `true`.
+
+## System config mode
+
+A request with `"mode": "systemConfig"` compares how clients derive the L1 system config from
+`ConfigUpdate` logs. It carries no block: `ancestors`, `header`, `transactions`, and `witness`
+are absent. It gives a system config, the receipts of one L1 block, and the L1 block's
+timestamp; the adapter applies the receipts to the config on the code path its derivation uses
+on the receipts of each new L1 origin (base/base: `SystemConfig::update_with_receipts`), and
+reports the resulting config and what it did with every log.
+
+```json
+{
+  "id": "sysconfig-1-17",
+  "chain": "base-mainnet",
+  "mode": "systemConfig",
+  "systemConfig": {
+    "l1Timestamp": "0x65f23e8b",
+    "forks": ["regolith", "canyon", "ecotone"],
+    "config": {
+      "batcherAddress": "0x5050505050505050505050505050505050505050",
+      "overhead": "0x00000000000000000000000000000000000000000000000000000000000000bc",
+      "scalar": "0x010000000000000000000000000000000000000000000000000c5fc500000558",
+      "gasLimit": "0x3938700",
+      "eip1559Denominator": "0xfa",
+      "eip1559Elasticity": "0x6",
+      "operatorFeeScalar": "0x0",
+      "operatorFeeConstant": "0x0",
+      "minBaseFee": "0x0",
+      "daFootprintGasScalar": "0x190"
+    },
+    "receipts": [
+      { "status": "0x1", "logs": [{ "address": "0x73a7...4072", "topics": ["0x1d2b...53be", "0x00..00", "0x00..02"], "data": "0x...20...20...03938700" }] }
+    ]
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `l1Timestamp` | Timestamp of the L1 block. The client decides which forks are active from it with its own Base mainnet rollup configuration, as its derivation does with the L1 origin's timestamp. On Base the only fork that changes parsing is Ecotone (`BlobAwareL1Fees` active at `l1Timestamp`): gas config updates zero the overhead and ignore an invalid scalar. |
+| `forks` | The Base upgrades active at `l1Timestamp` on mainnet, oldest first, from `regolith`, `canyon`, `ecotone`, `fjord`, `granite`, `holocene`, `isthmus`, `jovian`, `azul`, `beryl`, `cobalt`, `denim`. Derived from `l1Timestamp`, for adapters whose parser takes fork flags; it never contradicts `l1Timestamp`. |
+| `config` | The system config before the block. Every field is present: `batcherAddress`, `overhead` and `scalar` (32-byte words), and quantities `gasLimit`, `eip1559Denominator`, `eip1559Elasticity`, `operatorFeeScalar`, `operatorFeeConstant`, `minBaseFee`, `daFootprintGasScalar`. Values are arbitrary within their types, including zero. |
+| `receipts` | The L1 block's receipts in block order: `status` (`0x1` success, `0x0` failure) and `logs` (`address`, `topics`, `data`). The L1 system config address is Base mainnet's, `0x73a79fab69143498ed3712e519a88a918e1f4072`. |
+
+The response has `ok`, `valid: true`, and a `systemConfig` object instead of block results:
+
+```json
+{
+  "id": "sysconfig-1-17",
+  "ok": true,
+  "valid": true,
+  "systemConfig": {
+    "config": { "batcherAddress": "0x...", "gasLimit": "0x3938700", "...": "..." },
+    "logs": [
+      { "outcome": "applied", "kind": "0x2" },
+      { "outcome": "rejected", "error": "invalid data pointer" },
+      { "outcome": "ignored" }
+    ]
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `config` | The system config after every log, with the same fields as the request's. Omitted when the client halted. |
+| `logs` | One entry per log of every receipt, in order (receipt 0's logs, then receipt 1's, ...). `outcome` is `applied` (a well-formed update of a known kind, with `kind` its number, even if it leaves the config unchanged: an unsafe block signer update, or an Ecotone gas config update whose scalar is invalid), `rejected` (a log the client treats as a config update and skips as malformed), `ignored` (not a config update: the receipt failed, the emitter is not the system config address, or the log has no topics or a first topic other than the `ConfigUpdate` event), or `halted` (the client's derivation stops at this log, for example by throwing, instead of skipping it). After a `halted` entry the list ends. `error` is free text for `rejected` and `halted`, not compared. |
+
+Compared fields: `ok`, `valid`, every `config` field (or its absence), the number of `logs`, and
+each log's `outcome` with its `kind`. For each kind the update decodes as on L1: `data` is the
+ABI encoding of `bytes`, a pointer word (32), a length word (32, or 64 for gas config), and the
+payload words: 0 batcher address, 1 overhead and scalar, 2 gas limit, 3 unsafe block signer, 4
+EIP-1559 params (`denominator << 32 | elasticity` as a `uint64`), 5 operator fee params (scalar
+in bytes 20..24, constant in bytes 24..32), 6 minimum base fee (`uint64`), 7 DA footprint gas
+scalar (`uint16`, zero meaning the default 400). `topics[1]` is the version (zero) and
+`topics[2]` the kind. The harness sends both well-formed logs and logs broken in every field;
+whether each is applied, rejected, or ignored is exactly what this mode compares.
 
 ## Optional tracing
 
