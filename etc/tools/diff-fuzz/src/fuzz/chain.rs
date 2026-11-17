@@ -1,7 +1,7 @@
 //! Drives multi-block synthetic chains through every adapter.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fs,
     panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
@@ -66,12 +66,16 @@ pub struct ChainSummary {
 }
 
 impl ChainDriver {
+    /// Requests kept for `prefix.jsonl`. Requests carry full witnesses, so keeping a whole
+    /// 1,000-block chain per worker exhausts memory.
+    pub const PREFIX_LEN: usize = 32;
+
     /// Runs the chains and returns the summary, also written to `<out>/chain-summary.json`.
     ///
     /// A chain advances only when every adapter agrees, on the reference's response. On a
-    /// divergence or failure the chain stops and the finding directory gets `prefix.jsonl`, every
-    /// request of the chain up to and including the failing one (each replays on its own; the
-    /// prefix shows how the state was reached), plus the usual request, verdict, and responses,
+    /// divergence or failure the chain stops and the finding directory gets `prefix.jsonl`, the last
+    /// [`Self::PREFIX_LEN`] requests of the chain up to and including the failing one (each replays
+    /// on its own; the prefix shows how the state was reached), plus the usual request, verdict, and responses,
     /// and a minimized `minimized.json` of the failing block.
     pub fn run(&self) -> eyre::Result<ChainSummary> {
         eyre::ensure!(
@@ -147,18 +151,28 @@ impl ChainDriver {
         let Ok(mut chain) = built else {
             return ChainOutcome { agreed: 0, end: ChainEnd::Stopped("generator panicked".into()) };
         };
-        let mut prefix: Vec<Request> = Vec::new();
+        let mut prefix: VecDeque<Request> = VecDeque::with_capacity(Self::PREFIX_LEN);
         let reference = adapters
             .iter()
             .position(|a| a.spec.name == self.reference)
             .expect("run checks the reference");
         while chain.blocks() < self.length {
             let request = chain.request().clone();
-            prefix.push(request.clone());
+            if prefix.len() == Self::PREFIX_LEN {
+                prefix.pop_front();
+            }
+            prefix.push_back(request.clone());
             let (results, verdict) = Minimizer::run(adapters, &request);
             if let Some(signature) = FindingSignature::of(&verdict, &self.reference) {
                 eprintln!("{}: {}", request.id, verdict.describe());
-                let dir = self.record(&prefix, &results, &verdict, &signature, adapters, campaign);
+                let dir = self.record(
+                    prefix.make_contiguous(),
+                    &results,
+                    &verdict,
+                    &signature,
+                    adapters,
+                    campaign,
+                );
                 return ChainOutcome {
                     agreed: chain.blocks(),
                     end: ChainEnd::Finding { failure: signature.failure, dir },

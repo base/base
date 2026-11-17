@@ -12,8 +12,8 @@ post-state, and every header field. The wire format between the harness and an a
 - `gen --seed S --count N`: single-block generator cases `0..N`.
 - `chain --seed S --chains N --length L`: multi-block synthetic chains. A chain advances only
   while every adapter agrees, on the reference's response. On a divergence or adapter failure
-  the chain stops; its finding directory holds `prefix.jsonl` (every request of the chain up to
-  the failing one) and a minimized `minimized.json` of the failing block.
+  the chain stops; its finding directory holds `prefix.jsonl` (the last 32 requests of the chain
+  up to the failing one) and a minimized `minimized.json` of the failing block.
 - `fuzz --corpus <dir> --duration 20m`: coverage-guided fuzzing (below).
 
 Each takes `--adapter name=command...` once per client, `--jobs`, and `--out`. Divergences and
