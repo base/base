@@ -307,6 +307,7 @@ where
         let blob_fee_policy = BlobFeePolicy::new(
             config.max_priority_fee_per_gas_per_blob_lower_bound,
             config.max_priority_fee_per_gas_per_blob_upper_bound,
+            config.max_priority_fee_per_gas_per_blob_decay_percent,
         );
         Ok(Self {
             provider,
@@ -2514,7 +2515,7 @@ mod tests {
                 chain_id: 1,
                 closed: CancellationToken::new(),
                 metrics: Arc::new(NoopTxMetrics),
-                blob_fee_policy: BlobFeePolicy::new(1, 1),
+                blob_fee_policy: BlobFeePolicy::new(1, 1, 90),
             };
 
             let confirmed = SimpleTxManager::<_>::wait_mined_using_runtime(
@@ -2604,7 +2605,7 @@ mod tests {
                 chain_id: 1,
                 closed: CancellationToken::new(),
                 metrics: Arc::new(NoopTxMetrics),
-                blob_fee_policy: BlobFeePolicy::new(1, 1),
+                blob_fee_policy: BlobFeePolicy::new(1, 1, 90),
             };
             let send_state = Arc::new(SendState::new(3).expect("send state should be valid"));
             let (receipt_tx, receipt_rx) = mpsc::channel(1);
@@ -2923,11 +2924,26 @@ mod tests {
     }
 
     /// A manager over `provider`, whose first response must be the chain ID, with one
-    /// confirmation, a 60 s receipt polling interval and the given blob bounds, in wei.
+    /// confirmation, a 60 s receipt polling interval, the given blob bounds, in wei, and the
+    /// default blob fee decay.
     async fn blob_manager<P: Provider + Clone + std::fmt::Debug + 'static>(
         ctx: &Context,
         provider: P,
         bounds: (u128, u128),
+        metrics: MockTxMetrics,
+    ) -> SimpleTxManager<P, Context> {
+        let decay_percent =
+            TxManagerConfig::default().max_priority_fee_per_gas_per_blob_decay_percent;
+        blob_manager_with_decay(ctx, provider, bounds, decay_percent, metrics).await
+    }
+
+    /// A [`blob_manager`] whose blob fee decays to `decay_percent` of what a landed blob tx
+    /// paid.
+    async fn blob_manager_with_decay<P: Provider + Clone + std::fmt::Debug + 'static>(
+        ctx: &Context,
+        provider: P,
+        bounds: (u128, u128),
+        decay_percent: u8,
         metrics: MockTxMetrics,
     ) -> SimpleTxManager<P, Context> {
         SimpleTxManager::from_wallet_with_runtime(
@@ -2941,6 +2957,7 @@ mod tests {
                 safe_abort_nonce_too_low_count: 10,
                 max_priority_fee_per_gas_per_blob_lower_bound: bounds.0,
                 max_priority_fee_per_gas_per_blob_upper_bound: bounds.1,
+                max_priority_fee_per_gas_per_blob_decay_percent: decay_percent,
                 ..TxManagerConfig::default()
             },
             1,
@@ -2983,13 +3000,16 @@ mod tests {
     /// A blob tx still pending after the resubmission timeout is replaced with doubled fees,
     /// which raises the fees the next blob txs start from. Whichever version lands, the
     /// replacement or the first version, the next blob tx, here with two blobs, is then
-    /// signed at 90% of the `max_priority_fee_per_gas` per blob that version paid, and the
-    /// metrics record that value and the replacement.
+    /// signed at the configured decay percent (90 by default) of the
+    /// `max_priority_fee_per_gas` per blob that version paid, and the metrics record that
+    /// value and the replacement.
     #[rstest]
-    #[case::the_replacement_lands(1, 0.02, 18_000_000)]
-    #[case::the_first_version_lands(0, 0.01, 10_000_000)]
+    #[case::the_replacement_lands(1, 90, 0.02, 18_000_000)]
+    #[case::the_first_version_lands(0, 90, 0.01, 10_000_000)]
+    #[case::the_replacement_lands_with_a_configured_decay(1, 75, 0.02, 15_000_000)]
     fn a_stuck_blob_tx_is_replaced_on_the_timer_and_the_landed_fees_carry_to_the_next_one(
         #[case] landing: usize,
+        #[case] decay_percent: u8,
         #[case] landed_max_priority_fee_per_gas_per_blob_gwei: f64,
         #[case] next_max_priority_fee_per_gas_per_blob: u128,
     ) {
@@ -3023,8 +3043,14 @@ mod tests {
             let polled = Arc::new(Mutex::new(Vec::new()));
             let provider =
                 LandingProvider { inner: mocked(&asserter), landing, polled: Arc::clone(&polled) };
-            let mut manager =
-                blob_manager(&ctx, provider, (10_000_000, 10_000_000_000), metrics).await;
+            let mut manager = blob_manager_with_decay(
+                &ctx,
+                provider,
+                (10_000_000, 10_000_000_000),
+                decay_percent,
+                metrics,
+            )
+            .await;
             manager.config.receipt_query_interval = receipt_query_interval;
             let mut send = Box::pin(manager.send(blob_candidate()));
             assert!(futures::poll!(&mut send).is_pending());
