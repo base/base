@@ -658,7 +658,10 @@ impl DiffAdapter {
     /// The protocol `post` diff of a block's bundle state.
     ///
     /// The bundle holds, per touched account, its info at the start of the block and after it,
-    /// and for every written slot its value at the start of the block and after it.
+    /// and for every written slot its value at the start of the block and after it. When an
+    /// account is destroyed and recreated in one block (pre-Cancun `SELFDESTRUCT`, then
+    /// `CREATE2`), parent slots that were never rewritten are cleared but not listed, because a
+    /// witness cannot enumerate the parent storage trie; the state root still covers them.
     pub fn post_state(bundle: &BundleState) -> BTreeMap<Address, Option<PostAccount>> {
         let mut post = BTreeMap::new();
         for (address, account) in bundle.state() {

@@ -7,7 +7,8 @@ use std::{
 
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_primitives::{
-    Address, B256, BlockNumber, Bytes, StorageKey, StorageValue, U256, keccak256, map::B256Map,
+    Address, B256, BlockNumber, Bytes, StorageKey, StorageValue, U256, keccak256,
+    map::{B256Map, B256Set},
 };
 use alloy_rlp::Decodable;
 use alloy_trie::{Nibbles, TrieAccount};
@@ -135,6 +136,10 @@ pub struct OpenTries {
     pub accounts: TrieNode,
     /// Storage tries by hashed address, rooted at the parent storage roots.
     pub storages: B256Map<TrieNode>,
+    /// Hashed addresses whose storage the last hashed post state wiped: accounts destroyed and
+    /// recreated in one block, before Cancun. The pinned reth `HashedStorage` has no wipe flag,
+    /// so the provider records it from the bundle.
+    pub wiped: B256Set,
 }
 
 /// Shared witness data behind a [`WitnessState`].
@@ -190,6 +195,7 @@ impl WitnessState {
                         .into_iter()
                         .map(|(address, root)| (keccak256(address), TrieNode::new_blinded(root)))
                         .collect(),
+                    wiped: B256Set::default(),
                 }),
             }),
         }
@@ -251,6 +257,10 @@ impl WitnessState {
             let parent_storage_root =
                 parent.map_or(alloy_trie::EMPTY_ROOT_HASH, |a| a.storage_root);
             let storage_root = match post.storages.get(&hashed_address) {
+                // A wiped storage restarts from an empty trie, not the parent's.
+                Some(updates) if tries.wiped.contains(&hashed_address) => nodes
+                    .apply_storage(TrieNode::new_blinded(alloy_trie::EMPTY_ROOT_HASH), updates)?,
+                None if tries.wiped.contains(&hashed_address) => alloy_trie::EMPTY_ROOT_HASH,
                 Some(updates) => {
                     let trie = tries
                         .storages
@@ -451,6 +461,12 @@ impl StateProofProvider for WitnessState {
 
 impl HashedPostStateProvider for WitnessState {
     fn hashed_post_state(&self, bundle_state: &BundleState) -> ProviderResult<HashedPostState> {
+        self.tries().wiped = bundle_state
+            .state()
+            .iter()
+            .filter(|(_, account)| account.was_destroyed() && account.info.is_some())
+            .map(|(address, _)| keccak256(address))
+            .collect();
         Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state()))
     }
 }
@@ -561,6 +577,40 @@ mod tests {
 
         assert_eq!(state.state_root(post).unwrap(), after.root_and_nodes().0);
         assert_eq!(state.missing(), None);
+    }
+
+    #[test]
+    fn destroyed_and_recreated_account_restarts_from_empty_storage() {
+        // Account 2 holds slots 0 and 1. In one block it self-destructs (pre-Cancun) and is
+        // recreated at the same address with only slot 7. Slot 1 must not survive.
+        let before = world();
+        let (root, nodes) = before.root_and_nodes();
+        let state = WitnessState::new(root, &nodes, &[], [], []);
+        let a2 = Address::repeat_byte(2);
+        let recreated = account(1, 0);
+        let slot = U256::from(7);
+
+        let mut after = before;
+        after.0.insert(a2, (recreated, [(B256::from(slot), U256::from(70))].into_iter().collect()));
+
+        let mut bundle = BundleState::default();
+        bundle.state.insert(
+            a2,
+            revm::database::BundleAccount {
+                info: Some(recreated.into()),
+                original_info: Some(account(2, 1_000).into()),
+                storage: [(
+                    slot,
+                    revm::database::states::StorageSlot::new_changed(U256::ZERO, U256::from(70)),
+                )]
+                .into_iter()
+                .collect(),
+                status: revm::database::AccountStatus::DestroyedChanged,
+            },
+        );
+        let post = state.hashed_post_state(&bundle).unwrap();
+
+        assert_eq!(state.state_root(post).unwrap(), after.root_and_nodes().0);
     }
 
     #[test]
