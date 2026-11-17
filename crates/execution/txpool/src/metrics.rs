@@ -7,8 +7,8 @@
 base_metrics::define_metrics! {
     txpool.guard,
     struct = GuardMetrics,
-    #[describe("EIP-8130 transactions rejected at admission by signature/payment limits")]
-    #[label(name = "reason", default = ["sender", "payer", "payment", "payer_balance"])]
+    #[describe("EIP-8130 transactions rejected at admission by payment limits")]
+    #[label(name = "reason", default = ["payment", "payer_balance"])]
     admission_rejected: counter,
     #[describe("EIP-8130 transactions invalidated and evicted ahead of the builder")]
     #[label(
@@ -29,7 +29,7 @@ base_metrics::define_metrics! {
     #[describe("Transactions currently tracked by the admission/invalidation guard")]
     tracked: gauge,
     #[describe("EIP-8130 drop events from the builder's stateless manifest precheck")]
-    #[label(name = "cause", default = ["config_slot", "payer_balance", "expiry"])]
+    #[label(name = "cause", default = ["payer_balance", "expiry"])]
     builder_precheck_dropped: counter,
 }
 
@@ -37,8 +37,6 @@ impl GuardMetrics {
     /// Static label for the `admission_rejected` reason.
     pub const fn rejection_reason(rejection: crate::LimitRejection) -> &'static str {
         match rejection {
-            crate::LimitRejection::SenderLimit => "sender",
-            crate::LimitRejection::PayerLimit => "payer",
             crate::LimitRejection::PaymentLimit => "payment",
             crate::LimitRejection::PayerBalance => "payer_balance",
         }
@@ -168,11 +166,8 @@ base_metrics::define_metrics! {
     #[label(name = "kind", default = ["eip8130", "standard"])]
     validate_seconds: histogram,
     #[describe("EIP-8130 authorization wall time by sender authenticator type")]
-    #[label(name = "sig_type", default = ["k1", "p256", "passkey", "delegate", "delegate-k1", "delegate-p256", "delegate-passkey", "other"])]
+    #[label(name = "sig_type", default = ["k1", "other"])]
     auth_seconds: histogram,
-    #[describe("EIP-8130 lock-classification account-state resolutions by read source")]
-    #[label(name = "source", default = ["cache", "prefetch", "sload"])]
-    classification_state_reads: counter,
 }
 
 #[cfg(test)]

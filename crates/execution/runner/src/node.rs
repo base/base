@@ -111,25 +111,21 @@ impl BaseNode {
         let RollupArgs {
             discovery_v4,
             max_inflight_delegated_slots,
-            mempool_sender_limit,
             mempool_payer_limit,
             mempool_allowlisted_payer_limit,
             ..
         } = self.args;
+        self.args.warn_deprecated_flags();
         ComponentsBuilder::default()
             .node_types::<Node>()
             .pool(
                 BasePoolBuilder::default()
                     .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
                     .with_guard_limits(GuardLimits {
-                        signature_limit: mempool_sender_limit,
                         payment_limit: mempool_payer_limit,
                         allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
                     .with_validity_pool_limits(self.args.validity_pool_limits())
-                    .with_additional_trusted_delegation_targets(
-                        self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    )
                     .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
             )
             .executor(BaseExecutorBuilder::default())

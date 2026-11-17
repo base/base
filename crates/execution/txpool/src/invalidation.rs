@@ -43,16 +43,15 @@ pub enum InvalidationKey {
     /// Protocol (EOA) nonce of an account. Exact-match semantics.
     ProtocolNonce(Address),
     /// Account bytecode hash. Exact-match semantics; used when admission relies
-    /// on a payer remaining delegated to a trusted implementation. The index is
+    /// on a sender's code still accepting its EIP-8130 delegation. The index is
     /// deliberately address-keyed: every reported code change invalidates all
     /// watchers, even if the account later returns to a previously observed
     /// hash. This permits conservative false-positive invalidation rather than
     /// retaining a transaction across an unobserved intermediate code state.
     CodeHash(Address),
-    /// A raw storage slot `(contract address, slot)` — e.g. an actor-config or
-    /// account-state/lock slot in the EIP-8130 `AccountConfiguration` contract,
-    /// a 2D nonce-manager channel slot, or the nonce-manager slot recording a
-    /// nonce-free transaction's `replay_id`. Exact-match semantics.
+    /// A raw storage slot `(contract address, slot)` — e.g. a 2D nonce-manager
+    /// channel slot, or the nonce-manager slot recording a nonce-free
+    /// transaction's `replay_id`. Exact-match semantics.
     Slot {
         /// Contract whose storage slot is watched.
         address: Address,

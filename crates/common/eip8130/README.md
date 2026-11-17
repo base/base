@@ -11,7 +11,7 @@ transaction and therefore do not depend on any particular EVM implementation:
 - [`NonceManagerSlots`] — the ERC-7201 storage-slot derivation for the 2D nonce manager.
 
 It operates purely over the engine-neutral EIP-8130 types from `base-common-consensus`, with
-`alloy-primitives` for primitive types and `thiserror` for errors. It supports `no_std` when default
+`alloy-primitives` for primitive types. It supports `no_std` when default
 features are disabled. The revm execution path (`base-execution-eip8130`, `base-common-precompiles`)
 and the EVM2 execution path (`base-common-evm2`) both consume these primitives so the two engines
 cannot diverge on intrinsic-gas pricing or nonce-slot layout.

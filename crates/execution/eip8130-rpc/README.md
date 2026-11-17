@@ -31,16 +31,11 @@ the common `nonce_key != 0` case while keeping layout ownership inside
 
 Exposes [`Eip8130GasEstimator`], which estimates gas for an `eth_estimateGas`
 request carrying EIP-8130 fields (the sender account via `sender` or `from`,
-account changes, calls, `nonce_key`, `valid_after`/`valid_before`, metadata, and an optional
-`sender_actor_id` acting-actor hint). It builds an unsigned simulation
-transaction — the caller's `sender_auth` blob (a prefixed
-`authenticator(20) || data` blob for a configured account, a bare signature for
-the default EOA, or a stub when absent) lets the intrinsic schedule price
-authentication gas from its shape, and an optional `sender_actor_id` names the
-acting actor published to the `TxContext` precompile (default: the account's
-self-actor) so policy-gated session-key estimates resolve the right policy —
-and runs a single read-only `base_common_evm::Eip8130Executor::simulate`
-against the block state.
+account changes, calls, `nonce_key`, `valid_after`/`valid_before`, and metadata).
+It builds an unsigned simulation transaction — the caller's `sender_auth` blob
+(`K1_AUTHENTICATOR || r || s || v` for a named sender, a bare signature for the
+default EOA, or a stub when absent) — and runs a single read-only
+`base_common_evm::Eip8130Executor::simulate` against the block state.
 
 Because the EIP-8130 pipeline charges a deterministic, signature-independent
 amount (intrinsic + phased-call gas, less the EIP-3529-capped refund, plus payer
@@ -52,10 +47,8 @@ There is no outer gas-limit search like reth's standard estimator. Plain
 (non-8130) requests fall through to the standard reth estimator unchanged.
 
 The simulation applies the request's validity window at the simulated block's
-time (honoring a `time` block override on `eth_call`) and applies its account
-changes as inclusion would. A sequenced config change must therefore carry the
-account's current channel sequence and, on the local channel, its current local
-epoch; a mismatch is rejected with the expected and supplied values.
+time (honoring a `time` block override on `eth_call`) and applies its
+delegation as inclusion would.
 
 Both helpers are fork-agnostic: callers gate on the Everest hard fork via
 [`Eip8130EverestGate`] before invoking them.

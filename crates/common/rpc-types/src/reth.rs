@@ -119,16 +119,13 @@ impl SignableTxRequest<BaseTxEnvelope> for BaseTransactionRequest {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use base_common_consensus::{
-        Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
-    };
-    use base_common_evm::Eip8130ExecutionMode;
+    use base_common_consensus::{Eip8130Constants, Eip8130Signed, Eip8130StructuralError};
     use serde_json::json;
 
     use super::*;
     use crate::{
-        Eip8130AuthScheme, Eip8130SimulationRequestError,
-        eip8130::{MAX_AUTH_SIZE, STUB_AUTH_FILL},
+        Eip8130SimulationRequestError,
+        eip8130::{K1_SIGNATURE_LEN, MAX_AUTH_SIZE, STUB_AUTH_FILL},
     };
 
     const CHAIN_ID: u64 = 8453;
@@ -174,13 +171,13 @@ mod tests {
     }
 
     #[test]
-    fn sender_only_absent_auth_defaults_to_configured_k1() {
-        // A declared `sender` with no auth blob is a configured account: the
-        // absent blob defaults to a k1-prefixed stub on the configured path,
-        // rather than being under-estimated as a bare EOA.
+    fn sender_only_absent_auth_defaults_to_named_k1() {
+        // A declared `sender` with no auth blob is a named sender: the absent
+        // blob defaults to a k1-prefixed stub, rather than being
+        // under-estimated as a bare EOA.
         let tx = sim_tx(json!({ "sender": SENDER, "calls": [] }));
         let s = signed(&tx);
-        assert_eq!(s.tx().sender, Some(SENDER), "a declared sender sets the configured account");
+        assert_eq!(s.tx().sender, Some(SENDER), "a declared sender sets the named sender");
         let auth = s.sender_auth();
         assert_eq!(
             &auth[..20],
@@ -189,40 +186,10 @@ mod tests {
         );
         assert_eq!(
             auth.len(),
-            20 + Eip8130AuthScheme::Secp256k1.default_data_len(),
+            20 + K1_SIGNATURE_LEN,
             "the default stub is selector + the scheme's default data length",
         );
         assert!(s.payer_auth().is_empty(), "no declared payer means no payer auth");
-    }
-
-    #[test]
-    fn prefixed_p256_sender_auth_is_priced() {
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
-        }))
-        .expect("valid request");
-        let tx = req
-            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
-            .expect("a canonical authenticator is priced");
-        let s = signed(&tx);
-        assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
-    }
-
-    #[test]
-    fn prefixed_webauthn_sender_auth_is_priced() {
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), 512),
-        }))
-        .expect("valid request");
-        let tx = req
-            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
-            .expect("a canonical authenticator is priced");
-        let s = signed(&tx);
-        assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
     }
 
     #[test]
@@ -247,7 +214,7 @@ mod tests {
         assert!(s.tx().sender.is_none(), "a `from`-only absent-auth request is the EOA path");
         assert_eq!(
             s.sender_auth().len(),
-            Eip8130AuthScheme::Secp256k1.default_data_len(),
+            K1_SIGNATURE_LEN,
             "the bare secp256k1 stub is the scheme's default length (no selector)",
         );
     }
@@ -302,50 +269,6 @@ mod tests {
     }
 
     #[test]
-    fn delegate_prefixed_sender_auth_is_priced() {
-        let delegate_account = address!("0x00000000000000000000000000000000000000d4");
-        let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
-        nested.extend_from_slice(&[STUB_AUTH_FILL; 65]);
-        let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
-        blob.extend_from_slice(delegate_account.as_slice());
-        blob.extend_from_slice(&nested);
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderAuth": alloy_primitives::hex::encode_prefixed(&blob),
-        }))
-        .expect("valid request");
-        let tx = req
-            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
-            .expect("a canonical authenticator is priced");
-        let s = signed(&tx);
-        assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
-    }
-
-    #[test]
-    fn delegate_prefixed_payer_auth_is_priced() {
-        let payer = address!("0x00000000000000000000000000000000000000b2");
-        let delegate_account = address!("0x00000000000000000000000000000000000000d4");
-        let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
-        nested.extend_from_slice(&[STUB_AUTH_FILL; 65]);
-        let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
-        blob.extend_from_slice(delegate_account.as_slice());
-        blob.extend_from_slice(&nested);
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "sender": SENDER,
-            "calls": [],
-            "payer": payer,
-            "payerAuth": alloy_primitives::hex::encode_prefixed(&blob),
-        }))
-        .expect("valid request");
-        let tx = req
-            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
-            .expect("a canonical authenticator is priced");
-        let s = signed(&tx);
-        assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
-    }
-
-    #[test]
     fn from_and_sender_mismatch_is_rejected() {
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "from": FROM,
@@ -384,33 +307,6 @@ mod tests {
             req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
             Some(Eip8130SimulationRequestError::MissingSender),
             "an 8130 request with no account is rejected",
-        );
-    }
-
-    #[test]
-    fn explicit_secp256k1_scheme_resolves_to_the_k1_selector() {
-        // The mapping is pinned so the schedule charges the k1 entry.
-        assert_eq!(
-            Eip8130AuthScheme::Secp256k1.authenticator(),
-            Eip8130Constants::K1_AUTHENTICATOR,
-        );
-    }
-
-    #[test]
-    fn sender_auth_data_at_the_cap_is_accepted() {
-        // The 20-byte selector is excluded from the cap, so `MAX_AUTH_SIZE` data
-        // bytes are honoured (total = selector + data). WebAuthn carries
-        // variable-length data, unlike k1's fixed 65 bytes.
-        let tx = sim_tx(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), MAX_AUTH_SIZE as usize),
-        }));
-        let auth = signed(&tx).sender_auth();
-        assert_eq!(
-            auth.len(),
-            20 + MAX_AUTH_SIZE as usize,
-            "data at the cap is honoured (selector + data)",
         );
     }
 
@@ -525,21 +421,36 @@ mod tests {
         assert_eq!(signed(&tx).payer_auth().len(), 65, "the supplied signature is used verbatim");
     }
 
+    /// A named sender or payer authenticates with the k1 authenticator only.
+    /// Any other selector is read as a bare signature for the sender and
+    /// rejected for a named payer.
     #[test]
-    fn prefixed_p256_payer_auth_is_priced() {
-        let payer = address!("0x00000000000000000000000000000000000000b2");
+    fn non_k1_authenticators_are_not_priced() {
+        let other = address!("0x0000000000000000000000000000000000000100");
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
-            "payer": payer,
-            "payerAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
+            "senderAuth": blob(Some(other), 128),
         }))
         .expect("valid request");
-        let tx = req
-            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
-            .expect("a canonical authenticator is priced");
-        let s = signed(&tx);
-        assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
+        assert_eq!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::Structural(
+                Eip8130StructuralError::MalformedSenderAuth
+            )),
+        );
+
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
+            "sender": SENDER,
+            "calls": [],
+            "payer": address!("0x00000000000000000000000000000000000000b2"),
+            "payerAuth": blob(Some(other), 128),
+        }))
+        .expect("valid request");
+        assert_eq!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::UnrecognizedPayerAuthenticator),
+        );
     }
 
     #[test]
@@ -575,39 +486,6 @@ mod tests {
             Eip8130Constants::K1_AUTHENTICATOR.as_slice(),
             "the default payer authorization is prefixed with the k1 authenticator",
         );
-        assert_eq!(auth.len(), 20 + Eip8130AuthScheme::Secp256k1.default_data_len());
-    }
-
-    #[test]
-    fn sender_actor_id_is_threaded_to_parts() {
-        // The optional acting-actor hint is RPC-only metadata: it must land on
-        // the simulation parts so `simulate_resolve` can publish it to TxContext
-        // (and resolve that actor's policy) instead of always using the self-actor.
-        let actor = alloy_primitives::b256!(
-            "0x30df39d5edcf9ed82b6d77d27bff1192ac265918000000000000000000000000"
-        );
-        let tx = sim_tx(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderActorId": actor,
-        }));
-        let parts = tx.eip8130.as_ref().expect("eip8130 parts");
-        assert_eq!(parts.mode, Eip8130ExecutionMode::Simulate);
-        assert_eq!(
-            parts.simulation_sender_actor_id,
-            Some(actor),
-            "senderActorId must be threaded onto the simulation parts",
-        );
-    }
-
-    #[test]
-    fn absent_sender_actor_id_leaves_parts_hint_unset() {
-        let tx = sim_tx(json!({ "sender": SENDER, "calls": [] }));
-        let parts = tx.eip8130.as_ref().expect("eip8130 parts");
-        assert_eq!(parts.mode, Eip8130ExecutionMode::Simulate);
-        assert_eq!(
-            parts.simulation_sender_actor_id, None,
-            "without a hint the simulate path keeps the self-actor default",
-        );
+        assert_eq!(auth.len(), 20 + K1_SIGNATURE_LEN);
     }
 }

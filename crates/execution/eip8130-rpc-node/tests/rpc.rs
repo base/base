@@ -17,7 +17,7 @@ use alloy_eips::Encodable2718;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, U256, address, bytes, hex};
 use alloy_rpc_client::RpcClient;
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Predeploys};
+use base_common_consensus::{Eip8130Constants, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
@@ -192,8 +192,8 @@ async fn estimate_gas_rejects_mismatched_from_and_sender() -> eyre::Result<()> {
 
 /// A supplied secp256k1 authentication blob is priced only if it is well
 /// formed: k1 carries exactly 65 signature bytes, so a longer blob is rejected
-/// as pool admission rejects it, rather than priced. P-256 and `WebAuthn` blobs
-/// are rejected before Zenith, matching txpool admission.
+/// as pool admission rejects it, rather than priced. Any other authenticator is
+/// rejected, matching txpool admission.
 #[tokio::test]
 async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
@@ -217,14 +217,11 @@ async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<
         .expect_err("a malformed k1 blob must be rejected");
     assert!(err.to_string().contains("-32602"), "expected INVALID_PARAMS, got: {err}");
 
-    for authenticator in
-        [Eip8130Contracts::P256_AUTHENTICATOR, Eip8130Contracts::WEBAUTHN_AUTHENTICATOR]
-    {
-        assert!(
-            estimate(auth_blob(authenticator, 128)).await.is_err(),
-            "a non-k1 sender authenticator ({authenticator}) must be rejected"
-        );
-    }
+    let other_authenticator = Address::repeat_byte(0x05);
+    assert!(
+        estimate(auth_blob(other_authenticator, 128)).await.is_err(),
+        "a non-k1 sender authenticator must be rejected"
+    );
     Ok(())
 }
 
@@ -277,7 +274,7 @@ async fn estimate_gas_for_eip8130_request_with_reverting_call_fails() -> eyre::R
 
 /// An EIP-8130 `eth_estimateGas` request that names no account (neither `from`
 /// nor `sender`) must be rejected rather than silently simulated from the zero
-/// address: the sender identity drives actor resolution and policy lookup.
+/// address: the sender identity drives authentication and nonce lookup.
 #[tokio::test]
 async fn estimate_gas_for_eip8130_request_without_account_is_rejected() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;

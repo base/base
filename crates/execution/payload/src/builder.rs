@@ -1296,7 +1296,7 @@ where
                     target: "payload_builder",
                     tx_hash = ?tx.hash(),
                     cause = stale.cause(),
-                    "skipping EIP-8130 transaction with stale authorization manifest"
+                    "skipping EIP-8130 transaction with a stale admission manifest"
                 );
                 GuardMetrics::record_builder_precheck_drop(&stale);
                 if has_validity_predicates {
@@ -1318,36 +1318,7 @@ where
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit` (`0` for
             // non-8130 / self-pay); see `IntrinsicGas::payer_auth_cost_of`.
-            let tx_payer_auth = match tx.as_eip8130() {
-                Some(signed) => match IntrinsicGas::payer_auth_cost_of(signed) {
-                    Ok(payer_auth) => payer_auth,
-                    Err(err) => {
-                        trace!(
-                            target: "payload_builder",
-                            %err,
-                            tx_hash = ?tx.hash(),
-                            "skipping EIP-8130 transaction with unschedulable payer authenticator"
-                        );
-                        if has_validity_predicates {
-                            self.emit_validity_rejection(
-                                tx_hash,
-                                validity_consideration_index,
-                                "unschedulable_payer_authenticator",
-                                "EIP-8130 payer authenticator cannot be scheduled against the gas budget",
-                                false,
-                            );
-                        }
-                        Self::skip_current(
-                            &mut best_txs,
-                            tx.sender(),
-                            tx.nonce(),
-                            replay_independent,
-                        );
-                        continue;
-                    }
-                },
-                None => 0,
-            };
+            let tx_payer_auth = tx.as_eip8130().map_or(0, IntrinsicGas::payer_auth_cost_of);
 
             if coinbase_tip_affordability.unaffordable(
                 tx,
@@ -2451,12 +2422,7 @@ mod tests {
         let block_ms = DENIM_TIMESTAMP * 1_000 + u64::from(MILLIS_PART);
         let included = |deadline: UnixMillis| {
             let transaction = pool_transaction_to(0, Address::repeat_byte(0x8a), U256::ZERO);
-            transaction.set_watch_manifest(WatchManifest::new(
-                Vec::new(),
-                Address::ZERO,
-                U256::ZERO,
-                deadline,
-            ));
+            transaction.set_watch_manifest(WatchManifest::new(Address::ZERO, U256::ZERO, deadline));
             let mut provider = funded_provider(&[transaction.sender()]);
             let mut base_time_storage = HashMap::default();
             base_time_storage.insert(

@@ -20,7 +20,6 @@ use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
 use base_bundles::MeterBundleResponse;
 use base_common_consensus::{
     BaseTransactionSigned, CoinbaseTip, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
-    Predeploys,
 };
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
@@ -102,19 +101,16 @@ pub struct BasePooledTransaction<
     /// transaction, computed once during validation and consumed by the pool's
     /// invalidation index. Empty until set; see [`crate::WatchSet`].
     watch_set: OnceLock<crate::WatchSet>,
-    /// The admission limit classification (resolved sender/payer, lock/trusted
+    /// The admission limit classification (resolved sender/payer, allowlist
     /// status, payer balance and max cost), computed once during validation and
     /// consumed by the pool's admission guard. Unset until classified; see
     /// [`crate::LimitClass`].
     limit_class: OnceLock<crate::LimitClass>,
-    /// Sender policy gate target resolved during validation, when gated.
-    sender_policy_target: OnceLock<Address>,
     /// The classified EIP-8130 sender's obligation reported by `cost()`.
     sender_cost: OnceLock<U256>,
     /// Whether the sender's balance currently backs the declared coinbase tip.
     coinbase_tip_backing: CoinbaseTipBacking,
-    /// The authorization read-set and build-time predicates captured during
-    /// EIP-8130 validation. Unset for other transaction types; see
+    /// The build-time predicates captured during EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
     watch_manifest: OnceLock<crate::WatchManifest>,
     /// In-process `meter_bundle` result, attached after sim and before pool insert.
@@ -161,7 +157,6 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             validity_signature: None,
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
-            sender_policy_target: OnceLock::new(),
             sender_cost: OnceLock::new(),
             coinbase_tip_backing: CoinbaseTipBacking::default(),
             watch_manifest: OnceLock::new(),
@@ -353,9 +348,8 @@ where
     /// as queued instead of ranking it. Admission does not require the tip,
     /// so the cost is capped at [`BasePooledTransaction::MAX_POOL_COST`].
     ///
-    /// Computed once classified; validation sets the sender policy target,
-    /// which [`BasePooledTx::coinbase_tip`] reads, before the classification,
-    /// so the value is fixed while the transaction is pooled.
+    /// Computed once classified, so the value is fixed while the transaction
+    /// is pooled.
     fn cost(&self) -> &U256 {
         let Some(class) = self.limit_class.get() else {
             return &self.inner.cost;
@@ -394,10 +388,6 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
         // a transaction's size on removal exactly as they added it, so the size
         // must not change while the transaction is pooled.
         let encoding_size = core::mem::size_of::<OnceLock<Bytes>>() + self.inner.encoded_length;
-        let manifest_slots_size = self
-            .watch_manifest
-            .get()
-            .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
         let validity_predicates_size = self.validity_conditions.as_ref().map_or(0, |conditions| {
             core::mem::size_of::<crate::ValidityConditions>() + conditions.heap_size()
         });
@@ -413,7 +403,6 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + encoding_size
             + core::mem::size_of::<OnceLock<crate::LimitClass>>()
             + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
-            + manifest_slots_size
             + validity_predicates_size
             + core::mem::size_of::<Option<Arc<MeterBundleResponse>>>()
             + metering_size
@@ -551,15 +540,8 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     }
 
     /// Returns the statically declared coinbase tip this transaction can pay.
-    ///
-    /// A policy-gated sender's calls must all target its policy manager, so a
-    /// tip to the fee vault reverts, and pays nothing, unless the vault is that
-    /// target. Such a tip is not reported.
     fn coinbase_tip(&self) -> Option<U256> {
-        let tip = CoinbaseTip::decode(self.as_eip8130()?.tx())?;
-        self.sender_policy_target()
-            .is_none_or(|target| target == Predeploys::SEQUENCER_FEE_VAULT)
-            .then_some(tip)
+        CoinbaseTip::decode(self.as_eip8130()?.tx())
     }
 
     /// Returns whether the sender's balance currently backs
@@ -616,24 +598,14 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Defaults to a no-op.
     fn set_limit_class(&self, _limit_class: crate::LimitClass) {}
 
-    /// Returns the sender's policy gate target resolved during validation, when
-    /// the sender actor is policy-gated. Defaults to `None` (ungated).
-    fn sender_policy_target(&self) -> Option<Address> {
-        None
-    }
-
-    /// Records the sender's policy gate target resolved during validation.
-    /// Defaults to a no-op.
-    fn set_sender_policy_target(&self, _target: Address) {}
-
-    /// Returns build-time predicates captured during EIP-8130 authorization.
+    /// Returns build-time predicates captured during EIP-8130 admission.
     ///
     /// Defaults to `None` for transaction types that do not carry a manifest.
     fn watch_manifest(&self) -> Option<&crate::WatchManifest> {
         None
     }
 
-    /// Records build-time predicates captured during EIP-8130 authorization.
+    /// Records build-time predicates captured during EIP-8130 admission.
     ///
     /// Defaults to a no-op for transaction types that do not carry a manifest.
     fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
@@ -716,14 +688,6 @@ where
         let _ = self.limit_class.set(limit_class);
     }
 
-    fn sender_policy_target(&self) -> Option<Address> {
-        self.sender_policy_target.get().copied()
-    }
-
-    fn set_sender_policy_target(&self, target: Address) {
-        let _ = self.sender_policy_target.set(target);
-    }
-
     fn coinbase_tip_backed(&self) -> bool {
         self.coinbase_tip_backing.is_backed()
     }
@@ -778,8 +742,8 @@ mod tests {
     };
 
     use crate::{
-        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
-        UnixMillis, ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
+        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, InvalidationKey,
+        ValidityOperator, ValidityPredicate, WatchSet,
     };
 
     fn meter_response(results: usize) -> MeterBundleResponse {
@@ -1009,30 +973,6 @@ mod tests {
             transaction.size() >= size_without_keys + 2 * keys_size,
             "the keys are held by the transaction and again by the invalidation index"
         );
-    }
-
-    #[test]
-    fn in_memory_size_includes_manifest_slots() {
-        let transaction = eip8130_pooled(U256::ZERO);
-        let size_without_slots = transaction.size();
-        let manifest = WatchManifest::new(
-            vec![
-                ConfigSlot { address: Address::ZERO, slot: U256::ZERO, expected: U256::ZERO },
-                ConfigSlot {
-                    address: Address::repeat_byte(1),
-                    slot: U256::from(1),
-                    expected: U256::from(2),
-                },
-            ],
-            Address::ZERO,
-            U256::ZERO,
-            UnixMillis::MAX,
-        );
-        let slots_size = core::mem::size_of_val(manifest.config_slots());
-
-        transaction.set_watch_manifest(manifest);
-
-        assert_eq!(transaction.size(), size_without_slots + slots_size);
     }
 
     #[test]

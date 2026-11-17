@@ -19,7 +19,6 @@ alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-genesis.workspace = true
 alloy-consensus.workspace = true
-alloy-sol-types.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
 # compat
@@ -75,7 +74,6 @@ std = [
 	"alloy-rlp/std",
 	"alloy-rpc-types-eth?/std",
 	"alloy-serde?/std",
-	"alloy-sol-types/std",
 	"base-common-genesis/std",
 	"reth-codecs?/std",
 	"reth-primitives-traits?/std",
@@ -94,7 +92,6 @@ arbitrary = [
 	"alloy-primitives/rand",
 	"alloy-rpc-types-eth?/arbitrary",
 	"alloy-serde?/arbitrary",
-	"alloy-sol-types/arbitrary",
 	"base-common-genesis/arbitrary",
 	"dep:arbitrary",
 	"reth-codecs?/arbitrary",

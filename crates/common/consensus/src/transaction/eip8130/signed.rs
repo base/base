@@ -41,8 +41,8 @@ pub struct Eip8130Signed {
     ///
     /// On the EOA path (`tx.sender == None`) this is a 65-byte ECDSA signature
     /// (`r || s || v`) over [`TxEip8130::sender_signature_hash`].
-    /// On the configured-actor path (`tx.sender == Some(_)`) this is
-    /// `authenticator(20) || authenticator_data`.
+    /// On the named-sender path (`tx.sender == Some(_)`) this is
+    /// `K1_AUTHENTICATOR(20) || r || s || v`.
     sender_auth: Bytes,
     /// Payer authentication payload, or empty for self-pay.
     ///
@@ -52,7 +52,7 @@ pub struct Eip8130Signed {
     ///
     /// - Open payer mode: a raw 65-byte `r || s || v` signature, from which the
     ///   payer is recovered.
-    /// - Named payer: `authenticator(20) || authenticator_data`.
+    /// - Named payer: `K1_AUTHENTICATOR(20) || r || s || v`.
     ///
     /// When `tx.payer.is_none()` this is empty.
     payer_auth: Bytes,
@@ -345,7 +345,7 @@ impl Eip8130Signed {
     }
 
     /// Returns the sender address if it is explicitly provided by the
-    /// transaction body (configured-actor path).
+    /// transaction body (named-sender path).
     pub const fn explicit_sender(&self) -> Option<Address> {
         self.tx.sender
     }
@@ -355,7 +355,7 @@ impl Eip8130Signed {
     /// EIP-2).
     ///
     /// Returns `Ok(None)` when [`Self::explicit_sender`] is `Some(_)` — the
-    /// configured-actor path does not require ecrecover because the sender
+    /// named-sender path does not require ecrecover because the sender
     /// address is already in the transaction body.
     ///
     /// Returns `Ok(Some(addr))` when [`TxEip8130::sender`] is `None`: parses
@@ -387,7 +387,7 @@ impl Eip8130Signed {
     }
 
     /// Recovers the sender of this signed transaction by short-circuiting to
-    /// [`Self::explicit_sender`] for the configured-actor path and otherwise
+    /// [`Self::explicit_sender`] for the named-sender path and otherwise
     /// running checked EOA ecrecover. Flattens the [`Self::recover_eoa_sender`]
     /// `Option` so call sites in the pooled and envelope `SignerRecoverable`
     /// implementations stay one-liners and cannot drift.
@@ -415,8 +415,8 @@ impl Eip8130Signed {
     /// Recovers a signer from a raw 65-byte `r || s || v` blob over `hash`.
     ///
     /// Requires `v in {27, 28}` and EIP-2 low-`s`. This is the single checked
-    /// recovery for a raw k1 blob: open-payer resolution and
-    /// `RecoveredActorId::recover_k1` both go through it.
+    /// recovery for a raw k1 blob: open-payer resolution and named k1
+    /// authentication both go through it.
     #[cfg(feature = "k256")]
     pub fn recover_raw_k1(
         hash: B256,
@@ -476,8 +476,8 @@ impl Eip8130Signed {
         if self.tx.sender.is_some() {
             return Ok(None);
         }
-        // Canonical-encoding guard, matching the k1 authenticator's strict
-        // `v in {27, 28}` check in `RecoveredActorId::recover_k1`.
+        // Canonical-encoding guard, matching the strict `v in {27, 28}` check
+        // of named k1 authentication.
         let signature = Self::parse_raw_k1_signature(self.sender_auth.as_ref())?;
         let hash = self.tx.sender_signature_hash();
         recover(&signature, hash).map(Some)
@@ -978,7 +978,7 @@ mod tests {
 
     #[cfg(feature = "k256")]
     #[test]
-    fn recover_eoa_sender_returns_none_for_configured_actor() {
+    fn recover_eoa_sender_returns_none_for_named_sender() {
         let signed = sample_signed_8130(false);
         assert!(signed.explicit_sender().is_some());
         assert_eq!(signed.recover_eoa_sender().unwrap(), None);
@@ -1074,7 +1074,7 @@ mod tests {
 
     #[cfg(feature = "k256")]
     #[test]
-    fn recover_eoa_sender_unchecked_returns_none_for_configured_actor() {
+    fn recover_eoa_sender_unchecked_returns_none_for_named_sender() {
         let signed = sample_signed_8130(false);
         assert!(signed.explicit_sender().is_some());
         assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), None);

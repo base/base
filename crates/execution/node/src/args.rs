@@ -10,11 +10,11 @@ use std::{
 use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
 use base_execution_txpool::{
-    DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT,
-    ValidityPoolLimits,
+    DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, ValidityPoolLimits,
 };
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
+use reth_tracing::tracing::warn;
 
 /// Default proofs history window: 15 days of blocks at 200ms block time.
 pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 6_480_000;
@@ -370,7 +370,7 @@ pub struct RollupArgs {
     /// txpool. Reth defaults to 1, which prevents delegated accounts from submitting multiple
     /// transactions within a block (e.g. buy + approve in a single block).
     ///
-    /// We raise the default to 4 (matching the EIP-8130 sender cap). Delegated code can move the
+    /// We raise the default to 4. Delegated code can move the
     /// account's balance mid-block, so a queued tx can become insolvent before the next canonical
     /// update; but that case fails fast — revm rejects on the pre-execution balance check before
     /// running any delegated code — so the only cost of a small cap is bounded (linear in the cap)
@@ -378,20 +378,16 @@ pub struct RollupArgs {
     #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 4)]
     pub max_inflight_delegated_slots: usize,
 
-    /// Maximum inflight EIP-8130 transactions per non-locked sender account.
-    #[arg(long = "rollup.mempool-sender-limit", default_value_t = DEFAULT_SIGNATURE_LIMIT)]
-    pub mempool_sender_limit: u32,
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "rollup.mempool-sender-limit", hide = true)]
+    pub mempool_sender_limit: Option<u32>,
 
     /// Maximum inflight EIP-8130 transactions per count-limited payer account.
     #[arg(long = "rollup.mempool-payer-limit", default_value_t = DEFAULT_PAYMENT_LIMIT)]
     pub mempool_payer_limit: u32,
 
-    /// Additional operator-trusted delegation targets for balance-bounded locked payers.
-    ///
-    /// This is local, non-consensus mempool policy and may intentionally differ between nodes.
-    /// Only configure implementations whose locked mode prevents ETH outflows other than the gas
-    /// they sponsor; an unsafe target weakens this node's aggregate payer-balance admission bound.
-    #[arg(long = "rollup.mempool-trusted-delegation-targets", value_delimiter = ',')]
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "rollup.mempool-trusted-delegation-targets", value_delimiter = ',', hide = true)]
     pub mempool_trusted_delegation_targets: Vec<Address>,
 
     /// Payers allowed more inflight EIP-8130 sponsored transactions than the default payer
@@ -533,6 +529,18 @@ impl RollupArgs {
             max_account_slots: self.validity_pool_max_account_slots,
         }
     }
+
+    /// Logs a warning when a deprecated, ignored flag is set.
+    pub fn warn_deprecated_flags(&self) {
+        if self.mempool_sender_limit.is_some()
+            || !self.mempool_trusted_delegation_targets.is_empty()
+        {
+            warn!(
+                "deprecated --rollup.mempool-sender-limit and \
+                 --rollup.mempool-trusted-delegation-targets flags are ignored"
+            );
+        }
+    }
 }
 
 impl HasRollupArgs for RollupArgs {
@@ -550,7 +558,7 @@ impl Default for RollupArgs {
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
             max_inflight_delegated_slots: 4,
-            mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
+            mempool_sender_limit: None,
             mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,
             mempool_trusted_delegation_targets: Vec::new(),
             mempool_allowlisted_payers: Vec::new(),
@@ -684,7 +692,7 @@ mod tests {
     #[test]
     fn test_parse_mempool_limits_default() {
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert_eq!(args.mempool_sender_limit, DEFAULT_SIGNATURE_LIMIT);
+        assert_eq!(args.mempool_sender_limit, None);
         assert_eq!(args.mempool_payer_limit, DEFAULT_PAYMENT_LIMIT);
         assert!(args.mempool_trusted_delegation_targets.is_empty());
         assert!(args.mempool_allowlisted_payers.is_empty());
@@ -695,20 +703,33 @@ mod tests {
     fn test_parse_mempool_limits() {
         let args = CommandParser::<RollupArgs>::parse_from([
             "reth",
-            "--rollup.mempool-sender-limit",
-            "8",
             "--rollup.mempool-payer-limit",
             "16",
-            "--rollup.mempool-trusted-delegation-targets",
-            "0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002",
             "--rollup.mempool-allowlisted-payers",
             "0x0000000000000000000000000000000000000003",
             "--rollup.mempool-allowlisted-payer-limit",
             "128",
         ])
         .args;
-        assert_eq!(args.mempool_sender_limit, 8);
         assert_eq!(args.mempool_payer_limit, 16);
+        assert_eq!(
+            args.mempool_allowlisted_payers,
+            vec!["0x0000000000000000000000000000000000000003".parse::<Address>().unwrap()]
+        );
+        assert_eq!(args.mempool_allowlisted_payer_limit, 128);
+    }
+
+    #[test]
+    fn test_parse_deprecated_mempool_flags() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.mempool-sender-limit",
+            "8",
+            "--rollup.mempool-trusted-delegation-targets",
+            "0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002",
+        ])
+        .args;
+        assert_eq!(args.mempool_sender_limit, Some(8));
         assert_eq!(
             args.mempool_trusted_delegation_targets,
             vec![
@@ -716,11 +737,6 @@ mod tests {
                 "0x0000000000000000000000000000000000000002".parse::<Address>().unwrap(),
             ]
         );
-        assert_eq!(
-            args.mempool_allowlisted_payers,
-            vec!["0x0000000000000000000000000000000000000003".parse::<Address>().unwrap()]
-        );
-        assert_eq!(args.mempool_allowlisted_payer_limit, 128);
     }
 
     #[test]

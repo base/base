@@ -6,67 +6,34 @@ The transaction type itself (`AA_TX_TYPE`, `0x79`), with its gas schedule, nonce
 modes, is specified separately as EIP-8430, the transaction-type half of EIP-8130. These crates
 keep the EIP-8130 name for both.
 
-This crate owns the full reusable EIP-8130 validation pipeline that previously lived
-across several small crates:
+This crate owns the reusable EIP-8130 validation pipeline:
 
-- stateless authenticator dispatch (`AuthenticatorDispatch`),
-- `AccountConfiguration` storage reads (`AccountConfigurationStorage`),
-- stateful actor authorization (`ActorAuthorizer`),
-- transaction sender/payer and config-change authorization (`ActorTxVerifier`,
-  `ConfigChangeAuthorizer`),
+- transaction sender and payer authorization with the native secp256k1
+  authenticator (`ResolvedSender`, `TransactionAuthorizer`),
+- the delegation account change (`DelegationEffect`),
 - 2D nonce validation (`NonceValidator`), and
 - intrinsic gas accounting and fee/balance validation (`IntrinsicGas`,
   `Eip8130GasSchedule`, `FeeCheck`).
 
-The split is now internal module structure instead of independent workspace crates.
-
-## Enshrined, not a precompile
-
-The canonical authenticators (P-256, `WebAuthn`, Delegate; native secp256k1 ecrecover for
-k1) are **enshrined** here as native Rust implementations keyed by their canonical
-CREATE2 addresses (from `base-common-consensus::Eip8130Contracts`). This is the
-protocol's own fast-path for authenticating AA transactions during validation and block
-execution; the EIP explicitly permits enshrining canonical authenticators at a fixed gas
-cost provided results are identical to the deployed contract.
-
-This is **not** an EVM precompile and does **not** shadow the authenticator addresses:
-ordinary EVM `CALL`/`STATICCALL` to those addresses still hits the real deployed
-contract bytecode (e.g. `AccountConfiguration.verifySignature()`, `applySignedActorChanges()`
-on non-8130 chains, wallet code). The native code here is invoked only by the protocol.
-
-## Parity is required
-
-Because the enshrined path and the EVM path can authenticate the same actor, the native
-implementation MUST produce byte-identical `actorId` results to the deployed authenticator
-contracts. The enshrined logic is pinned to a specific contract version via the
-`init_code_hash` constants in `Eip8130Contracts`; a contract bytecode change shifts the
-canonical address (caught by the registry drift test) and requires re-pinning the address
-and re-validating parity here. A differential test against the deployed contracts (via the
-EVM) is a planned follow-up.
-
 ## Validation Layers
 
-The crate keeps the protocol stages explicit while avoiding crate sprawl:
-
-- **Dispatch** verifies canonical authenticator blobs and resolves actor ids.
-- **State** reads `AccountConfiguration` storage directly, without EVM calls.
-- **Authorize** binds resolved actors to account config, expiry, scope, and policy.
-- **Transaction auth** applies sender, payer, and config-change operation gates.
+- **Transaction auth** recovers the sender and payer from their secp256k1
+  signatures. A recovered (EOA) sender carries a bare 65-byte signature; a
+  named sender or payer carries `K1_AUTHENTICATOR || r || s || v` and must
+  recover to the named address. In open payer mode the payer is whoever the
+  bare `payer_auth` signature recovers to. No other authenticator is accepted,
+  and authorization reads no state.
+- **Delegation** allows at most one account change, a delegation, which sets or
+  clears the sender's EIP-7702-style delegation indicator. It only replaces
+  empty code or an existing indicator, never deployed contract code.
 - **Nonce validation** checks protocol, 2D-channel, and nonce-free replay state,
   and requires a transaction carrying a delegation to use the protocol nonce.
 - **Gas and fees** compute the EIP-8130 intrinsic gas and validate the fee caps
   and the payer's balance (see below).
-- **Orchestration** composes the final sender/payer signatures with the
-  transaction's ordered account-configuration changes — advancing each channel
-  sequence per applied entry — into one authorization verdict (`TransactionAuthorizer`),
-  shared by mempool admission and block inclusion. It writes the account
-  changes through the storage provider it is given (the journal at inclusion, a
-  discarded overlay in the pool); nonce, gas, and fee/balance checks remain
-  separate stages.
-- **Protocol logs** inject `ActorAuthorized` / `ActorRevoked` / `AccountCreated`
-  into the journal from the enshrined apply path
-  (`AccountConfigurationEvents`), matching the `IAccountConfiguration` event ABIs
-  so indexers can enumerate actors from 8130 transaction receipts.
+
+`TransactionAuthorizer` composes the sender and payer signatures with the
+delegation into one verdict, shared by mempool admission and block inclusion;
+nonce, gas, and fee/balance checks remain separate stages.
 
 ## Intrinsic gas
 
@@ -75,7 +42,7 @@ formula:
 
 ```text
 intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + value_transfer_cost
-              + bytecode_cost + account_changes_cost + sender_auth_cost
+              + account_changes_cost + sender_auth_cost
               + first_call_cost + sender_access_cost + payer_auth_cost
 ```
 
@@ -85,16 +52,15 @@ amount for the same transaction plus its 5,100 k1 authentication cost.
 
 | Component | Source |
 |---|---|
-| `base` | `AA_BASE_COST` (12,000): EIP-2780's `TX_BASE_COST`, covering one account access, one nonce write and one balance write in whichever accounts they land. It also covers the sender's cold `policy_manager` SLOAD, which every transaction pays since whether the sender's actor is policy-gated is state |
-| `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the RLP of `account_changes`, `calls` and `metadata`, plus `sender_auth` unless it is a k1 signature — the *standard* rate, subject to the EIP-7623 calldata floor below. The envelope (nonces, fees, `gas_limit`, validity window) is not metered, as in EIP-2780 |
+| `base` | `AA_BASE_COST` (12,000): EIP-2780's `TX_BASE_COST`, covering one account access, one nonce write and one balance write in whichever accounts they land |
+| `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the RLP of `account_changes`, `calls` and `metadata` — the *standard* rate, subject to the EIP-7623 calldata floor below. The envelope (nonces, fees, `gas_limit`, validity window) is not metered, as in EIP-2780 |
 | `payload_floor` | EIP-7623 calldata floor over the same bytes: `TX_TOTAL_COST_FLOOR_PER_TOKEN` (10) per payload token instead of the standard 4, so a data-heavy transaction cannot post data availability more cheaply than a standard EIP-7623 transaction on the same chain (always `>= payload`) |
 | `first_call` | `2,600` cold account access for the first call's target (the first call of the first non-empty phase), as EIP-2780 charges `tx.to`; `0` when `calls` is empty or the target is the sender |
 | `sender_account` | `2,600` cold account access for the sender's account when `payer` is set and differs from the sender (always in open payer mode, whose payer is only known from `payer_auth`). The base's one account access goes to the payer, and every transaction reads the sender's account nonce, so this is the second account; `0` for self-pay, with `payer` empty or equal to the sender |
 | `nonce_key` | protocol nonce (`nonce_key == 0`) `0`, even on first use: it is the account nonce, bumped without touching the nonce manager and covered by `AA_BASE_COST` as a legacy transaction's base cost covers its nonce; nonce-free `13,000`; otherwise `22,100` when `nonce_sequence == 0` (the key's first use, since a sequenced key's current nonce must equal `nonce_sequence`) and `5,000` after (a cold SLOAD plus an SSTORE set or reset) |
 | `value_transfer` | `6,000` per call with `value > 0` and `to != sender` |
-| `bytecode` | per create entry: `32,000 + 200 · code_len` |
-| `account_changes` | per create entry: one fresh packed `account_state` write plus one fresh `actor_config` slot write per initial actor; policy actors set `policy_commitment`/`policy_manager`, while ungated actors pay the cold zero-to-zero touches that preserve access warming; per config-change entry: a packed `account_state` write covering the sequence advance and lock read, always priced as a cold zero-to-nonzero write even when an earlier entry already touched the slot, its `auth` cost, and each mutated actor/policy slot; a revoke always prices all three actor/policy resets, whatever the slots hold; a self-actor change adds no separate bump — its inline-self write is already covered by the config-change `account_state` cost and its `actor_config(self)` home by the per-change slot cost; per delegation entry: the `4,600` indicator deposit |
-| `sender_auth` / `payer_auth` | authenticator execution gas + one cold config/state SLOAD (the sender's policy read is in `base`); `payer_auth` is `0` for self-pay. A k1 signature's bytes are covered by its authentication cost; any other `payer_auth` adds its bytes at the EIP-7623 floor rate (`10` per token) to `payer_auth_cost`. `payer_auth_cost` is the exact amount used for the payer's pre-charge, the EIP-7825 cap, the block gas reservation and settlement, and must not exceed `MAX_AUTHENTICATION_GAS` (100,000) |
+| `account_changes` | the delegation entry's `4,600` indicator deposit; `0` without one |
+| `sender_auth` / `payer_auth` | `5,100`: the `3,000` secp256k1 recovery plus one cold `2,100` state read; `payer_auth` is `0` for self-pay. A signature's bytes are covered by this cost and are not metered as payload. `payer_auth_cost` is the exact amount used for the payer's pre-charge, the EIP-7825 cap, the block gas reservation and settlement |
 
 A value-bearing call to an account that does not exist also pays `25,000` for
 account creation when it runs, since existence is only known at dispatch.
@@ -121,7 +87,7 @@ execution cannot drive the maximum block size back up. An 8130 transaction has
 no single `data` field, so the floor is evaluated over the metered payload. As
 in EIP-2780, one floor covers the whole transaction, and its base keeps the
 base, authentication, account access and value charges while dropping the
-state-dependent ones (`nonce_key`, `bytecode`, `account_changes`):
+state-dependent ones (`nonce_key`, `account_changes`):
 
 ```text
 sender_floor = base + sender_auth + first_call + sender_account + value_transfer
@@ -131,9 +97,8 @@ metered_gas  = max(sender_intrinsic + execution_gas_used, sender_floor)
 ```
 
 A `gas_limit` below either `sender_floor` or `sender_intrinsic` is rejected at
-mempool acceptance and at inclusion. Metered `payer_auth` bytes are already
-priced at the floor rate inside `payer_auth_cost`, so the payer has no
-separate floor. From Everest, gas-limit billing settles the whole reservation
+mempool acceptance and at inclusion. The payer pays only `payer_auth_cost`
+and has no separate floor. From Everest, gas-limit billing settles the whole reservation
 instead: `gas_limit + payer_auth_cost`, with no refund (see
 [`docs/guides/GAS_LIMIT_BILLING.md`](../../../docs/guides/GAS_LIMIT_BILLING.md)).
 The `10`-per-token rate is normative structure: an L2-profile
@@ -142,20 +107,13 @@ standard `4` or drop the floor.
 
 ### Authenticator execution gas
 
-The EIP lets a chain enshrine the canonical authenticators and charge a fixed
-gas per authenticator. `Eip8130GasSchedule` pins these to the EVM precompile
-costs Base already uses:
-
-| Authenticator | execution gas | basis |
-|---|---|---|
-| secp256k1 (`K1_AUTHENTICATOR` sentinel, EOA path) | 3,000 | `ECRECOVER` precompile |
-| P-256 | 6,900 | EIP-7951 `P256VERIFY` precompile |
-| `WebAuthn` | 6,900 | P-256 verify + SHA-256 + `clientDataJSON` handling |
-| delegate (depth-1) | `2,100 + nested` | extra cold `actor_config` SLOAD on the delegate account + the nested authenticator's execution |
+The only authenticator is native secp256k1 recovery (the `K1_AUTHENTICATOR`
+sentinel, or a bare signature on the EOA path). `Eip8130GasSchedule` prices its
+execution at `3,000`, the `ECRECOVER` precompile cost.
 
 The EIP-8130 gas schedule is a recommendation at the current point in time;
-chains may implement a different schedule. A `#[cfg(test)]` drift tripwire pins
-the EVM gas primitives to revm's canonical constants so an upstream repricing is
+chains may implement a different schedule. A drift tripwire test pins the EVM
+gas primitives to revm's canonical constants so an upstream repricing is
 caught here rather than silently diverging.
 
 ## Fees and balance

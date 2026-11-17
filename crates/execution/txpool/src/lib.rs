@@ -10,14 +10,14 @@
 mod guard;
 pub use guard::{
     Admission, AdmissionRecord, DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT,
-    DEFAULT_SIGNATURE_LIMIT, GuardLimits, LimitClass, LimitRejection, MempoolGuard,
+    GuardLimits, LimitClass, LimitRejection, MempoolGuard,
 };
 
 mod invalidation;
 pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet, Watchers};
 
 mod manifest;
-pub use manifest::{ConfigSlot, ManifestStale, WatchManifest};
+pub use manifest::{ManifestStale, WatchManifest};
 
 mod unix_millis;
 pub use unix_millis::UnixMillis;
@@ -26,7 +26,7 @@ mod limits;
 pub use limits::{InflightCounters, PayerBook};
 
 mod validator;
-pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, LimitClassCache};
+pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError};
 
 mod best;
 

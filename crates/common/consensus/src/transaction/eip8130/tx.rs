@@ -34,7 +34,7 @@ use crate::transaction::eip8130::{
 ///
 /// - [`Self::sender`]: `None` selects the EOA path (recovered from
 ///   `sender_auth` as a 65-byte ECDSA signature); `Some` selects the
-///   configured-actor path with an explicit account address.
+///   named-sender path with an explicit account address.
 /// - [`Self::payer`]: `None` selects self-pay (the resolved sender pays);
 ///   [`Eip8130Constants::OPEN_PAYER`] selects open payer mode (the payer is
 ///   recovered from `payer_auth`); any other address selects that payer.
@@ -532,7 +532,6 @@ impl TxEip8130 {
     pub fn size(&self) -> usize {
         mem::size_of::<Self>()
             + self.account_changes.capacity().saturating_mul(mem::size_of::<AccountChange>())
-            + self.account_changes.iter().map(AccountChange::heap_size).sum::<usize>()
             + self.calls.capacity().saturating_mul(mem::size_of::<Vec<Call>>())
             + self
                 .calls
@@ -1291,45 +1290,6 @@ mod tests {
             "calldata heap must be counted: bare={}, with_data={}",
             bare.size(),
             with_data.size()
-        );
-    }
-
-    #[test]
-    fn size_counts_account_change_nested_heap() {
-        use crate::transaction::eip8130::account_changes::{
-            AccountChangeChannel, ChangeType, SignedAccountChanges, SignedChange,
-        };
-
-        let bare = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(SignedAccountChanges {
-                channel: AccountChangeChannel::Local,
-                sequence: 0,
-                changes: vec![SignedChange {
-                    change_type: ChangeType::RevokeActor,
-                    payload: Bytes::new(),
-                }],
-                signature: Bytes::new(),
-            })],
-            ..Default::default()
-        };
-        let with_auth = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(SignedAccountChanges {
-                channel: AccountChangeChannel::Local,
-                sequence: 0,
-                changes: vec![SignedChange {
-                    change_type: ChangeType::RevokeActor,
-                    payload: Bytes::new(),
-                }],
-                signature: Bytes::from(vec![0xcd; 2_048]),
-            })],
-            ..Default::default()
-        };
-
-        assert!(
-            with_auth.size() >= bare.size() + 2_048,
-            "config-change signature heap must be counted: bare={}, with_auth={}",
-            bare.size(),
-            with_auth.size()
         );
     }
 }

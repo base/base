@@ -70,19 +70,19 @@ where
         self.provider.chain_spec().chain().id()
     }
 
-    /// The latest block's timestamp, rejecting the call unless Everest is active at it.
-    fn everest_timestamp(&self) -> RpcResult<u64> {
+    /// Rejects the call unless Everest is active at the latest block.
+    fn check_everest(&self) -> RpcResult<()> {
         let header = self.provider.latest_header().map_err(|error| {
             warn!(error = %error, "failed to read latest header for payer fork gate");
             PayerRejection::temporarily_unavailable("failed to resolve latest header")
         })?;
         header
-            .map(|header| header.timestamp())
-            .filter(|timestamp| {
+            .filter(|header| {
                 self.provider
                     .chain_spec()
-                    .is_feature_active_at_timestamp(BaseFeature::Eip8430, *timestamp)
+                    .is_feature_active_at_timestamp(BaseFeature::Eip8430, header.timestamp())
             })
+            .map(|_| ())
             .ok_or_else(|| invalid_params(PAYER_PRE_EVEREST_RPC_ERROR))
     }
 
@@ -94,16 +94,11 @@ where
     /// payment with a more specific rejection than the node could, such as
     /// `SENDER_BALANCE_INSUFFICIENT` with other offers to switch to. A nonce that cannot be read
     /// passes the transaction on, since the payer checks it too.
-    async fn check_transaction(&self, raw: &[u8], timestamp: u64) -> RpcResult<()> {
-        let keystore = self
-            .provider
-            .chain_spec()
-            .is_feature_active_at_timestamp(BaseFeature::Keystore, timestamp);
-        let transaction =
-            PayerTransaction::decode(raw, self.chain_id(), keystore).map_err(|error| {
-                debug!(error = %error, "rejected payer_sendTransaction transaction before forward");
-                PayerRejection::invalid_transaction(error)
-            })?;
+    async fn check_transaction(&self, raw: &[u8]) -> RpcResult<()> {
+        let transaction = PayerTransaction::decode(raw, self.chain_id()).map_err(|error| {
+            debug!(error = %error, "rejected payer_sendTransaction transaction before forward");
+            PayerRejection::invalid_transaction(error)
+        })?;
         let Some((sender, nonce_key)) = transaction.nonce_channel() else {
             return Ok(());
         };
@@ -139,7 +134,7 @@ where
     State: PayerChainState,
 {
     async fn get_terms(&self, request: Value) -> RpcResult<Value> {
-        self.everest_timestamp()?;
+        self.check_everest()?;
         PayerRequestFilter::validate_get_terms(&request, self.chain_id()).map_err(|error| {
             debug!(error = %error, "rejected payer_getTerms before forward");
             invalid_params(error)
@@ -148,12 +143,12 @@ where
     }
 
     async fn send_transaction(&self, request: Value) -> RpcResult<Value> {
-        let timestamp = self.everest_timestamp()?;
+        self.check_everest()?;
         let raw = PayerRequestFilter::validate_send_transaction(&request).map_err(|error| {
             debug!(error = %error, "rejected payer_sendTransaction before forward");
             invalid_params(error)
         })?;
-        self.check_transaction(&raw, timestamp).await?;
+        self.check_transaction(&raw).await?;
         self.forward("payer_sendTransaction", &request).await
     }
 }

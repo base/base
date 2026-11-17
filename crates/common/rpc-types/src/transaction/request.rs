@@ -8,11 +8,11 @@ use alloy_eips::eip7702::SignedAuthorization;
 #[cfg(feature = "network")]
 use alloy_network::TransactionBuilder;
 use alloy_network_primitives::TransactionBuilder7702;
-use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
+use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, EIP8130_TX_TYPE_ID,
-    Eip8130Constants, Eip8130Contracts, Eip8130PayerSerde, TxDeposit,
+    Eip8130Constants, Eip8130PayerSerde, TxDeposit,
 };
 use serde::{
     Deserialize, Deserializer, Serialize,
@@ -22,77 +22,19 @@ use serde_json::{Map, Value};
 
 use crate::Transaction;
 
-/// Named EIP-8130 authenticator selectors.
-///
-/// [`Self::Secp256k1`] sizes the default authorization when a blob is absent.
-/// P256, `WebAuthn`, and the delegate authenticator are priced when the chain
-/// supports them; otherwise `eth_estimateGas` rejects them, matching txpool
-/// admission.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Eip8130AuthScheme {
-    /// secp256k1 — the k1 authenticator (also the absent-blob default).
-    Secp256k1,
-    /// P-256 (secp256r1) authenticator.
-    P256,
-    /// `WebAuthn` authenticator (P-256 over `authenticatorData || clientDataJSON`).
-    WebAuthn,
-}
-
-impl Eip8130AuthScheme {
-    /// The enshrined authenticator address whose schedule entry prices this
-    /// scheme.
-    #[must_use]
-    pub const fn authenticator(self) -> Address {
-        match self {
-            Self::Secp256k1 => Eip8130Constants::K1_AUTHENTICATOR,
-            Self::P256 => Eip8130Contracts::P256_AUTHENTICATOR,
-            Self::WebAuthn => Eip8130Contracts::WEBAUTHN_AUTHENTICATOR,
-        }
-    }
-
-    /// Representative byte length of the authentication `data` (the bytes after
-    /// the 20-byte authenticator selector) for a real signature of this scheme.
-    /// Used to size the default secp256k1 authorization synthesized when a
-    /// `sender_auth` / `payer_auth` blob is absent; a supplied blob is priced at
-    /// its own length instead.
-    #[must_use]
-    pub const fn default_data_len(self) -> usize {
-        match self {
-            Self::Secp256k1 => 65,
-            Self::P256 => 128,
-            Self::WebAuthn => 256,
-        }
-    }
-
-    /// Every variant, in declaration order. The authoritative list for
-    /// exhaustively handling every flat leaf scheme (e.g. building a default
-    /// stub) — consult this rather than re-deriving the variant set by hand,
-    /// so a new variant can't silently go unhandled. See the
-    /// `eip8130_auth_scheme_all_lists_every_variant` test for the
-    /// compile-time guard that keeps this in sync with the enum.
-    ///
-    /// The variants other than [`Self::Secp256k1`] are accepted only where the
-    /// chain supports them.
-    pub const ALL: [Self; 3] = [Self::Secp256k1, Self::P256, Self::WebAuthn];
-}
-
 /// EIP-8130 account-abstraction fields layered onto a standard
 /// [`TransactionRequest`] for the `eth_call` / `eth_estimateGas` AA path.
 ///
 /// All fields are optional and absent for a plain (non-8130) request; their
 /// presence (via [`Eip8130RequestFields::is_some`]) marks a request as an
-/// EIP-8130 simulation. Authentication is priced from the *shape* of the
-/// `sender_auth` / `payer_auth` blobs, never verified: the caller passes the
-/// authentication blob it intends to sign (`authenticator(20) || data` for a
-/// configured account, or a bare secp256k1 signature for the default EOA), and
-/// the estimate charges that blob's authenticator execution gas plus its
-/// EIP-2028 calldata cost — so a caller estimates the cost of any key type
-/// without first signing.
+/// EIP-8130 simulation. Authentication is never verified: the caller may pass
+/// the authentication blob it intends to sign (`K1_AUTHENTICATOR(20) || sig`
+/// for a named account, or a bare secp256k1 signature for the default EOA),
+/// and the estimate charges the fixed k1 authentication cost.
 ///
 /// The sender account is [`sender`](Self::sender) or the standard `from`, which
 /// must agree when both are present; the `sender_auth` blob's form then selects
-/// the EOA vs configured-account path (see
+/// the EOA vs named-account path (see
 /// [`crate::BaseTransactionRequest::to_eip8130_simulation_tx`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,12 +42,8 @@ pub struct Eip8130RequestFields {
     /// The 2D nonce channel key. Absent or zero is the protocol-nonce channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nonce_key: Option<U256>,
-    /// Account-configuration changes applied before the calls (create,
-    /// authorize/revoke actor, set delegation).
-    ///
-    /// Simulation applies them as inclusion would, so a sequenced config change
-    /// must carry the account's current channel sequence (and, on the local
-    /// channel, its current local epoch); a mismatch rejects the request.
+    /// Account changes applied before the calls: at most one delegation entry,
+    /// which simulation installs as inclusion would.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -138,36 +76,23 @@ pub struct Eip8130RequestFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
     /// The EIP-8130 sender account the batch dispatches from — the wire-level
-    /// `sender` identity that drives actor resolution and policy lookup.
-    /// Interchangeable with the standard `from`: the estimate
+    /// `sender` identity. Interchangeable with the standard `from`: the estimate
     /// resolves the account as `sender` or `from`, and rejects a request where
     /// both are present but disagree, or where neither is set, as
-    /// `INVALID_PARAMS`. A declared `sender` also selects the configured-account
+    /// `INVALID_PARAMS`. A declared `sender` also selects the named-account
     /// default when `sender_auth` is absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender: Option<Address>,
-    /// Raw sender authentication blob whose *shape* is priced into the estimate
-    /// (never verified): estimation reads its length (for EIP-2028 calldata gas)
-    /// and, in the prefixed configured-account form, its leading 20-byte
-    /// authenticator selector (for the intrinsic-schedule execution gas).
+    /// Raw sender authentication blob, never verified. Its form selects the
+    /// authentication path, mirroring the on-wire transaction:
     ///
-    /// The blob's form also selects the authentication path, mirroring the
-    /// on-wire transaction:
-    ///
-    /// - A bare secp256k1 signature prices the default-EOA path: the account
-    ///   authenticates with a k1 key, exactly as for a 1559 transaction.
-    /// - `authenticator(20) || data` prefixed with the native k1 authenticator
-    ///   prices the configured-account path.
-    /// - A prefix that names P256, `WebAuthn`, or the delegate authenticator is
-    ///   priced when the chain supports it and rejected otherwise, matching
-    ///   txpool admission.
+    /// - A bare 65-byte secp256k1 signature prices the default-EOA path: the
+    ///   account authenticates with a k1 key, exactly as for a 1559 transaction.
+    /// - `K1_AUTHENTICATOR(20) || sig` prices the named-account path.
     ///
     /// An absent blob defaults by intent: a declared `sender` synthesizes a
-    /// k1-prefixed configured-account authorization; a `from`-only request
-    /// synthesizes a bare secp256k1 signature.
-    ///
-    /// Pass a representative blob for the key you intend to sign with (e.g. a
-    /// filler-byte stub of the right length); you need not sign first.
+    /// k1-prefixed authorization; a `from`-only request synthesizes a bare
+    /// secp256k1 signature. You need not sign first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_auth: Option<Bytes>,
     /// Sponsoring payer account, or `"0x00"` for open payer mode. When set, the
@@ -180,15 +105,12 @@ pub struct Eip8130RequestFields {
         deserialize_with = "Eip8130PayerSerde::deserialize"
     )]
     pub payer: Option<Address>,
-    /// Raw payer authentication blob whose shape is priced when a `payer` is
-    /// declared.
+    /// Raw payer authentication blob, used when a `payer` is declared.
     ///
-    /// For a named payer this is `authenticator(20) || data`, and absent
+    /// For a named payer this is `K1_AUTHENTICATOR(20) || sig`, and absent
     /// defaults to a representative secp256k1 payer authorization. A supplied
-    /// blob's leading 20 bytes must name the native k1 authenticator or a
-    /// canonical authenticator the chain supports. Any other selector is
-    /// rejected as `INVALID_PARAMS` rather than priced, and a canonical one the
-    /// chain does not support is rejected by the simulation.
+    /// blob that does not start with the k1 authenticator is rejected as
+    /// `INVALID_PARAMS`.
     ///
     /// In open payer mode this is the payer's raw 65-byte signature, from which
     /// the payer is recovered. It is optional: before any payer has signed, an
@@ -197,24 +119,10 @@ pub struct Eip8130RequestFields {
     /// `0x0000000000000000000000000000000000008130`, never as the sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
-    /// Optional acting-actor hint for simulation. Estimation never recovers a
-    /// signature, so without this hint the simulate path publishes the account's
-    /// self-actor to the `TxContext` precompile — which makes policy-gated
-    /// session-key calls look up the wrong policy and revert. When set, the
-    /// simulate path publishes this actor id (and resolves its policy) after
-    /// applying `account_changes`, so an actor authorized in the same estimate
-    /// request is visible. Ignored on the verifying execution path.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sender_actor_id: Option<B256>,
 }
 
 impl Eip8130RequestFields {
     /// Whether any field that defines an EIP-8130 request is present.
-    ///
-    /// [`Self::sender_actor_id`] is excluded: it is a simulation-only auxiliary
-    /// hint about an already-8130 request, not an indicator of one. A stray
-    /// `senderActorId` on a plain transaction is therefore ignored rather than
-    /// routing the request onto the AA simulation path.
     pub const fn is_some(&self) -> bool {
         self.nonce_key.is_some()
             || self.account_changes.is_some()
@@ -228,16 +136,16 @@ impl Eip8130RequestFields {
             || self.payer_auth.is_some()
     }
 
+    /// Maximum `accountChanges` entries: delegation is the only account change
+    /// type, and a transaction carries at most one.
+    pub const MAX_ACCOUNT_CHANGES: usize = 1;
+
     /// Deserializes `accountChanges`, rejecting more than
-    /// [`Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`] entries while decoding.
+    /// [`Self::MAX_ACCOUNT_CHANGES`] entries while decoding.
     pub fn deserialize_account_changes<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Vec<AccountChange>>, D::Error> {
-        Self::deserialize_bounded(
-            deserializer,
-            Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX,
-            "accountChanges",
-        )
+        Self::deserialize_bounded(deserializer, Self::MAX_ACCOUNT_CHANGES, "accountChanges")
     }
 
     /// Deserializes `calls`, rejecting more than
@@ -374,8 +282,6 @@ impl<'de> Deserialize<'de> for BaseTransactionRequest {
             payer: Option<Address>,
             #[serde(default)]
             payer_auth: Option<Bytes>,
-            #[serde(default)]
-            sender_actor_id: Option<B256>,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -417,7 +323,6 @@ impl<'de> Deserialize<'de> for BaseTransactionRequest {
             sender_auth: wire.sender_auth,
             payer: wire.payer,
             payer_auth: wire.payer_auth,
-            sender_actor_id: wire.sender_actor_id,
         };
         Ok(Self { inner, eip8130 })
     }
@@ -776,7 +681,7 @@ mod tests {
         eip4844::{BlobTransactionSidecar, Bytes48},
         eip7594::{BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant},
     };
-    use alloy_primitives::address;
+    use alloy_primitives::{B256, address};
     use base_common_consensus::Delegation;
     use serde_json::json;
 
@@ -826,7 +731,6 @@ mod tests {
             sender_auth: Some(Bytes::from_static(&[0x01])),
             payer: Some(Address::repeat_byte(0x08)),
             payer_auth: Some(Bytes::from_static(&[0x02])),
-            sender_actor_id: Some(B256::repeat_byte(0x09)),
         };
         BaseTransactionRequest { inner, eip8130 }
     }
@@ -894,7 +798,7 @@ mod tests {
             )
         };
         let max_calls = Eip8130Constants::MAX_CALL_PHASES_PER_TX;
-        let max_changes = Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX;
+        let max_changes = Eip8130RequestFields::MAX_ACCOUNT_CHANGES;
 
         let request = decode(max_calls, max_changes).unwrap();
         let fields = request.as_eip8130().unwrap();
@@ -904,29 +808,7 @@ mod tests {
         let error = decode(max_calls + 1, max_changes).unwrap_err().to_string();
         assert!(error.contains("`calls` with at most 1024 entries"), "{error}");
         let error = decode(max_calls, max_changes + 1).unwrap_err().to_string();
-        assert!(error.contains("`accountChanges` with at most 3 entries"), "{error}");
-    }
-
-    #[test]
-    fn eip8130_auth_scheme_all_lists_every_variant() {
-        // Exhaustive match with no wildcard arm: adding a variant to
-        // `Eip8130AuthScheme` without a corresponding arm here fails to
-        // compile (independent of whether the case ever runs), which is the
-        // signal to also extend `Eip8130AuthScheme::ALL` above.
-        fn assert_listed(scheme: Eip8130AuthScheme) {
-            assert!(
-                Eip8130AuthScheme::ALL.contains(&scheme),
-                "{scheme:?} is missing from Eip8130AuthScheme::ALL",
-            );
-            match scheme {
-                Eip8130AuthScheme::Secp256k1
-                | Eip8130AuthScheme::P256
-                | Eip8130AuthScheme::WebAuthn => {}
-            }
-        }
-        for scheme in Eip8130AuthScheme::ALL {
-            assert_listed(scheme);
-        }
+        assert!(error.contains("`accountChanges` with at most 1 entries"), "{error}");
     }
 
     #[test]
@@ -961,22 +843,6 @@ mod tests {
         assert_eq!(calls[0].len(), 1);
         // The base fields still deserialize into the inner request.
         assert_eq!(req.as_ref().max_fee_per_gas, Some(5));
-    }
-
-    #[test]
-    fn sender_actor_id_alone_does_not_mark_request_as_eip8130() {
-        // `senderActorId` is metadata about an 8130 request, not a defining
-        // field — a lone hint must not route a plain request onto the AA path.
-        let json = r#"{
-            "from":"0x0000000000000000000000000000000000000001",
-            "to":"0x0000000000000000000000000000000000000002",
-            "senderActorId":"0x30df39d5edcf9ed82b6d77d27bff1192ac265918000000000000000000000000"
-        }"#;
-        let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
-        assert!(
-            req.as_eip8130().is_none(),
-            "senderActorId alone must not classify the request as EIP-8130",
-        );
     }
 
     #[test]
