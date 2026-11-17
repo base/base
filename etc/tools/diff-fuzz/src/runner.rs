@@ -140,8 +140,10 @@ impl Adapter {
         let line = match received {
             Ok(Ok(line)) => line,
             Ok(Err(err)) => {
-                let status = running.child.wait().ok();
-                self.process = None;
+                // The adapter may still be alive, for example after a non-UTF-8 line stops the
+                // reader, so read the status without blocking and kill it.
+                let status = running.child.try_wait().ok().flatten();
+                self.kill();
                 return Err(CallFailure::Crashed(format!("{err} (exit status {status:?})")));
             }
             Err(RecvTimeoutError::Timeout) => {
@@ -188,5 +190,25 @@ impl Drop for Adapter {
             let _ = running.child.kill();
             let _ = running.child.wait();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+
+    #[test]
+    fn non_utf8_response_from_live_adapter_is_a_crash_not_a_hang() {
+        let spec = AdapterSpec {
+            name: "bad".to_owned(),
+            command: ["sh", "-c", "printf '\\377\\n'; exec sleep 60"].map(str::to_owned).to_vec(),
+        };
+        let mut adapter = Adapter::new(spec, Duration::from_secs(30));
+        let started = Instant::now();
+        let result = adapter.call_line("x", "{}");
+        assert!(matches!(result, Err(CallFailure::Crashed(_))), "{result:?}");
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 }
