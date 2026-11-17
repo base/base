@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_primitives::{Address, Bytes};
 use alloy_serde::OtherFields;
-use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, DepositReceipt, Eip8130Receipt};
+use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, DepositReceipt, TxBaseReceipt};
 use serde::{Deserialize, Serialize};
 
 use crate::BaseLogResponse;
@@ -22,33 +22,33 @@ pub struct BaseTransactionReceipt {
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
-    /* --------------------------------------- EIP-8130 --------------------------------------- */
-    /// Gas payer address for EIP-8130 transactions: the sender for self-pay, or the
+    /* ----------------------------------- Base transaction ----------------------------------- */
+    /// Gas payer address for Base transactions: the sender for self-pay, or the
     /// specified payer for sponsored transactions.
     ///
-    /// Always null for non-EIP-8130 transactions.
+    /// Always null for non-Base transactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<Address>,
-    /// Per-phase execution statuses for EIP-8130 transactions.
+    /// Per-phase execution statuses for Base transactions.
     ///
     /// Each entry is `0x01` (success) or `0x00` (reverted); phases after a revert are
-    /// not executed and reported as `0x00`. `None` for non-EIP-8130 transactions (the
-    /// field is omitted from the JSON); `Some([])` for an EIP-8130 transaction whose
-    /// `calls` was empty, which per EIP-8130 must still surface as `"phaseStatuses": []`.
+    /// not executed and reported as `0x00`. `None` for non-Base transactions (the
+    /// field is omitted from the JSON); `Some([])` for a Base transaction whose
+    /// `calls` was empty, which per EIP-8430 must still surface as `"phaseStatuses": []`.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "phase_statuses_serde")]
     pub phase_statuses: Option<Vec<u8>>,
-    /// Opaque transaction metadata for EIP-8130 transactions, committed to by the sender
+    /// Opaque transaction metadata for Base transactions, committed to by the sender
     /// and payer signatures but otherwise uninterpreted by the protocol.
     ///
-    /// Always null for non-EIP-8130 transactions.
+    /// Always null for non-Base transactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
 }
 
-/// EIP-8130-specific fields attached to a transaction receipt response.
+/// Base-transaction-specific fields attached to a transaction receipt response.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Eip8130ReceiptFields {
+pub struct TxBaseReceiptFields {
     /// Resolved gas payer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<Address>,
@@ -61,10 +61,10 @@ pub struct Eip8130ReceiptFields {
     pub metadata: Option<Bytes>,
 }
 
-impl TryFrom<Eip8130ReceiptFields> for OtherFields {
+impl TryFrom<TxBaseReceiptFields> for OtherFields {
     type Error = serde_json::Error;
 
-    fn try_from(value: Eip8130ReceiptFields) -> Result<Self, Self::Error> {
+    fn try_from(value: TxBaseReceiptFields) -> Result<Self, Self::Error> {
         serde_json::to_value(value)?.try_into()
     }
 }
@@ -177,11 +177,11 @@ mod l1_fee_scalar_serde {
     }
 }
 
-/// Serde for the EIP-8130 `phaseStatuses` field.
+/// Serde for the Base transaction `phaseStatuses` field.
 ///
-/// Separates applicability from contents: `None` (a non-EIP-8130 receipt) is
+/// Separates applicability from contents: `None` (a non-Base receipt) is
 /// omitted from the JSON via `skip_serializing_if`, while `Some(vec)` — including
-/// the empty vector for an EIP-8130 transaction whose `calls` was empty — always
+/// the empty vector for a Base transaction whose `calls` was empty — always
 /// serializes as a (possibly empty) array of `0x00`/`0x01` quantities.
 mod phase_statuses_serde {
     use alloc::vec::Vec;
@@ -319,9 +319,9 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
             BaseReceipt::Eip7702(receipt) => {
                 Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
             }
-            BaseReceipt::Eip8130(receipt) => Self::Eip8130(
+            BaseReceipt::Base(receipt) => Self::Base(
                 convert_standard_receipt(receipt.inner, logs_bloom)
-                    .map_receipt(|inner| Eip8130Receipt::new(inner, receipt.committed_phases)),
+                    .map_receipt(|inner| TxBaseReceipt::new(inner, receipt.committed_phases)),
             ),
             BaseReceipt::Deposit(receipt) => {
                 Self::Deposit(convert_standard_receipt(receipt.inner, logs_bloom).map_receipt(
@@ -399,7 +399,7 @@ mod tests {
     fn phase_statuses_distinguishes_absent_from_empty() {
         use alloc::{vec, vec::Vec};
 
-        // The base JSON carries no `phaseStatuses`, so a non-EIP-8130 receipt
+        // The base JSON carries no `phaseStatuses`, so a non-Base receipt
         // deserializes to `None` and re-serializes with the field omitted.
         let s = r#"{
             "blockHash": "0x9e6a0fb7e22159d943d760608cc36a0fb596d1ab3c997146f5b7c55c8c718c67",
@@ -424,7 +424,7 @@ mod tests {
         let json = serde_json::to_value(&receipt).unwrap();
         assert!(json.get("phaseStatuses").is_none(), "absent statuses must omit the field");
 
-        // Applicable but empty (EIP-8130 with empty `calls`) must serialize as `[]`,
+        // Applicable but empty (Base transaction with empty `calls`) must serialize as `[]`,
         // distinguishable from the omitted field above, and round-trip back to `Some([])`.
         receipt.phase_statuses = Some(Vec::new());
         let json = serde_json::to_value(&receipt).unwrap();
@@ -483,9 +483,9 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_receipt_fields_use_canonical_rpc_shape() {
+    fn base_tx_receipt_fields_use_canonical_rpc_shape() {
         let payer = Address::repeat_byte(0xaa);
-        let fields = Eip8130ReceiptFields {
+        let fields = TxBaseReceiptFields {
             payer: Some(payer),
             phase_statuses: vec![0x01, 0x00],
             metadata: Some(Bytes::from_static(&[0xca, 0xfe])),
@@ -499,7 +499,7 @@ mod tests {
         let other = OtherFields::try_from(fields).unwrap();
         assert_eq!(other.get("phaseStatuses"), Some(&json!(["0x1", "0x0"])));
 
-        let empty_calls = Eip8130ReceiptFields { payer: Some(payer), ..Default::default() };
+        let empty_calls = TxBaseReceiptFields { payer: Some(payer), ..Default::default() };
         assert_eq!(serde_json::to_value(&empty_calls).unwrap()["phaseStatuses"], json!([]));
     }
 }

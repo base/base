@@ -697,7 +697,7 @@ mod tests {
                 | BaseFeature::ExtendedSequencerDrift
                 | BaseFeature::OneShotPayloadBuilding
                 | BaseFeature::SingularBatchesOnly => BaseUpgrade::Denim,
-                BaseFeature::Eip8130
+                BaseFeature::TxBase
                 | BaseFeature::Eip8430
                 | BaseFeature::NativeNonceManager
                 | BaseFeature::GasLimitBilling => BaseUpgrade::Everest,

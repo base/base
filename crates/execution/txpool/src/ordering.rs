@@ -1,7 +1,7 @@
 //! Transaction ordering strategies for the Base mempool.
 //!
 //! [`UnifiedTipOrdering`] ranks by tip-per-gas — an EIP-1559 priority fee, or a
-//! statically decoded EIP-8130 coinbase tip over `gas_limit` — and breaks ties
+//! statically decoded Base transaction coinbase tip over `gas_limit` — and breaks ties
 //! in favor of fewer validity predicates. [`TimestampOrdering`] is FIFO.
 
 use std::{
@@ -91,7 +91,7 @@ impl<T> Default for BaseOrdering<T> {
 
 /// Tip-per-gas bid with a fewer-predicates tiebreak.
 ///
-/// The bid is the rational `tip / gas`. Standard transactions and EIP-8130
+/// The bid is the rational `tip / gas`. Standard transactions and Base
 /// transactions without a static coinbase tip use `effective_tip_per_gas` as
 /// `tip` and `gas = 1`. A statically decoded coinbase tip uses that amount as
 /// `tip` and the transaction `gas_limit` as `gas`.
@@ -156,10 +156,10 @@ impl Ord for UnifiedTipPriority {
     }
 }
 
-/// Unified tip-per-gas ordering for standard and EIP-8130 transactions.
+/// Unified tip-per-gas ordering for standard and Base transactions.
 ///
 /// Uses [`BasePooledTx::coinbase_tip`] when the transaction is a statically-analyzable
-/// EIP-8130 coinbase tip; otherwise ranks by `effective_tip_per_gas`. Returns
+/// Base transaction coinbase tip; otherwise ranks by `effective_tip_per_gas`. Returns
 /// [`Priority::None`] when `max_fee_per_gas < base_fee`, including for a
 /// decoded coinbase tip. A tip only counts while
 /// [`BasePooledTx::coinbase_tip_backed`] holds. Same bid prefers fewer
@@ -314,7 +314,7 @@ mod tests {
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, Call,
-        Eip8130Signed, Predeploys, TxEip8130,
+        Predeploys, TxBase, TxBaseSigned,
     };
     use base_test_utils::Account;
     use reth_primitives_traits::Recovered;
@@ -425,7 +425,7 @@ mod tests {
         BasePooledTransaction::new(recovered, len)
     }
 
-    fn eip8130_pooled(
+    fn base_tx_pooled(
         max_fee_per_gas: u128,
         max_priority_fee_per_gas: u128,
         gas_limit: u64,
@@ -439,7 +439,7 @@ mod tests {
                 data: Bytes::new(),
             }]]
         });
-        let tx = TxEip8130 {
+        let tx = TxBase {
             chain_id: ChainConfig::mainnet().chain_id,
             sender: None,
             nonce_key: U256::ZERO,
@@ -456,8 +456,8 @@ mod tests {
         };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+            TxBaseSigned::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Base(signed);
         BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
     }
 
@@ -600,8 +600,8 @@ mod tests {
     fn coinbase_tip_per_gas_competes_with_priority_fee() {
         let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
         let standard = eip1559_pooled(1, 10, 2, 21_000);
-        let cheaper_at = eip8130_pooled(10, 0, 21_000, Some(U256::from(21_000)));
-        let richer_at = eip8130_pooled(10, 0, 21_000, Some(U256::from(63_000)));
+        let cheaper_at = base_tx_pooled(10, 0, 21_000, Some(U256::from(21_000)));
+        let richer_at = base_tx_pooled(10, 0, 21_000, Some(U256::from(63_000)));
 
         assert!(ordering.priority(&standard, 0) > ordering.priority(&cheaper_at, 0));
         assert!(ordering.priority(&richer_at, 0) > ordering.priority(&standard, 0));
@@ -611,9 +611,9 @@ mod tests {
     fn fewer_predicates_win_equal_bid() {
         let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
         let standard = eip1559_pooled(1, 10, 2, 21_000);
-        let one_predicate = eip8130_pooled(10, 0, 21_000, Some(U256::from(42_000)))
+        let one_predicate = base_tx_pooled(10, 0, 21_000, Some(U256::from(42_000)))
             .with_validity_predicates(vec![block_number_predicate()]);
-        let two_predicates = eip8130_pooled(10, 0, 21_000, Some(U256::from(42_000)))
+        let two_predicates = base_tx_pooled(10, 0, 21_000, Some(U256::from(42_000)))
             .with_validity_predicates(vec![block_number_predicate(), block_number_predicate()]);
 
         assert!(ordering.priority(&standard, 0) > ordering.priority(&one_predicate, 0));
@@ -624,7 +624,7 @@ mod tests {
     fn unbacked_coinbase_tip_preserves_submitted_predicate_tiebreak() {
         let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
         let predicates = vec![block_number_predicate(), block_number_predicate()];
-        let transaction = eip8130_pooled(10, 2, 21_000, Some(U256::from(63_000)))
+        let transaction = base_tx_pooled(10, 2, 21_000, Some(U256::from(63_000)))
             .with_validity_predicates(predicates.clone());
         let same_fee_and_count =
             eip1559_pooled(1, 10, 2, 21_000).with_validity_predicates(predicates);
@@ -652,10 +652,10 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_without_static_tip_uses_priority_fee() {
+    fn base_tx_without_static_tip_uses_priority_fee() {
         let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
         let standard = eip1559_pooled(1, 10, 3, 21_000);
-        let aa = eip8130_pooled(10, 3, 50_000, None);
+        let aa = base_tx_pooled(10, 3, 50_000, None);
 
         assert_eq!(ordering.priority(&standard, 0), ordering.priority(&aa, 0));
     }
@@ -686,7 +686,7 @@ mod tests {
     #[test]
     fn below_base_fee_coinbase_tip_has_no_priority() {
         let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
-        let tx = eip8130_pooled(10, 0, 21_000, Some(U256::from(42_000)));
+        let tx = base_tx_pooled(10, 0, 21_000, Some(U256::from(42_000)));
         assert_eq!(ordering.priority(&tx, 20), Priority::None);
     }
     /// Bids by struct literal, so `gas == 0` reaches `cmp` without `new`'s clamp.

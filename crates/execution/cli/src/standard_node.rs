@@ -6,7 +6,7 @@ use base_builder_metering::{
     DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
     MeteringStoreExtension,
 };
-use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
+use base_execution_base_tx_rpc_node::TxBaseRpcExtension;
 use base_execution_payer_rpc::{PayerRpcConfig, PayerRpcExtension};
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
@@ -752,7 +752,7 @@ impl StandardBaseRethNode {
 
         // Feature extensions. `replace_configured` overwrites rather than composes
         // RPC methods, so each overridden method must have exactly one owner:
-        //   - Eip8130RpcExtension: owns eth_getTransactionCount, eth_estimateGas
+        //   - TxBaseRpcExtension: owns eth_getTransactionCount, eth_estimateGas
         //     and eth_call.
         //   - ProofsHistoryExtension: registers eth_getProof variants (disjoint from
         //     the above, so it can sit anywhere in the chain).
@@ -823,7 +823,7 @@ impl StandardBaseRethNode {
         }
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
-        runner.install_ext::<Eip8130RpcExtension>(());
+        runner.install_ext::<TxBaseRpcExtension>(());
         Ok(runner)
     }
 

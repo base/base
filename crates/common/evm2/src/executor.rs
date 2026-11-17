@@ -62,12 +62,12 @@ impl core::error::Error for PreExecutionError {}
 ///
 /// Mirrors the reference `BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas`: a
 /// transaction whose reserved gas is larger than the block's unused gas cannot be included. The
-/// reserved gas is the transaction's gas limit, plus — for an EIP-8130 transaction — the payer's
+/// reserved gas is the transaction's gas limit, plus — for a Base transaction — the payer's
 /// authentication gas ([`IntrinsicGas::payer_auth_cost_of`]), which is metered on top
 /// of the sender-signed gas limit (matching the reference `reserved_block_gas`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockGasLimitExceeded {
-    /// The transaction's reserved gas (gas limit, plus EIP-8130 payer-auth reservation).
+    /// The transaction's reserved gas (gas limit, plus Base transaction payer-auth reservation).
     pub transaction_gas_limit: u64,
     /// The block's remaining available gas (block gas limit minus cumulative gas used).
     pub block_available_gas: u64,
@@ -111,22 +111,22 @@ impl core::fmt::Display for DaFootprintAboveGasLimit {
 
 impl core::error::Error for DaFootprintAboveGasLimit {}
 
-/// Error returned for an EIP-8130 transaction, whose enshrined execution path this engine does not
+/// Error returned for a Base transaction, whose enshrined execution path this engine does not
 /// implement yet.
 ///
 /// The `0x79` receipt commits to the number of call phases that committed, which only the
 /// enshrined execution path can produce, so the transaction is rejected before execution rather
 /// than included with a receipt that disagrees with the reference executor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Eip8130ExecutionUnsupported;
+pub struct TxBaseExecutionUnsupported;
 
-impl core::fmt::Display for Eip8130ExecutionUnsupported {
+impl core::fmt::Display for TxBaseExecutionUnsupported {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("EIP-8130 transaction execution is not supported by this engine")
+        f.write_str("Base transaction execution is not supported by this engine")
     }
 }
 
-impl core::error::Error for Eip8130ExecutionUnsupported {}
+impl core::error::Error for TxBaseExecutionUnsupported {}
 
 /// Block-boundary context for pre-execution system calls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -160,7 +160,7 @@ pub struct BlockExecutionResult {
 /// irregular state transitions), then [`execute_transaction`](Self::execute_transaction) per
 /// transaction (running it through the registry, building its receipt with running cumulative gas,
 /// and committing its state into a [`BlockStateAccumulator`]), then [`finish`](Self::finish). The
-/// EIP-8130 path and the Jovian DA-footprint checks are layered on in follow-up work.
+/// Base transaction path and the Jovian DA-footprint checks are layered on in follow-up work.
 #[derive(Debug)]
 pub struct BaseBlockExecutor<'a> {
     evm: Evm<'a, BaseEvmTypes>,
@@ -230,8 +230,8 @@ impl<'a> BaseBlockExecutor<'a> {
 
     /// Applies the Base transition-block irregular state changes, in the reference order: the
     /// Canyon create2-deployer force-deploy, the Denim `BaseTime` predeploy install, then the
-    /// Everest EIP-8130 system-account stub. Each is fork-gated on `chain_spec` at this block's
-    /// timestamp and commits its state into the block state. Must run after
+    /// Everest Base transaction system-account stub. Each is fork-gated on `chain_spec` at this
+    /// block's timestamp and commits its state into the block state. Must run after
     /// [`apply_pre_execution`](Self::apply_pre_execution) and before any transactions.
     pub fn apply_transition_hooks(
         &mut self,
@@ -245,7 +245,7 @@ impl<'a> BaseBlockExecutor<'a> {
             &mut self.block_state,
         )?;
         BaseTime::ensure_predeploy(chain_spec, timestamp, &mut self.evm, &mut self.block_state)?;
-        Everest::ensure_eip8130_system_accounts(
+        Everest::ensure_base_tx_system_accounts(
             chain_spec,
             timestamp,
             &mut self.evm,
@@ -272,12 +272,12 @@ impl<'a> BaseBlockExecutor<'a> {
         let signer = tx.signer();
 
         // Reject a transaction whose reserved gas exceeds the block's remaining gas, before
-        // executing it. For an EIP-8130 transaction the reservation adds the payer's
+        // executing it. For a Base transaction the reservation adds the payer's
         // authentication gas (metered on top of the sender-signed gas limit), matching the
         // reference `reserved_block_gas`. Pre-Regolith deposits are exempt (matching the reference's
         // `is_regolith || !is_deposit` guard); every other transaction is checked.
         let mut reserved_gas = tx.gas_limit();
-        if let Some(signed) = tx.as_eip8130() {
+        if let Some(signed) = tx.as_base_tx() {
             reserved_gas = reserved_gas.saturating_add(IntrinsicGas::payer_auth_cost_of(signed));
         }
         let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();
@@ -314,8 +314,8 @@ impl<'a> BaseBlockExecutor<'a> {
             0
         };
 
-        if tx.as_eip8130().is_some() {
-            return Err(HandlerError::external(Eip8130ExecutionUnsupported));
+        if tx.as_base_tx().is_some() {
+            return Err(HandlerError::external(TxBaseExecutionUnsupported));
         }
 
         // The deposit receipt records the depositor's nonce *before* the deposit executes (and

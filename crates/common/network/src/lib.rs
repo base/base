@@ -11,7 +11,7 @@ mod base;
 pub use base::Base;
 
 mod builder;
-pub use builder::Eip8130BuildError;
+pub use builder::TxBaseBuildError;
 
 mod engine;
 pub use engine::{BaseEngineApi, SharedEngineApi};

@@ -223,7 +223,7 @@ with the configured contracts and test funds, never a public RPC.
 
 The transfer profiles (`eip8430-transfer.yaml` and the synthetic mainnet mix)
 have the following properties.
-They use the existing `Eip8130Signed` consensus implementation (type `0x79`), ECDSA EOA
+They use the existing `TxBaseSigned` consensus implementation (type `0x79`), ECDSA EOA
 authentication, self-payment, and nonce key zero, sharing each sender's protocol nonce
 stream with ordinary transactions. Calibration submits the same native envelope as measured
 load and uses its receipt gas; the 200,000 gas limit is a ceiling, not a gas estimate.
@@ -580,7 +580,7 @@ validity:
 The `nonce` predicate compares the watched account's protocol nonce immediately
 before transaction execution, using the same operators and `address`, `op`, and
 `value` fields as `balance`. Absent accounts have nonce zero. It does not read
-EIP-8130 channel nonces; use a storage predicate for those. Like every validity
+Base transaction channel nonces; use a storage predicate for those. Like every validity
 submission, nonce predicates must be paired with a `block_number` upper bound.
 
 Predicate addresses resolve per transaction: `sender` → the tx `from`,

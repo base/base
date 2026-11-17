@@ -7,9 +7,7 @@ use base_action_harness::{
     SharedL1Chain, TestRollupConfigBuilder, TestRollupNode, VerifierPipeline,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_consensus::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, Call, Eip8130Signed, TxEip8130,
-};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, Call, TxBase, TxBaseSigned};
 use base_test_utils::Account;
 
 /// L2 timestamp where the Everest fork activates in these tests.
@@ -58,10 +56,10 @@ impl EverestTestEnv {
         Self { sequencer, harness, batcher_cfg, node, chain, chain_id }
     }
 
-    /// Creates a signed EOA-path EIP-8130 transaction bound to this
-    /// environment's chain, via the shared [`Self::eip8130_user_tx`] builder.
-    pub(crate) fn create_eip8130_tx(&self, nonce_sequence: u64) -> BaseTxEnvelope {
-        Self::eip8130_user_tx(self.chain_id, nonce_sequence)
+    /// Creates a signed EOA-path Base transaction bound to this
+    /// environment's chain, via the shared [`Self::base_tx_user_tx`] builder.
+    pub(crate) fn create_base_tx(&self, nonce_sequence: u64) -> BaseTxEnvelope {
+        Self::base_tx_user_tx(self.chain_id, nonce_sequence)
     }
 
     /// Batches the supplied L2 blocks, derives each one, and asserts the final safe head.
@@ -117,17 +115,17 @@ impl EverestTestEnv {
             .unwrap_or_else(|| panic!("user tx receipt {user_tx_index} must exist"))
     }
 
-    /// Builds a signed EOA-path EIP-8130 transaction from Alice with a single
+    /// Builds a signed EOA-path Base transaction from Alice with a single
     /// value-less call to Bob. The sender is recovered from the signature
     /// (`sender: None`), and Alice self-pays (`payer: None`).
     ///
     /// Exposed as an associated function (no `self`) so derivation tests that
     /// build their own harness can reuse it without constructing a full
     /// [`EverestTestEnv`].
-    pub(crate) fn eip8130_user_tx(chain_id: u64, nonce_sequence: u64) -> BaseTxEnvelope {
+    pub(crate) fn base_tx_user_tx(chain_id: u64, nonce_sequence: u64) -> BaseTxEnvelope {
         let alice = Account::Alice;
 
-        let tx = TxEip8130 {
+        let tx = TxBase {
             chain_id,
             sender: None,
             nonce_key: U256::ZERO,
@@ -152,7 +150,7 @@ impl EverestTestEnv {
             .sign_hash_sync(&tx.sender_signature_hash())
             .expect("test transaction signing must succeed");
 
-        let signed = Eip8130Signed::new(tx, signature.as_bytes().to_vec().into(), Bytes::new());
+        let signed = TxBaseSigned::new(tx, signature.as_bytes().to_vec().into(), Bytes::new());
 
         signed.into()
     }

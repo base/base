@@ -169,7 +169,7 @@ pub struct PredicateContext {
 /// predicate compares `storage(address, slot) & mask` with `value`; omitted
 /// masks default to [`U256::MAX`]. The `balance` and `nonce` predicates have the
 /// same comparison fields but do not accept `slot` or `mask`. A `nonce` predicate
-/// reads the account's protocol nonce, not an EIP-8130 channel nonce. The
+/// reads the account's protocol nonce, not a Base transaction channel nonce. The
 /// `block_number` predicate compares the block currently being built against
 /// `value`. It and `flashblock_index` accept only `op` and `value`;
 /// `flashblock_index` is rejected at ingress and never holds.

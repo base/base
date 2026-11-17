@@ -21,9 +21,9 @@ pub use base_time::{BaseTime, BaseTimeTransitionError};
 
 mod transaction;
 pub use transaction::{
-    BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BaseTxTr, BuildError,
-    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, EIP8130_TRANSACTION_TYPE,
-    Eip8130ExecutionMode, Eip8130TransactionParts,
+    BASE_TRANSACTION_TYPE, BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BaseTxTr,
+    BuildError, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, TxBaseExecutionMode,
+    TxBaseTransactionParts,
 };
 
 mod handler;
@@ -42,12 +42,12 @@ mod evm;
 pub use evm::BaseEvm;
 
 #[cfg(feature = "std")]
-mod eip8130;
+mod base_tx;
 #[cfg(feature = "std")]
-pub use eip8130::{Eip8130Executor, Eip8130Outcome};
+pub use base_tx::{TxBaseExecutor, TxBaseOutcome};
 
-mod eip8130_committed_phases;
-pub use eip8130_committed_phases::Eip8130CommittedPhases;
+mod base_tx_committed_phases;
+pub use base_tx_committed_phases::TxBaseCommittedPhases;
 
 mod metered_gas;
 pub use metered_gas::MeteredGas;
@@ -68,7 +68,7 @@ mod canyon;
 pub use canyon::ensure_create2_deployer;
 
 mod everest;
-pub use everest::ensure_eip8130_system_accounts;
+pub use everest::ensure_base_tx_system_accounts;
 
 mod executor;
 pub use executor::{

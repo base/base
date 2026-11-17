@@ -1,4 +1,4 @@
-//! Derivation-layer rejection of pre-Everest EIP-8130 transactions.
+//! Derivation-layer rejection of pre-Everest Base transactions.
 
 use alloy_primitives::B256;
 use base_action_harness::{
@@ -9,8 +9,8 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 
 use crate::env::EverestTestEnv;
 
-/// An EIP-8130 transaction batched into a pre-Everest L2 block is dropped by the
-/// verifier's derivation pipeline (`BatchValidity::Drop::Eip8130PreEverest`), and
+/// A Base transaction batched into a pre-Everest L2 block is dropped by the
+/// verifier's derivation pipeline (`BatchValidity::Drop::TxBasePreEverest`), and
 /// the pipeline force-includes a deposit-only block in its place once the
 /// sequencing window closes.
 ///
@@ -19,12 +19,12 @@ use crate::env::EverestTestEnv;
 ///   seq_window_size = 4  (epoch-0 window closes at L1 block 4)
 ///   L1 block 1: batch for L2 block 1 (user tx)          → derived normally
 ///   L1 block 2: batch for L2 block 2 (user tx)          → derived normally
-///   L1 block 3: batch for L2 block 3 (EIP-8130, ts = 6) → DROPPED (pre-Everest)
+///   L1 block 3: batch for L2 block 3 (Base transaction, ts = 6) → DROPPED (pre-Everest)
 ///   L1 block 4: empty (closes epoch-0 window)           → block 3 force-included
 ///                                                          as deposit-only
 /// ```
 #[tokio::test]
-async fn eip8130_batch_is_dropped_before_everest() {
+async fn base_tx_batch_is_dropped_before_everest() {
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
@@ -46,18 +46,18 @@ async fn eip8130_batch_is_dropped_before_everest() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Build three pre-Everest L2 blocks. Blocks 1-2 carry a normal user tx; block
-    // 3 (ts = 6) is batched with an EIP-8130 transaction the verifier must drop
-    // because Everest is not active until ts = 8. Execution rejects EIP-8130
+    // 3 (ts = 6) is batched with a Base transaction the verifier must drop
+    // because Everest is not active until ts = 8. Execution rejects Base transactions
     // before Everest, so the sequencer cannot build such a block; the
     // transaction is appended to block 3's body only for batching, standing in
     // for a misbehaving sequencer.
-    let mut eip8130_block_hash = B256::ZERO;
+    let mut base_tx_block_hash = B256::ZERO;
     let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg);
     for i in 1u64..=3 {
         if i == 3 {
             let mut block = builder.build_next_block_with_transactions(Vec::new()).await;
-            eip8130_block_hash = block.header.hash_slow();
-            block.body.transactions.push(EverestTestEnv::eip8130_user_tx(chain_id, 0));
+            base_tx_block_hash = block.header.hash_slow();
+            block.body.transactions.push(EverestTestEnv::base_tx_user_tx(chain_id, 0));
             batcher.push_block(block);
         } else {
             batcher.push_block(builder.build_next_block_with_single_transaction().await);
@@ -69,20 +69,20 @@ async fn eip8130_batch_is_dropped_before_everest() {
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    // Block 3's EIP-8130 batch is dropped and the slot is force-included as a
+    // Block 3's Base transaction batch is dropped and the slot is force-included as a
     // deposit-only block, whose state root differs from the sequencer's block 3.
     // Overwrite the sequencer's registered state root so the engine skips the
     // cross-check for the divergent slot.
-    node.register_block_hash(3, eip8130_block_hash);
+    node.register_block_hash(3, base_tx_block_hash);
     node.initialize().await;
 
-    // Blocks 1-2 derive from their valid batches; block 3's EIP-8130 batch is
+    // Blocks 1-2 derive from their valid batches; block 3's Base transaction batch is
     // dropped and stays pending while the epoch-0 window is still open.
     node.run_until_idle().await;
     assert_eq!(
         node.l2_safe_number(),
         2,
-        "blocks 1-2 derive; block 3's EIP-8130 batch is dropped pre-Everest"
+        "blocks 1-2 derive; block 3's Base transaction batch is dropped pre-Everest"
     );
 
     // Close the epoch-0 sequencing window (0 + seq_window_size 4 = 4) so the
@@ -108,6 +108,6 @@ async fn eip8130_batch_is_dropped_before_everest() {
     assert_eq!(
         user_txs(3),
         Some(0),
-        "block 3: EIP-8130 batch dropped pre-Everest -> deposit-only, 0 user txs"
+        "block 3: Base transaction batch dropped pre-Everest -> deposit-only, 0 user txs"
     );
 }

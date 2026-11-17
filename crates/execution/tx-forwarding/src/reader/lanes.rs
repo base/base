@@ -48,10 +48,11 @@ impl LaneMix {
 /// One snapshot's worth of forwardable transactions, indexed for both lanes.
 ///
 /// Built from a `best_transactions()` snapshot, which yields the transactions of each nonce
-/// sequence (a sender, or a sender and EIP-8130 nonce key) in nonce order and only after their
-/// predecessors. Only a sequence's earliest unpicked transaction (its head) is eligible in either
-/// lane, so neither lane forwards a transaction ahead of its predecessor and the builder never
-/// receives a nonce gap from this reader. Transactions without a sequence are always eligible.
+/// sequence (a sender, or a sender and Base transaction nonce key) in nonce order and only after
+/// their predecessors. Only a sequence's earliest unpicked transaction (its head) is eligible in
+/// either lane, so neither lane forwards a transaction ahead of its predecessor and the builder
+/// never receives a nonce gap from this reader. Transactions without a sequence are always
+/// eligible.
 ///
 /// Every head sits in both heaps. Picking it from one leaves a stale entry in the other, which is
 /// skipped when it surfaces, so both lanes always see the same set of eligible transactions and

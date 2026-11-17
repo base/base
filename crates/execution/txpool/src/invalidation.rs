@@ -36,14 +36,14 @@ use crate::UnixMillis;
 /// share a single reverse-index entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InvalidationKey {
-    /// Balance of the account that pays for the transaction (the payer for an
-    /// EIP-8130 sponsored transaction, otherwise the sender). Threshold
+    /// Balance of the account that pays for the transaction (the payer for a
+    /// sponsored Base transaction, otherwise the sender). Threshold
     /// semantics: a change is re-evaluated against the payer's reservation.
     Balance(Address),
     /// Protocol (EOA) nonce of an account. Exact-match semantics.
     ProtocolNonce(Address),
     /// Account bytecode hash. Exact-match semantics; used when admission relies
-    /// on a sender's code still accepting its EIP-8130 delegation. The index is
+    /// on a sender's code still accepting its Base transaction delegation. The index is
     /// deliberately address-keyed: every reported code change invalidates all
     /// watchers, even if the account later returns to a previously observed
     /// hash. This permits conservative false-positive invalidation rather than

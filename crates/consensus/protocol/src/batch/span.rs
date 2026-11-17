@@ -498,12 +498,13 @@ impl SpanBatch {
                     return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
                 }
 
-                // If Everest is not active yet and the transaction is an 8130, drop the batch.
-                if !cfg.is_feature_active_cascading(BaseFeature::Eip8130, batch.timestamp)
-                    && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
+                // If Everest is not active yet and the transaction is a Base transaction, drop the
+                // batch.
+                if !cfg.is_feature_active_cascading(BaseFeature::TxBase, batch.timestamp)
+                    && tx.as_ref().first() == Some(&(OpTxType::Base as u8))
                 {
-                    warn!(target: "batch_span", tx_index = i, "EIP-8130 transactions are not supported pre-Everest");
-                    return BatchValidity::Drop(BatchDropReason::Eip8130PreEverest);
+                    warn!(target: "batch_span", tx_index = i, "Base transactions are not supported pre-Everest");
+                    return BatchValidity::Drop(BatchDropReason::TxBasePreEverest);
                 }
             }
         }
@@ -1499,13 +1500,13 @@ mod tests {
         BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus),
         Some((Level::WARN, &["EIP-7702 transactions are not supported pre-isthmus", "tx_index"][..]))
     )]
-    #[case::eip8130_pre_everest(
-        scenario_with_tx(UpgradeConfig { delta_time: Some(0), ..Default::default() }, &[OpTxType::Eip8130 as u8]),
-        BatchValidity::Drop(BatchDropReason::Eip8130PreEverest),
-        Some((Level::WARN, &["EIP-8130 transactions are not supported pre-Everest", "tx_index"][..]))
+    #[case::base_tx_pre_everest(
+        scenario_with_tx(UpgradeConfig { delta_time: Some(0), ..Default::default() }, &[OpTxType::Base as u8]),
+        BatchValidity::Drop(BatchDropReason::TxBasePreEverest),
+        Some((Level::WARN, &["Base transactions are not supported pre-Everest", "tx_index"][..]))
     )]
-    #[case::eip8130_span_post_everest(
-        // Everest enables EIP-8130 after Denim has disabled span batches, so EIP-8130
+    #[case::base_tx_span_post_everest(
+        // Everest enables Base transactions after Denim has disabled span batches, so Base
         // transactions must use singular batches.
         scenario_with_tx(
             UpgradeConfig {
@@ -1513,7 +1514,7 @@ mod tests {
                 base: BaseUpgradeConfig { denim: Some(0), everest: Some(0), ..Default::default() },
                 ..Default::default()
             },
-            &[OpTxType::Eip8130 as u8],
+            &[OpTxType::Base as u8],
         ),
         BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim),
         Some((Level::WARN, &["Dropping span batch after Denim activation"][..]))

@@ -18,7 +18,7 @@ pub struct InclusionFlow {
     pub base_fees: U256,
     /// Priority-fee revenue (`effective_tip * gas_used`), in wei.
     pub priority_fees: U256,
-    /// Coinbase-tip revenue from EIP-8130 phase-0 bids, in wei.
+    /// Coinbase-tip revenue from Base transaction phase-0 bids, in wei.
     pub coinbase_tips: U256,
 }
 
@@ -60,7 +60,7 @@ impl InclusionTracker {
     /// Records a mempool transaction that was committed to the payload.
     ///
     /// `is_validity` selects the [`Self::validity`] or [`Self::standard`] flow.
-    /// `coinbase_tip` is the statically-decoded EIP-8130 phase-0 tip
+    /// `coinbase_tip` is the statically-decoded Base transaction phase-0 tip
     /// (`base_common_consensus::CoinbaseTip::decode`), or [`U256::ZERO`] when
     /// the transaction does not carry one.
     pub fn record(

@@ -114,7 +114,7 @@ validator under `l2_shadow_validator`. The Anvil variant inherits all three
 services.
 
 **Validity transaction note:** the op-batcher pin embeds op-geth
-`v1.101609.2-rc.1`, whose typed block decoder does not support Base's EIP-8130
+`v1.101609.2-rc.1`, whose typed block decoder does not support the Base
 transaction type `0x79`. A block containing one prevents the canonical op-batcher
 from advancing past that block (`transaction type not supported`). The shadow
 `base-batcher` supports `0x79`, so the shadow validator continues deriving past
@@ -199,10 +199,10 @@ block 22 and Denim at block 25. Builder selection and block cadence change at
 Denim. Native payload building supports balance,
 storage, and block-number predicates; `flashblock_index` predicates are rejected.
 
-Everest enables EIP-8130 account-abstraction transactions and gas-limit fee billing, which bills
+Everest enables Base transactions and gas-limit fee billing, which bills
 every non-deposit transaction for its reserved gas (see `crates/common/evm/README.md`): receipts
-report `gasUsed` equal to the gas limit, or to `gas_limit + payer_auth_cost` for EIP-8130, while
-`eth_estimateGas` keeps returning the metered need. For a sponsored EIP-8130 request the estimate
+report `gasUsed` equal to the gas limit, or to `gas_limit + payer_auth_cost` for Base transactions, while
+`eth_estimateGas` keeps returning the metered need. For a sponsored Base transaction request the estimate
 is the sender's budget only: settlement adds payer authentication on top. Everest mode additionally
 activates Everest at
 block 100:

@@ -208,11 +208,12 @@ impl SingleBatch {
             {
                 return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
             }
-            // If Everest is not active yet and the transaction is an 8130, drop the batch.
-            if !cfg.is_feature_active_cascading(BaseFeature::Eip8130, self.timestamp)
-                && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
+            // If Everest is not active yet and the transaction is a Base transaction, drop the
+            // batch.
+            if !cfg.is_feature_active_cascading(BaseFeature::TxBase, self.timestamp)
+                && tx.as_ref().first() == Some(&(OpTxType::Base as u8))
             {
-                return BatchValidity::Drop(BatchDropReason::Eip8130PreEverest);
+                return BatchValidity::Drop(BatchDropReason::TxBasePreEverest);
             }
         }
 
@@ -610,11 +611,11 @@ mod tests {
         }
     }
 
-    /// Minimal batch tx bytes whose leading 2718 type byte marks an EIP-8130
+    /// Minimal batch tx bytes whose leading 2718 type byte marks a Base
     /// transaction. Batch validation keys the Everest gate on this type byte, so
     /// a fully formed envelope is unnecessary here.
-    fn eip_8130_tx_bytes() -> Bytes {
-        Bytes::from(vec![OpTxType::Eip8130 as u8, 0x00])
+    fn base_tx_bytes() -> Bytes {
+        Bytes::from(vec![OpTxType::Base as u8, 0x00])
     }
 
     fn eip_7702_tx_bytes() -> Bytes {
@@ -662,16 +663,16 @@ mod tests {
         1,
         BatchValidity::Accept
     )]
-    #[case::eip8130_pre_everest(
+    #[case::base_tx_pre_everest(
         cobalt_denim(None),
-        vec![eip_8130_tx_bytes()],
+        vec![base_tx_bytes()],
         0,
         0,
-        BatchValidity::Drop(BatchDropReason::Eip8130PreEverest)
+        BatchValidity::Drop(BatchDropReason::TxBasePreEverest)
     )]
-    #[case::eip8130_post_everest(
+    #[case::base_tx_post_everest(
         cobalt_denim(Some(0)),
-        vec![eip_8130_tx_bytes()],
+        vec![base_tx_bytes()],
         0,
         0,
         BatchValidity::Accept

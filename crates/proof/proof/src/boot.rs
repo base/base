@@ -195,9 +195,9 @@ pub struct BootInfo {
 }
 
 impl BootInfo {
-    /// Whether this build's EVM executes EIP-8130 transactions. Both features enable
-    /// `base-common-evm/std`, which carries the EIP-8130 pipeline.
-    pub const EXECUTES_EIP8130: bool = cfg!(any(feature = "std", feature = "evm-std"));
+    /// Whether this build's EVM executes Base transactions. Both features enable
+    /// `base-common-evm/std`, which carries the Base transaction pipeline.
+    pub const EXECUTES_BASE_TX: bool = cfg!(any(feature = "std", feature = "evm-std"));
 
     /// Read an optional local preimage by key.
     ///
@@ -464,10 +464,10 @@ impl BootInfo {
             None => {}
         }
 
-        // Without `base-common-evm/std` the EVM cannot execute EIP-8130 transactions, and the
+        // Without `base-common-evm/std` the EVM cannot execute Base transactions, and the
         // resulting validation error would make the driver re-execute the block as deposits only,
         // diverging from the node. Refuse to prove any range in which Everest is active.
-        if !Self::EXECUTES_EIP8130
+        if !Self::EXECUTES_BASE_TX
             && rollup_config.upgrades.base.everest.is_some_and(|time| time <= l2_claim_timestamp)
         {
             return Err(OracleProviderError::UnsupportedEverestUpgrade);
@@ -908,7 +908,7 @@ mod tests {
     #[case::active_before_claim(1_000, true)]
     #[case::after_claim(u64::MAX, false)]
     #[tokio::test]
-    async fn everest_requires_eip8130_execution(
+    async fn everest_requires_base_tx_execution(
         #[case] everest_timestamp: u64,
         #[case] everest_active: bool,
     ) {
@@ -923,7 +923,7 @@ mod tests {
         oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
         let result = BootInfo::load(&oracle).await;
-        if everest_active && !BootInfo::EXECUTES_EIP8130 {
+        if everest_active && !BootInfo::EXECUTES_BASE_TX {
             assert!(matches!(result, Err(OracleProviderError::UnsupportedEverestUpgrade)));
         } else {
             result.expect("boot info should load");

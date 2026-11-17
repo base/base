@@ -56,10 +56,10 @@ pub enum BaseTxEnvError {
     /// The standard request fields are invalid.
     #[error(transparent)]
     Eth(#[from] EthTxEnvError),
-    /// The request carries EIP-8130 fields, which the standard call paths cannot
+    /// The request carries Base transaction fields, which the standard call paths cannot
     /// represent: converting it would silently drop them.
-    #[error("EIP-8130 requests are supported only by eth_call and eth_estimateGas")]
-    Eip8130Unsupported,
+    #[error("Base transaction requests are supported only by eth_call and eth_estimateGas")]
+    TxBaseUnsupported,
 }
 
 impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
@@ -68,23 +68,26 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
     type Err = BaseTxEnvError;
 
     fn try_into_tx_env(self, evm_env: &EvmEnv<Spec, Block>) -> Result<BaseRevm<TxEnv>, Self::Err> {
-        if self.as_eip8130().is_some() {
-            return Err(BaseTxEnvError::Eip8130Unsupported);
+        if self.as_base_tx().is_some() {
+            return Err(BaseTxEnvError::TxBaseUnsupported);
         }
         Ok(BaseRevm {
             base: self.as_ref().clone().try_into_tx_env(evm_env)?,
             enveloped_tx: Some(Bytes::new()),
             enveloped_tx_fastlz_size: None,
             deposit: Default::default(),
-            eip8130: None,
+            base_tx: None,
         })
     }
 }
 
 impl TryIntoSimTx<BaseTxEnvelope> for BaseTransactionRequest {
     fn try_into_sim_tx(self) -> Result<BaseTxEnvelope, ValueError<Self>> {
-        if self.as_eip8130().is_some() {
-            return Err(ValueError::new(self, "EIP-8130 requests are not supported by simulation"));
+        if self.as_base_tx().is_some() {
+            return Err(ValueError::new(
+                self,
+                "Base transaction requests are not supported by simulation",
+            ));
         }
         let tx = self
             .build_typed_tx()
@@ -119,13 +122,13 @@ impl SignableTxRequest<BaseTxEnvelope> for BaseTransactionRequest {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use base_common_consensus::{Eip8130Constants, Eip8130Signed, Eip8130StructuralError};
+    use base_common_consensus::{TxBaseConstants, TxBaseSigned, TxBaseStructuralError};
     use serde_json::json;
 
     use super::*;
     use crate::{
-        Eip8130SimulationRequestError,
-        eip8130::{K1_SIGNATURE_LEN, STUB_AUTH_FILL},
+        TxBaseSimulationRequestError,
+        base_tx::{K1_SIGNATURE_LEN, STUB_AUTH_FILL},
     };
 
     const CHAIN_ID: u64 = 8453;
@@ -135,11 +138,11 @@ mod tests {
 
     fn sim_tx(request: serde_json::Value) -> BaseRevm<TxEnv> {
         let req: BaseTransactionRequest = serde_json::from_value(request).expect("valid request");
-        req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).expect("simulation tx")
+        req.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).expect("simulation tx")
     }
 
-    fn signed(tx: &BaseRevm<TxEnv>) -> &Eip8130Signed {
-        &tx.eip8130.as_ref().expect("eip8130 parts").signed
+    fn signed(tx: &BaseRevm<TxEnv>) -> &TxBaseSigned {
+        &tx.base_tx.as_ref().expect("base_tx parts").signed
     }
 
     /// Builds a hex (`0x`-prefixed) authentication blob: an optional 20-byte
@@ -153,21 +156,21 @@ mod tests {
         alloy_primitives::hex::encode_prefixed(v)
     }
 
-    /// The standard call paths cannot represent EIP-8130 fields, so they reject
+    /// The standard call paths cannot represent Base transaction fields, so they reject
     /// the request instead of silently dropping them.
     #[test]
-    fn standard_tx_env_rejects_eip8130_request() {
+    fn standard_tx_env_rejects_base_tx_request() {
         let env = EvmEnv::<revm::primitives::hardfork::SpecId>::default();
         let request: BaseTransactionRequest =
             serde_json::from_value(json!({ "sender": SENDER, "calls": [] })).unwrap();
         assert!(matches!(
             TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env),
-            Err(BaseTxEnvError::Eip8130Unsupported)
+            Err(BaseTxEnvError::TxBaseUnsupported)
         ));
         let plain: BaseTransactionRequest =
             serde_json::from_value(json!({ "from": FROM, "to": SENDER })).unwrap();
         let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(plain, &env).unwrap();
-        assert!(tx.eip8130.is_none());
+        assert!(tx.base_tx.is_none());
     }
 
     #[test]
@@ -181,7 +184,7 @@ mod tests {
         let auth = s.sender_auth();
         assert_eq!(
             &auth[..20],
-            Eip8130Constants::K1_AUTHENTICATOR.as_slice(),
+            TxBaseConstants::K1_AUTHENTICATOR.as_slice(),
             "an absent blob defaults to a prefixed secp256k1 authorization",
         );
         assert_eq!(
@@ -197,7 +200,7 @@ mod tests {
         let tx = sim_tx(json!({
             "sender": SENDER,
             "calls": [],
-            "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 65),
+            "senderAuth": blob(Some(TxBaseConstants::K1_AUTHENTICATOR), 65),
         }));
         let s = signed(&tx);
         assert_eq!(s.tx().sender, Some(SENDER));
@@ -226,7 +229,7 @@ mod tests {
         let tx = sim_tx(json!({
             "from": FROM,
             "calls": [],
-            "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 65),
+            "senderAuth": blob(Some(TxBaseConstants::K1_AUTHENTICATOR), 65),
         }));
         assert_eq!(
             signed(&tx).tx().sender,
@@ -261,9 +264,9 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::Structural(
-                Eip8130StructuralError::MalformedSenderAuth
+            req.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(TxBaseSimulationRequestError::Structural(
+                TxBaseStructuralError::MalformedSenderAuth
             )),
         );
     }
@@ -277,8 +280,8 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::SenderFromMismatch),
+            req.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(TxBaseSimulationRequestError::SenderFromMismatch),
             "a `from`/`sender` mismatch is rejected rather than guessing the account",
         );
     }
@@ -292,21 +295,21 @@ mod tests {
         assert_eq!(s.tx().sender, Some(SENDER), "matching `from`/`sender` resolves the account");
         assert_eq!(
             &s.sender_auth()[..20],
-            Eip8130Constants::K1_AUTHENTICATOR.as_slice(),
+            TxBaseConstants::K1_AUTHENTICATOR.as_slice(),
             "a declared sender defaults the absent blob to the prefixed k1 stub",
         );
     }
 
     #[test]
     fn no_account_is_rejected() {
-        // A request with 8130 fields but neither `from` nor `sender` is rejected
+        // A request with Base transaction fields but neither `from` nor `sender` is rejected
         // rather than defaulting the account to the zero address.
         let req: BaseTransactionRequest =
             serde_json::from_value(json!({ "calls": [] })).expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::MissingSender),
-            "an 8130 request with no account is rejected",
+            req.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(TxBaseSimulationRequestError::MissingSender),
+            "a Base transaction request with no account is rejected",
         );
     }
 
@@ -323,9 +326,9 @@ mod tests {
             }))
             .expect("valid request");
             assert_eq!(
-                req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-                Some(Eip8130SimulationRequestError::Structural(
-                    Eip8130StructuralError::MalformedSenderAuth
+                req.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+                Some(TxBaseSimulationRequestError::Structural(
+                    TxBaseStructuralError::MalformedSenderAuth
                 )),
                 "a {len}-byte bare signature is rejected",
             );
@@ -337,13 +340,13 @@ mod tests {
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
-            "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 8_192),
+            "senderAuth": blob(Some(TxBaseConstants::K1_AUTHENTICATOR), 8_192),
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::Structural(
-                Eip8130StructuralError::MalformedSenderAuth
+            req.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(TxBaseSimulationRequestError::Structural(
+                TxBaseStructuralError::MalformedSenderAuth
             )),
             "a named sender auth blob that is not a k1 signature is rejected rather than priced",
         );
@@ -356,13 +359,13 @@ mod tests {
             "sender": SENDER,
             "calls": [],
             "payer": payer,
-            "payerAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 8_192),
+            "payerAuth": blob(Some(TxBaseConstants::K1_AUTHENTICATOR), 8_192),
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::Structural(
-                Eip8130StructuralError::MalformedPayerAuth
+            req.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(TxBaseSimulationRequestError::Structural(
+                TxBaseStructuralError::MalformedPayerAuth
             )),
             "a named payer auth blob that is not a k1 signature is rejected rather than priced",
         );
@@ -375,12 +378,12 @@ mod tests {
             "sender": SENDER,
             "calls": [],
             "payer": payer,
-            "payerAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 65),
+            "payerAuth": blob(Some(TxBaseConstants::K1_AUTHENTICATOR), 65),
         }));
         let s = signed(&tx);
         assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
         let auth = s.payer_auth();
-        assert_eq!(&auth[..20], Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+        assert_eq!(&auth[..20], TxBaseConstants::K1_AUTHENTICATOR.as_slice());
         assert_eq!(auth.len(), 20 + 65);
     }
 
@@ -396,7 +399,7 @@ mod tests {
             "payer": "0x00",
         }));
         let s = signed(&tx);
-        assert_eq!(s.tx().payer, Some(Eip8130Constants::OPEN_PAYER));
+        assert_eq!(s.tx().payer, Some(TxBaseConstants::OPEN_PAYER));
         assert_eq!(s.payer_auth().len(), 65, "priced as a raw secp256k1 signature");
         assert!(s.resolved_payer(SENDER).is_err(), "the stub never recovers");
 
@@ -422,9 +425,9 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::Structural(
-                Eip8130StructuralError::MalformedSenderAuth
+            req.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(TxBaseSimulationRequestError::Structural(
+                TxBaseStructuralError::MalformedSenderAuth
             )),
         );
 
@@ -436,8 +439,8 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::UnrecognizedPayerAuthenticator),
+            req.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(TxBaseSimulationRequestError::UnrecognizedPayerAuthenticator),
         );
     }
 
@@ -456,8 +459,8 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::UnrecognizedPayerAuthenticator),
+            req.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(TxBaseSimulationRequestError::UnrecognizedPayerAuthenticator),
             "an unrecognized payer authenticator selector is rejected rather than priced",
         );
     }
@@ -471,7 +474,7 @@ mod tests {
         let auth = s.payer_auth();
         assert_eq!(
             &auth[..20],
-            Eip8130Constants::K1_AUTHENTICATOR.as_slice(),
+            TxBaseConstants::K1_AUTHENTICATOR.as_slice(),
             "the default payer authorization is prefixed with the k1 authenticator",
         );
         assert_eq!(auth.len(), 20 + K1_SIGNATURE_LEN);

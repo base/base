@@ -1,8 +1,8 @@
-//! Build-time check that a declared EIP-8130 coinbase tip is payable.
+//! Build-time check that a declared Base transaction coinbase tip is payable.
 
 use alloy_primitives::{Address, U256};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
-use base_execution_eip8130::FeeCheck;
+use base_execution_base_tx::FeeCheck;
 use base_execution_txpool::BasePooledTx;
 use revm::Database;
 use tracing::warn;
@@ -106,7 +106,7 @@ impl CoinbaseTipAffordability {
         T: BasePooledTx,
         DB: Database,
     {
-        let Some(signed) = tx.as_eip8130() else {
+        let Some(signed) = tx.as_base_tx() else {
             return false;
         };
         let Some(tip) = tx.coinbase_tip() else {
@@ -144,7 +144,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
     use base_common_chains::BaseUpgrade;
     use base_common_consensus::{
-        BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
+        BaseTxEnvelope, Call, Predeploys, TxBase, TxBaseConstants, TxBaseSigned,
     };
     use base_common_evm::{BaseSpecId, L1BlockInfo};
     use base_execution_txpool::{BasePooledTransaction, BasePooledTx, LimitClass};
@@ -261,10 +261,10 @@ mod tests {
     /// An open-payer transaction tipping the fee vault, whose `payer_auth` is
     /// 65 zero bytes (`v = 0`), which never recovers.
     fn unrecoverable_open_payer_tip() -> BasePooledTransaction {
-        let tx = TxEip8130 {
+        let tx = TxBase {
             gas_limit: 21_000,
             max_fee_per_gas: 2,
-            payer: Some(Eip8130Constants::OPEN_PAYER),
+            payer: Some(TxBaseConstants::OPEN_PAYER),
             calls: vec![vec![Call {
                 to: Predeploys::SEQUENCER_FEE_VAULT,
                 value: TIP,
@@ -272,7 +272,7 @@ mod tests {
             }]],
             ..Default::default()
         };
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
+        let envelope = BaseTxEnvelope::Base(TxBaseSigned::new(
             tx,
             Bytes::from(vec![0u8; 65]),
             Bytes::from(vec![0u8; 65]),
@@ -338,7 +338,7 @@ mod tests {
         max_fee_per_gas: u128,
         max_priority_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let tx = TxEip8130 {
+        let tx = TxBase {
             gas_limit: GAS_LIMIT,
             max_fee_per_gas,
             max_priority_fee_per_gas,
@@ -349,11 +349,8 @@ mod tests {
             }]],
             ..Default::default()
         };
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
-            tx,
-            Bytes::from(vec![0u8; 65]),
-            Bytes::new(),
-        ));
+        let envelope =
+            BaseTxEnvelope::Base(TxBaseSigned::new(tx, Bytes::from(vec![0u8; 65]), Bytes::new()));
         let encoded_len = envelope.encode_2718_len();
         BasePooledTransaction::new(Recovered::new_unchecked(envelope, SENDER), encoded_len)
     }

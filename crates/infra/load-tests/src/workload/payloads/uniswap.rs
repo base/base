@@ -321,8 +321,7 @@ impl Payload for UniswapV3Payload {
             .with_input(Bytes::from(data))
             .with_gas_limit(gas_limit);
         if self.native {
-            request.transaction_type =
-                Some(base_common_consensus::Eip8130Constants::EIP8130_TX_TYPE);
+            request.transaction_type = Some(base_common_consensus::TxBaseConstants::BASE_TX_TYPE);
         }
         request
     }
@@ -505,7 +504,7 @@ mod tests {
                 Fees { max_fee: 100, priority_fee: 10 },
             )
             .expect("native swap signs");
-            let BaseTxEnvelope::Eip8130(native) =
+            let BaseTxEnvelope::Base(native) =
                 BaseTxEnvelope::decode_2718(&mut signed.raw.as_ref())
                     .expect("native wire encoding")
             else {

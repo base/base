@@ -5,11 +5,11 @@ use base_common_rpc_types::BaseTransactionRequest;
 
 use crate::Base;
 
-/// An EIP-8130 request cannot be built as an unsigned typed transaction: its
+/// A Base transaction request cannot be built as an unsigned typed transaction: its
 /// fields have no place in any [`BaseTypedTransaction`] variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("an EIP-8130 request cannot be built as an unsigned typed transaction")]
-pub struct Eip8130BuildError;
+#[error("a Base transaction request cannot be built as an unsigned typed transaction")]
+pub struct TxBaseBuildError;
 
 impl NetworkTransactionBuilder<Base> for BaseTransactionRequest {
     fn complete_type(&self, ty: OpTxType) -> Result<(), Vec<&'static str>> {
@@ -51,9 +51,9 @@ impl NetworkTransactionBuilder<Base> for BaseTransactionRequest {
 
     fn build_unsigned(self) -> BuildResult<BaseTypedTransaction, Base> {
         // `missing_keys` only inspects the inner request, so it cannot vouch for
-        // an EIP-8130 request, which `build_typed_tx` always rejects.
-        if self.as_eip8130().is_some() {
-            return Err(TransactionBuilderError::custom(Eip8130BuildError).into_unbuilt(self));
+        // a Base transaction request, which `build_typed_tx` always rejects.
+        if self.as_base_tx().is_some() {
+            return Err(TransactionBuilderError::custom(TxBaseBuildError).into_unbuilt(self));
         }
         if let Err((tx_type, missing)) = self.as_ref().missing_keys() {
             let tx_type = OpTxType::try_from(tx_type as u8).map_err(|e| {
@@ -140,10 +140,10 @@ mod tests {
 
     #[rstest]
     #[case::declared_type(r#""type":"0x79""#)]
-    #[case::eip8130_field(r#""validBefore":"0x1""#)]
-    fn build_unsigned_rejects_complete_eip8130_request(#[case] eip8130_marker: &str) {
+    #[case::base_tx_field(r#""validBefore":"0x1""#)]
+    fn build_unsigned_rejects_complete_base_tx_request(#[case] base_tx_marker: &str) {
         let json = format!(
-            r#"{{"nonce":"0x0","gas":"0x5208","maxFeePerGas":"0x1","maxPriorityFeePerGas":"0x1","chainId":"0x1","to":"0x0000000000000000000000000000000000000002",{eip8130_marker}}}"#
+            r#"{{"nonce":"0x0","gas":"0x5208","maxFeePerGas":"0x1","maxPriorityFeePerGas":"0x1","chainId":"0x1","to":"0x0000000000000000000000000000000000000002",{base_tx_marker}}}"#
         );
         let req: BaseTransactionRequest = serde_json::from_str(&json).unwrap();
         assert!(req.as_ref().missing_keys().is_ok(), "the inner request is complete");
@@ -151,6 +151,6 @@ mod tests {
         let TransactionBuilderError::Custom(source) = err.error else {
             panic!("expected a custom error, got {:?}", err.error);
         };
-        assert!(source.downcast_ref::<Eip8130BuildError>().is_some());
+        assert!(source.downcast_ref::<TxBaseBuildError>().is_some());
     }
 }
