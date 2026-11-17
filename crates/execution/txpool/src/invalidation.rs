@@ -21,9 +21,12 @@
 //! The index is a pure data structure: it does not decide *whether* a watched
 //! transaction is still valid, only *which* transactions watch a changed key.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 
-use alloy_primitives::{Address, B256, TxHash};
+use alloy_primitives::{
+    Address, B256, TxHash,
+    map::{B256Set, Entry, HashMap, HashSet},
+};
 
 use crate::UnixMillis;
 
@@ -155,15 +158,59 @@ impl WatchSet {
     }
 }
 
+/// The transactions watching one key. Most keys have a single watcher, which
+/// is stored inline rather than in a set allocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Watchers {
+    /// The key's only watcher.
+    One(TxHash),
+    /// Two or more watchers.
+    Many(B256Set),
+}
+
+impl Watchers {
+    /// Adds `hash`, switching to [`Self::Many`] when it is a second watcher.
+    pub fn insert(&mut self, hash: TxHash) {
+        match self {
+            Self::One(one) if *one == hash => {}
+            Self::One(one) => *self = Self::Many([*one, hash].into_iter().collect()),
+            Self::Many(many) => {
+                many.insert(hash);
+            }
+        }
+    }
+
+    /// Removes `hash`, returning `true` if no watcher is left, in which case
+    /// the caller drops the key. A [`Self::One`] holding another hash is
+    /// unchanged.
+    pub fn remove(&mut self, hash: &TxHash) -> bool {
+        match self {
+            Self::One(one) => one == hash,
+            Self::Many(many) => {
+                many.remove(hash);
+                many.is_empty()
+            }
+        }
+    }
+
+    /// Iterates the watching hashes.
+    pub fn iter(&self) -> impl Iterator<Item = &TxHash> {
+        let (one, many) = match self {
+            Self::One(one) => (Some(one), None),
+            Self::Many(many) => (None, Some(many)),
+        };
+        one.into_iter().chain(many.into_iter().flatten())
+    }
+}
+
 /// Reverse index from [`InvalidationKey`] to the transactions watching it.
 ///
-/// Each transaction's [`WatchSet`] is stored so removal is O(watch-set size)
-/// and needs only the transaction hash. Empty key buckets are pruned on
+/// The caller keeps each transaction's [`WatchSet`] and passes it back on
+/// removal, so removal is O(watch-set size). Empty key buckets are pruned on
 /// removal, so the index never retains dangling entries.
 #[derive(Debug, Default)]
 pub struct InvalidationIndex {
-    by_key: HashMap<InvalidationKey, HashSet<TxHash>>,
-    watch_sets: HashMap<TxHash, WatchSet>,
+    by_key: HashMap<InvalidationKey, Watchers>,
     /// `(deadline, hash)` per [`InvalidationKey::Expiry`]; never in `by_key`.
     expiries: BTreeSet<(UnixMillis, TxHash)>,
 }
@@ -176,7 +223,7 @@ impl InvalidationIndex {
     }
 
     /// Upper bound on the bytes the index holds for one transaction registered
-    /// with `watch`: its stored watch set and, for each key, the transaction's
+    /// with `watch`: the watch set its caller keeps and, for each key, the transaction's
     /// hash plus a key bucket in case no other transaction shares the key, and,
     /// for each [`InvalidationKey::Expiry`], an entry in the ordered deadline
     /// set instead.
@@ -187,7 +234,7 @@ impl InvalidationIndex {
             + core::mem::size_of_val(watch.keys());
         let per_key = core::mem::size_of::<TxHash>()
             + core::mem::size_of::<InvalidationKey>()
-            + core::mem::size_of::<HashSet<TxHash>>();
+            + core::mem::size_of::<Watchers>();
         // B-tree nodes other than the root stay at least about half full, so an
         // entry costs under four times its own size in node storage.
         let per_expiry = 4 * core::mem::size_of::<(UnixMillis, TxHash)>();
@@ -196,69 +243,38 @@ impl InvalidationIndex {
         watch_set + (watch.len() - expiries) * per_key + expiries * per_expiry
     }
 
-    /// Registers `hash` under every key in `watch`. If `hash` is already present
-    /// its previous watch set is removed first, so the index always reflects the
-    /// latest registration. Returns `true` if this was a fresh insertion (i.e.
-    /// the hash was not previously registered).
-    pub fn insert(&mut self, hash: TxHash, watch: WatchSet) -> bool {
-        let was_present = self.remove(&hash).is_some();
+    /// Registers `hash` under every key in `watch`. The caller keeps `watch` and
+    /// passes it back to [`Self::remove`].
+    pub fn insert(&mut self, hash: TxHash, watch: &WatchSet) {
         for key in watch.keys() {
             if let InvalidationKey::Expiry(deadline) = key {
                 self.expiries.insert((*deadline, hash));
             } else {
-                self.by_key.entry(*key).or_default().insert(hash);
-            }
-        }
-        self.watch_sets.insert(hash, watch);
-        !was_present
-    }
-
-    /// Removes `hash` from the index, unlinking it from each of its watched
-    /// keys and pruning any key bucket left empty. Returns the transaction's
-    /// watch set if it was present.
-    pub fn remove(&mut self, hash: &TxHash) -> Option<WatchSet> {
-        let watch = self.watch_sets.remove(hash)?;
-        for key in watch.keys() {
-            if let InvalidationKey::Expiry(deadline) = key {
-                self.expiries.remove(&(*deadline, *hash));
-            } else if let Some(bucket) = self.by_key.get_mut(key) {
-                bucket.remove(hash);
-                if bucket.is_empty() {
-                    self.by_key.remove(key);
+                match self.by_key.entry(*key) {
+                    Entry::Occupied(mut watchers) => watchers.get_mut().insert(hash),
+                    Entry::Vacant(slot) => {
+                        slot.insert(Watchers::One(hash));
+                    }
                 }
             }
         }
-        Some(watch)
     }
 
-    /// Returns `true` if `hash` is registered.
-    #[must_use]
-    pub fn contains(&self, hash: &TxHash) -> bool {
-        self.watch_sets.contains_key(hash)
+    /// Unregisters `hash` from every key in `watch`, the set it was inserted
+    /// with, pruning any key left with no watcher.
+    pub fn remove(&mut self, hash: &TxHash, watch: &WatchSet) {
+        for key in watch.keys() {
+            if let InvalidationKey::Expiry(deadline) = key {
+                self.expiries.remove(&(*deadline, *hash));
+            } else if self.by_key.get_mut(key).is_some_and(|watchers| watchers.remove(hash)) {
+                self.by_key.remove(key);
+            }
+        }
     }
 
-    /// Returns the watch set registered for `hash`, if any.
-    #[must_use]
-    pub fn watch_set(&self, hash: &TxHash) -> Option<&WatchSet> {
-        self.watch_sets.get(hash)
-    }
-
-    /// Returns the set of transactions watching `key`, if any.
-    #[must_use]
-    pub fn watchers(&self, key: &InvalidationKey) -> Option<&HashSet<TxHash>> {
-        self.by_key.get(key)
-    }
-
-    /// Number of registered transactions.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.watch_sets.len()
-    }
-
-    /// Returns `true` if no transactions are registered.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.watch_sets.is_empty()
+    /// Returns the transactions watching `key`.
+    pub fn watchers(&self, key: &InvalidationKey) -> impl Iterator<Item = &TxHash> {
+        self.by_key.get(key).into_iter().flat_map(Watchers::iter)
     }
 
     /// Number of distinct keys with at least one watcher.
@@ -283,16 +299,14 @@ impl InvalidationIndex {
     where
         I: IntoIterator<Item = InvalidationKey>,
     {
-        let mut affected = HashSet::new();
+        let mut affected = HashSet::default();
         for key in changed {
             debug_assert!(
                 !matches!(key, InvalidationKey::Expiry(_)),
                 "expiry fires via take_expired"
             );
-            if key.is_exact()
-                && let Some(bucket) = self.by_key.get(&key)
-            {
-                affected.extend(bucket.iter().copied());
+            if key.is_exact() {
+                affected.extend(self.watchers(&key).copied());
             }
         }
         affected
@@ -343,17 +357,25 @@ mod tests {
         let nonce = InvalidationKey::ProtocolNonce(addr(1));
         let watch = WatchSet::new().watch(balance).watch(nonce);
 
-        assert!(index.insert(tx, watch.clone()));
-        assert!(index.contains(&tx));
-        assert_eq!(index.len(), 1);
+        index.insert(tx, &watch);
         assert_eq!(index.key_count(), 2);
-        assert_eq!(index.watch_set(&tx), Some(&watch));
+        assert_eq!(index.watchers(&nonce).collect::<Vec<_>>(), [&tx]);
 
-        let removed = index.remove(&tx);
-        assert_eq!(removed, Some(watch));
-        assert!(!index.contains(&tx));
-        assert!(index.is_empty());
+        index.remove(&tx, &watch);
         assert_eq!(index.key_count(), 0, "empty key buckets must be pruned");
+    }
+
+    #[test]
+    fn watchers_grow_to_many_and_report_when_empty() {
+        let mut watchers = Watchers::One(hash(1));
+        watchers.insert(hash(1));
+        assert_eq!(watchers, Watchers::One(hash(1)));
+        assert!(!watchers.remove(&hash(2)), "another hash leaves a lone watcher in place");
+
+        watchers.insert(hash(2));
+        assert!(matches!(watchers, Watchers::Many(_)));
+        assert!(!watchers.remove(&hash(1)));
+        assert!(watchers.remove(&hash(2)));
     }
 
     #[test]
@@ -362,36 +384,19 @@ mod tests {
         let balance = InvalidationKey::Balance(addr(1));
         let (a, b) = (hash(1), hash(2));
 
-        index.insert(a, WatchSet::new().watch(balance));
-        index.insert(b, WatchSet::new().watch(balance));
+        let watch = WatchSet::new().watch(balance);
+        index.insert(a, &watch);
+        index.insert(b, &watch);
 
-        let watchers = index.watchers(&balance).expect("bucket exists");
-        assert_eq!(watchers.len(), 2);
-        assert!(watchers.contains(&a));
-        assert!(watchers.contains(&b));
+        let watchers: HashSet<_> = index.watchers(&balance).copied().collect();
+        assert_eq!(watchers, [a, b].into_iter().collect());
 
         // Removing one leaves the other registered under the shared key.
-        index.remove(&a);
-        let watchers = index.watchers(&balance).expect("bucket still exists");
-        assert_eq!(watchers.len(), 1);
-        assert!(watchers.contains(&b));
-    }
-
-    #[test]
-    fn reinsert_replaces_previous_watch_set() {
-        let mut index = InvalidationIndex::new();
-        let tx = hash(1);
-        let old_slot = InvalidationKey::Slot { address: addr(1), slot: B256::repeat_byte(1) };
-        let new_slot = InvalidationKey::Slot { address: addr(1), slot: B256::repeat_byte(2) };
-
-        assert!(index.insert(tx, WatchSet::new().watch(old_slot)));
-        // Re-insertion with a different watch set is not a fresh insert.
-        assert!(!index.insert(tx, WatchSet::new().watch(new_slot)));
-
-        assert!(index.watchers(&old_slot).is_none(), "stale key must be unlinked");
-        assert!(index.watchers(&new_slot).expect("new key linked").contains(&tx));
-        assert_eq!(index.len(), 1);
+        index.remove(&a, &watch);
+        assert_eq!(index.watchers(&balance).collect::<Vec<_>>(), [&b]);
         assert_eq!(index.key_count(), 1);
+        index.remove(&b, &watch);
+        assert_eq!(index.key_count(), 0, "empty key buckets must be pruned");
     }
 
     #[test]
@@ -413,7 +418,7 @@ mod tests {
         let mut index = InvalidationIndex::new();
         let ms = UnixMillis::from_millis;
         for (byte, deadline) in [(1, 1), (2, 1_700_000_000_000), (3, 1_800_000_000_000)] {
-            index.insert(hash(byte), WatchSet::new().watch(InvalidationKey::Expiry(ms(deadline))));
+            index.insert(hash(byte), &WatchSet::new().watch(InvalidationKey::Expiry(ms(deadline))));
         }
 
         assert_eq!(
@@ -427,7 +432,7 @@ mod tests {
         let mut index = InvalidationIndex::new();
         let ms = UnixMillis::from_millis;
         let deadline = 1_700_000_000_300;
-        index.insert(hash(1), WatchSet::new().watch(InvalidationKey::Expiry(ms(deadline))));
+        index.insert(hash(1), &WatchSet::new().watch(InvalidationKey::Expiry(ms(deadline))));
 
         // Still valid at the deadline millisecond itself.
         assert!(index.take_expired(ms(deadline - 100)).is_empty());
@@ -441,9 +446,10 @@ mod tests {
         let deadline = InvalidationKey::Expiry(UnixMillis::from_millis(7));
         let (first, second) = (hash(1), hash(2));
 
-        index.insert(first, WatchSet::new().watch(deadline));
-        index.insert(second, WatchSet::new().watch(deadline));
-        index.remove(&first);
+        let watch = WatchSet::new().watch(deadline);
+        index.insert(first, &watch);
+        index.insert(second, &watch);
+        index.remove(&first, &watch);
         assert_eq!(
             index.take_expired(UnixMillis::from_millis(8)),
             vec![(UnixMillis::from_millis(7), second)]
@@ -462,10 +468,10 @@ mod tests {
         let on_slot = hash(3);
         let on_balance_and_slot = hash(4);
 
-        index.insert(on_balance, WatchSet::new().watch(balance));
-        index.insert(on_nonce, WatchSet::new().watch(nonce));
-        index.insert(on_slot, WatchSet::new().watch(slot));
-        index.insert(on_balance_and_slot, WatchSet::new().watch(balance).watch(slot));
+        index.insert(on_balance, &WatchSet::new().watch(balance));
+        index.insert(on_nonce, &WatchSet::new().watch(nonce));
+        index.insert(on_slot, &WatchSet::new().watch(slot));
+        index.insert(on_balance_and_slot, &WatchSet::new().watch(balance).watch(slot));
 
         // A block that changed the balance and the slot: only exact-match (slot)
         // watchers are returned; pure balance watchers are left for threshold
@@ -485,7 +491,7 @@ mod tests {
         let slot = InvalidationKey::Slot { address: addr(1), slot: B256::repeat_byte(1) };
         let tx = hash(1);
 
-        index.insert(tx, WatchSet::new().watch(nonce).watch(slot));
+        index.insert(tx, &WatchSet::new().watch(nonce).watch(slot));
 
         // The tx watches two changed keys but must appear once.
         let affected = index.affected_exact([nonce, slot]);
@@ -494,8 +500,14 @@ mod tests {
     }
 
     #[test]
-    fn remove_absent_hash_is_none() {
+    fn removing_an_unregistered_hash_is_a_no_op() {
         let mut index = InvalidationIndex::new();
-        assert!(index.remove(&hash(1)).is_none());
+        let watch = WatchSet::new().watch(InvalidationKey::ProtocolNonce(addr(1)));
+        index.insert(hash(1), &watch);
+        index.remove(&hash(2), &watch);
+        assert_eq!(
+            index.watchers(&InvalidationKey::ProtocolNonce(addr(1))).collect::<Vec<_>>(),
+            [&hash(1)]
+        );
     }
 }

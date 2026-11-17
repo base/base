@@ -3924,7 +3924,7 @@ mod tests {
         let assert_fires_after = |state: &Eip8130ValidationState, deadline_ms: u64| {
             let deadline = UnixMillis::from_millis(deadline_ms);
             let mut index = InvalidationIndex::new();
-            index.insert(B256::ZERO, state.watch_set.clone());
+            index.insert(B256::ZERO, &state.watch_set);
             assert!(index.take_expired(deadline).is_empty());
             assert_eq!(
                 index.take_expired(UnixMillis::from_millis(deadline_ms + 1)),
