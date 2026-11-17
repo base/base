@@ -125,7 +125,7 @@ mod tests {
     use super::*;
     use crate::{
         Eip8130SimulationRequestError,
-        eip8130::{K1_SIGNATURE_LEN, MAX_AUTH_SIZE, STUB_AUTH_FILL},
+        eip8130::{K1_SIGNATURE_LEN, STUB_AUTH_FILL},
     };
 
     const CHAIN_ID: u64 = 8453;
@@ -315,7 +315,7 @@ mod tests {
         // On the EOA path the blob is a raw secp256k1 signature: exactly 65
         // bytes, as pool admission requires, so a shorter or longer one is not
         // priced.
-        for len in [64, 66, MAX_AUTH_SIZE as usize] {
+        for len in [64, 66, 8_192] {
             let req: BaseTransactionRequest = serde_json::from_value(json!({
                 "from": FROM,
                 "calls": [],
@@ -333,50 +333,38 @@ mod tests {
     }
 
     #[test]
-    fn oversize_sender_auth_data_is_rejected() {
+    fn named_sender_auth_of_the_wrong_length_is_rejected() {
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
-            "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), MAX_AUTH_SIZE as usize + 1),
+            "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 8_192),
         }))
         .expect("valid request");
         assert_eq!(
             req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::SenderAuthTooLarge),
-            "an over-cap sender auth blob is rejected rather than priced",
+            Some(Eip8130SimulationRequestError::Structural(
+                Eip8130StructuralError::MalformedSenderAuth
+            )),
+            "a named sender auth blob that is not a k1 signature is rejected rather than priced",
         );
     }
 
     #[test]
-    fn oversize_bare_sender_auth_is_rejected() {
-        // A bare blob has no selector, so its whole length is capped at
-        // `MAX_AUTH_SIZE` (no 20-byte headroom).
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "from": FROM,
-            "calls": [],
-            "senderAuth": blob(None, MAX_AUTH_SIZE as usize + 1),
-        }))
-        .expect("valid request");
-        assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::SenderAuthTooLarge)
-        );
-    }
-
-    #[test]
-    fn oversize_payer_auth_is_rejected() {
+    fn named_payer_auth_of_the_wrong_length_is_rejected() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
             "payer": payer,
-            "payerAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), MAX_AUTH_SIZE as usize + 1),
+            "payerAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 8_192),
         }))
         .expect("valid request");
         assert_eq!(
             req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::PayerAuthTooLarge),
-            "an over-cap payer auth blob is rejected rather than priced",
+            Some(Eip8130SimulationRequestError::Structural(
+                Eip8130StructuralError::MalformedPayerAuth
+            )),
+            "a named payer auth blob that is not a k1 signature is rejected rather than priced",
         );
     }
 

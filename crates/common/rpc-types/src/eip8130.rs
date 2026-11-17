@@ -35,12 +35,6 @@ pub enum Eip8130SimulationRequestError {
     /// `sender` and `from` are both set and differ.
     #[error("`sender` and `from` differ")]
     SenderFromMismatch,
-    /// The `senderAuth` data is larger than an authentication blob may be.
-    #[error("`senderAuth` data exceeds the maximum authentication size")]
-    SenderAuthTooLarge,
-    /// The `payerAuth` data is larger than an authentication blob may be.
-    #[error("`payerAuth` data exceeds the maximum authentication size")]
-    PayerAuthTooLarge,
     /// A named payer's `payerAuth` does not start with the k1 authenticator
     /// selector.
     #[error("`payerAuth` for a named payer must start with the k1 authenticator")]
@@ -58,9 +52,6 @@ pub enum Eip8130SimulationRequestError {
     #[error(transparent)]
     Structural(#[from] Eip8130StructuralError),
 }
-
-/// Maximum caller-supplied authentication payload length.
-pub(crate) const MAX_AUTH_SIZE: u32 = 8_192;
 
 /// Canonical invalid-params message for EIP-8130 RPC reads before Everest.
 pub const EIP8130_PRE_EVEREST_RPC_ERROR: &str = "EIP-8130 RPC features are not active before the Everest hard fork; the `nonce_key` parameter is not supported at this block";
@@ -123,8 +114,6 @@ impl BaseTransactionRequest {
         let (sender, sender_auth) = match &aa.sender_auth {
             Some(blob) => {
                 let prefixed = Self::is_prefixed_auth(blob);
-                Self::check_auth_len(blob, prefixed)
-                    .ok_or(Eip8130SimulationRequestError::SenderAuthTooLarge)?;
                 (prefixed.then_some(account), Self::stub_supplied_auth(blob, prefixed))
             }
             None if sender_declared => (Some(account), Self::default_prefixed_auth()),
@@ -142,8 +131,6 @@ impl BaseTransactionRequest {
                                 Eip8130SimulationRequestError::UnrecognizedPayerAuthenticator,
                             );
                         }
-                        Self::check_auth_len(blob, named)
-                            .ok_or(Eip8130SimulationRequestError::PayerAuthTooLarge)?;
                         // An open payer is whoever its signature recovers to, so
                         // its bytes are kept to publish that payer.
                         if named { Self::stub_supplied_auth(blob, true) } else { blob.clone() }
@@ -221,15 +208,6 @@ impl BaseTransactionRequest {
 
     fn default_bare_auth() -> Bytes {
         Bytes::from(vec![STUB_AUTH_FILL; K1_SIGNATURE_LEN])
-    }
-
-    fn check_auth_len(blob: &Bytes, prefixed: bool) -> Option<()> {
-        let data_len = if prefixed {
-            blob.len().saturating_sub(AUTHENTICATOR_SELECTOR_LEN)
-        } else {
-            blob.len()
-        };
-        (data_len as u64 <= u64::from(MAX_AUTH_SIZE)).then_some(())
     }
 
     /// Whether the blob is a named-account authorization: its leading 20 bytes
@@ -470,22 +448,6 @@ mod tests {
         let tx = simulation(json!({ "sender": SENDER, "calls": [], "payer": payer }));
         assert_eq!(signed(&tx).tx().payer, Some(payer));
         assert_eq!(&signed(&tx).payer_auth()[..20], Eip8130Constants::K1_AUTHENTICATOR.as_slice());
-    }
-
-    #[test]
-    fn oversized_auth_is_rejected() {
-        let auth =
-            alloy_primitives::hex::encode_prefixed([STUB_AUTH_FILL; MAX_AUTH_SIZE as usize + 1]);
-        let request = serde_json::from_value::<BaseTransactionRequest>(json!({
-            "from": FROM,
-            "calls": [],
-            "senderAuth": auth
-        }))
-        .unwrap();
-        assert_eq!(
-            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::SenderAuthTooLarge)
-        );
     }
 
     #[test]
