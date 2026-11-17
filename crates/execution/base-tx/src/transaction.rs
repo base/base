@@ -29,6 +29,10 @@ pub struct AuthorizedTransaction {
 /// nonce first. A recovered sender is already authenticated, so
 /// [`TransactionAuthorizer`] does not run the secp256k1 recovery twice, and the
 /// transaction hash binds it to the `signed` it came from.
+///
+/// [`Self::assume_recovered`] is the exception: it takes the caller's word that
+/// trusted code already recovered the sender, so it is the one constructor that
+/// can yield an authenticated sender no recovery produced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedSender {
     account: Address,
@@ -52,6 +56,30 @@ impl ResolvedSender {
             .map_err(|_| TxAuthError::SenderRecovery)?
             .ok_or(TxAuthError::SenderRecovery)?;
         Ok(Self { account, recovered: true, tx_hash })
+    }
+
+    /// Assumes `sender` is the EOA signer of `signed` without repeating the
+    /// ecrecover, after the checks the checked recovery applies first (see
+    /// [`TxBaseSigned::check_eoa_sender_signature`]). A named sender resolves as
+    /// in [`Self::resolve`].
+    ///
+    /// Unlike [`Self::resolve`], this does not bind the signature to `sender`:
+    /// like alloy's `Recovered::new_unchecked`, it takes the caller's word that
+    /// trusted code recovered `sender` from `signed`, such as the sender of a
+    /// pool transaction (recovered at decode, or by the trusted mempool node
+    /// that forwarded it to a builder). Never pass one from an untrusted source,
+    /// since [`TransactionAuthorizer`] treats it as authenticated.
+    ///
+    /// # Errors
+    /// Returns [`TxAuthError::SenderRecovery`] when a bare `sender_auth` is not
+    /// a canonical low-`s` signature.
+    pub fn assume_recovered(signed: &TxBaseSigned, sender: Address) -> Result<Self, TxAuthError> {
+        let tx_hash = *signed.hash();
+        if let Some(account) = signed.explicit_sender() {
+            return Ok(Self { account, recovered: false, tx_hash });
+        }
+        signed.check_eoa_sender_signature().map_err(|_| TxAuthError::SenderRecovery)?;
+        Ok(Self { account: sender, recovered: true, tx_hash })
     }
 
     /// The resolved sender account.
@@ -328,6 +356,25 @@ mod tests {
 
         assert_eq!(TransactionAuthorizer::check(&padded), Err(TxAuthError::UnexpectedPayerAuth));
         assert_eq!(authorize(&padded), Err(TxAuthError::UnexpectedPayerAuth));
+    }
+
+    /// An assumed sender authorizes like a recovered one, and a malformed
+    /// `sender_auth` is still rejected.
+    #[test]
+    fn assumed_sender_matches_resolved_sender() {
+        let sender_key = key(0x33);
+        let signed = eoa_signed(TxBase::default(), &sender_key);
+        let resolved = ResolvedSender::resolve(&signed).unwrap();
+        let assumed = ResolvedSender::assume_recovered(&signed, resolved.account()).unwrap();
+        assert_eq!(assumed, resolved);
+        assert_eq!(TransactionAuthorizer::authorize(&signed, assumed), authorize(&signed));
+
+        let malformed =
+            TxBaseSigned::new(TxBase::default(), Bytes::from(vec![0xff; 65]), Bytes::new());
+        assert_eq!(
+            ResolvedSender::assume_recovered(&malformed, resolved.account()),
+            Err(TxAuthError::SenderRecovery)
+        );
     }
 
     #[test]
