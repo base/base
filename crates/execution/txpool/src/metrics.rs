@@ -165,8 +165,7 @@ base_metrics::define_metrics! {
     #[describe("End-to-end mempool validation wall time by transaction kind")]
     #[label(name = "kind", default = ["eip8130", "standard"])]
     validate_seconds: histogram,
-    #[describe("EIP-8130 authorization wall time by sender authenticator type")]
-    #[label(name = "sig_type", default = ["k1", "other"])]
+    #[describe("EIP-8130 authorization wall time")]
     auth_seconds: histogram,
 }
 

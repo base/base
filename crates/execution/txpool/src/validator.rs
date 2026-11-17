@@ -654,18 +654,6 @@ where
         }
     }
 
-    /// Returns a low-cardinality sender authenticator label for metrics: `"k1"`
-    /// for a bare or named secp256k1 sender, `"other"` otherwise.
-    fn sender_sig_type(signed: &Eip8130Signed) -> &'static str {
-        if signed.explicit_sender().is_none()
-            || signed.sender_auth().starts_with(Eip8130Constants::K1_AUTHENTICATOR.as_slice())
-        {
-            "k1"
-        } else {
-            "other"
-        }
-    }
-
     /// Runs full EIP-8130 admission checks that require account/precompile state:
     /// sender and payer authorization, nonce/replay state, intrinsic gas,
     /// delegation safety, and payer balance. This deliberately bypasses the inner
@@ -690,8 +678,7 @@ where
         let auth_start = Instant::now();
         let auth_result = ResolvedSender::resolve(signed)
             .and_then(|sender| TransactionAuthorizer::authorize(signed, sender));
-        ValidatorMetrics::auth_seconds(Self::sender_sig_type(signed))
-            .record(auth_start.elapsed().as_secs_f64());
+        ValidatorMetrics::auth_seconds().record(auth_start.elapsed().as_secs_f64());
         let authorized = auth_result.map_err(Self::map_tx_auth_error)?;
         let (sender, payer) = (authorized.sender, authorized.payer);
         // As in execution, a delegation entry may replace only empty code or a
@@ -1396,11 +1383,6 @@ mod tests {
             .no_cancun()
             .build(InMemoryBlobStore::default());
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
-    }
-
-    #[test]
-    fn sender_sig_type_identifies_eoa_path_as_k1() {
-        assert_eq!(TestValidator::sender_sig_type(&sign_eoa_eip8130(minimal_valid_eoa_tx())), "k1");
     }
 
     /// Returns the chain id the [`build_test_validator`] is configured against.
