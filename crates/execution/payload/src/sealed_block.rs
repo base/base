@@ -53,9 +53,10 @@ pub type HistogramHandle = base_metrics::NoopMetric;
 /// Default state-root time at or above which a sealed block's observation logs at `warn`
 /// instead of `debug`.
 ///
-/// Set below the Mainnet builder's p99 (about 140 ms) so the warn lines cover the whole slow
-/// tail that resource metering should explain, not only its worst blocks, while the bulk of
-/// blocks stay at `debug`.
+/// On Mainnet the builder's p99 is about 140 ms, and about 2% of sampled follower blocks reach
+/// 100 ms. A 50 ms threshold therefore warns on more than 1% of blocks, covering the whole slow
+/// tail that resource metering should explain rather than only its worst blocks, while most
+/// blocks stay at `debug`. Raise it if the warn volume is too high.
 pub const DEFAULT_SLOW_BLOCK_STATE_ROOT: Duration = Duration::from_millis(50);
 
 /// How a sealed block's state root was computed.
