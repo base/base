@@ -48,6 +48,12 @@ pub use resting::{
     RestingMember, RestingPredicateStore, RestingPredicates, RestingStats, SharedRestingPredicates,
 };
 
+mod sealed_block;
+pub use sealed_block::{
+    DimensionUsage, LargestStorage, SealedBlockMetricHandles, SealedBlockMetrics,
+    SealedBlockObservation, SealedBlockRecorder, StateDiffSizes, StateRootSource, StateRootTiming,
+};
+
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};
 

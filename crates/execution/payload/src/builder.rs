@@ -41,7 +41,8 @@ use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
-    HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy, WithEncoded,
+    BlockBody, HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy,
+    WithEncoded,
 };
 use reth_revm::{database::StateProviderDatabase, db::State, witness::ExecutionWitnessRecord};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
@@ -59,10 +60,11 @@ use crate::{
     Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
     HoldInterrupt, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
-    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SealedBlockObservation,
+    SealedBlockRecorder, SharedRestingPredicates, StateChangeEffects, StateDiffSizes,
+    StateRootSource, StateRootTiming, ValidityEvaluationCounters, ValidityEvaluationOutcome,
+    ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -118,6 +120,9 @@ pub struct BasePayloadBuilder<
     pub resting_predicates: RestingPredicateStore,
     /// Optional, non-blocking notifications for frozen sequencer payloads.
     pub payload_ready: Option<broadcast::Sender<PayloadReady>>,
+    /// Logs and records one observation per composed sealed block, holding metric handles for
+    /// the builder's lifetime.
+    pub sealed_blocks: Arc<SealedBlockRecorder>,
     /// Marker for the payload attributes type.
     _pd: PhantomData<Attrs>,
 }
@@ -136,6 +141,7 @@ where
             config: self.config.clone(),
             resting_predicates: self.resting_predicates.clone(),
             payload_ready: self.payload_ready.clone(),
+            sealed_blocks: Arc::clone(&self.sealed_blocks),
             _pd: PhantomData,
         }
     }
@@ -171,6 +177,7 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
             config,
             resting_predicates: RestingPredicateStore::default(),
             payload_ready: None,
+            sealed_blocks: Arc::default(),
             _pd: PhantomData,
         }
     }
@@ -262,7 +269,8 @@ where
             .with_permanent_eviction(move |hashes| {
                 let _ = pool.remove_transactions(hashes);
             })
-            .with_resting_predicates(self.resting_predicates.clone());
+            .with_resting_predicates(self.resting_predicates.clone())
+            .with_sealed_block_recorder(Arc::clone(&self.sealed_blocks));
 
         let state_provider = crate::BuilderStateProvider::new(
             self.client.state_by_block_hash(ctx.parent().hash())?,
@@ -427,6 +435,8 @@ pub struct Builder<'a, Txs> {
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
     /// Carries resting validity transactions between builds; used from Denim on.
     resting_predicates: Option<RestingPredicateStore>,
+    /// Logs and records the observation of a composed sealed block.
+    sealed_blocks: Arc<SealedBlockRecorder>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
@@ -441,6 +451,7 @@ impl<'a, Txs> Builder<'a, Txs> {
             best: Box::new(best),
             evict_permanently_rejected: Box::new(|_| {}),
             resting_predicates: None,
+            sealed_blocks: Arc::default(),
         }
     }
 
@@ -455,6 +466,13 @@ impl<'a, Txs> Builder<'a, Txs> {
     /// next.
     pub fn with_resting_predicates(mut self, store: RestingPredicateStore) -> Self {
         self.resting_predicates = Some(store);
+        self
+    }
+
+    /// Sets the recorder that logs and records the observation of a composed sealed block, so its
+    /// metric handles outlive this build.
+    pub fn with_sealed_block_recorder(mut self, recorder: Arc<SealedBlockRecorder>) -> Self {
+        self.sealed_blocks = recorder;
         self
     }
 }
@@ -480,7 +498,7 @@ impl<Txs> Builder<'_, Txs> {
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
-        let Self { best, evict_permanently_rejected, resting_predicates } = self;
+        let Self { best, evict_permanently_rejected, resting_predicates, sealed_blocks } = self;
         // The pool iterator's hold watches the job's cancellation through a weak reference. A
         // dropped `CancelOnDrop` clone cancels the job, so only this owner, dropped with `ctx` when
         // the build returns, keeps one.
@@ -573,11 +591,20 @@ impl<Txs> Builder<'_, Txs> {
             .map(|(resting, store)| store.finish(resting.take_predicates()));
 
         let block_num = ctx.parent().number().saturating_add(1);
+        // Timed from here so the observation covers both state-root paths: waiting on the
+        // parallel job, or the synchronous root `builder.finish` computes without one.
+        let state_root_start = Instant::now();
+        let mut state_root_source = StateRootSource::Synchronous;
+        let mut state_root_wait = Duration::ZERO;
         let state_root = state_root_handle.and_then(|mut task| {
             // Dropping the hook closes the update stream so the parallel task can finish.
             builder.evm_mut().db_mut().set_state_hook(None);
-            match task.state_root() {
+            let wait_start = Instant::now();
+            let result = task.state_root();
+            state_root_wait = wait_start.elapsed();
+            match result {
                 Ok(outcome) => {
+                    state_root_source = StateRootSource::Task;
                     debug!(
                         target: "payload_builder",
                         id = %ctx.payload_id(),
@@ -588,6 +615,7 @@ impl<Txs> Builder<'_, Txs> {
                     Some((outcome.state_root, Arc::unwrap_or_clone(outcome.trie_updates)))
                 }
                 Err(error) => {
+                    state_root_source = StateRootSource::TaskFallback;
                     warn!(
                         target: "payload_builder",
                         id = %ctx.payload_id(),
@@ -606,6 +634,11 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list,
         } = debug_span!("finish_payload", block_num)
             .in_scope(|| builder.finish(state_provider, state_root))?;
+        let state_root_timing = StateRootTiming {
+            source: state_root_source,
+            wait: state_root_wait,
+            total: state_root_start.elapsed(),
+        };
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -616,6 +649,32 @@ impl<Txs> Builder<'_, Txs> {
         let execution_outcome =
             BlockExecutionOutput { state: db.take_bundle(), result: execution_result };
 
+        let no_tx_pool = ctx.attributes().no_tx_pool();
+        // Recorded only for blocks this builder composed, like the inclusion metrics below.
+        if !no_tx_pool {
+            let resource_metering = &ctx.builder_config.resource_metering;
+            let dimensions = if resource_metering.is_active() {
+                resource_metering.schedule.dimensions.as_slice()
+            } else {
+                &[]
+            };
+            let observation = SealedBlockObservation {
+                block_number: block_num,
+                block_hash: sealed_block.hash(),
+                tx_count: sealed_block.body().transaction_count(),
+                gas_used: sealed_block.header().gas_used(),
+                state_root: state_root_timing,
+                state_diff: StateDiffSizes::new(
+                    &hashed_state,
+                    &trie_updates,
+                    &execution_outcome.state,
+                ),
+                // Block usage is final once the block is sealed.
+                resource_usage: std::mem::take(&mut info.resource_metering_usage),
+            };
+            sealed_blocks.record(&observation, dimensions);
+        }
+
         // create the executed block data
         let executed: BuiltPayloadExecutedBlock<N> = BuiltPayloadExecutedBlock {
             recovered_block: Arc::new(block),
@@ -623,8 +682,6 @@ impl<Txs> Builder<'_, Txs> {
             hashed_state: Arc::new(hashed_state),
             trie_updates: Arc::new(trie_updates),
         };
-
-        let no_tx_pool = ctx.attributes().no_tx_pool();
 
         let payload = BaseBuiltPayload::new(
             ctx.payload_id(),
@@ -1751,6 +1808,8 @@ mod tests {
     use reth_ethereum_forks::ForkCondition;
     use reth_evm::execute::BlockBuilder;
     use reth_payload_builder::PayloadId;
+    #[cfg(feature = "metrics")]
+    use reth_payload_primitives::BuiltPayload as _;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
@@ -1760,6 +1819,8 @@ mod tests {
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
     };
+    #[cfg(feature = "metrics")]
+    use reth_trie_common::{BranchNodeCompact, Nibbles, updates::StorageTrieUpdates};
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
     use reth_trie_parallel::state_root_task::{
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootHandle, StateRootTaskCancelGuard,
@@ -1780,22 +1841,45 @@ mod tests {
     };
 
     fn state_root_handle() -> PayloadStateRootHandle {
+        finished_state_root_handle(Some(TrieUpdates::default()))
+    }
+
+    /// A state-root job that already finished with `trie_updates`, or that failed when `None`.
+    fn finished_state_root_handle(trie_updates: Option<TrieUpdates>) -> PayloadStateRootHandle {
         let (updates_tx, _updates_rx) = crossbeam_channel::unbounded();
         let (cancel_guard, _cancel_rx) = StateRootTaskCancelGuard::channel();
         let (result_tx, result_rx) = std::sync::mpsc::channel();
         let (_hashed_state_tx, hashed_state_rx) = std::sync::mpsc::channel();
-        result_tx
-            .send(Ok(StateRootComputeOutcome {
-                state_root: B256::repeat_byte(0x42),
-                trie_updates: Arc::new(TrieUpdates::default()),
-                hashed_state: Arc::new(HashedPostState::default()),
-            }))
-            .unwrap();
+        if let Some(trie_updates) = trie_updates {
+            result_tx
+                .send(Ok(StateRootComputeOutcome {
+                    state_root: B256::repeat_byte(0x42),
+                    trie_updates: Arc::new(trie_updates),
+                    hashed_state: Arc::new(HashedPostState::default()),
+                }))
+                .unwrap();
+        }
+        drop(result_tx);
         StateRootHandle::new(B256::ZERO, updates_tx, cancel_guard, result_rx, hashed_state_rx)
             .into_payload_state_root_handle()
     }
 
     fn build_empty_payload(state_root_handle: PayloadStateRootHandle) -> B256 {
+        let BuildOutcomeKind::Freeze(payload) =
+            build_on_noop_provider(Some(state_root_handle), true)
+        else {
+            panic!("no-tx-pool payload must freeze")
+        };
+        payload.block().state_root
+    }
+
+    /// Builds a block with no candidates on an empty parent state whose provider can compute
+    /// state roots, so the synchronous state-root path runs when `state_root_handle` is `None` or
+    /// fails.
+    fn build_on_noop_provider(
+        state_root_handle: Option<PayloadStateRootHandle>,
+        no_tx_pool: bool,
+    ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
         let chain_spec = Arc::new(BaseChainSpec::from(ChainSpec::default()));
         let parent = Arc::new(SealedHeader::seal_slow(Header {
             gas_limit: 30_000_000,
@@ -1810,7 +1894,7 @@ mod tests {
                 parent_beacon_block_root: Some(B256::ZERO),
                 ..Default::default()
             },
-            no_tx_pool: true,
+            no_tx_pool,
             gas_limit: Some(parent.gas_limit),
             ..Default::default()
         };
@@ -1824,18 +1908,14 @@ mod tests {
         };
         let provider = NoopProvider::default();
         let builder = Builder::new(|_, _| NoopPayloadTransactions::<PooledCandidate>::default());
-        let outcome = builder
+        builder
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
                 &provider,
-                Some(state_root_handle),
+                state_root_handle,
                 ctx,
             )
-            .expect("empty payload must build");
-        let BuildOutcomeKind::Freeze(payload) = outcome else {
-            panic!("no-tx-pool payload must freeze")
-        };
-        payload.block().state_root
+            .expect("empty payload must build")
     }
 
     /// The block gas reservation must include Base transaction `payer_auth` on top of the
@@ -1961,6 +2041,113 @@ mod tests {
         for stage in ["build", "execution", "state_root"] {
             assert!(
                 rendered.contains(&format!("base_builder_native_payload_{stage}_duration_count 1"))
+            );
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    fn render_metrics(build: impl FnOnce()) -> String {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, build);
+        handle.render()
+    }
+
+    /// A sealed pool block records one observation whose sizes match that block's own state diff
+    /// and the trie updates its state-root job returned, plus the block's metered usage.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn sealed_pool_block_records_an_observation_matching_its_state_diff() {
+        let node = || BranchNodeCompact::new(0, 0, 0, Vec::new(), None);
+        let path = |nibble: u8| Nibbles::from_nibbles([nibble]);
+        let trie_updates = TrieUpdates {
+            account_nodes: [(path(1), node()), (path(2), node())].into_iter().collect(),
+            removed_nodes: [path(3)].into_iter().collect(),
+            storage_tries: [(
+                B256::repeat_byte(1),
+                StorageTrieUpdates {
+                    storage_nodes: [(path(1), node()), (path(2), node()), (path(3), node())]
+                        .into_iter()
+                        .collect(),
+                    removed_nodes: [path(4)].into_iter().collect(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let tx = pool_transaction(0);
+        let provider = funded_provider(&[tx.sender()]);
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.builder_config.resource_metering =
+            metering_config(cpu_schedule(u64::MAX, None, true), Arc::new(NoopMeteringProvider));
+
+        let mut outcome = None;
+        let rendered = render_metrics(|| {
+            outcome = Some(
+                Builder::new(|_, _| TestParkableTransactions::new(vec![tx]))
+                    .build(
+                        StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                        &provider,
+                        Some(finished_state_root_handle(Some(trie_updates))),
+                        ctx,
+                    )
+                    .expect("payload must build"),
+            );
+        });
+
+        let Some(BuildOutcomeKind::Freeze(payload)) = outcome else {
+            panic!("Denim pool payload must freeze")
+        };
+        let gas_used = payload.block().gas_used;
+        let executed = payload.executed_block().expect("built payload keeps its executed block");
+        let hashed = &executed.hashed_state;
+        let slots: usize = hashed.storages.values().map(|storage| storage.storage.len()).sum();
+        assert!(!hashed.accounts.is_empty(), "the transfer must change at least its sender");
+        for expected in [
+            r#"base_builder_sealed_block_state_root_duration_count{source="task"} 1"#.to_string(),
+            "base_builder_sealed_block_transactions_sum 1".to_string(),
+            format!("base_builder_sealed_block_gas_used_sum {gas_used}"),
+            format!("base_builder_sealed_block_hashed_accounts_sum {}", hashed.accounts.len()),
+            format!("base_builder_sealed_block_hashed_storages_sum {}", hashed.storages.len()),
+            format!("base_builder_sealed_block_hashed_storage_slots_sum {slots}"),
+            "base_builder_sealed_block_trie_account_nodes_sum 2".to_string(),
+            "base_builder_sealed_block_trie_storage_nodes_sum 3".to_string(),
+            "base_builder_sealed_block_trie_removed_nodes_sum 2".to_string(),
+            format!(
+                r#"base_builder_sealed_block_resource_metering_usage_sum{{dimension="cpu"}} {gas_used}"#
+            ),
+        ] {
+            assert!(rendered.contains(&expected), "expected `{expected}`, got: {rendered}");
+        }
+    }
+
+    /// Every sealed pool block records exactly one observation, labeled by how its state root was
+    /// computed. Replayed `no_tx_pool` blocks record none, matching the other per-block builder
+    /// metrics.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn each_state_root_path_records_one_observation_per_sealed_pool_block() {
+        let replay = render_metrics(|| {
+            build_on_noop_provider(Some(state_root_handle()), true);
+            build_on_noop_provider(None, true);
+        });
+        assert!(!replay.contains("sealed_block"), "replay builds must not record: {replay}");
+
+        for (source, handle) in [
+            ("task", Some(finished_state_root_handle(Some(TrieUpdates::default())))),
+            ("synchronous", None),
+            ("task_fallback", Some(finished_state_root_handle(None))),
+        ] {
+            let rendered = render_metrics(|| {
+                build_on_noop_provider(handle, false);
+            });
+            let expected = format!(
+                r#"base_builder_sealed_block_state_root_duration_count{{source="{source}"}} 1"#
+            );
+            assert!(rendered.contains(&expected), "expected `{expected}`, got: {rendered}");
+            assert!(
+                rendered.contains("base_builder_sealed_block_transactions_count 1"),
+                "expected one observation, got: {rendered}"
             );
         }
     }
