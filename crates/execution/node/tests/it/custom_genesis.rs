@@ -36,6 +36,11 @@ async fn test_base_node_custom_genesis_number() {
     let (mut node, wallet) = E2ETestSetupBuilder::<BaseNode>::new(1, chain_spec)
         .with_runtime(runtime.clone())
         .with_attributes_generator(payload_attributes)
+        .with_node(|_| {
+            let mut args = base_node_core::RollupArgs::default();
+            args.genesis_start.allow_genesis_start = true;
+            BaseNode::new(args)
+        })
         .build_single()
         .await
         .expect("Failed to launch node");

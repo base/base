@@ -171,6 +171,7 @@ async fn standalone_dev_chain_extends_and_resumes_denim_head() -> Result<()> {
 
     let genesis_hash = canonical.genesis.l2.hash;
     let engine = EngineConfig {
+        genesis_start: Default::default(),
         config: Arc::new(canonical.clone()),
         l2_endpoint: EngineEndpoint::Url(engine_url.clone()),
         l2_jwt_secret: jwt_secret,

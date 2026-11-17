@@ -330,6 +330,25 @@ mod tests {
         assert!(error.to_string().contains("`base batcher` manages its own chain configuration"));
     }
 
+    /// Each unified node command must expose exactly one default-off launch flag.
+    #[test]
+    fn node_commands_expose_one_genesis_launch_flag() {
+        let command = BaseCli::command();
+        for name in ["rpc", "follow", "sequencer"] {
+            let node = command.find_subcommand(name).expect("the unified node command must exist");
+            let flags: Vec<_> = node.get_arguments()
+                .filter(|arg| arg.get_long() == Some("allow-genesis-start"))
+                .collect();
+            assert_eq!(flags.len(), 1, "{name} must expose exactly one genesis launch flag");
+            assert_eq!(flags[0].get_default_values(), &[std::ffi::OsString::from("false")],
+                "{name} must refuse genesis startup by default");
+            let help = flags[0].get_long_help().or_else(|| flags[0].get_help())
+                .expect("the launch flag must explain its restricted purpose").to_string();
+            assert!(help.contains("launching a new chain"), "{name} help must limit the flag to launching a new chain");
+            assert!(help.contains("restore a snapshot"), "{name} help must direct existing chains to snapshots");
+        }
+    }
+
     #[test]
     fn parses_default_chain_for_rpc() {
         let cli = BaseCli::parse_from([

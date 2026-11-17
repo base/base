@@ -10,6 +10,9 @@
 mod sigsegv;
 pub use sigsegv::SigsegvHandler;
 
+mod genesis;
+pub use genesis::{GenesisStartArgs, GenesisStartError};
+
 mod backtrace;
 pub use backtrace::Backtracing;
 

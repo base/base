@@ -155,7 +155,8 @@ impl InProcessBuilder {
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
-        let rollup_args = RollupArgs::default();
+        let mut rollup_args = RollupArgs::default();
+        rollup_args.genesis_start.allow_genesis_start = true;
         let base_node = BaseNode::new(rollup_args.clone());
 
         let addons: base_node_core::BaseAddOns<
@@ -489,6 +490,7 @@ fn create_test_db(db_path: &std::path::Path) -> Result<DatabaseEnv> {
 
 fn pool_component(_rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransaction> {
     BasePoolBuilder::<BasePooledTransaction>::default()
+        .with_genesis_start(_rollup_args.genesis_start)
 }
 
 #[cfg(test)]

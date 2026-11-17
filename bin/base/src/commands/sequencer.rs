@@ -61,6 +61,7 @@ impl SequencerCommand {
         };
         let consensus_chain = resolved_chain.consensus_chain_args();
         let mut consensus_config: ConsensusNodeConfigArgs = consensus.into();
+        consensus_config.genesis_start = builder.rollup_args.genesis_start;
         builder.rollup_args.upgrade_signal.apply_chain_default(execution_chain.chain().id());
         builder
             .rollup_args

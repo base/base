@@ -208,8 +208,11 @@ impl InProcessClient {
         }
 
         // Configure rollup args with sequencer URL
-        let rollup_args =
-            RollupArgs { sequencer: Some(config.builder_rpc_url.clone()), ..Default::default() };
+        let rollup_args = RollupArgs {
+            sequencer: Some(config.builder_rpc_url.clone()),
+            genesis_start: base_cli_utils::GenesisStartArgs { allow_genesis_start: true },
+            ..Default::default()
+        };
 
         let base_node = BaseNode::new(rollup_args.clone());
 

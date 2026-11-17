@@ -480,6 +480,13 @@ impl EngineClient for MockEngineClient {
         self.cfg.as_ref()
     }
 
+    async fn latest_block_number(&self) -> TransportResult<u64> {
+        self.get_l2_block(BlockNumberOrTag::Latest.into())
+            .await?
+            .map(|block| block.header.number)
+            .ok_or_else(|| TransportErrorKind::non_retryable_str("local execution head is unavailable"))
+    }
+
     fn get_l1_block(&self, block: BlockId) -> EthGetBlock<<Ethereum as Network>::BlockResponse> {
         let storage = Arc::clone(&self.storage);
         let block_key = block_id_to_key(&block);

@@ -207,7 +207,9 @@ impl LocalInstance {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let metering_provider = Arc::clone(&builder_config.metering_provider);
 
-        let base_node = BaseNode::new(RollupArgs::default())
+        let mut rollup_args = RollupArgs::default();
+        rollup_args.genesis_start.allow_genesis_start = true;
+        let base_node = BaseNode::new(rollup_args)
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config);
 

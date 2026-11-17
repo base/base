@@ -2,6 +2,7 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
+use base_cli_utils::GenesisStartArgs;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_engine::{BaseEngineClient, EngineClient};
@@ -10,7 +11,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    NodeActor, ShutdownSignal,
+    EngineConfig, NodeActor, ShutdownSignal,
     follow::{
         engine::EngineApiFollowEngine,
         error::FollowError,
@@ -31,6 +32,7 @@ where
 {
     config: Arc<RollupConfig>,
     engine_client: Arc<E>,
+    genesis_start: GenesisStartArgs,
     l1_provider: RootProvider,
     local_l2_provider: RootProvider<Base>,
     l2_source: RemoteL2Client,
@@ -50,6 +52,8 @@ where
     pub rollup_config: Arc<RollupConfig>,
     /// Client used to insert payloads into the local execution engine.
     pub engine_client: Arc<E>,
+    /// Explicit permission to launch a new chain from genesis.
+    pub genesis_start: GenesisStartArgs,
     /// Provider for reading local L2 state.
     pub local_l2_provider: RootProvider<Base>,
     /// Provider used to check L2 block origins against canonical L1.
@@ -75,6 +79,7 @@ where
         Self {
             config: config.rollup_config,
             engine_client: config.engine_client,
+            genesis_start: config.genesis_start,
             l1_provider: config.l1_provider,
             local_l2_provider: config.local_l2_provider,
             l2_source: config.l2_source,
@@ -99,6 +104,8 @@ where
         &self,
         cancellation: CancellationToken,
     ) -> Result<(), FollowError> {
+        EngineConfig::check_startup(self.engine_client.as_ref(), self.genesis_start)
+            .await.map_err(FollowError::Startup)?;
         let local = Arc::new(LocalL2Client::new(
             self.local_l2_provider.clone(),
             self.l1_provider.clone(),
@@ -177,5 +184,43 @@ where
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_rpc_client::RpcClient;
+    use base_consensus_engine::InMemoryTransport;
+    use jsonrpsee::RpcModule;
+
+    use super::*;
+    use crate::test_utils::FakeEngineClient;
+
+    /// A supplied engine must not bypass follow-node admission or trigger source reads first.
+    #[tokio::test]
+    async fn refuses_genesis_before_follow_reads() {
+        let config = Arc::new(RollupConfig::default());
+        let engine_client = Arc::new(FakeEngineClient::new(Arc::clone(&config)));
+        let handle = engine_client.handle();
+        handle.set_l2_block_by_label(BlockNumberOrTag::Latest, Default::default());
+        let transport = InMemoryTransport { module: RpcModule::new(()) };
+        let node = FollowNode::new(FollowNodeConfig {
+            rollup_config: config,
+            engine_client,
+            genesis_start: GenesisStartArgs::default(),
+            local_l2_provider: RootProvider::new(RpcClient::new(transport.clone(), true)),
+            l1_provider: RootProvider::new(RpcClient::new(transport, true)),
+            l2_source: RemoteL2Client::new("http://127.0.0.1:1".parse().expect("valid unused source")),
+            rpc_builder: None,
+            proofs_enabled: false,
+            proofs_max_blocks_ahead: 0,
+            insert_delay: Duration::ZERO,
+        });
+        let error = node.start_with_cancellation(CancellationToken::new())
+            .await.expect_err("a supplied engine must still refuse genesis");
+        assert_eq!(error.to_string(),
+            "refusing to start from genesis; restore a snapshot for an existing chain; use --allow-genesis-start only for launching a new chain",
+            "follow startup must preserve the exact recovery instructions");
+        assert_eq!(handle.call_count(), 1, "only the admission height query may run");
     }
 }

@@ -2,6 +2,13 @@
 
 Unified Base node binary.
 
+## Starting a node
+
+Restore a snapshot before starting a node on any existing Base network. Nodes refuse
+to start while the local execution head is still genesis, on every network. Only when launching
+a brand-new chain, pass `--allow-genesis-start` to the node command. The flag logs one
+warning per process. A non-genesis head starts unchanged, with or without the flag.
+
 ## OTLP Tracing
 
 Unified commands, including `rpc`, `follow`, and `sequencer`, support the same

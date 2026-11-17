@@ -75,6 +75,7 @@ services:
           --datadir=/data \
           --proofs-history.storage-path=/data/proofs
         exec /app/base-reth-node node \
+          --allow-genesis-start \
           --chain=/genesis/l2/genesis.json \
           --datadir=/data \
           --disable-discovery \
@@ -112,6 +113,7 @@ services:
       - --chain
       - "${L2_CHAIN_ID}"
       - follow
+      - --allow-genesis-start
       - --source-l2-rpc=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --l2-rpc-url=http://base-proofs:${L2_PROOFS_HTTP_PORT}
       - --l2-engine-rpc=http://base-proofs:${L2_PROOFS_AUTH_PORT}

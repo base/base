@@ -89,7 +89,9 @@ impl LocalNode {
             rpc_args.rpc_gas_cap = rpc_gas_cap;
         }
 
-        let base_node = BaseNode::new(RollupArgs::default());
+        let mut rollup_args = RollupArgs::default();
+        rollup_args.genesis_start.allow_genesis_start = true;
+        let base_node = BaseNode::new(rollup_args);
 
         let (db, db_path) = Self::create_test_database()?;
 

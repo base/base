@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::BaseNode;
+use base_node_core::{BaseNode, args::RollupArgs};
 use reth_network::types::NatResolver;
 use reth_node_builder::{NodeBuilder, NodeHandle};
 use reth_node_core::{
@@ -32,9 +32,11 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
         .with_network(network_args)
         .with_rpc(RpcServerArgs::default().with_unused_ports().with_http());
 
+    let mut rollup_args = RollupArgs::default();
+    rollup_args.genesis_start.allow_genesis_start = true;
     let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
         .testing_node(exec.clone())
-        .node(BaseNode::default())
+        .node(BaseNode::new(rollup_args))
         .launch()
         .await?;
 

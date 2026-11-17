@@ -680,6 +680,10 @@ impl ActionEngineClient {
 
 #[async_trait]
 impl EngineClient for ActionEngineClient {
+    async fn latest_block_number(&self) -> TransportResult<u64> {
+        Ok(self.inner.lock().expect("action engine inner lock poisoned").canonical_head.block_info.number)
+    }
+
     fn cfg(&self) -> &RollupConfig {
         &self.rollup_config
     }

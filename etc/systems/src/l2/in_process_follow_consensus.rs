@@ -111,6 +111,7 @@ impl InProcessFollowConsensus {
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
 
         let engine_config = EngineConfig {
+            genesis_start: base_cli_utils::GenesisStartArgs { allow_genesis_start: true },
             config: Arc::clone(&rollup_config),
             l2_endpoint: EngineEndpoint::Url(config.l2_engine_url),
             l2_jwt_secret: config.jwt_secret,
@@ -141,6 +142,7 @@ impl InProcessFollowConsensus {
         };
 
         let node = FollowNode::new(FollowNodeConfig {
+            genesis_start: base_cli_utils::GenesisStartArgs { allow_genesis_start: true },
             rollup_config: Arc::clone(&rollup_config),
             engine_client,
             l1_provider,
