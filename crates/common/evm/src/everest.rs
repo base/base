@@ -4,7 +4,7 @@ use base_common_chains::{BaseFeature, Upgrades};
 use base_common_precompiles::NonceManagerStorage;
 use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
-/// Single-byte code stub planted on otherwise code-less EIP-8130 system accounts.
+/// Single-byte code stub planted on otherwise code-less Base transaction system accounts.
 ///
 /// `0xEF` is the EIP-3541 reserved prefix: it can never be produced by a normal
 /// `CREATE`/`CREATE2` deployment, so it is an unambiguous "this is a protocol
@@ -13,7 +13,7 @@ use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 /// executing this byte.
 const SYSTEM_ACCOUNT_STUB: [u8; 1] = [0xEF];
 
-/// Code-less EIP-8130 system accounts that hold persistent storage but carry no
+/// Code-less Base transaction system accounts that hold persistent storage but carry no
 /// code on any chain, and therefore must be made non-empty so EIP-161
 /// end-of-block state clearing does not reap them together with their storage.
 ///
@@ -23,7 +23,7 @@ const SYSTEM_ACCOUNT_STUB: [u8; 1] = [0xEF];
 /// (cleared every transaction, never trie-resident) so it needs no stub.
 const CODELESS_SYSTEM_ACCOUNTS: [Address; 1] = [NonceManagerStorage::ADDRESS];
 
-/// The Everest upgrade enables EIP-8130. The enshrined execution path writes
+/// The Everest upgrade enables Base transactions. The enshrined execution path writes
 /// persistent state (e.g. 2D nonce channels) to system accounts that hold
 /// storage but carry no code, leaving them EIP-161-"empty" and liable to be
 /// reaped — discarding that storage — by end-of-block state clearing.
@@ -38,7 +38,7 @@ const CODELESS_SYSTEM_ACCOUNTS: [Address; 1] = [NonceManagerStorage::ADDRESS];
 /// Everest block and is a no-op thereafter.
 ///
 /// [`ensure_create2_deployer`]: crate::ensure_create2_deployer
-pub fn ensure_eip8130_system_accounts<DB>(
+pub fn ensure_base_tx_system_accounts<DB>(
     chain_spec: impl Upgrades,
     timestamp: u64,
     db: &mut DB,
@@ -93,7 +93,7 @@ mod tests {
     fn everest_active_plants_stub_on_codeless_system_account() {
         let mut db = InMemoryDB::default();
 
-        ensure_eip8130_system_accounts(everest(Some(0)), 100, &mut db).unwrap();
+        ensure_base_tx_system_accounts(everest(Some(0)), 100, &mut db).unwrap();
 
         let acc = db.basic(ADDR).unwrap().expect("system account must exist");
         assert!(!acc.is_empty_code_hash(), "the stub must give the account a non-empty code hash");
@@ -108,7 +108,7 @@ mod tests {
     fn everest_inactive_is_a_noop() {
         let mut db = InMemoryDB::default();
 
-        ensure_eip8130_system_accounts(everest(None), 100, &mut db).unwrap();
+        ensure_base_tx_system_accounts(everest(None), 100, &mut db).unwrap();
 
         assert!(db.basic(ADDR).unwrap().is_none(), "no system account should be materialized");
     }
@@ -127,7 +127,7 @@ mod tests {
             },
         );
 
-        ensure_eip8130_system_accounts(everest(Some(0)), 100, &mut db).unwrap();
+        ensure_base_tx_system_accounts(everest(Some(0)), 100, &mut db).unwrap();
 
         let acc = db.basic(ADDR).unwrap().unwrap();
         assert_eq!(acc.code_hash, real.hash_slow(), "a real deployment must not be overwritten");

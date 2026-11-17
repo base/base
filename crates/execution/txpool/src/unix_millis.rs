@@ -1,4 +1,4 @@
-//! Block times on the millisecond clock that EIP-8130 expiry deadlines use.
+//! Block times on the millisecond clock that Base transaction expiry deadlines use.
 
 /// A block time in Unix milliseconds: the header timestamp times 1000 plus the
 /// block's `BaseTime` millisecond part.

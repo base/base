@@ -1,17 +1,17 @@
-//! Storage layout and constants for the EIP-8130 transaction context precompile.
+//! Storage layout and constants for the Base transaction context precompile.
 
 use alloy_primitives::{Address, B256, U256, address};
 use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 
-/// Transient-storage-backed view of the in-flight EIP-8130 transaction context.
+/// Transient-storage-backed view of the in-flight Base transaction context.
 ///
 /// The resolved sender, payer, and sender actor id are written to transient
-/// storage at [`Self::ADDRESS`] by the EIP-8130 execution layer at the start of
+/// storage at [`Self::ADDRESS`] by the Base transaction execution layer at the start of
 /// transaction processing and cleared automatically at transaction end. The
-/// precompile reads them without exposing TLOAD opcode gas because EIP-8130
+/// precompile reads them without exposing TLOAD opcode gas because EIP-8430
 /// prices getter output separately.
 ///
-/// For any non-EIP-8130 transaction (where nothing is written) each getter falls
+/// For any non-Base transaction (where nothing is written) each getter falls
 /// back to `tx.origin`: [`Self::sender`] and [`Self::payer`] return the origin
 /// address and [`Self::sender_actor_id`] returns
 /// `bytes32(uint256(uint160(tx.origin)))`,
@@ -24,8 +24,8 @@ pub struct TxContextStorage<'a> {
 impl<'a> TxContextStorage<'a> {
     /// Transaction context precompile address.
     ///
-    /// Pinned to `TX_CONTEXT_ADDRESS` from the EIP-8130 constant table
-    /// (`0x8130…aa02`, in the `0x8130…` / EIP-number namespace for EIP-8130
+    /// Pinned to `TX_CONTEXT_ADDRESS` from the EIP-8430 constant table
+    /// (`0x8130…aa02`, in the `0x8130…` namespace of the Base transaction
     /// system precompiles).
     pub const ADDRESS: Address = address!("813000000000000000000000000000000000aa02");
 
@@ -42,7 +42,7 @@ impl<'a> TxContextStorage<'a> {
     }
 
     /// Returns the resolved sender, falling back to `tx.origin` when unset
-    /// (i.e. outside an EIP-8130 transaction).
+    /// (i.e. outside a Base transaction).
     pub fn sender(&self) -> Result<Address> {
         let raw = self.storage.tload_unmetered(Self::ADDRESS, Self::SENDER_SLOT)?;
         if raw.is_zero() {
@@ -52,7 +52,7 @@ impl<'a> TxContextStorage<'a> {
     }
 
     /// Returns the resolved payer, falling back to `tx.origin` when unset
-    /// (i.e. outside an EIP-8130 transaction).
+    /// (i.e. outside a Base transaction).
     pub fn payer(&self) -> Result<Address> {
         let raw = self.storage.tload_unmetered(Self::ADDRESS, Self::PAYER_SLOT)?;
         if raw.is_zero() {
@@ -62,7 +62,7 @@ impl<'a> TxContextStorage<'a> {
     }
 
     /// Returns the sender actor id, falling back to
-    /// `bytes32(uint256(uint160(tx.origin)))` when unset (i.e. outside an EIP-8130
+    /// `bytes32(uint256(uint160(tx.origin)))` when unset (i.e. outside a Base
     /// transaction).
     pub fn sender_actor_id(&self) -> Result<B256> {
         let raw = self.storage.tload_unmetered(Self::ADDRESS, Self::SENDER_ACTOR_ID_SLOT)?;
@@ -74,14 +74,14 @@ impl<'a> TxContextStorage<'a> {
 
     /// Writes the resolved transaction context into transient storage.
     ///
-    /// Intended for the EIP-8130 execution layer to call once at the start of
+    /// Intended for the Base transaction execution layer to call once at the start of
     /// transaction processing through the gas-free `JournalStorageProvider`.
     /// These publication writes are covered by the protocol's intrinsic gas
     /// schedule and must not expose TSTORE opcode charges. The values are
     /// cleared automatically when the transaction's transient storage is reset.
     ///
     /// # Invariant
-    /// In the EIP-8130 domain the resolved sender, payer, and actor id are always
+    /// In the Base transaction domain the resolved sender, payer, and actor id are always
     /// non-zero (sender/payer are recovered addresses; the actor id derives from
     /// the sender). The getters depend on this: a zero slot unambiguously means
     /// "unset" and selects the `tx.origin` fallback, so writing a zero field here

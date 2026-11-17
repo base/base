@@ -45,7 +45,7 @@ pub struct BuilderConfig {
     /// Transactions in this cache are skipped by the iterator without re-evaluation.
     pub rejection_cache: RejectionCache,
 
-    /// Whether to drop EIP-8130 transactions whose captured payer and expiry
+    /// Whether to drop Base transactions whose captured payer and expiry
     /// predicates are positively stale before executing them.
     pub manifest_precheck_enabled: bool,
 
@@ -131,7 +131,7 @@ impl BuilderConfig {
         Self::default()
     }
 
-    /// Toggles the EIP-8130 manifest precheck.
+    /// Toggles the Base transaction manifest precheck.
     #[must_use]
     pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
         self.manifest_precheck_enabled = enabled;

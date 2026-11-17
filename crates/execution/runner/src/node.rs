@@ -42,7 +42,7 @@ pub struct BaseNode {
     /// Used to control the gas limit of the blocks produced by the payload builder (configured by the
     /// batcher via the `miner_` api)
     pub gas_limit_config: GasLimitConfig,
-    /// Whether to drop positively stale EIP-8130 transactions using their
+    /// Whether to drop positively stale Base transactions using their
     /// captured payer and expiry predicates before execution.
     pub manifest_precheck_enabled: bool,
     /// Resource metering by opcode for native payload admission.
@@ -85,7 +85,7 @@ impl BaseNode {
         self
     }
 
-    /// Configure whether EIP-8130 payer and expiry manifests are checked before execution.
+    /// Configure whether Base transaction payer and expiry manifests are checked before execution.
     pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
         self.manifest_precheck_enabled = enabled;
         self

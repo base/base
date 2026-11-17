@@ -3,7 +3,7 @@
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{Address, Bytes, Signature, TxHash};
 use base_common_chains::{BaseFeature, Upgrades};
-use base_common_consensus::EIP8130_TX_TYPE_ID;
+use base_common_consensus::BASE_TX_TYPE_ID;
 use base_common_genesis::RollupConfig;
 use base_execution_rpc::SequencerClient;
 use base_execution_txpool::{
@@ -28,12 +28,12 @@ use reth_transaction_pool::{BatchTxRequest, PoolTransaction, TransactionOrigin, 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-/// Rejection message returned when an EIP-8130 (account abstraction) validity transaction is
+/// Rejection message returned when a Base transaction validity transaction is
 /// submitted before the Everest hard fork is active at the latest block.
 ///
-/// EIP-8130 validity transactions are fork-gated on Everest; other transaction types (e.g. EIP-1559)
-/// carry validity predicates without a fork gate.
-pub const VALIDITY_TX_PRE_EVEREST_RPC_ERROR: &str = "EIP-8130 validity transactions are gated behind \
+/// Base transaction validity transactions are fork-gated on Everest; other transaction types (e.g.
+/// EIP-1559) carry validity predicates without a fork gate.
+pub const VALIDITY_TX_PRE_EVEREST_RPC_ERROR: &str = "Base transaction validity transactions are gated behind \
      the Everest hard fork; they are not accepted before Everest is active";
 
 /// Error returned for flashblock-index predicates, which no builder can satisfy.
@@ -355,15 +355,15 @@ where
                 )
             })?;
 
-        // EIP-8130 (account abstraction) validity transactions are fork-gated on Everest. Other
+        // Base transaction validity transactions are fork-gated on Everest. Other
         // transaction types (e.g. EIP-1559) carry validity predicates without a fork gate and are
         // accepted before Everest activates.
-        let eip8130_active = latest.is_some_and(|(_, timestamp)| {
+        let base_tx_active = latest.is_some_and(|(_, timestamp)| {
             self.provider
                 .chain_spec()
-                .is_feature_active_at_timestamp(BaseFeature::Eip8130, timestamp)
+                .is_feature_active_at_timestamp(BaseFeature::TxBase, timestamp)
         });
-        if transaction.ty() == EIP8130_TX_TYPE_ID && !eip8130_active {
+        if transaction.ty() == BASE_TX_TYPE_ID && !base_tx_active {
             return Err(ErrorObjectOwned::owned(
                 ErrorCode::InvalidParams.code(),
                 VALIDITY_TX_PRE_EVEREST_RPC_ERROR,
@@ -459,8 +459,8 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
-        Eip8130Signed, TxEip8130,
+        BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, TxBase,
+        TxBaseSigned,
     };
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -607,9 +607,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signed_validity_ingress_accepts_eoa_authenticated_eip8130() {
+    async fn signed_validity_ingress_accepts_eoa_authenticated_base_tx() {
         let signer = PrivateKeySigner::random();
-        let raw = signed_eip8130(&signer);
+        let raw = signed_base_tx(&signer);
         let tx: BasePooledTransaction =
             BasePooledTransaction::recover_raw_transaction(&raw).unwrap();
         let (_, mut options) = validity_request(raw.clone());
@@ -855,9 +855,9 @@ mod tests {
         tx.into_signed(signature).encoded_2718().into()
     }
 
-    /// Builds a raw, EOA-recoverable EIP-8130 transaction with a k1 sender authenticator.
-    fn signed_eip8130(signer: &PrivateKeySigner) -> Bytes {
-        let tx = TxEip8130 {
+    /// Builds a raw, EOA-recoverable Base transaction with a k1 sender authenticator.
+    fn signed_base_tx(signer: &PrivateKeySigner) -> Bytes {
+        let tx = TxBase {
             chain_id: ChainConfig::mainnet().chain_id,
             sender: None,
             nonce_key: U256::ZERO,
@@ -879,8 +879,8 @@ mod tests {
         sender_auth[..32].copy_from_slice(&signature.r().to_be_bytes::<32>());
         sender_auth[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
         sender_auth[64] = 27 + u8::from(signature.v());
-        let signed = Eip8130Signed::new(tx, Bytes::from(sender_auth.to_vec()), Bytes::new());
-        ConsensusPooledTransaction::Eip8130(signed).encoded_2718().into()
+        let signed = TxBaseSigned::new(tx, Bytes::from(sender_auth.to_vec()), Bytes::new());
+        ConsensusPooledTransaction::Base(signed).encoded_2718().into()
     }
 
     #[test]
@@ -1094,9 +1094,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_eip8130_before_everest() {
+    async fn send_raw_transaction_validity_rejects_base_tx_before_everest() {
         let signer = PrivateKeySigner::random();
-        let raw = signed_eip8130(&signer);
+        let raw = signed_base_tx(&signer);
         let rpc = SendRawTransactionValidityApiImpl::new(
             pre_everest_provider(),
             test_transaction_sender(),
@@ -1109,7 +1109,7 @@ mod tests {
         let error = rpc
             .send_raw_transaction_validity(raw, options)
             .await
-            .expect_err("EIP-8130 validity transactions should be rejected before Everest");
+            .expect_err("Base transaction validity transactions should be rejected before Everest");
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert_eq!(error.message(), VALIDITY_TX_PRE_EVEREST_RPC_ERROR);

@@ -8,7 +8,7 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, U256, hex};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
+use base_common_consensus::{Call, TxBase, TxBaseSigned};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payer_rpc::{
     PayerRejection, PayerRpcConfig, PayerRpcExtension, PayerTransactionError,
@@ -46,9 +46,9 @@ async fn node(genesis: Genesis, payer: &MockServer) -> eyre::Result<TestHarness>
 }
 
 /// A transaction `sender` signs with nonce 0, sponsored by [`PAYER`].
-fn sponsored(chain_id: u64, sender: &PrivateKeySigner) -> Eip8130Signed {
+fn sponsored(chain_id: u64, sender: &PrivateKeySigner) -> TxBaseSigned {
     let call = Call { to: Address::repeat_byte(0x11), value: U256::ZERO, data: Bytes::new() };
-    let tx = TxEip8130 {
+    let tx = TxBase {
         chain_id,
         max_fee_per_gas: 10_000_000_000,
         gas_limit: 200_000,
@@ -57,11 +57,11 @@ fn sponsored(chain_id: u64, sender: &PrivateKeySigner) -> Eip8130Signed {
         ..Default::default()
     };
     let sender_auth = sender.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes();
-    Eip8130Signed::new(tx, Bytes::from(sender_auth.to_vec()), Bytes::new())
+    TxBaseSigned::new(tx, Bytes::from(sender_auth.to_vec()), Bytes::new())
 }
 
 /// A `payer_sendTransaction` request for `tx`.
-fn send_request(tx: &Eip8130Signed) -> Value {
+fn send_request(tx: &TxBaseSigned) -> Value {
     json!({ "transaction": hex::encode_prefixed(tx.encoded_2718()) })
 }
 

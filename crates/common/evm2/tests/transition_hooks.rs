@@ -1,10 +1,11 @@
 //! Transition-block hook tests for `base-common-evm2`.
 //!
-//! Validates the Canyon create2-deployer, Denim `BaseTime`, and Everest EIP-8130 system-account
-//! irregular state transitions applied by [`BaseBlockExecutor::apply_transition_hooks`]: their
-//! fork gating, the state they install, and their idempotency. Each hook's parity with the revm
-//! reference (`base-common-evm`'s `canyon`/`everest`/`base_time` modules) is in the shape of the
-//! installed code/storage, asserted here against the same addresses and constants.
+//! Validates the Canyon create2-deployer, Denim `BaseTime`, and Everest Base transaction
+//! system-account irregular state transitions applied by
+//! [`BaseBlockExecutor::apply_transition_hooks`]: their fork gating, the state they install, and
+//! their idempotency. Each hook's parity with the revm reference (`base-common-evm`'s
+//! `canyon`/`everest`/`base_time` modules) is in the shape of the installed code/storage, asserted
+//! here against the same addresses and constants.
 
 use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, address, b256, uint};
 use base_common_consensus::Predeploys;

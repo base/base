@@ -1,4 +1,4 @@
-//! EIP-8130 transaction context native precompile.
+//! Base transaction context native precompile.
 
 mod abi;
 pub use abi::ITransactionContext;

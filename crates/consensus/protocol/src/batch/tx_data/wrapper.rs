@@ -7,8 +7,8 @@ use base_common_consensus::{BaseTxEnvelope, OpTxType};
 
 use crate::{
     SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
-    SpanBatchEip7702TransactionData, SpanBatchEip8130TransactionData, SpanBatchError,
-    SpanBatchLegacyTransactionData, SpanDecodingError,
+    SpanBatchEip7702TransactionData, SpanBatchError, SpanBatchLegacyTransactionData,
+    SpanBatchTxBaseTransactionData, SpanDecodingError,
 };
 
 /// The typed transaction data for a transaction within a span batch.
@@ -22,8 +22,8 @@ pub enum SpanBatchTransactionData {
     Eip1559(SpanBatchEip1559TransactionData),
     /// EIP-7702 transaction data.
     Eip7702(SpanBatchEip7702TransactionData),
-    /// EIP-8130 transaction data.
-    Eip8130(SpanBatchEip8130TransactionData),
+    /// Base transaction data.
+    Base(SpanBatchTxBaseTransactionData),
 }
 
 impl Encodable for SpanBatchTransactionData {
@@ -44,8 +44,8 @@ impl Encodable for SpanBatchTransactionData {
                 out.put_u8(OpTxType::Eip7702 as u8);
                 data.encode(out);
             }
-            Self::Eip8130(data) => {
-                out.put_u8(OpTxType::Eip8130 as u8);
+            Self::Base(data) => {
+                out.put_u8(OpTxType::Base as u8);
                 data.encode(out);
             }
         }
@@ -106,9 +106,9 @@ impl TryFrom<&BaseTxEnvelope> for SpanBatchTransactionData {
                     authorization_list: s.authorization_list.clone(),
                 }))
             }
-            BaseTxEnvelope::Eip8130(signed) => {
+            BaseTxEnvelope::Base(signed) => {
                 let tx = signed.tx();
-                Ok(Self::Eip8130(SpanBatchEip8130TransactionData {
+                Ok(Self::Base(SpanBatchTxBaseTransactionData {
                     sender: tx.sender,
                     nonce_key: tx.nonce_key,
                     valid_after: tx.valid_after,
@@ -119,14 +119,14 @@ impl TryFrom<&BaseTxEnvelope> for SpanBatchTransactionData {
                     account_changes: tx.account_changes.clone(),
                     calls: tx.calls.clone(),
                     metadata: tx.metadata.clone(),
-                    sender_authenticator: SpanBatchEip8130TransactionData::split_auth(
+                    sender_authenticator: SpanBatchTxBaseTransactionData::split_auth(
                         signed.sender_auth(),
                         tx.sender.is_some(),
                     )?
                     .0,
-                    payer_authenticator: SpanBatchEip8130TransactionData::split_auth(
+                    payer_authenticator: SpanBatchTxBaseTransactionData::split_auth(
                         signed.payer_auth(),
-                        SpanBatchEip8130TransactionData::named_payer(tx.payer),
+                        SpanBatchTxBaseTransactionData::named_payer(tx.payer),
                     )?
                     .0,
                 }))
@@ -146,7 +146,7 @@ impl SpanBatchTransactionData {
             Self::Eip2930(_) => OpTxType::Eip2930,
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
-            Self::Eip8130(_) => OpTxType::Eip8130,
+            Self::Base(_) => OpTxType::Base,
         }
     }
 
@@ -166,9 +166,7 @@ impl SpanBatchTransactionData {
             OpTxType::Eip7702 => {
                 Ok(Self::Eip7702(SpanBatchEip7702TransactionData::decode(&mut &b[1..])?))
             }
-            OpTxType::Eip8130 => {
-                Ok(Self::Eip8130(SpanBatchEip8130TransactionData::decode(&mut &b[1..])?))
-            }
+            OpTxType::Base => Ok(Self::Base(SpanBatchTxBaseTransactionData::decode(&mut &b[1..])?)),
             _ => Err(alloy_rlp::Error::Custom("Invalid transaction type")),
         }
     }
@@ -207,9 +205,9 @@ impl SpanBatchTransactionData {
                 };
                 BaseTxEnvelope::Eip7702(data.to_signed_tx(nonce, gas, addr, chain_id, signature)?)
             }
-            // EIP-8130 transactions are reconstructed through their dedicated path in
+            // Base transactions are reconstructed through their dedicated path in
             // `full_txs`, which supplies the auth proofs carried in the trailing column.
-            Self::Eip8130(_) => {
+            Self::Base(_) => {
                 return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionType));
             }
         })

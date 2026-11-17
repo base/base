@@ -22,7 +22,7 @@ pub use rpc::{
 };
 
 mod state;
-pub use state::{Eip8130ChainState, PayerChainState};
+pub use state::{PayerChainState, TxBaseChainState};
 
 mod transaction;
 pub use transaction::{PayerTransaction, PayerTransactionError};

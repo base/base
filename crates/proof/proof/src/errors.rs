@@ -171,8 +171,8 @@ pub enum OracleProviderError {
     /// An active Zenith upgrade is not committed by the proof schedule ID.
     #[error("Active Zenith upgrade is not committed by the proof schedule ID")]
     UncommittedZenithUpgrade,
-    /// Everest is active within the proven range, but this build cannot execute EIP-8130.
-    #[error("Active Everest upgrade requires EIP-8130 execution, which this build lacks")]
+    /// Everest is active within the proven range, but this build cannot execute Base transactions.
+    #[error("Active Everest upgrade requires Base transaction execution, which this build lacks")]
     UnsupportedEverestUpgrade,
     /// A Beryl-enabled chain is missing a trusted activation registry admin address.
     ///

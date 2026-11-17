@@ -25,13 +25,12 @@ mod precompiles;
 mod executor;
 pub use executor::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BlockExecutionResult, BlockGasLimitExceeded,
-    CumulativeGasOverflow, DaFootprintAboveGasLimit, Eip8130ExecutionUnsupported,
-    PreExecutionError,
+    CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError, TxBaseExecutionUnsupported,
 };
 
 mod registry;
 
-pub use base_common_eip8130::{Eip8130GasSchedule, IntrinsicGas};
+pub use base_common_base_tx::{IntrinsicGas, TxBaseGasSchedule};
 
 mod nonce_manager;
 pub use nonce_manager::{NonceManager, NonceOverflow};

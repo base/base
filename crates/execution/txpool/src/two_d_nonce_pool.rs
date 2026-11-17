@@ -1,5 +1,5 @@
 //! Lane storage and iteration for transactions kept outside the protocol
-//! pool: the EIP-8130 sidecar (finite nonce channels and nonce-free
+//! pool: the Base transaction sidecar (finite nonce channels and nonce-free
 //! transactions) and the validity pool, which also holds protocol-nonce lanes.
 
 use std::{
@@ -14,7 +14,7 @@ use alloy_primitives::{
     Address, B256, TxHash, U256, U512,
     map::{AddressMap, B256Map, HashMap},
 };
-use base_common_consensus::Eip8130Constants;
+use base_common_consensus::TxBaseConstants;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_transaction_pool::{
     AddedTransactionOutcome, BestTransactions, LocalTransactionConfig, PoolConfig, PoolResult,
@@ -605,7 +605,7 @@ impl EvictionOrder {
     }
 }
 
-/// EIP-8130 sidecar for finite non-zero nonce channels and nonce-free transactions.
+/// Base transaction sidecar for finite non-zero nonce channels and nonce-free transactions.
 ///
 /// Finite channels are kept in ordered `(sender, nonce_key)` lanes. Nonce-free
 /// transactions have no sequencing relationship, so they are stored separately
@@ -619,8 +619,8 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     limits: SidecarLimits,
     usage: SidecarUsage,
     /// Whether transactions sequenced on the account's protocol nonce (nonce
-    /// key zero, including non-EIP-8130 types) are stored in `(sender, 0)`
-    /// lanes. The EIP-8130 sidecar rejects them; the validity pool accepts them.
+    /// key zero, including non-Base types) are stored in `(sender, 0)`
+    /// lanes. The Base transaction sidecar rejects them; the validity pool accepts them.
     protocol_nonce_lanes: bool,
     /// Every eviction candidate. Kept in step with `lanes` and `nonce_free`
     /// so eviction never scans the pool.
@@ -677,16 +677,16 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self
     }
 
-    /// The nonce key of the lane `transaction` is sequenced in: its EIP-8130
+    /// The nonce key of the lane `transaction` is sequenced in: its Base transaction
     /// channel, or zero for a protocol-nonce transaction when this pool stores
     /// those. `None` for nonce-free transactions and for protocol-nonce
     /// transactions the pool does not accept.
     fn lane_key(&self, transaction: &T) -> Option<U256> {
-        if transaction.is_eip8130_nonce_free() {
+        if transaction.is_base_tx_nonce_free() {
             return None;
         }
         transaction
-            .eip8130_nonce_channel_key()
+            .base_tx_nonce_channel_key()
             .or_else(|| self.protocol_nonce_lanes.then_some(U256::ZERO))
     }
 
@@ -1063,7 +1063,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             return Err(PoolError::new(hash, PoolErrorKind::AlreadyImported));
         }
 
-        if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
+        if let Some(replay_id) = transaction.transaction.base_tx_replay_id() {
             self.ensure_admissible(&transaction, self.nonce_free.contains_key(&replay_id), false)?;
             let replaced = if let Some(existing) = self.nonce_free.get(&replay_id) {
                 if existing.is_replacement_underpriced(&transaction, &self.price_bump_config) {
@@ -1096,7 +1096,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
         let sender = transaction.sender();
         let nonce_key = self.lane_key(&transaction.transaction).ok_or_else(|| {
-            PoolError::other(hash, "2D nonce pool only accepts channelized EIP-8130 transactions")
+            PoolError::other(hash, "2D nonce pool only accepts channelized Base transactions")
         })?;
 
         let lane_id = (sender, nonce_key);
@@ -1410,7 +1410,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             if self
                 .hashes
                 .get(hash)
-                .is_some_and(|transaction| transaction.transaction.is_eip8130_nonce_free())
+                .is_some_and(|transaction| transaction.transaction.is_base_tx_nonce_free())
             {
                 if let Some(transaction) = self.remove_hash(*hash) {
                     removed.push(transaction);
@@ -1446,7 +1446,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             if self
                 .hashes
                 .get(hash)
-                .is_some_and(|transaction| transaction.transaction.is_eip8130_nonce_free())
+                .is_some_and(|transaction| transaction.transaction.is_base_tx_nonce_free())
                 && let Some(transaction) = self.remove_hash(*hash)
             {
                 removed.push(transaction);
@@ -1495,7 +1495,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     /// Removes nonce-free transactions whose `valid_before` has passed at
     /// `now_ms`, the block's exact millisecond time (see
-    /// `TxEip8130::is_expired_at`).
+    /// `TxBase::is_expired_at`).
     ///
     /// Finite channels are unaffected; the guard's expiry index evicts them.
     pub(crate) fn remove_expired_nonce_free(
@@ -1506,7 +1506,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .nonce_free
             .values()
             .filter_map(|transaction| {
-                let signed = transaction.transaction.as_eip8130()?;
+                let signed = transaction.transaction.as_base_tx()?;
                 signed.tx().is_expired_at(now_ms).then_some(*transaction.hash())
             })
             .collect();
@@ -1581,7 +1581,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     fn remove_hash(&mut self, hash: TxHash) -> Option<Arc<ValidPoolTransaction<T>>> {
         if let Some(transaction) = self.hashes.get(&hash)
-            && let Some(replay_id) = transaction.transaction.eip8130_replay_id()
+            && let Some(replay_id) = transaction.transaction.base_tx_replay_id()
         {
             let transaction = self.nonce_free.remove(&replay_id)?;
             self.hashes.remove(&hash);
@@ -1626,7 +1626,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         for hash in self.usage.sender_hashes.get(&sender).into_iter().flatten() {
             if let Some(transaction) = self.hashes.get(hash) {
                 transaction.transaction.set_coinbase_tip_backed(backed);
-                if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
+                if let Some(replay_id) = transaction.transaction.base_tx_replay_id() {
                     replay_ids.push(replay_id);
                 } else if let Some(nonce_key) = self.lane_key(&transaction.transaction) {
                     lanes.insert((sender, nonce_key));
@@ -1642,7 +1642,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 }
 
-/// Snapshot iterator over the current best transactions of the EIP-8130 sidecar.
+/// Snapshot iterator over the current best transactions of the Base transaction sidecar.
 ///
 /// Each finite channel contributes its contiguous head and each nonce-free
 /// transaction contributes an independent one-item candidate.
@@ -1723,7 +1723,7 @@ where
             .map(|(index, lane)| (lane.id, index))
             .collect();
         snapshot.extend(nonce_free.values().map(|transaction| {
-            let id = (transaction.sender(), Eip8130Constants::NONCE_KEY_MAX);
+            let id = (transaction.sender(), TxBaseConstants::NONCE_KEY_MAX);
             LaneIterator::new(id, Arc::clone(transaction), Vec::new())
         }));
         let candidates = BinaryHeap::from(
@@ -1782,9 +1782,9 @@ where
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
         let Some(nonce_key) = transaction
             .transaction
-            .eip8130_nonce_channel_key()
+            .base_tx_nonce_channel_key()
             .or_else(|| self.protocol_nonce_lanes.then_some(U256::ZERO))
-            .filter(|_| !transaction.transaction.is_eip8130_nonce_free())
+            .filter(|_| !transaction.transaction.is_base_tx_nonce_free())
         else {
             return;
         };
@@ -1835,8 +1835,8 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope, Call, Eip8130Signed,
-        Predeploys, TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope, Call, Predeploys,
+        TxBase, TxBaseSigned,
     };
     use reth_primitives_traits::InMemorySize;
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
@@ -1909,7 +1909,7 @@ mod tests {
     ) -> BasePooledTransaction {
         sign_tx(
             signer,
-            TxEip8130 {
+            TxBase {
                 chain_id: test_chain_id(),
                 nonce_key,
                 nonce_sequence,
@@ -1922,11 +1922,11 @@ mod tests {
         )
     }
 
-    fn sign_tx(signer: &PrivateKeySigner, tx: TxEip8130) -> BasePooledTransaction {
+    fn sign_tx(signer: &PrivateKeySigner, tx: TxBase) -> BasePooledTransaction {
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+            TxBaseSigned::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Base(signed);
         BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
     }
 
@@ -1938,7 +1938,7 @@ mod tests {
     ) -> BasePooledTransaction {
         signed_tx(
             signer,
-            Eip8130Constants::NONCE_KEY_MAX,
+            TxBaseConstants::NONCE_KEY_MAX,
             0,
             valid_before,
             max_priority_fee_per_gas,
@@ -2946,7 +2946,7 @@ mod tests {
                     if nonce == 0 { (7, Bytes::new()) } else { (1_000_000, vec![0; 4_096].into()) };
                 valid_pool_transaction(sign_tx(
                     &attacker,
-                    TxEip8130 {
+                    TxBase {
                         chain_id: test_chain_id(),
                         nonce_key: U256::from(1),
                         nonce_sequence: nonce,
@@ -3068,7 +3068,7 @@ mod tests {
     ) -> BasePooledTransaction {
         sign_tx(
             signer,
-            TxEip8130 {
+            TxBase {
                 chain_id: test_chain_id(),
                 nonce_key,
                 nonce_sequence,
@@ -3142,7 +3142,7 @@ mod tests {
         // 100 per gas once backed, nothing before.
         let coinbase = valid_pool_transaction(signed_coinbase_tip_tx(
             &tipper,
-            Eip8130Constants::NONCE_KEY_MAX,
+            TxBaseConstants::NONCE_KEY_MAX,
             0,
             5_000_000,
             0,
@@ -3210,7 +3210,7 @@ mod tests {
             } else {
                 signed_coinbase_tip_tx(
                     &tipper,
-                    Eip8130Constants::NONCE_KEY_MAX,
+                    TxBaseConstants::NONCE_KEY_MAX,
                     0,
                     coinbase_tip,
                     priority_fee,
@@ -3407,7 +3407,7 @@ mod tests {
         assert_eq!(error.hash, rejected_hash);
         assert_eq!(channel_only.len(), 0);
 
-        // EIP-1559 and key-0 EIP-8130 transactions share the sender's lane 0.
+        // EIP-1559 and key-0 Base transactions share the sender's lane 0.
         let mut pool = protocol_lane_pool();
         let eip1559 = valid_pool_transaction(signed_1559(&signer, 0, 1_000));
         let key0 = valid_pool_transaction(signed_channel_tx(&signer, U256::ZERO, 1, 1_000));
@@ -3520,7 +3520,7 @@ mod tests {
         let signer = signer();
         let mut pool = protocol_lane_pool();
         let transaction = valid_pool_transaction(signed_nonce_free_tx(&signer, 10_000, 0, 1_000));
-        let replay_id = transaction.transaction.eip8130_replay_id().unwrap();
+        let replay_id = transaction.transaction.base_tx_replay_id().unwrap();
         let hash = *transaction.hash();
         pool.insert_validated(transaction, 0).unwrap();
 

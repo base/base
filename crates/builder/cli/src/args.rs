@@ -219,11 +219,11 @@ pub struct Args {
     #[arg(long = "builder.rejection-cache-ttl-secs", default_value = "1800")]
     pub rejection_cache_ttl_secs: u64,
 
-    /// Whether to drop positively stale EIP-8130 transactions using their
+    /// Whether to drop positively stale Base transactions using their
     /// captured payer and expiry predicates before execution. Disable with
-    /// `--builder.eip8130-manifest-precheck=false`.
+    /// `--builder.base-tx-manifest-precheck=false`.
     #[arg(
-        long = "builder.eip8130-manifest-precheck",
+        long = "builder.base-tx-manifest-precheck",
         default_value_t = true,
         action = clap::ArgAction::Set
     )]
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn manifest_precheck_accepts_explicit_false() {
         let parsed =
-            CommandParser::parse_from(["test", "--builder.eip8130-manifest-precheck=false"]);
+            CommandParser::parse_from(["test", "--builder.base-tx-manifest-precheck=false"]);
         assert!(!parsed.args.manifest_precheck_enabled);
     }
 

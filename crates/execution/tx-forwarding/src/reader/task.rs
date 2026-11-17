@@ -390,11 +390,11 @@ where
     /// Returns whether an announced `tx` can join the current lanes without the builder seeing its
     /// sequence out of nonce order.
     ///
-    /// It can if it replaces or directly follows the sequence's latest transaction in the lanes,
-    /// or if its predecessor has been sent or is no longer pooled. It cannot if a later nonce of
-    /// the sequence is already in the lanes, since it would be sent after it, or if its
-    /// predecessor is pooled but unsent, as when that announcement was dropped. Predecessors in
-    /// EIP-8130 keyed nonce lanes cannot be looked up, so those are left to the full read too.
+    /// It can if it replaces or directly follows the sequence's latest transaction in the lanes, or
+    /// if its predecessor has been sent or is no longer pooled. It cannot if a later nonce of the
+    /// sequence is already in the lanes, since it would be sent after it, or if its predecessor is
+    /// pooled but unsent, as when that announcement was dropped. Predecessors in Base transaction
+    /// keyed nonce lanes cannot be looked up, so those are left to the full read too.
     fn in_nonce_order(
         &self,
         tx: &Arc<ValidPoolTransaction<P::Transaction>>,

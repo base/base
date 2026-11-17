@@ -15,7 +15,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
+use base_common_consensus::{Call, TxBase, TxBaseSigned};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{
@@ -67,7 +67,7 @@ fn block_expiry_bound(current_block: u64) -> ValidityPredicate {
 }
 
 /// Starts a separate mempool and builder pair using the native Denim payload builder with validity
-/// transport enabled on both nodes and Everest active for EIP-8130 transactions.
+/// transport enabled on both nodes and Everest active for Base transactions.
 async fn start_validity_system() -> Result<SystemTestStack> {
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
@@ -118,13 +118,13 @@ fn create_signed_eip1559_tx(
     Ok((sender, raw_tx, tx_hash))
 }
 
-/// Creates a signed, self-paying EIP-8130 transaction and returns its raw bytes and hash.
-fn create_signed_eip8130_tx(
+/// Creates a signed, self-paying Base transaction and returns its raw bytes and hash.
+fn create_signed_base_tx(
     signer: &PrivateKeySigner,
     chain_id: u64,
     nonce_sequence: u64,
 ) -> Result<(Bytes, B256)> {
-    let tx = TxEip8130 {
+    let tx = TxBase {
         chain_id,
         sender: None,
         nonce_key: U256::ZERO,
@@ -144,7 +144,7 @@ fn create_signed_eip8130_tx(
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash())?;
-    let signed = Eip8130Signed::new(tx, signature.as_bytes().to_vec().into(), Bytes::new());
+    let signed = TxBaseSigned::new(tx, signature.as_bytes().to_vec().into(), Bytes::new());
     let tx_hash = *signed.hash();
     Ok((signed.encoded_2718().into(), tx_hash))
 }
@@ -533,10 +533,10 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
     Ok(())
 }
 
-/// Verifies an Everest EIP-8130 transaction can carry validity predicates through forwarding and be
+/// Verifies an Everest Base transaction can carry validity predicates through forwarding and be
 /// included by the native Denim payload builder.
 #[tokio::test]
-async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Result<()> {
+async fn test_base_tx_validity_transaction_is_included_by_native_builder() -> Result<()> {
     let system = start_validity_system().await?;
     let builder_provider = system.l2_builder_provider()?;
     let client_provider = system.l2_client_provider()?;
@@ -545,8 +545,7 @@ async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Re
     client_provider.wait_for_balance(sender, Duration::from_secs(15)).await?;
 
     let nonce_sequence = client_provider.get_transaction_count(sender).await?;
-    let (raw_tx, expected_tx_hash) =
-        create_signed_eip8130_tx(&signer, L2_CHAIN_ID, nonce_sequence)?;
+    let (raw_tx, expected_tx_hash) = create_signed_base_tx(&signer, L2_CHAIN_ID, nonce_sequence)?;
     let current_block = client_provider.get_block_number().await?;
     let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
     let tx_hash: B256 = rpc_client

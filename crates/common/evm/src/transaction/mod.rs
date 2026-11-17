@@ -12,8 +12,8 @@ pub use builder::BaseTransactionBuilder;
 mod deposit;
 pub use deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts};
 
-mod eip8130;
-pub use eip8130::{EIP8130_TRANSACTION_TYPE, Eip8130ExecutionMode, Eip8130TransactionParts};
+mod base_tx;
+pub use base_tx::{BASE_TRANSACTION_TYPE, TxBaseExecutionMode, TxBaseTransactionParts};
 
 mod error;
 pub use error::{BaseTransactionError, BuildError};
