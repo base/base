@@ -200,6 +200,9 @@ where
         // How often to check whether a head whose logs keep failing has been reorged out, once
         // a newer head is waiting. One L1 slot.
         const REORG_CHECK_INTERVAL: Duration = Duration::from_secs(12);
+        // Bound on one reorg check, so a slow L1 cannot hold up the finalized stream or the
+        // log fetch for long.
+        const REORG_CHECK_TIMEOUT: Duration = Duration::from_secs(2);
 
         Metrics::l1_verifier_confs_depth().set(self.verifier_l1_confs as f64);
         if self.verifier_l1_confs > 0 {
@@ -363,11 +366,15 @@ where
                         }
                     },
                     _ = tokio::time::sleep_until(next_reorg_check), if newer_head.is_some() => {
-                        let canonical = self
-                            .l1_provider
-                            .get_block(BlockId::Number(derivation_block.number.into()))
-                            .await;
-                        if let Ok(Some(block)) = canonical
+                        let canonical = select! {
+                            _ = cancel.cancelled() => return Ok(()),
+                            block = tokio::time::timeout(
+                                REORG_CHECK_TIMEOUT,
+                                self.l1_provider
+                                    .get_block(BlockId::Number(derivation_block.number.into())),
+                            ) => block,
+                        };
+                        if let Ok(Ok(Some(block))) = canonical
                             && block.header.hash != derivation_block.hash
                         {
                             break None;
@@ -518,6 +525,7 @@ mod tests {
         failing: B256,
         failures_left: AtomicU32,
         canonical: B256,
+        hang_block_lookup: bool,
         fetched: Arc<Mutex<Vec<B256>>>,
     }
 
@@ -527,8 +535,15 @@ mod tests {
                 failing,
                 failures_left: AtomicU32::new(failures),
                 canonical,
+                hang_block_lookup: false,
                 fetched: Arc::new(Mutex::new(Vec::new())),
             }
+        }
+
+        /// Makes block lookups never complete, standing in for a hung L1 request.
+        fn with_hanging_block_lookup(mut self) -> Self {
+            self.hang_block_lookup = true;
+            self
         }
     }
 
@@ -551,6 +566,9 @@ mod tests {
         }
 
         async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
+            if self.hang_block_lookup {
+                std::future::pending::<()>().await;
+            }
             let mut block: Block = Block::default();
             block.header.hash = self.canonical;
             Ok(Some(block))
@@ -920,6 +938,35 @@ mod tests {
         let sent: Vec<_> = client.sent_heads().iter().map(|b| b.number).collect();
         assert_eq!(sent, vec![1, 2]);
         assert_eq!(*fetched.lock().unwrap(), vec![first.hash, block_at(2).hash]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hung_reorg_check_does_not_stall_safe_head_updates() {
+        // A reorg check runs once a newer head waits. If it hangs during the outage, the safe
+        // block arriving later must still be published, and the head must not be abandoned.
+        let first = block_at(1);
+        let fetcher =
+            HashFailingFetcher::new(first.hash, u32::MAX, first.hash).with_hanging_block_lookup();
+        let late_safe: BoxedBlockStream = Box::pin(
+            futures::stream::once(Box::pin(async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                block_at(7)
+            }))
+            .chain(futures::stream::pending()),
+        );
+
+        let (exited, client, safe_rx) = run_actor_for(
+            fetcher,
+            open_stream(vec![first, block_at(2)]),
+            late_safe,
+            Duration::from_secs(5 * 60),
+        )
+        .await;
+
+        assert!(!exited);
+        assert_eq!(safe_rx.borrow().unwrap().number, 7);
+        let sent: Vec<_> = client.sent_heads().iter().map(|b| b.number).collect();
+        assert_eq!(sent, vec![1]);
     }
 
     #[tokio::test(start_paused = true)]
