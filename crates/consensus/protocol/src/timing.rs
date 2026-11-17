@@ -7,4 +7,4 @@
 /// seal target and the builder's wall-clock transaction cutoff. The two run in separate
 /// processes, so each defaults from this constant; a mismatch shows up as every
 /// `getPayload` waiting on an unfinished build.
-pub const DEFAULT_SEAL_OFFSET: core::time::Duration = core::time::Duration::from_millis(150);
+pub const DEFAULT_SEAL_OFFSET: core::time::Duration = core::time::Duration::from_millis(100);
