@@ -28,35 +28,23 @@ pub const MAX_TRIE_DEPTH_CONTRACTS: usize = 100_000;
 ///
 /// JSON key `contractSlots`. Hand-built limits must go through
 /// [`Self::compile`] before [`Self::check`]; schedule loaders do this.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContractSlotLimits {
     /// Observe overruns without excluding. Must be `true`: enforcement is not supported.
     pub dry_run: bool,
     /// Cap on changed slots per storage owner, per transaction and per block.
     ///
     /// Applies to owners without a tighter trie-depth cap.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changed_slot_limit: Option<u64>,
     /// Depth classes for listed owners and the node budget that sets their caps.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trie_depth: Option<TrieDepthTable>,
-    /// Compiled cap and depth class for each listed owner whose depth class has a
-    /// cap. Owners whose class has no cap are omitted and fall back to
-    /// [`Self::changed_slot_limit`].
+    /// Compiled cap for each listed owner whose depth-class cap is tighter than
+    /// [`Self::changed_slot_limit`]. Other owners fall back to the flat limit.
     #[serde(skip)]
     owner_caps: AddressMap<ContractSlotCap>,
-}
-
-/// File form of [`ContractSlotLimits`].
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ContractSlotLimitsFile {
-    dry_run: bool,
-    #[serde(default)]
-    changed_slot_limit: Option<u64>,
-    #[serde(default)]
-    trie_depth: Option<TrieDepthTable>,
 }
 
 /// Storage-trie depth classes for listed contracts, and the node budget that
@@ -84,7 +72,7 @@ pub struct TrieDepthClass {
 /// Compiled changed-slot cap for one storage owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContractSlotCap {
-    /// Depth class from the trie-depth table, or `None` for the flat cap.
+    /// Depth class whose cap applies, or `None` when the flat cap applies.
     pub depth: Option<u8>,
     /// Largest number of changed slots allowed in the owner's storage.
     pub limit: u64,
@@ -95,7 +83,7 @@ pub struct ContractSlotCap {
 pub struct ContractSlotLimitExceeded {
     /// Storage owner whose slots changed.
     pub owner: Address,
-    /// Depth class of the owner, or `None` when the flat cap applied.
+    /// Depth class whose cap was exceeded, or `None` when the flat cap applied.
     pub depth: Option<u8>,
     /// Whether the transaction alone or the block total exceeded the cap.
     pub scope: ResourceThrottlingLimitScope,
@@ -119,7 +107,7 @@ pub struct ContractSlotLimitExceeded {
 pub struct ContractSlotUsage {
     /// Changed slots committed in this block, keyed by storage owner. Counts
     /// are additive across transactions: a slot changed by two transactions
-    /// counts twice.
+    /// counts twice, so the block total is an upper bound on distinct slots.
     pub committed: AddressMap<u64>,
     /// Changed slots per storage owner for the most recent executed attempt.
     pub staged: Vec<(Address, u64)>,
@@ -135,19 +123,11 @@ impl ContractSlotLimits {
         Self { dry_run: true, changed_slot_limit, trie_depth, owner_caps: AddressMap::default() }
     }
 
-    pub(crate) fn from_file(file: ContractSlotLimitsFile) -> Self {
-        Self {
-            dry_run: file.dry_run,
-            changed_slot_limit: file.changed_slot_limit,
-            trie_depth: file.trie_depth,
-            owner_caps: AddressMap::default(),
-        }
-    }
-
     /// Validates the limits and compiles the trie-depth table into per-owner caps.
     ///
     /// Each listed owner's cap is the smaller of its depth class's cap and the
-    /// flat [`Self::changed_slot_limit`].
+    /// flat [`Self::changed_slot_limit`]. When the flat limit is the smaller,
+    /// the owner is treated as unlisted, so overruns name the cap that bound.
     pub fn compile(mut self) -> Result<Self, ResourceMeteringError> {
         if !self.dry_run {
             return Err(ResourceMeteringError::ContractSlotsNotDryRun);
@@ -181,9 +161,8 @@ impl ContractSlotLimits {
                 }
                 let depth_cap = TrieDepthTable::slot_cap(table.node_budget, class.depth);
                 let limit = match (depth_cap, self.changed_slot_limit) {
-                    (Some(depth_cap), Some(flat)) => Some(depth_cap.min(flat)),
-                    (depth_cap, None) => depth_cap,
-                    (None, Some(_)) => None,
+                    (Some(depth_cap), Some(flat)) => (depth_cap < flat).then_some(depth_cap),
+                    (depth_cap, _) => depth_cap,
                 };
                 for contract in &class.contracts {
                     if seen_contracts.insert(*contract, ()).is_some() {
@@ -255,6 +234,9 @@ impl TrieDepthTable {
     ///
     /// `U(k, d) = Σ_{l=0}^{d-1} 16^l · (1 − (1 − 16^−l)^k)`.
     pub fn expected_branch_nodes(slots: u64, depth: u8) -> f64 {
+        if slots == 0 {
+            return 0.0;
+        }
         let slots = slots as f64;
         (0..i32::from(depth))
             .map(|level| {
@@ -393,8 +375,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(limits.cap_for(&deep), Some(ContractSlotCap { depth: Some(8), limit: 380 }));
-        // The flat limit is tighter than depth 5's 973 cap; the owner keeps its class.
-        assert_eq!(limits.cap_for(&mid), Some(ContractSlotCap { depth: Some(5), limit: 900 }));
+        // The flat limit is tighter than depth 5's 973 cap, so the flat cap applies.
+        assert_eq!(limits.cap_for(&mid), Some(ContractSlotCap { depth: None, limit: 900 }));
         assert_eq!(limits.cap_for(&shallow), Some(ContractSlotCap { depth: None, limit: 900 }));
         assert_eq!(limits.cap_for(&unlisted), Some(ContractSlotCap { depth: None, limit: 900 }));
 

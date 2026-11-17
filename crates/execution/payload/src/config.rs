@@ -161,7 +161,8 @@ impl ResourceMeteringConfig {
     /// is set and a non-empty schedule file is loaded. A missing schedule leaves
     /// those budgets inactive so mempool clients can serve `base_meterBundle`
     /// without a builder schedule. An empty schedule file fails closed because
-    /// the operator asked to load a schedule and it has no dimensions.
+    /// the operator asked to load a schedule and it has no dimensions or
+    /// per-contract limits.
     pub fn from_parts(
         enabled: bool,
         schedule_path: Option<&Path>,
@@ -268,11 +269,14 @@ impl ResourceMeteringConfig {
         let decision = self.schedule.decide_sample(&sample, cumulative);
         self.record_decision(tx_hash, &decision);
         if let Some(limits) = &self.schedule.contract_slots {
+            // An attempt excluded by an enforced dimension is neither committed
+            // nor a would-limit, so skip the post-state walk for it.
+            if decision.should_exclude() {
+                contract_slots.staged.clear();
+                return decision;
+            }
             contract_slots.stage(state);
-            // An attempt already excluded by an enforced dimension is not a would-limit.
-            if !decision.should_exclude()
-                && let Some(error) = limits.check(contract_slots)
-            {
+            if let Some(error) = limits.check(contract_slots) {
                 contract_slots.would_limit += 1;
                 ResourceMeteringMetrics::record_contract_slot_limit(&error);
                 debug!(
@@ -561,12 +565,15 @@ impl BuilderStateProvider {
 mod tests {
     use std::{collections::HashMap, path::Path};
 
-    use alloy_primitives::TxHash;
+    use alloy_primitives::{Address, TxHash, U256};
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
-    use revm::state::EvmState;
+    use revm::state::{Account, EvmState, EvmStorageSlot, TransactionId};
 
     use super::*;
-    use crate::{ResourceMeteringDimension, ResourceMeteringOperation};
+    use crate::{
+        ContractSlotLimits, ResourceMeteringDimension, ResourceMeteringOperation, TrieDepthClass,
+        TrieDepthTable,
+    };
 
     #[test]
     fn test_da() {
@@ -885,17 +892,13 @@ mod tests {
         assert!(!decision.should_exclude());
     }
 
-    fn state_writing_slots(owner: alloy_primitives::Address, slots: u64) -> EvmState {
-        let mut account = revm::state::Account::default();
+    fn state_writing_slots(owner: Address, slots: u64) -> EvmState {
+        let mut account = Account::default();
         account.mark_touch();
         for slot in 0..slots {
             account.storage.insert(
-                alloy_primitives::U256::from(slot),
-                revm::state::EvmStorageSlot::new_changed(
-                    alloy_primitives::U256::ZERO,
-                    alloy_primitives::U256::from(1),
-                    revm::state::TransactionId::ZERO,
-                ),
+                U256::from(slot),
+                EvmStorageSlot::new_changed(U256::ZERO, U256::from(1), TransactionId::ZERO),
             );
         }
         EvmState::from_iter([(owner, account)])
@@ -903,14 +906,14 @@ mod tests {
 
     fn contract_slot_config(
         dimensions: Vec<ResourceMeteringDimension>,
-        deep: alloy_primitives::Address,
+        deep: Address,
     ) -> ResourceMeteringConfig {
         let mut schedule = ResourceMeteringSchedule::new(dimensions);
-        schedule.contract_slots = Some(crate::ContractSlotLimits::new(
+        schedule.contract_slots = Some(ContractSlotLimits::new(
             None,
-            Some(crate::TrieDepthTable {
+            Some(TrieDepthTable {
                 node_budget: 2_100,
-                classes: vec![crate::TrieDepthClass { depth: 8, contracts: vec![deep] }],
+                classes: vec![TrieDepthClass { depth: 8, contracts: vec![deep] }],
             }),
         ));
         ResourceMeteringConfig {
@@ -922,7 +925,7 @@ mod tests {
 
     #[test]
     fn contract_over_depth_cap_records_dry_run_would_limit_and_is_still_included() {
-        let deep = alloy_primitives::Address::repeat_byte(0xee);
+        let deep = Address::repeat_byte(0xee);
         let config = contract_slot_config(compiled_cpu_schedule().dimensions, deep);
         let mut contract_slots = ContractSlotUsage::default();
 
@@ -944,7 +947,7 @@ mod tests {
 
     #[test]
     fn excluded_attempts_do_not_reach_per_contract_totals() {
-        let deep = alloy_primitives::Address::repeat_byte(0xee);
+        let deep = Address::repeat_byte(0xee);
         let mut enforced = compiled_cpu_schedule().dimensions;
         enforced[0].transaction_limit = 100;
         let config = contract_slot_config(enforced, deep);
@@ -977,7 +980,7 @@ mod tests {
 
     #[test]
     fn unthrottled_transactions_count_toward_per_contract_totals() {
-        let deep = alloy_primitives::Address::repeat_byte(0xee);
+        let deep = Address::repeat_byte(0xee);
         let config = contract_slot_config(Vec::new(), deep);
         let mut cumulative = Vec::new();
         let mut contract_slots = ContractSlotUsage::default();
@@ -1000,7 +1003,7 @@ mod tests {
             schedule: Arc::new(compiled_cpu_schedule()),
             provider: Arc::new(NoopMeteringProvider),
         };
-        let owner = alloy_primitives::Address::repeat_byte(0xee);
+        let owner = Address::repeat_byte(0xee);
         let mut contract_slots = ContractSlotUsage::default();
 
         config.check_executed_usage(

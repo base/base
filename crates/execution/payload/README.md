@@ -31,10 +31,13 @@ let payload = builder.build_payload(attrs, best_payload)?;
 
 The resource-metering schedule can carry an optional top-level `contractSlots` key. It counts
 changed storage slots per storage owner (the account whose storage changed) in each executed
-transaction's post-state, and keeps a per-block total for each owner. A transaction is a would-limit
+transaction's post-state, and keeps a per-block total for each owner. The block total adds each
+committed transaction's count, so a slot changed by several transactions counts once per
+transaction: it is an upper bound on distinct slots. A transaction is a would-limit
 when its own count for one owner exceeds that owner's cap (transaction scope), or when the block
 total would (block scope). Would-limits are recorded in
-`base_payload.resource_metering.contract_slot_limit_exceeded_total{scope,depth}` and a debug log
+`base_payload.resource_metering.contract_slot_limit_exceeded_total{scope,depth}` (`depth` names
+the class whose cap bound, or `flat`) and a debug log
 with the owner; they never exclude, skip or evict a transaction. Only `dryRun: true` is accepted.
 Sequencer and deposit transactions count toward the block totals and are never checked.
 

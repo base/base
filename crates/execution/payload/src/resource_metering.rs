@@ -22,7 +22,7 @@ use revm::state::EvmState;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{ContractSlotLimits, contract_slots::ContractSlotLimitsFile};
+use crate::ContractSlotLimits;
 
 const CURRENT_SCHEDULE_VERSION: u32 = 1;
 const MAX_DIMENSIONS: usize = 128;
@@ -93,7 +93,7 @@ struct ResourceMeteringScheduleFile {
     #[serde(default)]
     dimensions: Vec<ResourceMeteringDimensionFile>,
     #[serde(default)]
-    contract_slots: Option<ContractSlotLimitsFile>,
+    contract_slots: Option<ContractSlotLimits>,
 }
 
 #[derive(Deserialize)]
@@ -574,8 +574,8 @@ pub enum ResourceMeteringError {
     /// The schedule file was not valid JSON.
     #[error("failed to parse resource metering schedule JSON: {0}")]
     ParseJson(String),
-    /// Metering is enabled but the schedule file has no dimensions.
-    #[error("resource metering is enabled but the schedule has no dimensions")]
+    /// Metering is enabled but the schedule file has no dimensions or per-contract limits.
+    #[error("resource metering is enabled but the schedule has no dimensions or contractSlots")]
     EmptySchedule,
     /// Per-contract slot limits must be dry run; enforcement is not supported.
     #[error("resource metering contractSlots must set dryRun to true")]
@@ -623,7 +623,7 @@ impl ResourceMeteringSchedule {
     fn from_file_dto(file: ResourceMeteringScheduleFile) -> Result<Self, ResourceMeteringError> {
         Self {
             version: file.version,
-            contract_slots: file.contract_slots.map(ContractSlotLimits::from_file),
+            contract_slots: file.contract_slots,
             ..Self::new(
                 file.dimensions
                     .into_iter()

@@ -70,6 +70,12 @@ class MeteringDepthTableTest(unittest.TestCase):
             [("0xaa", None, 8), ("0xbb", None, 8), ("0xdd", 6, 5)],
         )
 
+    def test_default_min_depth_is_the_shallowest_class_with_a_cap(self):
+        self.assertEqual(table.default_min_depth(2100), 4)
+        self.assertEqual(table.default_min_depth(273), 4)
+        self.assertEqual(table.default_min_depth(272), 3)
+        self.assertEqual(table.default_min_depth(5000), 5)
+
 
 if __name__ == "__main__":
     unittest.main()

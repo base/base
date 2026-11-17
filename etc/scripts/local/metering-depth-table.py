@@ -15,8 +15,9 @@ trie with N leaves a random path meets about log16(N) branches, so the median of
 proxy, not the depth of any particular slot. The median is rounded half to even (a median of 4.5
 is class 4, 5.5 is class 6), matching the analysis the default budget came from. Contracts with
 empty storage and classes below --min-depth are left out; unlisted contracts get only the flat
-`changedSlotLimit`, if the schedule sets one. With the 2,100-node budget, classes 3 and below have
-no cap, so --min-depth defaults to 4.
+`changedSlotLimit`, if the schedule sets one. --min-depth defaults to the shallowest class whose
+whole trie has more branch nodes than --node-budget, since shallower classes get no cap (4 for
+the 2,100-node budget).
 
 Inputs:
     --addresses   files with one address per line (blank lines and `#` comments ignored).
@@ -26,7 +27,8 @@ Inputs:
 
 Refresh procedure (weekly, or after a large state change):
     1. Pick candidates: the previous table plus the storage owners with the most changed slots over
-       a recent window (for example the top 20,000 owners by changed slots over the last 7 days).
+       a recent window (for example the top 20,000 owners by changed slots over the last 7 days),
+       one address per line. This script does not select candidates; keep the list with the run.
     2. Pin --block to a recent finalized block so the run is reproducible, and keep --probe-log.
     3. Run with --previous, review the class changes printed on stderr, and commit the new table to
        the schedule's config repository together with the block number used.
@@ -40,6 +42,7 @@ import hashlib
 import json
 import statistics
 import sys
+import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -47,6 +50,14 @@ PROBE_KEYS = ["0x" + hashlib.sha256(f"depth-probe-{i}".encode()).hexdigest() for
 EMPTY_STORAGE_ROOT = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
 BRANCH_NODE_ITEMS = 17
 MAX_TRIE_DEPTH = 64
+
+
+def default_min_depth(node_budget):
+    """Shallowest class whose full trie (16^0 + ... + 16^(d-1) branch nodes) exceeds the budget."""
+    for depth in range(1, MAX_TRIE_DEPTH + 1):
+        if (16**depth - 1) // 15 > node_budget:
+            return depth
+    return MAX_TRIE_DEPTH
 
 
 def rlp_list_items(node_hex):
@@ -170,6 +181,7 @@ def rpc_call(url, method, params):
         except Exception:  # noqa: BLE001
             if attempt == 2:
                 raise
+            time.sleep(2**attempt)
     raise AssertionError("unreachable")
 
 
@@ -189,7 +201,9 @@ def main(argv=None):
     parser.add_argument("--from-probe-log", help="rebuild from an earlier probe log, without RPC")
     parser.add_argument("--probe-log", help="write one JSON line per probed contract here")
     parser.add_argument("--node-budget", type=int, help="nodeBudget to write into the table")
-    parser.add_argument("--min-depth", type=int, default=4, help="smallest class to list")
+    parser.add_argument(
+        "--min-depth", type=int, help="smallest class to list (default: derived from the budget)"
+    )
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--out", help="output path (default: stdout)")
     args = parser.parse_args(argv)
@@ -215,8 +229,13 @@ def main(argv=None):
                 for record in records:
                     file.write(json.dumps(record, separators=(",", ":")) + "\n")
 
-    node_budget = args.node_budget if args.node_budget is not None else previous_table.get("nodeBudget")
-    table = build_table(records, args.min_depth, node_budget, previous)
+    node_budget = args.node_budget
+    if node_budget is None:
+        node_budget = previous_table.get("nodeBudget")
+    min_depth = args.min_depth
+    if min_depth is None:
+        min_depth = default_min_depth(node_budget) if node_budget is not None else 4
+    table = build_table(records, min_depth, node_budget, previous)
     output = json.dumps(table, indent=2) + "\n"
     if args.out:
         with open(args.out, "w") as file:
@@ -227,7 +246,10 @@ def main(argv=None):
     failed = sum(1 for record in records if "error" in record)
     listed = table_classes(table)
     counts = {entry["depth"]: len(entry["contracts"]) for entry in table["classes"]}
-    print(f"probed={len(records)} failed={failed} listed={len(listed)} by_class={counts}", file=sys.stderr)
+    print(
+        f"probed={len(records)} failed={failed} listed={len(listed)} by_class={counts}",
+        file=sys.stderr,
+    )
     if previous_table:
         changes = class_changes(previous, listed)
         print(f"class changes: {len(changes)}", file=sys.stderr)

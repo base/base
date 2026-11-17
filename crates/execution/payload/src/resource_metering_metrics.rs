@@ -50,9 +50,21 @@ impl ResourceMeteringMetrics {
     /// The owner address stays out of the labels; the depth class is bounded
     /// by [`crate::MAX_TRIE_DEPTH`], and `flat` marks the flat cap.
     pub fn record_contract_slot_limit(error: &ContractSlotLimitExceeded) {
-        let depth = error.depth.map_or_else(|| "flat".to_string(), |depth| depth.to_string());
+        let depth = error
+            .depth
+            .and_then(|depth| Self::DEPTH_LABELS.get(usize::from(depth)).copied())
+            .unwrap_or("flat");
         Self::contract_slot_limit_exceeded_total(error.scope.as_metric_label(), depth).increment(1);
     }
+
+    /// Static depth-class labels, indexed by depth, so recording does not allocate.
+    const DEPTH_LABELS: [&'static str; crate::MAX_TRIE_DEPTH as usize + 1] = [
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+        "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31",
+        "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46",
+        "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61",
+        "62", "63", "64",
+    ];
 }
 
 impl ResourceThrottlingLimitScope {
