@@ -165,7 +165,7 @@ impl From<Signed<BaseTypedTransaction>> for BaseTxEnvelope {
             BaseTypedTransaction::Eip8130(tx) => {
                 assert!(
                     tx.sender.is_none(),
-                    "configured-actor EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; route them via BaseTxEnvelope::Eip8130 directly with the appropriate sender_auth",
+                    "named-sender EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; route them via BaseTxEnvelope::Eip8130 directly with the appropriate sender_auth",
                 );
                 assert!(
                     tx.payer.is_none(),
@@ -1079,14 +1079,14 @@ mod tests {
 
     #[cfg(feature = "k256")]
     #[test]
-    fn eip8130_envelope_recovery_short_circuits_configured_actor() {
+    fn eip8130_envelope_recovery_short_circuits_named_sender() {
         use alloy_consensus::transaction::SignerRecoverable;
 
         use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
 
         let explicit = Address::repeat_byte(0xab);
         let tx = TxEip8130 { sender: Some(explicit), ..Default::default() };
-        // sender_auth is irrelevant on the configured-actor path; supply 65
+        // sender_auth is irrelevant on the named-sender path; supply 65
         // zero bytes so the structural shape stays well-formed.
         let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
             tx,

@@ -278,9 +278,7 @@ impl<'a> BaseBlockExecutor<'a> {
         // `is_regolith || !is_deposit` guard); every other transaction is checked.
         let mut reserved_gas = tx.gas_limit();
         if let Some(signed) = tx.as_eip8130() {
-            let payer_auth =
-                IntrinsicGas::payer_auth_cost_of(signed).map_err(HandlerError::external)?;
-            reserved_gas = reserved_gas.saturating_add(payer_auth);
+            reserved_gas = reserved_gas.saturating_add(IntrinsicGas::payer_auth_cost_of(signed));
         }
         let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();
         let block_available_gas = block_gas_limit.saturating_sub(self.gas_used);

@@ -110,30 +110,21 @@ where
     /// (`gas_limit + payer_auth`) pushes cumulative block gas over the limit.
     ///
     /// The payer authentication gas ([`IntrinsicGas::payer_auth_cost_of`])
-    /// depends only on the payer fields, so block building, validation and
+    /// depends only on the payer field, so block building, validation and
     /// settlement all use the same value.
-    ///
-    /// A transaction whose payer authentication cannot be priced is invalid, so
-    /// the failure is a validation error rather than an internal one.
     #[cfg(feature = "std")]
-    fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
-        let Some(signed) = tx_env.eip8130_signed() else {
-            return Ok(gas_limit);
-        };
-        let payer_auth = IntrinsicGas::payer_auth_cost_of(signed)
-            .map_err(|error| BlockExecutionError::Validation(BlockValidationError::other(error)))?;
-        Ok(gas_limit.saturating_add(payer_auth))
+    fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> u64 {
+        tx_env.eip8130_signed().map_or(gas_limit, |signed| {
+            gas_limit.saturating_add(IntrinsicGas::payer_auth_cost_of(signed))
+        })
     }
 
     /// `no_std` builds reject EIP-8130 execution outright (see `Evm::transact_raw`),
     /// so no payer authentication gas is metered on top of `gas_limit` and the
     /// reserved block gas is just the declared `gas_limit`.
     #[cfg(not(feature = "std"))]
-    const fn reserved_block_gas(
-        _tx_env: &E::Tx,
-        gas_limit: u64,
-    ) -> Result<u64, BlockExecutionError> {
-        Ok(gas_limit)
+    const fn reserved_block_gas(_tx_env: &E::Tx, gas_limit: u64) -> u64 {
+        gas_limit
     }
 
     fn jovian_da_footprint_estimation(
@@ -228,7 +219,7 @@ where
         // prior, must be no greater than the block's gasLimit. For EIP-8130 the reserved amount is
         // `gas_limit + payer_auth`, since payer authentication is metered on top of the declared
         // gas_limit (see `reserved_block_gas`); for every other transaction it is `gas_limit`.
-        let reserved_gas = Self::reserved_block_gas(&tx_env, tx.tx().gas_limit())?;
+        let reserved_gas = Self::reserved_block_gas(&tx_env, tx.tx().gas_limit());
         let block_available_gas = self.evm.block().gas_limit().saturating_sub(self.gas_used);
         if reserved_gas > block_available_gas && (self.deposit_gas_accounting || !is_deposit) {
             return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
@@ -723,7 +714,7 @@ mod tests {
         const JOVIAN_TIMESTAMP: u64 = 1746806402;
 
         let signed = signed_eip8130(GAS_LIMIT, true);
-        let payer_auth = IntrinsicGas::payer_auth_cost_of(&signed).expect("payer auth cost");
+        let payer_auth = IntrinsicGas::payer_auth_cost_of(&signed);
         assert!(payer_auth > 0, "payer auth must be metered on top of gas_limit");
 
         // Block admits `gas_limit` alone but not `gas_limit + payer_auth`.
@@ -763,50 +754,6 @@ mod tests {
         }
     }
 
-    /// A sponsored transaction whose payer authentication cannot be priced is
-    /// invalid: the block is rejected through a validation error, never an
-    /// internal (node-fatal) one.
-    #[test]
-    fn unpriceable_payer_auth_is_a_validation_error() {
-        const GAS_LIMIT: u64 = 100_000;
-        const JOVIAN_TIMESTAMP: u64 = 1746806402;
-
-        let tx = TxEip8130 {
-            gas_limit: GAS_LIMIT,
-            payer: Some(Address::with_last_byte(0x11)),
-            ..Default::default()
-        };
-        let mut unscheduled_payer_auth = Address::repeat_byte(0xee).to_vec();
-        unscheduled_payer_auth.extend_from_slice(&[0u8; 65]);
-        let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::from(unscheduled_payer_auth));
-        assert!(IntrinsicGas::payer_auth_cost_of(&signed).is_err());
-
-        let mut db = prepare_jovian_db(0);
-        let base_chain_upgrades = ChainUpgrades::new(
-            BaseUpgrade::mainnet()
-                .into_iter()
-                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
-        );
-        let receipt_builder = AlloyReceiptBuilder::default();
-        let mut executor = build_executor(
-            &mut db,
-            &receipt_builder,
-            &base_chain_upgrades,
-            GAS_LIMIT,
-            JOVIAN_TIMESTAMP,
-        );
-
-        let tx = Recovered::new_unchecked(
-            BaseTxEnvelope::Eip8130(signed),
-            Address::with_last_byte(0x22),
-        );
-        let err = executor.execute_transaction(&tx).expect_err("unpriceable payer auth");
-        assert!(
-            matches!(err, BlockExecutionError::Validation(BlockValidationError::Other(_))),
-            "expected a validation error, got {err:?}",
-        );
-    }
-
     /// A self-paying EIP-8130 transaction meters no `payer_auth`, so its
     /// reservation is exactly `gas_limit`: it must not be rejected by the block
     /// gas pre-check when the block admits its declared `gas_limit`.
@@ -817,7 +764,7 @@ mod tests {
 
         let signed = signed_eip8130(GAS_LIMIT, false);
         assert_eq!(
-            IntrinsicGas::payer_auth_cost_of(&signed).expect("payer auth cost"),
+            IntrinsicGas::payer_auth_cost_of(&signed),
             0,
             "self-pay meters no payer authentication",
         );

@@ -471,11 +471,9 @@ mod tests {
     use alloc::vec;
 
     use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy};
-    use alloy_primitives::{B256, Signature, TxKind, address};
+    use alloy_primitives::{Signature, TxKind, address};
     use base_common_consensus::{
-        AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
-        Eip8130Constants, Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange,
-        TxEip8130,
+        AccountChange, Call, Delegation, Eip8130Constants, Eip8130Signed, TxEip8130,
     };
 
     use super::*;
@@ -651,10 +649,10 @@ mod tests {
             eip8130_raw(tx, Bytes::from_static(&[0xab; 65]), Bytes::new())
         };
 
-        // Configured sender and explicit payer: each auth is a 20-byte authenticator
-        // address followed by a proof, which the codec splits across the remainder and
+        // Named sender and explicit payer: each auth is a 20-byte authenticator
+        // selector followed by a proof, which the codec splits across the remainder and
         // the trailing auth column.
-        let configured = {
+        let named = {
             let mut tx = eip8130_body();
             tx.sender = Some(sender);
             tx.payer = Some(payer);
@@ -669,39 +667,14 @@ mod tests {
             eip8130_raw(tx, Bytes::from(sender_auth), Bytes::from(payer_auth))
         };
 
-        // Every account-change variant plus multi-phase calls and metadata.
+        // A delegation entry plus multi-phase calls and metadata.
         let rich = {
             let mut tx = eip8130_body();
             tx.sender = Some(sender);
             tx.nonce_sequence = 11;
-            tx.account_changes = vec![
-                AccountChange::Create(CreateEntry {
-                    user_salt: B256::repeat_byte(0x01),
-                    code: bytes!("60006000fd"),
-                    initial_actors: vec![InitialActor::owner(
-                        B256::repeat_byte(0x02),
-                        address!("00000000000000000000000000000000000000cc"),
-                    )],
-                }),
-                AccountChange::ConfigChange(SignedAccountChanges {
-                    channel: AccountChangeChannel::Local,
-                    sequence: 1,
-                    changes: vec![
-                        SignedChange {
-                            change_type: ChangeType::AuthorizeActor,
-                            payload: bytes!("aabbcc"),
-                        },
-                        SignedChange {
-                            change_type: ChangeType::RevokeActor,
-                            payload: Bytes::new(),
-                        },
-                    ],
-                    signature: bytes!("c0ffee"),
-                }),
-                AccountChange::Delegation(Delegation {
-                    target: address!("00000000000000000000000000000000000000ee"),
-                }),
-            ];
+            tx.account_changes = vec![AccountChange::Delegation(Delegation {
+                target: address!("00000000000000000000000000000000000000ee"),
+            })];
             tx.calls = vec![
                 vec![
                     Call {
@@ -758,7 +731,7 @@ mod tests {
         };
 
         assert_span_batch_roundtrip(
-            vec![eoa, configured, rich, minimal, open_payer, nonce_free],
+            vec![eoa, named, rich, minimal, open_payer, nonce_free],
             EIP8130_CHAIN_ID,
         );
     }
@@ -819,7 +792,7 @@ mod tests {
             tx.nonce_sequence = 4;
             eip8130_raw(tx, Bytes::from_static(&[0x01; 65]), Bytes::new())
         };
-        let aa_configured = {
+        let aa_named = {
             let mut tx = eip8130_body();
             tx.sender = Some(to);
             tx.nonce_sequence = 5;
@@ -829,13 +802,7 @@ mod tests {
         };
 
         assert_span_batch_roundtrip(
-            vec![
-                Bytes::from(legacy),
-                aa_eoa,
-                Bytes::from(eip1559),
-                aa_configured,
-                Bytes::from(eip7702),
-            ],
+            vec![Bytes::from(legacy), aa_eoa, Bytes::from(eip1559), aa_named, Bytes::from(eip7702)],
             EIP8130_CHAIN_ID,
         );
     }

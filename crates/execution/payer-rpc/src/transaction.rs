@@ -18,15 +18,8 @@ impl PayerTransaction {
     /// Decodes `raw` and checks it against `chain_id`.
     ///
     /// A bare `sender_auth` must recover the sender. A declared sender must sign with
-    /// [`Eip8130Constants::K1_AUTHENTICATOR`] using its own key unless `keystore` is active, in
-    /// which case it may authorize other keys and other authenticators. Whether it did needs
-    /// account state, so with the keystore only a K1 signature is checked, and only that it
-    /// recovers.
-    pub fn decode(
-        raw: &[u8],
-        chain_id: u64,
-        keystore: bool,
-    ) -> Result<Self, PayerTransactionError> {
+    /// [`Eip8130Constants::K1_AUTHENTICATOR`] using its own key.
+    pub fn decode(raw: &[u8], chain_id: u64) -> Result<Self, PayerTransactionError> {
         let envelope = decode_2718_canonical::<BaseTxEnvelope>(raw)
             .map_err(|_| PayerTransactionError::Undecodable)?;
         let BaseTxEnvelope::Eip8130(signed) = envelope else {
@@ -46,17 +39,14 @@ impl PayerTransaction {
                 signed.recover_sender().map_err(|_| PayerTransactionError::SenderSignature)?;
             return Ok(Self { signed, sender });
         };
-        let k1_signature =
-            signed.sender_auth().strip_prefix(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
-        let Some(signature) = k1_signature else {
-            if !keystore {
-                return Err(PayerTransactionError::UnsupportedSenderAuthenticator);
-            }
-            return Ok(Self { signed, sender });
+        let Some(signature) =
+            signed.sender_auth().strip_prefix(Eip8130Constants::K1_AUTHENTICATOR.as_slice())
+        else {
+            return Err(PayerTransactionError::UnsupportedSenderAuthenticator);
         };
         let signer = Eip8130Signed::recover_raw_k1(signed.tx().sender_signature_hash(), signature)
             .map_err(|_| PayerTransactionError::SenderSignature)?;
-        if signer != sender && !keystore {
+        if signer != sender {
             return Err(PayerTransactionError::SenderMismatch);
         }
         Ok(Self { signed, sender })
@@ -104,7 +94,7 @@ pub enum PayerTransactionError {
     /// A declared sender's K1 signature recovers to another address.
     #[error("sender signature is not from the declared sender")]
     SenderMismatch,
-    /// A declared sender signs with an authenticator other than K1 before the keystore upgrade.
+    /// A declared sender signs with an authenticator other than K1.
     #[error("a declared sender must sign with the K1 authenticator")]
     UnsupportedSenderAuthenticator,
     /// The transaction's nonce was already used.
@@ -164,7 +154,7 @@ mod tests {
         let tx = transaction(None, payer());
         let raw = encode(tx.clone(), signature(&signer, &tx).to_vec(), Bytes::new());
 
-        let transaction = PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap();
+        let transaction = PayerTransaction::decode(&raw, CHAIN_ID).unwrap();
 
         assert_eq!(transaction.nonce_channel(), Some((signer.address(), U256::ZERO)));
     }
@@ -175,7 +165,7 @@ mod tests {
         let tx = transaction(None, Some(Eip8130Constants::OPEN_PAYER));
         let raw = encode(tx.clone(), signature(&signer, &tx).to_vec(), Bytes::new());
 
-        assert!(PayerTransaction::decode(&raw, CHAIN_ID, false).is_ok());
+        assert!(PayerTransaction::decode(&raw, CHAIN_ID).is_ok());
     }
 
     #[test]
@@ -192,15 +182,15 @@ mod tests {
         let other_chain = signed(other_chain, Bytes::new());
 
         assert_eq!(
-            PayerTransaction::decode(&self_paid, CHAIN_ID, false).unwrap_err(),
+            PayerTransaction::decode(&self_paid, CHAIN_ID).unwrap_err(),
             PayerTransactionError::MissingPayer
         );
         assert_eq!(
-            PayerTransaction::decode(&co_signed, CHAIN_ID, false).unwrap_err(),
+            PayerTransaction::decode(&co_signed, CHAIN_ID).unwrap_err(),
             PayerTransactionError::PayerAuthPresent
         );
         assert_eq!(
-            PayerTransaction::decode(&other_chain, CHAIN_ID, false).unwrap_err(),
+            PayerTransaction::decode(&other_chain, CHAIN_ID).unwrap_err(),
             PayerTransactionError::ChainIdMismatch
         );
     }
@@ -212,7 +202,7 @@ mod tests {
         tx.nonce_key = U256::from(7);
         tx.nonce_sequence = 3;
         let raw = encode(tx.clone(), signature(&signer, &tx).to_vec(), Bytes::new());
-        let transaction = PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap();
+        let transaction = PayerTransaction::decode(&raw, CHAIN_ID).unwrap();
 
         assert_eq!(transaction.nonce_channel(), Some((signer.address(), U256::from(7))));
         assert_eq!(transaction.check_nonce(U256::from(4)), Err(PayerTransactionError::NonceUsed));
@@ -228,7 +218,7 @@ mod tests {
         tx.valid_before = 1;
         let raw = encode(tx.clone(), signature(&signer, &tx).to_vec(), Bytes::new());
 
-        assert_eq!(PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap().nonce_channel(), None);
+        assert_eq!(PayerTransaction::decode(&raw, CHAIN_ID).unwrap().nonce_channel(), None);
     }
 
     #[test]
@@ -237,11 +227,11 @@ mod tests {
         let eip1559 = BaseTxEnvelope::Eip1559(signed).encoded_2718();
 
         assert_eq!(
-            PayerTransaction::decode(&eip1559, CHAIN_ID, false).unwrap_err(),
+            PayerTransaction::decode(&eip1559, CHAIN_ID).unwrap_err(),
             PayerTransactionError::NotEip8130
         );
         assert_eq!(
-            PayerTransaction::decode(&[0x79, 0xff], CHAIN_ID, false).unwrap_err(),
+            PayerTransaction::decode(&[0x79, 0xff], CHAIN_ID).unwrap_err(),
             PayerTransactionError::Undecodable
         );
     }
@@ -251,53 +241,31 @@ mod tests {
         let raw = encode(transaction(None, payer()), vec![0x01; 65], Bytes::new());
 
         assert_eq!(
-            PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap_err(),
+            PayerTransaction::decode(&raw, CHAIN_ID).unwrap_err(),
             PayerTransactionError::SenderSignature
         );
     }
 
     #[test]
-    fn requires_a_declared_sender_to_sign_with_its_own_k1_key_before_the_keystore() {
+    fn requires_a_declared_sender_to_sign_with_its_own_k1_key() {
         let sender = PrivateKeySigner::random();
         let other = PrivateKeySigner::random();
         let tx = transaction(Some(sender.address()), payer());
         let own_key = encode(tx.clone(), k1_auth(&sender, &tx), Bytes::new());
         let other_key = encode(tx.clone(), k1_auth(&other, &tx), Bytes::new());
-        let mut passkey_auth = Address::repeat_byte(0x05).to_vec();
-        passkey_auth.extend_from_slice(&[0x01; 64]);
-        let passkey = encode(tx, passkey_auth, Bytes::new());
+        let mut non_k1_auth = Address::repeat_byte(0x05).to_vec();
+        non_k1_auth.extend_from_slice(&[0x01; 64]);
+        let non_k1 = encode(tx, non_k1_auth, Bytes::new());
 
-        let own_key = PayerTransaction::decode(&own_key, CHAIN_ID, false).unwrap();
+        let own_key = PayerTransaction::decode(&own_key, CHAIN_ID).unwrap();
         assert_eq!(own_key.nonce_channel(), Some((sender.address(), U256::ZERO)));
         assert_eq!(
-            PayerTransaction::decode(&other_key, CHAIN_ID, false).unwrap_err(),
+            PayerTransaction::decode(&other_key, CHAIN_ID).unwrap_err(),
             PayerTransactionError::SenderMismatch
         );
         assert_eq!(
-            PayerTransaction::decode(&passkey, CHAIN_ID, false).unwrap_err(),
+            PayerTransaction::decode(&non_k1, CHAIN_ID).unwrap_err(),
             PayerTransactionError::UnsupportedSenderAuthenticator
-        );
-    }
-
-    #[test]
-    fn lets_a_declared_sender_authorize_other_keys_with_the_keystore() {
-        let sender = PrivateKeySigner::random();
-        let session_key = PrivateKeySigner::random();
-        let tx = transaction(Some(sender.address()), payer());
-        let session = encode(tx.clone(), k1_auth(&session_key, &tx), Bytes::new());
-        let mut passkey_auth = Address::repeat_byte(0x05).to_vec();
-        passkey_auth.extend_from_slice(&[0x01; 64]);
-        let passkey = encode(tx.clone(), passkey_auth, Bytes::new());
-        let mut forged = k1_auth(&sender, &tx);
-        forged[84] = 0x00;
-        let forged = encode(tx, forged, Bytes::new());
-
-        let session = PayerTransaction::decode(&session, CHAIN_ID, true).unwrap();
-        assert_eq!(session.nonce_channel(), Some((sender.address(), U256::ZERO)));
-        assert!(PayerTransaction::decode(&passkey, CHAIN_ID, true).is_ok());
-        assert_eq!(
-            PayerTransaction::decode(&forged, CHAIN_ID, true).unwrap_err(),
-            PayerTransactionError::SenderSignature
         );
     }
 }
