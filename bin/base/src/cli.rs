@@ -333,7 +333,8 @@ mod tests {
     /// Each unified node command must expose exactly one default-off launch flag.
     #[test]
     fn node_commands_expose_one_genesis_launch_flag() {
-        let command = BaseCli::command();
+        let mut command = BaseCli::command();
+        command.build();
         for name in ["rpc", "follow", "sequencer"] {
             let node = command.find_subcommand(name).expect("the unified node command must exist");
             let flags: Vec<_> = node.get_arguments()
