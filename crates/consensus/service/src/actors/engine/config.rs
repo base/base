@@ -77,8 +77,20 @@ impl EngineConfig {
         .when(|error: &TransportError| {
             if let Some(kind) = error.as_transport_err() {
                 match kind {
-                    TransportErrorKind::Custom(_) | TransportErrorKind::BackendGone
-                    | TransportErrorKind::MissingBatchResponse(_) => true,
+                    TransportErrorKind::Custom(error) => {
+                        let source: &(dyn std::error::Error + 'static) = error.as_ref();
+                        !std::iter::successors(Some(source), |error| error.source()).any(|source| {
+                            // The connector's private invalid-URL error cannot be downcast by type.
+                            source.to_string().starts_with("invalid URL, ")
+                                || source.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                                    matches!(error.kind(), std::io::ErrorKind::InvalidInput
+                                        | std::io::ErrorKind::InvalidData
+                                        | std::io::ErrorKind::PermissionDenied
+                                        | std::io::ErrorKind::Unsupported)
+                                })
+                        })
+                    }
+                    TransportErrorKind::BackendGone | TransportErrorKind::MissingBatchResponse(_) => true,
                     TransportErrorKind::HttpError(error)
                     | TransportErrorKind::HttpErrorWithRetryAfter { error, .. } => {
                         error.status == 429 || (500..600).contains(&error.status)
@@ -229,6 +241,25 @@ mod tests {
         let result = EngineConfig::check_startup(&client, GenesisStartArgs::default()).await;
         assert_eq!(result.is_ok(), true, "a real transport error must recover without exiting startup");
         assert_eq!(calls.load(Ordering::Relaxed), 2, "one failed request task must cause exactly one retry");
+    }
+
+    /// The HTTP-only connector rejects this scheme before DNS or socket I/O; retries cannot fix it.
+    #[tokio::test(start_paused = true)]
+    async fn refuses_permanent_connector_error_without_retrying() {
+        let client = EngineClientBuilder {
+            l2: EngineEndpoint::Url(Url::parse("https://127.0.0.1:1").expect("valid unsupported-scheme URL")),
+            l2_jwt: JwtSecret::random(),
+            l1_rpc: Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL"),
+            l1_rpc_timeout: std::time::Duration::from_secs(1),
+            cfg: Arc::new(RollupConfig::default()),
+        }.build().await.expect("the lazy client must construct without connecting");
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            EngineConfig::check_startup(&client, GenesisStartArgs::default()),
+        ).await.expect("a permanent connector error must return before the first backoff");
+        let error = result.expect_err("an unsupported connector scheme must remain fatal");
+        assert!(format!("{error:?}").contains("scheme is not http"),
+            "the original permanent connector cause must be preserved");
     }
 
     /// Recovery must never admit genesis or retry a successful genesis refusal.
