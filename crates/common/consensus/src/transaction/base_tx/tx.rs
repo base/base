@@ -452,7 +452,7 @@ impl TxBase {
         (account_changes, calls, metadata)
     }
 
-    /// Hash the sender signs, per EIP-8430.
+    /// Hash the sender signs.
     ///
     /// `keccak256(SENDER_SIGNATURE_TYPE || rlp([all body fields through `payer`]))`
     /// with the wire `sender` slot, which is empty on the EOA path, where the
@@ -498,7 +498,7 @@ impl TxBase {
         keccak256(&buf)
     }
 
-    /// Hash the payer signs, per EIP-8430.
+    /// Hash the payer signs.
     ///
     /// `keccak256(PAYER_SIGNATURE_TYPE || rlp([all body fields through `payer`]))`
     /// with the `sender` slot replaced by the resolved sender address. The

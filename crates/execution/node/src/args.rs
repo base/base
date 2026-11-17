@@ -359,8 +359,9 @@ pub struct RollupArgs {
 
     /// Transaction ordering strategy for the mempool.
     ///
-    /// Determines how transactions are prioritized when building blocks. - `coinbase-tip`: Order by
-    /// tip-per-gas (priority fee, or Base transaction coinbase tip / gas limit). Default.
+    /// Determines how transactions are prioritized when building blocks.
+    /// - `coinbase-tip`: Order by tip-per-gas (priority fee, or Base transaction coinbase tip / gas
+    ///   limit). Default.
     /// - `timestamp`: Order by receive time (FIFO, earlier = higher priority).
     #[arg(long = "rollup.txpool-ordering", default_value = "coinbase-tip")]
     pub txpool_ordering: TxpoolOrdering,

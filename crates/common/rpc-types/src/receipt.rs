@@ -34,7 +34,7 @@ pub struct BaseTransactionReceipt {
     /// Each entry is `0x01` (success) or `0x00` (reverted); phases after a revert are
     /// not executed and reported as `0x00`. `None` for non-Base transactions (the
     /// field is omitted from the JSON); `Some([])` for a Base transaction whose
-    /// `calls` was empty, which per EIP-8430 must still surface as `"phaseStatuses": []`.
+    /// `calls` was empty, which must still surface as `"phaseStatuses": []`.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "phase_statuses_serde")]
     pub phase_statuses: Option<Vec<u8>>,
     /// Opaque transaction metadata for Base transactions, committed to by the sender
