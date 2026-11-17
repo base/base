@@ -22,6 +22,8 @@ use revm::state::EvmState;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::{ContractSlotLimits, contract_slots::ContractSlotLimitsFile};
+
 const CURRENT_SCHEDULE_VERSION: u32 = 1;
 const MAX_DIMENSIONS: usize = 128;
 const MAX_DIMENSION_NAME_LENGTH: usize = 64;
@@ -47,6 +49,11 @@ pub struct ResourceMeteringSchedule {
     /// `ResourceSample::EXECUTED_STATE_OPERATIONS`.
     #[serde(skip)]
     priced_state_operations: [bool; ResourceSample::EXECUTED_STATE_OPERATIONS.len()],
+    /// Optional dry-run per-contract changed-slot limits (`contractSlots`).
+    ///
+    /// Checked only on executed post-state. Absent in schedules that omit the key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_slots: Option<ContractSlotLimits>,
 }
 
 impl Default for ResourceMeteringSchedule {
@@ -85,6 +92,8 @@ struct ResourceMeteringScheduleFile {
     version: u32,
     #[serde(default)]
     dimensions: Vec<ResourceMeteringDimensionFile>,
+    #[serde(default)]
+    contract_slots: Option<ContractSlotLimitsFile>,
 }
 
 #[derive(Deserialize)]
@@ -298,6 +307,7 @@ impl ResourceMeteringSchedule {
             dimensions,
             operation_index: HashMap::new(),
             priced_state_operations: Default::default(),
+            contract_slots: None,
         }
     }
 
@@ -321,12 +331,13 @@ impl ResourceMeteringSchedule {
         self.priced_state_operations = ResourceSample::EXECUTED_STATE_OPERATIONS
             .map(|operation| operation_index.contains_key(operation));
         self.operation_index = operation_index;
+        self.contract_slots = self.contract_slots.map(ContractSlotLimits::compile).transpose()?;
         Ok(self)
     }
 
-    /// Returns whether the schedule has no metering dimensions.
+    /// Returns whether the schedule has no metering dimensions and no per-contract limits.
     pub const fn is_empty(&self) -> bool {
-        self.dimensions.is_empty()
+        self.dimensions.is_empty() && self.contract_slots.is_none()
     }
 
     /// Operation names priced by this schedule, including post-state effects.
@@ -566,6 +577,27 @@ pub enum ResourceMeteringError {
     /// Metering is enabled but the schedule file has no dimensions.
     #[error("resource metering is enabled but the schedule has no dimensions")]
     EmptySchedule,
+    /// Per-contract slot limits must be dry run; enforcement is not supported.
+    #[error("resource metering contractSlots must set dryRun to true")]
+    ContractSlotsNotDryRun,
+    /// Per-contract slot limits set neither a flat cap nor a trie-depth table.
+    #[error("resource metering contractSlots needs changedSlotLimit or trieDepth")]
+    EmptyContractSlotLimits,
+    /// A per-contract changed-slot cap or node budget is zero.
+    #[error("resource metering contractSlots has a zero limit or node budget")]
+    ZeroContractSlotLimit,
+    /// A trie-depth class is outside 1 to 64.
+    #[error("invalid resource metering trie depth class: {0}")]
+    InvalidTrieDepth(u8),
+    /// A trie-depth class appears more than once.
+    #[error("duplicate resource metering trie depth class: {0}")]
+    DuplicateTrieDepthClass(u8),
+    /// A contract appears in more than one trie-depth class or twice in one.
+    #[error("duplicate resource metering trie depth contract: {0}")]
+    DuplicateTrieDepthContract(Address),
+    /// The trie-depth table lists more contracts than allowed.
+    #[error("resource metering trie depth table has too many contracts: {0}")]
+    TooManyTrieDepthContracts(usize),
 }
 
 impl ResourceMeteringSchedule {
@@ -591,6 +623,7 @@ impl ResourceMeteringSchedule {
     fn from_file_dto(file: ResourceMeteringScheduleFile) -> Result<Self, ResourceMeteringError> {
         Self {
             version: file.version,
+            contract_slots: file.contract_slots.map(ContractSlotLimits::from_file),
             ..Self::new(
                 file.dimensions
                     .into_iter()
@@ -1643,5 +1676,89 @@ mod tests {
             .unwrap();
 
         assert_eq!(usage.values, vec![20]);
+    }
+
+    const OLD_SCHEDULE_JSON: &str = r#"{
+        "version": 1,
+        "dimensions": [{
+            "name": "builder_state_root",
+            "blockLimit": 40000000,
+            "transactionLimit": 20000000,
+            "operations": [
+                {"name": "STATE_CHANGED_STORAGE_SLOT", "countCost": 25},
+                {"name": "STATE_CHANGED_ACCOUNT", "countCost": 10}
+            ],
+            "dryRun": true
+        }]
+    }"#;
+
+    #[test]
+    fn schedules_without_contract_slots_parse_as_before() {
+        let parsed = ResourceMeteringSchedule::from_json(OLD_SCHEDULE_JSON).unwrap();
+        let hand_built = ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            dry_run: true,
+            ..dimension(
+                "builder_state_root",
+                40_000_000,
+                Some(20_000_000),
+                0,
+                vec![
+                    operation(ResourceSample::STATE_CHANGED_STORAGE_SLOT, 0, 25),
+                    operation(ResourceSample::STATE_CHANGED_ACCOUNT, 0, 10),
+                ],
+            )
+        }])
+        .compile()
+        .unwrap();
+
+        assert_eq!(parsed.contract_slots, None);
+        assert_eq!(parsed.dimensions, hand_built.dimensions);
+        assert_eq!(parsed.priced_state_operations, hand_built.priced_state_operations);
+        let state = state_with_slots(&[(U256::from(1), U256::ZERO, U256::from(1))]);
+        let sample = ResourceSample::from_execution(21_000, &state, None, &parsed);
+        assert_eq!(parsed.decide_sample(&sample, &[]), hand_built.decide_sample(&sample, &[]));
+    }
+
+    #[test]
+    fn parses_contract_slots_and_compiles_depth_caps() {
+        let deep = Address::repeat_byte(0xd8);
+        let schedule = ResourceMeteringSchedule::from_json(&format!(
+            r#"{{
+                "version": 1,
+                "contractSlots": {{
+                    "dryRun": true,
+                    "changedSlotLimit": 2000,
+                    "trieDepth": {{
+                        "nodeBudget": 2100,
+                        "classes": [{{"depth": 8, "contracts": ["{deep}"]}}]
+                    }}
+                }}
+            }}"#
+        ))
+        .expect("a schedule with only contractSlots must parse");
+
+        assert!(!schedule.is_empty());
+        let limits = schedule.contract_slots.as_ref().unwrap();
+        assert_eq!(limits.changed_slot_limit, Some(2_000));
+        assert_eq!(
+            limits.cap_for(&deep),
+            Some(crate::ContractSlotCap { depth: Some(8), limit: 380 })
+        );
+    }
+
+    #[test]
+    fn rejects_enforced_or_unknown_contract_slot_fields() {
+        let enforced = ResourceMeteringSchedule::from_json(
+            r#"{"version": 1, "contractSlots": {"dryRun": false, "changedSlotLimit": 10}}"#,
+        );
+        assert_eq!(enforced, Err(ResourceMeteringError::ContractSlotsNotDryRun));
+        let missing_dry_run = ResourceMeteringSchedule::from_json(
+            r#"{"version": 1, "contractSlots": {"changedSlotLimit": 10}}"#,
+        );
+        assert!(matches!(missing_dry_run, Err(ResourceMeteringError::ParseJson(_))));
+        let unknown = ResourceMeteringSchedule::from_json(
+            r#"{"version": 1, "contractSlots": {"dryRun": true, "changedSlotLimit": 10, "x": 1}}"#,
+        );
+        assert!(matches!(unknown, Err(ResourceMeteringError::ParseJson(_))));
     }
 }

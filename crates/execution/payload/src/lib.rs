@@ -15,6 +15,11 @@ pub mod builder;
 pub use builder::BasePayloadBuilder;
 pub mod config;
 pub use config::{BuilderStateProvider, ResourceMeteringConfig};
+mod contract_slots;
+pub use contract_slots::{
+    ContractSlotCap, ContractSlotLimitExceeded, ContractSlotLimits, ContractSlotUsage,
+    MAX_TRIE_DEPTH, MAX_TRIE_DEPTH_CONTRACTS, TrieDepthClass, TrieDepthTable,
+};
 mod rejection_cache;
 pub use rejection_cache::{REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache};
 pub mod error;

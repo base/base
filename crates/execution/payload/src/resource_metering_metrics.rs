@@ -1,6 +1,9 @@
 //! Metrics for payload resource metering and the native rejection cache.
 
-use crate::resource_metering::{ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope};
+use crate::{
+    ContractSlotLimitExceeded,
+    resource_metering::{ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope},
+};
 
 base_metrics::define_metrics! {
     base_payload.resource_metering,
@@ -15,6 +18,10 @@ base_metrics::define_metrics! {
     #[label(dimension)]
     #[label(scope)]
     throttled_total: counter,
+    #[describe("Executed transactions that a dry-run per-contract changed-slot cap would limit")]
+    #[label(scope)]
+    #[label(depth)]
+    contract_slot_limit_exceeded_total: counter,
 }
 
 base_metrics::define_metrics! {
@@ -36,6 +43,15 @@ impl ResourceMeteringMetrics {
         if enforced {
             Self::throttled_total(error.dimension.clone(), scope).increment(1);
         }
+    }
+
+    /// Records a dry-run per-contract changed-slot overrun.
+    ///
+    /// The owner address stays out of the labels; the depth class is bounded
+    /// by [`crate::MAX_TRIE_DEPTH`], and `flat` marks the flat cap.
+    pub fn record_contract_slot_limit(error: &ContractSlotLimitExceeded) {
+        let depth = error.depth.map_or_else(|| "flat".to_string(), |depth| depth.to_string());
+        Self::contract_slot_limit_exceeded_total(error.scope.as_metric_label(), depth).increment(1);
     }
 }
 

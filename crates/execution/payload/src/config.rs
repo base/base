@@ -17,9 +17,10 @@ use revm::state::EvmState;
 use tracing::{debug, warn};
 
 use crate::{
-    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
-    RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
-    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
+    ContractSlotUsage, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
+    NoopMeteringProvider, RejectionCache, ResourceMeteringError, ResourceMeteringMetrics,
+    ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision,
+    SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -245,6 +246,12 @@ impl ResourceMeteringConfig {
     /// Records every outcome. Does not add usage to the block totals; callers
     /// that include the transaction pass [`ResourceThrottlingDecision::committed_usage`]
     /// to [`Self::apply_accounted_usage`].
+    ///
+    /// When the schedule has per-contract limits, stages this attempt's
+    /// changed slots per storage owner in `contract_slots` and checks them
+    /// against per-owner caps. An overrun is recorded as a dry-run would-limit
+    /// event and never changes the returned decision. Callers that commit the
+    /// transaction then call [`Self::commit_contract_slots`].
     pub fn check_executed_usage(
         &self,
         tx_hash: &TxHash,
@@ -252,6 +259,7 @@ impl ResourceMeteringConfig {
         state: &EvmState,
         simulated: Option<&ResourceSample>,
         cumulative: &[u128],
+        contract_slots: &mut ContractSlotUsage,
     ) -> ResourceThrottlingDecision {
         if !self.is_active() {
             return ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0));
@@ -259,21 +267,60 @@ impl ResourceMeteringConfig {
         let sample = ResourceSample::from_execution(gas_used, state, simulated, &self.schedule);
         let decision = self.schedule.decide_sample(&sample, cumulative);
         self.record_decision(tx_hash, &decision);
+        if let Some(limits) = &self.schedule.contract_slots {
+            contract_slots.stage(state);
+            // An attempt already excluded by an enforced dimension is not a would-limit.
+            if !decision.should_exclude()
+                && let Some(error) = limits.check(contract_slots)
+            {
+                contract_slots.would_limit += 1;
+                ResourceMeteringMetrics::record_contract_slot_limit(&error);
+                debug!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    owner = %error.owner,
+                    depth = ?error.depth,
+                    scope = %error.scope,
+                    used = error.used,
+                    transaction_slots = error.transaction_slots,
+                    limit = error.limit,
+                    "per-contract changed-slot cap would limit transaction"
+                );
+            }
+        }
         decision
+    }
+
+    /// Adds the staged per-contract changed slots to the block totals.
+    ///
+    /// Call after the transaction is committed. Overflow fails open: the
+    /// transaction stays included and this method records
+    /// [`ResourceThrottlingDecision::CalculationFailed`].
+    pub fn commit_contract_slots(&self, tx_hash: &TxHash, contract_slots: &mut ContractSlotUsage) {
+        if contract_slots.commit().is_err() {
+            self.record_decision(tx_hash, &ResourceThrottlingDecision::CalculationFailed);
+        }
     }
 
     /// Calculates usage for an unthrottled transaction without applying it.
     ///
     /// Evaluate failures fail open: the method records
     /// [`ResourceThrottlingDecision::CalculationFailed`] and returns `None`.
+    /// Per-contract changed slots are staged in `contract_slots` without a
+    /// check, because unthrottled transactions cannot be limited; callers
+    /// commit them with [`Self::commit_contract_slots`].
     pub fn unthrottled_usage(
         &self,
         tx_hash: &TxHash,
         gas_used: u64,
         state: &EvmState,
+        contract_slots: &mut ContractSlotUsage,
     ) -> Option<ResourceMeteringUsage> {
         if !self.is_active() {
             return None;
+        }
+        if self.schedule.contract_slots.is_some() {
+            contract_slots.stage(state);
         }
         let simulated = self.simulated_sample(tx_hash);
         let sample =
@@ -298,10 +345,12 @@ impl ResourceMeteringConfig {
         gas_used: u64,
         state: &EvmState,
         cumulative: &mut Vec<u128>,
+        contract_slots: &mut ContractSlotUsage,
     ) {
-        if let Some(usage) = self.unthrottled_usage(tx_hash, gas_used, state) {
+        if let Some(usage) = self.unthrottled_usage(tx_hash, gas_used, state, contract_slots) {
             self.apply_accounted_usage(tx_hash, &usage, cumulative);
         }
+        self.commit_contract_slots(tx_hash, contract_slots);
     }
 
     /// Adds accounted usage to the block totals.
@@ -663,7 +712,12 @@ mod tests {
             )])))),
         };
         let usage = config
-            .unthrottled_usage(&tx_hash, 21_000, &EvmState::default())
+            .unthrottled_usage(
+                &tx_hash,
+                21_000,
+                &EvmState::default(),
+                &mut ContractSlotUsage::default(),
+            )
             .expect("active config should produce usage");
         assert_eq!(usage.values, vec![21_000 + 30]);
     }
@@ -765,7 +819,16 @@ mod tests {
                 tx_hash, meter,
             )])))),
         };
-        assert!(config.unthrottled_usage(&tx_hash, u64::MAX, &EvmState::default()).is_none());
+        assert!(
+            config
+                .unthrottled_usage(
+                    &tx_hash,
+                    u64::MAX,
+                    &EvmState::default(),
+                    &mut ContractSlotUsage::default()
+                )
+                .is_none()
+        );
     }
 
     #[test]
@@ -776,7 +839,13 @@ mod tests {
             provider: Arc::new(NoopMeteringProvider),
         };
         let mut cumulative = vec![u128::MAX];
-        config.account_unthrottled(&TxHash::ZERO, 21_000, &EvmState::default(), &mut cumulative);
+        config.account_unthrottled(
+            &TxHash::ZERO,
+            21_000,
+            &EvmState::default(),
+            &mut cumulative,
+            &mut ContractSlotUsage::default(),
+        );
         assert_eq!(cumulative, vec![u128::MAX]);
     }
 
@@ -814,5 +883,136 @@ mod tests {
         let (_, decision) = config.check_simulated_usage(&tx_hash, &[]);
         assert_eq!(decision, ResourceThrottlingDecision::CalculationFailed);
         assert!(!decision.should_exclude());
+    }
+
+    fn state_writing_slots(owner: alloy_primitives::Address, slots: u64) -> EvmState {
+        let mut account = revm::state::Account::default();
+        account.mark_touch();
+        for slot in 0..slots {
+            account.storage.insert(
+                alloy_primitives::U256::from(slot),
+                revm::state::EvmStorageSlot::new_changed(
+                    alloy_primitives::U256::ZERO,
+                    alloy_primitives::U256::from(1),
+                    revm::state::TransactionId::ZERO,
+                ),
+            );
+        }
+        EvmState::from_iter([(owner, account)])
+    }
+
+    fn contract_slot_config(
+        dimensions: Vec<ResourceMeteringDimension>,
+        deep: alloy_primitives::Address,
+    ) -> ResourceMeteringConfig {
+        let mut schedule = ResourceMeteringSchedule::new(dimensions);
+        schedule.contract_slots = Some(crate::ContractSlotLimits::new(
+            None,
+            Some(crate::TrieDepthTable {
+                node_budget: 2_100,
+                classes: vec![crate::TrieDepthClass { depth: 8, contracts: vec![deep] }],
+            }),
+        ));
+        ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(schedule.compile().unwrap()),
+            provider: Arc::new(NoopMeteringProvider),
+        }
+    }
+
+    #[test]
+    fn contract_over_depth_cap_records_dry_run_would_limit_and_is_still_included() {
+        let deep = alloy_primitives::Address::repeat_byte(0xee);
+        let config = contract_slot_config(compiled_cpu_schedule().dimensions, deep);
+        let mut contract_slots = ContractSlotUsage::default();
+
+        let decision = config.check_executed_usage(
+            &TxHash::ZERO,
+            50,
+            &state_writing_slots(deep, 403),
+            None,
+            &[],
+            &mut contract_slots,
+        );
+        assert!(!decision.should_exclude());
+        assert!(!decision.is_permanent());
+        assert_eq!(contract_slots.would_limit, 1);
+
+        config.commit_contract_slots(&TxHash::ZERO, &mut contract_slots);
+        assert_eq!(contract_slots.committed.get(&deep), Some(&403));
+    }
+
+    #[test]
+    fn excluded_attempts_do_not_reach_per_contract_totals() {
+        let deep = alloy_primitives::Address::repeat_byte(0xee);
+        let mut enforced = compiled_cpu_schedule().dimensions;
+        enforced[0].transaction_limit = 100;
+        let config = contract_slot_config(enforced, deep);
+        let mut contract_slots = ContractSlotUsage::default();
+
+        let decision = config.check_executed_usage(
+            &TxHash::ZERO,
+            21_000,
+            &state_writing_slots(deep, 403),
+            None,
+            &[],
+            &mut contract_slots,
+        );
+        assert!(decision.should_exclude());
+        // An enforced exclusion is not also a per-contract would-limit.
+        assert_eq!(contract_slots.would_limit, 0);
+
+        // The next attempt is committed; only its slots count.
+        config.check_executed_usage(
+            &TxHash::ZERO,
+            50,
+            &state_writing_slots(deep, 10),
+            None,
+            &[],
+            &mut contract_slots,
+        );
+        config.commit_contract_slots(&TxHash::ZERO, &mut contract_slots);
+        assert_eq!(contract_slots.committed.get(&deep), Some(&10));
+    }
+
+    #[test]
+    fn unthrottled_transactions_count_toward_per_contract_totals() {
+        let deep = alloy_primitives::Address::repeat_byte(0xee);
+        let config = contract_slot_config(Vec::new(), deep);
+        let mut cumulative = Vec::new();
+        let mut contract_slots = ContractSlotUsage::default();
+
+        config.account_unthrottled(
+            &TxHash::ZERO,
+            21_000,
+            &state_writing_slots(deep, 500),
+            &mut cumulative,
+            &mut contract_slots,
+        );
+        assert_eq!(contract_slots.committed.get(&deep), Some(&500));
+        assert_eq!(contract_slots.would_limit, 0);
+    }
+
+    #[test]
+    fn schedules_without_contract_slots_do_no_per_contract_work() {
+        let config = ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(compiled_cpu_schedule()),
+            provider: Arc::new(NoopMeteringProvider),
+        };
+        let owner = alloy_primitives::Address::repeat_byte(0xee);
+        let mut contract_slots = ContractSlotUsage::default();
+
+        config.check_executed_usage(
+            &TxHash::ZERO,
+            21_000,
+            &state_writing_slots(owner, 5),
+            None,
+            &[],
+            &mut contract_slots,
+        );
+        config.commit_contract_slots(&TxHash::ZERO, &mut contract_slots);
+        assert!(contract_slots.staged.is_empty());
+        assert!(contract_slots.committed.is_empty());
     }
 }
