@@ -6,7 +6,7 @@ use std::{fmt, sync::OnceLock, time::Duration};
 use alloy_primitives::{Address, B256};
 use reth_trie_common::{HashedPostState, updates::TrieUpdates};
 use revm::database::BundleState;
-use tracing::info;
+use tracing::Level;
 
 use crate::ResourceMeteringDimension;
 
@@ -41,10 +41,22 @@ base_metrics::define_metrics! {
     sealed_block_resource_metering_usage: histogram,
 }
 
+/// Histogram handle held by [`SealedBlockMetricHandles`]: a `metrics::Histogram` with the
+/// `metrics` feature, and a no-op otherwise.
 #[cfg(feature = "metrics")]
-type HistogramHandle = metrics::Histogram;
+pub type HistogramHandle = metrics::Histogram;
+/// Histogram handle held by [`SealedBlockMetricHandles`]: a `metrics::Histogram` with the
+/// `metrics` feature, and a no-op otherwise.
 #[cfg(not(feature = "metrics"))]
-type HistogramHandle = base_metrics::NoopMetric;
+pub type HistogramHandle = base_metrics::NoopMetric;
+
+/// Default state-root time at or above which a sealed block's observation logs at `warn`
+/// instead of `debug`.
+///
+/// Set below the Mainnet builder's p99 (about 140 ms) so the warn lines cover the whole slow
+/// tail that resource metering should explain, not only its worst blocks, while the bulk of
+/// blocks stay at `debug`.
+pub const DEFAULT_SLOW_BLOCK_STATE_ROOT: Duration = Duration::from_millis(50);
 
 /// How a sealed block's state root was computed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +104,11 @@ impl StateRootTiming {
     /// Returns [`Self::wait`] in whole microseconds.
     pub fn wait_us(&self) -> u64 {
         u64::try_from(self.wait.as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// Returns whether [`Self::total`] meets or exceeds `threshold`.
+    pub fn is_slow(&self, threshold: Duration) -> bool {
+        self.total >= threshold
     }
 }
 
@@ -265,6 +282,41 @@ impl SealedBlockMetricHandles {
     }
 }
 
+/// Emits the observation line at `$level`, with the same static message and fields at every level.
+macro_rules! sealed_block_event {
+    ($level:expr, $observation:expr, $dimensions:expr, $slow:expr) => {{
+        let observation = $observation;
+        let diff = &observation.state_diff;
+        tracing::event!(
+            target: "payload_builder",
+            $level,
+            block_number = observation.block_number,
+            block_hash = %observation.block_hash,
+            tx_count = observation.tx_count,
+            gas_used = observation.gas_used,
+            slow = $slow,
+            state_root_source = %observation.state_root.source.as_str(),
+            state_root_us = observation.state_root.total_us(),
+            state_root_wait_us = observation.state_root.wait_us(),
+            hashed_accounts = diff.hashed_accounts,
+            hashed_storages = diff.hashed_storages,
+            hashed_storage_slots = diff.hashed_storage_slots,
+            largest_storage_slots = diff.largest_storage.map_or(0, |largest| largest.slots),
+            largest_storage_address =
+                diff.largest_storage.map(|largest| tracing::field::display(largest.address)),
+            trie_account_nodes = diff.trie_account_nodes,
+            trie_storage_tries = diff.trie_storage_tries,
+            trie_storage_nodes = diff.trie_storage_nodes,
+            trie_removed_nodes = diff.trie_removed_nodes,
+            resource_usage = %DimensionUsage {
+                dimensions: $dimensions,
+                usage: &observation.resource_usage,
+            },
+            "sealed block observation"
+        )
+    }};
+}
+
 /// Logs and records one [`SealedBlockObservation`] per composed block.
 ///
 /// Metric handles are resolved on the first observation, after the process recorder is
@@ -279,34 +331,20 @@ pub struct SealedBlockRecorder {
 impl SealedBlockRecorder {
     /// Emits one structured log line and records the observation's metrics. `dimensions` names
     /// [`SealedBlockObservation::resource_usage`]; pass none when metering is inactive.
+    ///
+    /// The line logs at `debug`, or at `warn` with `slow=true` when the state-root time meets or
+    /// exceeds `slow_threshold`. Metrics are recorded for every block either way.
     pub fn record(
         &self,
         observation: &SealedBlockObservation,
         dimensions: &[ResourceMeteringDimension],
+        slow_threshold: Duration,
     ) {
-        let diff = &observation.state_diff;
-        info!(
-            target: "payload_builder",
-            block_number = observation.block_number,
-            block_hash = %observation.block_hash,
-            tx_count = observation.tx_count,
-            gas_used = observation.gas_used,
-            state_root_source = %observation.state_root.source.as_str(),
-            state_root_us = observation.state_root.total_us(),
-            state_root_wait_us = observation.state_root.wait_us(),
-            hashed_accounts = diff.hashed_accounts,
-            hashed_storages = diff.hashed_storages,
-            hashed_storage_slots = diff.hashed_storage_slots,
-            largest_storage_slots = diff.largest_storage.map_or(0, |largest| largest.slots),
-            largest_storage_address =
-                diff.largest_storage.map(|largest| tracing::field::display(largest.address)),
-            trie_account_nodes = diff.trie_account_nodes,
-            trie_storage_tries = diff.trie_storage_tries,
-            trie_storage_nodes = diff.trie_storage_nodes,
-            trie_removed_nodes = diff.trie_removed_nodes,
-            resource_usage = %DimensionUsage { dimensions, usage: &observation.resource_usage },
-            "sealed block observation"
-        );
+        if observation.state_root.is_slow(slow_threshold) {
+            sealed_block_event!(Level::WARN, observation, dimensions, true);
+        } else {
+            sealed_block_event!(Level::DEBUG, observation, dimensions, false);
+        }
         self.handles.get_or_init(|| SealedBlockMetricHandles::new(dimensions)).record(observation);
     }
 }
@@ -437,10 +475,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn recorder_logs_one_structured_line_per_observation() {
+    fn observation(state_root_total: Duration) -> SealedBlockObservation {
         let (bundle, hashed, trie) = known_diff();
-        let observation = SealedBlockObservation {
+        SealedBlockObservation {
             block_number: 7,
             block_hash: B256::repeat_byte(0xab),
             tx_count: 2,
@@ -448,25 +485,49 @@ mod tests {
             state_root: StateRootTiming {
                 source: StateRootSource::Task,
                 wait: Duration::from_micros(250),
-                total: Duration::from_micros(900),
+                total: state_root_total,
             },
             state_diff: StateDiffSizes::new(&hashed, &trie, &bundle),
             resource_usage: vec![5, 11],
-        };
+        }
+    }
+
+    /// Records `observation` against `slow_threshold` and returns the observation lines logged at
+    /// any level.
+    fn observation_lines(
+        observation: &SealedBlockObservation,
+        slow_threshold: Duration,
+    ) -> Vec<String> {
         let captured = Captured::default();
         let writer = captured.clone();
-        let subscriber =
-            tracing_subscriber::fmt().with_writer(move || writer.clone()).with_ansi(false).finish();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .finish();
 
         tracing::subscriber::with_default(subscriber, || {
-            SealedBlockRecorder::default()
-                .record(&observation, &[dimension("cpu"), dimension("state_root")]);
+            SealedBlockRecorder::default().record(
+                observation,
+                &[dimension("cpu"), dimension("state_root")],
+                slow_threshold,
+            );
         });
 
         let output = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
-        let lines: Vec<_> = output.lines().filter(|line| line.contains("sealed block")).collect();
-        assert_eq!(lines.len(), 1, "expected one observation line, got: {output}");
-        let line = lines[0];
+        output
+            .lines()
+            .filter(|line| line.contains("sealed block observation"))
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn recorder_logs_one_structured_line_per_observation() {
+        let lines = observation_lines(&observation(Duration::from_micros(900)), Duration::MAX);
+
+        assert_eq!(lines.len(), 1, "expected one observation line, got: {lines:?}");
+        let line = &lines[0];
         for field in [
             "block_number=7",
             "tx_count=2",
@@ -486,6 +547,35 @@ mod tests {
             "resource_usage=cpu=5,state_root=11",
         ] {
             assert!(line.contains(field), "expected `{field}` in: {line}");
+        }
+    }
+
+    #[test]
+    fn block_below_slow_threshold_logs_at_debug() {
+        let lines = observation_lines(
+            &observation(Duration::from_micros(49_999)),
+            Duration::from_millis(50),
+        );
+
+        assert_eq!(lines.len(), 1, "expected one observation line, got: {lines:?}");
+        assert!(lines[0].contains(" DEBUG "), "expected a debug line, got: {}", lines[0]);
+        assert!(lines[0].contains("slow=false"), "expected slow=false in: {}", lines[0]);
+    }
+
+    #[test]
+    fn block_at_or_above_slow_threshold_logs_at_warn() {
+        for state_root_total in [Duration::from_millis(50), Duration::from_millis(140)] {
+            let lines =
+                observation_lines(&observation(state_root_total), Duration::from_millis(50));
+
+            assert_eq!(lines.len(), 1, "expected one observation line, got: {lines:?}");
+            let line = &lines[0];
+            assert!(line.contains(" WARN "), "expected a warn line, got: {line}");
+            assert!(line.contains("slow=true"), "expected slow=true in: {line}");
+            assert!(
+                line.contains(&format!("state_root_us={}", state_root_total.as_micros())),
+                "the warn line keeps the observation fields: {line}"
+            );
         }
     }
 }

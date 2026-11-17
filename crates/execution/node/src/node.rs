@@ -18,7 +18,8 @@ use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
     Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes,
-    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PayloadPrimitives, RejectionCache,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, DEFAULT_SLOW_BLOCK_STATE_ROOT, PayloadPrimitives,
+    RejectionCache,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_execution_rpc::{
@@ -1100,6 +1101,7 @@ where
                     resource_metering: self.resource_metering,
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
+                    slow_block_state_root: DEFAULT_SLOW_BLOCK_STATE_ROOT,
                 },
             )
             .with_task_executor(ctx.task_executor().clone())
