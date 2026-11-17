@@ -134,6 +134,9 @@ impl WorldState {
                 bail!("post state of {address} has unknown code hash {}", change.code_hash);
             }
             let account = self.accounts.entry(*address).or_default();
+            if change.wiped {
+                account.storage.clear();
+            }
             account.nonce = change.nonce;
             account.balance = change.balance;
             account.code_hash =
@@ -208,6 +211,7 @@ mod tests {
                 balance: U256::from(9),
                 code_hash: keccak256([0x60, 3, 0x00]),
                 storage: [(B256::from(U256::from(0)), B256::ZERO)].into_iter().collect(),
+                wiped: false,
             }),
         );
         state.apply_post(&post).unwrap();
@@ -215,6 +219,27 @@ mod tests {
         assert_eq!(state.nonce(&Address::repeat_byte(3)), 5);
         assert_eq!(state.storage(&Address::repeat_byte(3), B256::ZERO), U256::ZERO);
         assert_eq!(state.account(&Address::repeat_byte(2)).unwrap().code_hash, KECCAK256_EMPTY);
+
+        // A destroyed and recreated account lists only its rewritten slots: the rest are zero.
+        let recreated = Address::repeat_byte(6);
+        assert_eq!(state.storage(&recreated, B256::from(U256::from(2))), U256::from(3));
+        let mut wiped = BTreeMap::new();
+        wiped.insert(
+            recreated,
+            Some(PostAccount {
+                nonce: 0,
+                balance: U256::from(7),
+                code_hash: KECCAK256_EMPTY,
+                storage: [(B256::from(U256::from(4)), B256::from(U256::from(9)))]
+                    .into_iter()
+                    .collect(),
+                wiped: true,
+            }),
+        );
+        state.apply_post(&wiped).unwrap();
+        assert_eq!(state.storage(&recreated, B256::from(U256::from(2))), U256::ZERO);
+        assert_eq!(state.storage(&recreated, B256::from(U256::from(4))), U256::from(9));
+        assert_eq!(state.account(&recreated).unwrap().storage.len(), 1);
 
         let mut unknown = BTreeMap::new();
         unknown.insert(
@@ -224,6 +249,7 @@ mod tests {
                 balance: U256::ZERO,
                 code_hash: B256::repeat_byte(9),
                 storage: BTreeMap::new(),
+                wiped: false,
             }),
         );
         assert!(state.apply_post(&unknown).is_err());

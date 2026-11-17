@@ -153,6 +153,7 @@ fn flatten(response: &Response) -> BTreeMap<String, String> {
                 flat.insert(format!("{prefix}.nonce"), account.nonce.to_string());
                 flat.insert(format!("{prefix}.balance"), account.balance.to_string());
                 flat.insert(format!("{prefix}.codeHash"), format!("{:#x}", account.code_hash));
+                flat.insert(format!("{prefix}.wiped"), account.wiped.to_string());
                 for (slot, value) in &account.storage {
                     flat.insert(format!("{prefix}.storage.{slot:#x}"), format!("{value:#x}"));
                 }

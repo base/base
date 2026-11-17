@@ -660,8 +660,9 @@ impl DiffAdapter {
     /// The bundle holds, per touched account, its info at the start of the block and after it,
     /// and for every written slot its value at the start of the block and after it. When an
     /// account is destroyed and recreated in one block (pre-Cancun `SELFDESTRUCT`, then
-    /// `CREATE2`), parent slots that were never rewritten are cleared but not listed, because a
-    /// witness cannot enumerate the parent storage trie; the state root still covers them.
+    /// `CREATE2` or a value transfer), parent slots that were never rewritten are cleared but not
+    /// listed, because a witness cannot enumerate the parent storage trie; the account is marked
+    /// `wiped` instead.
     pub fn post_state(bundle: &BundleState) -> BTreeMap<Address, Option<PostAccount>> {
         let mut post = BTreeMap::new();
         for (address, account) in bundle.state() {
@@ -682,7 +683,9 @@ impl DiffAdapter {
                             || before.balance != after.balance
                             || before.code_hash != after.code_hash
                     });
-                    if info_changed || !storage.is_empty() {
+                    // Destroyed during the block (SELFDESTRUCT or EIP-161) and recreated.
+                    let wiped = before.is_some() && account.was_destroyed();
+                    if info_changed || wiped || !storage.is_empty() {
                         post.insert(
                             *address,
                             Some(PostAccount {
@@ -690,6 +693,7 @@ impl DiffAdapter {
                                 balance: after.balance,
                                 code_hash: after.code_hash,
                                 storage,
+                                wiped,
                             }),
                         );
                     }

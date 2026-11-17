@@ -171,6 +171,10 @@ pub struct PostAccount {
     /// Storage slots whose value changed, with their new values.
     #[serde(default)]
     pub storage: BTreeMap<B256, B256>,
+    /// The account was destroyed and recreated in this block (pre-Cancun `SELFDESTRUCT`), so
+    /// its storage starts from empty: every parent slot not listed in `storage` is now zero.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wiped: bool,
 }
 
 /// One execution response.
