@@ -58,17 +58,20 @@ impl From<BaseTxEnvelope> for BaseTypedTransaction {
 }
 
 #[cfg(feature = "alloy-compat")]
-impl From<BaseTypedTransaction> for alloy_rpc_types_eth::TransactionRequest {
-    fn from(tx: BaseTypedTransaction) -> Self {
+impl TryFrom<BaseTypedTransaction> for alloy_rpc_types_eth::TransactionRequest {
+    type Error = ValueError<BaseTypedTransaction>;
+
+    fn try_from(tx: BaseTypedTransaction) -> Result<Self, Self::Error> {
         match tx {
-            BaseTypedTransaction::Legacy(tx) => tx.into(),
-            BaseTypedTransaction::Eip2930(tx) => tx.into(),
-            BaseTypedTransaction::Eip1559(tx) => tx.into(),
-            BaseTypedTransaction::Eip7702(tx) => tx.into(),
-            BaseTypedTransaction::Eip8130(_) => unimplemented!(
-                "BaseTypedTransaction::Eip8130 cannot be converted to an alloy TransactionRequest; AA transactions have no single sender/recipient/value to project into the legacy request shape"
-            ),
-            BaseTypedTransaction::Deposit(tx) => tx.into(),
+            BaseTypedTransaction::Legacy(tx) => Ok(tx.into()),
+            BaseTypedTransaction::Eip2930(tx) => Ok(tx.into()),
+            BaseTypedTransaction::Eip1559(tx) => Ok(tx.into()),
+            BaseTypedTransaction::Eip7702(tx) => Ok(tx.into()),
+            tx @ BaseTypedTransaction::Eip8130(_) => Err(ValueError::new(
+                tx,
+                "EIP-8130 transactions have no single recipient, value, or input to project into an alloy TransactionRequest",
+            )),
+            BaseTypedTransaction::Deposit(tx) => Ok(tx.into()),
         }
     }
 }
