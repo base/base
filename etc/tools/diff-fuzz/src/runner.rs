@@ -2,6 +2,7 @@
 
 use std::{
     io::{BufRead, BufReader, Write},
+    os::unix::process::CommandExt,
     process::{Child, ChildStdin, Command, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError},
     thread,
@@ -86,6 +87,8 @@ impl Adapter {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
+            // Its own process group, so a restart also ends processes a wrapper forked.
+            .process_group(0)
             .spawn()
             .wrap_err_with(|| format!("starting adapter {}", self.spec.name))?;
         let stdin = child.stdin.take().expect("stdin is piped");
@@ -113,9 +116,18 @@ impl Adapter {
 
     fn kill(&mut self) {
         if let Some(mut running) = self.process.take() {
-            let _ = running.child.kill();
-            let _ = running.child.wait();
+            Self::kill_group(&mut running.child);
         }
+    }
+
+    fn kill_group(child: &mut Child) {
+        // The adapter leads its process group (pgid = pid), so kill(-pid) reaches every process
+        // in it.
+        if let Ok(pid) = i32::try_from(child.id()) {
+            // SAFETY: kill has no memory-safety preconditions.
+            unsafe { libc::kill(-pid, libc::SIGKILL) };
+        }
+        let _ = child.wait();
     }
 
     /// Sends one serialized request line and waits for its response.
@@ -202,8 +214,7 @@ impl Drop for Adapter {
                 }
                 thread::sleep(Duration::from_millis(50));
             }
-            let _ = running.child.kill();
-            let _ = running.child.wait();
+            Self::kill_group(&mut running.child);
         }
     }
 }
@@ -227,14 +238,22 @@ mod tests {
 
     #[test]
     fn adapter_that_stops_reading_stdin_times_out() {
+        // A wrapper that forks rather than execs: the timeout must end its child too.
+        let pid_file = std::env::temp_dir().join(format!("diff-fuzz-stuck-{}", std::process::id()));
+        let script = format!("sleep 60 & echo $! > {}; wait", pid_file.display());
         let spec = AdapterSpec {
             name: "stuck".to_owned(),
-            command: ["sleep", "60"].map(str::to_owned).to_vec(),
+            command: vec!["sh".to_owned(), "-c".to_owned(), script],
         };
         let mut adapter = Adapter::new(spec, Duration::from_secs(1));
         let started = Instant::now();
         let request = "x".repeat(1 << 20);
         assert_eq!(adapter.call_line("x", &request), Err(CallFailure::TimedOut));
         assert!(started.elapsed() < Duration::from_secs(10));
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let _ = std::fs::remove_file(&pid_file);
+        thread::sleep(Duration::from_millis(200));
+        let alive = std::path::Path::new(&format!("/proc/{}", pid.trim())).exists();
+        assert!(!alive, "the wrapper's child outlived the restart");
     }
 }

@@ -233,7 +233,9 @@ impl Fuzzer {
             );
         }
         fs::create_dir_all(config.out.join("findings"))?;
-        let (corpus, saved) = Corpus::open(config.corpus.clone())?;
+        // The unguided baseline neither replays nor extends the guided corpus, so the two
+        // stay comparable.
+        let (corpus, saved) = Corpus::open(config.corpus.clone().filter(|_| config.guided))?;
         let mut queue: VecDeque<FuzzCase> = saved.into();
         let mut next_index = 0;
         if queue.is_empty() && config.guided {

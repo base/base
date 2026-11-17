@@ -4248,6 +4248,7 @@ dependencies = [
  "clap",
  "eyre",
  "k256 0.13.4",
+ "libc",
  "p256 0.13.2",
  "reqwest 0.13.4",
  "revm",

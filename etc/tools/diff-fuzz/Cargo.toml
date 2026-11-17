@@ -42,6 +42,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std", "serde"] }
 reqwest = { workspace = true, features = ["blocking"] }
 
 # misc
+libc.workspace = true
 eyre.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
