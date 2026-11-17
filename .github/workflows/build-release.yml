@@ -63,11 +63,32 @@ jobs:
           ref: ${{ inputs.tag }}
           fetch-depth: 1
 
+      # publish-release.yml runs this file from its dispatch ref against a release tag, and tags
+      # cut before #6612 still link SP1 into basectl, which needs protoc and Go to build.
+      # shortcut: remove this step and the sp1-gated installs once no supported release branch
+      # predates #6612.
+      - name: Detect SP1 build dependencies
+        id: sp1
+        run: |
+          if grep -qs 'dep:sp1-sdk' crates/proof/submission/Cargo.toml; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install system dependencies (Linux)
         if: matrix.target.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev pkg-config
+          sudo apt-get install -y libclang-dev pkg-config ${{ steps.sp1.outputs.needed == 'true' && 'protobuf-compiler' || '' }}
+
+      - name: Install system dependencies (macOS)
+        if: matrix.target.os == 'macos' && matrix.binary == 'basectl' && steps.sp1.outputs.needed == 'true'
+        run: brew install protobuf
+
+      - name: Install Go for basectl
+        if: matrix.binary == 'basectl' && steps.sp1.outputs.needed == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.24.x'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
