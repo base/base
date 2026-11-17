@@ -18,8 +18,9 @@ use crate::{FeeCalculator, FeeOverride, PreparedTx, TxManagerError, TxManagerRes
 /// another transaction raised `p` above twice its previous value. Once published, it
 /// raises `p` to its `max_priority_fee_per_gas` per blob
 /// ([`record_replacement`](Self::record_replacement)).
-/// When a transaction lands, `p` becomes 90% of the `max_priority_fee_per_gas` per blob it
-/// paid, and never less than the lower bound ([`record_landed`](Self::record_landed)).
+/// When a transaction lands, `p` becomes the decay percent (90 by default) of the
+/// `max_priority_fee_per_gas` per blob it paid, and never less than the lower bound
+/// ([`record_landed`](Self::record_landed)).
 ///
 /// No `max_priority_fee_per_gas` per blob goes above the upper bound: a fee override above
 /// `upper_bound × n` is refused. A replacement that cannot double its
@@ -34,21 +35,22 @@ pub struct BlobFeePolicy {
     lower_bound: u128,
     /// Highest `max_priority_fee_per_gas` per blob, in wei.
     upper_bound: u128,
+    /// Share, in percent, of the `max_priority_fee_per_gas` per blob of a landed transaction
+    /// that the next blob transaction starts from.
+    decay_percent: u128,
     /// `p`, the `max_priority_fee_per_gas` per blob of the next blob transaction, in wei.
     max_priority_fee_per_gas_per_blob: Arc<Mutex<u128>>,
 }
 
 impl BlobFeePolicy {
-    /// Share, in percent, of the `max_priority_fee_per_gas` per blob of a landed transaction
-    /// that the next blob transaction starts from.
-    pub const MAX_PRIORITY_FEE_PER_GAS_DECAY_PERCENT: u128 = 90;
-
     /// Creates a policy whose `max_priority_fee_per_gas` per blob starts at `lower_bound` and
-    /// stays between `lower_bound` and `upper_bound`, in wei.
-    pub fn new(lower_bound: u128, upper_bound: u128) -> Self {
+    /// stays between `lower_bound` and `upper_bound`, in wei, and decays to `decay_percent`
+    /// of its landed value each time a transaction lands.
+    pub fn new(lower_bound: u128, upper_bound: u128, decay_percent: u8) -> Self {
         Self {
             lower_bound,
             upper_bound,
+            decay_percent: u128::from(decay_percent),
             max_priority_fee_per_gas_per_blob: Arc::new(Mutex::new(lower_bound)),
         }
     }
@@ -136,13 +138,11 @@ impl BlobFeePolicy {
     }
 
     /// Records that a transaction with `blob_count` blobs landed with
-    /// `max_priority_fee_per_gas`: the next blob transaction starts from 90% of its
-    /// `max_priority_fee_per_gas` per blob, and never below the lower bound.
+    /// `max_priority_fee_per_gas`: the next blob transaction starts from the decay percent of
+    /// its `max_priority_fee_per_gas` per blob, and never below the lower bound.
     pub fn record_landed(&self, max_priority_fee_per_gas: u128, blob_count: u128) {
-        let decayed = max_priority_fee_per_gas
-            .saturating_mul(Self::MAX_PRIORITY_FEE_PER_GAS_DECAY_PERCENT)
-            / 100
-            / blob_count;
+        let decayed =
+            max_priority_fee_per_gas.saturating_mul(self.decay_percent) / 100 / blob_count;
         *self.max_priority_fee_per_gas_per_blob.lock().expect("BlobFeePolicy mutex poisoned") =
             decayed.max(self.lower_bound);
     }
@@ -157,9 +157,9 @@ mod tests {
 
     const GWEI: u128 = 1_000_000_000;
 
-    /// 0.01 to 10 gwei per blob, the batcher's defaults.
+    /// 0.01 to 10 gwei per blob with a 90% decay, the batcher's defaults.
     fn policy() -> BlobFeePolicy {
-        BlobFeePolicy::new(GWEI / 100, 10 * GWEI)
+        BlobFeePolicy::new(GWEI / 100, 10 * GWEI, 90)
     }
 
     /// A signed blob transaction with the given fees, in wei.
@@ -284,16 +284,20 @@ mod tests {
         );
     }
 
-    /// A landed transaction sets `p` to 90% of what it paid per blob, never below the lower
-    /// bound, even when that lowers `p`.
+    /// A landed transaction sets `p` to the decay percent of what it paid per blob, never
+    /// below the lower bound, even when that lowers `p`.
     #[rstest]
-    #[case::decays_by_ten_percent(60 * GWEI, 9 * GWEI)]
-    #[case::stops_at_the_lower_bound(6 * GWEI / 100, GWEI / 100)]
+    #[case::decays_by_ten_percent(90, 60 * GWEI, 9 * GWEI)]
+    #[case::stops_at_the_lower_bound(90, 6 * GWEI / 100, GWEI / 100)]
+    #[case::decays_by_half(50, 60 * GWEI, 5 * GWEI)]
+    #[case::keeps_the_landed_fee(100, 60 * GWEI, 10 * GWEI)]
+    #[case::returns_to_the_lower_bound(0, 60 * GWEI, GWEI / 100)]
     fn a_landed_transaction_decays_the_next_ones(
+        #[case] decay_percent: u8,
         #[case] max_priority_fee_per_gas: u128,
         #[case] expected_per_blob: u128,
     ) {
-        let policy = policy();
+        let policy = BlobFeePolicy::new(GWEI / 100, 10 * GWEI, decay_percent);
         policy.record_replacement(10 * GWEI, 1);
 
         policy.record_landed(max_priority_fee_per_gas, 6);
