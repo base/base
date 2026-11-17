@@ -1595,21 +1595,21 @@ mod tests {
     }
 
     /// The call phase cap is a cheap shape check, so it rejects before the fork
-    /// gate and before any signature recovery is attempted.
+    /// gate.
     #[test]
-    fn call_phase_cap_rejects_before_fork_gate_and_signature_recovery() {
+    fn call_phase_cap_rejects_before_fork_gate() {
         let pre_everest = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
         let tx = TxBase {
             calls: vec![Vec::new(); TxBaseConstants::MAX_CALL_PHASES_PER_TX + 1],
             ..minimal_valid_eoa_tx()
         };
-        let unrecoverable = TxBaseSigned::new(tx, Bytes::from(vec![0xff; 65]), Bytes::new());
+        let signed = TxBaseSigned::new(tx, Bytes::from(vec![0xff; 65]), Bytes::new());
 
         for validator in
             [build_test_validator(), build_test_validator_with_spec(Arc::new(pre_everest))]
         {
             assert_structural_reason(
-                validator.validate_base_tx_structural(&unrecoverable),
+                validator.validate_base_tx_structural(&signed),
                 "call phase count exceeds maximum",
             );
         }
