@@ -139,6 +139,30 @@ impl ChainGenerator {
         &self.registry
     }
 
+    /// Ancestor headers, newest (the pending request's parent) first.
+    pub fn ancestors(&self) -> &[Header] {
+        &self.ancestors
+    }
+
+    /// Replaces the ancestors with the single header `parent` and re-plans the pending block on
+    /// it. Real nodes started from a genesis file at the parent block compute their own genesis
+    /// header (empty body, genesis defaults) and know no earlier blocks; rebasing makes the chain
+    /// build on that header. `parent` must commit to the current state.
+    pub fn rebase(&mut self, parent: Header) -> eyre::Result<()> {
+        ensure!(self.blocks == 0, "only an unstarted chain can be rebased");
+        self.state.check_root(parent.state_root)?;
+        self.ancestors = vec![parent];
+        self.pending = self.plan();
+        Ok(())
+    }
+
+    /// Sets the pending request's base fee. Build mode executes with whatever base fee the
+    /// request names, and the generator sometimes picks a wrong one on purpose; a block meant for
+    /// real nodes must carry the base fee its parent implies.
+    pub const fn set_base_fee(&mut self, base_fee: u64) {
+        self.pending.request.header.base_fee_per_gas = base_fee;
+    }
+
     fn plan(&mut self) -> Template {
         let number = self.ancestors[0].number + 1;
         let input = TemplateInput {

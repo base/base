@@ -35,6 +35,9 @@ pub struct GeneratorOptions {
     /// Percentage of single-block cases placed at a fork activation block. Chains start just
     /// before a fork activation three times as often.
     pub activation_percent: u64,
+    /// Whether user deposits may create contracts from the key whose nonce is `u64::MAX`.
+    /// Real-node chains, which advance only on base/base's block, leave these out.
+    pub max_nonce_deposit_creates: bool,
 }
 
 impl Default for GeneratorOptions {
@@ -45,6 +48,7 @@ impl Default for GeneratorOptions {
             max_txs: 24,
             invalid_percent: 8,
             activation_percent: 15,
+            max_nonce_deposit_creates: true,
         }
     }
 }
@@ -56,6 +60,7 @@ impl GeneratorOptions {
             min_txs: self.min_txs,
             max_txs: self.max_txs,
             invalid_percent: self.invalid_percent,
+            max_nonce_deposit_creates: self.max_nonce_deposit_creates,
         }
     }
 

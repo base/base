@@ -3,8 +3,9 @@
 use std::{fs, path::PathBuf, time::Duration};
 
 use base_diff_fuzz::{
-    AdapterSpec, Campaign, ChainDriver, ConfigLogs, Era, FuzzConfig, Fuzzer, Generator,
-    GeneratorOptions, MainFuzzConfig, MainFuzzer, MainnetFetcher, MainnetReplay, Request,
+    Adapter, AdapterSpec, Campaign, ChainDriver, ChainFollower, ConfigLogs, Era, FuzzConfig,
+    Fuzzer, Generator, GeneratorOptions, Lag, MainFuzzConfig, MainFuzzer, MainnetFetcher,
+    MainnetReplay, NodeClient, Request, RpcCampaign, RpcConfig, RpcExclude,
 };
 use clap::{Args, Parser, Subcommand};
 use eyre::WrapErr;
@@ -212,6 +213,89 @@ enum Command {
         #[arg(long, default_value_t = 60)]
         minimize_budget: usize,
     },
+    /// Writes the genesis file that starts real nodes on synthetic chain `seed`.
+    NodeGenesis {
+        /// Chain seed.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Output file.
+        #[arg(long, default_value = "genesis.json")]
+        out: PathBuf,
+    },
+    /// Differential JSON-RPC fuzzing: every node follows synthetic chain `seed` (started from the
+    /// `node-genesis` file) over the Engine API and answers the same generated requests.
+    Rpc {
+        /// Chain seed (the same as for `node-genesis`).
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Reference adapter that builds the chain, as `name=command args...`.
+        #[arg(long)]
+        adapter: String,
+        /// Node as `name=http_url,auth_url`; repeat for each client. The first is the reference.
+        #[arg(long = "node", required = true)]
+        nodes: Vec<String>,
+        /// Shared Engine API JWT secret (hex).
+        #[arg(long)]
+        jwt: PathBuf,
+        /// Blocks added per round.
+        #[arg(long, default_value_t = 8)]
+        blocks_per_round: u64,
+        /// Chain length after which the chain stops growing.
+        #[arg(long, default_value_t = 2000)]
+        max_blocks: u64,
+        /// Requests per round.
+        #[arg(long, default_value_t = 400)]
+        requests_per_round: u64,
+        /// Worker threads sending requests.
+        #[arg(long, default_value_t = 8)]
+        jobs: usize,
+        /// How long to run, such as `90s`, `20m`, or `2h`.
+        #[arg(long, default_value = "1h", value_parser = parse_duration)]
+        duration: Duration,
+        /// Restrict generation to these families; repeat (default: all).
+        #[arg(long = "family")]
+        families: Vec<String>,
+        /// Examples saved per finding signature.
+        #[arg(long, default_value_t = 5)]
+        examples: usize,
+        /// Blocks between safe and head, and between finalized and head.
+        #[arg(long, default_value_t = 4)]
+        safe_lag: u64,
+        /// Blocks between finalized and head.
+        #[arg(long, default_value_t = 16)]
+        finalized_lag: u64,
+        /// Output directory.
+        #[arg(long, default_value = "rpc-fuzz-out")]
+        out: PathBuf,
+        /// Append every request to `<file>.<worker>` before sending it, to find the request a
+        /// node crashed on.
+        #[arg(long)]
+        request_log: Option<PathBuf>,
+        /// Leave a node out of matching cases, as `node=method[:body substring]` (a method
+        /// ending in `*` is a prefix); repeat. For requests known to crash a node.
+        #[arg(long = "exclude")]
+        excludes: Vec<String>,
+        /// Nodes whose `fuzz_coverage` edges guide the run; repeat for several. Requests to them
+        /// are serialized so each reading belongs to one request.
+        #[arg(long)]
+        coverage_from: Vec<String>,
+        /// With `--coverage-from`, only send fresh generator requests (the unguided baseline);
+        /// coverage is still measured.
+        #[arg(long)]
+        unguided: bool,
+        /// Percentage of guided requests that are fresh generator requests instead of mutants.
+        #[arg(long, default_value_t = 40)]
+        explore: u64,
+    },
+}
+
+/// Eras of the chains real nodes follow: the Engine API payloads they take start at Isthmus.
+fn node_chain_options() -> GeneratorOptions {
+    GeneratorOptions {
+        eras: vec![Era::Isthmus, Era::Jovian, Era::Azul, Era::Beryl, Era::Cobalt, Era::Denim],
+        max_nonce_deposit_creates: false,
+        ..GeneratorOptions::default()
+    }
 }
 
 /// Parses `90`, `90s`, `20m`, or `2h`.
@@ -283,6 +367,68 @@ impl Saved {
 fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::NodeGenesis { seed, out } => {
+            ChainFollower::write_genesis(seed, node_chain_options(), &out)?;
+        }
+        Command::Rpc {
+            seed,
+            adapter,
+            nodes,
+            jwt,
+            blocks_per_round,
+            max_blocks,
+            requests_per_round,
+            jobs,
+            duration,
+            families,
+            examples,
+            safe_lag,
+            finalized_lag,
+            out,
+            request_log,
+            excludes,
+            coverage_from,
+            unguided,
+            explore,
+        } => {
+            fs::create_dir_all(&out)?;
+            let _ = fs::remove_file(out.join("payloads.jsonl"));
+            let nodes = nodes
+                .iter()
+                .map(|n| NodeClient::parse(n, &jwt))
+                .collect::<eyre::Result<Vec<_>>>()?;
+            let adapter = Adapter::new(AdapterSpec::parse(&adapter)?, Duration::from_secs(120));
+            let lag = Lag { safe: safe_lag, finalized: finalized_lag };
+            let mut follower = ChainFollower::start(
+                seed,
+                node_chain_options(),
+                adapter,
+                nodes,
+                lag,
+                Some(out.join("payloads.jsonl")),
+            )?;
+            let config = RpcConfig {
+                seed,
+                blocks_per_round,
+                max_blocks,
+                requests_per_round,
+                jobs,
+                duration,
+                families,
+                examples,
+                out,
+                request_log,
+                excludes: excludes
+                    .iter()
+                    .map(|e| RpcExclude::parse(e))
+                    .collect::<eyre::Result<_>>()?,
+                coverage_from,
+                guided: !unguided,
+                explore_percent: explore,
+            };
+            let summary = RpcCampaign::run(&mut follower, &config)?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        }
         Command::Run { common, paths } => {
             let saved = Saved::collect(&paths)?;
             let summary = common

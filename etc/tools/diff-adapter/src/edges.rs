@@ -37,8 +37,10 @@ impl EdgeCounters {
             return &mut [];
         }
         // SAFETY: the instrumentation registered `start..start + len` as its counter section,
-        // which lives for the whole process; the adapter is single-threaded, so nothing else
-        // reads or writes the counters while this slice is alive.
+        // which lives for the whole process. The adapter is single-threaded. In
+        // `base-diff-node`, instrumented code on other threads increments counters without
+        // synchronization (as `SanitizerCoverage` always does), so readings are exact only
+        // while the harness sends that node one request at a time.
         unsafe { std::slice::from_raw_parts_mut(start, len) }
     }
 
@@ -55,9 +57,14 @@ impl EdgeCounters {
     /// `coverage` with an `edge:<index>` feature for every edge hit since the last reset, with
     /// its (8-bit, wrapping) hit count.
     pub fn with_edges(mut coverage: BTreeMap<String, u64>) -> BTreeMap<String, u64> {
-        for (index, count) in Self::counters().iter().enumerate().filter(|(_, c)| **c > 0) {
-            coverage.insert(format!("edge:{index}"), u64::from(*count));
+        for (index, count) in Self::hits() {
+            coverage.insert(format!("edge:{index}"), u64::from(count));
         }
         coverage
+    }
+
+    /// Every edge hit since the last reset, as `(index, count)` in index order.
+    pub fn hits() -> Vec<(usize, u8)> {
+        Self::counters().iter().enumerate().filter(|(_, c)| **c > 0).map(|(i, c)| (i, *c)).collect()
     }
 }

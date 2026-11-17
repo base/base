@@ -11,7 +11,7 @@ mod mutate;
 pub use mutate::{Mutation, Mutator};
 
 mod corpus;
-pub use corpus::{Corpus, CorpusEntry};
+pub use corpus::{Corpus, CorpusCase, CorpusEntry};
 
 mod minimize;
 pub use minimize::{AdapterResults, FindingSignature, Minimized, Minimizer};

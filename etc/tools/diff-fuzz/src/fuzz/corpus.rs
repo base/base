@@ -7,14 +7,27 @@ use std::{
 };
 
 use eyre::WrapErr;
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{FuzzCase, Rng};
 
+/// A case a [`Corpus`] can keep.
+pub trait CorpusCase: Clone + Serialize + DeserializeOwned {
+    /// A stable name for the case, used as its file name in the corpus directory.
+    fn id(&self) -> String;
+}
+
+impl CorpusCase for FuzzCase {
+    fn id(&self) -> String {
+        Self::id(self)
+    }
+}
+
 /// A corpus case and the coverage features it hit.
 #[derive(Debug, Clone)]
-pub struct CorpusEntry {
+pub struct CorpusEntry<C = FuzzCase> {
     /// The case.
-    pub case: FuzzCase,
+    pub case: C,
     /// Feature ids the case hit.
     pub features: Vec<u32>,
     /// Times the case was picked as a mutation parent.
@@ -31,12 +44,12 @@ pub struct CorpusEntry {
 /// Parents are picked with probability proportional to their energy: the sum over their
 /// features of `1 / cases that hit the feature`, damped by how often the case was already
 /// picked. Cases that are among the few to reach a rare behavior get most of the mutations.
-#[derive(Debug, Default)]
-pub struct Corpus {
+#[derive(Debug)]
+pub struct Corpus<C = FuzzCase> {
     /// Directory the cases are saved to, one JSON file each; `None` keeps them in memory.
     pub dir: Option<PathBuf>,
     /// Kept cases.
-    pub entries: Vec<CorpusEntry>,
+    pub entries: Vec<CorpusEntry<C>>,
     /// Feature (`name#bucket`) to id.
     pub ids: HashMap<String, u32>,
     /// Cases that hit each feature id.
@@ -49,13 +62,27 @@ pub struct Corpus {
     pub stale: u64,
 }
 
-impl Corpus {
+impl<C> Default for Corpus<C> {
+    fn default() -> Self {
+        Self {
+            dir: None,
+            entries: Vec::new(),
+            ids: HashMap::new(),
+            hits: Vec::new(),
+            names: HashSet::new(),
+            weights: Vec::new(),
+            stale: 0,
+        }
+    }
+}
+
+impl<C: CorpusCase> Corpus<C> {
     /// Rebuild weights after this many picks.
     pub const REWEIGHT_EVERY: u64 = 32;
 
     /// Opens a corpus saved in `dir`, creating the directory. Returns the corpus (empty: saved
     /// cases must be re-run to learn their features) and the saved cases.
-    pub fn open(dir: Option<PathBuf>) -> eyre::Result<(Self, Vec<FuzzCase>)> {
+    pub fn open(dir: Option<PathBuf>) -> eyre::Result<(Self, Vec<C>)> {
         let mut saved = Vec::new();
         if let Some(dir) = &dir {
             fs::create_dir_all(dir)?;
@@ -108,7 +135,7 @@ impl Corpus {
     }
 
     /// Keeps a case, saving it to the corpus directory.
-    pub fn add(&mut self, case: FuzzCase, features: Vec<u32>) -> eyre::Result<()> {
+    pub fn add(&mut self, case: C, features: Vec<u32>) -> eyre::Result<()> {
         if let Some(dir) = &self.dir {
             fs::write(dir.join(format!("{}.json", case.id())), serde_json::to_vec(&case)?)?;
         }
@@ -118,7 +145,7 @@ impl Corpus {
     }
 
     /// Energy of an entry.
-    pub fn energy(&self, entry: &CorpusEntry) -> f64 {
+    pub fn energy(&self, entry: &CorpusEntry<C>) -> f64 {
         let rarity: f64 =
             entry.features.iter().map(|id| 1.0 / self.hits[*id as usize] as f64).sum();
         rarity / (1.0 + entry.picks as f64 / 8.0).sqrt()
@@ -148,6 +175,18 @@ impl Corpus {
         Some(chosen)
     }
 
+    /// Distinct feature names per family (the part before the first `:`).
+    pub fn families(&self) -> BTreeMap<String, u64> {
+        let mut families = BTreeMap::new();
+        for name in &self.names {
+            let family = name.split(':').next().unwrap_or_default();
+            *families.entry(family.to_owned()).or_default() += 1;
+        }
+        families
+    }
+}
+
+impl Corpus<FuzzCase> {
     /// A splice donor for `case`: another entry on the same pre-state when there is one (half
     /// the time), otherwise any entry.
     pub fn donor(&self, rng: &mut Rng, case: &FuzzCase) -> Option<FuzzCase> {
@@ -168,16 +207,6 @@ impl Corpus {
         }
         Some(self.entries[rng.index(self.entries.len())].case.clone())
     }
-
-    /// Distinct feature names per family (the part before the first `:`).
-    pub fn families(&self) -> BTreeMap<String, u64> {
-        let mut families = BTreeMap::new();
-        for name in &self.names {
-            let family = name.split(':').next().unwrap_or_default();
-            *families.entry(family.to_owned()).or_default() += 1;
-        }
-        families
-    }
 }
 
 #[cfg(test)]
@@ -185,10 +214,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::Corpus;
+    use crate::FuzzCase;
 
     #[test]
     fn new_names_and_new_hit_count_buckets_are_novel() {
-        let mut corpus = Corpus::default();
+        let mut corpus = Corpus::<FuzzCase>::default();
         let coverage = |pairs: &[(&str, u64)]| -> BTreeMap<String, u64> {
             pairs.iter().map(|(n, c)| ((*n).to_owned(), *c)).collect()
         };

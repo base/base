@@ -19,9 +19,9 @@ pub use campaign::{Campaign, Summary};
 mod fuzz;
 pub use fuzz::{
     AdapterResults, ByteEdit, ChainDriver, ChainEnd, ChainOutcome, ChainSummary, CodeEdit, Corpus,
-    CorpusEntry, CoverageReport, FeeTarget, Finding, FindingGroup, FindingSignature, FuzzCase,
-    FuzzConfig, FuzzState, FuzzStats, Fuzzer, GasTarget, L1Tweak, Minimized, Minimizer, Mutation,
-    MutationStats, Mutator, Sample, Slot, SlotKind, Tweak,
+    CorpusCase, CorpusEntry, CoverageReport, FeeTarget, Finding, FindingGroup, FindingSignature,
+    FuzzCase, FuzzConfig, FuzzState, FuzzStats, Fuzzer, GasTarget, L1Tweak, Minimized, Minimizer,
+    Mutation, MutationStats, Mutator, Sample, Slot, SlotKind, Tweak,
 };
 
 mod mainnet;
@@ -42,4 +42,12 @@ pub use r#gen::{
     ProgramCtx, RECURSER, REFUNDER, RELAY, Registry, Rng, Scenarios, Schedule, Shape, SysConfig,
     Template, TemplateInput, Templates, Token, TrafficMix, TrieBuilder, TxSpec, Txs, WorldState,
     era_blocks,
+};
+
+mod nodes;
+pub use nodes::{
+    ChainBlock, ChainFollower, ChainIndex, ChainTx, CoverageReading, FAMILIES, GuideReport,
+    GuideSample, GuideState, Lag, MethodStats, NodeClient, NodeGenesis, PathStep, Reply,
+    RpcCampaign, RpcCase, RpcCompare, RpcConfig, RpcDifference, RpcExclude, RpcFinding, RpcGen,
+    RpcGuide, RpcMutator, RpcSummary, RpcVerdict,
 };

@@ -86,6 +86,8 @@ pub struct Planner<'a> {
     /// Next nonces of other authorities of the transaction being built, applied only once the
     /// transaction is planned.
     pub auth_nonces: BTreeMap<Address, u64>,
+    /// See `GeneratorOptions::max_nonce_deposit_creates`.
+    pub max_nonce_deposit_creates: bool,
 }
 
 /// Addresses of contracts every era has.
@@ -124,6 +126,7 @@ impl<'a> Planner<'a> {
             new_codes: Vec::new(),
             self_bump: false,
             auth_nonces: BTreeMap::new(),
+            max_nonce_deposit_creates: true,
         }
     }
 
@@ -1215,7 +1218,8 @@ impl<'a> Planner<'a> {
             6 => MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS,
             _ => keys.address(self.rng.range(1, 4) as usize),
         };
-        let create = self.rng.chance(12);
+        let create = self.rng.chance(12)
+            && (self.max_nonce_deposit_creates || from != keys.address(Keys::MAX_NONCE));
         // A creation whose address is already taken.
         let from = if create && self.rng.chance(15) && self.nonce(&COLLIDER) < COLLIDER_NONCES {
             COLLIDER

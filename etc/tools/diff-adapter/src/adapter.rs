@@ -173,11 +173,21 @@ impl DiffAdapter {
             parent.number
         );
 
+        // A genesis block (zero parent hash) has no blocks before it, and `BLOCKHASH` of a block
+        // before it is zero, as on a node started from that genesis.
+        let oldest = ancestors.last().expect("the parent is an ancestor");
+        let before_genesis = oldest
+            .parent_hash
+            .is_zero()
+            .then(|| oldest.number.saturating_sub(256)..oldest.number)
+            .into_iter()
+            .flatten()
+            .map(|number| (number, B256::ZERO));
         let state = WitnessState::new(
             parent.state_root,
             &request.witness.state,
             &request.witness.codes,
-            ancestors.iter().map(|header| (header.number, header.hash())),
+            ancestors.iter().map(|header| (header.number, header.hash())).chain(before_genesis),
             parent
                 .withdrawals_root
                 .filter(|_| {

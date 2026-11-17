@@ -418,7 +418,7 @@ impl MainFuzzer {
             let mut features = Vec::new();
             let mut novel = 0;
             for (name, count) in coverage.iter().filter(|(_, c)| **c > 0) {
-                let key = format!("{name}#{}", Corpus::bucket(*count));
+                let key = format!("{name}#{}", <Corpus>::bucket(*count));
                 let next = s.ids.len() as u32;
                 let id = *s.ids.entry(key).or_insert(next);
                 if id == next {

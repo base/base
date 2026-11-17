@@ -32,6 +32,8 @@ pub struct TrafficMix {
     pub max_txs: usize,
     /// Percentage of random transactions that are deliberately invalid.
     pub invalid_percent: u64,
+    /// See `GeneratorOptions::max_nonce_deposit_creates`.
+    pub max_nonce_deposit_creates: bool,
 }
 
 /// A planned block: the request and what each transaction was meant to do.
@@ -148,6 +150,7 @@ impl Template {
             deposits_allowed: input.origin.sequence_number == 0,
         };
         let mut planner = Planner::new(rng.fork(1), ctx, input.state, input.registry, system_gas);
+        planner.max_nonce_deposit_creates = input.mix.max_nonce_deposit_creates;
         if planner.ctx.deposits_allowed {
             scenario(&mut planner, true);
             for _ in 0..planner.rng.below(4) {

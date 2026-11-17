@@ -146,3 +146,41 @@ rejecting a transaction whose `gas * maxFeePerGas` overflows u128, and any block
 from an account at nonce `u64::MAX`. `<out>/coverage.json` holds counters, feature families,
 findings, and the number of feature names beyond `--baseline`; `<out>/beyond-baseline.txt` lists
 those names.
+
+## Coverage-guided JSON-RPC fuzzing
+
+`rpc --coverage-from <node>` (repeatable) guides the JSON-RPC campaign with per-request edge
+coverage from the nodes themselves. A coverage node is an opt-in build that serves
+`fuzz_coverage`: no parameters, result `{"counters": N, "hits": [[index, count], ...]}` with every
+edge counter that is nonzero since the previous call (an 8-bit count), after which the node
+zeroes its counters. Production builds do not have the method. The builds are:
+
+- base/base: `base-diff-node` ([`../diff-node`](../diff-node/README.md)), `base-reth-node` with
+  `SanitizerCoverage` counters in the RPC, RPC type, tracer, and EVM crates.
+- Nethermind: `tools/RpcCoverage/instrument.sh` builds a runner with `SharpFuzz` edge counters in
+  its JSON-RPC, Facade, serialization, EVM, precompile, tracer, state, and Optimism assemblies and
+  an unreferenced `fuzz` RPC plugin; start it with its `run-coverage.sh` and add `fuzz` to
+  `--JsonRpc.EnabledModules`.
+- needlefish: the `-Ddiff-coverage` build, which keeps the `-ffuzz` counters of the RPC, JSON,
+  HTTP, and EVM functions.
+
+Counters are process-wide, so the harness sends each coverage node one request at a time and
+reads its coverage right after every request, Engine API calls and the campaign's own extra
+requests (determinism checks, minimization, filter polls) included; only the readings of
+generated requests count. Workers still overlap across nodes. Features are `<node>:<edge index>`
+with the hit-count bucket, merged over the coverage nodes, so a request that reaches new code in
+any client is kept in `<out>/rpc-corpus/`.
+
+Guided requests are a mix of fresh generator requests (`--explore`, default 40%) and mutants of
+corpus requests picked by energy (as for `fuzz`). Mutations replace a parameter, a subtree, or an
+object key with the one from a fresh request of the same family (which holds valid block numbers,
+hashes, addresses, and call objects for the chain so far), splice a subtree from another corpus
+request of the same method, drop or duplicate array elements and object keys, nudge hex quantities
+across boundaries (including leading zeros and decimal numbers), cut, extend, or flip hex data, swap
+in block tags, change a value's JSON type, switch to a sibling method with the same parameters (such
+as `eth_call` to `eth_estimateGas`), or edit single characters of the body to reach parser errors.
+`--unguided` sends only fresh requests and still reads coverage, as a baseline.
+
+`<out>/rpc-coverage.json` is rewritten every round: requests and requests per second, distinct
+features, distinct edges per node, corpus size, kept requests by origin, mutation operator, and
+method, and a timeline with one sample per round.

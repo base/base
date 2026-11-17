@@ -4247,6 +4247,7 @@ dependencies = [
  "base-common-precompiles",
  "base-common-rpc-types",
  "base-consensus-upgrades",
+ "base64 0.22.1",
  "clap",
  "eyre",
  "k256 0.13.4",
@@ -4257,6 +4258,21 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "base-diff-node"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-diff-adapter",
+ "base-execution-cli",
+ "base-node-runner",
+ "base-reth-cli",
+ "clap",
+ "jsonrpsee",
+ "reth-cli-util",
+ "serde",
 ]
 
 [[package]]

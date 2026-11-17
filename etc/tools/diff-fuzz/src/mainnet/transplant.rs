@@ -328,7 +328,12 @@ impl Transplant {
             sys: &sys,
             origin: &origin,
             ancestors: &genesis.ancestors,
-            mix: TrafficMix { min_txs: 0, max_txs: self.synthetic as usize, invalid_percent: 5 },
+            mix: TrafficMix {
+                min_txs: 0,
+                max_txs: self.synthetic as usize,
+                invalid_percent: 5,
+                max_nonce_deposit_creates: true,
+            },
         };
         let id = self.id();
         let template = Template::build(&mut rng, input, &mut |planner, deposits| {
