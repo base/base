@@ -11,7 +11,7 @@ use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
-    BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
+    BASE_TX_TYPE_ID, BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -65,10 +65,10 @@ where
     ) -> Result<B256, Self::Error> {
         let (tx, pool_transaction) = tx.split();
 
-        if pool_transaction.consensus_ref().ty() == EIP8130_TX_TYPE_ID
-            && !self.is_eip8130_active_at_latest()?
+        if pool_transaction.consensus_ref().ty() == BASE_TX_TYPE_ID
+            && !self.is_base_tx_active_at_latest()?
         {
-            return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
+            return Err(BaseInvalidTransactionError::TxBaseNotAccepted.into());
         }
 
         let tx_hash = *pool_transaction.hash();
@@ -228,14 +228,14 @@ where
     N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
-    fn is_eip8130_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
+    fn is_base_tx_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
         let Some(header) = self.provider().latest_header()? else {
             return Ok(false);
         };
         Ok(self
             .provider()
             .chain_spec()
-            .is_feature_active_at_timestamp(BaseFeature::Eip8130, header.timestamp()))
+            .is_feature_active_at_timestamp(BaseFeature::TxBase, header.timestamp()))
     }
 }
 

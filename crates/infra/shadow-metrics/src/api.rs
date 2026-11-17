@@ -380,8 +380,8 @@ fn per_tx_gas_used(row: &ShadowBlockRow) -> Vec<Option<u64>> {
 fn tx_type_str(tx: &BaseTxEnvelope) -> &'static str {
     if tx.is_deposit() {
         "deposit"
-    } else if tx.is_eip8130() {
-        "eip8130"
+    } else if tx.is_base_tx() {
+        "base_tx"
     } else if tx.is_eip1559() {
         "eip1559"
     } else if tx.is_eip2930() {

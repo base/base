@@ -17,7 +17,7 @@ use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::{BaseSpecId, BaseTime, L1BlockInfo, MeteredGas};
 use base_common_rpc_types_engine::PayloadReady;
-use base_execution_eip8130::IntrinsicGas;
+use base_execution_base_tx::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, UnixMillis,
     estimated_da_size::DataAvailabilitySized,
@@ -759,8 +759,8 @@ impl ExecutionInfo {
     /// Returns true if the transaction would exceed the block limits:
     /// - block gas limit: ensures the transaction still fits into the block. `tx_reserved_gas` is
     ///   the gas reserved against the block budget: `gas_limit` for ordinary transactions, and
-    ///   `gas_limit + payer_auth` for EIP-8130, since payer authentication is metered on top of the
-    ///   declared gas limit (see `IntrinsicGas::payer_auth_cost_of`).
+    ///   `gas_limit + payer_auth` for Base transactions, since payer authentication is metered on
+    ///   top of the declared gas limit (see `IntrinsicGas::payer_auth_cost_of`).
     /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
@@ -1142,7 +1142,7 @@ where
             }
 
             let tx_hash = *tx.hash();
-            let replay_independent = tx.is_eip8130_nonce_free();
+            let replay_independent = tx.is_base_tx_nonce_free();
             let has_validity_predicates = !tx.validity_conditions().is_empty();
             if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
                 RejectionCacheMetrics::hits().increment(1);
@@ -1296,7 +1296,7 @@ where
                     target: "payload_builder",
                     tx_hash = ?tx.hash(),
                     cause = stale.cause(),
-                    "skipping EIP-8130 transaction with a stale admission manifest"
+                    "skipping Base transaction with a stale admission manifest"
                 );
                 GuardMetrics::record_builder_precheck_drop(&stale);
                 if has_validity_predicates {
@@ -1315,10 +1315,10 @@ where
             let tx_da_size = tx.estimated_da_size();
             let tx_uncompressed_size = tx.encoded_length() as u64;
 
-            // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
-            // be reserved against the block gas budget in addition to `gas_limit` (`0` for
-            // non-8130 / self-pay); see `IntrinsicGas::payer_auth_cost_of`.
-            let tx_payer_auth = tx.as_eip8130().map_or(0, IntrinsicGas::payer_auth_cost_of);
+            // Base transactions meter payer authentication gas on top of the declared gas limit, so
+            // it must be reserved against the block gas budget in addition to `gas_limit` (`0` for
+            // non-Base / self-pay); see `IntrinsicGas::payer_auth_cost_of`.
+            let tx_payer_auth = tx.as_base_tx().map_or(0, IntrinsicGas::payer_auth_cost_of);
 
             if coinbase_tip_affordability.unaffordable(
                 tx,
@@ -1639,7 +1639,7 @@ where
                     .executor()
                     .receipts()
                     .last()
-                    .and_then(DepositReceiptExt::as_eip8130_receipt)
+                    .and_then(DepositReceiptExt::as_base_tx_receipt)
                     .is_some_and(|receipt| receipt.phase_committed(0))
             });
             info.inclusion.record(
@@ -1838,11 +1838,11 @@ mod tests {
         payload.block().state_root
     }
 
-    /// The block gas reservation must include EIP-8130 `payer_auth` on top of the
+    /// The block gas reservation must include Base transaction `payer_auth` on top of the
     /// declared `gas_limit`: a transaction that fits on `gas_limit` alone is still
     /// over the block limit once payer authentication is metered on top.
     #[test]
-    fn is_tx_over_limits_reserves_eip8130_payer_auth() {
+    fn is_tx_over_limits_reserves_base_tx_payer_auth() {
         let mut info = ExecutionInfo::new();
         info.cumulative_gas_used = 979_000;
         let block_gas_limit = 1_000_000;

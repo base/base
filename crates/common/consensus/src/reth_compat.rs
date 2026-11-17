@@ -21,8 +21,8 @@ use reth_codecs::{
 };
 
 use crate::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID,
-    DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt, OpTxType, TxDeposit, TxEip8130,
+    BASE_TX_TYPE_ID, BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction,
+    DEPOSIT_TX_TYPE_ID, DepositReceipt, OpTxType, TxBase, TxBaseReceipt, TxDeposit,
 };
 
 // ---------------------------------------------------------------------------
@@ -112,8 +112,8 @@ impl Compact for OpTxType {
                 buf.put_u8(DEPOSIT_TX_TYPE_ID);
                 COMPACT_EXTENDED_IDENTIFIER_FLAG
             }
-            Self::Eip8130 => {
-                buf.put_u8(EIP8130_TX_TYPE_ID);
+            Self::Base => {
+                buf.put_u8(BASE_TX_TYPE_ID);
                 COMPACT_EXTENDED_IDENTIFIER_FLAG
             }
         }
@@ -130,7 +130,7 @@ impl Compact for OpTxType {
                     match extended_identifier {
                         EIP7702_TX_TYPE_ID => Self::Eip7702,
                         DEPOSIT_TX_TYPE_ID => Self::Deposit,
-                        EIP8130_TX_TYPE_ID => Self::Eip8130,
+                        BASE_TX_TYPE_ID => Self::Base,
                         _ => panic!("Unsupported OpTxType identifier: {extended_identifier}"),
                     }
                 }
@@ -157,7 +157,7 @@ impl Compact for BaseTypedTransaction {
             Self::Eip1559(tx) => tx.to_compact(out),
             Self::Eip7702(tx) => tx.to_compact(out),
             Self::Deposit(tx) => tx.to_compact(out),
-            Self::Eip8130(tx) => tx.to_compact(out),
+            Self::Base(tx) => tx.to_compact(out),
         };
         identifier
     }
@@ -185,9 +185,9 @@ impl Compact for BaseTypedTransaction {
                 let (tx, buf) = Compact::from_compact(buf, buf.len());
                 (Self::Deposit(tx), buf)
             }
-            OpTxType::Eip8130 => {
-                let (tx, buf) = TxEip8130::from_compact(buf, buf.len());
-                (Self::Eip8130(tx), buf)
+            OpTxType::Base => {
+                let (tx, buf) = TxBase::from_compact(buf, buf.len());
+                (Self::Base(tx), buf)
             }
         }
     }
@@ -215,7 +215,7 @@ impl reth_codecs::alloy::transaction::ToTxCompact for BaseTxEnvelope {
             Self::Deposit(tx) => {
                 tx.to_compact(buf);
             }
-            Self::Eip8130(tx) => {
+            Self::Base(tx) => {
                 tx.to_compact(buf);
             }
         };
@@ -252,13 +252,13 @@ impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
                 let tx = Sealed::new(tx);
                 (Self::Deposit(tx), buf)
             }
-            OpTxType::Eip8130 => {
+            OpTxType::Base => {
                 let (tx, buf) = Compact::from_compact(buf, buf.len());
-                // EIP-8130 carries sender_auth / payer_auth inside the signed
+                // A Base transaction carries sender_auth / payer_auth inside the signed
                 // payload itself, so the outer envelope signature is only a
                 // placeholder mandated by the trait contract.
                 let _ = signature;
-                (Self::Eip8130(tx), buf)
+                (Self::Base(tx), buf)
             }
         }
     }
@@ -280,10 +280,10 @@ impl reth_codecs::alloy::transaction::Envelope for BaseTxEnvelope {
             Self::Eip7702(tx) => tx.signature(),
             // The `Envelope` trait forces a `&Signature` return, so neither variant can
             // signal absence the way `BaseTxEnvelope::signature` (which returns `Option`)
-            // does. Both Deposit and EIP-8130 AA transactions carry their own auth model
+            // does. Both Deposit and Base transactions carry their own auth model
             // and have no meaningful ECDSA signature: callers MUST NOT feed this value
             // into ECDSA recovery — it is an all-zero placeholder.
-            Self::Deposit(_) | Self::Eip8130(_) => &PLACEHOLDER_SIGNATURE,
+            Self::Deposit(_) | Self::Base(_) => &PLACEHOLDER_SIGNATURE,
         }
     }
 
@@ -313,7 +313,7 @@ impl Compact for BaseTxEnvelope {
 // Compact – BaseReceipt (via CompactZstd helper)
 // ---------------------------------------------------------------------------
 
-/// Backward-compatible `Compact` wrapper for the EIP-8130 committed phase
+/// Backward-compatible `Compact` wrapper for the Base transaction committed phase
 /// count stored as the trailing field of [`CompactBaseReceipt`].
 ///
 /// A plain `u64` field would be bit-packed into the derive's flags header and
@@ -322,7 +322,7 @@ impl Compact for BaseTxEnvelope {
 /// backward compatible:
 ///
 /// * `to_compact` writes the count as trimmed big-endian bytes, which is nothing
-///   for `0`, so non-EIP-8130 receipts stay byte-identical to the existing
+///   for `0`, so non-Base receipts stay byte-identical to the existing
 ///   on-disk format.
 /// * `from_compact` decodes an empty remainder as `0`, so receipts written
 ///   before this field existed decode unchanged.
@@ -357,10 +357,10 @@ struct CompactBaseReceipt<'a> {
     logs: Cow<'a, Vec<alloy_primitives::Log>>,
     deposit_nonce: Option<u64>,
     deposit_receipt_version: Option<u64>,
-    /// EIP-8130 committed phase count. `0` for non-8130 receipts. Must remain
+    /// Base transaction committed phase count. `0` for non-Base receipts. Must remain
     /// the last field — see [`CompactCommittedPhases`] for the
     /// backward-compatibility contract with pre-existing on-disk receipts.
-    eip8130_committed_phases: CompactCommittedPhases,
+    base_tx_committed_phases: CompactCommittedPhases,
 }
 
 impl<'a> From<&'a BaseReceipt> for CompactBaseReceipt<'a> {
@@ -379,12 +379,8 @@ impl<'a> From<&'a BaseReceipt> for CompactBaseReceipt<'a> {
             } else {
                 None
             },
-            eip8130_committed_phases: CompactCommittedPhases(
-                if let BaseReceipt::Eip8130(receipt) = receipt {
-                    receipt.committed_phases
-                } else {
-                    0
-                },
+            base_tx_committed_phases: CompactCommittedPhases(
+                if let BaseReceipt::Base(receipt) = receipt { receipt.committed_phases } else { 0 },
             ),
             tx_type: receipt.tx_type(),
         }
@@ -400,7 +396,7 @@ impl From<CompactBaseReceipt<'_>> for BaseReceipt {
             logs,
             deposit_nonce,
             deposit_receipt_version,
-            eip8130_committed_phases,
+            base_tx_committed_phases,
         } = receipt;
 
         let inner =
@@ -414,9 +410,7 @@ impl From<CompactBaseReceipt<'_>> for BaseReceipt {
             OpTxType::Deposit => {
                 Self::Deposit(DepositReceipt { inner, deposit_nonce, deposit_receipt_version })
             }
-            OpTxType::Eip8130 => {
-                Self::Eip8130(Eip8130Receipt::new(inner, eip8130_committed_phases.0))
-            }
+            OpTxType::Base => Self::Base(TxBaseReceipt::new(inner, base_tx_committed_phases.0)),
         }
     }
 }
@@ -481,14 +475,14 @@ pub trait DepositReceiptExt: reth_primitives_traits::Receipt {
     /// Returns a reference to the inner deposit receipt, if this is a deposit.
     fn as_deposit_receipt(&self) -> Option<&DepositReceipt>;
 
-    /// Returns a reference to the inner EIP-8130 receipt, if this is one.
-    fn as_eip8130_receipt(&self) -> Option<&Eip8130Receipt>;
+    /// Returns a reference to the inner Base transaction receipt, if this is one.
+    fn as_base_tx_receipt(&self) -> Option<&TxBaseReceipt>;
 }
 
 impl DepositReceiptExt for BaseReceipt {
-    fn as_eip8130_receipt(&self) -> Option<&Eip8130Receipt> {
+    fn as_base_tx_receipt(&self) -> Option<&TxBaseReceipt> {
         match self {
-            Self::Eip8130(receipt) => Some(receipt),
+            Self::Base(receipt) => Some(receipt),
             _ => None,
         }
     }
@@ -537,7 +531,7 @@ mod tests {
 
     #[test]
     fn compact_committed_phases_zero_writes_nothing_and_decodes_zero() {
-        // A zero count must encode to zero bytes so non-8130 receipts keep the
+        // A zero count must encode to zero bytes so non-Base receipts keep the
         // pre-existing on-disk format.
         let mut buf = Vec::new();
         let written = CompactCommittedPhases(0).to_compact(&mut buf);
@@ -553,9 +547,9 @@ mod tests {
 
     #[test]
     fn base_receipt_compact_decode_tolerates_missing_committed_phases() {
-        // A non-8130 receipt encodes with zero trailing bytes, so its `Compact`
+        // A non-Base receipt encodes with zero trailing bytes, so its `Compact`
         // byte stream is identical to receipts written before the
-        // `eip8130_committed_phases` field existed.
+        // `base_tx_committed_phases` field existed.
         let receipt = BaseReceipt::Legacy(Receipt {
             status: true.into(),
             cumulative_gas_used: 21_000,
@@ -570,10 +564,10 @@ mod tests {
     }
 
     #[test]
-    fn base_receipt_compact_roundtrips_eip8130_committed_phases() {
+    fn base_receipt_compact_roundtrips_base_tx_committed_phases() {
         // A count that needs more than one byte must survive the trailing-field
         // round-trip; dropping or reordering the field would decode it as `0`.
-        let receipt = BaseReceipt::Eip8130(crate::Eip8130Receipt::new(
+        let receipt = BaseReceipt::Base(crate::TxBaseReceipt::new(
             Receipt {
                 status: false.into(),
                 cumulative_gas_used: 21_000,

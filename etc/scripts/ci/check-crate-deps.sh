@@ -34,7 +34,7 @@ DISALLOWED_DEPS=(
 # These are foundational protocol crates that are intentionally shared across
 # layers via local path deps:
 #   - base-consensus-engine: consensus protocol crate under crates/consensus/.
-#   - base-execution-eip8130: EIP-8130 account-abstraction protocol logic
+#   - base-execution-base-tx: Base transaction account-abstraction protocol logic
 #     (authorize / nonce / intrinsic-gas / account-change apply) consumed both by
 #     the enshrined EVM executor in base-common-evm and by the execution-layer
 #     txpool/builder. The crate is foundational rather than execution-specific;
@@ -42,7 +42,7 @@ DISALLOWED_DEPS=(
 #     under crates/common/.
 ALLOWED_DEPS=(
   "base-consensus-engine"
-  "base-execution-eip8130"
+  "base-execution-base-tx"
 )
 
 # Build a jq filter string for allowed deps

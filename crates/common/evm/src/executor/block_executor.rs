@@ -17,7 +17,7 @@ use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{DepositReceipt, Predeploys};
 use base_common_flz::{flz_compress_len, tx_estimated_size_fjord_from_fastlz_size};
 #[cfg(feature = "std")]
-use base_execution_eip8130::IntrinsicGas;
+use base_execution_base_tx::IntrinsicGas;
 use revm::{
     Database as _, DatabaseCommit,
     context::{Block, result::ResultAndState},
@@ -25,9 +25,9 @@ use revm::{
 };
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
-    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, EIP8130_TRANSACTION_TYPE, Eip8130CommittedPhases,
-    L1BlockInfo, canyon,
+    BASE_TRANSACTION_TYPE, BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder,
+    BaseTime, BaseTxEnv, BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo,
+    TxBaseCommittedPhases, canyon,
 };
 
 /// Block executor for Base.
@@ -102,7 +102,7 @@ where
     /// Block gas the transaction may consume, reserved against the block gas
     /// limit before execution.
     ///
-    /// For every transaction this is the declared `gas_limit`. An EIP-8130
+    /// For every transaction this is the declared `gas_limit`. A Base
     /// transaction additionally meters `payer_auth` *on top of* `gas_limit` (the
     /// payer reimburses its own authentication beyond the sender-signed limit),
     /// so that portion must be reserved in the block gas budget too. Reserving
@@ -114,12 +114,12 @@ where
     /// settlement all use the same value.
     #[cfg(feature = "std")]
     fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> u64 {
-        tx_env.eip8130_signed().map_or(gas_limit, |signed| {
+        tx_env.base_tx_signed().map_or(gas_limit, |signed| {
             gas_limit.saturating_add(IntrinsicGas::payer_auth_cost_of(signed))
         })
     }
 
-    /// `no_std` builds reject EIP-8130 execution outright (see `Evm::transact_raw`),
+    /// `no_std` builds reject Base transaction execution outright (see `Evm::transact_raw`),
     /// so no payer authentication gas is metered on top of `gas_limit` and the
     /// reserved block gas is just the declared `gas_limit`.
     #[cfg(not(feature = "std"))]
@@ -194,11 +194,11 @@ where
         )
         .map_err(BlockExecutionError::other)?;
 
-        // At the Everest (EIP-8130) transition, plant a code stub on the code-less
+        // At the Everest (Base transactions) transition, plant a code stub on the code-less
         // enshrined system accounts (the 2D nonce manager) so the persistent state
         // the enshrined path writes to them is not reaped by EIP-161 end-of-block
         // state clearing.
-        crate::everest::ensure_eip8130_system_accounts(
+        crate::everest::ensure_base_tx_system_accounts(
             &self.spec,
             self.evm.block().timestamp().saturating_to(),
             self.evm.db_mut(),
@@ -216,9 +216,10 @@ where
         let is_deposit = tx.tx().ty() == DEPOSIT_TRANSACTION_TYPE;
 
         // The sum of the gas the transaction may consume, Tg, and the gas utilized in this block
-        // prior, must be no greater than the block's gasLimit. For EIP-8130 the reserved amount is
-        // `gas_limit + payer_auth`, since payer authentication is metered on top of the declared
-        // gas_limit (see `reserved_block_gas`); for every other transaction it is `gas_limit`.
+        // prior, must be no greater than the block's gasLimit. For Base transactions the reserved
+        // amount is `gas_limit + payer_auth`, since payer authentication is metered on top of the
+        // declared gas_limit (see `reserved_block_gas`); for every other transaction it is
+        // `gas_limit`.
         let reserved_gas = Self::reserved_block_gas(&tx_env, tx.tx().gas_limit());
         let block_available_gas = self.evm.block().gas_limit().saturating_sub(self.gas_used);
         if reserved_gas > block_available_gas && (self.deposit_gas_accounting || !is_deposit) {
@@ -258,11 +259,8 @@ where
             let hash = tx.tx().trie_hash();
             BlockExecutionError::evm(err, hash)
         })?;
-        let eip8130_committed_phases = if tx.tx().ty() == EIP8130_TRANSACTION_TYPE {
-            Eip8130CommittedPhases::take()
-        } else {
-            0
-        };
+        let base_tx_committed_phases =
+            if tx.tx().ty() == BASE_TRANSACTION_TYPE { TxBaseCommittedPhases::take() } else { 0 };
 
         // Fetch the depositor account from the database for the deposit nonce.
         // This *only* needs to be done post-Regolith for deposit transactions.
@@ -280,7 +278,7 @@ where
             is_deposit,
             sender: *tx.signer(),
             depositor,
-            eip8130_committed_phases,
+            base_tx_committed_phases,
         })
     }
 
@@ -290,7 +288,7 @@ where
             is_deposit,
             sender: _,
             depositor,
-            eip8130_committed_phases,
+            base_tx_committed_phases,
         } = output;
 
         let tx_gas_used = result.tx_gas_used();
@@ -315,7 +313,7 @@ where
                     evm: &self.evm,
                     state: &state,
                 },
-                eip8130_committed_phases,
+                base_tx_committed_phases,
             ) {
                 Ok(receipt) => receipt,
                 Err(ctx) => {
@@ -397,7 +395,7 @@ mod tests {
     };
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{
-        BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxDeposit, TxEip8130,
+        BaseTxEnvelope, Call, Predeploys, TxBase, TxBaseConstants, TxBaseSigned, TxDeposit,
     };
     use base_common_genesis::BaseUpgrade;
     use k256::ecdsa::SigningKey;
@@ -684,36 +682,36 @@ mod tests {
         assert!(result.blob_gas_used > result.gas_used);
     }
 
-    /// Builds a signed EIP-8130 transaction with the given `gas_limit`. When
+    /// Builds a signed Base transaction with the given `gas_limit`. When
     /// `with_payer` is set, a distinct payer is named with a resolvable k1 payer
     /// auth blob (`K1_AUTHENTICATOR || sig`), so `payer_auth` is non-zero.
-    fn signed_eip8130(gas_limit: u64, with_payer: bool) -> Eip8130Signed {
+    fn signed_base_tx(gas_limit: u64, with_payer: bool) -> TxBaseSigned {
         let payer_auth = if with_payer {
             let mut blob = vec![];
-            blob.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+            blob.extend_from_slice(TxBaseConstants::K1_AUTHENTICATOR.as_slice());
             blob.extend_from_slice(&[0u8; 65]);
             Bytes::from(blob)
         } else {
             Bytes::new()
         };
-        let tx = TxEip8130 {
+        let tx = TxBase {
             gas_limit,
             payer: with_payer.then(|| Address::with_last_byte(0x11)),
             ..Default::default()
         };
-        Eip8130Signed::new(tx, Bytes::new(), payer_auth)
+        TxBaseSigned::new(tx, Bytes::new(), payer_auth)
     }
 
-    /// The block gas reservation for an EIP-8130 transaction must include
+    /// The block gas reservation for a Base transaction must include
     /// `payer_auth` on top of the declared `gas_limit`: a transaction that fits
     /// on `gas_limit` alone is still rejected when `gas_limit + payer_auth`
     /// exceeds the available block gas.
     #[test]
-    fn eip8130_block_gas_reservation_includes_payer_auth() {
+    fn base_tx_block_gas_reservation_includes_payer_auth() {
         const GAS_LIMIT: u64 = 100_000;
         const JOVIAN_TIMESTAMP: u64 = 1746806402;
 
-        let signed = signed_eip8130(GAS_LIMIT, true);
+        let signed = signed_base_tx(GAS_LIMIT, true);
         let payer_auth = IntrinsicGas::payer_auth_cost_of(&signed);
         assert!(payer_auth > 0, "payer auth must be metered on top of gas_limit");
 
@@ -735,10 +733,8 @@ mod tests {
             JOVIAN_TIMESTAMP,
         );
 
-        let tx = Recovered::new_unchecked(
-            BaseTxEnvelope::Eip8130(signed),
-            Address::with_last_byte(0x22),
-        );
+        let tx =
+            Recovered::new_unchecked(BaseTxEnvelope::Base(signed), Address::with_last_byte(0x22));
         let err = executor.execute_transaction(&tx).expect_err("reservation must reject");
         match err {
             BlockExecutionError::Validation(
@@ -754,15 +750,15 @@ mod tests {
         }
     }
 
-    /// A self-paying EIP-8130 transaction meters no `payer_auth`, so its
+    /// A self-paying Base transaction meters no `payer_auth`, so its
     /// reservation is exactly `gas_limit`: it must not be rejected by the block
     /// gas pre-check when the block admits its declared `gas_limit`.
     #[test]
-    fn self_pay_eip8130_block_gas_reservation_is_gas_limit() {
+    fn self_pay_base_tx_block_gas_reservation_is_gas_limit() {
         const GAS_LIMIT: u64 = 100_000;
         const JOVIAN_TIMESTAMP: u64 = 1746806402;
 
-        let signed = signed_eip8130(GAS_LIMIT, false);
+        let signed = signed_base_tx(GAS_LIMIT, false);
         assert_eq!(
             IntrinsicGas::payer_auth_cost_of(&signed),
             0,
@@ -784,10 +780,8 @@ mod tests {
             JOVIAN_TIMESTAMP,
         );
 
-        let tx = Recovered::new_unchecked(
-            BaseTxEnvelope::Eip8130(signed),
-            Address::with_last_byte(0x22),
-        );
+        let tx =
+            Recovered::new_unchecked(BaseTxEnvelope::Base(signed), Address::with_last_byte(0x22));
         // Execution itself may fail for this synthetic transaction, but the block
         // gas pre-check must not: reserving exactly `gas_limit` fits the block.
         if let Err(BlockExecutionError::Validation(
@@ -798,11 +792,11 @@ mod tests {
         }
     }
 
-    /// The committed phase count of an EIP-8130 transaction travels with its execution result, so
+    /// The committed phase count of a Base transaction travels with its execution result, so
     /// a receipt built on a different thread from the one that executed the transaction (as in a
     /// split execute-on-worker, commit-on-coordinator pipeline) still sees it.
     #[test]
-    fn eip8130_committed_phases_survive_execution_on_another_thread() {
+    fn base_tx_committed_phases_survive_execution_on_another_thread() {
         const CHAIN_ID: u64 = 8453;
         const TIMESTAMP: u64 = 1_000;
         const BLOCK_GAS_LIMIT: u64 = 30_000_000;
@@ -814,7 +808,7 @@ mod tests {
         let point = key.verifying_key().to_encoded_point(false);
         let sender = Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..]);
 
-        let tx = TxEip8130 {
+        let tx = TxBase {
             chain_id: CHAIN_ID,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
@@ -829,11 +823,11 @@ mod tests {
             key.sign_prehash_recoverable(tx.sender_signature_hash().as_slice()).expect("sign");
         let mut sender_auth = signature.to_bytes().to_vec();
         sender_auth.push(recid.to_byte() + 27);
-        let signed = Eip8130Signed::new(tx, Bytes::from(sender_auth), Bytes::new());
+        let signed = TxBaseSigned::new(tx, Bytes::from(sender_auth), Bytes::new());
 
         // The executor is not `Send`, so the worker owns its own state and executor, as a
         // parallel-execution worker would, and hands only the result back.
-        let tx = Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), sender);
+        let tx = Recovered::new_unchecked(BaseTxEnvelope::Base(signed), sender);
         let result = std::thread::spawn(move || {
             let mut db =
                 revm::database::State::builder().with_database(InMemoryDB::default()).build();
@@ -881,9 +875,9 @@ mod tests {
         })
         .join()
         .expect("execution thread panicked")
-        .expect("EIP-8130 transaction is included");
+        .expect("Base transaction is included");
 
-        assert_eq!(result.eip8130_committed_phases, 1);
+        assert_eq!(result.base_tx_committed_phases, 1);
     }
 
     // ---- Gas-limit billing (BaseFeature::GasLimitBilling) ----

@@ -1,4 +1,4 @@
-//! ABI dispatch for the EIP-8130 transaction context precompile.
+//! ABI dispatch for the Base transaction context precompile.
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
@@ -10,11 +10,11 @@ use crate::{
     tx_context::storage::TxContextStorage,
 };
 
-/// EIP-8130 getter output price per 32-byte word: the EVM copy-word cost
+/// Base transaction getter output price per 32-byte word: the EVM copy-word cost
 /// (`W_copy`, revm's `gas::COPY`). Unlike the sibling nonce-manager dispatcher —
 /// which prices *input* calldata words at `G_SHA3WORD` (see
 /// [`crate::nonce::dispatch`]) — the transaction-context getters price the
-/// *returned* words per the EIP-8130 output schedule, so the two dispatchers use
+/// *returned* words per the Base transaction output schedule, so the two dispatchers use
 /// deliberately different word costs. `gas_matches_evm_reference` pins this to
 /// revm's canonical constant as a drift tripwire.
 const OUTPUT_WORD_GAS: u64 = 3;
@@ -22,7 +22,7 @@ const OUTPUT_WORD_GAS: u64 = 3;
 impl TxContextStorage<'_> {
     /// ABI-dispatches transaction context calldata and prices encoded output.
     ///
-    /// EIP-8130 charges [`OUTPUT_WORD_GAS`] per 32 bytes returned in addition to
+    /// EIP-8430 charges [`OUTPUT_WORD_GAS`] per 32 bytes returned in addition to
     /// the precompile call's base cost. The backing transient read is unmetered,
     /// so no TLOAD opcode charge is exposed to the caller.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
@@ -121,7 +121,7 @@ mod tests {
     /// Drift tripwire: `OUTPUT_WORD_GAS` is the EVM copy-word cost (`W_copy`). If
     /// revm reprices `gas::COPY`, this fails so the output-word charge is
     /// re-decided deliberately rather than tracked silently (mirrors the
-    /// `Eip8130GasSchedule` primitive tripwire).
+    /// `TxBaseGasSchedule` primitive tripwire).
     #[test]
     fn gas_matches_evm_reference() {
         assert_eq!(super::OUTPUT_WORD_GAS, revm::interpreter::gas::COPY);

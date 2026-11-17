@@ -39,7 +39,7 @@ const DEFAULT_ROCKSDB_WRITE_BUFFER_SIZE_MIB: u64 = 64;
 pub enum TxpoolOrdering {
     /// Order by unified tip-per-gas (higher bid = higher priority).
     ///
-    /// Standard transactions use `priorityFeePerGas`. EIP-8130 transactions
+    /// Standard transactions use `priorityFeePerGas`. Base transactions
     /// with a static coinbase tip use `tip / gasLimit`. Equal bids prefer
     /// fewer validity predicates.
     #[default]
@@ -360,7 +360,8 @@ pub struct RollupArgs {
     /// Transaction ordering strategy for the mempool.
     ///
     /// Determines how transactions are prioritized when building blocks.
-    /// - `coinbase-tip`: Order by tip-per-gas (priority fee, or EIP-8130 coinbase tip / gas limit). Default.
+    /// - `coinbase-tip`: Order by tip-per-gas (priority fee, or Base transaction coinbase tip / gas
+    ///   limit). Default.
     /// - `timestamp`: Order by receive time (FIFO, earlier = higher priority).
     #[arg(long = "rollup.txpool-ordering", default_value = "coinbase-tip")]
     pub txpool_ordering: TxpoolOrdering,
@@ -377,11 +378,11 @@ pub struct RollupArgs {
     #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 4)]
     pub max_inflight_delegated_slots: usize,
 
-    /// Maximum inflight EIP-8130 transactions per count-limited payer account.
+    /// Maximum inflight Base transactions per count-limited payer account.
     #[arg(long = "rollup.mempool-payer-limit", default_value_t = DEFAULT_PAYMENT_LIMIT)]
     pub mempool_payer_limit: u32,
 
-    /// Payers allowed more inflight EIP-8130 sponsored transactions than the default payer
+    /// Payers allowed more inflight sponsored Base transactions than the default payer
     /// limit, up to `--rollup.mempool-allowlisted-payer-limit`.
     ///
     /// This is local, non-consensus mempool policy. An allowlisted payer is also balance-bounded:
@@ -389,7 +390,7 @@ pub struct RollupArgs {
     #[arg(long = "rollup.mempool-allowlisted-payers", value_delimiter = ',')]
     pub mempool_allowlisted_payers: Vec<Address>,
 
-    /// Maximum inflight EIP-8130 transactions per allowlisted payer account.
+    /// Maximum inflight Base transactions per allowlisted payer account.
     #[arg(
         long = "rollup.mempool-allowlisted-payer-limit",
         default_value_t = DEFAULT_ALLOWLISTED_PAYMENT_LIMIT

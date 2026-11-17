@@ -1,4 +1,4 @@
-//! Merged best-transaction iteration across the protocol pool, the EIP-8130
+//! Merged best-transaction iteration across the protocol pool, the Base transaction
 //! sidecar and the validity pool.
 
 use std::{
@@ -242,10 +242,10 @@ where
     /// The nonce slot `transaction` occupies, with the protocol nonce as key
     /// zero. Nonce-free transactions have no slot.
     fn slot(transaction: &ValidPoolTransaction<T>) -> Option<(LaneId, u64)> {
-        if transaction.transaction.is_eip8130_nonce_free() {
+        if transaction.transaction.is_base_tx_nonce_free() {
             return None;
         }
-        let nonce_key = transaction.transaction.eip8130_nonce_channel_key().unwrap_or(U256::ZERO);
+        let nonce_key = transaction.transaction.base_tx_nonce_channel_key().unwrap_or(U256::ZERO);
         Some(((transaction.sender(), nonce_key), transaction.nonce()))
     }
 
@@ -448,8 +448,7 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
-        TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, TxBase, TxBaseConstants, TxBaseSigned,
     };
     use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
 
@@ -482,11 +481,11 @@ mod tests {
 
     impl<T: BasePooledTx> BestTransactions for StaticBestTransactions<T> {
         fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
-            let nonce_key = transaction.transaction.eip8130_nonce_channel_key();
+            let nonce_key = transaction.transaction.base_tx_nonce_channel_key();
             self.transactions.retain(|candidate| {
                 if nonce_key.is_some() {
                     candidate.sender() != transaction.sender()
-                        || candidate.transaction.eip8130_nonce_channel_key() != nonce_key
+                        || candidate.transaction.base_tx_nonce_channel_key() != nonce_key
                 } else {
                     candidate.sender() != transaction.sender()
                 }
@@ -531,7 +530,7 @@ mod tests {
         max_fee_per_gas: u128,
         received_at: u128,
     ) -> BasePooledTransaction {
-        let tx = TxEip8130 {
+        let tx = TxBase {
             chain_id: test_chain_id(),
             sender: None,
             nonce_key,
@@ -548,8 +547,8 @@ mod tests {
         };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+            TxBaseSigned::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Base(signed);
         let encoded_length = pooled.encode_2718_len();
         BasePooledTransaction::new_with_received_at(
             Recovered::new_unchecked(pooled.into(), signer.address()),
@@ -676,11 +675,11 @@ mod tests {
         );
 
         let first = merged.next().expect("expected protocol transaction");
-        assert_eq!(first.transaction.eip8130_nonce_channel_key(), None);
+        assert_eq!(first.transaction.base_tx_nonce_channel_key(), None);
         assert_eq!(first.nonce(), 0);
 
         let second = merged.next().expect("expected sidecar transaction");
-        assert_eq!(second.transaction.eip8130_nonce_channel_key(), Some(U256::from(1)));
+        assert_eq!(second.transaction.base_tx_nonce_channel_key(), Some(U256::from(1)));
 
         merged.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
 
@@ -897,14 +896,14 @@ mod tests {
         let nonce_free = |tip| {
             valid_pool_transaction(signed_tx(
                 &signer(),
-                Eip8130Constants::NONCE_KEY_MAX,
+                TxBaseConstants::NONCE_KEY_MAX,
                 0,
                 tip,
                 1_000,
             ))
         };
         let (first, second) = (nonce_free(900), nonce_free(800));
-        assert!(first.transaction.is_eip8130_nonce_free());
+        assert!(first.transaction.is_base_tx_nonce_free());
         let second_hash = *second.hash();
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(Vec::new())),

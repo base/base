@@ -53,7 +53,7 @@ retries = 1
 # The test waits up to 15 minutes for local SP1 execute, plus stack setup.
 # Debug-profile SP1 execute does not finish in that window; run with --release.
 [[profile.default.overrides]]
-filter = 'binary(eip8130)'
+filter = 'binary(base_tx)'
 retries = 0
 slow-timeout = { period = "5m", terminate-after = 5 }
 

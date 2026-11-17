@@ -1,4 +1,4 @@
-//! Metrics for EIP-8130 admission, invalidation, builder prechecks, and
+//! Metrics for Base transaction admission, invalidation, builder prechecks, and
 //! transaction validation.
 //!
 //! All labels are low-cardinality static categories; addresses and transaction
@@ -7,10 +7,10 @@
 base_metrics::define_metrics! {
     txpool.guard,
     struct = GuardMetrics,
-    #[describe("EIP-8130 transactions rejected at admission by payment limits")]
+    #[describe("Base transactions rejected at admission by payment limits")]
     #[label(name = "reason", default = ["payment", "payer_balance"])]
     admission_rejected: counter,
-    #[describe("EIP-8130 transactions invalidated and evicted ahead of the builder")]
+    #[describe("Base transactions invalidated and evicted ahead of the builder")]
     #[label(
         name = "cause",
         default = [
@@ -28,7 +28,7 @@ base_metrics::define_metrics! {
     expiry_buckets_fired: counter,
     #[describe("Transactions currently tracked by the admission/invalidation guard")]
     tracked: gauge,
-    #[describe("EIP-8130 drop events from the builder's stateless manifest precheck")]
+    #[describe("Base transaction drop events from the builder's stateless manifest precheck")]
     #[label(name = "cause", default = ["payer_balance", "expiry"])]
     builder_precheck_dropped: counter,
 }
@@ -163,9 +163,9 @@ base_metrics::define_metrics! {
     txpool.validator,
     struct = ValidatorMetrics,
     #[describe("End-to-end mempool validation wall time by transaction kind")]
-    #[label(name = "kind", default = ["eip8130", "standard"])]
+    #[label(name = "kind", default = ["base_tx", "standard"])]
     validate_seconds: histogram,
-    #[describe("EIP-8130 authorization wall time")]
+    #[describe("Base transaction authorization wall time")]
     auth_seconds: histogram,
 }
 

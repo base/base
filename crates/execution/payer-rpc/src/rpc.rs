@@ -166,7 +166,7 @@ mod tests {
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
-    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Call, Eip8130Signed, TxEip8130};
+    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Call, TxBase, TxBaseSigned};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_test_utils::build_test_genesis_everest;
     use httpmock::prelude::*;
@@ -229,7 +229,7 @@ mod tests {
     fn send_request_paid_by(payer: Option<Address>) -> Value {
         let signer = PrivateKeySigner::random();
         let call = Call { to: Address::repeat_byte(0x11), value: U256::ZERO, data: Bytes::new() };
-        let tx = TxEip8130 {
+        let tx = TxBase {
             chain_id: ChainConfig::mainnet().chain_id,
             max_fee_per_gas: 1,
             gas_limit: 100_000,
@@ -238,8 +238,8 @@ mod tests {
             ..Default::default()
         };
         let sender_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes();
-        let signed = Eip8130Signed::new(tx, Bytes::from(sender_auth.to_vec()), Bytes::new());
-        json!({ "transaction": hex::encode_prefixed(BaseTxEnvelope::Eip8130(signed).encoded_2718()) })
+        let signed = TxBaseSigned::new(tx, Bytes::from(sender_auth.to_vec()), Bytes::new());
+        json!({ "transaction": hex::encode_prefixed(BaseTxEnvelope::Base(signed).encoded_2718()) })
     }
 
     fn send_request() -> Value {

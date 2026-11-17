@@ -1,5 +1,5 @@
 use alloy_primitives::Bytes;
-use base_common_consensus::Eip8130Signed;
+use base_common_consensus::TxBaseSigned;
 use base_common_flz::flz_compress_len;
 
 use crate::BaseTransaction;
@@ -17,7 +17,7 @@ pub trait BaseTxEnv {
         self.encoded_bytes().map(|encoded| flz_compress_len(encoded))
     }
 
-    /// Returns the signed EIP-8130 envelope for an EIP-8130 transaction, or
+    /// Returns the signed Base transaction envelope for a Base transaction, or
     /// [`None`] for every other transaction type.
     ///
     /// This lives on [`BaseTxEnv`] (rather than the richer [`BaseTxTr`], which
@@ -27,7 +27,7 @@ pub trait BaseTxEnv {
     /// through every downstream generic.
     ///
     /// [`BaseTxTr`]: crate::BaseTxTr
-    fn eip8130_signed(&self) -> Option<&Eip8130Signed>;
+    fn base_tx_signed(&self) -> Option<&TxBaseSigned>;
 }
 
 impl<T: revm::context::Transaction> BaseTxEnv for BaseTransaction<T> {
@@ -40,7 +40,7 @@ impl<T: revm::context::Transaction> BaseTxEnv for BaseTransaction<T> {
         Some(*self.enveloped_tx_fastlz_size.get_or_insert_with(|| flz_compress_len(encoded)))
     }
 
-    fn eip8130_signed(&self) -> Option<&Eip8130Signed> {
-        self.eip8130.as_ref().map(|parts| &parts.signed)
+    fn base_tx_signed(&self) -> Option<&TxBaseSigned> {
+        self.base_tx.as_ref().map(|parts| &parts.signed)
     }
 }

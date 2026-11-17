@@ -164,7 +164,7 @@ async fn builder_accepted_reports_metered_gas_equal_to_billed_gas_before_gas_lim
     assert_eq!(tx_gas_limit, OVER_PROVISIONED_TRANSFER_GAS_LIMIT);
     assert_eq!(gas_used, TRANSFER_GAS);
     assert_eq!(metered_gas_used, TRANSFER_GAS);
-    assert!(payer_auth.is_null(), "only EIP-8130 transactions report payer_auth_gas_reserved");
+    assert!(payer_auth.is_null(), "only Base transactions report payer_auth_gas_reserved");
     Ok(())
 }
 
@@ -181,7 +181,7 @@ async fn builder_accepted_reports_metered_gas_below_billed_gas_under_gas_limit_b
     assert_eq!(tx_gas_limit, OVER_PROVISIONED_TRANSFER_GAS_LIMIT);
     assert_eq!(gas_used, OVER_PROVISIONED_TRANSFER_GAS_LIMIT);
     assert_eq!(metered_gas_used, TRANSFER_GAS);
-    assert!(payer_auth.is_null(), "only EIP-8130 transactions report payer_auth_gas_reserved");
+    assert!(payer_auth.is_null(), "only Base transactions report payer_auth_gas_reserved");
     Ok(())
 }
 

@@ -9,16 +9,14 @@ use crate::transaction::envelope::OpTxType;
 /// Identifier for a deposit transaction
 pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 
-/// Identifier for an [EIP-8130] Account Abstraction transaction.
-///
-/// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
-pub const EIP8130_TX_TYPE_ID: u8 = 121; // 0x79
+/// Identifier for a Base transaction.
+pub const BASE_TX_TYPE_ID: u8 = 121; // 0x79
 
-/// Canonical user-facing rejection message for EIP-8130 transactions submitted before Everest.
+/// Canonical user-facing rejection message for Base transactions submitted before Everest.
 ///
-/// Used by `base-execution-rpc` when an EIP-8130 transaction is submitted before
+/// Used by `base-execution-rpc` when a Base transaction is submitted before
 /// the Everest fork is active at the latest block timestamp.
-pub const EIP8130_REJECTION_MSG: &str = "EIP-8130 (account abstraction) transactions are gated behind Everest; \
+pub const BASE_TX_REJECTION_MSG: &str = "Base transactions are gated behind Everest; \
      eth_sendRawTransaction does not accept transaction type 0x79 before Everest";
 
 #[allow(clippy::derivable_impls)]
@@ -36,7 +34,7 @@ impl Display for OpTxType {
             Self::Eip1559 => write!(f, "eip1559"),
             Self::Eip7702 => write!(f, "eip7702"),
             Self::Deposit => write!(f, "deposit"),
-            Self::Eip8130 => write!(f, "eip8130"),
+            Self::Base => write!(f, "base"),
         }
     }
 }
@@ -44,16 +42,16 @@ impl Display for OpTxType {
 impl OpTxType {
     /// List of all variants.
     pub const ALL: [Self; 6] =
-        [Self::Legacy, Self::Eip2930, Self::Eip1559, Self::Eip7702, Self::Eip8130, Self::Deposit];
+        [Self::Legacy, Self::Eip2930, Self::Eip1559, Self::Eip7702, Self::Base, Self::Deposit];
 
     /// Returns `true` if the type is [`OpTxType::Deposit`].
     pub const fn is_deposit(&self) -> bool {
         matches!(self, Self::Deposit)
     }
 
-    /// Returns `true` if the type is [`OpTxType::Eip8130`].
-    pub const fn is_eip8130(&self) -> bool {
-        matches!(self, Self::Eip8130)
+    /// Returns `true` if the type is [`OpTxType::Base`].
+    pub const fn is_base_tx(&self) -> bool {
+        matches!(self, Self::Base)
     }
 }
 
