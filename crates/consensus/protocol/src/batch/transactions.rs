@@ -650,9 +650,9 @@ mod tests {
         };
 
         // Named sender and explicit payer: each auth is a 20-byte authenticator
-        // address followed by a proof, which the codec splits across the remainder and
+        // selector followed by a proof, which the codec splits across the remainder and
         // the trailing auth column.
-        let configured = {
+        let named = {
             let mut tx = eip8130_body();
             tx.sender = Some(sender);
             tx.payer = Some(payer);
@@ -731,7 +731,7 @@ mod tests {
         };
 
         assert_span_batch_roundtrip(
-            vec![eoa, configured, rich, minimal, open_payer, nonce_free],
+            vec![eoa, named, rich, minimal, open_payer, nonce_free],
             EIP8130_CHAIN_ID,
         );
     }
@@ -792,7 +792,7 @@ mod tests {
             tx.nonce_sequence = 4;
             eip8130_raw(tx, Bytes::from_static(&[0x01; 65]), Bytes::new())
         };
-        let aa_configured = {
+        let aa_named = {
             let mut tx = eip8130_body();
             tx.sender = Some(to);
             tx.nonce_sequence = 5;
@@ -802,13 +802,7 @@ mod tests {
         };
 
         assert_span_batch_roundtrip(
-            vec![
-                Bytes::from(legacy),
-                aa_eoa,
-                Bytes::from(eip1559),
-                aa_configured,
-                Bytes::from(eip7702),
-            ],
+            vec![Bytes::from(legacy), aa_eoa, Bytes::from(eip1559), aa_named, Bytes::from(eip7702)],
             EIP8130_CHAIN_ID,
         );
     }

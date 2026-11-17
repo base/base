@@ -115,7 +115,6 @@ impl BaseNode {
             mempool_allowlisted_payer_limit,
             ..
         } = self.args;
-        self.args.warn_deprecated_flags();
         ComponentsBuilder::default()
             .node_types::<Node>()
             .pool(

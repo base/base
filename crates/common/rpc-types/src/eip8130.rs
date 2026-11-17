@@ -333,16 +333,16 @@ mod tests {
         let bare_sender = |auth: &[u8]| json!({ "from": FROM, "calls": [], "senderAuth": hex::encode_prefixed(auth) });
         assert!(estimated_gas(bare_sender(&zero)) >= estimated_gas(bare_sender(&real)));
 
-        let configured_sender =
+        let named_sender =
             |auth: &[u8]| json!({ "sender": SENDER, "calls": [], "senderAuth": prefixed(auth) });
-        assert!(estimated_gas(configured_sender(&zero)) >= estimated_gas(configured_sender(&real)));
+        assert!(estimated_gas(named_sender(&zero)) >= estimated_gas(named_sender(&real)));
 
         let named_payer = |auth: &[u8]| json!({ "from": FROM, "calls": [], "payer": payer, "payerAuth": prefixed(auth) });
         assert!(estimated_gas(named_payer(&zero)) >= estimated_gas(named_payer(&real)));
     }
 
     #[test]
-    fn configured_sender_gets_prefixed_k1_stub() {
+    fn named_sender_gets_prefixed_k1_stub() {
         let tx = simulation(json!({ "sender": SENDER, "calls": [] }));
         assert_eq!(signed(&tx).tx().sender, Some(SENDER));
         assert_eq!(&signed(&tx).sender_auth()[..20], Eip8130Constants::K1_AUTHENTICATOR.as_slice());

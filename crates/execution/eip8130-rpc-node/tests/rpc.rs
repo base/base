@@ -160,7 +160,7 @@ async fn estimate_gas_for_eip8130_request_returns_positive_gas() -> eyre::Result
 }
 
 /// The account may be named by the EIP-8130 `sender` field instead of `from`;
-/// a configured-account request estimates to a positive gas amount.
+/// a named-sender request estimates to a positive gas amount.
 #[tokio::test]
 async fn estimate_gas_accepts_explicit_sender() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;

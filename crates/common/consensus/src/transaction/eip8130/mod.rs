@@ -1,4 +1,4 @@
-//! [EIP-8130] Account Abstraction by Account Configuration transaction type.
+//! [EIP-8130] native account abstraction transaction type.
 //!
 //! Provides type-only plumbing for the new transaction kind:
 //! [`TxEip8130`] (unsigned), [`Eip8130Signed`] (signed envelope), [`AccountChange`]

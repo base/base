@@ -257,7 +257,6 @@ impl BaseNode {
             mempool_allowlisted_payer_limit,
             ..
         } = self.args;
-        self.args.warn_deprecated_flags();
         let ordering = match txpool_ordering {
             TxpoolOrdering::CoinbaseTip => BaseOrdering::coinbase_tip(),
             TxpoolOrdering::Timestamp => BaseOrdering::timestamp(),

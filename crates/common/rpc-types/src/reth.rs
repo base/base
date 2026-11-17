@@ -220,9 +220,9 @@ mod tests {
     }
 
     #[test]
-    fn from_only_prefixed_auth_is_configured() {
+    fn from_only_prefixed_auth_is_named() {
         // `from` is interchangeable with `sender` as the account; a prefixed blob
-        // selects the configured path regardless of which field named the account.
+        // selects the named-sender path regardless of which field named the account.
         let tx = sim_tx(json!({
             "from": FROM,
             "calls": [],
@@ -231,7 +231,7 @@ mod tests {
         assert_eq!(
             signed(&tx).tx().sender,
             Some(FROM),
-            "a prefixed blob selects the configured path"
+            "a prefixed blob selects the named-sender path"
         );
     }
 
@@ -284,16 +284,16 @@ mod tests {
     }
 
     #[test]
-    fn from_and_matching_sender_is_configured() {
+    fn from_and_matching_sender_is_named() {
         // Both present and equal is valid; a declared `sender` means the absent
-        // blob defaults to the configured k1 stub, not the bare EOA form.
+        // blob defaults to the prefixed k1 stub, not the bare EOA form.
         let tx = sim_tx(json!({ "from": SENDER, "sender": SENDER, "calls": [] }));
         let s = signed(&tx);
         assert_eq!(s.tx().sender, Some(SENDER), "matching `from`/`sender` resolves the account");
         assert_eq!(
             &s.sender_auth()[..20],
             Eip8130Constants::K1_AUTHENTICATOR.as_slice(),
-            "a declared sender defaults the absent blob to configured k1",
+            "a declared sender defaults the absent blob to the prefixed k1 stub",
         );
     }
 

@@ -1633,7 +1633,7 @@ where
             let gas_used = gas_output.tx_gas_used();
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
             // The tip is a phase-0 transfer, so it is revenue only if that phase
-            // committed; a reverted or policy-blocked phase pays nothing.
+            // committed; a reverted phase pays nothing.
             let coinbase_tip = coinbase_tip.filter(|_| {
                 builder
                     .executor()

@@ -253,9 +253,9 @@ mod tests {
         let tx = transaction(Some(sender.address()), payer());
         let own_key = encode(tx.clone(), k1_auth(&sender, &tx), Bytes::new());
         let other_key = encode(tx.clone(), k1_auth(&other, &tx), Bytes::new());
-        let mut passkey_auth = Address::repeat_byte(0x05).to_vec();
-        passkey_auth.extend_from_slice(&[0x01; 64]);
-        let passkey = encode(tx, passkey_auth, Bytes::new());
+        let mut non_k1_auth = Address::repeat_byte(0x05).to_vec();
+        non_k1_auth.extend_from_slice(&[0x01; 64]);
+        let non_k1 = encode(tx, non_k1_auth, Bytes::new());
 
         let own_key = PayerTransaction::decode(&own_key, CHAIN_ID).unwrap();
         assert_eq!(own_key.nonce_channel(), Some((sender.address(), U256::ZERO)));
@@ -264,7 +264,7 @@ mod tests {
             PayerTransactionError::SenderMismatch
         );
         assert_eq!(
-            PayerTransaction::decode(&passkey, CHAIN_ID).unwrap_err(),
+            PayerTransaction::decode(&non_k1, CHAIN_ID).unwrap_err(),
             PayerTransactionError::UnsupportedSenderAuthenticator
         );
     }

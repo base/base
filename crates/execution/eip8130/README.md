@@ -1,6 +1,6 @@
 # base-execution-eip8130
 
-Native EIP-8130 (Account Abstraction by Account Configuration) validation helpers.
+Native EIP-8130 account abstraction transaction validation helpers.
 
 The transaction type itself (`AA_TX_TYPE`, `0x79`), with its gas schedule, nonces and payer
 modes, is specified separately as EIP-8430, the transaction-type half of EIP-8130. These crates
