@@ -249,7 +249,8 @@ impl TrieDepthTable {
     }
 
     /// Largest changed-slot count whose expected branch nodes fit `node_budget`
-    /// at `depth`, or `None` when the whole trie fits the budget.
+    /// at `depth`, or `None` when the whole trie fits the budget or the cap
+    /// would exceed `u32::MAX` slots.
     ///
     /// Runs once per depth class at schedule load, not per transaction.
     pub fn slot_cap(node_budget: u64, depth: u8) -> Option<u64> {
@@ -490,6 +491,15 @@ mod tests {
                 Err(ResourceMeteringError::InvalidTrieDepth(depth))
             );
         }
+        let other = Address::repeat_byte(0xbb);
+        assert_eq!(
+            ContractSlotLimits::new(
+                None,
+                Some(depth_table(2_100, &[(8, &[owner]), (8, &[other])]))
+            )
+            .compile(),
+            Err(ResourceMeteringError::DuplicateTrieDepthClass(8))
+        );
         assert_eq!(
             ContractSlotLimits::new(
                 None,

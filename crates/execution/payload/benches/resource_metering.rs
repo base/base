@@ -144,8 +144,9 @@ fn contract_slots_config(mode: ContractSlotsMode) -> ResourceMeteringConfig {
                     TrieDepthClass { depth, contracts }
                 })
                 .collect();
+            // Above every class cap, so all 2,331 listed owners land in the cap map.
             Some(ContractSlotLimits::new(
-                Some(2_000),
+                Some(3_000),
                 Some(TrieDepthTable { node_budget: 2_100, classes }),
             ))
         }

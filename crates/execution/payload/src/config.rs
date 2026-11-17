@@ -197,8 +197,11 @@ impl ResourceMeteringConfig {
     }
 
     /// Looks up the simulated sample for `tx_hash`, if the provider has a matching result.
+    ///
+    /// Returns `None` without a lookup when the schedule has no dimensions,
+    /// because only dimensions price simulated observations.
     pub fn simulated_sample(&self, tx_hash: &TxHash) -> Option<ResourceSample> {
-        if !self.is_active() {
+        if !self.is_active() || self.schedule.dimensions.is_empty() {
             return None;
         }
         MeteringProvider::get(self.provider.as_ref(), tx_hash)
@@ -265,9 +268,14 @@ impl ResourceMeteringConfig {
         if !self.is_active() {
             return ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0));
         }
-        let sample = ResourceSample::from_execution(gas_used, state, simulated, &self.schedule);
-        let decision = self.schedule.decide_sample(&sample, cumulative);
-        self.record_decision(tx_hash, &decision);
+        let decision = if self.schedule.dimensions.is_empty() {
+            ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0))
+        } else {
+            let sample = ResourceSample::from_execution(gas_used, state, simulated, &self.schedule);
+            let decision = self.schedule.decide_sample(&sample, cumulative);
+            self.record_decision(tx_hash, &decision);
+            decision
+        };
         if let Some(limits) = &self.schedule.contract_slots {
             // An attempt excluded by an enforced dimension is neither committed
             // nor a would-limit, so skip the post-state walk for it.
@@ -325,6 +333,9 @@ impl ResourceMeteringConfig {
         }
         if self.schedule.contract_slots.is_some() {
             contract_slots.stage(state);
+        }
+        if self.schedule.dimensions.is_empty() {
+            return None;
         }
         let simulated = self.simulated_sample(tx_hash);
         let sample =

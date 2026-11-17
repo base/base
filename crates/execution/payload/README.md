@@ -39,6 +39,10 @@ total would (block scope). Would-limits are recorded in
 `base_payload.resource_metering.contract_slot_limit_exceeded_total{scope,depth}` (`depth` names
 the class whose cap bound, or `flat`) and a debug log
 with the owner; they never exclude, skip or evict a transaction. Only `dryRun: true` is accepted.
+Because dry run includes every transaction, the block totals keep growing after an owner's first
+block-scope overrun, and each later attempt that writes that owner also records a would-limit; the
+counts are evaluations, not what enforcement would have excluded. A schedule may carry only
+`contractSlots`; it then skips the simulated lookup and dimension evaluation.
 Sequencer and deposit transactions count toward the block totals and are never checked.
 
 ```json
@@ -47,7 +51,7 @@ Sequencer and deposit transactions count toward the block totals and are never c
   "dimensions": [],
   "contractSlots": {
     "dryRun": true,
-    "changedSlotLimit": 2000,
+    "changedSlotLimit": 3000,
     "trieDepth": {
       "nodeBudget": 2100,
       "classes": [
