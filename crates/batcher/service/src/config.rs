@@ -73,6 +73,9 @@ pub struct BatcherConfig {
     pub max_priority_fee_per_gas_per_blob_lower_bound: u128,
     /// Highest `max_priority_fee_per_gas` per blob (in wei) of blob transactions.
     pub max_priority_fee_per_gas_per_blob_upper_bound: u128,
+    /// Share, in percent, of the `max_priority_fee_per_gas` per blob of a landed blob
+    /// transaction that the next blob transaction starts from.
+    pub max_priority_fee_per_gas_per_blob_decay_percent: u8,
     /// DA throttle configuration, `None` to disable the throttle.
     ///
     /// Must be `None` when [`shadow`](Self::shadow) is set.
@@ -140,6 +143,7 @@ impl Default for BatcherConfig {
             min_basefee: 0,
             max_priority_fee_per_gas_per_blob_lower_bound: 10_000_000,
             max_priority_fee_per_gas_per_blob_upper_bound: 10_000_000_000,
+            max_priority_fee_per_gas_per_blob_decay_percent: 90,
             throttle: Some(ThrottleConfig::default()),
             throttle_strategy: ThrottleStrategy::Quadratic,
             check_recent_txs_depth: 0,
@@ -167,6 +171,8 @@ impl BatcherConfig {
                 .max_priority_fee_per_gas_per_blob_lower_bound,
             max_priority_fee_per_gas_per_blob_upper_bound: self
                 .max_priority_fee_per_gas_per_blob_upper_bound,
+            max_priority_fee_per_gas_per_blob_decay_percent: self
+                .max_priority_fee_per_gas_per_blob_decay_percent,
             network_timeout: self.network_timeout,
             ..TxManagerConfig::default()
         }
@@ -237,6 +243,7 @@ mod tests {
             min_basefee: 250_000_000,
             max_priority_fee_per_gas_per_blob_lower_bound: 20_000_000,
             max_priority_fee_per_gas_per_blob_upper_bound: 5_000_000_000,
+            max_priority_fee_per_gas_per_blob_decay_percent: 50,
             network_timeout: Duration::from_secs(4),
             ..BatcherConfig::default()
         };
@@ -252,6 +259,7 @@ mod tests {
                 min_basefee: 250_000_000,
                 max_priority_fee_per_gas_per_blob_lower_bound: 20_000_000,
                 max_priority_fee_per_gas_per_blob_upper_bound: 5_000_000_000,
+                max_priority_fee_per_gas_per_blob_decay_percent: 50,
                 network_timeout: Duration::from_secs(4),
                 ..TxManagerConfig::default()
             }
