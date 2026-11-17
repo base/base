@@ -188,8 +188,10 @@ impl DiffAdapter {
                 })
                 .map(|root| (Predeploys::L2_TO_L1_MESSAGE_PASSER, root)),
         );
-        let computed_base_fee =
-            self.chain_spec.next_block_base_fee(parent.header(), request.header.timestamp);
+        let computed_base_fee = self
+            .chain_spec
+            .next_block_base_fee(parent.header(), request.header.timestamp)
+            .map(U256::from);
 
         let mut outcome = match request.mode {
             Mode::Build => self.build(request, &parent, &state)?,

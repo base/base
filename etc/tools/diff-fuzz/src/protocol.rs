@@ -378,9 +378,10 @@ pub struct Response {
     /// Computed header fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header: Option<HeaderResults>,
-    /// Base fee implied by the parent and chain rules.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub computed_base_fee_per_gas: Option<u64>,
+    /// Base fee implied by the parent and chain rules. Up to 256 bits, so a client whose
+    /// computation leaves the `u64` range is reported as a difference, not a bad response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computed_base_fee_per_gas: Option<U256>,
     /// Receipts of included transactions.
     #[serde(default)]
     pub receipts: Vec<Receipt>,
