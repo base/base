@@ -26,7 +26,7 @@ enum KeyStreamInner {
     Seed { rng: Box<StdRng>, seed: u64, offset: usize, generated: u64 },
     /// BIP39 derivation: each `next_signer` advances `next_index`.
     Mnemonic {
-        /// Parent key at `m/44'/60'/0'/0`, cached to avoid PBKDF2 per signer.
+        /// Parent key at `m/44'/60'/0'/0`; each signer is one child step from it.
         key: MnemonicKey,
         /// Initial BIP39 child index used to position this stream.
         offset: usize,
