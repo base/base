@@ -122,6 +122,7 @@ impl StandaloneDevChain {
             metadata.l1_info,
             metadata.system_config,
             None,
+            Default::default(),
         );
         node.schedule_delay = schedule_delay;
         node.attributes_builder.impersonation = Some(impersonation);

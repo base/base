@@ -74,6 +74,7 @@ impl InProcessStandaloneSequencer {
             config.l1_info,
             config.system_config,
             config.prefund,
+            Default::default(),
         );
         node.schedule_delay = config.schedule_delay;
         let cancellation = CancellationToken::new();

@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-retry.workspace = true
 base-health.workspace = true
 base-metrics.workspace = true
 base-protocol.workspace = true

@@ -313,8 +313,14 @@ impl RollupNode {
     ) -> Result<(), String> {
         let engine_client =
             Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
-        EngineConfig::check_startup(engine_client.as_ref(), self.engine_config.genesis_start)
-            .await.map_err(|error| error.to_string())?;
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => return Ok(()),
+            () = crate::ShutdownSignal::wait() => return Ok(()),
+            result = EngineConfig::check_startup(engine_client.as_ref(), self.engine_config.genesis_start) => {
+                result.map_err(|error| error.to_string())?;
+            }
+        }
         let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
         self.start_inner(engine_client, pipeline, l1_head_number, cancellation).await

@@ -488,9 +488,9 @@ fn create_test_db(db_path: &std::path::Path) -> Result<DatabaseEnv> {
     Ok(db)
 }
 
-fn pool_component(_rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransaction> {
+fn pool_component(rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransaction> {
     BasePoolBuilder::<BasePooledTransaction>::default()
-        .with_genesis_start(_rollup_args.genesis_start)
+        .with_genesis_start(rollup_args.genesis_start)
 }
 
 #[cfg(test)]

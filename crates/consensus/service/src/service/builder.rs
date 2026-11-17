@@ -367,6 +367,37 @@ mod tests {
         }
     }
 
+    /// Cancelling startup while the EL is unavailable must not start the pipeline or actors.
+    #[tokio::test(start_paused = true)]
+    async fn cancels_startup_while_waiting_for_execution_head() {
+        let mut builder = test_builder(Url::parse("http://127.0.0.1:1").expect("valid unused endpoint"));
+        let cancellation = CancellationToken::new();
+        let signal = cancellation.clone();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let mut module = RpcModule::new(());
+        module.register_method("eth_blockNumber", move |_, _, _| {
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            signal.cancel();
+            Err::<String, _>(jsonrpsee::types::ErrorObjectOwned::owned(
+                -32603, "execution database is opening", None::<()>,
+            ))
+        }).expect("the cancelling head method must register");
+        let fake = crate::test_utils::FakeEngineClient::new(Arc::clone(&builder.engine_config.config));
+        let handle = fake.handle();
+        builder.engine_config.l2_endpoint = EngineEndpoint::InMemory {
+            transport: InMemoryTransport { module },
+            engine_api: SharedEngineApi::new(fake),
+        };
+        let node = builder.build().await.expect("in-memory startup must not need L1");
+        let result = tokio::time::timeout(
+            Duration::from_secs(1), node.start_with_cancellation(cancellation),
+        ).await.expect("cancellation must interrupt startup backoff immediately");
+        assert_eq!(result, Ok(()), "cancelled startup must stop cleanly without admitting the node");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1, "no height request may follow startup cancellation");
+        assert_eq!(handle.call_count(), 0, "cancelled admission must never reach Engine API bootstrap");
+    }
+
     #[tokio::test]
     async fn build_keeps_ws_startup_lazy_for_derivation_provider() {
         let rollup_node =

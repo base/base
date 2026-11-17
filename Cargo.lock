@@ -4006,6 +4006,7 @@ dependencies = [
  "base-metrics",
  "base-node-runner",
  "base-protocol",
+ "base-retry",
  "base-upgrade-signal",
  "bytes",
  "derive_more 2.1.1",

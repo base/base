@@ -104,8 +104,14 @@ where
         &self,
         cancellation: CancellationToken,
     ) -> Result<(), FollowError> {
-        EngineConfig::check_startup(self.engine_client.as_ref(), self.genesis_start)
-            .await.map_err(FollowError::Startup)?;
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => return Ok(()),
+            () = ShutdownSignal::wait() => return Ok(()),
+            result = EngineConfig::check_startup(self.engine_client.as_ref(), self.genesis_start) => {
+                result.map_err(FollowError::Startup)?;
+            }
+        }
         let local = Arc::new(LocalL2Client::new(
             self.local_l2_provider.clone(),
             self.l1_provider.clone(),

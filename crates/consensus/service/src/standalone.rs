@@ -263,6 +263,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
         l1_info: L1BlockInfoTx,
         system_config: SystemConfig,
         prefund: Option<StandalonePrefund>,
+        genesis_start: GenesisStartArgs,
     ) -> Self {
         Self {
             attributes_builder: StandaloneAttributesBuilder::new(
@@ -274,7 +275,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             origin_selector: StandaloneOriginSelector::new(l1_info),
             rollup_config,
             engine_client,
-            genesis_start: GenesisStartArgs::default(),
+            genesis_start,
             schedule_delay: Duration::ZERO,
         }
     }
@@ -289,8 +290,14 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
         &self,
         cancellation: CancellationToken,
     ) -> Result<(), String> {
-        EngineConfig::check_startup(self.engine_client.as_ref(), self.genesis_start)
-            .await.map_err(|error| error.to_string())?;
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => return Ok(()),
+            () = crate::ShutdownSignal::wait() => return Ok(()),
+            result = EngineConfig::check_startup(self.engine_client.as_ref(), self.genesis_start) => {
+                result.map_err(|error| error.to_string())?;
+            }
+        }
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
         let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
         let (engine_state_tx, engine_state_rx) = watch::channel(EngineState::default());
@@ -379,7 +386,9 @@ mod tests {
         let handle = engine.handle();
         handle.set_l2_block_by_label(BlockNumberOrTag::Latest, Default::default());
         let (l1_info, _) = snapshot_boundary();
-        let node = StandaloneSequencerNode::new(rollup, engine, l1_info, SystemConfig::default(), None);
+        let node = StandaloneSequencerNode::new(
+            rollup, engine, l1_info, SystemConfig::default(), None, Default::default(),
+        );
         let result = tokio::time::timeout(
             std::time::Duration::from_millis(100),
             node.start_with_cancellation(CancellationToken::new()),

@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_chains::ChainConfig;
 use base_consensus_engine::{EngineEndpoint, InMemoryTransport};
-use base_consensus_node::{StandaloneDevChain, StandaloneImpersonationQueue};
+use base_consensus_node::{StandaloneDevChain, StandaloneDevError, StandaloneImpersonationQueue};
 use base_execution_cli::ExecutionNodeConfigArgs;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
@@ -79,7 +79,12 @@ impl DevCommand {
             let builder = execution.into_default_node_builder(ctx)?;
             let mut runner = BaseNodeRunner::new(RollupArgs::default());
             runner.install_ext::<ImpersonationRpcExtension>(impersonation.clone());
-            let launched = runner.launch(builder).await?;
+            let launched = runner.launch(builder).await.map_err(|error| {
+                match error.downcast::<base_cli_utils::GenesisStartError>() {
+                    Ok(_) => eyre::Report::new(StandaloneDevError::GenesisHead),
+                    Err(error) => error,
+                }
+            })?;
             let engine = EngineEndpoint::InMemory {
                 transport: InMemoryTransport { module: launched.auth_module },
                 engine_api: launched.engine_api,
