@@ -551,13 +551,24 @@ impl ChainParam {
         Self::DaFootprintGasScalar,
     ];
 
+    /// Largest EIP-1559 elasticity a chain gets. With gas limits of at least 3,000,000 the gas
+    /// target stays at 3,000 gas or more, so the base fee at most multiplies by about 1,000 per
+    /// block: from the generator's base fees (at most a few times 10^15) the next base fee stays in
+    /// `u64`, and the target never reaches zero. Clients disagree past `u64` (base/base wraps) and
+    /// base/base divides by zero at a zero target, both known and accepted as unreachable.
+    pub const MAX_ELASTICITY: u32 = 1_000;
+
+    /// Smallest gas limit a chain gets.
+    pub const MIN_GAS_LIMIT: u64 = 3_000_000;
+
     /// A random parameter.
     pub fn any(rng: &mut Rng) -> Self {
         *rng.pick(&Self::ALL)
     }
 
     /// Sets this parameter of `config` to an edge value (seven times in ten) or to its value in
-    /// `realistic`. Edges stay within what L1 can set: the EIP-1559 parameters are never zero.
+    /// `realistic`. Edges stay within what L1 can set: the EIP-1559 parameters are never zero,
+    /// and the elasticity stays at most [`Self::MAX_ELASTICITY`].
     pub fn set(self, rng: &mut Rng, config: &mut SystemConfig, realistic: &SystemConfig) {
         let edge = rng.chance(70);
         let pick = |rng: &mut Rng, edges: &[u64], realistic: u64| {
@@ -572,7 +583,14 @@ impl ChainParam {
             Self::GasLimit => {
                 config.gas_limit = pick(
                     rng,
-                    &[3_000_000, 5_000_000, 36_000_000, 150_000_000, 1_000_000_000, 1 << 40],
+                    &[
+                        Self::MIN_GAS_LIMIT,
+                        5_000_000,
+                        36_000_000,
+                        150_000_000,
+                        1_000_000_000,
+                        1 << 40,
+                    ],
                     realistic.gas_limit,
                 );
             }
@@ -606,7 +624,7 @@ impl ChainParam {
             Self::Eip1559Elasticity => {
                 config.eip1559_elasticity = Some(pick(
                     rng,
-                    &[1, 2, 6, 10, 1_000_000, u64::from(u32::MAX)],
+                    &[1, 2, 6, 10, 100, u64::from(Self::MAX_ELASTICITY)],
                     u64::from(realistic.eip1559_elasticity.unwrap_or(6)),
                 ) as u32);
             }
@@ -647,7 +665,7 @@ impl ChainParam {
 mod tests {
     use base_common_genesis::SystemConfigUpdateKind;
 
-    use super::{ConfigLogs, ConfigUpdate};
+    use super::{ChainParam, ConfigLogs, ConfigUpdate};
     use crate::r#gen::rng::Rng;
 
     /// Every well-formed update applies with base's parser and sets the values it encodes.
@@ -687,11 +705,12 @@ mod tests {
         }
     }
 
-    /// Chain updates, malformed logs included, only set values the L1 contract could: base/base
-    /// applies some malformed logs, and a zero EIP-1559 denominator or elasticity makes a Holocene
-    /// header invalid.
+    /// Chain updates, malformed logs included, only set values the L1 contract could, and keep
+    /// the base fee computable: base/base applies some malformed logs, a zero EIP-1559 denominator
+    /// or elasticity makes a Holocene header invalid, and a large elasticity leaves a gas target so
+    /// small the next base fee leaves `u64` (or, at zero, divides by zero).
     #[test]
-    fn chain_updates_keep_eip1559_params_nonzero() {
+    fn chain_updates_keep_eip1559_params_in_range() {
         let mut rng = Rng::new(&[9]);
         for _ in 0..20 {
             let mut config = crate::SysConfig::random(&mut rng, 1_800_000_000).config;
@@ -700,6 +719,9 @@ mod tests {
                 config.update_with_receipts(&[(&receipt).into()], ConfigLogs::address(), true);
                 assert_ne!(config.eip1559_denominator, Some(0), "{receipt:?}");
                 assert_ne!(config.eip1559_elasticity, Some(0), "{receipt:?}");
+                let elasticity = config.eip1559_elasticity.unwrap_or_default();
+                assert!(elasticity <= ChainParam::MAX_ELASTICITY, "{receipt:?}");
+                assert!(config.gas_limit >= ChainParam::MIN_GAS_LIMIT, "{receipt:?}");
             }
         }
     }
