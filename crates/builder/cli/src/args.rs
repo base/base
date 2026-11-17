@@ -221,11 +221,9 @@ pub struct Args {
 
     /// Whether to drop positively stale Base transactions using their
     /// captured payer and expiry predicates before execution. Disable with
-    /// `--builder.base-tx-manifest-precheck=false`. The former
-    /// `--builder.eip8130-manifest-precheck` name is still accepted.
+    /// `--builder.base-tx-manifest-precheck=false`.
     #[arg(
         long = "builder.base-tx-manifest-precheck",
-        alias = "builder.eip8130-manifest-precheck",
         default_value_t = true,
         action = clap::ArgAction::Set
     )]
@@ -512,13 +510,6 @@ mod tests {
     fn manifest_precheck_accepts_explicit_false() {
         let parsed =
             CommandParser::parse_from(["test", "--builder.base-tx-manifest-precheck=false"]);
-        assert!(!parsed.args.manifest_precheck_enabled);
-    }
-
-    #[test]
-    fn manifest_precheck_accepts_deprecated_flag_name() {
-        let parsed =
-            CommandParser::parse_from(["test", "--builder.eip8130-manifest-precheck=false"]);
         assert!(!parsed.args.manifest_precheck_enabled);
     }
 
