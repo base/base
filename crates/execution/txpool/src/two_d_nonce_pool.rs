@@ -1075,12 +1075,14 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             };
             self.acquire_ids(&mut transaction);
             let transaction = Arc::new(transaction);
+            self.nonce_free.insert(replay_id, Arc::clone(&transaction));
+            // Added before the replaced transaction is removed, as in a lane, so
+            // a sender's only transaction being replaced keeps its known balance.
+            self.usage.add(&transaction);
             if let Some(existing) = &replaced {
                 self.hashes.remove(existing.hash());
                 self.usage.remove(existing);
             }
-            self.nonce_free.insert(replay_id, Arc::clone(&transaction));
-            self.usage.add(&transaction);
             let sender = transaction.sender();
             transaction.transaction.set_coinbase_tip_backed(self.usage.tip_backed(&sender));
             self.refresh_nonce_free_candidate(replay_id);
@@ -3160,6 +3162,46 @@ mod tests {
 
         assert_eq!(evicted_hashes(&mut pool), vec![priority_hash]);
         assert!(pool.contains(&coinbase_hash));
+    }
+
+    #[test]
+    fn replacing_a_senders_only_transaction_keeps_its_known_balance() {
+        let mut pool = capped_pool(1);
+        let tipper = signer();
+        // Same replay id: 100 per gas from the coinbase tip once backed, plus
+        // a priority fee of 0, then 10.
+        let original = valid_pool_transaction(signed_coinbase_tip_tx(
+            &tipper,
+            TxBaseConstants::NONCE_KEY_MAX,
+            0,
+            5_000_000,
+            0,
+            1_000,
+        ));
+        let replacement = valid_pool_transaction(signed_coinbase_tip_tx(
+            &tipper,
+            TxBaseConstants::NONCE_KEY_MAX,
+            0,
+            5_000_000,
+            10,
+            1_250,
+        ));
+        let replacement_hash = *replacement.hash();
+        let balance = *replacement.transaction.cost();
+        let priority = valid_pool_transaction(signed_nonce_free_tx(&signer(), 1, 50, 1_000));
+        let priority_hash = *priority.hash();
+        pool.insert_validated(original, 0).unwrap();
+        pool.apply_balance_updates([(tipper.address(), balance)]);
+
+        // A balance update lands while the replacement is being validated.
+        let balance_epoch = pool.balance_epoch();
+        pool.apply_balance_updates([(tipper.address(), balance)]);
+        assert!(pool.insert_validated(replacement, 0).unwrap().replaced.is_some());
+        pool.record_validated_balance(tipper.address(), balance, balance_epoch);
+        pool.insert_validated(priority, 0).unwrap();
+
+        assert_eq!(evicted_hashes(&mut pool), vec![priority_hash]);
+        assert!(pool.contains(&replacement_hash));
     }
 
     #[test]
