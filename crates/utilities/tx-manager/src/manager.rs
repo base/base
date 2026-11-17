@@ -307,6 +307,7 @@ where
         let blob_fee_policy = BlobFeePolicy::new(
             config.max_priority_fee_per_gas_per_blob_lower_bound,
             config.max_priority_fee_per_gas_per_blob_upper_bound,
+            config.max_priority_fee_per_gas_per_blob_decay_percent,
         );
         Ok(Self {
             provider,
@@ -2514,7 +2515,7 @@ mod tests {
                 chain_id: 1,
                 closed: CancellationToken::new(),
                 metrics: Arc::new(NoopTxMetrics),
-                blob_fee_policy: BlobFeePolicy::new(1, 1),
+                blob_fee_policy: BlobFeePolicy::new(1, 1, 90),
             };
 
             let confirmed = SimpleTxManager::<_>::wait_mined_using_runtime(
@@ -2604,7 +2605,7 @@ mod tests {
                 chain_id: 1,
                 closed: CancellationToken::new(),
                 metrics: Arc::new(NoopTxMetrics),
-                blob_fee_policy: BlobFeePolicy::new(1, 1),
+                blob_fee_policy: BlobFeePolicy::new(1, 1, 90),
             };
             let send_state = Arc::new(SendState::new(3).expect("send state should be valid"));
             let (receipt_tx, receipt_rx) = mpsc::channel(1);
@@ -3060,6 +3061,33 @@ mod tests {
             assert_eq!(next.max_fee_per_gas, next_max_priority_fee_per_gas + 2_000_000_000);
             assert_eq!(next.max_fee_per_blob_gas, 2_000_000_000);
             assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
+    /// A landed blob tx carries the configured decay percent of its
+    /// `max_priority_fee_per_gas` per blob to the next one.
+    #[test]
+    fn a_landed_blob_tx_decays_by_the_configured_percent() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                mocked(&asserter),
+                EthereumWallet::from(PrivateKeySigner::random()),
+                TxManagerConfig {
+                    max_priority_fee_per_gas_per_blob_decay_percent: 50,
+                    ..TxManagerConfig::default()
+                },
+                1,
+                Arc::new(NoopTxMetrics),
+            )
+            .await
+            .expect("should construct manager");
+
+            manager.blob_fee_policy.record_landed(2_000_000_000, 1);
+
+            assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 1_000_000_000);
         });
     }
 

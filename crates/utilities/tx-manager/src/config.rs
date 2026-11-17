@@ -129,6 +129,10 @@ pub struct TxManagerConfig {
     /// Highest `max_priority_fee_per_gas` per blob (in wei) of blob transactions. See
     /// [`BlobFeePolicy`](crate::BlobFeePolicy).
     pub max_priority_fee_per_gas_per_blob_upper_bound: u128,
+    /// Share, in percent, of the `max_priority_fee_per_gas` per blob of a landed blob
+    /// transaction that the next blob transaction starts from. See
+    /// [`BlobFeePolicy`](crate::BlobFeePolicy).
+    pub max_priority_fee_per_gas_per_blob_decay_percent: u8,
 }
 
 impl Default for TxManagerConfig {
@@ -149,6 +153,7 @@ impl Default for TxManagerConfig {
             tx_not_in_mempool_timeout: Duration::from_secs(120),
             max_priority_fee_per_gas_per_blob_lower_bound: 10_000_000, // 0.01 gwei
             max_priority_fee_per_gas_per_blob_upper_bound: 10_000_000_000, // 10 gwei
+            max_priority_fee_per_gas_per_blob_decay_percent: 90,
         }
     }
 }
@@ -164,6 +169,7 @@ impl TxManagerConfig {
     /// - `fee_limit_multiplier` must be >= 1
     /// - `max_priority_fee_per_gas_per_blob_lower_bound` must be >= 1
     /// - `max_priority_fee_per_gas_per_blob_upper_bound` must be >= the lower bound
+    /// - `max_priority_fee_per_gas_per_blob_decay_percent` must be <= 100
     /// - `network_timeout` must be > 0
     /// - `resubmission_timeout` must be > 0
     /// - `publish_max_retries` must be >= 1
@@ -217,6 +223,13 @@ impl TxManagerConfig {
                 field: "max_priority_fee_per_gas_per_blob_upper_bound",
                 constraint: ">= max_priority_fee_per_gas_per_blob_lower_bound",
                 value: self.max_priority_fee_per_gas_per_blob_upper_bound.to_string(),
+            });
+        }
+        if self.max_priority_fee_per_gas_per_blob_decay_percent > 100 {
+            return Err(ConfigError::OutOfRange {
+                field: "max_priority_fee_per_gas_per_blob_decay_percent",
+                constraint: "<= 100",
+                value: self.max_priority_fee_per_gas_per_blob_decay_percent.to_string(),
             });
         }
         let refusals_before_abort =
@@ -324,10 +337,11 @@ mod tests {
     }
 
     #[test]
-    fn default_blob_bounds_are_a_hundredth_and_ten_gwei_per_blob() {
+    fn default_blob_bounds_are_a_hundredth_and_ten_gwei_per_blob_with_a_ninety_percent_decay() {
         let config = TxManagerConfig::default();
         assert_eq!(config.max_priority_fee_per_gas_per_blob_lower_bound, 10_000_000);
         assert_eq!(config.max_priority_fee_per_gas_per_blob_upper_bound, 10_000_000_000);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_decay_percent, 90);
     }
 
     #[rstest]
@@ -376,6 +390,27 @@ mod tests {
         match config.validate() {
             Err(ConfigError::OutOfRange { field, .. }) => assert_eq!(Some(field), rejected_field),
             result => assert!(result.is_ok() && rejected_field.is_none(), "{result:?}"),
+        }
+    }
+
+    #[rstest]
+    #[case::zero(0, true)]
+    #[case::hundred(100, true)]
+    #[case::above_hundred(101, false)]
+    fn validation_caps_the_blob_decay_percent_at_a_hundred(
+        #[case] decay_percent: u8,
+        #[case] valid: bool,
+    ) {
+        let config = TxManagerConfig {
+            max_priority_fee_per_gas_per_blob_decay_percent: decay_percent,
+            ..TxManagerConfig::default()
+        };
+        match config.validate() {
+            Err(ConfigError::OutOfRange { field, .. }) => {
+                assert!(!valid);
+                assert_eq!(field, "max_priority_fee_per_gas_per_blob_decay_percent");
+            }
+            result => assert!(result.is_ok() && valid, "{result:?}"),
         }
     }
 
