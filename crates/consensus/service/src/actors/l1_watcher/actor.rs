@@ -41,14 +41,16 @@ use crate::{
 pub struct LogRetrier;
 
 impl LogRetrier {
-    /// Fetch logs matching `filter` with capped exponential backoff, trying up to 10 times.
+    /// Fetch logs matching `filter`, retrying with capped exponential backoff until the fetch
+    /// succeeds or `cancel` fires.
     ///
-    /// Returns `Ok(Some(logs))` on success, `Ok(None)` if `cancel` fires during a backoff sleep,
-    /// or `Err(`[`L1WatcherActorError::RetriesExhausted`]`)` once all attempts fail.
+    /// Returns `Some(logs)` on success and `None` once `cancel` fires, whether during a request
+    /// or a backoff sleep.
     ///
-    /// Provider failures, including request timeouts, use the same bounded retry path. Exhausting
-    /// those attempts returns an actor error so the node service can shut down instead of waiting
-    /// indefinitely on an L1 request.
+    /// There is no attempt limit. Every L1 RPC failure is treated as transient, because exiting
+    /// cannot help: a restarted node needs the same L1 to start and to make progress. Retrying
+    /// keeps the node alive through an L1 outage, so it resumes as soon as L1 recovers. Each
+    /// request is still bounded by the provider's request timeout.
     ///
     /// `initial_backoff` and `max_backoff` are caller-supplied so tests can use tiny values.
     pub async fn fetch_logs_with_retry<F>(
@@ -58,16 +60,20 @@ impl LogRetrier {
         block_info: BlockInfo,
         initial_backoff: Duration,
         max_backoff: Duration,
-    ) -> Result<Option<Vec<Log>>, L1WatcherActorError<BlockInfo>>
+    ) -> Option<Vec<Log>>
     where
         F: L1BlockFetcher,
     {
-        const MAX_RETRIES: u32 = 10;
-
         let mut backoff = initial_backoff;
-        for attempt in 1..=MAX_RETRIES {
-            match provider.get_logs(filter.clone()).await {
-                Ok(logs) => return Ok(Some(logs)),
+        let mut attempt: u64 = 0;
+        loop {
+            attempt += 1;
+            let result = select! {
+                _ = cancel.cancelled() => return None,
+                result = provider.get_logs(filter.clone()) => result,
+            };
+            match result {
+                Ok(logs) => return Some(logs),
                 Err(e) => {
                     warn!(
                         target: "l1_watcher",
@@ -75,26 +81,17 @@ impl LogRetrier {
                         block_hash = %block_info.hash,
                         block_number = block_info.number,
                         attempt,
+                        retry_in = ?backoff,
                         "Failed to fetch logs for L1 head"
                     );
-                    if attempt < MAX_RETRIES {
-                        select! {
-                            _ = cancel.cancelled() => return Ok(None),
-                            _ = tokio::time::sleep(backoff) => {}
-                        }
-                        backoff = (backoff * 2).min(max_backoff);
+                    select! {
+                        _ = cancel.cancelled() => return None,
+                        _ = tokio::time::sleep(backoff) => {}
                     }
+                    backoff = (backoff * 2).min(max_backoff);
                 }
             }
         }
-
-        error!(
-            target: "l1_watcher",
-            block_hash = %block_info.hash,
-            block_number = block_info.number,
-            "Exhausted retries fetching logs for L1 head"
-        );
-        Err(L1WatcherActorError::RetriesExhausted)
     }
 }
 
@@ -197,7 +194,15 @@ where
     /// Start the main processing loop.
     async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
         const INITIAL_BACKOFF: Duration = Duration::from_millis(50);
-        const MAX_BACKOFF: Duration = Duration::from_millis(500);
+        // Caps the retry interval during an L1 outage so the watcher resumes within a few
+        // seconds of L1 recovering without flooding the provider while it is down.
+        const MAX_BACKOFF: Duration = Duration::from_secs(5);
+        // How often to check whether a head whose logs keep failing has been reorged out, once
+        // a newer head is waiting. One L1 slot.
+        const REORG_CHECK_INTERVAL: Duration = Duration::from_secs(12);
+        // Bound on one reorg check, so a slow L1 cannot hold up the finalized stream or the
+        // log fetch for long.
+        const REORG_CHECK_TIMEOUT: Duration = Duration::from_secs(2);
 
         Metrics::l1_verifier_confs_depth().set(self.verifier_l1_confs as f64);
         if self.verifier_l1_confs > 0 {
@@ -210,133 +215,208 @@ where
 
         let cancel = self.cancellation.clone();
 
+        // A head that arrived while logs for an older head were still being fetched. It is
+        // processed next, ahead of the streams.
+        let mut superseding_head: Option<BlockInfo> = None;
+
         loop {
-            select! {
-                _ = cancel.cancelled() => {
-                    // Exit the task on cancellation.
-                    info!(
-                        target: "l1_watcher",
-                        "Received shutdown signal. Exiting L1 watcher task."
-                    );
+            let head_block_info = match superseding_head.take() {
+                Some(head) => head,
+                None => select! {
+                    _ = cancel.cancelled() => {
+                        // Exit the task on cancellation.
+                        info!(
+                            target: "l1_watcher",
+                            "Received shutdown signal. Exiting L1 watcher task."
+                        );
 
-                    return Ok(());
-                },
-                new_head = self.head_stream.next() => match new_head {
-                    None => {
-                        return Err(L1WatcherActorError::StreamEnded);
-                    }
-                    Some(head_block_info) => {
-                        // Always broadcast the real head so the sequencer's
-                        // DelayedL1OriginSelectorProvider can compute its own offset.
-                        self.latest_head.send_replace(Some(head_block_info));
-
-                        // Update the shared atomic so the ConfDepthProvider in the
-                        // derivation pipeline can enforce the confirmation depth cutoff.
-                        self.l1_head_number.store(head_block_info.number, Ordering::Relaxed);
-
-                        // Apply verifier confirmation delay: derive from
-                        // `head - verifier_l1_confs` when the chain is deep enough.
-                        let derivation_block = if self.verifier_l1_confs > 0
-                            && head_block_info.number >= self.verifier_l1_confs
-                        {
-                            let target = head_block_info.number - self.verifier_l1_confs;
-                            // Delayed block reads are best effort. A request timeout is handled
-                            // like any other fetch error: skip this head and try the next one.
-                            match self.l1_provider.get_block(BlockId::Number(target.into())).await {
-                                Ok(Some(block)) => block.into_consensus().into(),
-                                Ok(None) => {
-                                    Metrics::l1_verifier_delayed_fetch_errors().increment(1);
-                                    warn!(
-                                        target: "l1_watcher",
-                                        head = head_block_info.number,
-                                        target,
-                                        "Delayed L1 block not found; skipping head update"
-                                    );
-                                    continue;
-                                }
-                                Err(e) => {
-                                    Metrics::l1_verifier_delayed_fetch_errors().increment(1);
-                                    warn!(
-                                        target: "l1_watcher",
-                                        error = %e,
-                                        head = head_block_info.number,
-                                        target,
-                                        "Failed to fetch delayed L1 block; skipping head update"
-                                    );
-                                    continue;
-                                }
-                            }
-                        } else {
-                            head_block_info
-                        };
-
-                        Metrics::l1_verifier_derivation_head()
-                            .absolute(derivation_block.number);
-                        self.derivation_client.send_new_l1_head(derivation_block).await.map_err(|e| {
-                            warn!(target: "l1_watcher", error = %e, "Error sending l1 head update to derivation actor");
-                            L1WatcherActorError::DerivationClientError(e)
-                        })?;
-
-                        // For each log, attempt to construct a [`SystemConfigLog`].
-                        // Build the [`SystemConfigUpdate`] from the log.
-                        // If the update is an Unsafe block signer update, send the address
-                        // to the block signer sender.
-                        let filter_address = self.rollup_config.l1_system_config_address;
-                        let filter = Filter::new()
-                            .address(filter_address)
-                            .select(derivation_block.hash);
-
-                        // Log requests are retried with bounded backoff. If all attempts time out
-                        // or otherwise fail, the actor returns an error instead of hanging.
-                        let Some(logs) = LogRetrier::fetch_logs_with_retry(
-                            &self.l1_provider,
-                            filter,
-                            &cancel,
-                            derivation_block,
-                            INITIAL_BACKOFF,
-                            MAX_BACKOFF,
-                        )
-                        .await?
-                        else {
-                            return Ok(());
-                        };
-                        let ecotone_active =
-                            self.rollup_config.is_feature_active_cascading(BaseFeature::BlobAwareL1Fees, derivation_block.timestamp);
-                        for log in logs {
-                            let sys_cfg_log = SystemConfigLog::new(log.into(), ecotone_active);
-                            if let Ok(SystemConfigUpdate::UnsafeBlockSigner(UnsafeBlockSignerUpdate { unsafe_block_signer })) = sys_cfg_log.build() {
-                                info!(
-                                    target: "l1_watcher",
-                                    "Unsafe block signer update: {unsafe_block_signer}"
-                                );
-                                if let Some(ref block_signer_sender) = self.block_signer_sender && let Err(e) = block_signer_sender.send(unsafe_block_signer).await {
-                                    error!(
-                                        target: "l1_watcher",
-                                        "Error sending unsafe block signer update: {e}"
-                                    );
-                                }
-                            }
+                        return Ok(());
+                    },
+                    new_head = self.head_stream.next() => match new_head {
+                        None => {
+                            return Err(L1WatcherActorError::StreamEnded);
+                        }
+                        Some(head_block_info) => head_block_info,
+                    },
+                    new_safe = self.safe_stream.next() => match new_safe {
+                        None => {
+                            return Err(L1WatcherActorError::StreamEnded);
+                        }
+                        Some(safe_block_info) => {
+                            self.safe_head.send_replace(Some(safe_block_info));
+                            continue;
+                        }
+                    },
+                    new_finalized = self.finalized_stream.next() => match new_finalized {
+                        None => {
+                            return Err(L1WatcherActorError::StreamEnded);
+                        }
+                        Some(finalized_block_info) => {
+                            self.finalized_head.send_replace(Some(finalized_block_info));
+                            self.derivation_client.send_finalized_l1_block(finalized_block_info).await.map_err(|e| {
+                                warn!(target: "l1_watcher", error = %e, "Error sending finalized l1 block update to derivation actor");
+                                L1WatcherActorError::DerivationClientError(e)
+                            })?;
+                            continue;
                         }
                     },
                 },
-                new_safe = self.safe_stream.next() => match new_safe {
-                    None => {
-                        return Err(L1WatcherActorError::StreamEnded);
+            };
+
+            // Always broadcast the real head so the sequencer's
+            // DelayedL1OriginSelectorProvider can compute its own offset.
+            self.latest_head.send_replace(Some(head_block_info));
+
+            // Update the shared atomic so the ConfDepthProvider in the
+            // derivation pipeline can enforce the confirmation depth cutoff.
+            self.l1_head_number.store(head_block_info.number, Ordering::Relaxed);
+
+            // Apply verifier confirmation delay: derive from
+            // `head - verifier_l1_confs` when the chain is deep enough.
+            let derivation_block =
+                if self.verifier_l1_confs > 0 && head_block_info.number >= self.verifier_l1_confs {
+                    let target = head_block_info.number - self.verifier_l1_confs;
+                    // Delayed block reads are best effort. A request timeout is handled
+                    // like any other fetch error: skip this head and try the next one.
+                    match self.l1_provider.get_block(BlockId::Number(target.into())).await {
+                        Ok(Some(block)) => block.into_consensus().into(),
+                        Ok(None) => {
+                            Metrics::l1_verifier_delayed_fetch_errors().increment(1);
+                            warn!(
+                                target: "l1_watcher",
+                                head = head_block_info.number,
+                                target,
+                                "Delayed L1 block not found; skipping head update"
+                            );
+                            continue;
+                        }
+                        Err(e) => {
+                            Metrics::l1_verifier_delayed_fetch_errors().increment(1);
+                            warn!(
+                                target: "l1_watcher",
+                                error = %e,
+                                head = head_block_info.number,
+                                target,
+                                "Failed to fetch delayed L1 block; skipping head update"
+                            );
+                            continue;
+                        }
                     }
-                    Some(safe_block_info) => {
-                        self.safe_head.send_replace(Some(safe_block_info));
+                } else {
+                    head_block_info
+                };
+
+            Metrics::l1_verifier_derivation_head().absolute(derivation_block.number);
+            self.derivation_client.send_new_l1_head(derivation_block).await.map_err(|e| {
+                warn!(target: "l1_watcher", error = %e, "Error sending l1 head update to derivation actor");
+                L1WatcherActorError::DerivationClientError(e)
+            })?;
+
+            // For each log, attempt to construct a [`SystemConfigLog`].
+            // Build the [`SystemConfigUpdate`] from the log.
+            // If the update is an Unsafe block signer update, send the address
+            // to the block signer sender.
+            let filter_address = self.rollup_config.l1_system_config_address;
+            let filter = Filter::new().address(filter_address).select(derivation_block.hash);
+
+            // Log requests are retried until they succeed or the node shuts down, so an L1
+            // outage pauses this watcher instead of exiting the node. While waiting, the safe and
+            // finalized streams are still served. The first head that arrives meanwhile is kept
+            // and processed next, and the head stream is not polled again until then.
+            //
+            // This head is abandoned only once L1 reports a different block at its height, that
+            // is, once it has been reorged out and the RPC may never serve its logs. A canonical
+            // head is never abandoned, because its logs may carry an unsafe block signer update
+            // that later heads' filters would not include.
+            let fetch = LogRetrier::fetch_logs_with_retry(
+                &self.l1_provider,
+                filter,
+                &cancel,
+                derivation_block,
+                INITIAL_BACKOFF,
+                MAX_BACKOFF,
+            );
+            tokio::pin!(fetch);
+            let mut next_reorg_check = tokio::time::Instant::now() + REORG_CHECK_INTERVAL;
+            let mut newer_head: Option<BlockInfo> = None;
+            let logs = loop {
+                select! {
+                    logs = &mut fetch => match logs {
+                        Some(logs) => break Some(logs),
+                        None => return Ok(()),
+                    },
+                    new_head = self.head_stream.next(), if newer_head.is_none() => match new_head {
+                        None => return Err(L1WatcherActorError::StreamEnded),
+                        Some(new_head) => newer_head = Some(new_head),
+                    },
+                    new_safe = self.safe_stream.next() => match new_safe {
+                        None => return Err(L1WatcherActorError::StreamEnded),
+                        Some(safe_block_info) => {
+                            self.safe_head.send_replace(Some(safe_block_info));
+                        }
+                    },
+                    new_finalized = self.finalized_stream.next() => match new_finalized {
+                        None => return Err(L1WatcherActorError::StreamEnded),
+                        Some(finalized_block_info) => {
+                            self.finalized_head.send_replace(Some(finalized_block_info));
+                            self.derivation_client.send_finalized_l1_block(finalized_block_info).await.map_err(|e| {
+                                warn!(target: "l1_watcher", error = %e, "Error sending finalized l1 block update to derivation actor");
+                                L1WatcherActorError::DerivationClientError(e)
+                            })?;
+                        }
+                    },
+                    _ = tokio::time::sleep_until(next_reorg_check), if newer_head.is_some() => {
+                        let canonical = select! {
+                            _ = cancel.cancelled() => return Ok(()),
+                            block = tokio::time::timeout(
+                                REORG_CHECK_TIMEOUT,
+                                self.l1_provider
+                                    .get_block(BlockId::Number(derivation_block.number.into())),
+                            ) => block,
+                        };
+                        if let Ok(Ok(Some(block))) = canonical
+                            && block.header.hash != derivation_block.hash
+                        {
+                            break None;
+                        }
+                        next_reorg_check = tokio::time::Instant::now() + REORG_CHECK_INTERVAL;
                     }
-                },
-                new_finalized = self.finalized_stream.next() => match new_finalized {
-                    None => {
-                        return Err(L1WatcherActorError::StreamEnded);
-                    }
-                    Some(finalized_block_info) => {
-                        self.finalized_head.send_replace(Some(finalized_block_info));
-                        self.derivation_client.send_finalized_l1_block(finalized_block_info).await.map_err(|e| {
-                            warn!(target: "l1_watcher", error = %e, "Error sending finalized l1 block update to derivation actor");
-                            L1WatcherActorError::DerivationClientError(e)
-                        })?;
+                }
+            };
+            superseding_head = newer_head;
+            let Some(logs) = logs else {
+                warn!(
+                    target: "l1_watcher",
+                    block_hash = %derivation_block.hash,
+                    block_number = derivation_block.number,
+                    new_head = ?superseding_head.map(|head| head.number),
+                    "L1 head was reorged out before its logs were fetched; moving to the newer head"
+                );
+                continue;
+            };
+            let ecotone_active = self.rollup_config.is_feature_active_cascading(
+                BaseFeature::BlobAwareL1Fees,
+                derivation_block.timestamp,
+            );
+            for log in logs {
+                let sys_cfg_log = SystemConfigLog::new(log.into(), ecotone_active);
+                if let Ok(SystemConfigUpdate::UnsafeBlockSigner(UnsafeBlockSignerUpdate {
+                    unsafe_block_signer,
+                })) = sys_cfg_log.build()
+                {
+                    info!(
+                        target: "l1_watcher",
+                        signer = %unsafe_block_signer,
+                        "Unsafe block signer update"
+                    );
+                    if let Some(ref block_signer_sender) = self.block_signer_sender
+                        && let Err(e) = block_signer_sender.send(unsafe_block_signer).await
+                    {
+                        error!(
+                            target: "l1_watcher",
+                            error = %e,
+                            "Error sending unsafe block signer update"
+                        );
                     }
                 }
             }
@@ -412,6 +492,86 @@ mod tests {
 
         async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
             Ok(None)
+        }
+    }
+
+    /// Fetcher whose log requests never complete, standing in for a hung L1 request.
+    ///
+    /// Hand-rolled like the other fetcher doubles in this module: `L1BlockFetcher` has no
+    /// automock, and a mockall expectation cannot return a future that never resolves.
+    struct PendingFetcher;
+
+    #[async_trait]
+    impl L1BlockFetcher for PendingFetcher {
+        type Error = String;
+
+        async fn get_logs(&self, _: Filter) -> Result<Vec<Log>, Self::Error> {
+            futures::future::pending().await
+        }
+
+        async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
+            Ok(None)
+        }
+    }
+
+    /// Fetcher whose log requests fail a set number of times for one block hash, standing in
+    /// for an RPC that is briefly flaky for, or no longer serves, that block. Reports
+    /// `canonical` as the block hash at every height and records the hashes whose logs were
+    /// fetched.
+    ///
+    /// Hand-rolled like the other fetcher doubles in this module: `L1BlockFetcher` has no
+    /// automock, and the fake needs failure state shared across calls keyed on the filter.
+    struct HashFailingFetcher {
+        failing: B256,
+        failures_left: AtomicU32,
+        canonical: B256,
+        hang_block_lookup: bool,
+        fetched: Arc<Mutex<Vec<B256>>>,
+    }
+
+    impl HashFailingFetcher {
+        fn new(failing: B256, failures: u32, canonical: B256) -> Self {
+            Self {
+                failing,
+                failures_left: AtomicU32::new(failures),
+                canonical,
+                hang_block_lookup: false,
+                fetched: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        /// Makes block lookups never complete, standing in for a hung L1 request.
+        fn with_hanging_block_lookup(mut self) -> Self {
+            self.hang_block_lookup = true;
+            self
+        }
+    }
+
+    #[async_trait]
+    impl L1BlockFetcher for HashFailingFetcher {
+        type Error = String;
+
+        async fn get_logs(&self, filter: Filter) -> Result<Vec<Log>, Self::Error> {
+            let hash = filter.get_block_hash().expect("watcher filters logs by block hash");
+            if hash == self.failing
+                && self
+                    .failures_left
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                    .is_ok()
+            {
+                return Err("unknown block".to_string());
+            }
+            self.fetched.lock().unwrap().push(hash);
+            Ok(vec![])
+        }
+
+        async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
+            if self.hang_block_lookup {
+                std::future::pending::<()>().await;
+            }
+            let mut block: Block = Block::default();
+            block.header.hash = self.canonical;
+            Ok(Some(block))
         }
     }
 
@@ -582,8 +742,45 @@ mod tests {
         (derivation_client, l1_head_rx, l1_head_number)
     }
 
+    /// Run an [`L1WatcherActor`] with the given head and safe streams for at most `run_for`,
+    /// with verifier confirmations disabled.
+    ///
+    /// Returns whether the actor exited on its own within that time, the derivation client, and
+    /// the safe-head watch receiver.
+    async fn run_actor_for<F: L1BlockFetcher>(
+        fetcher: F,
+        head_stream: BoxedBlockStream,
+        safe_stream: BoxedBlockStream,
+        run_for: Duration,
+    ) -> (bool, RecordingDerivationClient, watch::Receiver<Option<BlockInfo>>) {
+        let derivation_client = RecordingDerivationClient::default();
+        let (safe_tx, safe_rx) = watch::channel(None);
+        let actor = L1WatcherActor::new(
+            Arc::new(RollupConfig::default()),
+            fetcher,
+            watch::channel(None).0,
+            safe_tx,
+            watch::channel(None).0,
+            derivation_client.clone(),
+            None,
+            CancellationToken::new(),
+            head_stream,
+            safe_stream,
+            Box::pin(futures::stream::pending()),
+            0,
+            Arc::new(AtomicU64::new(0)),
+        );
+        let exited = tokio::time::timeout(run_for, actor.start(())).await.is_ok();
+        (exited, derivation_client, safe_rx)
+    }
+
+    /// A stream that yields `blocks` and then stays open without yielding.
+    fn open_stream(blocks: Vec<BlockInfo>) -> BoxedBlockStream {
+        Box::pin(futures::stream::iter(blocks).chain(futures::stream::pending()))
+    }
+
     // ---------------------------------------------------------------------------
-    // LogRetrier tests (unchanged)
+    // LogRetrier tests
     // ---------------------------------------------------------------------------
 
     #[tokio::test]
@@ -598,7 +795,7 @@ mod tests {
             Duration::from_nanos(1),
         )
         .await;
-        assert!(matches!(result, Ok(Some(_))));
+        assert!(result.is_some());
     }
 
     #[tokio::test]
@@ -613,13 +810,15 @@ mod tests {
             Duration::from_nanos(1),
         )
         .await;
-        assert!(matches!(result, Ok(Some(_))));
+        assert!(result.is_some());
     }
 
-    #[tokio::test]
-    async fn fetch_logs_exhausted_retries_returns_error() {
+    #[tokio::test(start_paused = true)]
+    async fn fetch_logs_keeps_retrying_through_long_outage() {
+        // Fail far more often than any fixed attempt budget would allow; the retrier must
+        // keep going rather than give up and take the node down.
         let cancel = CancellationToken::new();
-        let fetcher = MockFetcher::always_fail();
+        let fetcher = MockFetcher::fail_times(1_000);
         let call_count = Arc::clone(&fetcher.call_count);
         let result = LogRetrier::fetch_logs_with_retry(
             &fetcher,
@@ -630,25 +829,184 @@ mod tests {
             Duration::from_nanos(1),
         )
         .await;
-        assert!(matches!(result, Err(L1WatcherActorError::RetriesExhausted)));
-        assert_eq!(call_count.load(Ordering::SeqCst), 10);
+        assert!(result.is_some());
+        assert_eq!(call_count.load(Ordering::SeqCst), 1_001);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn fetch_logs_cancelled_during_backoff_returns_none() {
         let cancel = CancellationToken::new();
-        // Pre-cancel so the very first backoff sleep resolves to the cancel arm.
-        cancel.cancel();
-        let result = LogRetrier::fetch_logs_with_retry(
-            &MockFetcher::always_fail(),
+        let fetcher = MockFetcher::always_fail();
+        let retry = LogRetrier::fetch_logs_with_retry(
+            &fetcher,
             Filter::new(),
             &cancel,
             dummy_block(),
-            Duration::from_secs(10), // long sleep ensures only the cancel arm fires
+            Duration::from_secs(10), // long sleep ensures only the cancel arm can end it
             Duration::from_secs(10),
+        );
+        // The first request fails at once, so the retrier is in its backoff sleep by the time
+        // the cancellation fires.
+        let cancel_later = async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            cancel.cancel();
+        };
+        let (result, ()) = tokio::join!(retry, cancel_later);
+        assert!(result.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_logs_cancelled_during_request_returns_none() {
+        let cancel = CancellationToken::new();
+        let retry = LogRetrier::fetch_logs_with_retry(
+            &PendingFetcher,
+            Filter::new(),
+            &cancel,
+            dummy_block(),
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+        );
+        // The request never completes, so the retrier is waiting on it when cancelled.
+        let cancel_later = async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            cancel.cancel();
+        };
+        let (result, ()) = tokio::join!(retry, cancel_later);
+        assert!(result.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn actor_survives_long_l1_log_outage() {
+        // With the production backoff, 30 consecutive failures span well over a minute of
+        // simulated outage. The actor must ride it out instead of exiting.
+        let fetcher = MockFetcher::fail_times(30);
+        let call_count = Arc::clone(&fetcher.call_count);
+        let (exited, client, _) = run_actor_for(
+            fetcher,
+            open_stream(vec![block_at(1)]),
+            open_stream(vec![]),
+            Duration::from_secs(10 * 60),
         )
         .await;
-        assert!(matches!(result, Ok(None)));
+
+        assert!(!exited, "actor exited during the L1 outage");
+        assert_eq!(client.sent_heads().len(), 1);
+        assert_eq!(call_count.load(Ordering::SeqCst), 31);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn newer_head_replaces_head_whose_logs_cannot_be_fetched() {
+        // Logs for a reorged-out block may never be served again. Once L1 reports a different
+        // block at its height, a newer head must take over so the stale block cannot pin the
+        // watcher.
+        let stale = block_at(1);
+        // L1 now reports a different block at the stale head's height.
+        let fetcher = HashFailingFetcher::new(stale.hash, u32::MAX, B256::repeat_byte(0xff));
+        let fetched = Arc::clone(&fetcher.fetched);
+
+        let (exited, client, _) = run_actor_for(
+            fetcher,
+            open_stream(vec![stale, block_at(2)]),
+            open_stream(vec![]),
+            Duration::from_secs(5 * 60),
+        )
+        .await;
+
+        assert!(!exited);
+        let sent: Vec<_> = client.sent_heads().iter().map(|b| b.number).collect();
+        assert_eq!(sent, vec![1, 2]);
+        assert_eq!(*fetched.lock().unwrap(), vec![block_at(2).hash]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn briefly_failing_head_logs_are_fetched_before_newer_head() {
+        // A newer head arriving during a short L1 hiccup must not cost the current head its
+        // logs, which may carry an unsafe block signer update.
+        let first = block_at(1);
+        let fetcher = HashFailingFetcher::new(first.hash, 3, first.hash);
+        let fetched = Arc::clone(&fetcher.fetched);
+
+        let (exited, client, _) = run_actor_for(
+            fetcher,
+            open_stream(vec![first, block_at(2)]),
+            open_stream(vec![]),
+            Duration::from_secs(5 * 60),
+        )
+        .await;
+
+        assert!(!exited);
+        let sent: Vec<_> = client.sent_heads().iter().map(|b| b.number).collect();
+        assert_eq!(sent, vec![1, 2]);
+        assert_eq!(*fetched.lock().unwrap(), vec![first.hash, block_at(2).hash]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hung_reorg_check_does_not_stall_safe_head_updates() {
+        // A reorg check runs once a newer head waits. If it hangs during the outage, the safe
+        // block arriving later must still be published, and the head must not be abandoned.
+        let first = block_at(1);
+        let fetcher =
+            HashFailingFetcher::new(first.hash, u32::MAX, first.hash).with_hanging_block_lookup();
+        let late_safe: BoxedBlockStream = Box::pin(
+            futures::stream::once(Box::pin(async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                block_at(7)
+            }))
+            .chain(futures::stream::pending()),
+        );
+
+        let (exited, client, safe_rx) = run_actor_for(
+            fetcher,
+            open_stream(vec![first, block_at(2)]),
+            late_safe,
+            Duration::from_secs(5 * 60),
+        )
+        .await;
+
+        assert!(!exited);
+        assert_eq!(safe_rx.borrow().unwrap().number, 7);
+        let sent: Vec<_> = client.sent_heads().iter().map(|b| b.number).collect();
+        assert_eq!(sent, vec![1]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn canonical_head_is_not_abandoned_during_long_outage() {
+        // A canonical head's logs may carry a signer update that later heads' filters miss, so
+        // the watcher keeps retrying it however long the outage lasts, even with a newer head
+        // waiting.
+        let first = block_at(1);
+        let fetcher = HashFailingFetcher::new(first.hash, u32::MAX, first.hash);
+        let fetched = Arc::clone(&fetcher.fetched);
+
+        let (exited, client, _) = run_actor_for(
+            fetcher,
+            open_stream(vec![first, block_at(2)]),
+            open_stream(vec![]),
+            Duration::from_secs(30 * 60),
+        )
+        .await;
+
+        assert!(!exited);
+        let sent: Vec<_> = client.sent_heads().iter().map(|b| b.number).collect();
+        assert_eq!(sent, vec![1]);
+        assert!(fetched.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn safe_head_updates_while_head_logs_are_failing() {
+        let head = block_at(1);
+        let fetcher = HashFailingFetcher::new(head.hash, u32::MAX, head.hash);
+
+        let (exited, _, safe_rx) = run_actor_for(
+            fetcher,
+            open_stream(vec![head]),
+            open_stream(vec![block_at(7)]),
+            Duration::from_secs(5 * 60),
+        )
+        .await;
+
+        assert!(!exited);
+        assert_eq!(safe_rx.borrow().unwrap().number, 7);
     }
 
     // ---------------------------------------------------------------------------
