@@ -74,6 +74,11 @@ impl ChainDriver {
     /// prefix shows how the state was reached), plus the usual request, verdict, and responses,
     /// and a minimized `minimized.json` of the failing block.
     pub fn run(&self) -> eyre::Result<ChainSummary> {
+        eyre::ensure!(
+            self.adapters.iter().any(|a| a.name == self.reference),
+            "reference adapter {} is not among the adapters",
+            self.reference
+        );
         fs::create_dir_all(self.out.join("findings"))?;
         let next = AtomicU64::new(0);
         let summary = Mutex::new(ChainSummary::default());
@@ -143,7 +148,10 @@ impl ChainDriver {
             return ChainOutcome { agreed: 0, end: ChainEnd::Stopped("generator panicked".into()) };
         };
         let mut prefix: Vec<Request> = Vec::new();
-        let reference = adapters.iter().position(|a| a.spec.name == self.reference).unwrap_or(0);
+        let reference = adapters
+            .iter()
+            .position(|a| a.spec.name == self.reference)
+            .expect("run checks the reference");
         while chain.blocks() < self.length {
             let request = chain.request().clone();
             prefix.push(request.clone());

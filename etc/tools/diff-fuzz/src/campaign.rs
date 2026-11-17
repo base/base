@@ -3,6 +3,7 @@
 use std::{
     collections::BTreeMap,
     fs,
+    panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
     sync::{
         Mutex,
@@ -84,14 +85,19 @@ impl Campaign {
                         if index >= count {
                             break;
                         }
-                        let request = match source(index) {
-                            Ok(Some(request)) => request,
-                            Ok(None) => {
+                        let request = match catch_unwind(AssertUnwindSafe(|| source(index))) {
+                            Ok(Ok(Some(request))) => request,
+                            Ok(Ok(None)) => {
                                 summary.lock().unwrap().skipped += 1;
                                 continue;
                             }
-                            Err(err) => {
+                            Ok(Err(err)) => {
                                 eprintln!("case {index}: source failed: {err:#}");
+                                summary.lock().unwrap().skipped += 1;
+                                continue;
+                            }
+                            Err(_) => {
+                                eprintln!("case {index}: source panicked");
                                 summary.lock().unwrap().skipped += 1;
                                 continue;
                             }

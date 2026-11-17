@@ -5,7 +5,7 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use eyre::{WrapErr, eyre};
@@ -69,7 +69,8 @@ pub struct Adapter {
 #[derive(Debug)]
 struct Running {
     child: Child,
-    stdin: ChildStdin,
+    /// `None` while a writer thread holds it.
+    stdin: Option<ChildStdin>,
     lines: Receiver<std::io::Result<String>>,
 }
 
@@ -107,7 +108,7 @@ impl Adapter {
                 }
             }
         });
-        Ok(Running { child, stdin, lines })
+        Ok(Running { child, stdin: Some(stdin), lines })
     }
 
     fn kill(&mut self) {
@@ -124,19 +125,33 @@ impl Adapter {
                 Some(self.start().map_err(|err| CallFailure::Crashed(format!("{err:#}")))?);
         }
         let running = self.process.as_mut().expect("process started above");
-        let written = running
-            .stdin
-            .write_all(line.as_bytes())
-            .and_then(|()| running.stdin.write_all(b"\n"))
-            .and_then(|()| running.stdin.flush());
-        if let Err(err) = written {
-            let status = running.child.try_wait().ok().flatten();
-            self.kill();
-            return Err(CallFailure::Crashed(format!(
-                "writing request: {err} (exit status {status:?})"
-            )));
+        let deadline = Instant::now() + self.timeout;
+        // Requests are far larger than a pipe buffer, so an adapter that stops reading would
+        // block the write forever; write from a thread and wait for it under the deadline.
+        let mut stdin = running.stdin.take().expect("stdin returns after every write");
+        let payload = format!("{line}\n");
+        let (done, written) = mpsc::channel();
+        thread::spawn(move || {
+            let result = stdin.write_all(payload.as_bytes()).and_then(|()| stdin.flush());
+            let _ = done.send((stdin, result));
+        });
+        match written.recv_timeout(self.timeout) {
+            Ok((stdin, Ok(()))) => running.stdin = Some(stdin),
+            Ok((_, Err(err))) => {
+                let status = running.child.try_wait().ok().flatten();
+                self.kill();
+                return Err(CallFailure::Crashed(format!(
+                    "writing request: {err} (exit status {status:?})"
+                )));
+            }
+            Err(_) => {
+                // Killing the adapter closes the pipe, which ends the writer thread.
+                self.kill();
+                return Err(CallFailure::TimedOut);
+            }
         }
-        let received = running.lines.recv_timeout(self.timeout);
+        let received =
+            running.lines.recv_timeout(deadline.saturating_duration_since(Instant::now()));
         let line = match received {
             Ok(Ok(line)) => line,
             Ok(Err(err)) => {
@@ -195,8 +210,6 @@ impl Drop for Adapter {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
     use super::*;
 
     #[test]
@@ -209,6 +222,19 @@ mod tests {
         let started = Instant::now();
         let result = adapter.call_line("x", "{}");
         assert!(matches!(result, Err(CallFailure::Crashed(_))), "{result:?}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn adapter_that_stops_reading_stdin_times_out() {
+        let spec = AdapterSpec {
+            name: "stuck".to_owned(),
+            command: ["sleep", "60"].map(str::to_owned).to_vec(),
+        };
+        let mut adapter = Adapter::new(spec, Duration::from_secs(1));
+        let started = Instant::now();
+        let request = "x".repeat(1 << 20);
+        assert_eq!(adapter.call_line("x", &request), Err(CallFailure::TimedOut));
         assert!(started.elapsed() < Duration::from_secs(10));
     }
 }
