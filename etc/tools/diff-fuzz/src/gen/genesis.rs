@@ -90,7 +90,10 @@ impl Genesis {
             let balance = match index {
                 22 => U256::ZERO,
                 23 => U256::from(rng.range(1, 10u64.pow(15))),
-                _ if rng.chance(5) => U256::MAX >> 64,
+                // Large but below 2^128 even when many such balances end up in one account:
+                // revm computes gas_limit * max_fee in u128 and rejects on overflow, which only
+                // diverges from 256-bit clients for balances no real chain can reach.
+                _ if rng.chance(5) => U256::from(1) << 120,
                 _ => {
                     U256::from(rng.range(1, 1000))
                         * U256::from(10).pow(U256::from(rng.range(21, 24)))

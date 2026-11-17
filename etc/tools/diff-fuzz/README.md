@@ -22,10 +22,11 @@ adapter's response.
 
 ## Coverage-guided fuzzing
 
-`fuzz` steers case generation towards behavior the reference adapter (`--reference`, default
-`base`) has not executed yet. The harness starts the reference with `BASE_DIFF_COVERAGE=1`, and
-it reports semantic coverage features with every response (see "Optional coverage" in
-[PROTOCOL.md](./PROTOCOL.md)).
+`fuzz` steers case generation towards behavior the adapters have not executed yet. The harness
+starts each `--coverage-from` adapter (repeatable, default the `--reference` adapter, `base`)
+with `BASE_DIFF_COVERAGE=1`, and each reports coverage features with every response (see
+"Optional coverage" in [PROTOCOL.md](./PROTOCOL.md)). Their features are merged, so a case that
+reaches new code in any client is kept; clients other than base prefix their feature names.
 
 A corpus case is a descriptor, not a request: a generator seed and index (which fix the fork,
 block, genesis state, system config, and L1 origin) plus a list of transaction slots. Each slot
@@ -46,7 +47,7 @@ Mutations re-roll one slot's stream, change its kind, insert, remove, duplicate,
 splice slots from another corpus case (preferring one on the same pre-state), add tweaks, edit
 program bytecode, edit L1 attributes, move the slots onto another pre-state, or re-roll a native
 precompile call's function, sender, ABI mutation, or arguments. A case is kept
-when the reference reports a feature, or a feature hit-count bucket, that no earlier case did.
+when an adapter reports a feature, or a feature hit-count bucket, that no earlier case did.
 Parents are picked by energy: the sum over their features of one over the number of cases that
 hit the feature, so cases reaching rare behavior get most mutations. A share of rounds
 (`--explore`) runs fresh generator cases instead. `--unguided` runs only fresh cases and still

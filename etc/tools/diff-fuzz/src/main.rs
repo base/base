@@ -45,7 +45,7 @@ enum Command {
         paths: Vec<PathBuf>,
     },
     /// Coverage-guided fuzzing: mutates corpus cases, keeps the ones that reach new coverage
-    /// in the reference adapter, and records (and minimizes) every divergence or failure.
+    /// in the `--coverage-from` adapters, and records (and minimizes) every divergence or failure.
     Fuzz {
         #[command(flatten)]
         common: Common,
@@ -58,9 +58,13 @@ enum Command {
         /// Generator seed.
         #[arg(long, default_value_t = 1)]
         seed: u64,
-        /// Adapter that reports coverage (started with `BASE_DIFF_COVERAGE=1`).
+        /// Reference adapter that findings are compared against.
         #[arg(long, default_value = "base")]
         reference: String,
+        /// Adapters started with `BASE_DIFF_COVERAGE=1` whose features are merged; repeat for
+        /// several. Defaults to the reference.
+        #[arg(long)]
+        coverage_from: Vec<String>,
         /// Fresh cases to start from when the corpus is empty.
         #[arg(long, default_value_t = 64)]
         initial: u64,
@@ -192,6 +196,7 @@ fn main() -> eyre::Result<()> {
             duration,
             seed,
             reference,
+            coverage_from,
             initial,
             explore,
             unguided,
@@ -202,6 +207,11 @@ fn main() -> eyre::Result<()> {
             let fuzzer = Fuzzer {
                 config: FuzzConfig {
                     adapters: campaign.adapters,
+                    coverage_from: if coverage_from.is_empty() {
+                        vec![reference.clone()]
+                    } else {
+                        coverage_from
+                    },
                     reference,
                     jobs: campaign.jobs,
                     timeout: campaign.timeout,

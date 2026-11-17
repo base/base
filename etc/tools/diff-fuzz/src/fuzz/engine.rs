@@ -22,8 +22,11 @@ use crate::{
 pub struct FuzzConfig {
     /// Adapters to compare.
     pub adapters: Vec<AdapterSpec>,
-    /// Name of the reference adapter, which reports coverage.
+    /// Name of the reference adapter that findings are compared against.
     pub reference: String,
+    /// Adapters started with coverage on. Their features are merged; each client prefixes its
+    /// own names, so they don't collide.
+    pub coverage_from: Vec<String>,
     /// Worker threads; each runs one process of every adapter.
     pub jobs: usize,
     /// Per-request timeout.
@@ -192,14 +195,14 @@ pub struct Fuzzer {
 }
 
 impl Fuzzer {
-    /// The adapter specs to start: the reference with coverage turned on.
+    /// The adapter specs to start, with coverage turned on for `coverage_from`.
     pub fn specs(&self) -> Vec<AdapterSpec> {
         self.config
             .adapters
             .iter()
             .map(|spec| {
                 let mut spec = spec.clone();
-                if spec.name == self.config.reference {
+                if self.config.coverage_from.contains(&spec.name) {
                     let mut command = vec!["env".to_owned(), format!("{COVERAGE_ENV}=1")];
                     command.append(&mut spec.command);
                     spec.command = command;
@@ -223,6 +226,12 @@ impl Fuzzer {
     /// counters. `coverage.json` in the output directory is rewritten every few seconds.
     pub fn run(&self) -> eyre::Result<FuzzStats> {
         let config = &self.config;
+        for name in std::iter::once(&config.reference).chain(&config.coverage_from) {
+            eyre::ensure!(
+                config.adapters.iter().any(|a| &a.name == name),
+                "adapter {name} is not among the adapters"
+            );
+        }
         fs::create_dir_all(config.out.join("findings"))?;
         let (corpus, saved) = Corpus::open(config.corpus.clone())?;
         let mut queue: VecDeque<FuzzCase> = saved.into();
@@ -274,7 +283,12 @@ impl Fuzzer {
             max_slots: config.options.max_txs.max(4) * 2,
             index_space: 1 << 32,
         };
-        let reference = adapters.iter().position(|a| a.spec.name == config.reference);
+        let covered: Vec<usize> = adapters
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| config.coverage_from.contains(&a.spec.name))
+            .map(|(i, _)| i)
+            .collect();
         while started.elapsed() < config.duration {
             let Some((case, mutations)) = self.next_case(state, &mut rng, &mut mutator) else {
                 break;
@@ -285,12 +299,15 @@ impl Fuzzer {
                 continue;
             };
             let (results, verdict) = Minimizer::run(&mut adapters, &template.request);
-            let coverage = reference
-                .and_then(|i| results[i].1.as_ref().ok())
-                .and_then(|response| response.coverage.as_ref());
+            let mut coverage: Option<BTreeMap<String, u64>> = None;
+            for response in covered.iter().filter_map(|&i| results[i].1.as_ref().ok()) {
+                if let Some(features) = &response.coverage {
+                    coverage.get_or_insert_default().extend(features.clone());
+                }
+            }
             let finding = {
                 let mut s = state.lock().unwrap();
-                let finding = self.account(&mut s, &case, &mutations, coverage, &verdict);
+                let finding = self.account(&mut s, &case, &mutations, coverage.as_ref(), &verdict);
                 if s.last_sample.elapsed() >= config.sample_every {
                     Self::sample(&mut s, started);
                 }
