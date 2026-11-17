@@ -1,0 +1,36 @@
+[package]
+name = "base-archive-writer-bin"
+description = "Shared chain history store writer: copies finalized history from nodes into object storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "archive-writer"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-history-store.workspace = true
+base-execution-chainspec.workspace = true
+
+# reth
+reth-rpc-layer.workspace = true
+
+# alloy
+alloy-genesis = { workspace = true, features = ["std"] }
+
+# misc
+eyre.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "env"] }
+humantime.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+tracing = { workspace = true, features = ["std"] }

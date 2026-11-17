@@ -6,11 +6,20 @@ use base_builder_metering::{
     DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
     MeteringStoreExtension,
 };
-use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
+use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, TransactionCountOwner};
 use base_execution_payer_rpc::{PayerRpcConfig, PayerRpcExtension};
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
+};
+use base_history_rpc::{
+    ArchiveEthConfig, ArchiveEthExtension, ArchiveExportConfig, ArchiveExportExtension,
+    ArchiveExportLimits, ArchiveSource, DEFAULT_MAX_CONCURRENT_RANGES,
+    DEFAULT_STARTUP_CHECK_TIMEOUT,
+};
+use base_history_store::{
+    ArchiveStore, CacheConfig, DEFAULT_MAX_RANGE_BLOCKS, DEFAULT_MAX_RANGE_BYTES,
+    DEFAULT_SNAPSHOT_TTL, IndexOptions, StoreOptions,
 };
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
@@ -126,6 +135,132 @@ impl Default for ResourceMeteringArgs {
             rejection_cache_max_capacity: REJECTION_CACHE_MAX_CAPACITY,
             rejection_cache_ttl_secs: REJECTION_CACHE_TTL.as_secs(),
         }
+    }
+}
+
+/// CLI arguments for the shared chain history store (archive).
+///
+/// `--archive.enable` serves the `archive_` export namespace that writers read from, on the
+/// authenticated (`--authrpc.*`, JWT) server and IPC only.
+/// `--archive.url` makes the node answer `eth_` reads it has pruned from the archive.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+#[command(next_help_heading = "Archive")]
+pub struct ArchiveArgs {
+    /// Serve the `archive_` export namespace for archive writers on the authenticated RPC server.
+    #[arg(id = "archive_enable", long = "archive.enable", env = "ARCHIVE_ENABLE")]
+    pub enable: bool,
+
+    /// Most blocks one `archive_getBlockRange` call may return.
+    #[arg(id = "archive_max_range_blocks", long = "archive.max-range-blocks", default_value_t = DEFAULT_MAX_RANGE_BLOCKS)]
+    pub max_range_blocks: u64,
+
+    /// Most payload bytes one `archive_getBlockRange` call may return.
+    #[arg(id = "archive_max_range_bytes", long = "archive.max-range-bytes", default_value_t = DEFAULT_MAX_RANGE_BYTES)]
+    pub max_range_bytes: u64,
+
+    /// Most `archive_getBlockRange` calls served at once; more are refused as busy.
+    #[arg(id = "archive_max_concurrent_ranges", long = "archive.max-concurrent-ranges", default_value_t = DEFAULT_MAX_CONCURRENT_RANGES)]
+    pub max_concurrent_ranges: usize,
+
+    /// Archive to read pruned history from: `s3://bucket/prefix`, `file:///dir` or `memory://`.
+    /// Requires `--archive.cache-dir`, which also holds segments served without caching them.
+    #[arg(
+        id = "archive_url",
+        long = "archive.url",
+        env = "ARCHIVE_URL",
+        value_name = "URL",
+        requires = "archive_cache_dir"
+    )]
+    pub url: Option<String>,
+
+    /// S3 service endpoint for S3-compatible stores such as `MinIO`.
+    #[arg(
+        id = "archive_endpoint",
+        long = "archive.endpoint",
+        env = "ARCHIVE_ENDPOINT",
+        requires = "archive_url"
+    )]
+    pub endpoint: Option<String>,
+
+    /// Directory for the on-disk segment cache, required with `--archive.url`. Segments that do
+    /// not fit the cache are served from its `ephemeral/` subdirectory while loaded.
+    #[arg(id = "archive_cache_dir", long = "archive.cache-dir", requires = "archive_url")]
+    pub cache_dir: Option<PathBuf>,
+
+    /// Byte budget of the on-disk segment cache.
+    #[arg(id = "archive_cache_size", long = "archive.cache-size", default_value_t = DEFAULT_ARCHIVE_CACHE_BYTES)]
+    pub cache_size: u64,
+
+    /// How long a resolved archive catalog is reused, and how long archive reads fail fast
+    /// after the archive could not be opened.
+    #[arg(
+        id = "archive_catalog_ttl",
+        long = "archive.catalog-ttl",
+        default_value = "2s",
+        value_parser = humantime::parse_duration
+    )]
+    pub catalog_ttl: Duration,
+}
+
+/// Default byte budget of the on-disk archive segment cache: 1 `GiB`.
+const DEFAULT_ARCHIVE_CACHE_BYTES: u64 = 1 << 30;
+
+impl Default for ArchiveArgs {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            max_range_blocks: DEFAULT_MAX_RANGE_BLOCKS,
+            max_range_bytes: DEFAULT_MAX_RANGE_BYTES,
+            max_concurrent_ranges: DEFAULT_MAX_CONCURRENT_RANGES,
+            url: None,
+            endpoint: None,
+            cache_dir: None,
+            cache_size: DEFAULT_ARCHIVE_CACHE_BYTES,
+            catalog_ttl: DEFAULT_SNAPSHOT_TTL,
+        }
+    }
+}
+
+impl ArchiveArgs {
+    /// Owner of `eth_getTransactionCount`, decided once from `--archive.url` so the EIP-8130
+    /// and archive extensions always agree regardless of install order.
+    pub const fn transaction_count_owner(&self) -> TransactionCountOwner {
+        if self.url.is_some() {
+            TransactionCountOwner::Archive
+        } else {
+            TransactionCountOwner::Eip8130
+        }
+    }
+
+    /// Export endpoint configuration.
+    pub const fn export_config(&self) -> ArchiveExportConfig {
+        ArchiveExportConfig {
+            enabled: self.enable,
+            limits: ArchiveExportLimits {
+                max_range_blocks: self.max_range_blocks,
+                max_range_bytes: self.max_range_bytes,
+                max_concurrent_ranges: self.max_concurrent_ranges,
+            },
+        }
+    }
+
+    /// Reader configuration, or `None` without `--archive.url`.
+    pub fn reader_config(&self) -> eyre::Result<Option<ArchiveEthConfig>> {
+        let Some(url) = &self.url else { return Ok(None) };
+        let opened =
+            ArchiveStore::from_url_with(url, self.endpoint.as_deref(), StoreOptions::reader())?;
+        let cache = CacheConfig {
+            disk_dir: self.cache_dir.clone(),
+            disk_bytes: self.cache_size,
+            ..CacheConfig::default()
+        };
+        Ok(Some(ArchiveEthConfig {
+            source: ArchiveSource { store: opened.store, layout: opened.layout },
+            cache,
+            index: IndexOptions { gc_enabled: false, ..IndexOptions::default() },
+            startup_check_timeout: DEFAULT_STARTUP_CHECK_TIMEOUT,
+            snapshot_ttl: self.catalog_ttl,
+        }))
     }
 }
 
@@ -358,6 +493,10 @@ pub struct RpcStandardNodeArgs {
     /// sequencer URL. Enables those methods.
     #[arg(long = "rollup.payer", value_name = "PAYER_URL")]
     pub payer_url: Option<String>,
+
+    /// Shared chain history store (archive) arguments.
+    #[command(flatten)]
+    pub archive: ArchiveArgs,
 
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
@@ -754,6 +893,13 @@ impl StandardBaseRethNode {
         // RPC methods, so each overridden method must have exactly one owner:
         //   - Eip8130RpcExtension: owns eth_getTransactionCount, eth_estimateGas
         //     and eth_call.
+        //     With --archive.url, eth_getTransactionCount moves to ArchiveEthExtension,
+        //     which delegates non-zero nonce_key reads to the EIP-8130 implementation.
+        //     `ArchiveArgs::transaction_count_owner` decides this for both extensions.
+        //   - ArchiveEthExtension (only with --archive.url): owns eth_getBlockByNumber,
+        //     eth_getBlockByHash, eth_getTransactionByHash, eth_getTransactionReceipt,
+        //     eth_getLogs, eth_getBalance, eth_getStorageAt, eth_getCode and (see above)
+        //     eth_getTransactionCount.
         //   - ProofsHistoryExtension: registers eth_getProof variants (disjoint from
         //     the above, so it can sit anywhere in the chain).
         // New extensions touching the same RPC methods MUST coordinate ownership
@@ -823,7 +969,9 @@ impl StandardBaseRethNode {
         }
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
-        runner.install_ext::<Eip8130RpcExtension>(());
+        runner.install_ext::<ArchiveExportExtension>(args.rpc.archive.export_config());
+        runner.install_ext::<ArchiveEthExtension>(args.rpc.archive.reader_config()?);
+        runner.install_ext::<Eip8130RpcExtension>(args.rpc.archive.transaction_count_owner());
         Ok(runner)
     }
 
@@ -987,7 +1135,7 @@ fn is_inspector_opcode_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use clap::{Args, Parser};
+    use clap::{Args, CommandFactory, Parser};
 
     use super::*;
 
@@ -1022,7 +1170,95 @@ mod tests {
             inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
             payer_enabled: false,
             payer_url: None,
+            archive: ArchiveArgs::default(),
         }
+    }
+
+    /// `ArchiveArgs` flattened next to reth's ERA import args, which define an arg with id
+    /// `url`. Explicit `archive_*` ids keep clap's debug asserts from panicking on the
+    /// duplicate, and `requires` still points at `--archive.url`.
+    #[derive(Debug, Parser)]
+    struct ArchiveWithEraParser {
+        #[command(flatten)]
+        era: reth_node_core::args::EraArgs,
+        #[command(flatten)]
+        archive: ArchiveArgs,
+    }
+
+    /// Regression for the clap id collision between `ArchiveArgs::url` and reth's `era.url`:
+    /// both parse together, the archive flags land in `ArchiveArgs`, and `--archive.url` and
+    /// `--archive.cache-dir` each require the other.
+    #[test]
+    fn archive_args_parse_beside_reth_args_with_a_url_field() {
+        ArchiveWithEraParser::command().debug_assert();
+        let parsed = ArchiveWithEraParser::try_parse_from([
+            "reth",
+            "--era.url",
+            "https://era.example/",
+            "--archive.url",
+            "s3://bucket/prefix",
+            "--archive.cache-dir",
+            "/tmp/archive-cache",
+        ])
+        .expect("archive and era flags parse together");
+        assert_eq!(parsed.archive.url.as_deref(), Some("s3://bucket/prefix"), "archive url parsed");
+        assert_eq!(
+            parsed.archive.cache_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/archive-cache")),
+            "cache dir parsed"
+        );
+        assert_eq!(
+            parsed.era.source.url.as_ref().map(ToString::to_string).as_deref(),
+            Some("https://era.example/"),
+            "era url is still its own argument"
+        );
+        let err = ArchiveWithEraParser::try_parse_from(["reth", "--archive.cache-dir", "/tmp/c"])
+            .expect_err("cache dir requires --archive.url");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "missing url: {err}"
+        );
+        let err = ArchiveWithEraParser::try_parse_from(["reth", "--archive.url", "memory://c"])
+            .expect_err("--archive.url requires --archive.cache-dir");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "missing cache dir: {err}"
+        );
+        assert!(err.to_string().contains("--archive.cache-dir"), "the error names the flag: {err}");
+    }
+
+    /// The full `RpcStandardNodeArgs` passes clap's debug asserts and parses the archive flags.
+    #[test]
+    fn rpc_standard_node_args_parse_archive_flags() {
+        CommandParser::<RpcStandardNodeArgs>::command().debug_assert();
+        let parsed = CommandParser::<RpcStandardNodeArgs>::try_parse_from([
+            "reth",
+            "--archive.url",
+            "memory://chain",
+            "--archive.cache-dir",
+            "/tmp/archive-cache",
+            "--archive.max-concurrent-ranges",
+            "4",
+            "--archive.catalog-ttl",
+            "500ms",
+        ])
+        .expect("archive flags parse");
+        let archive = &parsed.args.archive;
+        assert_eq!(archive.url.as_deref(), Some("memory://chain"), "archive url parsed");
+        assert_eq!(archive.max_concurrent_ranges, 4, "concurrency limit parsed");
+        assert_eq!(archive.catalog_ttl, Duration::from_millis(500), "catalog ttl parsed");
+        assert_eq!(
+            archive.export_config().limits.max_concurrent_ranges,
+            4,
+            "the limit reaches the export"
+        );
+        let defaults = CommandParser::<RpcStandardNodeArgs>::try_parse_from(["reth"])
+            .expect("defaults parse")
+            .args
+            .archive;
+        assert_eq!(defaults, ArchiveArgs::default(), "clap defaults equal ArchiveArgs::default()");
     }
 
     #[test]

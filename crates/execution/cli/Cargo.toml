@@ -57,6 +57,8 @@ base-execution-payer-rpc.workspace = true
 base-observability-events.workspace = true
 base-execution-payload-builder.workspace = true
 base-execution-eip8130-rpc-node.workspace = true
+base-history-rpc.workspace = true
+base-history-store.workspace = true
 base-upgrade-signal = { workspace = true, features = ["metrics"] }
 
 # misc
