@@ -220,7 +220,7 @@ pub struct Args {
     pub rejection_cache_ttl_secs: u64,
 
     /// Whether to drop positively stale EIP-8130 transactions using their
-    /// captured authorization manifest before execution. Disable with
+    /// captured payer and expiry predicates before execution. Disable with
     /// `--builder.eip8130-manifest-precheck=false`.
     #[arg(
         long = "builder.eip8130-manifest-precheck",

@@ -164,25 +164,25 @@ mod tests {
         let buf = [0xc1u8, 0x80];
         assert!(AccountChange::decode(&mut &buf[..]).is_err());
 
-        // `0x02` and `0x03` are reserved too: well-formed entries of the
-        // former create and config-change shapes are rejected.
-        let mut create = Vec::new();
-        Header { list: true, payload_length: 1 + 33 + 6 + 1 }.encode(&mut create);
-        0x02u8.encode(&mut create);
+        // `0x02` and `0x03` are reserved too: well-formed RLP entries with
+        // those type bytes are rejected.
+        let mut type_02 = Vec::new();
+        Header { list: true, payload_length: 1 + 33 + 6 + 1 }.encode(&mut type_02);
+        0x02u8.encode(&mut type_02);
         b256!("0x2222222222222222222222222222222222222222222222222222222222222222")
-            .encode(&mut create);
-        bytes!("6080604052").encode(&mut create);
-        Header { list: true, payload_length: 0 }.encode(&mut create);
-        assert!(AccountChange::decode(&mut create.as_slice()).is_err());
+            .encode(&mut type_02);
+        bytes!("6080604052").encode(&mut type_02);
+        Header { list: true, payload_length: 0 }.encode(&mut type_02);
+        assert!(AccountChange::decode(&mut type_02.as_slice()).is_err());
 
-        let mut config = Vec::new();
-        Header { list: true, payload_length: 5 }.encode(&mut config);
+        let mut type_03 = Vec::new();
+        Header { list: true, payload_length: 5 }.encode(&mut type_03);
         for field in [0x03u8, 0x00, 0x07] {
-            field.encode(&mut config);
+            field.encode(&mut type_03);
         }
-        Header { list: true, payload_length: 0 }.encode(&mut config);
-        bytes!("").encode(&mut config);
-        assert!(AccountChange::decode(&mut config.as_slice()).is_err());
+        Header { list: true, payload_length: 0 }.encode(&mut type_03);
+        bytes!("").encode(&mut type_03);
+        assert!(AccountChange::decode(&mut type_03.as_slice()).is_err());
     }
 
     /// JSON names each entry by its type byte, as a hex quantity.

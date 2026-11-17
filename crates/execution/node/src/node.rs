@@ -964,7 +964,7 @@ pub struct BasePayloadBuilder {
     /// This is used to configure gas limit related constraints for the payload builder.
     pub gas_limit_config: GasLimitConfig,
     /// Whether to drop positively stale EIP-8130 transactions using their
-    /// captured authorization manifest before execution.
+    /// captured payer and expiry predicates before execution.
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,
@@ -1020,7 +1020,7 @@ impl BasePayloadBuilder {
         self
     }
 
-    /// Configure whether EIP-8130 authorization manifests are checked before execution.
+    /// Configure whether EIP-8130 payer and expiry manifests are checked before execution.
     pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
         self.manifest_precheck_enabled = enabled;
         self

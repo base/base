@@ -1873,9 +1873,11 @@ mod tests {
         precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
     };
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
+    use alloy_sol_types::SolCall;
     use base_common_consensus::{
         AccountChange, BaseTxEnvelope, Call, Delegation, Eip8130Signed, Predeploys, TxEip8130,
     };
+    use base_common_precompiles::ITransactionContext;
     use k256::ecdsa::SigningKey;
     use revm::{
         Database,
@@ -2159,6 +2161,43 @@ mod tests {
         assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
         let recipient_acc = outcome.state.get(&recipient).expect("recipient in state");
         assert_eq!(recipient_acc.info.balance, transfer, "recipient credited the call value");
+    }
+
+    /// Execution publishes the sender to the `TxContext` precompile:
+    /// `getTransactionSenderActorId()` returns the sender address right-aligned
+    /// in a 32-byte word.
+    #[test]
+    fn calls_read_the_sender_actor_id_from_tx_context() {
+        let key = signing_key(0x53);
+        let sender = eoa_address(&key);
+        let reader = address!("0x00000000000000000000000000000000000000e2");
+
+        // Calls `getTransactionSenderActorId()` and stores the returned word in
+        // slot 0.
+        let selector = ITransactionContext::getTransactionSenderActorIdCall::SELECTOR;
+        let mut code = vec![0x63];
+        code.extend_from_slice(&selector);
+        // PUSH1 0xe0 SHL PUSH1 0 MSTORE: the selector at memory[0..4].
+        code.extend_from_slice(&[0x60, 0xe0, 0x1b, 0x60, 0x00, 0x52]);
+        // CALL(gas, TxContext, 0, 0, 4, 0, 32).
+        code.extend_from_slice(&[0x60, 0x20, 0x60, 0x00, 0x60, 0x04, 0x60, 0x00, 0x60, 0x00, 0x73]);
+        code.extend_from_slice(TxContextStorage::ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xf1]);
+        // POP PUSH1 0 MLOAD PUSH1 0 SSTORE STOP.
+        code.extend_from_slice(&[0x50, 0x60, 0x00, 0x51, 0x60, 0x00, 0x55, 0x00]);
+
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: reader, value: U256::ZERO, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+
+        let initial_balance = U256::from(10u64).pow(U256::from(18u64));
+        let mut evm = evm_with_accounts(initial_balance, sender, &[(reader, Bytes::from(code))]);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("8130 tx should execute");
+
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        let stored =
+            outcome.state.get(&reader).expect("reader in state").storage[&U256::ZERO].present_value;
+        assert_eq!(B256::from(stored), sender.into_word());
     }
 
     /// A value-bearing call to an account that does not exist pays

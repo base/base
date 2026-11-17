@@ -43,7 +43,7 @@ pub struct BaseNode {
     /// batcher via the `miner_` api)
     pub gas_limit_config: GasLimitConfig,
     /// Whether to drop positively stale EIP-8130 transactions using their
-    /// captured authorization manifest before execution.
+    /// captured payer and expiry predicates before execution.
     pub manifest_precheck_enabled: bool,
     /// Resource metering by opcode for native payload admission.
     pub resource_metering: ResourceMeteringConfig,
@@ -85,7 +85,7 @@ impl BaseNode {
         self
     }
 
-    /// Configure whether EIP-8130 authorization manifests are checked before execution.
+    /// Configure whether EIP-8130 payer and expiry manifests are checked before execution.
     pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
         self.manifest_precheck_enabled = enabled;
         self
