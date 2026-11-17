@@ -105,6 +105,38 @@ mod tests {
     /// (`plonk_vkey_hash[..4]`) that prefixes the on-chain seal.
     const VKEY_PREFIX: [u8; 4] = [0x5a, 0x09, 0x3a, 0x2f];
 
+    /// Builds a PLONK receipt with the pinned `sp1-sdk` types, so tests check
+    /// the decoder against SP1's real wire layout.
+    fn sp1_plonk_receipt(vkey_prefix: [u8; 4], encoded_proof: &str) -> SP1ProofWithPublicValues {
+        let mut receipt = SP1ProofWithPublicValues {
+            proof: SP1Proof::Plonk(Default::default()),
+            public_values: SP1PublicValues::new(),
+            sp1_version: "test".to_owned(),
+            tee_proof: None,
+        };
+        let SP1Proof::Plonk(plonk) = &mut receipt.proof else {
+            unreachable!("receipt was built as PLONK");
+        };
+        plonk.encoded_proof = encoded_proof.to_owned();
+        plonk.plonk_vkey_hash[..4].copy_from_slice(&vkey_prefix);
+        receipt
+    }
+
+    /// Encodes a receipt with the prover-service wire configuration used by
+    /// the `base-proof-zk-backend` provers.
+    fn sp1_receipt_bytes(receipt: &SP1ProofWithPublicValues) -> Vec<u8> {
+        bincode::serde::encode_to_vec(receipt, bincode::config::standard())
+            .expect("receipt must encode")
+    }
+
+    #[test]
+    fn fixture_matches_sp1_encoding() {
+        assert_eq!(
+            SnarkReceiptFixture::plonk_receipt_bytes(VKEY_PREFIX, "abcd"),
+            sp1_receipt_bytes(&sp1_plonk_receipt(VKEY_PREFIX, "abcd")),
+        );
+    }
+
     #[test]
     fn encode_onchain_zk_proof_prefixes_zk_type_and_vkey() {
         let receipt_bytes = SnarkReceiptFixture::plonk_receipt_bytes(VKEY_PREFIX, "abcd");
@@ -131,23 +163,19 @@ mod tests {
             tee_proof: None,
         };
 
-        let error = SnarkReceiptEncoder::encode_onchain_zk_proof(
-            &SnarkReceiptFixture::receipt_bytes(&receipt),
-        )
-        .expect_err("non-PLONK receipt must fail");
+        let error = SnarkReceiptEncoder::encode_onchain_zk_proof(&sp1_receipt_bytes(&receipt))
+            .expect_err("non-PLONK receipt must fail");
 
         assert!(matches!(error, SnarkReceiptDecodeError::NotPlonk));
     }
 
     #[test]
     fn encode_onchain_zk_proof_rejects_tee_2fa_receipts() {
-        let mut receipt = SnarkReceiptFixture::plonk_receipt(VKEY_PREFIX, "abcd");
+        let mut receipt = sp1_plonk_receipt(VKEY_PREFIX, "abcd");
         receipt.tee_proof = Some(vec![0xEE; 8]);
 
-        let error = SnarkReceiptEncoder::encode_onchain_zk_proof(
-            &SnarkReceiptFixture::receipt_bytes(&receipt),
-        )
-        .expect_err("TEE-2FA receipt must fail");
+        let error = SnarkReceiptEncoder::encode_onchain_zk_proof(&sp1_receipt_bytes(&receipt))
+            .expect_err("TEE-2FA receipt must fail");
 
         assert!(matches!(error, SnarkReceiptDecodeError::TeeProof));
     }
@@ -172,7 +200,7 @@ mod tests {
 
     #[test]
     fn encode_onchain_zk_proof_skips_populated_receipt_fields() {
-        let mut receipt = SnarkReceiptFixture::plonk_receipt(VKEY_PREFIX, "abcd");
+        let mut receipt = sp1_plonk_receipt(VKEY_PREFIX, "abcd");
         receipt.public_values = SP1PublicValues::from(&[0x11; 96][..]);
         receipt.sp1_version = "v6.10.0".to_owned();
         let SP1Proof::Plonk(plonk) = &mut receipt.proof else {
@@ -182,10 +210,8 @@ mod tests {
         plonk.raw_proof = "ef".repeat(400);
         plonk.plonk_vkey_hash[4..].fill(0xCC);
 
-        let proof = SnarkReceiptEncoder::encode_onchain_zk_proof(
-            &SnarkReceiptFixture::receipt_bytes(&receipt),
-        )
-        .expect("populated receipt encodes");
+        let proof = SnarkReceiptEncoder::encode_onchain_zk_proof(&sp1_receipt_bytes(&receipt))
+            .expect("populated receipt encodes");
 
         assert_eq!(proof.as_ref(), &[1, 0x5a, 0x09, 0x3a, 0x2f, 0xab, 0xcd]);
     }
