@@ -387,24 +387,21 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
         // Counted at its full length even before it is filled: subpools subtract
         // a transaction's size on removal exactly as they added it, so the size
         // must not change while the transaction is pooled.
-        let encoding_size = core::mem::size_of::<OnceLock<Bytes>>() + self.inner.encoded_length;
+        let encoding_heap_size = self.inner.encoded_length;
         let validity_predicates_size = self.validity_conditions.as_ref().map_or(0, |conditions| {
             core::mem::size_of::<crate::ValidityConditions>() + conditions.heap_size()
         });
         let metering_size = self.metering.as_ref().map_or(0, |metering| {
             core::mem::size_of::<MeterBundleResponse>() + metering.heap_size()
         });
-        self.inner.size()
-            + core::mem::size_of::<u128>()
-            + core::mem::size_of::<Option<Arc<crate::ValidityConditions>>>()
-            + core::mem::size_of::<OnceLock<crate::WatchSet>>()
+        // Every inline field, plus the consensus transaction's heap: the part of
+        // its reported size (`self.inner.size()`) beyond its inline slot.
+        core::mem::size_of::<Self>()
+            + self.inner.size().saturating_sub(core::mem::size_of::<Cons>())
             + watch_keys_size
             + invalidation_index_size
-            + encoding_size
-            + core::mem::size_of::<OnceLock<crate::LimitClass>>()
-            + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
+            + encoding_heap_size
             + validity_predicates_size
-            + core::mem::size_of::<Option<Arc<MeterBundleResponse>>>()
             + metering_size
     }
 }
@@ -956,6 +953,17 @@ mod tests {
         assert!(existing.is_replacement_underpriced(&with_predicates(10, 110), &bumps));
         assert!(existing.is_replacement_underpriced(&with_predicates(11, 109), &bumps));
         assert!(!existing.is_replacement_underpriced(&with_predicates(11, 110), &bumps));
+    }
+
+    #[test]
+    fn in_memory_size_covers_every_inline_field_and_the_encoding() {
+        for transaction in [eip1559_pooled_with_fees(1, 2), base_tx_pooled(U256::ZERO)] {
+            assert!(
+                transaction.size()
+                    >= core::mem::size_of::<BasePooledTransaction>() + transaction.encoded_length(),
+                "the pooled transaction holds its inline fields and its cached encoding"
+            );
+        }
     }
 
     #[test]
