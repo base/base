@@ -19,6 +19,8 @@
 //! 7. Error texts inside a result are free text too: a string `error` field (call tracer
 //!    frames, struct logs, `eth_createAccessList`) becomes `"<error>"`, so only its presence is
 //!    compared, and an object `error` (an `eth_simulateV1` call) loses its `message`.
+//! 8. A struct log's `"refund": 0` is dropped: geth (and Nethermind) omit a zero refund, reth
+//!    writes it.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -190,6 +192,9 @@ impl RpcCompare {
                     }
                     _ => {}
                 }
+                if object.get("refund") == Some(&json!(0)) && object.contains_key("op") {
+                    object.remove("refund");
+                }
                 object.values_mut().for_each(Self::error_texts);
             }
             Value::Array(items) => items.iter_mut().for_each(Self::error_texts),
@@ -312,6 +317,19 @@ mod tests {
         let none = n(json!({"id":1,"result":{"calls":[{}]}}));
         assert!(RpcVerdict::compare(&[("a".into(), oog.clone()), ("b".into(), other)]).agree);
         assert!(!RpcVerdict::compare(&[("a".into(), oog), ("b".into(), none)]).agree);
+
+        // A zero struct-log refund equals an absent one; a nonzero refund does not.
+        let log = |refund: Option<u64>| {
+            let mut step = json!({"op":"SSTORE","gas":10});
+            if let Some(refund) = refund {
+                step["refund"] = json!(refund);
+            }
+            n(json!({"id":1,"result":{"structLogs":[step]}}))
+        };
+        assert!(RpcVerdict::compare(&[("a".into(), log(Some(0))), ("b".into(), log(None))]).agree);
+        assert!(
+            !RpcVerdict::compare(&[("a".into(), log(Some(4800))), ("b".into(), log(None))]).agree
+        );
     }
 
     #[test]

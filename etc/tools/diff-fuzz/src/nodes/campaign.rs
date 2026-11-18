@@ -432,13 +432,20 @@ impl RpcCampaign {
             .iter()
             .map(|(name, reply)| (name.clone(), RpcCompare::normalize(&case.method, reply)))
             .collect();
-        let (mut replies, mut serving) = (replies, serving);
-        if let Some(cause) = Self::known_base_cause(case, replies, &normalized) {
+        let mut replies = replies.to_vec();
+        let mut serving = serving.to_vec();
+        let known = Self::known_base_cause(case, &replies, &normalized)
+            .map(|cause| (cause, 0))
+            .or_else(|| Self::known_nethermind_cause(case, &replies, &normalized));
+        if let Some((cause, index)) = known {
             *summary.lock().expect("lock").known.entry(cause.into()).or_default() += 1;
-            normalized.remove(0);
-            replies = &replies[1..];
-            serving = serving.get(1..).unwrap_or_default();
+            normalized.remove(index);
+            replies.remove(index);
+            if index < serving.len() {
+                serving.remove(index);
+            }
         }
+        let (replies, serving) = (replies.as_slice(), serving.as_slice());
         let verdict = RpcVerdict::compare(&normalized);
         // A node that sent no JSON body (crashed, hung, or killed) is a finding even when every
         // node failed the same way.
@@ -560,9 +567,10 @@ impl RpcCampaign {
     /// trace too large to send).
     pub const KNOWN_BASE_EXTRA_PARAMS: &str = "base: parameters beyond the last are ignored";
 
-    /// base/base answers a request whose id is a negative or fractional number with no reply.
-    /// Reported; compared on the other nodes only.
-    pub const KNOWN_BASE_ID: &str = "base: negative or fractional id gets no reply";
+    /// base/base answers a request whose id it cannot read (a negative or fractional number, a
+    /// boolean, array or object) with no reply or a parse error. Reported; compared on the other
+    /// nodes only.
+    pub const KNOWN_BASE_ID: &str = "base: unreadable id gets no reply";
 
     /// The known base/base cause, if any, that explains how base answered `case`
     /// (`replies` and `normalized` reference first). The cause's cases are compared on the other
@@ -590,12 +598,185 @@ impl RpcCampaign {
         }
         let id =
             serde_json::from_str::<Value>(&case.body).ok().and_then(|body| body.get("id").cloned());
-        let odd_id =
-            id.as_ref().and_then(Value::as_f64).is_some_and(|id| id < 0.0 || id.fract() != 0.0);
-        if odd_id && reference == &json!({ "empty": true }) {
+        // Ids jsonrpsee cannot read: a negative or fractional number, a boolean, array or object.
+        let odd_id = id.as_ref().is_some_and(|id| match id {
+            Value::Number(n) => n.as_f64().is_some_and(|id| id < 0.0 || id.fract() != 0.0),
+            Value::Bool(_) | Value::Array(_) | Value::Object(_) => true,
+            Value::Null | Value::String(_) => false,
+        });
+        if odd_id
+            && (reference == &json!({ "empty": true }) || reference["error"]["code"] == -32700)
+        {
             return Some(Self::KNOWN_BASE_ID);
         }
         None
+    }
+
+    /// Nethermind accepts EIP-1898-style block parameters where base wants a number or tag (a
+    /// block hash, `""` or `null`) and answers `null` for an index of 2^64 or more.
+    pub const KNOWN_NM_BLOCK_PARAM: &str = "nethermind: lenient block parameter or index";
+    /// Nethermind refuses `0X`-prefixed hashes.
+    pub const KNOWN_NM_UPPER_PREFIX: &str = "nethermind: 0X prefix refused";
+    /// Nethermind accepts odd-length hex data, access-list entries without `storageKeys`, and
+    /// authorizations without `r` or `s`.
+    pub const KNOWN_NM_LENIENT_FIELDS: &str = "nethermind: lenient request fields";
+    /// Nethermind checks `eth_simulateV1` calls in another order, so the first error differs.
+    pub const KNOWN_NM_SIMULATE_ORDER: &str = "nethermind: simulate check order";
+    /// Nethermind (with geth) answers a priced estimate from an unfunded sender with
+    /// "gas required exceeds allowance (0)".
+    pub const KNOWN_NM_ESTIMATE_ALLOWANCE: &str = "nethermind: estimate allowance (0)";
+    /// Nethermind's prestate tracer keeps `codeHash` and lists authorities of invalid EIP-7702
+    /// authorizations, as geth does.
+    pub const KNOWN_NM_PRESTATE: &str = "nethermind: prestate codeHash and invalid authorities";
+
+    /// Nethermind's 4byteTracer skips calls to precompiles, as geth's does; revm-inspectors'
+    /// counts them.
+    pub const KNOWN_NM_4BYTE_PRECOMPILES: &str = "nethermind: 4byteTracer skips precompile calls";
+
+    /// The known Nethermind difference, if any, that explains Nethermind's answer to `case`,
+    /// with Nethermind's index: base and needlefish answer alike and Nethermind otherwise.
+    /// Nethermind's case is then compared on the other nodes only.
+    pub fn known_nethermind_cause(
+        case: &RpcCase,
+        replies: &[(String, Reply)],
+        normalized: &[(String, Value)],
+    ) -> Option<(&'static str, usize)> {
+        let get = |name: &str| normalized.iter().position(|(n, _)| n == name);
+        let (base, needlefish, nm) = (get("base")?, get("needlefish")?, get("nethermind")?);
+        let (reference, theirs) = (&normalized[base].1, &normalized[nm].1);
+        if reference != &normalized[needlefish].1 || reference == theirs {
+            return None;
+        }
+        let code = |v: &Value| v["error"]["code"].as_i64();
+        let ok = |v: &Value| v.get("result").is_some();
+        let message = match &replies[nm].1 {
+            Reply::Body(body) => body["error"]["message"].as_str().unwrap_or_default().to_owned(),
+            Reply::Transport(_) => return None,
+        };
+        let body: Value = serde_json::from_str(&case.body).ok()?;
+        let params = body.get("params").and_then(Value::as_array);
+        let strings = Self::strings(&body["params"]);
+        let cause = if ok(theirs) && code(reference) == Some(-32602) {
+            let last = params.and_then(|p| p.last());
+            let block_like = last.is_some_and(|v| {
+                v.is_null() || v == "" || v.as_str().is_some_and(|s| s.len() == 66)
+            });
+            let big_index = params.is_some_and(|p| {
+                p.iter().any(|v| {
+                    v.as_str().is_some_and(|s| s.len() > 18 && s.starts_with("0x") && s.len() < 66)
+                })
+            });
+            let odd_hex = strings
+                .iter()
+                .any(|s| s.len() > 3 && s.len() % 2 == 1 && RpcCompare::is_hex(s) && s.len() != 66);
+            let lenient = body["params"].to_string().contains("\"accessList\"")
+                && Self::any_object(&body["params"], &|o| {
+                    o.contains_key("address") && !o.contains_key("storageKeys")
+                })
+                || Self::any_object(&body["params"], &|o| {
+                    o.contains_key("chainId")
+                        && o.contains_key("nonce")
+                        && o.contains_key("address")
+                        && !(o.contains_key("r") && o.contains_key("s"))
+                });
+            if odd_hex || lenient {
+                Self::KNOWN_NM_LENIENT_FIELDS
+            } else if block_like || big_index {
+                Self::KNOWN_NM_BLOCK_PARAM
+            } else {
+                return None;
+            }
+        } else if code(theirs) == Some(-32602) && ok(reference) && case.body.contains("\"0X") {
+            Self::KNOWN_NM_UPPER_PREFIX
+        } else if case.method == "eth_simulateV1"
+            && code(theirs).is_some()
+            && code(reference).is_some()
+        {
+            Self::KNOWN_NM_SIMULATE_ORDER
+        } else if case.method == "eth_estimateGas"
+            && message.starts_with("gas required exceeds allowance (0)")
+        {
+            Self::KNOWN_NM_ESTIMATE_ALLOWANCE
+        } else if case.body.contains("4byteTracer") && Self::counts_within(theirs, reference) {
+            Self::KNOWN_NM_4BYTE_PRECOMPILES
+        } else if case.body.contains("prestateTracer")
+            && Self::without_extra_accounts(theirs, reference) == *reference
+        {
+            Self::KNOWN_NM_PRESTATE
+        } else {
+            return None;
+        };
+        Some((cause, nm))
+    }
+
+    /// Whether `value` matches `reference` except that its numeric counts may be lower or
+    /// missing (a 4byteTracer result that leaves some calls out).
+    fn counts_within(value: &Value, reference: &Value) -> bool {
+        match (value, reference) {
+            (Value::Object(object), Value::Object(theirs)) => object.iter().all(|(key, v)| {
+                theirs.get(key).is_some_and(|r| match (v.as_u64(), r.as_u64()) {
+                    (Some(count), Some(limit)) => count <= limit,
+                    _ => Self::counts_within(v, r),
+                })
+            }),
+            (Value::Array(items), Value::Array(theirs)) => {
+                items.len() == theirs.len()
+                    && items.iter().zip(theirs).all(|(v, r)| Self::counts_within(v, r))
+            }
+            _ => value == reference,
+        }
+    }
+
+    /// Every string inside `value`.
+    fn strings(value: &Value) -> Vec<&str> {
+        match value {
+            Value::String(s) => vec![s.as_str()],
+            Value::Array(items) => items.iter().flat_map(Self::strings).collect(),
+            Value::Object(object) => object.values().flat_map(Self::strings).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether any object inside `value` satisfies `test`.
+    fn any_object(value: &Value, test: &dyn Fn(&serde_json::Map<String, Value>) -> bool) -> bool {
+        match value {
+            Value::Object(object) => {
+                test(object) || object.values().any(|v| Self::any_object(v, test))
+            }
+            Value::Array(items) => items.iter().any(|v| Self::any_object(v, test)),
+            _ => false,
+        }
+    }
+
+    /// `value` without the `codeHash` fields and the account (address-keyed) entries that
+    /// `reference` lacks at the same place.
+    fn without_extra_accounts(value: &Value, reference: &Value) -> Value {
+        match (value, reference) {
+            (Value::Object(object), Value::Object(theirs)) => Value::Object(
+                object
+                    .iter()
+                    .filter(|(key, _)| {
+                        theirs.contains_key(*key)
+                            || !(key.as_str() == "codeHash"
+                                || (key.len() == 42 && RpcCompare::is_hex(key)))
+                    })
+                    .map(|(key, v)| {
+                        let reference = theirs.get(key).unwrap_or(&Value::Null);
+                        (key.clone(), Self::without_extra_accounts(v, reference))
+                    })
+                    .collect(),
+            ),
+            (Value::Array(items), Value::Array(theirs)) => Value::Array(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        Self::without_extra_accounts(v, theirs.get(i).unwrap_or(&Value::Null))
+                    })
+                    .collect(),
+            ),
+            _ => value.clone(),
+        }
     }
 
     /// Whether `normalized` (reference first) shows [`Self::KNOWN_BASE_GENESIS`]: base failed
@@ -908,6 +1089,67 @@ mod tests {
         };
         assert_eq!(known(&with_id(json!(-1)), &empty, ""), Some(RpcCampaign::KNOWN_BASE_ID));
         assert_eq!(known(&with_id(json!(1.5)), &empty, ""), Some(RpcCampaign::KNOWN_BASE_ID));
+        assert_eq!(known(&with_id(json!([1])), &empty, ""), Some(RpcCampaign::KNOWN_BASE_ID));
+        let parse = json!({"id":null,"error":{"code":-32700}});
+        assert_eq!(known(&with_id(json!(1.5)), &parse, ""), Some(RpcCampaign::KNOWN_BASE_ID));
         assert_eq!(known(&with_id(json!(1)), &empty, ""), None);
+    }
+
+    #[test]
+    fn known_nethermind_causes_need_base_and_needlefish_agreeing() {
+        let classify = |case: &RpcCase, base: Value, needlefish: Value, nm: Value| {
+            let replies = vec![
+                ("base".to_owned(), Reply::Body(base)),
+                ("needlefish".to_owned(), Reply::Body(needlefish)),
+                ("nethermind".to_owned(), Reply::Body(nm)),
+            ];
+            let normalized: Vec<(String, Value)> = replies
+                .iter()
+                .map(|(n, r)| (n.clone(), RpcCompare::normalize(&case.method, r)))
+                .collect();
+            RpcCampaign::known_nethermind_cause(case, &replies, &normalized).map(|(c, _)| c)
+        };
+        let invalid = json!({"id":1,"error":{"code":-32602,"message":"invalid params"}});
+        let ok = json!({"id":1,"result":"0x1"});
+        let hash = format!("0x{}", "ab".repeat(32));
+        let by_hash = RpcCase::new("state", "eth_getBalance", json!(["0x01", hash]));
+        assert_eq!(
+            classify(&by_hash, invalid.clone(), invalid.clone(), ok.clone()),
+            Some(RpcCampaign::KNOWN_NM_BLOCK_PARAM)
+        );
+        // Not when needlefish sides with Nethermind, nor for a block number.
+        assert_eq!(classify(&by_hash, invalid.clone(), ok.clone(), ok.clone()), None);
+        let by_number = RpcCase::new("state", "eth_getBalance", json!(["0x01", "0x10"]));
+        assert_eq!(classify(&by_number, invalid.clone(), invalid, ok), None);
+        // Prestate: extra accounts and codeHash only on Nethermind are known; another value is not.
+        let trace = RpcCase::new(
+            "trace",
+            "debug_traceTransaction",
+            json!(["0x01", {"tracer": "prestateTracer"}]),
+        );
+        let a = "0x00000000000000000000000000000000000000aa";
+        let b = "0x00000000000000000000000000000000000000bb";
+        let base = json!({"id":1,"result":{a:{"balance":"0x1"}}});
+        let extra =
+            json!({"id":1,"result":{a:{"balance":"0x1","codeHash":"0x00"},b:{"balance":"0x2"}}});
+        let other = json!({"id":1,"result":{a:{"balance":"0x2"}}});
+        assert_eq!(
+            classify(&trace, base.clone(), base.clone(), extra),
+            Some(RpcCampaign::KNOWN_NM_PRESTATE)
+        );
+        assert_eq!(classify(&trace, base.clone(), base, other), None);
+        // 4byteTracer: fewer or missing counts on Nethermind are known; a higher count is not.
+        let four = RpcCase::new(
+            "trace",
+            "debug_traceTransaction",
+            json!(["0x01", {"tracer": "4byteTracer"}]),
+        );
+        let counts = |c: Value| json!({"id":1,"result":c});
+        let base = counts(json!({"0x00000000-33":10,"0xa9059cbb-68":1}));
+        assert_eq!(
+            classify(&four, base.clone(), base.clone(), counts(json!({"0xa9059cbb-68":1}))),
+            Some(RpcCampaign::KNOWN_NM_4BYTE_PRECOMPILES)
+        );
+        assert_eq!(classify(&four, base.clone(), base, counts(json!({"0xa9059cbb-68":2}))), None);
     }
 }
