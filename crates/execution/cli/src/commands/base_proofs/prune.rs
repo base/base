@@ -195,11 +195,15 @@ mod tests {
         let datadir = directory.path().join("execution");
         let proofs = directory.path().join("proofs");
         let command = PruneCommand::<BaseChainSpecParser>::try_parse_from([
-            "prune", "--chain", "base-sepolia", "--datadir",
+            "prune",
+            "--chain",
+            "base-sepolia",
+            "--datadir",
             datadir.to_str().expect("temporary datadir is UTF-8"),
             "--proofs-history.storage-path",
             proofs.to_str().expect("temporary proofs path is UTF-8"),
-            "--proofs-history.db", "rocksdb",
+            "--proofs-history.db",
+            "rocksdb",
         ])?;
         {
             let environment = command.env.init::<BaseNode>(AccessRights::RW, runtime.clone())?;
@@ -219,12 +223,17 @@ mod tests {
         let result = command.execute::<BaseNode>(runtime.clone()).await;
         assert!(result.is_ok(), "offline proofs prune must heal before reading: {result:?}");
         let env = EnvironmentArgs::<BaseChainSpecParser>::try_parse_from([
-            "inspect", "--chain", "base-sepolia", "--datadir",
+            "inspect",
+            "--chain",
+            "base-sepolia",
+            "--datadir",
             datadir.to_str().expect("temporary datadir is UTF-8"),
         ])?;
         let environment = env.init::<BaseNode>(AccessRights::RO, runtime)?;
         assert_eq!(
-            environment.provider_factory.static_file_provider()
+            environment
+                .provider_factory
+                .static_file_provider()
                 .get_highest_static_file_block(StaticFileSegment::Headers),
             Some(0),
             "proofs prune must remove the header above the database checkpoint"

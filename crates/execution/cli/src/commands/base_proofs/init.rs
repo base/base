@@ -206,7 +206,6 @@ mod tests {
         Ok(command)
     }
 
-
     /// Verifies offline proofs initialization heals an interrupted execution static-file commit.
     #[tokio::test]
     async fn proofs_init_heals_static_files_before_backfill() -> eyre::Result<()> {
@@ -215,7 +214,10 @@ mod tests {
         let command = interrupted_static_file_commit(&directory, runtime.clone())?;
         let datadir = directory.path().join("execution");
         let result = command.execute::<BaseNode>(runtime.clone()).await;
-        assert!(result.is_ok(), "offline proofs initialization must heal before backfilling: {result:?}");
+        assert!(
+            result.is_ok(),
+            "offline proofs initialization must heal before backfilling: {result:?}"
+        );
         let env = EnvironmentArgs::<BaseChainSpecParser>::try_parse_from([
             "inspect",
             "--chain",
@@ -225,7 +227,9 @@ mod tests {
         ])?;
         let environment = env.init::<BaseNode>(AccessRights::RO, runtime)?;
         assert_eq!(
-            environment.provider_factory.static_file_provider()
+            environment
+                .provider_factory
+                .static_file_provider()
                 .get_highest_static_file_block(StaticFileSegment::Headers),
             Some(0),
             "initialization must remove the uncommitted header above the database checkpoint"
