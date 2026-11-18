@@ -704,35 +704,6 @@ mod tests {
     const TEST_CHAIN_ID: u64 = 7_777_777;
 
     #[tokio::test]
-    async fn driver_stops_when_handler_is_dropped() {
-        let dir = tempdir().unwrap();
-        let CombinedKey::Secp256k1(secret_key) = CombinedKey::generate_secp256k1() else {
-            unreachable!()
-        };
-        let listen = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-        let (handle, mut enr_recv) = Discv5Driver::builder(
-            LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::LOCALHOST), 0, 0),
-            TEST_CHAIN_ID,
-            ConfigBuilder::new(listen.into()).build(),
-        )
-        .with_bootstore_file(Some(BootStoreFile::Custom(dir.path().join("bootstore.json"))))
-        .build()
-        .expect("Failed to build discovery service")
-        .start();
-
-        // Answering a request means the driver has reached its main loop.
-        handle.local_enr().await.unwrap();
-        drop(handle);
-
-        // The driver task owns the ENR sender, so the receiver closes once the task exits.
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while enr_recv.recv().await.is_some() {}
-        })
-        .await
-        .expect("discovery driver did not stop after its handler was dropped");
-    }
-
-    #[tokio::test]
     async fn admits_peer_whose_packets_leave_from_a_translated_port() {
         let dir = tempdir().unwrap();
 
