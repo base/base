@@ -4276,6 +4276,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-diff-trie-adapter"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-trie",
+ "base-diff-adapter",
+ "base-diff-fuzz",
+ "base-execution-trie",
+ "eyre",
+ "reth-chainspec",
+ "reth-db",
+ "reth-db-api",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-storage-api",
+ "reth-tasks",
+ "reth-trie",
+ "reth-trie-common",
+ "reth-trie-db",
+ "reth-trie-sparse",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "base-execution-chainspec"
 version = "0.0.0"
 dependencies = [

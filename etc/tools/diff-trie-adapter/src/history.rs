@@ -1,0 +1,213 @@
+//! Base's proofs-history store (`base-execution-trie`): versioned trie nodes and hashed state
+//! per block, the overlay roots and proofs computed over them, unwinds, and historical reads.
+
+use std::sync::{Arc, Mutex};
+
+use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
+use alloy_primitives::{B256, keccak256};
+use base_diff_fuzz::{ProofTarget, TrieBlockResult};
+use base_execution_trie::{
+    BaseProofsBatchSession, BaseProofsBatchStateProviderRef, BaseProofsBatchStore,
+    BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, BlockStateDiff,
+    provider::BaseProofsStateProviderRef,
+};
+use reth_provider::noop::NoopProvider;
+use reth_storage_api::{StateProofProvider, StateRootProvider};
+use reth_trie_common::{HashedPostState, MultiProofTargets, TrieInput};
+
+use crate::RethDb;
+
+/// A proofs-history store fed block by block, as its live collector feeds it.
+#[derive(Debug)]
+pub struct ProofsHistory<S: BaseProofsStore + 'static> {
+    /// The store.
+    pub store: Arc<S>,
+    /// The store, behind the node's (optionally metered) wrapper.
+    pub storage: BaseProofsStorage<Arc<S>>,
+    /// Hashes of the canonical blocks by number, from the anchor at block 0.
+    pub chain: Vec<B256>,
+    /// Blocks built so far, which makes hashes of reorged blocks unique.
+    pub built: u64,
+}
+
+impl<S> ProofsHistory<S>
+where
+    S: BaseProofsStore + BaseProofsInitialStateStore + BaseProofsBatchStore + 'static,
+    Arc<S>: BaseProofsStore + Clone,
+{
+    /// Anchors an empty store at block 0, the empty state.
+    pub fn new(store: S) -> eyre::Result<Self> {
+        let store = Arc::new(store);
+        store.set_initial_state_anchor(BlockNumHash::new(0, B256::ZERO))?;
+        store.commit_initial_state()?;
+        Ok(Self { storage: Arc::clone(&store).into(), store, chain: vec![B256::ZERO], built: 0 })
+    }
+
+    /// The block reference of block `number` on top of the current chain.
+    fn next_block(&mut self, number: u64) -> BlockWithParent {
+        self.built += 1;
+        let mut seed = [0u8; 16];
+        seed[..8].copy_from_slice(&number.to_be_bytes());
+        seed[8..].copy_from_slice(&self.built.to_be_bytes());
+        BlockWithParent::new(self.chain[number as usize - 1], NumHash::new(number, keccak256(seed)))
+    }
+
+    /// Proofs of `targets` at block `number`.
+    fn proofs(&self, number: u64, targets: &[ProofTarget]) -> eyre::Result<TrieBlockResult> {
+        let provider =
+            BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &self.storage, number);
+        let root = provider.state_root(HashedPostState::default())?;
+        let mut request = MultiProofTargets::default();
+        for target in targets {
+            request.entry(target.key).or_default().extend(target.slots.iter().copied());
+        }
+        let multiproof = provider.multiproof(TrieInput::default(), request)?;
+        let proofs = targets
+            .iter()
+            .map(|target| RethDb::proof(&multiproof, target))
+            .collect::<eyre::Result<_>>()?;
+        Ok(TrieBlockResult {
+            number: Some(number),
+            state_root: Some(root),
+            proofs: Some(proofs),
+            ..Default::default()
+        })
+    }
+
+    /// Builds block `number` (whose parent is `number - 1` after dropping `unwind` blocks) from
+    /// `state`: its root and trie updates over the store at the parent, then stored (replacing
+    /// the dropped blocks after an unwind), and the block's root and proofs read back.
+    pub fn block(
+        &mut self,
+        number: u64,
+        unwind: u64,
+        state: &HashedPostState,
+        targets: &[ProofTarget],
+    ) -> eyre::Result<TrieBlockResult> {
+        self.chain.truncate(number as usize);
+        let parent = number - 1;
+        let provider =
+            BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &self.storage, parent);
+        let (root, updates) = provider.state_root_with_updates(state.clone())?;
+        drop(provider);
+        let block = self.next_block(number);
+        let diff = BlockStateDiff {
+            sorted_trie_updates: updates.into_sorted(),
+            sorted_post_state: state.clone().into_sorted(),
+        };
+        if unwind > 0 {
+            self.storage
+                .replace_updates(BlockNumHash::new(parent, block.parent), vec![(block, diff)])?;
+        } else {
+            self.storage.store_trie_updates(block, diff)?;
+        }
+        self.chain.push(block.block.hash);
+        let mut result = self.proofs(number, targets)?;
+        eyre::ensure!(
+            result.state_root == Some(root),
+            "root read back at block {number} differs from the overlay root {root}"
+        );
+        result.state_root = Some(root);
+        Ok(result)
+    }
+
+    /// Roots and proofs read back after the last block at each of `blocks` (number and proof
+    /// targets) that is still canonical; the others stay empty.
+    pub fn history(
+        &self,
+        blocks: &[(u64, Vec<ProofTarget>)],
+        canonical: &[bool],
+    ) -> Vec<TrieBlockResult> {
+        blocks
+            .iter()
+            .zip(canonical)
+            .map(|((number, targets), canonical)| {
+                if !canonical {
+                    return TrieBlockResult::default();
+                }
+                self.proofs(*number, targets).unwrap_or_else(|err| TrieBlockResult {
+                    error: Some(format!("history read at block {number}: {err:#}")),
+                    ..Default::default()
+                })
+            })
+            .collect()
+    }
+
+    /// Builds every block (none unwinds) in one batch session, as cold catch-up does: each
+    /// block's root over the session's view of its parent, which includes the session's own
+    /// earlier writes.
+    pub fn batch(
+        store: S,
+        states: &[(u64, HashedPostState, Vec<ProofTarget>)],
+    ) -> eyre::Result<Vec<TrieBlockResult>> {
+        let mut history = Self::new(store)?;
+        let blocks: Vec<BlockWithParent> = states
+            .iter()
+            .map(|(number, _, _)| {
+                let block = history.next_block(*number);
+                history.chain.push(block.block.hash);
+                block
+            })
+            .collect();
+        let results = Mutex::new(Vec::new());
+        history.store.with_batch_session(|session| {
+            for ((number, state, targets), block) in states.iter().zip(&blocks) {
+                let result = Self::batch_block(session, *number, state, targets, *block);
+                let failed = result.is_err();
+                results.lock().expect("not poisoned").push(result);
+                if failed {
+                    break;
+                }
+            }
+            Ok(())
+        })?;
+        let results = results.into_inner().expect("not poisoned");
+        Ok(results
+            .into_iter()
+            .map(|result| {
+                result.unwrap_or_else(|err| TrieBlockResult {
+                    error: Some(format!("batch session: {err:#}")),
+                    ..Default::default()
+                })
+            })
+            .collect())
+    }
+
+    fn batch_block(
+        session: &mut S::BatchSession<'_>,
+        number: u64,
+        state: &HashedPostState,
+        targets: &[ProofTarget],
+        block: BlockWithParent,
+    ) -> eyre::Result<TrieBlockResult> {
+        let provider = BaseProofsBatchStateProviderRef::new(
+            Box::<NoopProvider>::default(),
+            session,
+            number - 1,
+        );
+        let (root, updates) = provider.state_root_with_updates(state.clone())?;
+        drop(provider);
+        let diff = BlockStateDiff {
+            sorted_trie_updates: updates.into_sorted(),
+            sorted_post_state: state.clone().into_sorted(),
+        };
+        session.store_trie_updates(block, diff)?;
+        let provider =
+            BaseProofsBatchStateProviderRef::new(Box::<NoopProvider>::default(), session, number);
+        let mut request = MultiProofTargets::default();
+        for target in targets {
+            request.entry(target.key).or_default().extend(target.slots.iter().copied());
+        }
+        let multiproof = provider.multiproof(TrieInput::default(), request)?;
+        let proofs = targets
+            .iter()
+            .map(|target| RethDb::proof(&multiproof, target))
+            .collect::<eyre::Result<_>>()?;
+        Ok(TrieBlockResult {
+            number: Some(number),
+            state_root: Some(root),
+            proofs: Some(proofs),
+            ..Default::default()
+        })
+    }
+}

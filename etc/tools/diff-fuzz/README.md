@@ -44,6 +44,8 @@ post-state, and every header field. The wire format between the harness and an a
   finding's `minimized-case.json`.
 - `state --launch <script> --root <dir> --node name=http,auth ...`: differential state fuzzing of
   real nodes through reorgs and restarts (below).
+- `trie-fuzz --duration 2h [--unguided]`: coverage-guided differential fuzzing of state root
+  code in process (below); `trie-run [--minimize N] <case.json>...` reruns saved trie cases.
 
 Each takes `--adapter name=command...` once per client, `--jobs`, and `--out`. Divergences and
 adapter failures go to `<out>/findings/<case id>/`: the request, `verdict.json`, and every
@@ -216,6 +218,54 @@ as `eth_call` to `eth_estimateGas`), or edit single characters of the body to re
 `<out>/rpc-coverage.json` is rewritten every round: requests and requests per second, distinct
 features, distinct edges per node, corpus size, kept requests by origin, mutation operator, and
 method, and a timeline with one sample per round.
+
+## Differential trie fuzzing
+
+`trie-fuzz` compares state root code directly, without executing transactions: every adapter gets
+a series of blocks of hashed-key writes (account create, update, and delete; storage set, change,
+and clear; storage wipes; recreated accounts), applies them to its trie code over its own on-disk
+database, and reports the state root, storage roots, and account and storage proofs after every
+block ([`TRIE_PROTOCOL.md`](./TRIE_PROTOCOL.md)). Adapters report more code paths as variants
+(`<adapter>/<variant>`), and the harness adds its own from-scratch trie as `model`. Every block
+of every implementation is compared field by field against the majority; proofs also have to
+verify against their own roots.
+
+A case (`TrieCase`) is the block list itself. The generator picks keys in hashed-key space so
+cases aim at trie shapes: keys sharing prefixes of every length, branches collapsing to an
+extension or a leaf, extensions splitting, embedded nodes, deletes down to an empty trie, many
+writes under one storage trie, keys written and set back within a block or across blocks, and
+unwinds (with the `revert` ops an adapter without native unwinds applies). Proof reads target
+touched, untouched, and absent keys next to existing ones. Most cases keep every two keys to at
+most 12 shared nibbles, which keccak keys of a real trie reach (about 2^48 hashes); a fifth go
+deeper. A quarter use keys with preimages, for implementations keyed by address and slot.
+
+Guidance is edge coverage of the coverage adapters (by default every adapter): `edge:` for
+base/base (`base-diff-trie-adapter` built with `edge-coverage` and the trie crates in
+`SANCOV_CRATES`), `nm:edge:` and `nf:edge:` for the others. A case is kept when it reaches an edge
+name no earlier case reached and a second run of it reaches that edge again; hit counts do not
+count. The second run filters edges that differ between runs of one request, such as
+Nethermind's, whose previous-location state is per thread. Mutations re-roll, insert, remove,
+duplicate, or swap blocks and ops, change values, move a key or slot (everywhere it appears) to
+share a chosen prefix length with another, add or drop proof reads, add or drop unwinds, splice
+blocks from another case, add a block that empties the trie or one storage trie, or truncate.
+`--unguided` runs fresh cases only and still measures coverage.
+
+Findings are grouped by signature: the most telling differing field kind in the first diverging
+block, the implementations that differ there, and for errors the error text with numbers elided.
+The first five of each are recorded in `<out>/findings/` (`case.json`, `request.json`,
+`results.json`, `verdict.json`) and the first two minimized (`minimized-*`): blocks after the
+divergence, whole blocks, runs of ops, proof reads, and unwinds are dropped while the signature
+reproduces. Each finding counts occurrences at realistic and deep key depths and the shallowest
+depth seen. Signatures of known causes (`TrieFuzzer::KNOWN`, plus `--known`) are only counted.
+`<out>/trie-coverage.json` holds counters, distinct edges per client, findings, known causes,
+mutation yields, and a timeline sampled every `--sample-secs`.
+
+```sh
+target/release/base-diff-fuzz trie-fuzz --duration 2h --jobs 4 --out trie-out --corpus trie-corpus \
+  --adapter base=target/sancov-trie/release/base-diff-trie-adapter \
+  --adapter "nethermind=dotnet $HOME/nethermind/tools/artifacts/bin/BaseDiffAdapter/instrumented-trie/BaseDiffAdapter.dll" \
+  --adapter "needlefish=$HOME/needlefish/zig-out-coverage/bin/base diff-adapter"
+```
 
 ## Differential state fuzzing of real nodes
 

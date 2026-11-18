@@ -15,6 +15,12 @@ use crate::{FuzzCase, Rng};
 pub trait CorpusCase: Clone + Serialize + DeserializeOwned {
     /// A stable name for the case, used as its file name in the corpus directory.
     fn id(&self) -> String;
+
+    /// The relative cost of running the case, at least 1. A parent's energy is divided by it,
+    /// so slow cases are mutated less often.
+    fn cost(&self) -> f64 {
+        1.0
+    }
 }
 
 impl CorpusCase for FuzzCase {
@@ -43,7 +49,7 @@ pub struct CorpusEntry<C = FuzzCase> {
 ///
 /// Parents are picked with probability proportional to their energy: the sum over their
 /// features of `1 / cases that hit the feature`, damped by how often the case was already
-/// picked. Cases that are among the few to reach a rare behavior get most of the mutations.
+/// picked and divided by its [`CorpusCase::cost`]. Cases that are among the few to reach a rare behavior get most of the mutations.
 #[derive(Debug)]
 pub struct Corpus<C = FuzzCase> {
     /// Directory the cases are saved to, one JSON file each; `None` keeps them in memory.
@@ -148,7 +154,7 @@ impl<C: CorpusCase> Corpus<C> {
     pub fn energy(&self, entry: &CorpusEntry<C>) -> f64 {
         let rarity: f64 =
             entry.features.iter().map(|id| 1.0 / self.hits[*id as usize] as f64).sum();
-        rarity / (1.0 + entry.picks as f64 / 8.0).sqrt()
+        rarity / (1.0 + entry.picks as f64 / 8.0).sqrt() / entry.case.cost()
     }
 
     /// Picks a mutation parent by energy, or `None` when the corpus is empty.

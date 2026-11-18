@@ -8,7 +8,7 @@ pub use protocol::{
 };
 
 mod runner;
-pub use runner::{Adapter, AdapterSpec, CallFailure};
+pub use runner::{Adapter, AdapterSpec, CallFailure, HasId};
 
 mod compare;
 pub use compare::{CANONICAL, Difference, Verdict};
@@ -43,6 +43,15 @@ pub use r#gen::{
     Precompiles, Program, ProgramCtx, RECURSER, REFUNDER, RELAY, Registry, Rng, STRESSOR,
     Scenarios, Schedule, Shape, Stress, StressPlan, SysConfig, Template, TemplateInput, Templates,
     Token, TrafficMix, TrieBuilder, TxSpec, Txs, WorldState, era_blocks,
+};
+
+mod trie;
+pub use trie::{
+    BuiltCase, BuiltTrie, CaseBlock, ModelAccount, Preimages, ProofAccount, ProofResult,
+    ProofTarget, StorageProofResult, TrieBlock, TrieBlockResult, TrieCase, TrieCompare,
+    TrieDifference, TrieFinding, TrieFuzzConfig, TrieFuzzStats, TrieFuzzer, TrieGen, TrieInput,
+    TrieModel, TrieMutator, TrieOp, TrieRequest, TrieResponse, TrieResults, TrieSample,
+    TrieVerdict,
 };
 
 mod nodes;

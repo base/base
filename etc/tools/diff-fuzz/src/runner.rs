@@ -10,8 +10,27 @@ use std::{
 };
 
 use eyre::{WrapErr, eyre};
+use serde::de::DeserializeOwned;
 
-use crate::{Request, Response};
+use crate::{Request, Response, TrieResponse};
+
+/// A protocol response, which echoes its request's id.
+pub trait HasId {
+    /// The echoed request id.
+    fn id(&self) -> &str;
+}
+
+impl HasId for Response {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+impl HasId for TrieResponse {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
 
 /// How to start one adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +133,11 @@ impl Adapter {
         Ok(Running { child, stdin: Some(stdin), lines })
     }
 
+    /// Ends the process; the next call starts a new one.
+    pub fn restart(&mut self) {
+        self.kill();
+    }
+
     fn kill(&mut self) {
         if let Some(mut running) = self.process.take() {
             Self::kill_group(&mut running.child);
@@ -132,6 +156,15 @@ impl Adapter {
 
     /// Sends one serialized request line and waits for its response.
     pub fn call_line(&mut self, id: &str, line: &str) -> Result<Response, CallFailure> {
+        self.call_as(id, line)
+    }
+
+    /// Sends one serialized request line and waits for a response of type `R` with id `id`.
+    pub fn call_as<R: DeserializeOwned + HasId>(
+        &mut self,
+        id: &str,
+        line: &str,
+    ) -> Result<R, CallFailure> {
         if self.process.is_none() {
             self.process =
                 Some(self.start().map_err(|err| CallFailure::Crashed(format!("{err:#}")))?);
@@ -182,11 +215,11 @@ impl Adapter {
                 return Err(CallFailure::Crashed("reader thread stopped".to_owned()));
             }
         };
-        match serde_json::from_str::<Response>(&line) {
-            Ok(response) if response.id == id => Ok(response),
+        match serde_json::from_str::<R>(&line) {
+            Ok(response) if response.id() == id => Ok(response),
             Ok(response) => {
                 self.kill();
-                Err(CallFailure::BadResponse(format!("expected id {id}, got {}", response.id)))
+                Err(CallFailure::BadResponse(format!("expected id {id}, got {}", response.id())))
             }
             Err(err) => {
                 self.kill();

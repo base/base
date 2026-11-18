@@ -6,7 +6,8 @@ use base_diff_fuzz::{
     Adapter, AdapterSpec, Campaign, ChainDriver, ChainFollower, ChainFuzzer, ConfigLogs, Era,
     FuzzConfig, Fuzzer, Generator, GeneratorOptions, Lag, MainFuzzConfig, MainFuzzer,
     MainnetFetcher, MainnetReplay, NodeClient, NodeProcess, Request, RpcCampaign, RpcConfig,
-    RpcExclude, StateCampaign, StateConfig, StateOp, StateSession,
+    RpcExclude, StateCampaign, StateConfig, StateOp, StateSession, TrieCase, TrieCompare,
+    TrieFuzzConfig, TrieFuzzer,
 };
 use clap::{Args, Parser, Subcommand};
 use eyre::WrapErr;
@@ -259,6 +260,66 @@ enum Command {
         /// Count only new feature names as new coverage, not new hit-count buckets.
         #[arg(long)]
         no_buckets: bool,
+    },
+    /// Coverage-guided differential trie fuzzing (`TRIE_PROTOCOL.md`): block sequences of
+    /// hashed-key writes and proof reads, compared across every adapter's state root code.
+    TrieFuzz {
+        #[command(flatten)]
+        common: Common,
+        /// Corpus directory; cases found there are run first (guided runs only).
+        #[arg(long)]
+        corpus: Option<PathBuf>,
+        /// Scratch directory for the adapters' databases.
+        #[arg(long, default_value = "/tmp/diff-trie")]
+        scratch: PathBuf,
+        /// Base seed of fresh cases.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// How long to run, such as `90s`, `20m`, or `2h`.
+        #[arg(long, default_value = "1h", value_parser = parse_duration)]
+        duration: Duration,
+        /// Adapters whose coverage guides the run; repeat (default: every adapter).
+        #[arg(long)]
+        coverage_from: Vec<String>,
+        /// Only run fresh cases (the baseline); coverage is still measured.
+        #[arg(long)]
+        unguided: bool,
+        /// Percentage of guided rounds that run a fresh case.
+        #[arg(long, default_value_t = 10)]
+        explore: u64,
+        /// Seconds between timeline samples.
+        #[arg(long, default_value_t = 60)]
+        sample_secs: u64,
+        /// Candidate runs one minimization may use (0 disables minimization).
+        #[arg(long, default_value_t = 400)]
+        minimize_budget: usize,
+        /// Signature substring of a known cause, counted but not recorded; repeat. Adds to the
+        /// built-in list.
+        #[arg(long)]
+        known: Vec<String>,
+    },
+    /// Runs saved trie cases (`case.json` files of `trie-fuzz` findings or corpora) on every
+    /// adapter and prints each verdict.
+    TrieRun {
+        #[command(flatten)]
+        common: Common,
+        /// Scratch directory for the adapters' databases.
+        #[arg(long, default_value = "/tmp/diff-trie")]
+        scratch: PathBuf,
+        /// Minimize each diverging case with this many candidate runs, writing
+        /// `<case>.min.json` next to it.
+        #[arg(long, default_value_t = 0)]
+        minimize: usize,
+        /// Case files.
+        cases: Vec<PathBuf>,
+    },
+    /// Prints the request a saved trie case builds into, with scratch directory `dir`.
+    TrieRequest {
+        /// Case file.
+        case: PathBuf,
+        /// Scratch directory named in the request.
+        #[arg(long, default_value = "/tmp/diff-trie-request")]
+        dir: String,
     },
     /// Writes the genesis file that starts real nodes on synthetic chain `seed`.
     NodeGenesis {
@@ -925,6 +986,102 @@ fn main() -> eyre::Result<()> {
             let stats = fuzzer.run()?;
             println!("{}", serde_json::to_string_pretty(&stats)?);
         }
+        Command::TrieFuzz {
+            common,
+            corpus,
+            scratch,
+            seed,
+            duration,
+            coverage_from,
+            unguided,
+            explore,
+            sample_secs,
+            minimize_budget,
+            known,
+        } => {
+            let fuzzer = trie_fuzzer(&common, scratch)?;
+            let known = TrieFuzzer::KNOWN.iter().map(|k| (*k).to_owned()).chain(known).collect();
+            let config = TrieFuzzConfig {
+                coverage_from: if coverage_from.is_empty() {
+                    fuzzer.config.adapters.iter().map(|a| a.name.clone()).collect()
+                } else {
+                    coverage_from
+                },
+                corpus,
+                seed,
+                duration,
+                unguided,
+                explore_percent: explore,
+                sample_every: Duration::from_secs(sample_secs),
+                minimize_budget,
+                known,
+                ..fuzzer.config
+            };
+            let stats = TrieFuzzer { config }.run()?;
+            println!("{}", serde_json::to_string_pretty(&stats.edges)?);
+            println!("{}", serde_json::to_string_pretty(&stats.findings)?);
+        }
+        Command::TrieRequest { case, dir } => {
+            let case: TrieCase = serde_json::from_str(&fs::read_to_string(&case)?)?;
+            println!(
+                "{}",
+                serde_json::to_string(&case.build("trie-request".to_owned(), dir).request)?
+            );
+        }
+        Command::TrieRun { common, scratch, minimize, cases } => {
+            let mut fuzzer = trie_fuzzer(&common, scratch)?;
+            fuzzer.config.minimize_budget = minimize;
+            let mut adapters = fuzzer.adapters();
+            let scratch = fuzzer.config.scratch.join(format!("{}-run", std::process::id()));
+            for path in cases {
+                let case: TrieCase = serde_json::from_str(&fs::read_to_string(&path)?)
+                    .wrap_err_with(|| format!("parsing {}", path.display()))?;
+                let (results, _) = fuzzer.run_case(&mut adapters, &case, "trie-run", &scratch);
+                let verdict = TrieCompare::compare(case.blocks.len(), &results);
+                let names: Vec<&String> = results.iter().map(|(n, _)| n).collect();
+                println!(
+                    "{}: {} implementations {names:?}, depth {}",
+                    path.display(),
+                    names.len(),
+                    case.depth()
+                );
+                println!("{}", serde_json::to_string_pretty(&verdict)?);
+                if let Some(signature) = verdict.signature().filter(|_| minimize > 0) {
+                    let small = fuzzer.minimize(&mut adapters, &case, &signature, &scratch);
+                    let out = path.with_extension("min.json");
+                    fs::write(&out, serde_json::to_vec_pretty(&small)?)?;
+                    println!(
+                        "minimized {signature} to {} blocks: {}",
+                        small.blocks.len(),
+                        out.display()
+                    );
+                }
+            }
+        }
     }
     Ok(())
+}
+
+/// A trie fuzzer over `common`'s adapters with default settings.
+fn trie_fuzzer(common: &Common, scratch: PathBuf) -> eyre::Result<TrieFuzzer> {
+    let adapters =
+        common.adapters.iter().map(|a| AdapterSpec::parse(a)).collect::<eyre::Result<Vec<_>>>()?;
+    Ok(TrieFuzzer {
+        config: TrieFuzzConfig {
+            adapters,
+            coverage_from: Vec::new(),
+            jobs: common.jobs,
+            duration: Duration::from_secs(0),
+            timeout: Duration::from_secs(common.timeout),
+            out: common.out.clone(),
+            corpus: None,
+            scratch,
+            seed: 1,
+            explore_percent: 10,
+            unguided: false,
+            sample_every: Duration::from_secs(60),
+            minimize_budget: 0,
+            known: Vec::new(),
+        },
+    })
 }
