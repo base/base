@@ -9,10 +9,10 @@ use std::{
     str::FromStr,
 };
 
-use alloy_primitives::{B256, b256};
+use alloy_primitives::B256;
 use alloy_provider::Provider;
 use backon::Retryable;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
 use base_consensus_gossip::{
@@ -429,11 +429,6 @@ impl P2PArgs {
         genesis_signer: Option<alloy_primitives::Address>,
     ) -> eyre::Result<alloy_primitives::Address> {
         if let Some(l1_eth_rpc) = l1_eth_rpc {
-            /// The storage slot that the unsafe block signer address is stored at.
-            /// Computed as: `bytes32(uint256(keccak256("systemconfig.unsafeblocksigner")) - 1)`
-            const UNSAFE_BLOCK_SIGNER_ADDRESS_STORAGE_SLOT: B256 =
-                b256!("0x65a7ed542fb37fe237fdfbdd70b31598523fe5b32879e307bae27a0bd9581c08");
-
             let provider = AlloyChainProvider::new(
                 L1RpcProvider::new_http_with_timeout(l1_eth_rpc, l1_rpc_timeout),
                 1024,
@@ -532,7 +527,7 @@ impl P2PArgs {
                     inner
                         .get_storage_at(
                             rollup_config.l1_system_config_address,
-                            UNSAFE_BLOCK_SIGNER_ADDRESS_STORAGE_SLOT.into(),
+                            SystemConfig::UNSAFE_BLOCK_SIGNER_SLOT.into(),
                         )
                         .hash(block_info.hash)
                         .await
