@@ -4245,6 +4245,7 @@ dependencies = [
  "base-common-evm",
  "base-common-genesis",
  "base-common-precompiles",
+ "base-common-rpc-types",
  "base-consensus-upgrades",
  "clap",
  "eyre",

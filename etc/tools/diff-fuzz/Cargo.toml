@@ -38,6 +38,7 @@ base-common-consensus = { workspace = true, features = ["std", "k256", "serde"] 
 
 # mainnet case fetcher
 alloy-rpc-types-debug.workspace = true
+base-common-rpc-types.workspace = true
 alloy-rpc-types-eth = { workspace = true, features = ["std", "serde"] }
 reqwest = { workspace = true, features = ["blocking"] }
 

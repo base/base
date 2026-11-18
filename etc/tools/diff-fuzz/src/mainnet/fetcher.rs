@@ -9,6 +9,7 @@ use std::{
 };
 
 use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header};
+use alloy_eips::Encodable2718;
 use alloy_primitives::{B64, B256, Bytes, U256, keccak256};
 use alloy_rlp::Decodable;
 use alloy_rpc_types_debug::ExecutionWitness;
@@ -16,6 +17,7 @@ use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof, root::ordered_trie_root_with_encoder};
 use base_common_chains::ChainConfig;
 use base_common_consensus::Predeploys;
+use base_common_rpc_types::BaseBlockResponse;
 use eyre::{Context, bail, ensure, eyre};
 use serde_json::json;
 
@@ -256,9 +258,17 @@ impl MainnetFetcher {
     pub fn download(&self, number: u64) -> eyre::Result<Request> {
         let tag = json!([format!("{number:#x}")]);
 
-        let raw_block: Bytes =
-            serde_json::from_value(self.blocks.call("debug_getRawBlock", tag.clone())?)?;
-        let (raw_header, transactions) = Self::split_block(&raw_block)?;
+        // Few public endpoints serve `debug_getRawBlock`, so each is asked once before falling
+        // back to the JSON block.
+        let body =
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "debug_getRawBlock", "params": tag });
+        let raw_block = self.blocks.urls.iter().find_map(|url| {
+            serde_json::from_value::<Bytes>(self.blocks.call_once(url, &body).ok()?).ok()
+        });
+        let (raw_header, transactions) = match raw_block {
+            Some(raw_block) => Self::split_block(&raw_block)?,
+            None => self.block_from_json(number)?,
+        };
         let header = Header::decode(&mut raw_header.as_ref()).wrap_err("decoding header")?;
         ensure!(header.number == number, "raw block is block {}", header.number);
 
@@ -272,8 +282,24 @@ impl MainnetFetcher {
         );
         ensure!(header.hash_slow() == canonical_hash, "header does not re-encode to its RLP");
 
-        let mut witness: ExecutionWitness =
-            serde_json::from_value(self.witness.call("debug_executionWitness", tag)?)?;
+        // Some gateway backends answer with an empty witness; ask again.
+        let mut witness = ExecutionWitness::default();
+        for _ in 0..6 {
+            witness =
+                serde_json::from_value(self.witness.call("debug_executionWitness", tag.clone())?)?;
+            if !witness.state.is_empty() {
+                break;
+            }
+        }
+        if !witness.keys.is_empty() {
+            // Key preimages (addresses and storage slots) let a case recover the accounts the
+            // block read from its witness; they are not part of the request.
+            fs::create_dir_all(&self.cache_dir)?;
+            fs::write(
+                self.cache_dir.join(format!("{number}.keys.json")),
+                serde_json::to_vec(&witness.keys)?,
+            )?;
+        }
         let ancestors = Self::order_ancestors(witness.headers, header.number)?;
         if header.timestamp >= ChainConfig::mainnet().isthmus_timestamp {
             let parent = Header::decode(&mut ancestors[0].as_ref())?;
@@ -324,6 +350,23 @@ impl MainnetFetcher {
         );
         Self::validate(&request)?;
         Ok(request)
+    }
+
+    /// Rebuilds block `number`'s header RLP and EIP-2718 transactions from
+    /// `eth_getBlockByNumber` with full transactions, for endpoints without `debug_getRawBlock`.
+    /// The caller checks the header against the block hash and the transactions against the
+    /// transactions root.
+    pub fn block_from_json(&self, number: u64) -> eyre::Result<(Bytes, Vec<Bytes>)> {
+        let block: BaseBlockResponse = serde_json::from_value(
+            self.blocks.call("eth_getBlockByNumber", json!([format!("{number:#x}"), true]))?,
+        )?;
+        let raw_header = Bytes::from(alloy_rlp::encode(&block.header.inner.inner));
+        let transactions = block
+            .transactions
+            .into_transactions()
+            .map(|tx| Bytes::from(tx.inner.inner.into_inner().encoded_2718()))
+            .collect();
+        Ok((raw_header, transactions))
     }
 
     /// Fetches the `L2ToL1MessagePasser` account proof at block `number` and verifies it against
