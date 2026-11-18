@@ -65,18 +65,7 @@ impl NonceValidator {
         mode: NonceMode,
         now: u64,
     ) -> Result<NonceStatus, NonceError> {
-        // A delegation must consume the protocol nonce, so a delegated account
-        // always ends with a non-zero account nonce (as with EIP-7702) and
-        // EIP-161 never treats it as empty. On a 2D channel or nonce-free, the
-        // account nonce would stay untouched.
-        if tx.nonce_key != U256::ZERO
-            && tx
-                .account_changes
-                .iter()
-                .any(|change| matches!(change, AccountChange::Delegation(_)))
-        {
-            return Err(NonceError::DelegationRequiresProtocolNonce);
-        }
+        Self::validate_delegation(tx)?;
 
         if tx.nonce_key == TxBaseConstants::NONCE_KEY_MAX {
             // Nonce-free: no sequence channel, so `nonce_sequence` must be zero.
@@ -103,6 +92,25 @@ impl NonceValidator {
         };
 
         Self::validate_sequence(tx, channel, mode)
+    }
+
+    /// Rejects a transaction that carries a delegation off the protocol nonce
+    /// (`nonce_key != 0`). Reads no state; [`Self::validate`] applies it first.
+    ///
+    /// A delegation must consume the protocol nonce, so a delegated account
+    /// always ends with a non-zero account nonce (as with EIP-7702) and EIP-161
+    /// never treats it as empty. On a 2D channel or nonce-free, the account
+    /// nonce would stay untouched.
+    pub fn validate_delegation(tx: &TxBase) -> Result<(), NonceError> {
+        if tx.nonce_key != U256::ZERO
+            && tx
+                .account_changes
+                .iter()
+                .any(|change| matches!(change, AccountChange::Delegation(_)))
+        {
+            return Err(NonceError::DelegationRequiresProtocolNonce);
+        }
+        Ok(())
     }
 
     /// Validates a transaction against an already-loaded `channel`.

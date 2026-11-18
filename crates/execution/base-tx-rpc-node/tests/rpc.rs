@@ -493,6 +493,50 @@ async fn estimate_gas_rejects_a_nonce_free_request_without_valid_before() -> eyr
     Ok(())
 }
 
+/// A delegation must use the protocol nonce, as pool admission and inclusion
+/// require: `eth_estimateGas` and `eth_call` reject a delegation on a 2D or
+/// nonce-free `nonce_key`, and still simulate one on the protocol nonce.
+#[tokio::test]
+async fn simulation_rejects_a_delegation_off_the_protocol_nonce() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+    let target = address!("0x00000000000000000000000000000000000000dd");
+    // Pin the simulated time so the nonce-free request's `validBefore` sits
+    // inside its expiry window and only the delegation rule can reject it.
+    let now_secs = 1_000_u64;
+    let block_overrides = json!({ "time": format!("{now_secs:#x}") });
+    let request = |nonce_key: U256| {
+        json!({
+            "from": alice,
+            "calls": [],
+            "nonceKey": format!("{nonce_key:#x}"),
+            "validBefore": format!("{:#x}", now_secs + 10),
+            "accountChanges": [{ "type": "0x1", "target": target }],
+        })
+    };
+
+    let gas: U256 = client
+        .request("eth_estimateGas", (request(U256::ZERO), "latest", json!({}), &block_overrides))
+        .await?;
+    assert!(gas > U256::ZERO, "a delegation on the protocol nonce must estimate, got {gas}");
+
+    for nonce_key in [U256::from(7u64), TxBaseConstants::NONCE_KEY_MAX] {
+        for method in ["eth_estimateGas", "eth_call"] {
+            let result: Result<serde_json::Value, _> = client
+                .request(method, (request(nonce_key), "latest", json!({}), &block_overrides))
+                .await;
+            let err_str = result.expect_err("a delegation off the protocol nonce must error");
+            let err_str = err_str.to_string();
+            assert!(
+                err_str.contains("-32602") && err_str.contains("must use the protocol nonce"),
+                "{method} with nonce key {nonce_key:#x}: expected INVALID_PARAMS for the \
+                 delegation rule, got: {err_str}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// The validity window is checked at the simulated block's time: a request not
 /// yet valid at the head is rejected, but accepted under a `time` block override
 /// that opens its window.
