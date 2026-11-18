@@ -3,8 +3,8 @@
 use std::{fs, path::PathBuf, time::Duration};
 
 use base_diff_fuzz::{
-    AdapterSpec, Campaign, ChainDriver, ConfigLogs, FuzzConfig, Fuzzer, Generator,
-    GeneratorOptions, Request,
+    AdapterSpec, Campaign, ChainDriver, ConfigLogs, Era, FuzzConfig, Fuzzer, Generator,
+    GeneratorOptions, MainnetFetcher, MainnetReplay, Request,
 };
 use clap::{Args, Parser, Subcommand};
 use eyre::WrapErr;
@@ -104,6 +104,32 @@ enum Command {
         /// Number of cases.
         #[arg(long, default_value_t = 10_000)]
         count: u64,
+    },
+    /// Validate-mode replay of Base mainnet blocks, tallied per fork era.
+    Mainnet {
+        #[command(flatten)]
+        common: Common,
+        /// Directory caching fetched blocks as `<number>.json`.
+        #[arg(long, default_value = "mainnet-cache")]
+        cache: PathBuf,
+        /// Blocks, such as `9101527,58500000..58500100` (half-open ranges).
+        #[arg(long, default_value = "")]
+        blocks: String,
+        /// The last N blocks before the chain head (minus a 20-block margin).
+        #[arg(long, default_value_t = 0)]
+        tip: u64,
+        /// Blocks to sample evenly from each era, besides its activation blocks.
+        #[arg(long, default_value_t = 0)]
+        per_era: u64,
+        /// Oldest era to sample.
+        #[arg(long, default_value = "regolith")]
+        first_era: String,
+        /// Blocks fetched in parallel before replaying (0 fetches inside the workers).
+        #[arg(long, default_value_t = 16)]
+        fetch_jobs: usize,
+        /// Only replay cached blocks.
+        #[arg(long)]
+        offline: bool,
     },
     /// Multi-block synthetic chains; each advances only while every adapter agrees.
     Chain {
@@ -255,6 +281,61 @@ fn main() -> eyre::Result<()> {
             let summary =
                 common.campaign()?.run(count, |i| Ok(Some(ConfigLogs::request(seed, i))))?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
+        }
+        Command::Mainnet {
+            common,
+            cache,
+            blocks,
+            tip,
+            per_era,
+            first_era,
+            fetch_jobs,
+            offline,
+        } => {
+            let mut fetcher = MainnetFetcher::from_env(cache)?;
+            fetcher.offline = offline;
+            let mut list = MainnetReplay::parse_blocks(&blocks)?;
+            if tip > 0 || per_era > 0 {
+                let head: String = serde_json::from_value(
+                    fetcher.blocks.call("eth_blockNumber", serde_json::json!([]))?,
+                )?;
+                let head = u64::from_str_radix(head.trim_start_matches("0x"), 16)? - 20;
+                list.extend(head.saturating_sub(tip)..head);
+                if per_era > 0 {
+                    let first: Era = serde_json::from_value(serde_json::json!(first_era))?;
+                    list.extend(MainnetReplay::era_samples(per_era, first, head));
+                }
+            }
+            list.sort_unstable();
+            list.dedup();
+            if fetch_jobs > 0 && !offline {
+                let missing: Vec<u64> =
+                    list.iter().copied().filter(|b| !fetcher.cache_path(*b).exists()).collect();
+                eprintln!("prefetching {} blocks", missing.len());
+                std::thread::scope(|scope| {
+                    for chunk in missing.chunks(missing.len().div_ceil(fetch_jobs).max(1)) {
+                        let fetcher = &fetcher;
+                        scope.spawn(move || {
+                            for block in chunk {
+                                if let Err(error) = fetcher.fetch_case(*block) {
+                                    eprintln!("fetch {block}: {error:#}");
+                                }
+                            }
+                        });
+                    }
+                });
+                fetcher.offline = true;
+            }
+            let campaign = common.campaign()?;
+            let replay = MainnetReplay {
+                fetcher,
+                adapters: campaign.adapters,
+                jobs: campaign.jobs,
+                timeout: campaign.timeout,
+                out: campaign.out,
+            };
+            let tally = replay.run(&list)?;
+            println!("{}", serde_json::to_string_pretty(&tally)?);
         }
         Command::Chain { common, seed, chains, length, reference, minimize_budget } => {
             let campaign = common.campaign()?;

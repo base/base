@@ -31,6 +31,8 @@ post-state, and every header field. The wire format between the harness and an a
   topics), and logs that are not config updates (another emitter, another event, no topics,
   failed receipts); one case in five is a single well-formed update.
 - `fuzz --corpus <dir> --duration 20m`: coverage-guided fuzzing (below).
+- `mainnet --cache <dir> [--blocks 9101527,58500000..58500100] [--tip N] [--per-era N]`:
+  validate-mode replay of Base mainnet blocks (below), tallied per fork era.
 
 Each takes `--adapter name=command...` once per client, `--jobs`, and `--out`. Divergences and
 adapter failures go to `<out>/findings/<case id>/`: the request, `verdict.json`, and every
@@ -87,3 +89,25 @@ target/release/base-diff-fuzz fuzz --corpus corpus --out fuzz-out --jobs 6 --dur
   --adapter "needlefish=$HOME/ext/needlefish/zig-out/bin/base diff-adapter" \
   --adapter "nethermind=$HOME/.dotnet/dotnet $HOME/ext/nethermind/tools/artifacts/bin/BaseDiffAdapter/release/BaseDiffAdapter.dll"
 ```
+
+## Mainnet replay
+
+`mainnet` fetches blocks with `MainnetFetcher` (endpoints from `BASE_DIFF_WITNESS_RPC`,
+`BASE_DIFF_BLOCK_RPC`, and `BASE_DIFF_PROOF_RPC`, comma-separated) into a cache of one validate-mode
+request per block (`<number>.json`, plus `<number>.keys.json` with the witness's key preimages when
+the endpoint returns them), then runs every adapter on each block. Endpoints without
+`debug_getRawBlock` work too: the block is rebuilt from `eth_getBlockByNumber` and checked against
+its hash and transactions root. With `BASE_DIFF_WITNESS_FROM_PROOFS=1` the witness is rebuilt
+instead, for endpoints without `debug_executionWitness` (`ProofWitness` in `src/mainnet/proofs.rs`):
+the accounts and slots the block reads come from `debug_traceBlockByNumber` struct logs on the
+witness endpoints plus the state system logic reads outside the EVM, and their `eth_getProof` nodes
+and code at the parent come from the proof endpoints. Native precompiles read storage no struct log
+shows, so `BASE_DIFF_WITNESS_COMPLETER` can name an adapter command whose errors name the missing
+account and slot (needlefish's do); the fetcher adds those proofs until the adapter runs the block.
+A cleared slot that collapses a storage branch needs the remaining sibling node, which is fetched by
+proving a searched slot whose hashed key leads into it; deletions in the account trie are not
+covered, so such blocks fail with a missing node. `--tip N` takes the last N blocks before the head,
+`--per-era N` samples N blocks evenly from every era plus each activation block and its successor.
+Every block's verdict is appended to `<out>/results.jsonl` (a rerun skips blocks that already agreed
+and reruns the rest), and `<out>/eras.json` holds blocks, agreeing blocks, and their transactions
+per era.

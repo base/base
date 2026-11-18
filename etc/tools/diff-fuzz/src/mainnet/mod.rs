@@ -11,3 +11,6 @@ pub use fetcher::MainnetFetcher;
 
 mod proofs;
 pub use proofs::{ProofWitness, Touched};
+
+mod replay;
+pub use replay::{BlockResult, EraTally, MainnetReplay};
