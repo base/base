@@ -172,6 +172,10 @@ just anvil-nitro-local logs
 just anvil-nitro-local down
 ```
 
+The local Nitro host image builds for the selected Docker platform (ARM64 on
+Apple Silicon), without amd64 emulation. `just tee build-host` still explicitly
+targets amd64 for real-enclave deployments.
+
 Anvil mines one block every 12 seconds. Do not use timestamp-warp RPCs in
 this variant: Base derives Beacon slots from L1 timestamps, so arbitrary time
 jumps would break the one-slot-per-execution-block mapping used to fetch blobs.
