@@ -2346,7 +2346,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "description": "Selected local summary quantile for active post-Denim construction stages. Total build includes the other stages; compare components rather than adding them. The red threshold marks the local 200 ms block interval.",
+          "description": "Selected local summary quantile for post-Denim construction stages. The parallel state-root worker can start before the build timer and overlaps execution. Compare the stage times; do not add them. The red threshold marks the 200 ms block interval.",
           "fieldConfig": {
             "defaults": {
               "color": {

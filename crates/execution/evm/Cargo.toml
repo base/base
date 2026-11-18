@@ -70,7 +70,12 @@ harness = false
 
 [features]
 default = [ "metrics", "std" ]
-metrics = [ "base-common-evm/metrics", "dep:scoped-tls", "reth-evm/metrics", "std" ]
+metrics = [
+	"base-common-evm/metrics",
+	"dep:scoped-tls",
+	"reth-evm/metrics",
+	"std",
+]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
