@@ -2402,7 +2402,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "p99 latency comparison for end-to-end building, state-root calculation, and builder-side getPayload. This puts the largest critical-path contributor in context without mixing units.",
+      "description": "p99 latency comparison for end-to-end building, post-execution to sealed (not root-only), and builder-side getPayload. This puts the largest critical-path contributor in context without mixing units.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2457,7 +2457,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "State root"
+              "options": "Post-execution to sealed"
             },
             "properties": [
               {
@@ -2529,7 +2529,7 @@
           },
           "editorMode": "code",
           "expr": "max(reth_base_builder_native_payload_state_root_duration{job=\"l2_builder\",quantile=\"0.99\"})",
-          "legendFormat": "State root",
+          "legendFormat": "Post-execution to sealed",
           "range": true,
           "refId": "B"
         },

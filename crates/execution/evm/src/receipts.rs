@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, OpTxType, TxBaseReceipt};

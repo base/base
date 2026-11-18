@@ -2431,7 +2431,7 @@
               },
               "editorMode": "code",
               "expr": "reth_base_builder_native_payload_state_root_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
-              "legendFormat": "state root · p$quantile",
+              "legendFormat": "post-execution to sealed · p$quantile",
               "range": true,
               "refId": "B"
             },
@@ -2445,6 +2445,17 @@
               "legendFormat": "predicate eval · p$quantile",
               "range": true,
               "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "editorMode": "code",
+              "expr": "reth_base_builder_native_payload_finalization_stage_seconds{job=\"l2_builder\",quantile=\"$quantile\"}",
+              "legendFormat": "{{stage}} · p$quantile",
+              "range": true,
+              "refId": "D"
             }
           ],
           "title": "Block Construction Critical Path · p$quantile",

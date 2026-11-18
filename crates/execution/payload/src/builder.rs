@@ -573,11 +573,26 @@ impl<Txs> Builder<'_, Txs> {
             .map(|(resting, store)| store.finish(resting.take_predicates()));
 
         let block_num = ctx.parent().number().saturating_add(1);
+        #[cfg(feature = "metrics")]
+        let mut worker = None;
+        #[cfg(feature = "metrics")]
+        let mut root_wait = None;
         let state_root = state_root_handle.and_then(|mut task| {
             // Dropping the hook closes the update stream so the parallel task can finish.
             builder.evm_mut().db_mut().set_state_hook(None);
-            match task.state_root() {
+            #[cfg(feature = "metrics")]
+            let wait_start = Instant::now();
+            let result = task.state_root();
+            #[cfg(feature = "metrics")]
+            {
+                root_wait = Some(wait_start.elapsed());
+            }
+            match result {
                 Ok(outcome) => {
+                    #[cfg(feature = "metrics")]
+                    {
+                        worker = Some((outcome.worker_elapsed, outcome.worker_idle));
+                    }
                     debug!(
                         target: "payload_builder",
                         id = %ctx.payload_id(),
@@ -598,14 +613,28 @@ impl<Txs> Builder<'_, Txs> {
                 }
             }
         });
+        let finish = || {
+            debug_span!("finish_payload", block_num)
+                .in_scope(|| builder.finish(state_provider, state_root))
+        };
+        #[cfg(feature = "metrics")]
+        let (outcome, assembly) = if ctx.attributes().no_tx_pool() {
+            (finish(), Default::default())
+        } else {
+            base_execution_evm::AssemblyTimings::capture(finish)
+        };
+        #[cfg(not(feature = "metrics"))]
+        let outcome = finish();
         let BlockBuilderOutcome {
+            #[cfg(feature = "metrics")]
+            timings,
             execution_result,
             hashed_state,
             trie_updates,
             block,
             block_access_list,
-        } = debug_span!("finish_payload", block_num)
-            .in_scope(|| builder.finish(state_provider, state_root))?;
+            ..
+        } = outcome?;
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -639,6 +668,8 @@ impl<Txs> Builder<'_, Txs> {
         if !no_tx_pool {
             BuilderMetrics::record_inclusion(&info.inclusion);
             BuilderMetrics::record_native_build(execution_duration, build_start.elapsed());
+            #[cfg(feature = "metrics")]
+            BuilderMetrics::record_finalization(timings, assembly, root_wait, worker);
         }
 
         if no_tx_pool || ctx.is_one_shot_building_active() {
@@ -1780,22 +1811,33 @@ mod tests {
     };
 
     fn state_root_handle() -> PayloadStateRootHandle {
+        completed_root_handle(true)
+    }
+
+    fn completed_root_handle(success: bool) -> PayloadStateRootHandle {
         let (updates_tx, _updates_rx) = crossbeam_channel::unbounded();
         let (cancel_guard, _cancel_rx) = StateRootTaskCancelGuard::channel();
         let (result_tx, result_rx) = std::sync::mpsc::channel();
         let (_hashed_state_tx, hashed_state_rx) = std::sync::mpsc::channel();
-        result_tx
-            .send(Ok(StateRootComputeOutcome {
-                state_root: B256::repeat_byte(0x42),
-                trie_updates: Arc::new(TrieUpdates::default()),
-                hashed_state: Arc::new(HashedPostState::default()),
-            }))
-            .unwrap();
+        if success {
+            result_tx
+                .send(Ok(StateRootComputeOutcome {
+                    worker_elapsed: Duration::from_millis(70),
+                    worker_idle: Duration::from_millis(25),
+                    state_root: B256::repeat_byte(0x42),
+                    trie_updates: Arc::new(TrieUpdates::default()),
+                    hashed_state: Arc::new(HashedPostState::default()),
+                }))
+                .unwrap();
+        }
         StateRootHandle::new(B256::ZERO, updates_tx, cancel_guard, result_rx, hashed_state_rx)
             .into_payload_state_root_handle()
     }
 
-    fn build_empty_payload(state_root_handle: PayloadStateRootHandle) -> B256 {
+    fn build_empty_payload(
+        state_root_handle: Option<PayloadStateRootHandle>,
+        no_tx_pool: bool,
+    ) -> B256 {
         let chain_spec = Arc::new(BaseChainSpec::from(ChainSpec::default()));
         let parent = Arc::new(SealedHeader::seal_slow(Header {
             gas_limit: 30_000_000,
@@ -1810,7 +1852,7 @@ mod tests {
                 parent_beacon_block_root: Some(B256::ZERO),
                 ..Default::default()
             },
-            no_tx_pool: true,
+            no_tx_pool,
             gas_limit: Some(parent.gas_limit),
             ..Default::default()
         };
@@ -1828,12 +1870,13 @@ mod tests {
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
                 &provider,
-                Some(state_root_handle),
+                state_root_handle,
                 ctx,
             )
             .expect("empty payload must build");
-        let BuildOutcomeKind::Freeze(payload) = outcome else {
-            panic!("no-tx-pool payload must freeze")
+        let payload = match outcome {
+            BuildOutcomeKind::Freeze(payload) | BuildOutcomeKind::Better { payload } => payload,
+            _ => panic!("expected a built payload"),
         };
         payload.block().state_root
     }
@@ -1900,7 +1943,7 @@ mod tests {
 
     #[test]
     fn parallel_state_root_is_used() {
-        assert_eq!(build_empty_payload(state_root_handle()), B256::repeat_byte(0x42));
+        assert_eq!(build_empty_payload(Some(state_root_handle()), true), B256::repeat_byte(0x42));
     }
 
     #[cfg(feature = "metrics")]
@@ -1942,7 +1985,7 @@ mod tests {
         let handle = recorder.handle();
 
         metrics::with_local_recorder(&recorder, || {
-            build_empty_payload(state_root_handle());
+            build_empty_payload(Some(state_root_handle()), true);
             let rendered = handle.render();
             assert!(!rendered.contains("txs_included_per_block"));
             assert!(!rendered.contains("native_payload"));
@@ -1962,6 +2005,52 @@ mod tests {
             assert!(
                 rendered.contains(&format!("base_builder_native_payload_{stage}_duration_count 1"))
             );
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn finalization_metrics_distinguish_root_paths() {
+        for (job, wait, synchronous, worker) in [
+            (None, false, true, false),
+            (Some(state_root_handle()), true, false, true),
+            (Some(completed_root_handle(false)), true, true, false),
+        ] {
+            let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+            let handle = recorder.handle();
+            metrics::with_local_recorder(&recorder, || build_empty_payload(job, false));
+            let rendered = handle.render();
+            for (stage, expected) in [
+                ("root_wait", wait),
+                ("synchronous_root", synchronous),
+                ("root_worker_active", worker),
+                ("root_worker_idle", worker),
+                ("merge_transitions", true),
+                ("hash_post_state", true),
+                ("transactions_root", true),
+                ("receipts_root", true),
+                ("logs_bloom", true),
+                ("message_root", false),
+            ] {
+                let sample = format!(
+                    r#"base_builder_native_payload_finalization_stage_seconds_count{{stage="{stage}"}} 1"#
+                );
+                assert_eq!(
+                    rendered.lines().any(|line| line == sample),
+                    expected,
+                    "{stage}: {rendered}"
+                );
+            }
+            if worker {
+                assert!(rendered.contains(
+                    r#"finalization_stage_seconds_sum{stage="root_worker_active"} 0.045"#
+                ));
+                assert!(
+                    rendered.contains(
+                        r#"finalization_stage_seconds_sum{stage="root_worker_idle"} 0.025"#
+                    )
+                );
+            }
         }
     }
 
