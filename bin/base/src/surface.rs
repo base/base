@@ -253,11 +253,9 @@ impl CliSurface {
         "txpool.queued-max-size",
         "txpool.ordering",
         "txpool.max-inflight-delegated-slots",
-        "txpool.sender-limit",
         "txpool.payer-limit",
         "txpool.allowlisted-payers",
         "txpool.allowlisted-payer-limit",
-        "txpool.trusted-delegation-targets",
         "txpool.validity-pool-max-count",
         "txpool.validity-pool-max-size",
         "txpool.validity-pool-max-account-slots",
@@ -1002,7 +1000,7 @@ mod tests {
             "1000",
             "--builder.predicate-eval-hard-cutoff-ms",
             "25",
-            "--txpool.sender-limit",
+            "--txpool.max-inflight-delegated-slots",
             "7",
             "--rollup.mempool-payer-limit",
             "8",
@@ -1019,13 +1017,13 @@ mod tests {
         assert_eq!(sequencer.consensus.checkpoint_path, Some(PathBuf::from("/data/checkpoint")));
         assert_eq!(sequencer.builder.max_uncompressed_block_size, Some(1000));
         assert_eq!(sequencer.builder.predicate_eval_hard_cutoff_ms, 25);
-        assert_eq!(sequencer.builder.rollup_args.mempool_sender_limit, 7);
+        assert_eq!(sequencer.builder.rollup_args.max_inflight_delegated_slots, 7);
         assert_eq!(sequencer.builder.rollup_args.mempool_payer_limit, 8);
 
         let cli = parse(&[
             "base",
             "mempool",
-            "--txpool.sender-limit",
+            "--txpool.payer-limit",
             "7",
             "--tx-forwarding.builder-urls",
             "http://builder:8545",
@@ -1037,7 +1035,7 @@ mod tests {
         let BaseCommand::Mempool(mempool) = cli.command else {
             panic!("expected mempool command");
         };
-        assert_eq!(mempool.execution.standard.rollup_args.mempool_sender_limit, 7);
+        assert_eq!(mempool.execution.standard.rollup_args.mempool_payer_limit, 7);
         let rpc = mempool.execution.into_launch_config(BaseChainSpec::devnet().into()).standard.rpc;
         assert!(rpc.enable_tx_forwarding);
         assert_eq!(rpc.builder_rpc_urls.len(), 1);
@@ -1049,7 +1047,7 @@ mod tests {
         let cli = parse(&[
             "base",
             "rpc",
-            "--txpool.sender-limit",
+            "--txpool.payer-limit",
             "7",
             "--rollup.validity-pool-max-count",
             "5",
@@ -1061,7 +1059,7 @@ mod tests {
         assert_eq!(
             ignored(&cli),
             [
-                "txpool.sender-limit",
+                "txpool.payer-limit",
                 "txpool.validity-pool-max-count",
                 "tx-forwarding.enabled",
                 "tx-forwarding.builder-urls"
