@@ -306,7 +306,7 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
 /// Wrapper function around [`EngineClient::get_l2_block`] to handle compatibility issues with clients.
 /// When serving a block-by-number request, these clients will return non-standard errors for the safe
 /// and finalized heads when the chain has just started and nothing is marked as safe or finalized yet.
-async fn get_block_compat<EngineClient_: EngineClient>(
+pub async fn get_block_compat<EngineClient_: EngineClient>(
     engine_client: &EngineClient_,
     block_id: BlockId,
 ) -> TransportResult<Option<<Base as Network>::BlockResponse>> {

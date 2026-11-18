@@ -186,7 +186,7 @@ where
         // Recovery may substitute metadata above a pruned label. It must not become
         // an authoritative safe/finalized label merely because execution is valid.
         for (tag, hydrated) in [(BlockNumberOrTag::Safe, existing.safe), (BlockNumberOrTag::Finalized, existing.finalized)] {
-            let labeled = self.client.get_l2_block(tag.into()).await
+            let labeled = base_consensus_engine::get_block_compat(self.client.as_ref(), tag.into()).await
                 .map_err(|error| EngineError::BootstrapHeadQuery(error.to_string()))?;
             if labeled.is_some_and(|block| block.header.inner.inner.hash_slow() != hydrated.block_info.hash
                 || block.header.number != hydrated.block_info.number) {
@@ -202,8 +202,16 @@ where
         );
         let anchor = match self.safe_db_reader.safe_head_at_l1(u64::MAX).await {
             Ok(stored) => {
-                let canonical = self.client.l2_block_info_by_label(BlockNumberOrTag::Number(stored.safe_head.number))
-                    .await.map_err(|e| EngineError::BootstrapHeadQuery(e.to_string()))?;
+                let canonical = if existing.safe.block_info.number == stored.safe_head.number
+                    && existing.safe.block_info.hash == stored.safe_head.hash {
+                    Some(existing.safe)
+                } else if existing.finalized.block_info.number == stored.safe_head.number
+                    && existing.finalized.block_info.hash == stored.safe_head.hash {
+                    Some(existing.finalized)
+                } else {
+                    self.client.l2_block_info_by_label(BlockNumberOrTag::Number(stored.safe_head.number))
+                        .await.map_err(|e| EngineError::BootstrapHeadQuery(e.to_string()))?
+                };
                 if let Some(head) = canonical.filter(|head| head.block_info.hash == stored.safe_head.hash) {
                     let inclusion = self.client.get_l1_block(stored.l1_block.number.into()).await
                         .map_err(|e| EngineError::BootstrapHeadQuery(e.to_string()))?;
@@ -216,8 +224,9 @@ where
                 }
             }
             Err(SafeDBError::Disabled | SafeDBError::NotFound) => {
-                if old.safe_head().block_info.number >= target && old.safe_head() != L2BlockInfo::default() {
-                    old.safe_head()
+                let retained = if old.safe_head().block_info.number > existing.safe.block_info.number { old.safe_head() } else { existing.safe };
+                if retained.block_info.number >= target && retained != L2BlockInfo::default() {
+                    retained
                 } else
                 if target == self.rollup.genesis.l2.number {
                     L2BlockInfo::from_l2_genesis(&self.rollup.genesis)
@@ -902,7 +911,7 @@ mod tests {
     }
 
     /// Distinguishes status histories without ambiguous boolean test arguments.
-    enum SyncHistory { CatchUp, Snapshot, PromotionSyncing, StoredSafe, StoredOldSafe, StaleSafe }
+    enum SyncHistory { CatchUp, Snapshot, PromotionSyncing, StoredSafe, StoredOldSafe, StoredPrunedSafe, MissingErrors, StaleSafe }
 
     /// Real EL catch-up must hand derivation the offset anchor without inventing finality.
     #[rstest]
@@ -914,6 +923,8 @@ mod tests {
     #[case::stored_safe(SyncHistory::StoredSafe, 2, 4)]
     #[case::stored_older_safe(SyncHistory::StoredOldSafe, 2, 2)]
     #[case::stale_safe(SyncHistory::StaleSafe, 2, 2)]
+    #[case::stored_pruned_safe(SyncHistory::StoredPrunedSafe, 2, 2)]
+    #[case::missing_label_errors(SyncHistory::MissingErrors, 0, 3)]
     #[tokio::test]
     async fn real_el_sync_resumes_derivation_at_offset_anchor(
         #[case] history: SyncHistory,
@@ -954,7 +965,20 @@ mod tests {
             builder = builder.with_l2_block(BlockId::Number(BlockNumberOrTag::Safe), blocks[old_safe_number as usize].clone())
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Finalized), blocks[1].clone());
         }
+        if matches!(history, SyncHistory::StoredPrunedSafe) {
+            let mut pruned = blocks[2].clone();
+            pruned.transactions = BlockTransactions::Hashes(vec![]);
+            builder = builder.with_l2_block(BlockNumberOrTag::Safe.into(), pruned.clone())
+                .with_l2_block_by_label(BlockNumberOrTag::Number(2), pruned);
+        }
+        if matches!(history, SyncHistory::MissingErrors) {
+            builder = builder.with_l2_block_error(BlockNumberOrTag::Safe.into(), base_consensus_engine::test_utils::MockL2BlockError::Custom("block not found".into()))
+                .with_l2_block_error(BlockNumberOrTag::Finalized.into(), base_consensus_engine::test_utils::MockL2BlockError::Custom("Unknown block".into()));
+        }
         let client = Arc::new(builder.build());
+        if matches!(history, SyncHistory::StoredPrunedSafe) {
+            client.storage().write().await.block_info_by_tag.remove(&BlockNumberOrTag::Number(2));
+        }
         let state = TestEngineStateBuilder::new()
             .with_unsafe_head(head)
             .with_safe_head(safe)
@@ -974,7 +998,7 @@ mod tests {
         derivation.expect_send_signal().returning(|_| Ok(()));
         derivation.expect_reset_el_sync_anchor()
             .withf(move |actual| *actual == expected_safe)
-            .times(usize::from(matches!(history, SyncHistory::CatchUp | SyncHistory::StoredSafe | SyncHistory::StoredOldSafe)))
+            .times(usize::from(matches!(history, SyncHistory::CatchUp | SyncHistory::StoredSafe | SyncHistory::StoredOldSafe | SyncHistory::StoredPrunedSafe | SyncHistory::MissingErrors)))
             .returning(|_| Ok(()));
         derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
         derivation.expect_notify_sync_completed()
@@ -985,9 +1009,9 @@ mod tests {
             client.set_fork_choice_updated_v3_response(syncing_fcu()).await;
         }
         let directory = tempfile::tempdir().expect("SafeDB temporary directory is created");
-        let reader: Arc<dyn base_consensus_safedb::SafeDBReader> = if matches!(history, SyncHistory::StoredSafe | SyncHistory::StoredOldSafe | SyncHistory::StaleSafe) {
+        let reader: Arc<dyn base_consensus_safedb::SafeDBReader> = if matches!(history, SyncHistory::StoredSafe | SyncHistory::StoredOldSafe | SyncHistory::StoredPrunedSafe | SyncHistory::StaleSafe) {
             let db = base_consensus_safedb::SafeDB::open(directory.path().join("safe.redb")).expect("SafeDB opens");
-            let mut recorded = infos[if matches!(history, SyncHistory::StoredOldSafe) { 2 } else { 4 }];
+            let mut recorded = infos[if matches!(history, SyncHistory::StoredOldSafe | SyncHistory::StoredPrunedSafe) { 2 } else { 4 }];
             if matches!(history, SyncHistory::StaleSafe) { recorded.block_info.hash = B256::with_last_byte(99); }
             base_consensus_safedb::SafeHeadListener::safe_head_updated(&db, recorded, BlockInfo::default())
                 .await.expect("stored derivation head is recorded");
@@ -995,11 +1019,14 @@ mod tests {
         } else { Arc::new(base_consensus_safedb::DisabledSafeDB) };
         let mut processor = EngineProcessor::new(client, config, derivation, engine)
             .with_el_sync_anchor(4, reader);
+        if matches!(history, SyncHistory::StoredPrunedSafe) {
+            processor.checkpoint_reader = Arc::new(TestCheckpointReader { safe: Some(safe), finalized: None });
+        }
         let completion = processor.mark_el_sync_complete_and_notify_derivation_actor().await;
         assert_eq!(completion.is_err(), matches!(history, SyncHistory::PromotionSyncing | SyncHistory::StaleSafe), "unconfirmed promotion and stale SafeDB must fail closed: {completion:?}");
         assert_eq!(processor.engine_state().sync_state.safe_head(), expected_safe, "safe must respect the real-sync gate and preserve higher labels");
         assert_eq!(processor.engine_state().sync_state.finalized_head(), finalized, "existing genuine finalized head must not advance");
-        if matches!(history, SyncHistory::CatchUp | SyncHistory::StoredSafe | SyncHistory::StoredOldSafe) {
+        if matches!(history, SyncHistory::CatchUp | SyncHistory::StoredSafe | SyncHistory::StoredOldSafe | SyncHistory::StoredPrunedSafe | SyncHistory::MissingErrors) {
             assert_eq!(processor.last_safe_head_sent, expected_safe, "completion must consume the anchor notification so the next drain cannot falsely confirm attributes");
             processor.drain().await.expect("a repeated drain must not emit an anchor confirmation after completion");
         }

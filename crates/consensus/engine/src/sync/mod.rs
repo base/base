@@ -10,7 +10,7 @@ mod el_sync;
 pub use el_sync::ElSyncAnchor;
 
 mod forkchoice;
-pub use forkchoice::L2ForkchoiceState;
+pub use forkchoice::{L2ForkchoiceState, get_block_compat};
 
 mod error;
 pub use error::SyncStartError;
