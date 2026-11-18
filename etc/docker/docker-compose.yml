@@ -469,7 +469,7 @@ services:
     command:
       - --chain
       - dev
-      - rpc
+      - mempool
       - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
       - --http
@@ -504,7 +504,6 @@ services:
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
       - --rpc.forwarding-endpoint=http://base-builder:${L2_BUILDER_HTTP_PORT}
-      - --enable-tx-forwarding
       - --builder-rpc-urls=${VALIDITY_BUILDER_RPC_URLS}
       - --enable-transaction-event-journal
       - --enable-metering
@@ -579,7 +578,7 @@ services:
     command:
       - --chain
       - dev
-      - rpc
+      - mempool
       - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
       - --http
@@ -604,7 +603,6 @@ services:
       - --rpc.eth-proof-window=1209600
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
-      - --enable-tx-forwarding
       - --builder-rpc-urls=${VALIDITY_BUILDER_RPC_URLS}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
@@ -697,7 +695,6 @@ services:
       - --discovery.port=${L2_SHADOW_P2P_PORT}
       - --nat=extip:${L2_SHADOW_ADVERTISE_IP}
       - --metrics=0.0.0.0:${L2_SHADOW_METRICS_PORT}
-      - --txpool.nolocals
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --rpc.eth-proof-window=1209600

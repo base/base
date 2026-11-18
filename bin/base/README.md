@@ -4,11 +4,12 @@ Unified Base node binary.
 
 ## Flags
 
-`base rpc` and `base sequencer` embed execution, consensus, and (for `sequencer`) the builder in
-one process, but accept only a Base-chosen set of their flags. `-h`/`--help` lists the curated
-flags needed to run a node; `--help-all` adds the advanced flags, such as transaction pool limits,
-transaction forwarding, metering, and upgrade-signal settings. `base sequencer` also supports
-every `--builder.*` flag. Any other execution, consensus, or builder flag is ignored, whether it
+`base rpc`, `base mempool`, and `base sequencer` embed execution, consensus, and (for `sequencer`)
+the builder in one process, but accept only a Base-chosen set of their flags. `-h`/`--help` lists
+the curated flags needed to run a node; `--help-all` adds the advanced flags, such as metering and
+upgrade-signal settings. Transaction pool limits apply only on `base mempool` and
+`base sequencer`, and transaction forwarding flags only on `base mempool`. `base sequencer` also
+supports every `--builder.*` flag. Any other execution, consensus, or builder flag is ignored, whether it
 comes from the command line or its environment variable, and the node logs a warning naming it at
 startup. The full lists live in `src/surface.rs`.
 
@@ -31,6 +32,8 @@ has the flag:
 | `--rollup.validity-pool-*`                       | `--txpool.validity-pool-*`                           |
 | `--enable-metering`, `--enable-shadow-indexer`, `--enable-tx-forwarding` | `--metering.enabled`, `--shadow-indexer.enabled`, `--tx-forwarding.enabled` |
 | `--builder-rpc-urls`, `--rollup.payer`, `--rollup.payer-enabled` | `--tx-forwarding.builder-urls`, `--payer.url`, `--payer.enabled` |
+| `--tx-forwarding-*`                              | `--tx-forwarding.*`                                  |
+| `--transaction-event-journal-path`               | `--transaction-event-journal.path`                   |
 | `--validity-*`, `--execution-chain`              | `--validity.*`, `--execution.chain`                  |
 | `--l1-eth-rpc`, `--l1-beacon`, `--l1-*`, `--l2-config-file` | `--l1.rpc`, `--l1.beacon`, `--l1.*`, `--l2.config-file` |
 | `--logs-otlp*`, `--tracing-otlp*`                | `--logs.otlp*`, `--tracing.otlp*`                    |
@@ -93,7 +96,9 @@ encoding; L2 reads, such as block queries, are still dispatched as JSON-RPC into
 
 The execution CLI surface is shared with the standalone execution binaries through
 `base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
-sequencer, builder, conductor, and transaction-forwarding options.
+sequencer, builder, conductor, transaction pool, and transaction-forwarding options. A query node
+forwards each submitted transaction to the sequencer before it keeps a local copy, so pool limits
+do not change what it sends upstream.
 
 Supported forms:
 
@@ -113,6 +118,20 @@ base rpc --execution.chain dev
 
 The command also accepts metering flags such as `--metering.enabled` for trusted local devnet
 simulation nodes.
+
+## `base mempool`
+
+`base mempool` runs the same embedded execution and consensus nodes as `base rpc`, and forwards
+its transaction pool to builders with `base_insertValidatedTransactions`. Forwarding is always on,
+so `--tx-forwarding.builder-urls` is required. The command adds the transaction pool and validity
+pool limits (`--txpool.*`) and the forwarding tuning flags (`--tx-forwarding.*`) to the `base rpc`
+flags.
+
+```text
+base mempool --l1.rpc <url> --l1.beacon <url> --tx-forwarding.builder-urls <url>[,<url>...]
+```
+
+`--enable-tx-forwarding` and `--tx-forwarding.enabled` are still accepted and have no effect.
 
 ## `base sequencer`
 
@@ -349,7 +368,7 @@ base update --update-installer
 
 ## Chain Selection
 
-`--chain`/`-c` (or `BASE_CHAIN`) goes after `rpc`, `sequencer`, or `bootnode`. The older
+`--chain`/`-c` (or `BASE_CHAIN`) goes after `rpc`, `mempool`, `sequencer`, or `bootnode`. The older
 `base --chain <chain> <command>` form is still accepted and takes precedence over `BASE_CHAIN`;
 passing `--chain` both before and after the subcommand is an error.
 

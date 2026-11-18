@@ -29,6 +29,9 @@ pub(crate) enum BaseCommand {
     /// Run the integrated node in RPC mode.
     #[command(name = "rpc")]
     Rpc(Box<RpcCommand>),
+    /// Run the integrated node in mempool mode, forwarding its transaction pool to builders.
+    #[command(name = "mempool")]
+    Mempool(Box<RpcCommand>),
     /// Run the integrated node in follow mode (execution + consensus follow node).
     #[command(name = "follow")]
     Follow(Box<FollowCommand>),
@@ -72,6 +75,7 @@ impl BaseCommand {
             }
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?),
+            Self::Mempool(mempool) => (*mempool).run(chain_resolver.resolve()?),
             Self::Follow(follow) => (*follow).run(chain_resolver.resolve()?),
             Self::Sequencer(sequencer) => (*sequencer).run(chain_resolver.resolve()?),
             Self::Dev(dev) => (*dev).run(chain_resolver.resolve()?),

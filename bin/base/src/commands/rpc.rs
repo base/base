@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::ResolvedChainConfig;
 
-/// Arguments for `base rpc`.
+/// Arguments for `base rpc` and `base mempool`.
 #[derive(Args, Clone, Debug)]
 #[command(
     mut_arg("builder_disallow", |arg| arg.hide(true).long("__builder-disallow-disabled")),
@@ -44,7 +44,7 @@ pub(crate) struct RpcCommand {
 }
 
 impl RpcCommand {
-    /// Runs the `rpc` flavor.
+    /// Runs the `rpc` or `mempool` flavor.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
         let Self { execution_chain, execution, consensus } = self;
         let mut execution_chain = match execution_chain {
@@ -281,7 +281,7 @@ mod tests {
             "base",
             "--chain",
             "dev",
-            "rpc",
+            "mempool",
             "--execution-chain",
             "dev",
             "--datadir=/data",
@@ -307,6 +307,8 @@ mod tests {
             "--rpc.txfeecap=0",
             "--rpc.gascap=600000000",
             "--rpc.eth-proof-window=1209600",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls=http://base-builder:8545",
             "--bootnodes=enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303",
             "--rollup.discovery.v4",
             "--l1-eth-rpc",
@@ -339,8 +341,9 @@ mod tests {
         ]);
 
         assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "dev"));
-        let BaseCommand::Rpc(rpc) = cli.command else {
-            panic!("expected rpc command");
+        assert!(cli.ignored.is_empty(), "{:?}", cli.ignored);
+        let BaseCommand::Mempool(rpc) = cli.command else {
+            panic!("expected mempool command");
         };
 
         assert_eq!(rpc.execution.node.network.port, 30303);
@@ -549,19 +552,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_rpc_validity_forwarding_args() {
+    fn parses_mempool_validity_forwarding_args() {
         let cli = BaseCli::parse_curated(rpc_args(&[
             "base",
-            "rpc",
-            "--enable-tx-forwarding",
+            "mempool",
             "--builder-rpc-urls",
             "http://localhost:8545",
             "--validity-max-predicates",
             "8",
         ]));
 
-        let BaseCommand::Rpc(rpc) = cli.command else {
-            panic!("expected rpc command");
+        let BaseCommand::Mempool(rpc) = cli.command else {
+            panic!("expected mempool command");
         };
 
         let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
@@ -569,15 +571,6 @@ mod tests {
         assert!(launch_config.standard.rpc.enable_tx_forwarding);
         assert_eq!(launch_config.standard.rpc.validity_max_predicates, 8);
         assert_eq!(launch_config.standard.rpc.builder_rpc_urls.len(), 1);
-    }
-
-    #[test]
-    fn rpc_tx_forwarding_requires_builder_urls() {
-        let err = BaseCli::try_parse_curated(rpc_args(&["base", "rpc", "--enable-tx-forwarding"]))
-            .unwrap_err();
-
-        let rendered = err.to_string();
-        assert!(rendered.contains("--tx-forwarding.builder-urls"), "{rendered}");
     }
 
     #[test]
