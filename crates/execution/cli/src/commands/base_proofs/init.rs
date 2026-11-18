@@ -21,6 +21,7 @@ use tracing::info;
 ///
 /// This command must be run before starting the node with proofs history enabled.
 /// It backfills the proofs storage with trie nodes from the current chain state.
+/// Run with the execution node stopped; consistency checks may repair execution storage.
 #[derive(Debug, Parser)]
 pub struct InitCommand<C: ChainSpecParser> {
     #[command(flatten)]
@@ -69,8 +70,10 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         );
         proofs_history_db.ensure_storage_path_matches(&storage_path)?;
 
-        // Initialize the environment with read-only access
-        let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RO, runtime)?;
+        // Initialize the environment with read-write access so startup consistency checks can
+        // heal interrupted static-file commits before proofs backfill reads the chain state.
+        // This command runs offline; the backfill transaction itself remains read-only.
+        let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RW, runtime)?;
 
         match proofs_history_db {
             ProofsHistoryDbBackend::Rocksdb => {
@@ -155,5 +158,78 @@ impl<C: ChainSpecParser> InitCommand<C> {
     /// Returns the underlying chain being used to run this command
     pub const fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
         Some(&self.env.chain)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Header;
+    use base_node_core::BaseNode;
+    use reth_provider::{StaticFileProviderFactory, StaticFileSegment, StaticFileWriter};
+    use reth_tasks::Runtime;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::chainspec::BaseChainSpecParser;
+
+    /// Creates committed static-file data one block ahead of the database checkpoint.
+    fn interrupted_static_file_commit(
+        directory: &TempDir,
+        runtime: Runtime,
+    ) -> eyre::Result<InitCommand<BaseChainSpecParser>> {
+        let datadir = directory.path().join("execution");
+        let proofs = directory.path().join("proofs");
+        let command = InitCommand::try_parse_from([
+            "init",
+            "--chain",
+            "base-sepolia",
+            "--datadir",
+            datadir.to_str().expect("temporary datadir is UTF-8"),
+            "--proofs-history.storage-path",
+            proofs.to_str().expect("temporary proofs path is UTF-8"),
+        ])?;
+        {
+            let environment = command.env.init::<BaseNode>(AccessRights::RW, runtime)?;
+            let static_files = environment.provider_factory.static_file_provider();
+            let header = Header { number: 1, ..Default::default() };
+            {
+                let mut writer = static_files.latest_writer(StaticFileSegment::Headers)?;
+                writer.append_header(&header, &header.hash_slow())?;
+                writer.commit()?;
+            }
+            assert_eq!(
+                static_files.get_highest_static_file_block(StaticFileSegment::Headers),
+                Some(1),
+                "fixture must retain the interrupted static-file commit above genesis"
+            );
+        }
+        Ok(command)
+    }
+
+
+    /// Verifies offline proofs initialization heals an interrupted execution static-file commit.
+    #[tokio::test]
+    async fn proofs_init_heals_static_files_before_backfill() -> eyre::Result<()> {
+        let directory = TempDir::new()?;
+        let runtime = Runtime::test();
+        let command = interrupted_static_file_commit(&directory, runtime.clone())?;
+        let datadir = directory.path().join("execution");
+        let result = command.execute::<BaseNode>(runtime.clone()).await;
+        assert!(result.is_ok(), "offline proofs initialization must heal before backfilling: {result:?}");
+        let env = EnvironmentArgs::<BaseChainSpecParser>::try_parse_from([
+            "inspect",
+            "--chain",
+            "base-sepolia",
+            "--datadir",
+            datadir.to_str().expect("temporary datadir is UTF-8"),
+        ])?;
+        let environment = env.init::<BaseNode>(AccessRights::RO, runtime)?;
+        assert_eq!(
+            environment.provider_factory.static_file_provider()
+                .get_highest_static_file_block(StaticFileSegment::Headers),
+            Some(0),
+            "initialization must remove the uncommitted header above the database checkpoint"
+        );
+        Ok(())
     }
 }
