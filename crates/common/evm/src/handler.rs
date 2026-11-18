@@ -101,6 +101,19 @@ where
         self.mainnet.validate_env(evm)
     }
 
+    fn tx_gas(&self, evm: &mut Self::Evm, init_and_floor_gas: &InitialAndFloorGas) -> GasTracker {
+        let ctx = evm.ctx_ref();
+        if ctx.tx().tx_type() != DEPOSIT_TRANSACTION_TYPE {
+            return self.mainnet.tx_gas(evm, init_and_floor_gas);
+        }
+
+        // Deposits are exempt from the per-transaction gas limit cap.
+        let gas_limit = ctx.tx().gas_limit();
+        let (remaining, reservoir) =
+            init_and_floor_gas.initial_gas_and_reservoir(gas_limit, u64::MAX);
+        GasTracker::new(gas_limit, remaining, reservoir)
+    }
+
     fn validate_against_state_and_deduct_caller(
         &self,
         evm: &mut Self::Evm,
@@ -398,9 +411,11 @@ where
 mod tests {
 
     use alloy_primitives::uint;
+    use alloy_sol_types::SolCall;
     use base_common_consensus::Predeploys;
+    use base_common_precompiles::{INonceManager, NonceManagerStorage};
     use revm::{
-        InspectEvm,
+        ExecuteEvm, InspectEvm,
         bytecode::Bytecode,
         context::{BlockEnv, CfgEnv, Context, TxEnv},
         database::InMemoryDB,
@@ -415,6 +430,88 @@ mod tests {
 
     use super::*;
     use crate::{BaseContext, BaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo};
+
+    /// A stateful precompile must not turn unused deposit gas into receipt gas used.
+    #[rstest]
+    #[case::cobalt(BaseUpgrade::Cobalt)]
+    #[case::denim(BaseUpgrade::Denim)]
+    #[case::everest(BaseUpgrade::Everest)]
+    fn deposit_precompile_gas_used_is_independent_of_limit(#[case] upgrade: BaseUpgrade) {
+        let run = |gas_limit| {
+            let tx = BaseTransaction::builder()
+                .base(
+                    TxEnv::builder()
+                        .caller(Address::repeat_byte(0x55))
+                        .kind(TxKind::Call(NonceManagerStorage::ADDRESS))
+                        .data(Bytes::from(
+                            INonceManager::getNonceCall {
+                                account: Address::repeat_byte(0x44),
+                                nonceKey: U256::from(1),
+                            }
+                            .abi_encode(),
+                        ))
+                        .gas_limit(gas_limit)
+                        .gas_price(0),
+                )
+                .source_hash(B256::from([1u8; 32]))
+                .build_fill();
+            let mut evm = Context::base()
+                .with_db(InMemoryDB::default())
+                .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(upgrade)))
+                .build_base();
+            let outcome = evm.transact(tx).expect("deposit must execute");
+            assert!(outcome.result.is_success());
+            assert_eq!(
+                INonceManager::getNonceCall::abi_decode_returns(
+                    outcome.result.output().expect("precompile must return a nonce"),
+                )
+                .unwrap(),
+                0,
+            );
+            outcome.result.tx_gas_used()
+        };
+        assert_eq!(run(20_000_000), run(16_000_000));
+    }
+
+    /// Deposits are exempt from EIP-7825 during execution as well as validation.
+    #[rstest]
+    #[case::jovian(BaseUpgrade::Jovian)]
+    #[case::azul(BaseUpgrade::Azul)]
+    #[case::beryl(BaseUpgrade::Beryl)]
+    #[case::everest(BaseUpgrade::Everest)]
+    fn deposit_execution_uses_full_gas_limit(
+        #[case] upgrade: BaseUpgrade,
+        #[values(16_000_000, 16_777_216, 16_777_217, 20_000_000)] gas_limit: u64,
+    ) {
+        let target = Address::repeat_byte(0x44);
+        let mut db = InMemoryDB::default();
+        // GAS PUSH1 0 MSTORE PUSH1 32 PUSH1 0 RETURN.
+        let code = Bytecode::new_raw(bytes!("5a60005260206000f3"));
+        db.insert_account_info(
+            target,
+            AccountInfo { code_hash: code.hash_slow(), code: Some(code), ..Default::default() },
+        );
+        let tx = BaseTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(Address::repeat_byte(0x55))
+                    .kind(TxKind::Call(target))
+                    .gas_limit(gas_limit)
+                    .gas_price(0),
+            )
+            .source_hash(B256::from([1u8; 32]))
+            .build_fill();
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(upgrade)))
+            .build_base();
+        let outcome = evm.transact(tx).expect("deposit must execute");
+        assert!(outcome.result.is_success());
+        let output = outcome.result.output().expect("deposit must return GAS");
+        // Empty calldata costs 21,000 intrinsic gas; GAS itself costs 2.
+        assert_eq!(U256::from_be_slice(output), U256::from(gas_limit - 21_000 - 2));
+        assert_eq!(outcome.result.tx_gas_used(), 21_017);
+    }
 
     /// Creates frame result.
     fn call_last_frame_return(
