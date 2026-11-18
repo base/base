@@ -1,6 +1,7 @@
 //! Blocking JSON-RPC and Engine API client for one running node.
 
 use std::{
+    collections::BTreeMap,
     io::Read,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -44,6 +45,9 @@ pub struct NodeClient {
     http: reqwest::blocking::Client,
     /// Set for a coverage node: held from sending a request until its coverage is read.
     coverage: Option<Arc<Mutex<()>>>,
+    /// Set by [`Self::enable_coverage_sink`]: edge hit counts summed over every reading that is
+    /// not returned by [`Self::send_covered`].
+    sink: Option<Arc<Mutex<BTreeMap<u64, u64>>>>,
 }
 
 impl NodeClient {
@@ -75,6 +79,7 @@ impl NodeClient {
             secret,
             http,
             coverage: None,
+            sink: None,
         })
     }
 
@@ -86,6 +91,44 @@ impl NodeClient {
     /// request. [`Self::send_covered`] returns the reading; every other request discards it.
     pub fn enable_coverage(&mut self) {
         self.coverage = Some(Arc::new(Mutex::new(())));
+    }
+
+    /// Makes this a coverage node whose readings are summed instead of discarded, so the edges
+    /// of a sequence of requests (Engine API calls and state reads alike) can be taken at once
+    /// with [`Self::take_coverage`]. Clones share the sum.
+    pub fn enable_coverage_sink(&mut self) {
+        self.enable_coverage();
+        self.sink = Some(Arc::new(Mutex::new(BTreeMap::new())));
+    }
+
+    /// Reads the node's pending coverage into the sink, then returns and clears the sum. `None`
+    /// when [`Self::enable_coverage_sink`] was not called.
+    pub fn take_coverage(&self) -> Option<BTreeMap<u64, u64>> {
+        let sink = self.sink.as_ref()?;
+        let lock = self.coverage.as_ref()?;
+        let _held = lock.lock().expect("coverage lock");
+        self.drain_coverage();
+        Some(std::mem::take(&mut *sink.lock().expect("coverage sink")))
+    }
+
+    /// Clears the sum and the node's pending coverage, such as after a restart's warm-up.
+    pub fn reset_coverage(&self) {
+        if let Some(sink) = &self.sink {
+            let _ = self.take_coverage();
+            sink.lock().expect("coverage sink").clear();
+        }
+    }
+
+    /// Reads coverage into the sink (or discards it without one). The caller holds the lock.
+    fn drain_coverage(&self) {
+        let reading = self.read_coverage();
+        if let (Some(sink), Some(reading)) = (&self.sink, reading) {
+            let mut sink = sink.lock().expect("coverage sink");
+            for (edge, count) in reading.hits {
+                let sum = sink.entry(edge).or_default();
+                *sum = sum.saturating_add(count);
+            }
+        }
     }
 
     /// Whether [`Self::enable_coverage`] was called.
@@ -164,7 +207,7 @@ impl NodeClient {
         };
         let _held = lock.lock().expect("coverage lock");
         let reply = self.post_raw(url, body, token);
-        let _ = self.read_coverage();
+        self.drain_coverage();
         reply
     }
 

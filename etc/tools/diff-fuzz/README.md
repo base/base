@@ -41,6 +41,8 @@ post-state, and every header field. The wire format between the harness and an a
   and the total hits (`name<TAB>cases<TAB>hits`). `mainfuzz --baseline` reads the first column.
 - `build-case --cache <dir> <case.json>`: prints the request a `mainfuzz` case builds, such as a
   finding's `minimized-case.json`.
+- `state --launch <script> --root <dir> --node name=http,auth ...`: differential state fuzzing of
+  real nodes through reorgs and restarts (below).
 
 Each takes `--adapter name=command...` once per client, `--jobs`, and `--out`. Divergences and
 adapter failures go to `<out>/findings/<case id>/`: the request, `verdict.json`, and every
@@ -184,3 +186,65 @@ as `eth_call` to `eth_estimateGas`), or edit single characters of the body to re
 `<out>/rpc-coverage.json` is rewritten every round: requests and requests per second, distinct
 features, distinct edges per node, corpus size, kept requests by origin, mutation operator, and
 method, and a timeline with one sample per round.
+
+## Differential state fuzzing of real nodes
+
+`state` checks that real nodes compute and persist state identically: their state roots, the
+state they serve back through reorganizations, unwinds of persisted blocks, and restarts. Every
+node follows one synthetic chain over the Engine API, built block by block by the reference
+adapter, and the harness starts, stops, kills, and wipes the node processes itself: the
+`--launch` script is run as `<script> <name> <datadir>` and must exec node `name` there, with
+`genesis.json` and `jwt.hex` in `--root`. The genesis file puts the genesis block at block zero
+(with mainnet's timestamps at the original numbers), since base/base cannot reopen a datadir
+whose genesis is above it.
+
+An input is a short sequence of chain operations:
+
+- `extend`: build one to twelve blocks on the head, with a forkchoice update after each block or
+  only after the last;
+- `fork`: build a sibling branch on an ancestor up to `--max-depth` blocks back (never below the
+  finalized block, `--finalized-lag` behind the head) and make it canonical or leave it aside;
+- `switch`: make an earlier branch tip the head again;
+- `restart`: stop some or all nodes cleanly (`SIGTERM`) or kill them (`SIGKILL`) and start them on
+  the same datadir; blocks a node lost are sent again, and counted;
+- `badRoot`: submit the next block with a wrong state root (random, the parent's, one bit flipped,
+  or a sibling's), which every node must answer `INVALID`;
+- `check`: read state back at several heights.
+
+Blocks carry state-stress traffic (`StressPlan`, per operation) besides ordinary transactions:
+calls to a genesis contract that runs scripts of slot writes on keys whose hashed paths share one
+to five nibbles (so writes and deletions split and collapse branch nodes), deletions of existing
+slots, a hot set every block rewrites, slots written and reset within a transaction or by a later
+transaction of the block, dense runs of consecutive slots, value sprayed to hundreds of fresh
+accounts, `CREATE2` children that write storage and self-destruct in the same transaction and are
+recreated later, code blobs up to and past the maximum code size, and calls that touch empty
+genesis accounts (some with storage) so EIP-161 removes them.
+
+After every operation, and at more heights at the end of an input, the harness reads back the
+header and, for the accounts and slots the block touched plus random present and absent ones,
+`eth_getProof` (values checked and proofs verified against the expected roots),
+`eth_getStorageAt`, `eth_getBalance`, `eth_getTransactionCount`, and `eth_getCode`, and compares
+them with the generator's expected state. Payload statuses (`VALID`, or `ACCEPTED` for side
+branches), forkchoice results, and the head every node reports are checked too. A read that
+diverges is read again five seconds later and marked `(transient)` if it is gone.
+
+A divergence wipes the nodes and restarts the chain; a new signature (kind, node, field, and the
+validation error with hashes blanked) gets a reproducer in `<out>/findings/<signature>/`: the
+genesis file, `ops.json` (the operations since the last wipe), `trace.jsonl` (every Engine API
+call in order, with restarts), and `divergences.json`, plus a `minimized/` copy when
+`--minimize-budget` allows replays from genesis. `state --replay ops.json` replays a reproducer
+and minimizes it. The chain also starts over after `--max-blocks`.
+
+With `--coverage-from <node>` (repeatable) the run is guided by the coverage builds above scoped
+to trie, state, database, and persistence code (see the diff-node README for base/base's crate
+set; needlefish takes `BASE_RPC_COVERAGE_PREFIXES`, Nethermind an instrument script over its
+Trie, State, Db, Blockchain, Consensus, and Merge assemblies). Every reading of an input, Engine
+API calls and state reads alike, is summed and divided by the blocks the input built (so a long
+input does not reach new hit-count buckets just by being long), and an input that reaches a new
+feature in any node is kept in `<out>/state-corpus/`. Guided inputs are fresh (`--explore`,
+default 25%) or mutants of corpus inputs: operations inserted, deleted, duplicated, swapped,
+spliced from another input, reseeded, retuned (one stress knob or a fresh plan), or tweaked
+(block counts, depths, flags).
+`--unguided` runs only fresh inputs and still reads coverage. `<out>/state-summary.json` holds
+operation counts, blocks, wipes, findings, observations, features, edges per node, corpus size,
+kept inputs by origin and operator, and a timeline.

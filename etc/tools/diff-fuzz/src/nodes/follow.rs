@@ -144,11 +144,13 @@ pub struct ChainFollower {
 }
 
 impl ChainFollower {
-    /// Writes the genesis file of chain `seed` (Isthmus to Denim) to `path`.
+    /// Writes the genesis file of chain `seed` (Isthmus to Denim) to `path`, at block zero when
+    /// `zero_number` is set (see [`NodeGenesis::json`]).
     pub fn write_genesis(
         seed: u64,
         options: GeneratorOptions,
         path: &std::path::Path,
+        zero_number: bool,
     ) -> eyre::Result<()> {
         let chain = ChainGenerator::new(seed, options);
         let parent = &chain.ancestors()[0];
@@ -160,7 +162,7 @@ impl ChainFollower {
             parent.timestamp < denim,
             "chain {seed} starts after Denim activation; pick another seed"
         );
-        let genesis = NodeGenesis::json(chain.state(), parent);
+        let genesis = NodeGenesis::json(chain.state(), parent, zero_number);
         fs::write(path, serde_json::to_vec_pretty(&genesis)?)?;
         Ok(())
     }
@@ -270,7 +272,9 @@ impl ChainFollower {
         self.index.blocks[(number - genesis) as usize].hash
     }
 
-    fn new_payload(node: &NodeClient, method: &str, params: &Value) -> eyre::Result<()> {
+    /// Submits a payload, retrying while the node answers `SYNCING` or `ACCEPTED`; fails unless
+    /// it ends `VALID`.
+    pub fn new_payload(node: &NodeClient, method: &str, params: &Value) -> eyre::Result<()> {
         for attempt in 0..50 {
             let status = node.engine(method, params)?;
             match status["status"].as_str() {
@@ -284,7 +288,9 @@ impl ChainFollower {
         unreachable!("the last attempt returns or fails")
     }
 
-    fn forkchoice(node: &NodeClient, forkchoice: &Value) -> eyre::Result<()> {
+    /// Sends a forkchoice update (a zero safe or finalized hash stands for the head), retrying
+    /// while the node answers `SYNCING` or `ACCEPTED`; fails unless it ends `VALID`.
+    pub fn forkchoice(node: &NodeClient, forkchoice: &Value) -> eyre::Result<()> {
         let mut forkchoice = forkchoice.clone();
         // The head's own hash stands in for "safe/finalized = head" (lag 0).
         let head = forkchoice[0]["headBlockHash"].clone();

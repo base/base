@@ -46,8 +46,10 @@ pub use r#gen::{
 
 mod nodes;
 pub use nodes::{
-    ChainBlock, ChainFollower, ChainIndex, ChainTx, CoverageReading, FAMILIES, GuideReport,
-    GuideSample, GuideState, Lag, MethodStats, NodeClient, NodeGenesis, PathStep, Reply,
-    RpcCampaign, RpcCase, RpcCompare, RpcConfig, RpcDifference, RpcExclude, RpcFinding, RpcGen,
-    RpcGuide, RpcMutator, RpcSummary, RpcVerdict,
+    ChainBlock, ChainFollower, ChainIndex, ChainTree, ChainTx, CoverageReading, Divergence,
+    FAMILIES, GuideReport, GuideSample, GuideState, Lag, MethodStats, NodeClient, NodeGenesis,
+    NodeProcess, PathStep, Reply, RpcCampaign, RpcCase, RpcCompare, RpcConfig, RpcDifference,
+    RpcExclude, RpcFinding, RpcGen, RpcGuide, RpcMutator, RpcSummary, RpcVerdict, StateCampaign,
+    StateConfig, StateFinding, StateInput, StateMutator, StateOp, StateSession, StateSummary,
+    TreeBlock,
 };

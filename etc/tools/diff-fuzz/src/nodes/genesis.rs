@@ -26,7 +26,11 @@ impl NodeGenesis {
     /// Fields a genesis file cannot set (gas used, roots of the empty body, the parent beacon
     /// block root, the requests hash) take each client's genesis defaults, so the genesis hash is
     /// read back from the nodes rather than taken from `parent`.
-    pub fn json(state: &WorldState, parent: &Header) -> Value {
+    ///
+    /// With `zero_number` the genesis block is block zero instead (timestamp unchanged): the
+    /// chain rebased onto it numbers its blocks from one (see [`crate::ChainGenerator::rebase`]),
+    /// for nodes that cannot reopen a datadir whose genesis is above block zero.
+    pub fn json(state: &WorldState, parent: &Header, zero_number: bool) -> Value {
         let c = ChainConfig::mainnet();
         let mut alloc = Map::new();
         for (address, account) in &state.accounts {
@@ -86,7 +90,7 @@ impl NodeGenesis {
                 },
             },
             "nonce": "0x0",
-            "number": format!("{:#x}", parent.number),
+            "number": format!("{:#x}", if zero_number { 0 } else { parent.number }),
             "timestamp": format!("{:#x}", parent.timestamp),
             "extraData": parent.extra_data,
             "gasLimit": format!("{:#x}", parent.gas_limit),

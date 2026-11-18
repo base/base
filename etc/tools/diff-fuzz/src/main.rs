@@ -5,7 +5,8 @@ use std::{fs, path::PathBuf, time::Duration};
 use base_diff_fuzz::{
     Adapter, AdapterSpec, Campaign, ChainDriver, ChainFollower, ConfigLogs, Era, FuzzConfig,
     Fuzzer, Generator, GeneratorOptions, Lag, MainFuzzConfig, MainFuzzer, MainnetFetcher,
-    MainnetReplay, NodeClient, Request, RpcCampaign, RpcConfig, RpcExclude,
+    MainnetReplay, NodeClient, NodeProcess, Request, RpcCampaign, RpcConfig, RpcExclude,
+    StateCampaign, StateConfig, StateOp, StateSession,
 };
 use clap::{Args, Parser, Subcommand};
 use eyre::WrapErr;
@@ -287,6 +288,61 @@ enum Command {
         #[arg(long, default_value_t = 40)]
         explore: u64,
     },
+    /// Differential state fuzzing: every node follows synthetic chain `seed` with state-stress
+    /// traffic through extensions, reorgs, restarts, and wrong-root blocks, and reads its state
+    /// back against the generator's expected state. Nodes are started by `--launch`.
+    State {
+        /// Chain seed.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Reference adapter that builds the chain, as `name=command args...`.
+        #[arg(long)]
+        adapter: String,
+        /// Node as `name=http_url,auth_url`; repeat for each client.
+        #[arg(long = "node", required = true)]
+        nodes: Vec<String>,
+        /// Script run as `<launch> <name> <datadir>` that execs node `name` on `datadir`, with
+        /// the genesis file and JWT secret in the datadir's parent.
+        #[arg(long)]
+        launch: PathBuf,
+        /// Directory of the datadirs, logs, `genesis.json`, and `jwt.hex`.
+        #[arg(long)]
+        root: PathBuf,
+        /// How long to run, such as `90s`, `20m`, or `2h`.
+        #[arg(long, default_value = "1h", value_parser = parse_duration)]
+        duration: Duration,
+        /// Output directory.
+        #[arg(long, default_value = "state-fuzz-out")]
+        out: PathBuf,
+        /// Nodes whose `fuzz_coverage` edges guide the run; repeat for several.
+        #[arg(long)]
+        coverage_from: Vec<String>,
+        /// Only run fresh inputs (the unguided baseline); coverage is still measured.
+        #[arg(long)]
+        unguided: bool,
+        /// Percentage of guided inputs that are fresh instead of mutants.
+        #[arg(long, default_value_t = 25)]
+        explore: u64,
+        /// Canonical height after which the nodes are wiped and the chain starts over.
+        #[arg(long, default_value_t = 400)]
+        max_blocks: u64,
+        /// Deepest reorg.
+        #[arg(long, default_value_t = 40)]
+        max_depth: u64,
+        /// Blocks between safe and head.
+        #[arg(long, default_value_t = 4)]
+        safe_lag: u64,
+        /// Blocks between finalized and head (reorgs never go below finalized).
+        #[arg(long, default_value_t = 64)]
+        finalized_lag: u64,
+        /// Replays one minimization may run (0 disables minimization).
+        #[arg(long, default_value_t = 24)]
+        minimize_budget: usize,
+        /// Instead of fuzzing, replay the operations in this file (`ops.json` of a reproducer)
+        /// from genesis and print the divergences, minimizing them within `--minimize-budget`.
+        #[arg(long)]
+        replay: Option<PathBuf>,
+    },
 }
 
 /// Eras of the chains real nodes follow: the Engine API payloads they take start at Isthmus.
@@ -296,6 +352,11 @@ fn node_chain_options() -> GeneratorOptions {
         max_nonce_deposit_creates: false,
         ..GeneratorOptions::default()
     }
+}
+
+/// Options of the chains the state campaign drives: the node eras, with state-stress traffic.
+fn state_chain_options() -> GeneratorOptions {
+    GeneratorOptions { state_stress: true, ..node_chain_options() }
 }
 
 /// Parses `90`, `90s`, `20m`, or `2h`.
@@ -368,7 +429,7 @@ fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::NodeGenesis { seed, out } => {
-            ChainFollower::write_genesis(seed, node_chain_options(), &out)?;
+            ChainFollower::write_genesis(seed, node_chain_options(), &out, false)?;
         }
         Command::Rpc {
             seed,
@@ -427,6 +488,77 @@ fn main() -> eyre::Result<()> {
                 explore_percent: explore,
             };
             let summary = RpcCampaign::run(&mut follower, &config)?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        }
+        Command::State {
+            seed,
+            adapter,
+            nodes,
+            launch,
+            root,
+            duration,
+            out,
+            coverage_from,
+            unguided,
+            explore,
+            max_blocks,
+            max_depth,
+            safe_lag,
+            finalized_lag,
+            minimize_budget,
+            replay,
+        } => {
+            fs::create_dir_all(&root)?;
+            fs::create_dir_all(&out)?;
+            let jwt = root.join("jwt.hex");
+            if !jwt.exists() {
+                fs::write(&jwt, alloy_primitives::hex::encode(alloy_primitives::B256::random()))?;
+            }
+            let nodes = nodes
+                .iter()
+                .map(|n| NodeClient::parse(n, &jwt))
+                .collect::<eyre::Result<Vec<_>>>()?;
+            let procs = nodes
+                .iter()
+                .map(|n| NodeProcess::new(n.name.clone(), launch.clone(), root.clone()))
+                .collect();
+            let adapter = Adapter::new(AdapterSpec::parse(&adapter)?, Duration::from_secs(300));
+            let lag = Lag { safe: safe_lag, finalized: finalized_lag };
+            let mut session = StateSession::start(
+                seed,
+                state_chain_options(),
+                adapter,
+                nodes,
+                procs,
+                lag,
+                max_depth.min(finalized_lag),
+            )?;
+            if let Some(path) = replay {
+                let ops: Vec<StateOp> = serde_json::from_str(&fs::read_to_string(&path)?)
+                    .wrap_err_with(|| format!("parsing {}", path.display()))?;
+                let mut divergences = session.replay(&ops)?;
+                session.save_reproducer(&out.join("replay"), &divergences)?;
+                if let Some(first) = divergences.first().filter(|_| minimize_budget > 0) {
+                    let signature = first.signature();
+                    let ops =
+                        StateCampaign::minimize(&mut session, &ops, &signature, minimize_budget)?;
+                    divergences = session.replay(&ops)?;
+                    session.save_reproducer(&out.join("minimized"), &divergences)?;
+                }
+                println!("{}", serde_json::to_string_pretty(&divergences)?);
+                return Ok(());
+            }
+            let config = StateConfig {
+                seed,
+                duration,
+                out,
+                coverage_from,
+                guided: !unguided,
+                explore_percent: explore,
+                max_blocks,
+                minimize_budget,
+            };
+            let summary = StateCampaign::run(&mut session, &config)?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
         }
         Command::Run { common, paths } => {

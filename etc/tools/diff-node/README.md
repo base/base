@@ -1,7 +1,8 @@
 # `base-diff-node`
 
-`base-reth-node` with per-request JSON-RPC edge coverage, for the coverage-guided JSON-RPC
-differential fuzzer (`base-diff-fuzz rpc --coverage-from base`). It runs the same node as
+`base-reth-node` with per-request edge coverage, for the coverage-guided differential fuzzers of
+real nodes: JSON-RPC (`base-diff-fuzz rpc --coverage-from base`) and state (`base-diff-fuzz
+state --coverage-from base`). It runs the same node as
 `bin/node` (`StandardBaseRethNode` with its standard extensions) and adds one RPC method,
 `fuzz_coverage`. It is a separate binary under `etc/tools` so production builds never contain
 the method or the instrumentation.
@@ -46,3 +47,21 @@ RUSTC_WRAPPER=etc/tools/diff-adapter/sancov-rustc.sh CARGO_TARGET_DIR=target/san
 Use a target directory for each `SANCOV_CRATES` value: cargo does not see the variable, so it
 would reuse crates built with another set. The binary takes the same arguments as
 `base-reth-node`.
+
+For the state campaign, instrument the trie, state root, database, and persistence code instead:
+reth's trie crates (including the sparse and parallel tries), the provider and database layers
+(MDBX, static files, codecs), the engine tree and in-memory chain state, stages, pruning, and
+Base's proofs-history storage and extension.
+
+```sh
+SANCOV_CRATES="reth_trie reth_trie_common reth_trie_db reth_trie_parallel reth_trie_sparse \
+  reth_provider reth_db reth_db_api reth_db_common reth_db_models reth_storage_api \
+  reth_storage_overlay reth_chain_state reth_engine_tree reth_static_file reth_nippy_jar \
+  reth_libmdbx reth_prune reth_stages reth_stages_api reth_codecs alloy_trie \
+  base_execution_trie base_proofs_extension" \
+RUSTC_WRAPPER=etc/tools/diff-adapter/sancov-rustc.sh CARGO_TARGET_DIR=target/sancov-state \
+  cargo build --release -p base-diff-node
+```
+
+Background work (persistence, proofs history) also bumps these counters between requests; the
+state campaign sums every reading over an input rather than attributing them to single requests.
