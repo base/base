@@ -1055,7 +1055,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// is rejected as already executed.
     pub(crate) fn insert_validated_at(
         &mut self,
-        mut transaction: ValidPoolTransaction<T>,
+        transaction: ValidPoolTransaction<T>,
         cursor: LaneCursor,
     ) -> PoolResult<InsertOutcome<T>> {
         let hash = *transaction.hash();
@@ -1073,25 +1073,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             } else {
                 None
             };
-            self.acquire_ids(&mut transaction);
-            let transaction = Arc::new(transaction);
-            if let Some(existing) = &replaced {
-                self.hashes.remove(existing.hash());
-                self.usage.remove(existing);
-            }
-            self.nonce_free.insert(replay_id, Arc::clone(&transaction));
-            self.usage.add(&transaction);
-            let sender = transaction.sender();
-            transaction.transaction.set_coinbase_tip_backed(self.usage.tip_backed(&sender));
-            self.refresh_nonce_free_candidate(replay_id);
-            self.hashes.insert(hash, Arc::clone(&transaction));
-            self.refresh_tip_backing(sender);
-            return Ok(InsertOutcome {
-                outcome: AddedTransactionOutcome { hash, state: AddedTransactionState::Pending },
-                replaced,
-                anchor: LaneUpdate::default(),
-                promoted: Vec::new(),
-            });
+            return Ok(self.place_nonce_free(replay_id, transaction, replaced));
         }
 
         let sender = transaction.sender();
@@ -1129,6 +1111,89 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 }
             })
             .transpose()?;
+        Ok(self.place_in_lane(lane_id, transaction, cursor, replaced))
+    }
+
+    /// Undoes the insertion `outcome` reports, which a post-insert check
+    /// rejected, and returns the inserted transaction. The transaction it
+    /// replaced takes its slot back; lane changes from anchoring the cursor
+    /// stand.
+    pub(crate) fn roll_back_insert(
+        &mut self,
+        outcome: &InsertOutcome<T>,
+        cursor: LaneCursor,
+    ) -> Option<Arc<ValidPoolTransaction<T>>> {
+        let hash = outcome.outcome.hash;
+        let Some(replaced) = &outcome.replaced else {
+            return self.remove_hash(hash);
+        };
+        let inserted = self.hashes.get(&hash).cloned();
+        let restored = ValidPoolTransaction {
+            transaction_id: replaced.transaction_id,
+            transaction: replaced.transaction.clone(),
+            propagate: replaced.propagate,
+            timestamp: replaced.timestamp,
+            origin: replaced.origin,
+            authority_ids: replaced.authority_ids.clone(),
+        };
+        let outcome = if let Some(replay_id) = restored.transaction.base_tx_replay_id() {
+            self.place_nonce_free(replay_id, restored, inserted)
+        } else {
+            let lane_id = (restored.sender(), self.lane_key(&restored.transaction)?);
+            self.place_in_lane(lane_id, restored, cursor, inserted)
+        };
+        outcome.replaced
+    }
+
+    /// Puts an admitted nonce-free transaction under `replay_id`, in place of
+    /// `replaced`, the one holding it.
+    ///
+    /// The transaction is added to the usage totals before `replaced` leaves
+    /// them, so a sender whose only transaction is replaced keeps its known
+    /// balance.
+    fn place_nonce_free(
+        &mut self,
+        replay_id: B256,
+        mut transaction: ValidPoolTransaction<T>,
+        replaced: Option<Arc<ValidPoolTransaction<T>>>,
+    ) -> InsertOutcome<T> {
+        let hash = *transaction.hash();
+        self.acquire_ids(&mut transaction);
+        let transaction = Arc::new(transaction);
+        self.nonce_free.insert(replay_id, Arc::clone(&transaction));
+        self.usage.add(&transaction);
+        if let Some(existing) = &replaced {
+            self.hashes.remove(existing.hash());
+            self.usage.remove(existing);
+        }
+        let sender = transaction.sender();
+        transaction.transaction.set_coinbase_tip_backed(self.usage.tip_backed(&sender));
+        self.refresh_nonce_free_candidate(replay_id);
+        self.hashes.insert(hash, Arc::clone(&transaction));
+        self.refresh_tip_backing(sender);
+        InsertOutcome {
+            outcome: AddedTransactionOutcome { hash, state: AddedTransactionState::Pending },
+            replaced,
+            anchor: LaneUpdate::default(),
+            promoted: Vec::new(),
+        }
+    }
+
+    /// Puts an admitted lane transaction in `lane_id`, anchored at `cursor`,
+    /// in place of `replaced`, the one holding its nonce.
+    ///
+    /// The transaction is added to the usage totals before `replaced` leaves
+    /// them, so a sender whose only transaction is replaced keeps its known
+    /// balance.
+    fn place_in_lane(
+        &mut self,
+        lane_id: LaneId,
+        mut transaction: ValidPoolTransaction<T>,
+        cursor: LaneCursor,
+        replaced: Option<Arc<ValidPoolTransaction<T>>>,
+    ) -> InsertOutcome<T> {
+        let hash = *transaction.hash();
+        let nonce = transaction.nonce();
         self.acquire_ids(&mut transaction);
         let transaction = Arc::new(transaction);
 
@@ -1166,15 +1231,15 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .cloned()
             .collect();
 
-        transaction.transaction.set_coinbase_tip_backed(self.usage.tip_backed(&sender));
+        transaction.transaction.set_coinbase_tip_backed(self.usage.tip_backed(&lane_id.0));
         self.refresh_lane_indexes(lane_id);
-        self.refresh_tip_backing(sender);
-        Ok(InsertOutcome {
+        self.refresh_tip_backing(lane_id.0);
+        InsertOutcome {
             outcome: AddedTransactionOutcome { hash, state },
             replaced,
             anchor,
             promoted,
-        })
+        }
     }
 
     /// Moves a lane's canonical anchor forward to `nonce`, leaving it alone
@@ -3160,6 +3225,83 @@ mod tests {
 
         assert_eq!(evicted_hashes(&mut pool), vec![priority_hash]);
         assert!(pool.contains(&coinbase_hash));
+    }
+
+    #[test]
+    fn replacing_a_senders_only_transaction_keeps_its_known_balance() {
+        let mut pool = capped_pool(1);
+        let tipper = signer();
+        // Same replay id: 100 per gas from the coinbase tip once backed, plus
+        // a priority fee of 0, then 10.
+        let original = valid_pool_transaction(signed_coinbase_tip_tx(
+            &tipper,
+            TxBaseConstants::NONCE_KEY_MAX,
+            0,
+            5_000_000,
+            0,
+            1_000,
+        ));
+        let replacement = valid_pool_transaction(signed_coinbase_tip_tx(
+            &tipper,
+            TxBaseConstants::NONCE_KEY_MAX,
+            0,
+            5_000_000,
+            10,
+            1_250,
+        ));
+        let replacement_hash = *replacement.hash();
+        let balance = *replacement.transaction.cost();
+        let priority = valid_pool_transaction(signed_nonce_free_tx(&signer(), 1, 50, 1_000));
+        let priority_hash = *priority.hash();
+        pool.insert_validated(original, 0).unwrap();
+        pool.apply_balance_updates([(tipper.address(), balance)]);
+
+        // A balance update lands while the replacement is being validated.
+        let balance_epoch = pool.balance_epoch();
+        pool.apply_balance_updates([(tipper.address(), balance)]);
+        assert!(pool.insert_validated(replacement, 0).unwrap().replaced.is_some());
+        pool.record_validated_balance(tipper.address(), balance, balance_epoch);
+        pool.insert_validated(priority, 0).unwrap();
+
+        assert_eq!(evicted_hashes(&mut pool), vec![priority_hash]);
+        assert!(pool.contains(&replacement_hash));
+    }
+
+    #[test]
+    fn rolling_back_a_replacement_keeps_the_senders_known_balance() {
+        for nonce_key in [TxBaseConstants::NONCE_KEY_MAX, U256::from(1)] {
+            let mut pool = capped_pool(1);
+            let tipper = signer();
+            // Same slot: 100 per gas from the coinbase tip once backed, plus a
+            // priority fee of 0, then 10.
+            let original = valid_pool_transaction(signed_coinbase_tip_tx(
+                &tipper, nonce_key, 0, 5_000_000, 0, 1_000,
+            ));
+            let original_hash = *original.hash();
+            let replacement = valid_pool_transaction(signed_coinbase_tip_tx(
+                &tipper, nonce_key, 0, 5_000_000, 10, 1_250,
+            ));
+            let replacement_hash = *replacement.hash();
+            let balance = *replacement.transaction.cost();
+            let priority = valid_pool_transaction(signed_nonce_free_tx(&signer(), 1, 50, 1_000));
+            let priority_hash = *priority.hash();
+            pool.insert_validated(original, 0).unwrap();
+            pool.apply_balance_updates([(tipper.address(), balance)]);
+
+            // A balance update lands while the replacement is being validated,
+            // and a post-insert check then rejects the replacement.
+            let balance_epoch = pool.balance_epoch();
+            pool.apply_balance_updates([(tipper.address(), balance)]);
+            let outcome = pool.insert_validated(replacement, 0).unwrap();
+            pool.record_validated_balance(tipper.address(), balance, balance_epoch);
+            let removed = pool.roll_back_insert(&outcome, LaneCursor::at(0));
+            pool.insert_validated(priority, 0).unwrap();
+
+            assert_eq!(removed.map(|removed| *removed.hash()), Some(replacement_hash));
+            assert_eq!(evicted_hashes(&mut pool), vec![priority_hash]);
+            assert!(pool.contains(&original_hash));
+            assert!(!pool.contains(&replacement_hash));
+        }
     }
 
     #[test]

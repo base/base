@@ -1278,39 +1278,18 @@ where
         LaneCursor { state_nonce, next_nonce, run_bid }
     }
 
-    /// Undoes a lane insertion that a post-insert check rejected: removes the
-    /// newcomer, re-announces the lane, and restores the transaction it replaced
-    /// within the same store.
-    #[expect(clippy::too_many_arguments, reason = "borrows the locks the caller already holds")]
+    /// Undoes a lane insertion that a post-insert check rejected: the
+    /// transaction it replaced within the same store takes its slot back, and
+    /// listeners see the newcomer discarded and the lane re-announced.
     fn roll_back_lane_insert(
         pool: &mut TwoDNoncePool<T>,
         listeners: &mut SidecarListeners<T>,
-        guard: &mut MempoolGuard,
         outcome: &InsertOutcome<T>,
         cursor: LaneCursor,
-        sender: Address,
-        balance: U256,
-        balance_epoch: u64,
     ) {
-        let removed = pool.remove_transactions(&[outcome.outcome.hash]);
-        listeners.on_discarded(&removed);
+        let removed = pool.roll_back_insert(outcome, cursor);
+        listeners.on_discarded(removed.as_slice());
         listeners.on_lane_moved(&outcome.anchor);
-        let Some(replaced) = &outcome.replaced else {
-            return;
-        };
-        let restored = ValidPoolTransaction {
-            transaction_id: replaced.transaction_id,
-            transaction: replaced.transaction.clone(),
-            propagate: replaced.propagate,
-            timestamp: replaced.timestamp,
-            origin: replaced.origin,
-            authority_ids: replaced.authority_ids.clone(),
-        };
-        if pool.insert_validated_at(restored, cursor).is_err() {
-            guard.release(replaced.hash());
-            listeners.on_discarded(std::slice::from_ref(replaced));
-        }
-        pool.record_validated_balance(sender, balance, balance_epoch);
     }
 
     /// Inserts a validated transaction into the lane store `store`.
@@ -1400,16 +1379,7 @@ where
                     None
                 };
                 if let Some(error) = rejection {
-                    Self::roll_back_lane_insert(
-                        &mut pool,
-                        &mut listeners,
-                        &mut guard,
-                        &outcome,
-                        cursor,
-                        sender,
-                        balance,
-                        balance_epoch,
-                    );
+                    Self::roll_back_lane_insert(&mut pool, &mut listeners, &outcome, cursor);
                     return Err(error);
                 }
                 // An incumbent from another store stays pooled there until the
@@ -1434,12 +1404,8 @@ where
                             Self::roll_back_lane_insert(
                                 &mut pool,
                                 &mut listeners,
-                                &mut guard,
                                 &outcome,
                                 cursor,
-                                sender,
-                                balance,
-                                balance_epoch,
                             );
                             return Err(Self::limit_rejection_error(hash, rejection));
                         }
