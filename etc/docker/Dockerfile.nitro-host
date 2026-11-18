@@ -4,7 +4,7 @@
 # them to the Nitro Enclave over vsock.
 
 # --- Builder ---
-FROM --platform=linux/amd64 rust:1.95-trixie@sha256:443dd9a3260cf23c22fc05051dd5661dd7b4028d3d25dbaffab6563b63c3539c AS builder
+FROM rust:1.96.0-trixie@sha256:58fe97504a0e4cbba5d85599619a589923d3e779472a6fb0840d58d1c4ba99d7 AS builder
 WORKDIR /app
 
 RUN apt-get update && \
@@ -14,16 +14,17 @@ RUN apt-get update && \
 
 COPY . .
 
+ARG TARGETARCH
 ARG PROFILE=release
 ARG CARGO_FEATURES=""
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=prover-nitro-host-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=prover-nitro-host-target-${TARGETARCH},sharing=locked \
     cargo build --profile $PROFILE --locked --package base-prover-nitro-host --bin base-prover-nitro-host $CARGO_FEATURES && \
     cp target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-prover-nitro-host ./base-prover-nitro-host
 
 # --- Runtime ---
-FROM --platform=linux/amd64 debian:trixie-slim@sha256:1d3c811171a08a5adaa4a163fbafd96b61b87aa871bbc7aa15431ac275d3d430
+FROM debian:trixie-slim@sha256:1d3c811171a08a5adaa4a163fbafd96b61b87aa871bbc7aa15431ac275d3d430
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/* && \
