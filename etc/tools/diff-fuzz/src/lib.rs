@@ -26,7 +26,10 @@ pub use fuzz::{
 
 mod mainnet;
 pub use mainnet::{
-    BlockResult, EraTally, MainnetFetcher, MainnetReplay, ProofWitness, RpcClient, Touched,
+    BlockPool, BlockResult, CallEdit, EraTally, HeaderTweak, MainCase, MainFindingGroup,
+    MainFuzzConfig, MainFuzzStats, MainFuzzer, MainnetFetcher, MainnetReplay, ProofWitness,
+    RealCall, RealCase, RealItem, RealState, RpcClient, TX_GAS_LIMIT_CAP, Touched, Transplant,
+    TransplantItem,
 };
 
 mod r#gen;

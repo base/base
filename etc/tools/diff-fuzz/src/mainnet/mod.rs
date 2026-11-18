@@ -14,3 +14,14 @@ pub use proofs::{ProofWitness, Touched};
 
 mod replay;
 pub use replay::{BlockResult, EraTally, MainnetReplay};
+
+mod mutate;
+pub use mutate::{
+    BlockPool, CallEdit, HeaderTweak, RealCall, RealCase, RealItem, TX_GAS_LIMIT_CAP,
+};
+
+mod transplant;
+pub use transplant::{RealState, Transplant, TransplantItem};
+
+mod mainfuzz;
+pub use mainfuzz::{MainCase, MainFindingGroup, MainFuzzConfig, MainFuzzStats, MainFuzzer};

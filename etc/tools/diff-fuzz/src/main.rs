@@ -4,7 +4,7 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use base_diff_fuzz::{
     AdapterSpec, Campaign, ChainDriver, ConfigLogs, Era, FuzzConfig, Fuzzer, Generator,
-    GeneratorOptions, MainnetFetcher, MainnetReplay, Request,
+    GeneratorOptions, MainFuzzConfig, MainFuzzer, MainnetFetcher, MainnetReplay, Request,
 };
 use clap::{Args, Parser, Subcommand};
 use eyre::WrapErr;
@@ -130,6 +130,67 @@ enum Command {
         /// Only replay cached blocks.
         #[arg(long)]
         offline: bool,
+    },
+    /// Coverage-guided fuzzing seeded from cached mainnet blocks: real transactions dropped,
+    /// reordered, duplicated, spliced, and replayed with edits through deposits, and real
+    /// contracts and transactions transplanted into synthetic generator states.
+    Mainfuzz {
+        #[command(flatten)]
+        common: Common,
+        /// Mainnet block cache (from `mainnet`).
+        #[arg(long, default_value = "mainnet-cache")]
+        cache: PathBuf,
+        /// How long to run, such as `90s`, `20m`, or `2h`.
+        #[arg(long, default_value = "1h", value_parser = parse_duration)]
+        duration: Duration,
+        /// Seed.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Reference adapter (started with coverage on).
+        #[arg(long, default_value = "base")]
+        reference: String,
+        /// Percentage of fresh cases that are transplants.
+        #[arg(long, default_value_t = 35)]
+        transplant_percent: u64,
+        /// Candidate requests one minimization may run.
+        #[arg(long, default_value_t = 150)]
+        minimize_budget: usize,
+        /// File of coverage feature names of the main corpus (one per line).
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+    },
+    /// Prints the request a `mainfuzz` case (such as a finding's `minimized-case.json`) builds.
+    BuildCase {
+        /// Mainnet block cache.
+        #[arg(long, default_value = "mainnet-cache")]
+        cache: PathBuf,
+        /// Case file.
+        case: PathBuf,
+    },
+    /// Writes the coverage feature names the reference adapter reports for saved fuzz corpus
+    /// cases (descriptors) and fresh generator cases, one per line.
+    CoverageNames {
+        /// Reference adapter as `name=command args...` (started with coverage on).
+        #[arg(long)]
+        adapter: String,
+        /// Fuzz corpus directories of case descriptors.
+        #[arg(long)]
+        corpus: Vec<PathBuf>,
+        /// `mainfuzz` corpus directories (`<out>/corpus`), built from `--cache`.
+        #[arg(long)]
+        main_corpus: Vec<PathBuf>,
+        /// Mainnet block cache for `--main-corpus`.
+        #[arg(long, default_value = "mainnet-cache")]
+        cache: PathBuf,
+        /// Fresh generator cases to add (seed 1).
+        #[arg(long, default_value_t = 0)]
+        gen_cases: u64,
+        /// Worker threads.
+        #[arg(long, default_value_t = 4)]
+        jobs: usize,
+        /// Output file: `name<TAB>cases hitting it<TAB>total hits`, one per line.
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Multi-block synthetic chains; each advances only while every adapter agrees.
     Chain {
@@ -336,6 +397,128 @@ fn main() -> eyre::Result<()> {
             };
             let tally = replay.run(&list)?;
             println!("{}", serde_json::to_string_pretty(&tally)?);
+        }
+        Command::Mainfuzz {
+            common,
+            cache,
+            duration,
+            seed,
+            reference,
+            transplant_percent,
+            minimize_budget,
+            baseline,
+        } => {
+            let campaign = common.campaign()?;
+            let baseline = match baseline {
+                Some(path) => fs::read_to_string(path)?
+                    .lines()
+                    .map(|line| line.split('\t').next().unwrap_or_default().to_owned())
+                    .collect(),
+                None => Default::default(),
+            };
+            let fuzzer = MainFuzzer {
+                config: MainFuzzConfig {
+                    adapters: campaign.adapters,
+                    reference,
+                    jobs: campaign.jobs,
+                    timeout: campaign.timeout,
+                    out: campaign.out,
+                    duration,
+                    seed,
+                    transplant_percent,
+                    minimize_budget,
+                    baseline,
+                },
+                pool: std::sync::Arc::new(base_diff_fuzz::BlockPool::open(cache)?),
+            };
+            let stats = fuzzer.run()?;
+            println!("{}", serde_json::to_string_pretty(&stats)?);
+        }
+        Command::BuildCase { cache, case } => {
+            let case: base_diff_fuzz::MainCase = serde_json::from_slice(&fs::read(case)?)?;
+            let request = case.build(&base_diff_fuzz::BlockPool::open(cache)?)?;
+            println!("{}", serde_json::to_string(&request)?);
+        }
+        Command::CoverageNames { adapter, corpus, main_corpus, cache, gen_cases, jobs, out } => {
+            let mut spec = AdapterSpec::parse(&adapter)?;
+            spec.command
+                .splice(0..0, ["env".to_owned(), format!("{}=1", base_diff_fuzz::COVERAGE_ENV)]);
+            let options = GeneratorOptions::default();
+            let read_dir = |dir: &PathBuf| -> eyre::Result<Vec<Vec<u8>>> {
+                let mut files = Vec::new();
+                for entry in fs::read_dir(dir)? {
+                    let path = entry?.path();
+                    if path.extension().is_some_and(|e| e == "json") {
+                        files.push(fs::read(&path)?);
+                    }
+                }
+                Ok(files)
+            };
+            let mut cases: Vec<base_diff_fuzz::FuzzCase> = Vec::new();
+            for dir in &corpus {
+                for file in read_dir(dir)? {
+                    cases.push(serde_json::from_slice(&file)?);
+                }
+            }
+            let mut main_cases: Vec<base_diff_fuzz::MainCase> = Vec::new();
+            for dir in &main_corpus {
+                for file in read_dir(dir)? {
+                    main_cases.push(serde_json::from_slice(&file)?);
+                }
+            }
+            let pool = if main_cases.is_empty() {
+                None
+            } else {
+                Some(base_diff_fuzz::BlockPool::open(cache)?)
+            };
+            let generator = Generator::new(1, options.clone());
+            let (fuzz, main) = (cases.len() as u64, main_cases.len() as u64);
+            let total = fuzz + main + gen_cases;
+            let next = std::sync::atomic::AtomicU64::new(0);
+            let names =
+                std::sync::Mutex::new(std::collections::BTreeMap::<String, (u64, u64)>::new());
+            std::thread::scope(|scope| {
+                for _ in 0..jobs.max(1) {
+                    scope.spawn(|| {
+                        let mut adapter =
+                            base_diff_fuzz::Adapter::new(spec.clone(), Duration::from_secs(120));
+                        loop {
+                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if i >= total {
+                                break;
+                            }
+                            let request = if i < fuzz {
+                                cases[i as usize].build(&options).request
+                            } else if i < fuzz + main {
+                                let pool = pool.as_ref().expect("main cases need the cache");
+                                match main_cases[(i - fuzz) as usize].build(pool) {
+                                    Ok(request) => request,
+                                    Err(_) => continue,
+                                }
+                            } else {
+                                generator.case(i - fuzz - main)
+                            };
+                            if let Ok(response) = adapter.call(&request)
+                                && let Some(coverage) = response.coverage
+                            {
+                                let mut names = names.lock().unwrap();
+                                for (name, count) in coverage {
+                                    let entry = names.entry(name).or_default();
+                                    entry.0 += 1;
+                                    entry.1 += count;
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+            let names = names.into_inner().unwrap();
+            let lines: Vec<String> = names
+                .iter()
+                .map(|(name, (cases, hits))| format!("{name}\t{cases}\t{hits}"))
+                .collect();
+            fs::write(&out, lines.join("\n"))?;
+            println!("{} names from {total} cases", names.len());
         }
         Command::Chain { common, seed, chains, length, reference, minimize_budget } => {
             let campaign = common.campaign()?;

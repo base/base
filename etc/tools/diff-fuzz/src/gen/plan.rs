@@ -1155,7 +1155,8 @@ impl<'a> Planner<'a> {
         gas.min(self.gas_left)
     }
 
-    fn push_deposit(
+    /// Adds a deposit, charging its gas to the block and bumping its sender's nonce.
+    pub fn push_deposit(
         &mut self,
         deposit: TxDeposit,
         label: String,

@@ -33,6 +33,14 @@ post-state, and every header field. The wire format between the harness and an a
 - `fuzz --corpus <dir> --duration 20m`: coverage-guided fuzzing (below).
 - `mainnet --cache <dir> [--blocks 9101527,58500000..58500100] [--tip N] [--per-era N]`:
   validate-mode replay of Base mainnet blocks (below), tallied per fork era.
+- `mainfuzz --cache <dir> --duration 8h`: coverage-guided fuzzing seeded from cached mainnet
+  blocks (below).
+- `coverage-names --adapter base=... [--corpus <dir>] [--main-corpus <dir> --cache <dir>]
+  [--gen-cases N] --out names.txt`: the coverage feature names the reference reports for a fuzz
+  corpus, a `mainfuzz` corpus, and fresh generator cases, with the number of cases hitting each
+  and the total hits (`name<TAB>cases<TAB>hits`). `mainfuzz --baseline` reads the first column.
+- `build-case --cache <dir> <case.json>`: prints the request a `mainfuzz` case builds, such as a
+  finding's `minimized-case.json`.
 
 Each takes `--adapter name=command...` once per client, `--jobs`, and `--out`. Divergences and
 adapter failures go to `<out>/findings/<case id>/`: the request, `verdict.json`, and every
@@ -111,3 +119,30 @@ covered, so such blocks fail with a missing node. `--tip N` takes the last N blo
 Every block's verdict is appended to `<out>/results.jsonl` (a rerun skips blocks that already agreed
 and reruns the rest), and `<out>/eras.json` holds blocks, agreeing blocks, and their transactions
 per era.
+
+## Fuzzing from mainnet blocks
+
+`mainfuzz` builds build-mode cases from cached mainnet blocks, keeps the ones that reach new
+reference coverage, and records and minimizes findings like `fuzz`. Its cases are of two kinds.
+
+- **Real** (`RealCase` in `src/mainnet/mutate.rs`): the pre-state, ancestors, header inputs, and
+  system deposits of a real block, with a body drawn from the block and up to three successors:
+  real transactions dropped, reordered, duplicated, and spliced across blocks, and deposits that
+  replay a real call as its real sender (or another address of the window) with a different gas
+  limit, value, mint, recipient, or calldata (words overwritten, bits flipped, truncated,
+  extended). Base fee, gas limit, and `prevRandao` edits apply to the header. The witness is the
+  union of the window's witnesses, which covers every path a successor reads at the case's
+  pre-state. A mutated call can still read state no source block read; an adapter failure on a
+  missing trie node is counted as a witness gap, not a finding.
+- **Transplant** (`Transplant` in `src/mainnet/transplant.rs`): every account and storage slot a
+  real block read, recovered from its witness and key preimages, is copied into the genesis of a
+  generator case (any era from Fjord on; code starting with `0xEF` only where it can exist), and
+  the block's real transactions run there verbatim, re-signed from generator keys with edits, and
+  as deposits from their real senders, next to the generator's own traffic. The synthetic state
+  is a complete trie, so there are no witness gaps.
+
+Findings that match known differences are counted as `known` and not recorded: base/base alone
+rejecting a transaction whose `gas * maxFeePerGas` overflows u128, and any block with a transaction
+from an account at nonce `u64::MAX`. `<out>/coverage.json` holds counters, feature families,
+findings, and the number of feature names beyond `--baseline`; `<out>/beyond-baseline.txt` lists
+those names.
