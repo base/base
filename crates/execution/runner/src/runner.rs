@@ -21,6 +21,7 @@ use tracing::{info, warn};
 
 use crate::{
     BaseNodeBuilder, BaseNodeExtension, FromExtensionConfig, MerkleStageDefaults, NodeHooks,
+    PruneGuardedComponents,
     node::BaseNode,
     service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder},
 };
@@ -212,7 +213,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         if let Some(rejection_cache) = rejection_cache {
             base_node = base_node.with_rejection_cache(rejection_cache);
         }
-        let components = service_builder.build_components(&base_node);
+        let components = PruneGuardedComponents(service_builder.build_components(&base_node));
         let engine_api = Arc::new(OnceLock::new());
         let add_ons = base_node.add_ons().with_engine_api(
             BaseEngineApiBuilder::default().with_in_process_sink(Arc::clone(&engine_api)),

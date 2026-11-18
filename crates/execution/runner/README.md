@@ -55,6 +55,51 @@ impl FromExtensionConfig for MyExtension {
 }
 ```
 
+## Historical-state prune startup guard
+
+`BaseNodeRunner` checks account and storage history prune backlog before building node
+components. The guard is always enabled for this runner, including custom payload services.
+It uses the resolved CLI/TOML prune policy, the persisted executed tip (`Finish`, not the
+static-file header tip), and each segment's persisted prune checkpoint. Target blocks use
+Reth's live prune-mode API and minimum-distance rules.
+
+Startup is refused when either segment's eligible block backlog exceeds the configured engine
+persistence backpressure threshold (Base default 160 blocks). Equality is allowed. A missing
+checkpoint, or a checkpoint with no completed block, counts from block zero. Archive policies
+and policies with no eligible history target pass. Validation only reads the database; it does
+not advance checkpoints or prune data.
+
+For example, at executed tip 30,000,000, a 31-day checkpoint at 16,608,000 combined with
+20-day retention (`Distance(8,640,000)`) targets 21,360,000. Its 4,752,000-block backlog is
+refused rather than handed to the live pruner.
+
+### Offline recovery
+
+1. Stop the node. Preserve the snapshot/database and verify the intended retention policy.
+2. Run `base reth prune --chain <CHAIN_OR_CUSTOM_SPEC> --datadir <DATADIR> --config <CONFIG>`
+   offline, with the **same** chain or custom spec, datadir, configuration file, and any custom
+   static-files and RocksDB paths used by the node. Consult `base reth prune --help` for path
+   flags supported by the installed binary. Do not run two writers against the same database.
+   Reth saves the resolved CLI prune policy to the config file before component construction;
+   inspect that file before pruning. The offline command accepts `--config`, not `--prune.*`
+   node flags. Pruning permanently removes history.
+3. Let offline pruning finish successfully, then restart with the same policy. Alternatively,
+   select a snapshot already pruned to the desired retention, or retain a wider history window
+   whose eligible backlog fits the allowance.
+
+### Limits
+
+This is a startup admission check, not a live prune budget or timeout. Block counts do not
+bound latency or rows per block. A large configured prune interval can conservatively refuse
+startup even for an otherwise normal backlog. Raising the backpressure threshold weakens the
+check. Backlog that develops after startup is not covered.
+
+Only account and storage history are checked; receipts and other segments are not scanned.
+Reth's live history pruning still has unlimited default work and soft budget behavior. This
+guard does not diagnose or fix the separate, unexplained permanent persistence stall observed
+after a completed 513-second prune. Launch paths that bypass `BaseNodeRunner`, including the
+`LocalNode` test harness, do not exercise this wiring.
+
 ## Frozen payload notifications
 
 `LaunchedBaseNode::payload_ready` is a bounded, in-process EL-to-CL channel carrying
