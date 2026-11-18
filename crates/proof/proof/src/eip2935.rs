@@ -59,7 +59,8 @@ where
     let slot_key = Nibbles::unpack(keccak256(U256::from(slot).to_be_bytes::<32>()));
     let slot_value = storage_trie.open(&slot_key, provider)?.ok_or(TrieNodeError::KeyNotFound)?;
 
-    B256::decode(&mut slot_value.as_ref()).map_err(OracleProviderError::Rlp)
+    // Storage values are RLP-encoded with leading zero bytes stripped.
+    U256::decode(&mut slot_value.as_ref()).map(B256::from).map_err(OracleProviderError::Rlp)
 }
 
 #[cfg(test)]
@@ -89,8 +90,9 @@ mod tests {
                 let mut storage_hb =
                     HashBuilder::default().with_proof_retainer(ProofRetainer::new(vec![slot_key]));
 
-                let mut encoded = Vec::with_capacity(block_hash.length());
-                block_hash.encode(&mut encoded);
+                let slot_value = U256::from_be_bytes(block_hash.0);
+                let mut encoded = Vec::with_capacity(slot_value.length());
+                slot_value.encode(&mut encoded);
                 storage_hb.add_leaf(slot_key, encoded.as_slice());
 
                 let storage_root = storage_hb.root();
@@ -146,8 +148,12 @@ mod tests {
     async fn test_eip_2935_history_lookup(
         #[case] head_block_number: u64,
         #[case] target_block_number: u64,
+        #[values(
+            B256::repeat_byte(0xFF),
+            b256!("00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+        )]
+        expected_hash: B256,
     ) {
-        let expected_hash = B256::from([0xFF; 32]);
         let ring_index = if head_block_number - target_block_number <= HISTORY_SERVE_WINDOW {
             target_block_number
         } else {
