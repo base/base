@@ -69,6 +69,8 @@ pub struct TemplateInput<'a> {
     /// Mainnet block number minus chain block number: a chain whose genesis was moved to block
     /// zero still takes its timestamps from mainnet's schedule at the original numbers.
     pub number_offset: u64,
+    /// Seconds added to the block's schedule timestamp (chains moved off the mainnet schedule).
+    pub time_offset: u64,
 }
 
 impl Template {
@@ -83,6 +85,7 @@ impl Template {
         let parent = &input.ancestors[0];
         let number = parent.number + 1;
         let (timestamp, millis) = schedule.timestamp_parts(number + input.number_offset);
+        let timestamp = timestamp + input.time_offset;
         let upgrade = schedule.upgrade_at(timestamp);
 
         let mut base_fee = Blocks::next_base_fee(parent, timestamp).min(Blocks::MAX_BASE_FEE);

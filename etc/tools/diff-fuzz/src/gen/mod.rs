@@ -67,4 +67,4 @@ mod case;
 pub use case::{Generator, GeneratorOptions, era_blocks};
 
 mod chain;
-pub use chain::ChainGenerator;
+pub use chain::{ChainEdit, ChainGenerator};

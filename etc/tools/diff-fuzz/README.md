@@ -31,6 +31,7 @@ post-state, and every header field. The wire format between the harness and an a
   topics), and logs that are not config updates (another emitter, another event, no topics,
   failed receipts); one case in five is a single well-formed update.
 - `fuzz --corpus <dir> --duration 20m`: coverage-guided fuzzing (below).
+- `chain-fuzz --duration 3h [--unguided]`: coverage-guided chain fuzzing (below).
 - `mainnet --cache <dir> [--blocks 9101527,58500000..58500100] [--tip N] [--per-era N]`:
   validate-mode replay of Base mainnet blocks (below), tallied per fork era.
 - `mainfuzz --cache <dir> --duration 8h`: coverage-guided fuzzing seeded from cached mainnet
@@ -148,6 +149,35 @@ rejecting a transaction whose `gas * maxFeePerGas` overflows u128, and any block
 from an account at nonce `u64::MAX`. `<out>/coverage.json` holds counters, feature families,
 findings, and the number of feature names beyond `--baseline`; `<out>/beyond-baseline.txt` lists
 those names.
+
+## Coverage-guided chain fuzzing
+
+`chain-fuzz` guides `chain`-style runs with the merged coverage of the `--coverage-from` adapters
+(default the reference), read for every block. A block that reaches a feature, or a hit-count
+bucket, that no earlier block did keeps its chain prefix (with `--no-buckets`, only a new feature
+name counts: with several clients' coverage merged, nearly every block reaches some new bucket): the descriptor (chain seed, edits by
+block index, length) and, in memory, a snapshot of the chain generator after the block. Requests
+are self-contained, so continuing a snapshot needs no replay. A guided run picks a kept prefix by
+energy (as `fuzz` picks cases) and applies one to three edits before running 16 to 96 more
+blocks:
+
+- `reroll`: re-plans the next block from a new random stream, which the rest of the run follows;
+- `configUpdate`: starts a new epoch at the block with a system config update, when the L1 origin
+  can advance;
+- `gap`: moves the block, and every later one, past the schedule: by seconds, an epoch, an hour,
+  or a day, or exactly onto (or one second past) the next upgrade activation. Denim's gas
+  parameter scaling applies when a gap moves a block onto the Denim activation;
+- `fork`: any of these applied 1 to 15 blocks after the prefix instead of at its next block.
+
+`--explore` percent of guided runs, and every `--unguided` run, start fresh chains of a
+`--length` picked uniformly (default 100 to 1,000 blocks). Guided fresh chains rotate through
+the eras, Regolith to Denim, so each gets an equal share; unguided ones weight recent eras as
+`chain` does. At most `--max-snapshots` snapshots are held; the lowest-energy tenth is dropped
+when the cap is reached, and only entries with a snapshot keep their feature lists. Findings are grouped by signature; the
+first five of each are recorded like `chain` findings, with `case.json` holding the run's
+descriptor, and the first two are minimized. `<out>/chain-coverage.json` is rewritten every ten
+seconds with counters, distinct features and names, distinct edges per client (`edge:` for base,
+`<client>:edge:` for the others), kept prefixes, operator yields, and a timeline.
 
 ## Coverage-guided JSON-RPC fuzzing
 

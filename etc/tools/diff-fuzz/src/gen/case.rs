@@ -194,6 +194,7 @@ impl Generator {
             sys: &sys,
             origin: &origin,
             ancestors: &genesis.ancestors,
+            time_offset: 0,
             mix: self.options.mix(),
             number_offset: 0,
         };

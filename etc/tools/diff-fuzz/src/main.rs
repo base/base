@@ -3,10 +3,10 @@
 use std::{fs, path::PathBuf, time::Duration};
 
 use base_diff_fuzz::{
-    Adapter, AdapterSpec, Campaign, ChainDriver, ChainFollower, ConfigLogs, Era, FuzzConfig,
-    Fuzzer, Generator, GeneratorOptions, Lag, MainFuzzConfig, MainFuzzer, MainnetFetcher,
-    MainnetReplay, NodeClient, NodeProcess, Request, RpcCampaign, RpcConfig, RpcExclude,
-    StateCampaign, StateConfig, StateOp, StateSession,
+    Adapter, AdapterSpec, Campaign, ChainDriver, ChainFollower, ChainFuzzer, ConfigLogs, Era,
+    FuzzConfig, Fuzzer, Generator, GeneratorOptions, Lag, MainFuzzConfig, MainFuzzer,
+    MainnetFetcher, MainnetReplay, NodeClient, NodeProcess, Request, RpcCampaign, RpcConfig,
+    RpcExclude, StateCampaign, StateConfig, StateOp, StateSession,
 };
 use clap::{Args, Parser, Subcommand};
 use eyre::WrapErr;
@@ -217,6 +217,49 @@ enum Command {
         #[arg(long, default_value_t = 45)]
         crossing_percent: u64,
     },
+    /// Coverage-guided chain fuzzing: keeps chain prefixes whose blocks reach new coverage in the
+    /// `--coverage-from` adapters and continues them with edits (re-planned blocks, system config
+    /// updates, timestamp gaps, forks a few blocks later); writes `chain-coverage.json`.
+    ChainFuzz {
+        #[command(flatten)]
+        common: Common,
+        /// Base seed of fresh chains.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// How long to run, such as `90s`, `20m`, or `2h`.
+        #[arg(long, default_value = "1h", value_parser = parse_duration)]
+        duration: Duration,
+        /// Reference adapter whose response advances the chain.
+        #[arg(long, default_value = "base")]
+        reference: String,
+        /// Adapters whose coverage guides the run; repeat (default: the reference).
+        #[arg(long)]
+        coverage_from: Vec<String>,
+        /// Only run fresh chains (the baseline); coverage is still measured.
+        #[arg(long)]
+        unguided: bool,
+        /// Percentage of guided runs that start a fresh chain.
+        #[arg(long, default_value_t = 20)]
+        explore: u64,
+        /// Fresh chain length; repeat to pick uniformly.
+        #[arg(long = "length", default_values_t = [100, 150, 250, 400, 600, 1000])]
+        lengths: Vec<u64>,
+        /// Most kept-prefix snapshots held in memory.
+        #[arg(long, default_value_t = 800)]
+        max_snapshots: usize,
+        /// Candidate requests one minimization may run (0 disables minimization).
+        #[arg(long, default_value_t = 60)]
+        minimize_budget: usize,
+        /// Percentage of chains started just before a fork activation (Isthmus to Denim).
+        #[arg(long, default_value_t = 75)]
+        crossing_percent: u64,
+        /// Seconds between timeline samples.
+        #[arg(long, default_value_t = 60)]
+        sample_secs: u64,
+        /// Count only new feature names as new coverage, not new hit-count buckets.
+        #[arg(long)]
+        no_buckets: bool,
+    },
     /// Writes the genesis file that starts real nodes on synthetic chain `seed`.
     NodeGenesis {
         /// Chain seed.
@@ -360,6 +403,17 @@ fn node_chain_options() -> GeneratorOptions {
 /// Options of the chains the state campaign drives: the node eras, with state-stress traffic.
 fn state_chain_options() -> GeneratorOptions {
     GeneratorOptions { state_stress: true, ..node_chain_options() }
+}
+
+/// Generator options of synthetic chains: `crossing_percent` of them start just before an
+/// upgrade activation. Like real-node chains, they leave out deposit CREATEs from the
+/// `u64::MAX`-nonce key.
+fn chain_options(crossing_percent: u64) -> GeneratorOptions {
+    GeneratorOptions {
+        activation_percent: crossing_percent.div_ceil(3),
+        max_nonce_deposit_creates: false,
+        ..GeneratorOptions::default()
+    }
 }
 
 /// Parses `90`, `90s`, `20m`, or `2h`.
@@ -820,14 +874,56 @@ fn main() -> eyre::Result<()> {
                 seed,
                 chains,
                 length,
-                options: GeneratorOptions {
-                    activation_percent: crossing_percent.div_ceil(3),
-                    ..GeneratorOptions::default()
-                },
+                options: chain_options(crossing_percent),
                 minimize_budget,
             };
             let summary = driver.run()?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
+        }
+        Command::ChainFuzz {
+            common,
+            seed,
+            duration,
+            reference,
+            coverage_from,
+            unguided,
+            explore,
+            lengths,
+            max_snapshots,
+            minimize_budget,
+            crossing_percent,
+            sample_secs,
+            no_buckets,
+        } => {
+            let campaign = common.campaign()?;
+            let fuzzer = ChainFuzzer {
+                coverage_from: if coverage_from.is_empty() {
+                    vec![reference.clone()]
+                } else {
+                    coverage_from
+                },
+                driver: ChainDriver {
+                    adapters: campaign.adapters,
+                    reference,
+                    jobs: campaign.jobs,
+                    timeout: campaign.timeout,
+                    out: campaign.out,
+                    seed,
+                    chains: 0,
+                    length: 0,
+                    options: chain_options(crossing_percent),
+                    minimize_budget,
+                },
+                duration,
+                guided: !unguided,
+                explore_percent: explore,
+                lengths,
+                max_snapshots,
+                sample_every: Duration::from_secs(sample_secs),
+                buckets: !no_buckets,
+            };
+            let stats = fuzzer.run()?;
+            println!("{}", serde_json::to_string_pretty(&stats)?);
         }
     }
     Ok(())

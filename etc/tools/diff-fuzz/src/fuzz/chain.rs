@@ -162,7 +162,7 @@ impl ChainDriver {
                                 last_era: *last_era,
                                 end,
                             });
-                            s.longest.sort_by(|a, b| b.blocks.cmp(&a.blocks));
+                            s.longest.sort_by_key(|record| std::cmp::Reverse(record.blocks));
                             s.longest.truncate(ChainSummary::LONGEST);
                         }
                         match outcome.end {
@@ -286,7 +286,9 @@ impl ChainDriver {
         ChainOutcome { agreed: chain.blocks(), start, eras, end: ChainEnd::Completed }
     }
 
-    fn record(
+    /// Records a chain finding: the failing request, its prefix, the responses, and (with a
+    /// budget) a minimized reproducer. Returns the finding directory.
+    pub fn record(
         &self,
         prefix: &[Request],
         results: &[(String, Result<crate::Response, crate::CallFailure>)],

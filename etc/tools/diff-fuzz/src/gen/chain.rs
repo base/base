@@ -4,6 +4,7 @@ use alloy_consensus::Header;
 use alloy_primitives::Address;
 use base_common_genesis::{BaseFeature, RollupConfig};
 use eyre::{bail, ensure};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     Request, Response,
@@ -26,13 +27,36 @@ use crate::{
 const CROSSINGS: [Era; 6] =
     [Era::Isthmus, Era::Jovian, Era::Azul, Era::Beryl, Era::Cobalt, Era::Denim];
 
+/// A change to a chain's pending block, for coverage-guided chain fuzzing. The chain after an
+/// edit is still a deterministic function of the seed, the edits, and the agreed responses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum ChainEdit {
+    /// Re-plans the block from a new random stream, which the rest of the chain then follows.
+    Reroll {
+        /// Seeds the new stream.
+        salt: u64,
+    },
+    /// Starts a new epoch at the block with a system config update, when the L1 origin can
+    /// advance (or already starts an epoch there).
+    ConfigUpdate {
+        /// Seeds the update.
+        salt: u64,
+    },
+    /// Moves the block, and every later block, this many seconds later than the schedule.
+    Gap {
+        /// Seconds added.
+        secs: u64,
+    },
+}
+
 /// Generates a chain of build-mode requests. Each request after the first builds on the
 /// previous block as the clients computed it: the parent header is assembled from the previous
 /// request's inputs and the agreed response's computed fields, and the pre-state is the
 /// previous pre-state with the agreed post-state diff applied.
 ///
-/// The chain is a deterministic function of the seed, the options, the agreed responses, and the
-/// [`Self::prepare`] calls.
+/// The chain is a deterministic function of the seed, the options, the agreed responses, the
+/// [`Self::prepare`] calls, and the [`Self::edit`] calls.
 #[derive(Debug, Clone)]
 pub struct ChainGenerator {
     seed: u64,
@@ -52,6 +76,8 @@ pub struct ChainGenerator {
     stress: Option<StressPlan>,
     /// Mainnet block number minus chain block number (see [`Self::rebase`]).
     number_offset: u64,
+    /// Seconds every block's timestamp is past the mainnet schedule (see [`ChainEdit::Gap`]).
+    time_offset: u64,
 }
 
 impl ChainGenerator {
@@ -104,6 +130,7 @@ impl ChainGenerator {
             burst: 0,
             stress: None,
             number_offset: 0,
+            time_offset: 0,
         };
         chain.pending = chain.plan();
         chain
@@ -210,6 +237,7 @@ impl ChainGenerator {
                     TrafficMix { min_txs: txs, max_txs: txs, ..self.options.mix() }
                 },
             ),
+            time_offset: self.time_offset,
         };
         let scenarios = &mut self.scenarios;
         let stress = self.stress;
@@ -288,7 +316,8 @@ impl ChainGenerator {
         let schedule = Schedule::mainnet();
         let parent_timestamp = self.ancestors[0].timestamp;
         let next_timestamp =
-            schedule.timestamp_parts(self.ancestors[0].number + 1 + self.number_offset).0;
+            schedule.timestamp_parts(self.ancestors[0].number + 1 + self.number_offset).0
+                + self.time_offset;
         // Upgrade activation blocks start a new epoch when they can, and usually change the
         // system config, so config changes land on fork boundaries. A burst gives consecutive
         // blocks an update each, for as long as the L1 origin can advance every block.
@@ -301,32 +330,79 @@ impl ChainGenerator {
             && (self.burst > 0 || self.rng.chance(if activation { 75 } else { 30 }));
         self.burst = if update { self.burst.saturating_sub(1) } else { 0 };
         if update {
-            // The new L1 origin carries system config updates, which derivation applies with
-            // `update_with_receipts` at the first block of the epoch.
-            let receipt =
-                ConfigLogs::chain_update(&mut self.rng, &self.sys.config, parent_timestamp);
-            self.sys.config.update_with_receipts(
-                &[(&receipt).into()],
-                ConfigLogs::address(),
-                schedule.active(BaseFeature::BlobAwareL1Fees, self.origin.header.timestamp),
-            );
+            let mut rng = std::mem::replace(&mut self.rng, Rng::new(&[]));
+            self.config_update(&mut rng, parent_timestamp);
+            self.rng = rng;
             if self.burst == 0 && self.rng.chance(30) {
                 self.burst = self.rng.range(1, 4);
             }
         }
-        if schedule.rollup.is_feature_activation_block_cascading(
-            BaseFeature::SubsecondBlocks,
-            next_timestamp,
-            parent_timestamp,
-        ) {
-            // Denim scales the legacy whole-second gas parameters at its activation block.
-            let factor = RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR;
-            self.sys.config.gas_limit =
-                (self.sys.config.gas_limit / u64::from(factor)).max(5_000_000);
-            self.sys.config.eip1559_denominator =
-                self.sys.config.eip1559_denominator.map(|d| d.saturating_mul(factor));
+        if Self::denim_activation(next_timestamp, parent_timestamp) {
+            self.denim_scaling();
         }
         Ok(())
+    }
+
+    /// Applies an edit to the pending block and re-plans it. Returns whether the edit applied:
+    /// a config update needs an L1 origin that can start a new epoch at the block.
+    pub fn edit(&mut self, edit: ChainEdit) -> bool {
+        let parent_timestamp = self.ancestors[0].timestamp;
+        let timestamp = self.pending.request.header.timestamp;
+        match edit {
+            ChainEdit::Reroll { salt } => {
+                self.rng = Rng::new(&[self.seed, salt, self.blocks]);
+            }
+            ChainEdit::ConfigUpdate { salt } => {
+                let mut rng = Rng::new(&[self.seed, salt, self.blocks, 1]);
+                if self.origin.sequence_number != 0 {
+                    let mut origin = self.origin.clone();
+                    origin.advance(&mut rng, timestamp, 100);
+                    if origin.sequence_number != 0 {
+                        return false;
+                    }
+                    self.origin = origin;
+                }
+                self.config_update(&mut rng, parent_timestamp);
+                self.rng = rng;
+            }
+            ChainEdit::Gap { secs } => {
+                // Offsets only grow, so a block that was an upgrade's activation block still is.
+                let crossed = Self::denim_activation(timestamp, parent_timestamp);
+                self.time_offset += secs;
+                if !crossed && Self::denim_activation(timestamp + secs, parent_timestamp) {
+                    self.denim_scaling();
+                }
+            }
+        }
+        self.pending = self.plan();
+        true
+    }
+
+    /// Applies one system config update, as the L1 origin's logs would: derivation applies them
+    /// with `update_with_receipts` at the first block of the epoch.
+    fn config_update(&mut self, rng: &mut Rng, parent_timestamp: u64) {
+        let receipt = ConfigLogs::chain_update(rng, &self.sys.config, parent_timestamp);
+        self.sys.config.update_with_receipts(
+            &[(&receipt).into()],
+            ConfigLogs::address(),
+            Schedule::mainnet().active(BaseFeature::BlobAwareL1Fees, self.origin.header.timestamp),
+        );
+    }
+
+    fn denim_activation(timestamp: u64, parent_timestamp: u64) -> bool {
+        Schedule::mainnet().rollup.is_feature_activation_block_cascading(
+            BaseFeature::SubsecondBlocks,
+            timestamp,
+            parent_timestamp,
+        )
+    }
+
+    /// Denim scales the legacy whole-second gas parameters at its activation block.
+    fn denim_scaling(&mut self) {
+        let factor = RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR;
+        self.sys.config.gas_limit = (self.sys.config.gas_limit / u64::from(factor)).max(5_000_000);
+        self.sys.config.eip1559_denominator =
+            self.sys.config.eip1559_denominator.map(|d| d.saturating_mul(factor));
     }
 }
 
@@ -334,7 +410,7 @@ impl ChainGenerator {
 mod tests {
     use std::{collections::BTreeMap, time::Duration};
 
-    use super::ChainGenerator;
+    use super::{ChainEdit, ChainGenerator};
     use crate::{
         Adapter, AdapterSpec, Request, Response,
         r#gen::{
@@ -501,5 +577,30 @@ mod tests {
         }
         reach.report("chains");
         println!("chain lengths {lengths:?}");
+    }
+
+    /// A gap that moves the pending block onto the Denim activation applies Denim's gas
+    /// parameter scaling, and a later gap on the same block does not apply it again.
+    #[test]
+    fn gap_onto_denim_scales_gas_parameters_once() {
+        let options = GeneratorOptions {
+            eras: vec![Era::Cobalt],
+            activation_percent: 0,
+            ..GeneratorOptions::default()
+        };
+        let denim = Era::Denim.activation_timestamp();
+        for seed in 0..4 {
+            let mut chain = ChainGenerator::new(seed, options.clone());
+            let timestamp = chain.request().header.timestamp;
+            assert!(timestamp < denim);
+            let scaled = (chain.request().header.gas_limit / 10).max(5_000_000);
+            assert!(chain.edit(ChainEdit::Gap { secs: denim - timestamp }));
+            assert_eq!(chain.request().header.timestamp, denim);
+            assert_eq!(chain.request().header.gas_limit, scaled);
+            assert!(chain.labels().iter().any(|label| label == "baseTime"));
+            assert!(chain.edit(ChainEdit::Gap { secs: 1 }));
+            assert_eq!(chain.request().header.timestamp, denim + 1);
+            assert_eq!(chain.request().header.gas_limit, scaled);
+        }
     }
 }

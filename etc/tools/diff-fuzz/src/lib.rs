@@ -18,7 +18,8 @@ pub use campaign::{Campaign, Summary};
 
 mod fuzz;
 pub use fuzz::{
-    AdapterResults, ByteEdit, ChainDriver, ChainEnd, ChainOutcome, ChainRecord, ChainSummary, CodeEdit, Corpus,
+    AdapterResults, ByteEdit, ChainCase, ChainDriver, ChainEnd, ChainFuzzState, ChainFuzzStats,
+    ChainFuzzer, ChainOutcome, ChainRecord, ChainRun, ChainSample, ChainSummary, CodeEdit, Corpus,
     CorpusCase, CorpusEntry, CoverageReport, FeeTarget, Finding, FindingGroup, FindingSignature,
     FuzzCase, FuzzConfig, FuzzState, FuzzStats, Fuzzer, GasTarget, L1Tweak, Minimized, Minimizer,
     Mutation, MutationStats, Mutator, Sample, Slot, SlotKind, Tweak,
@@ -35,13 +36,13 @@ pub use mainnet::{
 mod r#gen;
 pub use r#gen::{
     AbiMutation, AbiType, Account, Asm, BlockCtx, Blocks, Bootstrap, Bootstrapped, CHAIN, COLLIDER,
-    COLLIDER_NONCES, CREATOR, CREATOR_MAX_NONCE, Caller, ChainGenerator, ChainParam, ConfigLogs,
-    ConfigUpdate, DESTRUCTOR_TO, DeployedProgram, Ending, Era, FILLER, Fragment, Generator,
-    GeneratorOptions, Genesis, Keys, L1Origin, Native, NativeAbi, NativeCall, NativeTarget, Op,
-    Param, PendingDeploy, PlannedTx, Planner, Policy, PrecompileCall, Precompiles, Program,
-    ProgramCtx, RECURSER, REFUNDER, RELAY, Registry, Rng, STRESSOR, Scenarios, Schedule, Shape,
-    Stress, StressPlan, SysConfig, Template, TemplateInput, Templates, Token, TrafficMix,
-    TrieBuilder, TxSpec, Txs, WorldState, era_blocks,
+    COLLIDER_NONCES, CREATOR, CREATOR_MAX_NONCE, Caller, ChainEdit, ChainGenerator, ChainParam,
+    ConfigLogs, ConfigUpdate, DESTRUCTOR_TO, DeployedProgram, Ending, Era, FILLER, Fragment,
+    Generator, GeneratorOptions, Genesis, Keys, L1Origin, Native, NativeAbi, NativeCall,
+    NativeTarget, Op, Param, PendingDeploy, PlannedTx, Planner, Policy, PrecompileCall,
+    Precompiles, Program, ProgramCtx, RECURSER, REFUNDER, RELAY, Registry, Rng, STRESSOR,
+    Scenarios, Schedule, Shape, Stress, StressPlan, SysConfig, Template, TemplateInput, Templates,
+    Token, TrafficMix, TrieBuilder, TxSpec, Txs, WorldState, era_blocks,
 };
 
 mod nodes;

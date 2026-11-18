@@ -24,3 +24,8 @@ pub use engine::{
 
 mod chain;
 pub use chain::{ChainDriver, ChainEnd, ChainOutcome, ChainRecord, ChainSummary};
+
+mod chain_guided;
+pub use chain_guided::{
+    ChainCase, ChainFuzzState, ChainFuzzStats, ChainFuzzer, ChainRun, ChainSample,
+};
