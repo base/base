@@ -435,8 +435,8 @@ impl RpcCampaign {
         let mut replies = replies.to_vec();
         let mut serving = serving.to_vec();
         let known = Self::known_base_cause(case, &replies, &normalized)
-            .map(|cause| (cause, 0))
-            .or_else(|| Self::known_nethermind_cause(case, &replies, &normalized));
+            .or_else(|| Self::known_base_difference(case, &replies, &normalized))
+            .or_else(|| Self::settled_difference(case, &normalized));
         if let Some((cause, index)) = known {
             *summary.lock().expect("lock").known.entry(cause.into()).or_default() += 1;
             normalized.remove(index);
@@ -572,20 +572,22 @@ impl RpcCampaign {
     /// nodes only.
     pub const KNOWN_BASE_ID: &str = "base: unreadable id gets no reply";
 
-    /// The known base/base cause, if any, that explains how base answered `case`
-    /// (`replies` and `normalized` reference first). The cause's cases are compared on the other
-    /// nodes only.
+    /// The known base/base cause, if any, that explains how base answered `case`, with base's
+    /// index. The cause's cases are compared on the other nodes only.
     pub fn known_base_cause(
         case: &RpcCase,
         replies: &[(String, Reply)],
         normalized: &[(String, Value)],
-    ) -> Option<&'static str> {
-        let ((name, reference), others) = normalized.split_first()?;
-        if name != "base" || others.is_empty() {
+    ) -> Option<(&'static str, usize)> {
+        let base = normalized.iter().position(|(n, _)| n == "base")?;
+        let reference = &normalized[base].1;
+        let others: Vec<&(String, Value)> =
+            normalized.iter().enumerate().filter(|(i, _)| *i != base).map(|(_, o)| o).collect();
+        if others.is_empty() {
             return None;
         }
         if Self::base_genesis_bug(case, normalized) {
-            return Some(Self::KNOWN_BASE_GENESIS);
+            return Some((Self::KNOWN_BASE_GENESIS, base));
         }
         // Nethermind names the cause in its message: "too many arguments, want at most N".
         let too_many = replies.iter().any(|(name, reply)| {
@@ -594,7 +596,7 @@ impl RpcCampaign {
                     if body["error"]["message"].as_str().is_some_and(|m| m.starts_with("too many arguments")))
         });
         if too_many && others.iter().all(|(_, v)| v != reference) {
-            return Some(Self::KNOWN_BASE_EXTRA_PARAMS);
+            return Some((Self::KNOWN_BASE_EXTRA_PARAMS, base));
         }
         let id =
             serde_json::from_str::<Value>(&case.body).ok().and_then(|body| body.get("id").cloned());
@@ -607,49 +609,50 @@ impl RpcCampaign {
         if odd_id
             && (reference == &json!({ "empty": true }) || reference["error"]["code"] == -32700)
         {
-            return Some(Self::KNOWN_BASE_ID);
+            return Some((Self::KNOWN_BASE_ID, base));
         }
         None
     }
 
-    /// Nethermind accepts EIP-1898-style block parameters where base wants a number or tag (a
-    /// block hash, `""` or `null`) and answers `null` for an index of 2^64 or more.
-    pub const KNOWN_NM_BLOCK_PARAM: &str = "nethermind: lenient block parameter or index";
-    /// Nethermind refuses `0X`-prefixed hashes.
-    pub const KNOWN_NM_UPPER_PREFIX: &str = "nethermind: 0X prefix refused";
-    /// Nethermind accepts odd-length hex data, access-list entries without `storageKeys`, and
-    /// authorizations without `r` or `s`.
-    pub const KNOWN_NM_LENIENT_FIELDS: &str = "nethermind: lenient request fields";
-    /// Nethermind checks `eth_simulateV1` calls in another order, so the first error differs.
-    pub const KNOWN_NM_SIMULATE_ORDER: &str = "nethermind: simulate check order";
-    /// Nethermind (with geth) answers a priced estimate from an unfunded sender with
-    /// "gas required exceeds allowance (0)".
-    pub const KNOWN_NM_ESTIMATE_ALLOWANCE: &str = "nethermind: estimate allowance (0)";
-    /// Nethermind's prestate tracer keeps `codeHash` and lists authorities of invalid EIP-7702
-    /// authorizations, as geth does.
-    pub const KNOWN_NM_PRESTATE: &str = "nethermind: prestate codeHash and invalid authorities";
+    /// base/base refuses EIP-1898-style block parameters that Nethermind accepts (a block hash,
+    /// `""` or `null`) and refuses an index of 2^64 or more that Nethermind answers with `null`.
+    pub const KNOWN_BASE_BLOCK_PARAM: &str = "base: strict block parameter or index";
+    /// base/base accepts `0X`-prefixed hashes, which Nethermind refuses.
+    pub const KNOWN_BASE_UPPER_PREFIX: &str = "base: 0X prefix accepted";
+    /// base/base refuses odd-length hex data, access-list entries without `storageKeys`, and
+    /// authorizations without `r` or `s`, which Nethermind accepts.
+    pub const KNOWN_BASE_STRICT_FIELDS: &str = "base: strict request fields";
+    /// base/base checks `eth_simulateV1` calls in another order than Nethermind, so the first
+    /// error differs.
+    pub const KNOWN_BASE_SIMULATE_ORDER: &str = "base: simulate check order";
+    /// base/base answers a priced estimate from an unfunded sender otherwise than Nethermind's
+    /// (and geth's) "gas required exceeds allowance (0)".
+    pub const KNOWN_BASE_ESTIMATE_ALLOWANCE: &str = "base: estimate without allowance (0)";
+    /// base/base's prestate tracer drops `codeHash` and the authorities of invalid EIP-7702
+    /// authorizations, which Nethermind (with geth) lists.
+    pub const KNOWN_BASE_PRESTATE: &str = "base: prestate without codeHash and invalid authorities";
+    /// base/base's 4byteTracer (revm-inspectors) counts calls to precompiles, which Nethermind's
+    /// (with geth's) skips.
+    pub const KNOWN_BASE_4BYTE_PRECOMPILES: &str = "base: 4byteTracer counts precompile calls";
 
-    /// Nethermind's 4byteTracer skips calls to precompiles, as geth's does; revm-inspectors'
-    /// counts them.
-    pub const KNOWN_NM_4BYTE_PRECOMPILES: &str = "nethermind: 4byteTracer skips precompile calls";
+    /// Simulated block headers: Nethermind computes `stateRoot` and `withdrawalsRoot` and uses a
+    /// zero `parentBeaconBlockRoot`, as geth does; base/base (and needlefish, following it) leave
+    /// both roots zero and copy the parent's beacon root. The block hash, which covers them,
+    /// differs with them. A settled difference: compared on base and needlefish only.
+    pub const KNOWN_SIMULATE_HEADER: &str = "settled: simulated header roots";
 
-    /// Nethermind computes a simulated block's `stateRoot` and `withdrawalsRoot` and uses a zero
-    /// `parentBeaconBlockRoot`, as geth does; base leaves both roots zero and copies the parent's
-    /// beacon root. The block hash, which covers them, differs with them.
-    pub const KNOWN_NM_SIMULATE_HEADER: &str = "nethermind: simulated header roots";
-
-    /// The known Nethermind difference, if any, that explains Nethermind's answer to `case`,
-    /// with Nethermind's index: base and needlefish answer alike and Nethermind otherwise.
-    /// Nethermind's case is then compared on the other nodes only.
-    pub fn known_nethermind_cause(
+    /// The known base/base difference from Nethermind, the RPC reference, if any, that explains
+    /// base's answer to `case`, with base's index: needlefish answers like Nethermind and base
+    /// otherwise. base's case is then compared on the other nodes only.
+    pub fn known_base_difference(
         case: &RpcCase,
         replies: &[(String, Reply)],
         normalized: &[(String, Value)],
     ) -> Option<(&'static str, usize)> {
         let get = |name: &str| normalized.iter().position(|(n, _)| n == name);
         let (base, needlefish, nm) = (get("base")?, get("needlefish")?, get("nethermind")?);
-        let (reference, theirs) = (&normalized[base].1, &normalized[nm].1);
-        if reference != &normalized[needlefish].1 || reference == theirs {
+        let (ours, reference) = (&normalized[base].1, &normalized[nm].1);
+        if reference != &normalized[needlefish].1 || reference == ours {
             return None;
         }
         let code = |v: &Value| v["error"]["code"].as_i64();
@@ -661,7 +664,7 @@ impl RpcCampaign {
         let body: Value = serde_json::from_str(&case.body).ok()?;
         let params = body.get("params").and_then(Value::as_array);
         let strings = Self::strings(&body["params"]);
-        let cause = if ok(theirs) && code(reference) == Some(-32602) {
+        let cause = if ok(reference) && code(ours) == Some(-32602) {
             let last = params.and_then(|p| p.last());
             let block_like = last.is_some_and(|v| {
                 v.is_null() || v == "" || v.as_str().is_some_and(|s| s.len() == 66)
@@ -685,37 +688,49 @@ impl RpcCampaign {
                         && !(o.contains_key("r") && o.contains_key("s"))
                 });
             if odd_hex || lenient {
-                Self::KNOWN_NM_LENIENT_FIELDS
+                Self::KNOWN_BASE_STRICT_FIELDS
             } else if block_like || big_index {
-                Self::KNOWN_NM_BLOCK_PARAM
+                Self::KNOWN_BASE_BLOCK_PARAM
             } else {
                 return None;
             }
-        } else if code(theirs) == Some(-32602) && ok(reference) && case.body.contains("\"0X") {
-            Self::KNOWN_NM_UPPER_PREFIX
+        } else if code(reference) == Some(-32602) && ok(ours) && case.body.contains("\"0X") {
+            Self::KNOWN_BASE_UPPER_PREFIX
         } else if case.method == "eth_simulateV1"
-            && code(theirs).is_some()
             && code(reference).is_some()
+            && code(ours).is_some()
         {
-            Self::KNOWN_NM_SIMULATE_ORDER
+            Self::KNOWN_BASE_SIMULATE_ORDER
         } else if case.method == "eth_estimateGas"
             && message.starts_with("gas required exceeds allowance (0)")
         {
-            Self::KNOWN_NM_ESTIMATE_ALLOWANCE
-        } else if case.method == "eth_simulateV1"
-            && Self::with_reference_roots(theirs, reference) == *reference
-        {
-            Self::KNOWN_NM_SIMULATE_HEADER
-        } else if case.body.contains("4byteTracer") && Self::counts_within(theirs, reference) {
-            Self::KNOWN_NM_4BYTE_PRECOMPILES
+            Self::KNOWN_BASE_ESTIMATE_ALLOWANCE
+        } else if case.body.contains("4byteTracer") && Self::counts_within(reference, ours) {
+            Self::KNOWN_BASE_4BYTE_PRECOMPILES
         } else if case.body.contains("prestateTracer")
-            && Self::without_extra_accounts(theirs, reference) == *reference
+            && Self::without_extra_accounts(reference, ours) == *ours
         {
-            Self::KNOWN_NM_PRESTATE
+            Self::KNOWN_BASE_PRESTATE
         } else {
             return None;
         };
-        Some((cause, nm))
+        Some((cause, base))
+    }
+
+    /// The settled difference, if any, that explains Nethermind's answer to `case`, with
+    /// Nethermind's index: base and needlefish answer alike and Nethermind otherwise.
+    pub fn settled_difference(
+        case: &RpcCase,
+        normalized: &[(String, Value)],
+    ) -> Option<(&'static str, usize)> {
+        let get = |name: &str| normalized.iter().position(|(n, _)| n == name);
+        let (base, needlefish, nm) = (get("base")?, get("needlefish")?, get("nethermind")?);
+        let (ours, theirs) = (&normalized[base].1, &normalized[nm].1);
+        (case.method == "eth_simulateV1"
+            && ours == &normalized[needlefish].1
+            && ours != theirs
+            && Self::with_reference_roots(theirs, ours) == *ours)
+            .then_some((Self::KNOWN_SIMULATE_HEADER, nm))
     }
 
     /// Whether `value` matches `reference` except that its numeric counts may be lower or
@@ -828,10 +843,12 @@ impl RpcCampaign {
     /// sender-and-nonce lookup, while every other node answered it with a result (`null` included:
     /// a sender-and-nonce lookup of a nonce never used is `null`).
     pub fn base_genesis_bug(case: &RpcCase, normalized: &[(String, Value)]) -> bool {
-        let Some(((name, reference), others)) = normalized.split_first() else { return false };
+        let Some(base) = normalized.iter().position(|(n, _)| n == "base") else { return false };
+        let reference = &normalized[base].1;
+        let others: Vec<&(String, Value)> =
+            normalized.iter().enumerate().filter(|(i, _)| *i != base).map(|(_, o)| o).collect();
         let failed = |v: &Value| v.get("error").is_some() || v.get("result") == Some(&Value::Null);
-        name == "base"
-            && !others.is_empty()
+        !others.is_empty()
             && failed(reference)
             && (others.iter().all(|(_, v)| v.get("result").is_some())
                 // Base cannot find the block ("block not found: earliest", -32001 or -32000) where the others
@@ -1080,11 +1097,12 @@ mod tests {
         let latest = RpcCase::new("state", "eth_getBalance", json!(["0x01", "latest"]));
         let err = json!({"id":1,"error":{"code":-32001}});
         let ok = json!({"id":1,"result":"0x1"});
+        // Nethermind, the RPC reference, comes first.
         let replies = |base: &Value, other: &Value| {
             vec![
+                ("nethermind".to_owned(), other.clone()),
                 ("base".to_owned(), base.clone()),
                 ("needlefish".to_owned(), other.clone()),
-                ("nethermind".to_owned(), other.clone()),
             ]
         };
         assert!(RpcCampaign::base_genesis_bug(&earliest, &replies(&err, &ok)));
@@ -1105,16 +1123,21 @@ mod tests {
         // Extra parameters: known only when Nethermind names them and base answers otherwise.
         let raw = |base: &Value, message: &str| {
             vec![
-                ("base".to_owned(), Reply::Body(base.clone())),
-                ("needlefish".to_owned(), Reply::Body(invalid.clone())),
                 (
                     "nethermind".to_owned(),
                     Reply::Body(json!({"id":1,"error":{"code":-32602,"message":message}})),
                 ),
+                ("base".to_owned(), Reply::Body(base.clone())),
+                ("needlefish".to_owned(), Reply::Body(invalid.clone())),
             ]
         };
         let known = |case: &RpcCase, base: &Value, message: &str| {
-            RpcCampaign::known_base_cause(case, &raw(base, message), &replies(base, &invalid))
+            RpcCampaign::known_base_cause(case, &raw(base, message), &replies(base, &invalid)).map(
+                |(cause, index)| {
+                    assert_eq!(index, 1, "base's index");
+                    cause
+                },
+            )
         };
         assert_eq!(
             known(&latest, &ok, "too many arguments, want at most 2"),
@@ -1140,32 +1163,36 @@ mod tests {
     }
 
     #[test]
-    fn known_nethermind_causes_need_base_and_needlefish_agreeing() {
+    fn known_base_differences_need_needlefish_agreeing_with_nethermind() {
+        // Nethermind, the RPC reference, comes first. Returns the cause and the dropped node.
         let classify = |case: &RpcCase, base: Value, needlefish: Value, nm: Value| {
             let replies = vec![
+                ("nethermind".to_owned(), Reply::Body(nm)),
                 ("base".to_owned(), Reply::Body(base)),
                 ("needlefish".to_owned(), Reply::Body(needlefish)),
-                ("nethermind".to_owned(), Reply::Body(nm)),
             ];
             let normalized: Vec<(String, Value)> = replies
                 .iter()
                 .map(|(n, r)| (n.clone(), RpcCompare::normalize(&case.method, r)))
                 .collect();
-            RpcCampaign::known_nethermind_cause(case, &replies, &normalized).map(|(c, _)| c)
+            RpcCampaign::known_base_difference(case, &replies, &normalized)
+                .or_else(|| RpcCampaign::settled_difference(case, &normalized))
+                .map(|(cause, index)| (cause, replies[index].0.clone()))
         };
+        let base_cause = |cause| Some((cause, "base".to_owned()));
         let invalid = json!({"id":1,"error":{"code":-32602,"message":"invalid params"}});
         let ok = json!({"id":1,"result":"0x1"});
         let hash = format!("0x{}", "ab".repeat(32));
         let by_hash = RpcCase::new("state", "eth_getBalance", json!(["0x01", hash]));
         assert_eq!(
-            classify(&by_hash, invalid.clone(), invalid.clone(), ok.clone()),
-            Some(RpcCampaign::KNOWN_NM_BLOCK_PARAM)
+            classify(&by_hash, invalid.clone(), ok.clone(), ok.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_BLOCK_PARAM)
         );
-        // Not when needlefish sides with Nethermind, nor for a block number.
-        assert_eq!(classify(&by_hash, invalid.clone(), ok.clone(), ok.clone()), None);
+        // Not while needlefish sides with base (a needlefish finding), nor for a block number.
+        assert_eq!(classify(&by_hash, invalid.clone(), invalid.clone(), ok.clone()), None);
         let by_number = RpcCase::new("state", "eth_getBalance", json!(["0x01", "0x10"]));
-        assert_eq!(classify(&by_number, invalid.clone(), invalid, ok), None);
-        // Simulated header roots and the hash that covers them are known; another field is not.
+        assert_eq!(classify(&by_number, invalid, ok.clone(), ok), None);
+        // Simulated header roots (settled): Nethermind is set aside when only they differ.
         let simulate = RpcCase::new("call", "eth_simulateV1", json!([{"blockStateCalls": []}]));
         let block = |root: &str, hash: &str, gas: &str| {
             json!({"id":1,"result":[{"hash": hash, "stateRoot": root, "gasUsed": gas,
@@ -1175,11 +1202,12 @@ mod tests {
             (block("0x00", "0xb1", "0x5208"), block("0x83", "0xc2", "0x5208"));
         assert_eq!(
             classify(&simulate, base_block.clone(), base_block.clone(), nm_block),
-            Some(RpcCampaign::KNOWN_NM_SIMULATE_HEADER)
+            Some((RpcCampaign::KNOWN_SIMULATE_HEADER, "nethermind".to_owned()))
         );
         let other_gas = block("0x83", "0xc2", "0x5209");
         assert_eq!(classify(&simulate, base_block.clone(), base_block, other_gas), None);
-        // Prestate: extra accounts and codeHash only on Nethermind are known; another value is not.
+        // Prestate: Nethermind's extra accounts and codeHash missing on base are known; another
+        // value is not.
         let trace = RpcCase::new(
             "trace",
             "debug_traceTransaction",
@@ -1188,26 +1216,27 @@ mod tests {
         let a = "0x00000000000000000000000000000000000000aa";
         let b = "0x00000000000000000000000000000000000000bb";
         let base = json!({"id":1,"result":{a:{"balance":"0x1"}}});
-        let extra =
+        let full =
             json!({"id":1,"result":{a:{"balance":"0x1","codeHash":"0x00"},b:{"balance":"0x2"}}});
         let other = json!({"id":1,"result":{a:{"balance":"0x2"}}});
         assert_eq!(
-            classify(&trace, base.clone(), base.clone(), extra),
-            Some(RpcCampaign::KNOWN_NM_PRESTATE)
+            classify(&trace, base, full.clone(), full.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_PRESTATE)
         );
-        assert_eq!(classify(&trace, base.clone(), base, other), None);
-        // 4byteTracer: fewer or missing counts on Nethermind are known; a higher count is not.
+        assert_eq!(classify(&trace, other, full.clone(), full), None);
+        // 4byteTracer: extra or higher counts on base are known; a lower count is not.
         let four = RpcCase::new(
             "trace",
             "debug_traceTransaction",
             json!(["0x01", {"tracer": "4byteTracer"}]),
         );
         let counts = |c: Value| json!({"id":1,"result":c});
-        let base = counts(json!({"0x00000000-33":10,"0xa9059cbb-68":1}));
+        let nm = counts(json!({"0xa9059cbb-68":1}));
         assert_eq!(
-            classify(&four, base.clone(), base.clone(), counts(json!({"0xa9059cbb-68":1}))),
-            Some(RpcCampaign::KNOWN_NM_4BYTE_PRECOMPILES)
+            classify(&four, counts(json!({"0x00000000-33":10,"0xa9059cbb-68":1})), nm.clone(), nm),
+            base_cause(RpcCampaign::KNOWN_BASE_4BYTE_PRECOMPILES)
         );
-        assert_eq!(classify(&four, base.clone(), base, counts(json!({"0xa9059cbb-68":2}))), None);
+        let fewer = counts(json!({"0xa9059cbb-68":2}));
+        assert_eq!(classify(&four, counts(json!({})), fewer.clone(), fewer), None);
     }
 }
