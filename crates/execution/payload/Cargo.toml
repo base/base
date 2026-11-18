@@ -36,7 +36,7 @@ base-bundles.workspace = true
 base-metrics.workspace = true
 base-execution-evm.workspace = true
 base-execution-txpool.workspace = true
-base-execution-eip8130.workspace = true
+base-execution-base-tx.workspace = true
 base-observability-events.workspace = true
 
 # evm2

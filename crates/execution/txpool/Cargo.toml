@@ -37,7 +37,7 @@ base-common-l1-fees.workspace = true
 base-observability-events.workspace = true
 base-execution-evm.workspace = true
 base-common-precompiles.workspace = true
-base-execution-eip8130.workspace = true
+base-execution-base-tx.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-precompile-storage = { workspace = true, features = ["evm2"] }
 

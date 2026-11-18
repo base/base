@@ -1,12 +1,12 @@
 //! System tests for gas-limit fee billing, the Everest rule that charges a transaction for its
-//! reserved gas (`gas_limit`, or `gas_limit + payer_auth` for EIP-8130) instead of the gas it
-//! consumed.
+//! reserved gas (`gas_limit`, or `gas_limit + payer_auth` for Base transactions) instead of the gas
+//! it consumed.
 //!
 //! The same over-provisioned transfer is sent before and after the Everest activation on a real
 //! builder + validator stack. Before Everest the receipt and the sender's balance reflect the
 //! 21k gas a transfer uses; after it they reflect the 100k gas limit, every fee recipient is paid
 //! on the limit, `eth_estimateGas` still reports the metered requirement, and the validator agrees
-//! with the builder on every block. A sponsored EIP-8130 transaction is then billed to its payer
+//! with the builder on every block. A sponsored Base transaction is then billed to its payer
 //! for the reserved `gas_limit + payer_auth` budget, and one sent at `gas_limit = eth_estimateGas`
 //! settles at the estimate plus payer authentication, which the estimate leaves out.
 
@@ -23,8 +23,8 @@ use alloy_rpc_types_eth::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, sol};
-use base_common_consensus::{Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130};
-use base_common_eip8130::IntrinsicGas;
+use base_common_base_tx::IntrinsicGas;
+use base_common_consensus::{Call, Predeploys, TxBase, TxBaseConstants, TxBaseSigned};
 use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
 use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
@@ -50,9 +50,9 @@ const EVEREST_ACTIVATION_BLOCK: u64 = 40;
 /// A plain transfer needs 21k gas; the limit is deliberately ~5x that.
 const TRANSFER_GAS_USED: u64 = 21_000;
 const TX_GAS_LIMIT: u64 = 100_000;
-/// Declared limit of the sponsored EIP-8130 transaction, far above what its single empty call
+/// Declared limit of the sponsored Base transaction, far above what its single empty call
 /// needs so the limit, not the metered gas, is what settlement bills.
-const EIP8130_GAS_LIMIT: u64 = 200_000;
+const BASE_TX_GAS_LIMIT: u64 = 200_000;
 const TX_VALUE: U256 = U256::from_limbs([1, 0, 0, 0]);
 const RECIPIENT: Address = Address::repeat_byte(0xfe);
 const MAX_FEE_PER_GAS: u128 = 2_000_000_000;
@@ -394,10 +394,10 @@ async fn everest_bills_transactions_for_their_gas_limit() -> Result<()> {
     Ok(())
 }
 
-/// From Everest a sponsored EIP-8130 transaction bills its payer for the reserved budget,
+/// From Everest a sponsored Base transaction bills its payer for the reserved budget,
 /// `gas_limit + payer_auth`, the sender pays nothing, and the validator agrees with the builder.
 #[tokio::test]
-async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()> {
+async fn everest_bills_sponsored_base_tx_for_its_reserved_budget() -> Result<()> {
     let system = EverestSystem::start().await?;
     let builder = &system.builder;
     let sender = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
@@ -407,20 +407,21 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
     system.wait_for_everest().await?;
 
     let nonce_sequence = builder.get_transaction_count(sender.address()).await?;
-    let signed = sponsored_eip8130(&sender, &payer, nonce_sequence, EIP8130_GAS_LIMIT)?;
-    let reserved_gas = EIP8130_GAS_LIMIT + IntrinsicGas::payer_auth_cost_of(&signed);
-    assert!(reserved_gas > EIP8130_GAS_LIMIT, "payer authentication must reserve gas");
+    let signed = sponsored_base_tx(&sender, &payer, nonce_sequence, BASE_TX_GAS_LIMIT)?;
+    let reserved_gas = BASE_TX_GAS_LIMIT + IntrinsicGas::payer_auth_cost_of(&signed);
+    assert!(reserved_gas > BASE_TX_GAS_LIMIT, "payer authentication must reserve gas");
     let raw: Bytes = signed.encoded_2718().into();
 
     let sender_before = builder.get_balance(sender.address()).await?;
-    let (settlement, receipt) =
-        settle(builder, &raw, payer.address(), U256::ZERO).await.wrap_err("sponsored EIP-8130")?;
+    let (settlement, receipt) = settle(builder, &raw, payer.address(), U256::ZERO)
+        .await
+        .wrap_err("sponsored Base transaction")?;
     ensure!(
         settlement.block_timestamp >= system.everest_timestamp,
         "sponsored transaction landed at block {} before the Everest activation",
         settlement.block_number
     );
-    assert!(receipt.status(), "sponsored EIP-8130 transaction must succeed");
+    assert!(receipt.status(), "sponsored Base transaction must succeed");
     assert_eq!(receipt.payer, Some(payer.address()), "receipt must name the sponsor as payer");
     settlement.assert_consistent(reserved_gas);
     assert_eq!(
@@ -447,8 +448,8 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
     // estimated as self-pay has the same sender budget: naming a payer adds only its 20 address
     // bytes to the sender payload, far less than payer authentication, so an estimate that folded
     // payer authentication in would exceed the self-pay estimate by at least `payer_auth`. Sent at
-    // `gas_limit = estimate`, the sponsored transaction succeeds and settles at
-    // `estimate + payer_auth`. The EIP-8130 RPC module is installed on the validator node, not the
+    // `gas_limit = estimate`, the sponsored transaction succeeds and settles at `estimate +
+    // payer_auth`. The Base transaction RPC module is installed on the validator node, not the
     // builder, so the estimates come from the client.
     let estimate_request = |payer: Option<Address>| -> Result<BaseTransactionRequest> {
         let mut request = serde_json::json!({
@@ -473,10 +474,10 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
         .await
         .wrap_err("self-pay eth_estimateGas")?;
     ensure!(
-        estimate < EIP8130_GAS_LIMIT,
+        estimate < BASE_TX_GAS_LIMIT,
         "estimate {estimate} must be below the over-provisioned limit"
     );
-    let signed = sponsored_eip8130(&sender, &payer, nonce_sequence + 1, estimate)?;
+    let signed = sponsored_base_tx(&sender, &payer, nonce_sequence + 1, estimate)?;
     let payer_auth = IntrinsicGas::payer_auth_cost_of(&signed);
     assert!(
         estimate < self_pay_estimate + payer_auth,
@@ -486,7 +487,7 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
     let raw: Bytes = signed.encoded_2718().into();
     let (settlement, receipt) = settle(builder, &raw, payer.address(), U256::ZERO)
         .await
-        .wrap_err("sponsored EIP-8130 at the estimate")?;
+        .wrap_err("sponsored Base transaction at the estimate")?;
     assert!(receipt.status(), "a sponsored transaction sent at the estimate must succeed");
     assert_eq!(
         receipt.gas_used(),
@@ -554,16 +555,16 @@ async fn send_transfer(
     Ok(settlement)
 }
 
-/// A sponsored EIP-8130 transaction: `sender` dispatches one empty call and `payer` covers the
+/// A sponsored Base transaction: `sender` dispatches one empty call and `payer` covers the
 /// fees, authenticating over the payer digest with the secp256k1 (`K1`) authenticator. The
 /// transaction declares `gas_limit`.
-fn sponsored_eip8130(
+fn sponsored_base_tx(
     sender: &PrivateKeySigner,
     payer: &PrivateKeySigner,
     nonce_sequence: u64,
     gas_limit: u64,
-) -> Result<Eip8130Signed> {
-    let tx = TxEip8130 {
+) -> Result<TxBaseSigned> {
+    let tx = TxBase {
         chain_id: L2_CHAIN_ID,
         sender: None,
         nonce_key: U256::ZERO,
@@ -582,9 +583,9 @@ fn sponsored_eip8130(
     // Explicit payer auth is `authenticator(20) || data`; for K1 the data is the payer's 65-byte
     // signature over the payer digest, which binds to the resolved sender.
     let payer_signature = payer.sign_hash_sync(&tx.payer_signature_hash(sender.address()))?;
-    let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+    let mut payer_auth = TxBaseConstants::K1_AUTHENTICATOR.to_vec();
     payer_auth.extend_from_slice(&payer_signature.as_bytes());
-    Ok(Eip8130Signed::new(tx, sender_auth, payer_auth.into()))
+    Ok(TxBaseSigned::new(tx, sender_auth, payer_auth.into()))
 }
 
 /// Submits `raw`, waits for its receipt, and reads how `payer` and the fee recipients settled it.

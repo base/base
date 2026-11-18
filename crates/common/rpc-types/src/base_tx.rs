@@ -1,0 +1,509 @@
+//! Reth-free Base transaction RPC request conversion.
+
+use alloc::{vec, vec::Vec};
+
+use alloy_consensus::transaction::Recovered;
+use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use alloy_rpc_types_eth::state::StateOverride;
+use base_common_consensus::{
+    BaseTxEnvelope, Call, TxBase, TxBaseConstants, TxBaseSigned, TxBaseStructuralError,
+    TxBaseStructure,
+};
+use base_common_evm2::{BaseTxEnvelope as BaseTxEnv, TxBaseSimulation, TxBaseSimulationMode};
+
+use crate::BaseTransactionRequest;
+
+/// Filler byte for synthesized authentication stubs.
+pub(crate) const STUB_AUTH_FILL: u8 = 0xff;
+
+/// Length of the authenticator selector on a prefixed authentication blob.
+const AUTHENTICATOR_SELECTOR_LEN: usize = 20;
+
+/// Length of a secp256k1 signature, `r || s || v`.
+pub(crate) const K1_SIGNATURE_LEN: usize = 65;
+
+/// Why a Base transaction `eth_estimateGas` / `eth_call` request cannot be simulated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum TxBaseSimulationRequestError {
+    /// The request carries none of the Base transaction fields.
+    #[error("request carries no Base transaction fields")]
+    NotTxBase,
+    /// Neither `sender` nor `from` is set.
+    #[error("no sender account: set `sender` or `from`")]
+    MissingSender,
+    /// `sender` and `from` are both set and differ.
+    #[error("`sender` and `from` differ")]
+    SenderFromMismatch,
+    /// A named payer's `payerAuth` does not start with the k1 authenticator
+    /// selector.
+    #[error("`payerAuth` for a named payer must start with the k1 authenticator")]
+    UnrecognizedPayerAuthenticator,
+    /// The request sets both `calls` and a top-level `to` / `value` / `data`.
+    #[error("set either `calls` or a top-level `to`/`value`/`data`, not both")]
+    CallsAndSingleCall,
+    /// A top-level `value` or `data` is set without a `to`.
+    #[error("a top-level `value` or `data` needs a `to`")]
+    SingleCallMissingTo,
+    /// The top-level `to` is a contract creation, which Base transaction calls cannot do.
+    #[error("a Base transaction call cannot create a contract")]
+    ContractCreation,
+    /// The transaction fails the structural rules pool admission enforces.
+    #[error(transparent)]
+    Structural(#[from] TxBaseStructuralError),
+}
+
+/// Canonical invalid-params message for Base transaction RPC reads before Everest.
+pub const BASE_TX_PRE_EVEREST_RPC_ERROR: &str = "Base transaction RPC features are not active before the Everest hard fork; the `nonce_key` parameter is not supported at this block";
+
+/// Reth-free Base transaction channel-nonce helpers.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TxBaseNonce;
+
+impl TxBaseNonce {
+    /// Looks up a Nonce Manager storage slot in a state override.
+    ///
+    /// A full `state` replacement takes precedence and returns zero for a missing slot. A
+    /// `state_diff` only returns values explicitly present in the diff.
+    pub fn override_for_slot(
+        state_overrides: Option<&StateOverride>,
+        address: Address,
+        slot: B256,
+    ) -> Option<U256> {
+        let account_override = state_overrides?.get(&address)?;
+        let value = match &account_override.state {
+            Some(state) => state.get(&slot).copied().unwrap_or_default(),
+            None => *account_override.state_diff.as_ref()?.get(&slot)?,
+        };
+        Some(U256::from_be_bytes(value.0))
+    }
+
+    /// Decodes the Solidity-packed `u64` channel nonce from an EVM storage word.
+    pub fn decode_channel_nonce(slot_value: U256) -> U256 {
+        slot_value & U256::from(u64::MAX)
+    }
+}
+
+impl BaseTransactionRequest {
+    /// Builds an unsigned Base transaction simulation transaction.
+    ///
+    /// The simulation runs with the request's `gas`, clamped to `gas_limit_cap`, or with
+    /// `gas_limit_cap` when `gas` is omitted.
+    ///
+    /// Returns an [`TxBaseSimulationRequestError`] naming why the request cannot be simulated.
+    /// The returned transaction is a read-only [`TxBaseSimulation`] in `mode`, executed without
+    /// signature verification or committed state, from the request's account.
+    pub fn to_base_tx_simulation_tx(
+        &self,
+        chain_id: u64,
+        gas_limit_cap: u64,
+        mode: TxBaseSimulationMode,
+    ) -> Result<Recovered<BaseTxEnv>, TxBaseSimulationRequestError> {
+        let aa = self.as_base_tx().ok_or(TxBaseSimulationRequestError::NotTxBase)?;
+        let req = self.as_ref();
+
+        let account = match (aa.sender, req.from) {
+            (Some(sender), Some(from)) if sender != from => {
+                return Err(TxBaseSimulationRequestError::SenderFromMismatch);
+            }
+            (Some(sender), _) => sender,
+            (None, Some(from)) => from,
+            (None, None) => return Err(TxBaseSimulationRequestError::MissingSender),
+        };
+        let sender_declared = aa.sender.is_some();
+
+        let (sender, sender_auth) = match &aa.sender_auth {
+            Some(blob) => {
+                let prefixed = Self::is_prefixed_auth(blob);
+                (prefixed.then_some(account), Self::stub_supplied_auth(blob, prefixed))
+            }
+            None if sender_declared => (Some(account), Self::default_prefixed_auth()),
+            None => (None, Self::default_bare_auth()),
+        };
+
+        let (payer, payer_auth) = match aa.payer {
+            None => (None, Bytes::new()),
+            Some(payer) => {
+                let named = payer != TxBaseConstants::OPEN_PAYER;
+                let blob = match &aa.payer_auth {
+                    Some(blob) => {
+                        if named && !Self::is_prefixed_auth(blob) {
+                            return Err(
+                                TxBaseSimulationRequestError::UnrecognizedPayerAuthenticator,
+                            );
+                        }
+                        // An open payer is whoever its signature recovers to, so
+                        // its bytes are kept to publish that payer.
+                        if named { Self::stub_supplied_auth(blob, true) } else { blob.clone() }
+                    }
+                    None if named => Self::default_prefixed_auth(),
+                    // The sender estimates before any payer has signed, so an
+                    // absent `payer_auth` for the open payer is priced as a
+                    // 65-byte signature. This bare stub never recovers, leaving
+                    // the payer unknown rather than a random address or the
+                    // sender.
+                    None => Self::default_bare_auth(),
+                };
+                (Some(payer), blob)
+            }
+        };
+
+        let tx = TxBase {
+            chain_id,
+            sender,
+            nonce_key: aa.nonce_key.unwrap_or(U256::ZERO),
+            nonce_sequence: 0,
+            valid_after: aa.valid_after.unwrap_or_default(),
+            valid_before: aa.valid_before.unwrap_or_default(),
+            max_priority_fee_per_gas: req.max_priority_fee_per_gas.unwrap_or_default(),
+            max_fee_per_gas: req.max_fee_per_gas.unwrap_or_default(),
+            gas_limit: req.gas.map_or(gas_limit_cap, |gas| gas.min(gas_limit_cap)),
+            account_changes: aa.account_changes.clone().unwrap_or_default(),
+            calls: self.base_tx_calls(aa.calls.as_ref())?,
+            metadata: aa.metadata.clone().unwrap_or_default(),
+            payer,
+        };
+
+        let signed = TxBaseSigned::new(tx, sender_auth, payer_auth);
+        // Reject what pool admission rejects as malformed, so an estimate is
+        // never returned for a transaction that could not be submitted.
+        TxBaseStructure::validate(&signed)?;
+        let enveloped = BaseTxEnvelope::Base(signed.clone()).encoded_2718().into();
+        let simulation = TxBaseSimulation { mode };
+        Ok(Recovered::new_unchecked(
+            BaseTxEnv::base_tx_simulation(signed, enveloped, simulation),
+            account,
+        ))
+    }
+
+    /// The request's calls: `calls`, or a single call from the top-level `to` /
+    /// `value` / `data` of a standard request. Setting both is ambiguous and
+    /// rejected. A zero `value` and empty `data` count as unset, since clients
+    /// commonly send them as defaults on every request.
+    fn base_tx_calls(
+        &self,
+        calls: Option<&Vec<Vec<Call>>>,
+    ) -> Result<Vec<Vec<Call>>, TxBaseSimulationRequestError> {
+        let req = self.as_ref();
+        let value = req.value.filter(|value| !value.is_zero());
+        let data = req.input.input().filter(|data| !data.is_empty());
+        let single_call = req.to.is_some() || value.is_some() || data.is_some();
+        if let Some(calls) = calls {
+            if single_call {
+                return Err(TxBaseSimulationRequestError::CallsAndSingleCall);
+            }
+            return Ok(calls.clone());
+        }
+        if !single_call {
+            return Ok(Vec::new());
+        }
+        let to = match req.to {
+            Some(TxKind::Call(to)) => to,
+            Some(TxKind::Create) => return Err(TxBaseSimulationRequestError::ContractCreation),
+            None => return Err(TxBaseSimulationRequestError::SingleCallMissingTo),
+        };
+        let call =
+            Call { to, value: value.unwrap_or_default(), data: data.cloned().unwrap_or_default() };
+        Ok(vec![vec![call]])
+    }
+
+    fn default_bare_auth() -> Bytes {
+        Bytes::from(vec![STUB_AUTH_FILL; K1_SIGNATURE_LEN])
+    }
+
+    /// Whether the blob is a named-account authorization: its leading 20 bytes
+    /// name the k1 authenticator. Any other blob is treated as a bare EOA
+    /// signature.
+    fn is_prefixed_auth(blob: &Bytes) -> bool {
+        blob.starts_with(TxBaseConstants::K1_AUTHENTICATOR.as_slice())
+    }
+
+    /// A supplied blob is used for its shape and length only: the
+    /// authenticator selector is kept and every other byte becomes
+    /// [`STUB_AUTH_FILL`].
+    fn stub_supplied_auth(blob: &Bytes, prefixed: bool) -> Bytes {
+        let kept = if prefixed { AUTHENTICATOR_SELECTOR_LEN } else { 0 };
+        let mut stub = blob.to_vec();
+        if let Some(data) = stub.get_mut(kept..) {
+            data.fill(STUB_AUTH_FILL);
+        }
+        Bytes::from(stub)
+    }
+
+    /// A canonical k1 authenticator selector followed by k1-signature-sized
+    /// filler, standing in for auth the request does not carry.
+    fn default_prefixed_auth() -> Bytes {
+        let mut blob = TxBaseConstants::K1_AUTHENTICATOR.to_vec();
+        blob.resize(blob.len() + K1_SIGNATURE_LEN, STUB_AUTH_FILL);
+        Bytes::from(blob)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{address, hex};
+    use alloy_rpc_types_eth::state::AccountOverride;
+    use base_common_chains::BaseUpgrade;
+    use base_common_consensus::{TxBaseConstants, TxBaseSigned};
+    use base_common_evm2::{BaseEvmTypes, BaseSpecId};
+    use evm2::{Evm, ExecutionConfig, Version, env::BlockEnv, evm::InMemoryDB};
+    use k256::ecdsa::SigningKey;
+    use serde_json::json;
+
+    use super::*;
+
+    const CHAIN_ID: u64 = 8453;
+    const GAS_CAP: u64 = 30_000_000;
+    const SENDER: Address = address!("00000000000000000000000000000000000000a1");
+    const FROM: Address = address!("00000000000000000000000000000000000000c3");
+
+    fn simulation(request: serde_json::Value) -> Recovered<BaseTxEnv> {
+        let request = serde_json::from_value::<BaseTransactionRequest>(request).unwrap();
+        request.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Estimate).unwrap()
+    }
+
+    fn signed(tx: &Recovered<BaseTxEnv>) -> &TxBaseSigned {
+        &tx.inner().as_base_tx().unwrap().signed
+    }
+
+    /// Gas the simulation of `request` uses, which `eth_estimateGas` searches for.
+    fn estimated_gas(request: serde_json::Value) -> u64 {
+        let spec = BaseSpecId::new(BaseUpgrade::Everest);
+        let mut version = Version::new(spec.into());
+        version.chain_id = CHAIN_ID;
+        let mut evm = Evm::new_with_execution_config(
+            ExecutionConfig::for_spec_and_version(spec, version),
+            spec,
+            BlockEnv::<BaseEvmTypes>::default(),
+            BaseEvmTypes::tx_registry(spec),
+            InMemoryDB::default(),
+            BaseEvmTypes::native_precompiles(spec, None),
+        );
+        let result = evm.transact(&simulation(request)).expect("simulation runs").discard();
+        assert!(result.is_success(), "expected success, got {result:?}");
+        result.tx_gas_used()
+    }
+
+    /// A real 65-byte `r || s || v` secp256k1 signature.
+    fn real_k1_signature() -> Vec<u8> {
+        let key = SigningKey::from_slice(&[0x5a; 32]).unwrap();
+        let (signature, recid) = key.sign_prehash_recoverable(&[0x42; 32]).unwrap();
+        let mut out = signature.to_bytes().to_vec();
+        out.push(recid.to_byte() + 27);
+        out
+    }
+
+    /// A zero-filled placeholder for `senderAuth` or a named `payerAuth` must
+    /// never estimate less gas than the real signature it stands in for, even
+    /// though zero calldata bytes are cheaper than non-zero ones.
+    #[test]
+    fn zero_filled_auth_placeholder_does_not_underestimate() {
+        let payer = address!("00000000000000000000000000000000000000b2");
+        let prefixed = |data: &[u8]| {
+            let mut blob = TxBaseConstants::K1_AUTHENTICATOR.to_vec();
+            blob.extend_from_slice(data);
+            hex::encode_prefixed(blob)
+        };
+        let real = real_k1_signature();
+        let zero = [0u8; 65];
+        assert!(real.iter().filter(|&&byte| byte == 0).count() < real.len());
+
+        let bare_sender = |auth: &[u8]| json!({ "from": FROM, "calls": [], "senderAuth": hex::encode_prefixed(auth) });
+        assert!(estimated_gas(bare_sender(&zero)) >= estimated_gas(bare_sender(&real)));
+
+        let named_sender =
+            |auth: &[u8]| json!({ "sender": SENDER, "calls": [], "senderAuth": prefixed(auth) });
+        assert!(estimated_gas(named_sender(&zero)) >= estimated_gas(named_sender(&real)));
+
+        let named_payer = |auth: &[u8]| json!({ "from": FROM, "calls": [], "payer": payer, "payerAuth": prefixed(auth) });
+        assert!(estimated_gas(named_payer(&zero)) >= estimated_gas(named_payer(&real)));
+    }
+
+    #[test]
+    fn named_sender_gets_prefixed_k1_stub() {
+        let tx = simulation(json!({ "sender": SENDER, "calls": [] }));
+        assert_eq!(signed(&tx).tx().sender, Some(SENDER));
+        assert_eq!(&signed(&tx).sender_auth()[..20], TxBaseConstants::K1_AUTHENTICATOR.as_slice());
+    }
+
+    #[test]
+    fn from_only_request_uses_eoa_path() {
+        let tx = simulation(json!({ "from": FROM, "calls": [] }));
+        assert!(signed(&tx).tx().sender.is_none());
+        assert_eq!(signed(&tx).sender_auth().len(), K1_SIGNATURE_LEN);
+    }
+
+    #[test]
+    fn mismatched_sender_and_from_are_rejected() {
+        let request = serde_json::from_value::<BaseTransactionRequest>(json!({
+            "from": FROM,
+            "sender": SENDER,
+            "calls": []
+        }))
+        .unwrap();
+        assert_eq!(
+            request
+                .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Estimate)
+                .err(),
+            Some(TxBaseSimulationRequestError::SenderFromMismatch)
+        );
+    }
+
+    /// A standard request's top-level `to` / `value` / `data` is one call.
+    #[test]
+    fn top_level_call_fields_become_one_call() {
+        let to = address!("0x00000000000000000000000000000000000000c1");
+        let tx = simulation(json!({
+            "sender": SENDER,
+            "to": to,
+            "value": "0x5",
+            "data": "0xabcd",
+        }));
+        assert_eq!(
+            signed(&tx).tx().calls,
+            vec![vec![Call { to, value: U256::from(5), data: Bytes::from_static(&[0xab, 0xcd]) }]]
+        );
+        assert!(signed(&simulation(json!({ "sender": SENDER }))).tx().calls.is_empty());
+    }
+
+    /// `calls` and a top-level call are ambiguous together, and a top-level
+    /// call needs a recipient that is not a contract creation.
+    #[test]
+    fn top_level_call_fields_are_validated() {
+        let to = address!("0x00000000000000000000000000000000000000c1");
+        let reject = |request: serde_json::Value| {
+            serde_json::from_value::<BaseTransactionRequest>(request)
+                .unwrap()
+                .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Estimate)
+                .err()
+        };
+        assert_eq!(
+            reject(json!({ "sender": SENDER, "calls": [], "to": to })),
+            Some(TxBaseSimulationRequestError::CallsAndSingleCall)
+        );
+        assert_eq!(
+            reject(json!({ "sender": SENDER, "calls": [], "data": "0x01" })),
+            Some(TxBaseSimulationRequestError::CallsAndSingleCall)
+        );
+        assert_eq!(
+            reject(json!({ "sender": SENDER, "data": "0x01" })),
+            Some(TxBaseSimulationRequestError::SingleCallMissingTo)
+        );
+        // Default `value: "0x0"` / `data: "0x"` are not a single call.
+        let calls = vec![vec![Call { to, value: U256::ZERO, data: Bytes::new() }]];
+        let tx = simulation(json!({
+            "sender": SENDER,
+            "calls": calls,
+            "value": "0x0",
+            "data": "0x",
+        }));
+        assert_eq!(signed(&tx).tx().calls, calls);
+        let tx = simulation(json!({ "sender": SENDER, "value": "0x0", "data": "0x" }));
+        assert!(signed(&tx).tx().calls.is_empty());
+        let mut create =
+            serde_json::from_value::<BaseTransactionRequest>(json!({ "sender": SENDER })).unwrap();
+        create.as_mut().to = Some(TxKind::Create);
+        assert_eq!(
+            create
+                .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Estimate)
+                .err(),
+            Some(TxBaseSimulationRequestError::ContractCreation)
+        );
+    }
+
+    /// A request's `gas` above the cap is clamped to it, so a caller cannot
+    /// pick an unbounded simulation budget.
+    #[test]
+    fn request_gas_is_clamped_to_the_cap() {
+        let tx = simulation(json!({ "sender": SENDER, "calls": [], "gas": "0xffffffffffffffff" }));
+        assert_eq!(signed(&tx).tx().gas_limit, GAS_CAP);
+        let tx = simulation(json!({ "sender": SENDER, "calls": [], "gas": "0x5208" }));
+        assert_eq!(signed(&tx).tx().gas_limit, 21_000);
+    }
+
+    /// The structural limits enforced at pool admission also bound simulation;
+    /// over JSON the phase cap already applies while decoding.
+    #[test]
+    fn too_many_call_phases_are_rejected() {
+        let calls: Vec<Vec<Call>> = vec![vec![]; TxBaseConstants::MAX_CALL_PHASES_PER_TX + 1];
+        let decoded = serde_json::from_value::<BaseTransactionRequest>(json!({
+            "sender": SENDER,
+            "calls": calls,
+        }));
+        let error = decoded.unwrap_err().to_string();
+        assert!(error.contains("`calls` with at most 1024 entries"), "{error}");
+    }
+
+    #[test]
+    fn missing_sender_is_rejected() {
+        let request =
+            serde_json::from_value::<BaseTransactionRequest>(json!({ "calls": [] })).unwrap();
+        assert_eq!(
+            request
+                .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Estimate)
+                .err(),
+            Some(TxBaseSimulationRequestError::MissingSender)
+        );
+    }
+
+    #[test]
+    fn declared_payer_gets_prefixed_auth() {
+        let payer = address!("00000000000000000000000000000000000000b2");
+        let tx = simulation(json!({ "sender": SENDER, "calls": [], "payer": payer }));
+        assert_eq!(signed(&tx).tx().payer, Some(payer));
+        assert_eq!(&signed(&tx).payer_auth()[..20], TxBaseConstants::K1_AUTHENTICATOR.as_slice());
+    }
+
+    #[test]
+    fn simulation_mode_is_retained() {
+        let request = serde_json::from_value::<BaseTransactionRequest>(
+            json!({ "sender": SENDER, "calls": [] }),
+        )
+        .unwrap();
+        let tx = request
+            .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Call)
+            .unwrap();
+        assert_eq!(
+            tx.inner().as_base_tx().unwrap().simulation,
+            Some(TxBaseSimulation { mode: TxBaseSimulationMode::Call })
+        );
+    }
+
+    #[test]
+    fn channel_nonce_decodes_low_u64() {
+        let slot = (U256::ONE << 200) | U256::from(42);
+        assert_eq!(TxBaseNonce::decode_channel_nonce(slot), U256::from(42));
+    }
+
+    #[test]
+    fn channel_nonce_reads_state_diff_override() {
+        let slot = B256::repeat_byte(0xab);
+        let value = B256::from(U256::from(9).to_be_bytes::<32>());
+        let overrides = [(
+            SENDER,
+            AccountOverride {
+                state_diff: Some([(slot, value)].into_iter().collect()),
+                ..Default::default()
+            },
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            TxBaseNonce::override_for_slot(Some(&overrides), SENDER, slot),
+            Some(U256::from(9))
+        );
+    }
+
+    #[test]
+    fn channel_nonce_full_state_miss_is_zero() {
+        let slot = B256::repeat_byte(0xab);
+        let overrides =
+            [(SENDER, AccountOverride { state: Some(Default::default()), ..Default::default() })]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            TxBaseNonce::override_for_slot(Some(&overrides), SENDER, slot),
+            Some(U256::ZERO)
+        );
+    }
+}

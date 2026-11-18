@@ -16,10 +16,10 @@ workspace = true
 # base
 base-common-flz.workspace = true
 base-common-genesis.workspace = true
-base-common-eip8130.workspace = true
+base-common-base-tx.workspace = true
 base-common-l1-fees.workspace = true
 base-common-consensus.workspace = true
-base-execution-eip8130.workspace = true
+base-execution-base-tx.workspace = true
 base-precompile-storage = { workspace = true, default-features = false, features = ["evm2", "std"] }
 base-common-precompiles = { workspace = true, default-features = false, features = ["evm2", "std"] }
 
@@ -50,7 +50,7 @@ alloy-evm.workspace = true
 alloy-sol-types.workspace = true
 alloy-hardforks.workspace = true
 
-# crypto — signs the EIP-8130 transactions the parity harness executes.
+# crypto — signs the Base transactions the parity harness executes.
 k256 = { workspace = true, features = ["ecdsa"] }
 
 # revm

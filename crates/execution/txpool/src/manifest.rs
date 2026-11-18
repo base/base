@@ -1,7 +1,7 @@
 //! Captured admission predicates for stateless intra-block revalidation.
 //!
-//! A [`WatchManifest`] carries the payer-balance and expiry predicates of an
-//! EIP-8130 admission to the payload builder, where stale transactions can be
+//! A [`WatchManifest`] carries the payer-balance and expiry predicates of a
+//! Base transaction admission to the payload builder, where stale transactions can be
 //! dropped before execution without repeating signature recovery.
 
 use alloy_primitives::{Address, U256};
@@ -9,7 +9,7 @@ use reth_evm::Database;
 
 use crate::UnixMillis;
 
-/// State predicates captured during EIP-8130 admission.
+/// State predicates captured during Base transaction admission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchManifest {
     payer: Address,
@@ -45,7 +45,7 @@ impl WatchManifest {
     /// Returns the last block time, in Unix milliseconds, at which all captured
     /// expiry predicates hold.
     ///
-    /// This is the transaction's `TxEip8130::last_valid_ms`.
+    /// This is the transaction's `TxBase::last_valid_ms`.
     /// [`UnixMillis::MAX`] means unbounded.
     #[must_use]
     pub const fn effective_expiry(&self) -> UnixMillis {
@@ -91,7 +91,7 @@ impl WatchManifest {
     }
 }
 
-/// A positively observed reason an EIP-8130 transaction is stale at build time.
+/// A positively observed reason a Base transaction is stale at build time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestStale {
     /// The payer can no longer cover the transaction's maximum charge.

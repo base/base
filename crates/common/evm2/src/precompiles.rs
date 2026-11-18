@@ -188,7 +188,7 @@ impl BaseEvmTypes {
     /// Returns the full Base precompile provider for `spec`: the static set of
     /// [`Self::precompiles`] plus the stateful native precompiles, gated exactly like the revm
     /// `BasePrecompiles` — the B-20 factory and tokens, the policy registry, and the activation
-    /// registry from **Beryl**, and the EIP-8130 `TxContext` and `NonceManager` from **Cobalt**.
+    /// registry from **Beryl**, and the Base transaction `TxContext` and `NonceManager` from **Cobalt**.
     ///
     /// `activation_admin_address` is the chain's static activation registry admin.
     pub fn native_precompiles(

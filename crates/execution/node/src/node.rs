@@ -803,11 +803,11 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub ordering: BaseOrdering<T>,
     /// Maximum inflight EIP-7702 delegated account transactions per sender.
     pub max_inflight_delegated_slots: usize,
-    /// Per-account EIP-8130 admission caps.
+    /// Per-account Base transaction admission caps.
     pub guard_limits: GuardLimits,
     /// Capacity of the validity pool; unset fields copy the pending subpool limit.
     pub validity_pool_limits: ValidityPoolLimits,
-    /// Operator-allowlisted EIP-8130 payers.
+    /// Operator-allowlisted Base transaction payers.
     pub allowlisted_payers: AddressSet,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
@@ -852,7 +852,7 @@ impl<T> BasePoolBuilder<T> {
         self
     }
 
-    /// Sets the per-account EIP-8130 admission caps.
+    /// Sets the per-account Base transaction admission caps.
     pub const fn with_guard_limits(mut self, guard_limits: GuardLimits) -> Self {
         self.guard_limits = guard_limits;
         self
@@ -864,7 +864,7 @@ impl<T> BasePoolBuilder<T> {
         self
     }
 
-    /// Sets the operator-allowlisted EIP-8130 payers, limited to
+    /// Sets the operator-allowlisted Base transaction payers, limited to
     /// [`GuardLimits::allowlisted_payment_limit`] inflight payments and bounded
     /// by their balance.
     pub fn with_allowlisted_payers(mut self, payers: impl IntoIterator<Item = Address>) -> Self {
@@ -964,7 +964,7 @@ pub struct BasePayloadBuilder {
     /// Gas limit configuration for the payload builder.
     /// This is used to configure gas limit related constraints for the payload builder.
     pub gas_limit_config: GasLimitConfig,
-    /// Whether to drop positively stale EIP-8130 transactions using their
+    /// Whether to drop positively stale Base transactions using their
     /// captured payer and expiry predicates before execution.
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
@@ -1021,7 +1021,7 @@ impl BasePayloadBuilder {
         self
     }
 
-    /// Configure whether EIP-8130 payer and expiry manifests are checked before execution.
+    /// Configure whether Base transaction payer and expiry manifests are checked before execution.
     pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
         self.manifest_precheck_enabled = enabled;
         self

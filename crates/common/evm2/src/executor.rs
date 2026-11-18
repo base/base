@@ -3,7 +3,7 @@
 use alloy_consensus::{Eip658Value, Receipt, Transaction, transaction::Recovered};
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{Address, B256, Bytes};
-use base_common_consensus::{BaseReceipt, DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt};
+use base_common_consensus::{BASE_TX_TYPE_ID, BaseReceipt, DepositReceipt, TxBaseReceipt};
 use base_common_flz::flz_compress_len;
 use base_common_genesis::BaseFeature;
 use evm2::{
@@ -63,12 +63,12 @@ impl core::error::Error for PreExecutionError {}
 ///
 /// Mirrors the reference `BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas`: a
 /// transaction whose reserved gas is larger than the block's unused gas cannot be included. The
-/// reserved gas is the transaction's gas limit, plus — for an EIP-8130 transaction — the payer's
+/// reserved gas is the transaction's gas limit, plus — for a Base transaction — the payer's
 /// authentication gas ([`IntrinsicGas::payer_auth_cost_of`]), which is metered on top
 /// of the sender-signed gas limit (matching the reference `reserved_block_gas`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockGasLimitExceeded {
-    /// The transaction's reserved gas (gas limit, plus EIP-8130 payer-auth reservation).
+    /// The transaction's reserved gas (gas limit, plus Base transaction payer-auth reservation).
     pub transaction_gas_limit: u64,
     /// The block's remaining available gas (block gas limit minus cumulative gas used).
     pub block_available_gas: u64,
@@ -181,9 +181,9 @@ impl BaseExecutedTx {
                 deposit_nonce: self.deposit_nonce,
                 deposit_receipt_version: is_canyon_active.then_some(1),
             })
-        } else if let Some(committed_phases) = result.ext.eip8130_committed_phases {
-            debug_assert_eq!(self.ty, EIP8130_TX_TYPE_ID);
-            BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, committed_phases))
+        } else if let Some(committed_phases) = result.ext.base_tx_committed_phases {
+            debug_assert_eq!(self.ty, BASE_TX_TYPE_ID);
+            BaseReceipt::Base(TxBaseReceipt::new(receipt, committed_phases))
         } else {
             match self.ty {
                 1 => BaseReceipt::Eip2930(receipt),
@@ -283,8 +283,8 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
 
     /// Applies the Base transition-block irregular state changes, in the reference order: the
     /// Canyon create2-deployer force-deploy, the Denim `BaseTime` predeploy install, then the
-    /// Everest EIP-8130 system-account stub. Each is fork-gated on `chain_spec` at this block's
-    /// timestamp and commits its state into the block state. Must run after
+    /// Everest Base transaction system-account stub. Each is fork-gated on `chain_spec` at this
+    /// block's timestamp and commits its state into the block state. Must run after
     /// [`apply_pre_execution`](Self::apply_pre_execution) and before any transactions.
     pub fn apply_transition_hooks(
         &mut self,
@@ -298,7 +298,7 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
             &mut self.block_state,
         )?;
         BaseTime::ensure_predeploy(chain_spec, timestamp, &mut self.evm, &mut self.block_state)?;
-        Everest::ensure_eip8130_system_accounts(
+        Everest::ensure_base_tx_system_accounts(
             chain_spec,
             timestamp,
             &mut self.evm,
@@ -349,14 +349,14 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
         let is_deposit = tx.is_deposit();
         let spec = self.evm.config_spec_id();
 
-        // A transaction's reserved gas must fit in the block's remaining gas. For an EIP-8130
+        // A transaction's reserved gas must fit in the block's remaining gas. For a Base transaction
         // transaction the reservation adds the payer's authentication gas, metered on
         // top of the sender-signed gas limit (the reference `reserved_block_gas`). Pre-Regolith
         // deposits are exempt (the reference's `is_regolith || !is_deposit` guard).
         let mut reserved_gas = tx.gas_limit();
-        if let Some(eip8130) = tx.as_eip8130() {
+        if let Some(base_tx) = tx.as_base_tx() {
             reserved_gas =
-                reserved_gas.saturating_add(IntrinsicGas::payer_auth_cost_of(&eip8130.signed));
+                reserved_gas.saturating_add(IntrinsicGas::payer_auth_cost_of(&base_tx.signed));
         }
         let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();
         let block_available_gas = block_gas_limit.saturating_sub(self.gas_used);

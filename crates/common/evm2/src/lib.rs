@@ -15,7 +15,7 @@ mod base_time;
 pub use base_time::{BaseTime, BaseTimeTransitionError};
 
 mod transaction;
-pub use transaction::{BaseTxEnvelope, Eip8130Simulation, Eip8130SimulationMode, Eip8130Tx};
+pub use transaction::{BaseTxEnvelope, TxBaseEnv, TxBaseSimulation, TxBaseSimulationMode};
 
 mod handler;
 pub use handler::BaseTxHandlerHooks;
@@ -31,12 +31,12 @@ pub use executor::{
     BlockGasLimitExceeded, CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError,
 };
 
-mod eip8130;
-pub use eip8130::{Eip8130Handler, Eip8130Prepared, Eip8130Settlement};
+mod base_tx;
+pub use base_tx::{TxBaseHandler, TxBasePrepared, TxBaseSettlement};
 
 mod registry;
 
-pub use base_common_eip8130::{Eip8130GasSchedule, IntrinsicGas};
+pub use base_common_base_tx::{IntrinsicGas, TxBaseGasSchedule};
 
 mod nonce_manager;
 pub use nonce_manager::{NonceManager, NonceOverflow};

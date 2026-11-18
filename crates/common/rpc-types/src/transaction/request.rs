@@ -11,8 +11,8 @@ use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
-    AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, EIP8130_TX_TYPE_ID,
-    Eip8130Constants, Eip8130PayerSerde, TxDeposit,
+    AccountChange, BASE_TX_TYPE_ID, BaseTxEnvelope, BaseTypedTransaction, Call, TxBaseConstants,
+    TxBasePayerSerde, TxDeposit,
 };
 use serde::{
     Deserialize, Deserializer, Serialize,
@@ -22,12 +22,12 @@ use serde_json::{Map, Value};
 
 use crate::Transaction;
 
-/// EIP-8130 account-abstraction fields layered onto a standard
+/// Base transaction account-abstraction fields layered onto a standard
 /// [`TransactionRequest`] for the `eth_call` / `eth_estimateGas` AA path.
 ///
-/// All fields are optional and absent for a plain (non-8130) request; their
-/// presence (via [`Eip8130RequestFields::is_some`]) marks a request as an
-/// EIP-8130 simulation. Authentication is never verified: the caller may pass
+/// All fields are optional and absent for a plain (non-Base) request; their
+/// presence (via [`TxBaseRequestFields::is_some`]) marks a request as a
+/// Base transaction simulation. Authentication is never verified: the caller may pass
 /// the authentication blob it intends to sign (`K1_AUTHENTICATOR(20) || sig`
 /// for a named account, or a bare secp256k1 signature for the default EOA),
 /// and the estimate charges the fixed k1 authentication cost.
@@ -35,10 +35,10 @@ use crate::Transaction;
 /// The sender account is [`sender`](Self::sender) or the standard `from`, which
 /// must agree when both are present; the `sender_auth` blob's form then selects
 /// the EOA vs named-account path (see
-/// [`crate::BaseTransactionRequest::to_eip8130_simulation_tx`]).
+/// [`crate::BaseTransactionRequest::to_base_tx_simulation_tx`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Eip8130RequestFields {
+pub struct TxBaseRequestFields {
     /// The 2D nonce channel key. Absent or zero is the protocol-nonce channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nonce_key: Option<U256>,
@@ -47,7 +47,7 @@ pub struct Eip8130RequestFields {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "Eip8130RequestFields::deserialize_account_changes"
+        deserialize_with = "TxBaseRequestFields::deserialize_account_changes"
     )]
     pub account_changes: Option<Vec<AccountChange>>,
     /// The phased call batches dispatched by the sender account.
@@ -58,7 +58,7 @@ pub struct Eip8130RequestFields {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "Eip8130RequestFields::deserialize_calls"
+        deserialize_with = "TxBaseRequestFields::deserialize_calls"
     )]
     pub calls: Option<Vec<Vec<Call>>>,
     /// Optional lower bound of the validity window, in Unix seconds or
@@ -75,7 +75,7 @@ pub struct Eip8130RequestFields {
     /// Opaque, non-executed transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
-    /// The EIP-8130 sender account the batch dispatches from — the wire-level
+    /// The Base transaction sender account the batch dispatches from — the wire-level
     /// `sender` identity. Interchangeable with the standard `from`: the estimate
     /// resolves the account as `sender` or `from`, and rejects a request where
     /// both are present but disagree, or where neither is set, as
@@ -101,8 +101,8 @@ pub struct Eip8130RequestFields {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "Eip8130PayerSerde::serialize",
-        deserialize_with = "Eip8130PayerSerde::deserialize"
+        serialize_with = "TxBasePayerSerde::serialize",
+        deserialize_with = "TxBasePayerSerde::deserialize"
     )]
     pub payer: Option<Address>,
     /// Raw payer authentication blob, used when a `payer` is declared.
@@ -121,8 +121,8 @@ pub struct Eip8130RequestFields {
     pub payer_auth: Option<Bytes>,
 }
 
-impl Eip8130RequestFields {
-    /// Whether any field that defines an EIP-8130 request is present.
+impl TxBaseRequestFields {
+    /// Whether any field that defines a Base transaction request is present.
     pub const fn is_some(&self) -> bool {
         self.nonce_key.is_some()
             || self.account_changes.is_some()
@@ -137,23 +137,23 @@ impl Eip8130RequestFields {
     }
 
     /// Deserializes `accountChanges`, rejecting more than
-    /// [`Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`] entries while decoding.
+    /// [`TxBaseConstants::MAX_ACCOUNT_CHANGES_PER_TX`] entries while decoding.
     pub fn deserialize_account_changes<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Vec<AccountChange>>, D::Error> {
         Self::deserialize_bounded(
             deserializer,
-            Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX,
+            TxBaseConstants::MAX_ACCOUNT_CHANGES_PER_TX,
             "accountChanges",
         )
     }
 
     /// Deserializes `calls`, rejecting more than
-    /// [`Eip8130Constants::MAX_CALL_PHASES_PER_TX`] phases while decoding.
+    /// [`TxBaseConstants::MAX_CALL_PHASES_PER_TX`] phases while decoding.
     pub fn deserialize_calls<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Vec<Vec<Call>>>, D::Error> {
-        Self::deserialize_bounded(deserializer, Eip8130Constants::MAX_CALL_PHASES_PER_TX, "calls")
+        Self::deserialize_bounded(deserializer, TxBaseConstants::MAX_CALL_PHASES_PER_TX, "calls")
     }
 
     /// Deserializes an optional list of at most `max` entries. The entry past
@@ -211,14 +211,14 @@ impl Eip8130RequestFields {
     }
 }
 
-/// Builder for [`BaseTypedTransaction`], with optional EIP-8130 simulation
-/// fields ([`Eip8130RequestFields`]) layered onto a standard
-/// [`TransactionRequest`]. A request with no 8130 fields serializes and behaves
+/// Builder for [`BaseTypedTransaction`], with optional Base transaction simulation
+/// fields ([`TxBaseRequestFields`]) layered onto a standard
+/// [`TransactionRequest`]. A request with no Base transaction fields serializes and behaves
 /// exactly like the underlying [`TransactionRequest`].
 ///
 /// Deserialization is a single pass over the JSON object rather than
 /// `#[serde(flatten)]`, which would buffer the whole object before decoding
-/// either half. The EIP-8130 fields decode straight into their bounded types,
+/// either half. The Base transaction fields decode straight into their bounded types,
 /// keys neither half defines are skipped without being buffered, and only
 /// [`TransactionRequest`]'s own keys are collected for it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize)]
@@ -226,7 +226,7 @@ pub struct BaseTransactionRequest {
     #[serde(flatten)]
     inner: TransactionRequest,
     #[serde(flatten)]
-    eip8130: Eip8130RequestFields,
+    base_tx: TxBaseRequestFields,
 }
 
 impl<'de> Deserialize<'de> for BaseTransactionRequest {
@@ -263,10 +263,10 @@ impl<'de> Deserialize<'de> for BaseTransactionRequest {
             nonce_key: Option<U256>,
             #[serde(
                 default,
-                deserialize_with = "Eip8130RequestFields::deserialize_account_changes"
+                deserialize_with = "TxBaseRequestFields::deserialize_account_changes"
             )]
             account_changes: Option<Vec<AccountChange>>,
-            #[serde(default, deserialize_with = "Eip8130RequestFields::deserialize_calls")]
+            #[serde(default, deserialize_with = "TxBaseRequestFields::deserialize_calls")]
             calls: Option<Vec<Vec<Call>>>,
             #[serde(default, with = "alloy_serde::quantity::opt")]
             valid_after: Option<u64>,
@@ -278,7 +278,7 @@ impl<'de> Deserialize<'de> for BaseTransactionRequest {
             sender: Option<Address>,
             #[serde(default)]
             sender_auth: Option<Bytes>,
-            #[serde(default, deserialize_with = "Eip8130PayerSerde::deserialize")]
+            #[serde(default, deserialize_with = "TxBasePayerSerde::deserialize")]
             payer: Option<Address>,
             #[serde(default)]
             payer_auth: Option<Bytes>,
@@ -312,7 +312,7 @@ impl<'de> Deserialize<'de> for BaseTransactionRequest {
         .collect();
         let inner =
             TransactionRequest::deserialize(Value::Object(inner)).map_err(de::Error::custom)?;
-        let eip8130 = Eip8130RequestFields {
+        let base_tx = TxBaseRequestFields {
             nonce_key: wire.nonce_key,
             account_changes: wire.account_changes,
             calls: wire.calls,
@@ -324,17 +324,17 @@ impl<'de> Deserialize<'de> for BaseTransactionRequest {
             payer: wire.payer,
             payer_auth: wire.payer_auth,
         };
-        Ok(Self { inner, eip8130 })
+        Ok(Self { inner, base_tx })
     }
 }
 
 impl BaseTransactionRequest {
-    /// The EIP-8130 simulation fields layered onto this request, if any are
+    /// The Base transaction simulation fields layered onto this request, if any are
     /// present or the request declares `type: 0x79`. Returns `None` for a plain
-    /// (non-8130) transaction request.
-    pub fn as_eip8130(&self) -> Option<&Eip8130RequestFields> {
-        let declared = self.inner.transaction_type == Some(EIP8130_TX_TYPE_ID);
-        (declared || self.eip8130.is_some()).then_some(&self.eip8130)
+    /// (non-Base) transaction request.
+    pub fn as_base_tx(&self) -> Option<&TxBaseRequestFields> {
+        let declared = self.inner.transaction_type == Some(BASE_TX_TYPE_ID);
+        (declared || self.base_tx.is_some()).then_some(&self.base_tx)
     }
 }
 
@@ -352,7 +352,7 @@ impl AsMut<TransactionRequest> for BaseTransactionRequest {
 
 impl From<TransactionRequest> for BaseTransactionRequest {
     fn from(inner: TransactionRequest) -> Self {
-        Self { inner, eip8130: Eip8130RequestFields::default() }
+        Self { inner, base_tx: TxBaseRequestFields::default() }
     }
 }
 
@@ -437,17 +437,17 @@ impl BaseTransactionRequest {
     /// for more info.
     ///
     /// Note that EIP-4844 transactions are not supported on Base chains and will be converted into
-    /// EIP-1559 transactions. An EIP-8130 request is returned as an error: a typed transaction
-    /// cannot carry its fields.
+    /// EIP-1559 transactions. A Base transaction request is returned as an error: a typed
+    /// transaction cannot carry its fields.
     #[allow(clippy::result_large_err)]
     pub fn build_typed_tx(self) -> Result<BaseTypedTransaction, Self> {
-        if self.as_eip8130().is_some() {
+        if self.as_base_tx().is_some() {
             return Err(self);
         }
-        let Self { inner, eip8130 } = self;
+        let Self { inner, base_tx } = self;
         let tx = match inner.build_typed_tx() {
             Ok(tx) => tx,
-            Err(inner) => return Err(Self { inner, eip8130 }),
+            Err(inner) => return Err(Self { inner, base_tx }),
         };
         match tx {
             TypedTransaction::Legacy(tx) => Ok(BaseTypedTransaction::Legacy(tx)),
@@ -533,8 +533,8 @@ impl From<BaseTypedTransaction> for BaseTransactionRequest {
             BaseTypedTransaction::Eip2930(tx) => Into::<TransactionRequest>::into(tx).into(),
             BaseTypedTransaction::Eip1559(tx) => Into::<TransactionRequest>::into(tx).into(),
             BaseTypedTransaction::Eip7702(tx) => Into::<TransactionRequest>::into(tx).into(),
-            BaseTypedTransaction::Eip8130(_) => unimplemented!(
-                "BaseTypedTransaction::Eip8130 cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
+            BaseTypedTransaction::Base(_) => unimplemented!(
+                "BaseTypedTransaction::Base cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
             ),
             BaseTypedTransaction::Deposit(tx) => tx.into(),
         }
@@ -548,8 +548,8 @@ impl From<BaseTxEnvelope> for BaseTransactionRequest {
             BaseTxEnvelope::Eip2930(tx) => tx.into(),
             BaseTxEnvelope::Eip1559(tx) => tx.into(),
             BaseTxEnvelope::Eip7702(tx) => tx.into(),
-            BaseTxEnvelope::Eip8130(_) => unimplemented!(
-                "BaseTxEnvelope::Eip8130 cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
+            BaseTxEnvelope::Base(_) => unimplemented!(
+                "BaseTxEnvelope::Base cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
             ),
             BaseTxEnvelope::Deposit(tx) => tx.into(),
         }
@@ -691,7 +691,7 @@ mod tests {
 
     /// A request with every [`TransactionRequest`] field set (an exhaustive
     /// literal, so a field added upstream fails to compile here) and every
-    /// EIP-8130 field set.
+    /// Base transaction field set.
     fn full_request(sidecar: BlobTransactionSidecarVariant) -> BaseTransactionRequest {
         let inner = TransactionRequest {
             from: Some(SENDER),
@@ -709,12 +709,12 @@ mod tests {
                 address: Address::repeat_byte(0x03),
                 storage_keys: vec![B256::repeat_byte(0x04)],
             }])),
-            transaction_type: Some(EIP8130_TX_TYPE_ID),
+            transaction_type: Some(BASE_TX_TYPE_ID),
             blob_versioned_hashes: Some(vec![B256::repeat_byte(0x05)]),
             sidecar: Some(sidecar),
             authorization_list: Some(Vec::new()),
         };
-        let eip8130 = Eip8130RequestFields {
+        let base_tx = TxBaseRequestFields {
             nonce_key: Some(U256::from(7)),
             account_changes: Some(vec![AccountChange::Delegation(Delegation {
                 target: Address::repeat_byte(0x06),
@@ -732,7 +732,7 @@ mod tests {
             payer: Some(Address::repeat_byte(0x08)),
             payer_auth: Some(Bytes::from_static(&[0x02])),
         };
-        BaseTransactionRequest { inner, eip8130 }
+        BaseTransactionRequest { inner, base_tx }
     }
 
     #[test]
@@ -756,23 +756,22 @@ mod tests {
 
     /// A request built in code skips decoding, so the structural check run by
     /// simulation is what bounds it.
-    #[cfg(feature = "eip8130")]
+    #[cfg(feature = "base-tx")]
     #[test]
     fn oversized_calls_built_in_code_fail_the_structural_check() {
         let mut request = BaseTransactionRequest::default();
-        request.eip8130.sender = Some(SENDER);
-        request.eip8130.calls =
-            Some(vec![Vec::new(); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1]);
+        request.base_tx.sender = Some(SENDER);
+        request.base_tx.calls = Some(vec![Vec::new(); TxBaseConstants::MAX_CALL_PHASES_PER_TX + 1]);
         assert_eq!(
             request
-                .to_eip8130_simulation_tx(
+                .to_base_tx_simulation_tx(
                     8453,
                     30_000_000,
-                    base_common_evm2::Eip8130SimulationMode::Estimate,
+                    base_common_evm2::TxBaseSimulationMode::Estimate,
                 )
                 .err(),
-            Some(crate::Eip8130SimulationRequestError::Structural(
-                base_common_consensus::Eip8130StructuralError::TooManyCallPhases
+            Some(crate::TxBaseSimulationRequestError::Structural(
+                base_common_consensus::TxBaseStructuralError::TooManyCallPhases
             ))
         );
     }
@@ -791,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_lists_are_bounded_while_decoding() {
+    fn base_tx_lists_are_bounded_while_decoding() {
         let decode = |calls: usize, account_changes: usize| {
             let delegation = json!({ "type": "0x1", "target": Address::repeat_byte(0x06) });
             serde_json::from_str::<BaseTransactionRequest>(
@@ -803,11 +802,11 @@ mod tests {
                 .to_string(),
             )
         };
-        let max_calls = Eip8130Constants::MAX_CALL_PHASES_PER_TX;
-        let max_changes = Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX;
+        let max_calls = TxBaseConstants::MAX_CALL_PHASES_PER_TX;
+        let max_changes = TxBaseConstants::MAX_ACCOUNT_CHANGES_PER_TX;
 
         let request = decode(max_calls, max_changes).unwrap();
-        let fields = request.as_eip8130().unwrap();
+        let fields = request.as_base_tx().unwrap();
         assert_eq!(fields.calls.as_ref().unwrap().len(), max_calls);
         assert_eq!(fields.account_changes.as_ref().unwrap().len(), max_changes);
 
@@ -818,13 +817,13 @@ mod tests {
     }
 
     #[test]
-    fn plain_request_has_no_eip8130_fields() {
+    fn plain_request_has_no_base_tx_fields() {
         let json = r#"{"from":"0x0000000000000000000000000000000000000001","to":"0x0000000000000000000000000000000000000002","value":"0x1"}"#;
         let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
-        assert!(req.as_eip8130().is_none(), "a plain request is not an 8130 request");
+        assert!(req.as_base_tx().is_none(), "a plain request is not a Base transaction request");
         assert_eq!(req.as_ref().value, Some(U256::from(1u64)));
 
-        // A plain request must not serialize any 8130 keys.
+        // A plain request must not serialize any Base transaction keys.
         let out = serde_json::to_string(&req).unwrap();
         assert!(!out.contains("nonceKey"));
         assert!(!out.contains("calls"));
@@ -832,7 +831,7 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_fields_parse_alongside_the_base_request() {
+    fn base_tx_fields_parse_alongside_the_base_request() {
         let json = r#"{
             "from":"0x0000000000000000000000000000000000000001",
             "maxFeePerGas":"0x5",
@@ -841,7 +840,7 @@ mod tests {
             "calls":[[{"to":"0x0000000000000000000000000000000000000003","data":"0x"}]]
         }"#;
         let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
-        let aa = req.as_eip8130().expect("request carries 8130 fields");
+        let aa = req.as_base_tx().expect("request carries Base transaction fields");
         assert_eq!(aa.nonce_key, Some(U256::from(0x2au64)));
         assert_eq!(aa.account_changes.as_deref(), Some(&[][..]));
         let calls = aa.calls.as_ref().expect("calls present");
@@ -852,16 +851,19 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_type_alone_marks_request_as_eip8130() {
+    fn base_tx_type_alone_marks_request_as_base_tx() {
         let json = r#"{"from":"0x0000000000000000000000000000000000000001","type":"0x79"}"#;
         let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
-        assert!(req.as_eip8130().is_some(), "type 0x79 must route the request onto the AA path");
+        assert!(req.as_base_tx().is_some(), "type 0x79 must route the request onto the AA path");
     }
 
     #[test]
-    fn eip8130_request_does_not_build_a_typed_tx() {
+    fn base_tx_request_does_not_build_a_typed_tx() {
         let json = r#"{"from":"0x0000000000000000000000000000000000000001","nonce":"0x0","gas":"0x5208","maxFeePerGas":"0x1","maxPriorityFeePerGas":"0x1","type":"0x79"}"#;
         let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
-        assert!(req.build_typed_tx().is_err(), "an 8130 request must not become a plain tx");
+        assert!(
+            req.build_typed_tx().is_err(),
+            "a Base transaction request must not become a plain tx"
+        );
     }
 }

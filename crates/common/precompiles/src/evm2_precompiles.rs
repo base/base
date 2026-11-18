@@ -34,9 +34,9 @@ pub enum BaseNativePrecompile {
     PolicyRegistry,
     /// The activation registry precompile.
     ActivationRegistry,
-    /// The EIP-8130 transaction context precompile.
+    /// The Base transaction context precompile.
     TxContext,
-    /// The EIP-8130 2D nonce manager precompile.
+    /// The Base transaction 2D nonce manager precompile.
     NonceManager,
     /// A B-20 token of the given variant, resolved from its address.
     B20Token(B20Variant),

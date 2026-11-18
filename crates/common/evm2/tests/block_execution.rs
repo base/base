@@ -27,7 +27,7 @@ const fn cumulative_gas(receipt: &BaseReceipt) -> u64 {
         | BaseReceipt::Eip2930(r)
         | BaseReceipt::Eip1559(r)
         | BaseReceipt::Eip7702(r) => r.cumulative_gas_used,
-        BaseReceipt::Eip8130(r) => r.inner.cumulative_gas_used,
+        BaseReceipt::Base(r) => r.inner.cumulative_gas_used,
     }
 }
 
@@ -300,51 +300,51 @@ fn azul_exempts_deposits_from_the_per_tx_gas_cap() {
 }
 
 #[test]
-fn eip8130_block_gas_reservation_includes_payer_auth() {
-    use base_common_consensus::{Eip8130Constants, Eip8130Signed, TxEip8130};
+fn base_tx_block_gas_reservation_includes_payer_auth() {
+    use base_common_consensus::{TxBase, TxBaseConstants, TxBaseSigned};
 
     // A payer auth blob (`K1 authenticator || data`) so the payer-auth reservation is non-zero.
-    let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+    let mut payer_auth = TxBaseConstants::K1_AUTHENTICATOR.to_vec();
     payer_auth.extend_from_slice(&[0xab; 65]);
-    let signed = Eip8130Signed::new(
-        TxEip8130 {
+    let signed = TxBaseSigned::new(
+        TxBase {
             gas_limit: 100_000,
             payer: Some(TARGET),
             sender: Some(SENDER),
             ..Default::default()
         },
-        Bytes::from(Eip8130Constants::K1_AUTHENTICATOR.to_vec()),
+        Bytes::from(TxBaseConstants::K1_AUTHENTICATOR.to_vec()),
         Bytes::from(payer_auth),
     );
     // The block admits the 100k gas limit alone, but not once the payer-auth reservation is added.
     let mut executor = executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Cobalt), 105_000);
     let err = executor
-        .execute_transaction(&Recovered::new_unchecked(eip8130_envelope(signed), SENDER))
-        .expect_err("payer-auth reservation pushes the 8130 tx over the block gas limit");
+        .execute_transaction(&Recovered::new_unchecked(base_tx_envelope(signed), SENDER))
+        .expect_err("payer-auth reservation pushes the Base tx over the block gas limit");
     assert!(format!("{err}").contains("more than the block's available gas"), "got: {err}");
 }
 
 /// The execution envelope of `signed`, carrying its EIP-2718 encoding.
-fn eip8130_envelope(signed: base_common_consensus::Eip8130Signed) -> BaseTxEnvelope {
+fn base_tx_envelope(signed: base_common_consensus::TxBaseSigned) -> BaseTxEnvelope {
     use alloy_eips::Encodable2718;
-    let encoded = base_common_consensus::BaseTxEnvelope::Eip8130(signed.clone()).encoded_2718();
-    BaseTxEnvelope::eip8130(signed, encoded.into())
+    let encoded = base_common_consensus::BaseTxEnvelope::Base(signed.clone()).encoded_2718();
+    BaseTxEnvelope::base_tx(signed, encoded.into())
 }
 
 #[test]
-fn rejects_eip8130_transaction_before_everest() {
-    use base_common_consensus::{Eip8130Constants, Eip8130Signed, TxEip8130};
+fn rejects_base_tx_transaction_before_everest() {
+    use base_common_consensus::{TxBase, TxBaseConstants, TxBaseSigned};
 
-    let signed = Eip8130Signed::new(
-        TxEip8130 { gas_limit: 100_000, sender: Some(SENDER), ..Default::default() },
-        Bytes::from(Eip8130Constants::K1_AUTHENTICATOR.to_vec()),
+    let signed = TxBaseSigned::new(
+        TxBase { gas_limit: 100_000, sender: Some(SENDER), ..Default::default() },
+        Bytes::from(TxBaseConstants::K1_AUTHENTICATOR.to_vec()),
         Bytes::new(),
     );
     let mut executor =
         executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Cobalt), 30_000_000);
     let err = executor
-        .execute_transaction(&Recovered::new_unchecked(eip8130_envelope(signed), SENDER))
-        .expect_err("EIP-8130 transactions are not active before Everest");
+        .execute_transaction(&Recovered::new_unchecked(base_tx_envelope(signed), SENDER))
+        .expect_err("Base transactions are not active before Everest");
     assert!(format!("{err}").contains("not active before Everest"), "got: {err}");
     assert!(executor.receipts().is_empty(), "a rejected transaction has no receipt");
 }

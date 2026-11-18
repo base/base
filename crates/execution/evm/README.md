@@ -22,7 +22,7 @@ Orchestrates Base block execution for Reth on the EVM2 engine. The execution rul
   keeps the block's state as Reth bundle state, streaming every commit, including the
   pre-execution and transition changes, to Reth's state hook. Execution errors map onto Reth's
   block-validation errors; invalid transactions are classified through `BaseInvalidTxError` so
-  payload building can skip them. EIP-8130 transactions execute through the shared engine (see
+  payload building can skip them. Base transactions execute through the shared engine (see
   `base-common-evm2`).
 - `BaseBlockAssembler` assembles the header: the receipts root (without Regolith deposit nonces
   before Canyon), the Isthmus withdrawals root (the `L2ToL1MessagePasser` storage root), the

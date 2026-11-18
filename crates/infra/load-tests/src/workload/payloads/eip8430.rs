@@ -2,13 +2,13 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::Address;
 use alloy_rpc_types::TransactionRequest;
 use async_trait::async_trait;
-use base_common_consensus::Eip8130Constants;
+use base_common_consensus::TxBaseConstants;
 
 use super::{Payload, TransferPayload};
 use crate::workload::SeededRng;
 
 /// EOA self-pay native transfer using the published EIP-8430 envelope.
-/// Existing consensus types retain their implementation name, EIP-8130.
+/// The consensus types name it `TxBase`.
 #[derive(Debug, Default)]
 pub struct Eip8430TransferPayload;
 
@@ -28,7 +28,7 @@ impl Payload for Eip8430TransferPayload {
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest {
         let mut request = TransferPayload::default().generate(rng, from, to);
         // This is a signing discriminator, not an Ethereum typed request.
-        request.transaction_type = Some(Eip8130Constants::EIP8130_TX_TYPE);
+        request.transaction_type = Some(TxBaseConstants::BASE_TX_TYPE);
         // Ceiling, not a gas estimate: calibration uses an actual native receipt.
         request = request.with_gas_limit(EIP8430_TRANSFER_GAS_LIMIT);
         request

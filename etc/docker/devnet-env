@@ -229,7 +229,7 @@ L2_BASE_BERYL_BLOCK=21
 L2_BASE_COBALT_BLOCK=22
 # Base Denim activates at block 25 by default. Override with another non-negative block number.
 L2_BASE_DENIM_BLOCK=25
-# Optional: set to a non-negative block number to schedule Base Everest (EIP-8130) in devnet.
+# Optional: set to a non-negative block number to schedule Base Everest (Base transactions) in devnet.
 # `just devnet up everest` and `just devnet up zenith` default this to 100.
 # Leave unset to avoid setting base.everest during genesis generation.
 # L2_BASE_EVEREST_BLOCK=100

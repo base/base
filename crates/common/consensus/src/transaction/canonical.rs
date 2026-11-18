@@ -30,7 +30,7 @@ mod tests {
     use super::*;
     use crate::{
         BaseTxEnvelope,
-        test_utils::{sample_deposit, sample_signed_8130},
+        test_utils::{sample_deposit, sample_signed_base_tx},
     };
 
     fn canonical_transactions() -> Vec<BaseTxEnvelope> {
@@ -89,7 +89,7 @@ mod tests {
             .into_signed(signature)
             .into(),
             sample_deposit().into(),
-            BaseTxEnvelope::Eip8130(sample_signed_8130(false)),
+            BaseTxEnvelope::Base(sample_signed_base_tx(false)),
         ]
     }
 

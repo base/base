@@ -2,7 +2,7 @@
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::{Encodable2718, eip2718::WithEncoded, eip2930::AccessList};
-use base_common_consensus::{BaseTransactionSigned, Eip8130Signed};
+use base_common_consensus::{BaseTransactionSigned, TxBaseSigned};
 use evm2::TxResultWithState;
 use reth_evm::{BlockTransactionResult, FromRecoveredTx, FromTxWithEncoded, TransactionEnvMut};
 
@@ -30,11 +30,11 @@ impl TransactionEnvMut for BaseTxEnvelope {
         match self {
             Self::Deposit(tx) => tx.gas_limit = gas_limit,
             Self::Standard { tx, .. } => tx.set_gas_limit(gas_limit),
-            Self::Eip8130(eip8130) => {
-                let signed = &mut eip8130.signed;
+            Self::Base(base_tx) => {
+                let signed = &mut base_tx.signed;
                 let mut tx = signed.tx().clone();
                 tx.gas_limit = gas_limit;
-                *signed = Eip8130Signed::new(
+                *signed = TxBaseSigned::new(
                     tx,
                     signed.sender_auth().clone(),
                     signed.payer_auth().clone(),
@@ -43,7 +43,7 @@ impl TransactionEnvMut for BaseTxEnvelope {
         }
     }
 
-    /// Deposits and EIP-8130 transactions carry no access list, so only standard transactions
+    /// Deposits and Base transactions carry no access list, so only standard transactions
     /// take one.
     fn set_access_list(&mut self, access_list: AccessList) {
         if let Self::Standard { tx, .. } = self {

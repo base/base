@@ -99,13 +99,13 @@ serde = [
 	"reth-primitives-traits?/serde",
 ]
 network = [ "dep:alloy-network" ]
-eip8130 = [ "dep:base-common-evm2", "dep:thiserror", "std" ]
+base-tx = [ "dep:base-common-evm2", "dep:thiserror", "std" ]
 reth = [
+	"base-tx",
 	"dep:alloy-signer",
 	"dep:reth-evm",
 	"dep:reth-primitives-traits",
 	"dep:reth-rpc-convert",
-	"eip8130",
 	"network",
 	"std",
 ]

@@ -3,7 +3,7 @@
 //! Runs EIP-1559 transactions that call the Base native precompiles through the evm2 engine
 //! (with [`BaseEvmTypes::native_precompiles`]) and the revm reference (with its node precompile
 //! set), asserting identical status, output, and gas across the fork ladder. The `TxContext`
-//! getters read `tx.origin` outside an EIP-8130 transaction, so they also pin the evm2 origin
+//! getters read `tx.origin` outside a Base transaction, so they also pin the evm2 origin
 //! wiring; the fork sweep pins the Beryl/Cobalt activation gates.
 
 use alloy_consensus::{TxEip1559, transaction::Recovered};

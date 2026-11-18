@@ -99,7 +99,7 @@ struct Outcome {
 type Body = fn(StorageCtx<'_>) -> PrecompileResult;
 
 /// Which storage provider a body runs on: the metered precompile provider or the gas-free
-/// journal provider of the enshrined EIP-8130 pipeline.
+/// journal provider of the enshrined Base transaction pipeline.
 #[derive(Clone, Copy)]
 enum Provider {
     Metered,

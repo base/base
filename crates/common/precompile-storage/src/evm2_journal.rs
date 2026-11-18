@@ -2,8 +2,8 @@
 //!
 //! [`Evm2JournalStorageProvider`] is the evm2 counterpart of the revm
 //! [`JournalStorageProvider`](crate::JournalStorageProvider): it reads and writes the live evm2
-//! [`Evm`] state without metering any gas. It exists for the *enshrined* EIP-8130 execution path,
-//! which runs around (not inside) an EVM call and meters its own gas via the EIP-8130 intrinsic
+//! [`Evm`] state without metering any gas. It exists for the *enshrined* Base transaction execution path,
+//! which runs around (not inside) an EVM call and meters its own gas via the Base transaction intrinsic
 //! schedule; the metered [`Evm2PrecompileStorageProvider`](crate::Evm2PrecompileStorageProvider)
 //! would double-count storage gas there.
 //!

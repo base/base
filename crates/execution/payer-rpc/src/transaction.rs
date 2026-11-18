@@ -1,16 +1,14 @@
 //! Checks on the sender-signed transaction a `payer_sendTransaction` request carries.
 
 use alloy_primitives::{Address, U256};
-use base_common_consensus::{
-    BaseTxEnvelope, Eip8130Constants, Eip8130Signed, decode_2718_canonical,
-};
+use base_common_consensus::{BaseTxEnvelope, TxBaseConstants, TxBaseSigned, decode_2718_canonical};
 use thiserror::Error;
 
-/// An EIP-8130 transaction that names a payer, leaves `payer_auth` for it to fill, and carries
+/// A Base transaction that names a payer, leaves `payer_auth` for it to fill, and carries
 /// a sender signature that recovers.
 #[derive(Debug, Clone)]
 pub struct PayerTransaction {
-    signed: Eip8130Signed,
+    signed: TxBaseSigned,
     sender: Address,
 }
 
@@ -18,12 +16,12 @@ impl PayerTransaction {
     /// Decodes `raw` and checks it against `chain_id`.
     ///
     /// A bare `sender_auth` must recover the sender. A declared sender must sign with
-    /// [`Eip8130Constants::K1_AUTHENTICATOR`] using its own key.
+    /// [`TxBaseConstants::K1_AUTHENTICATOR`] using its own key.
     pub fn decode(raw: &[u8], chain_id: u64) -> Result<Self, PayerTransactionError> {
         let envelope = decode_2718_canonical::<BaseTxEnvelope>(raw)
             .map_err(|_| PayerTransactionError::Undecodable)?;
-        let BaseTxEnvelope::Eip8130(signed) = envelope else {
-            return Err(PayerTransactionError::NotEip8130);
+        let BaseTxEnvelope::Base(signed) = envelope else {
+            return Err(PayerTransactionError::NotTxBase);
         };
         if signed.tx().chain_id != chain_id {
             return Err(PayerTransactionError::ChainIdMismatch);
@@ -40,11 +38,11 @@ impl PayerTransaction {
             return Ok(Self { signed, sender });
         };
         let Some(signature) =
-            signed.sender_auth().strip_prefix(Eip8130Constants::K1_AUTHENTICATOR.as_slice())
+            signed.sender_auth().strip_prefix(TxBaseConstants::K1_AUTHENTICATOR.as_slice())
         else {
             return Err(PayerTransactionError::UnsupportedSenderAuthenticator);
         };
-        let signer = Eip8130Signed::recover_raw_k1(signed.tx().sender_signature_hash(), signature)
+        let signer = TxBaseSigned::recover_raw_k1(signed.tx().sender_signature_hash(), signature)
             .map_err(|_| PayerTransactionError::SenderSignature)?;
         if signer != sender {
             return Err(PayerTransactionError::SenderMismatch);
@@ -56,7 +54,7 @@ impl PayerTransaction {
     /// transaction, which relies on its expiry instead.
     pub fn nonce_channel(&self) -> Option<(Address, U256)> {
         let nonce_key = self.signed.tx().nonce_key;
-        (nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some((self.sender, nonce_key))
+        (nonce_key != TxBaseConstants::NONCE_KEY_MAX).then_some((self.sender, nonce_key))
     }
 
     /// Rejects this transaction when `next`, the next unused nonce in its channel, is past its
@@ -76,9 +74,9 @@ pub enum PayerTransactionError {
     /// The bytes are not a canonical EIP-2718 transaction.
     #[error("transaction is not a valid EIP-2718 encoding")]
     Undecodable,
-    /// The transaction is not EIP-8130.
-    #[error("payer_sendTransaction requires an EIP-8130 transaction")]
-    NotEip8130,
+    /// The transaction is not a Base transaction.
+    #[error("payer_sendTransaction requires a Base transaction")]
+    NotTxBase,
     /// The transaction's chain id is not this node's.
     #[error("transaction chain id does not match this node")]
     ChainIdMismatch,
@@ -109,7 +107,7 @@ mod tests {
     use alloy_primitives::{Bytes, Signature};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_consensus::{Call, TxEip8130};
+    use base_common_consensus::{Call, TxBase};
 
     use super::*;
 
@@ -119,8 +117,8 @@ mod tests {
         Call { to: Address::repeat_byte(to), value: U256::ZERO, data: Bytes::new() }
     }
 
-    fn transaction(sender: Option<Address>, payer: Option<Address>) -> TxEip8130 {
-        TxEip8130 {
+    fn transaction(sender: Option<Address>, payer: Option<Address>) -> TxBase {
+        TxBase {
             chain_id: CHAIN_ID,
             sender,
             max_fee_per_gas: 1,
@@ -131,17 +129,16 @@ mod tests {
         }
     }
 
-    fn encode(tx: TxEip8130, sender_auth: Vec<u8>, payer_auth: Bytes) -> Vec<u8> {
-        BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth.into(), payer_auth))
-            .encoded_2718()
+    fn encode(tx: TxBase, sender_auth: Vec<u8>, payer_auth: Bytes) -> Vec<u8> {
+        BaseTxEnvelope::Base(TxBaseSigned::new(tx, sender_auth.into(), payer_auth)).encoded_2718()
     }
 
-    fn signature(signer: &PrivateKeySigner, tx: &TxEip8130) -> [u8; 65] {
+    fn signature(signer: &PrivateKeySigner, tx: &TxBase) -> [u8; 65] {
         signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes()
     }
 
-    fn k1_auth(signer: &PrivateKeySigner, tx: &TxEip8130) -> Vec<u8> {
-        [Eip8130Constants::K1_AUTHENTICATOR.as_slice(), &signature(signer, tx)].concat()
+    fn k1_auth(signer: &PrivateKeySigner, tx: &TxBase) -> Vec<u8> {
+        [TxBaseConstants::K1_AUTHENTICATOR.as_slice(), &signature(signer, tx)].concat()
     }
 
     fn payer() -> Option<Address> {
@@ -162,7 +159,7 @@ mod tests {
     #[test]
     fn accepts_an_open_payer() {
         let signer = PrivateKeySigner::random();
-        let tx = transaction(None, Some(Eip8130Constants::OPEN_PAYER));
+        let tx = transaction(None, Some(TxBaseConstants::OPEN_PAYER));
         let raw = encode(tx.clone(), signature(&signer, &tx).to_vec(), Bytes::new());
 
         assert!(PayerTransaction::decode(&raw, CHAIN_ID).is_ok());
@@ -171,7 +168,7 @@ mod tests {
     #[test]
     fn rejects_a_transaction_the_payer_cannot_co_sign() {
         let signer = PrivateKeySigner::random();
-        let signed = |tx: TxEip8130, payer_auth: Bytes| {
+        let signed = |tx: TxBase, payer_auth: Bytes| {
             encode(tx.clone(), signature(&signer, &tx).to_vec(), payer_auth)
         };
 
@@ -214,7 +211,7 @@ mod tests {
     fn leaves_a_nonce_free_transaction_to_its_expiry() {
         let signer = PrivateKeySigner::random();
         let mut tx = transaction(None, payer());
-        tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+        tx.nonce_key = TxBaseConstants::NONCE_KEY_MAX;
         tx.valid_before = 1;
         let raw = encode(tx.clone(), signature(&signer, &tx).to_vec(), Bytes::new());
 
@@ -222,13 +219,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_bytes_that_are_not_an_eip8130_transaction() {
+    fn rejects_bytes_that_are_not_a_base_tx() {
         let signed = Signed::new_unhashed(TxEip1559::default(), Signature::test_signature());
         let eip1559 = BaseTxEnvelope::Eip1559(signed).encoded_2718();
 
         assert_eq!(
             PayerTransaction::decode(&eip1559, CHAIN_ID).unwrap_err(),
-            PayerTransactionError::NotEip8130
+            PayerTransactionError::NotTxBase
         );
         assert_eq!(
             PayerTransaction::decode(&[0x79, 0xff], CHAIN_ID).unwrap_err(),

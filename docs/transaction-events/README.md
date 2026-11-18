@@ -257,7 +257,7 @@ its position in the pool iterator, and how many times it was resent are not
 journaled; the reader and forwarder metrics cover them in aggregate.
 
 One builder verdict is not journaled: a capacity discard. When a store of the
-builder's pool (validity, standard or EIP-8130 sidecar) is full and evicts the
+builder's pool (validity, standard or Base transaction sidecar) is full and evicts the
 newcomer on arrival (`PoolErrorKind::DiscardedOnInsert`), the insert RPC still
 returns the error, but the builder emits no `TXPOOL_VALIDATED_INSERT_REJECTED`,
 whether or not the transaction carries validity predicates. A full pool discards
@@ -351,10 +351,10 @@ window or an expired position predicate.
 transaction was billed and its receipt reports; `data.metered_gas_used` is the
 gas it actually consumed, defined as the gas it would have been billed without
 gas-limit billing (gas spent less the EIP-3529-capped refund, raised to the
-EIP-7623 floor; for EIP-8130, sender gas raised to the sender's floor, plus
+EIP-7623 floor; for Base transactions, sender gas raised to the sender's floor, plus
 payer authentication). Before the gas-limit billing feature (Everest)
 `metered_gas_used == gas_used`; after it, `gas_used` is `tx_gas_limit` for
-standard transactions and `tx_gas_limit + payer_auth_gas_reserved` for EIP-8130, where
+standard transactions and `tx_gas_limit + payer_auth_gas_reserved` for Base transactions, where
 `data.payer_auth_gas_reserved` (`null` for every other transaction type) is the
 payer-authentication gas reserved on top of the sender's limit. The column is
 continuous across the activation, so `tx_gas_limit / metered_gas_used` measures
@@ -542,7 +542,7 @@ Terminal builder-side expiry:
 
 Accepted under gas-limit billing. `gas_used` is the billed gas (here the
 declared `tx_gas_limit`) and `metered_gas_used` the gas the transfer consumed;
-`payer_auth_gas_reserved` is non-null only for EIP-8130 transactions:
+`payer_auth_gas_reserved` is non-null only for Base transactions:
 
 ```json
 {

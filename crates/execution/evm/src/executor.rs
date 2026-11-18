@@ -112,7 +112,7 @@ impl<'a, ChainSpec: Upgrades> BlockExecutor for BaseRethBlockExecutor<'a, ChainS
     }
 
     /// Checks a gas limit against the block's remaining gas. Block execution additionally reserves
-    /// an EIP-8130 transaction's payer-authentication gas and exempts pre-Regolith deposits.
+    /// a Base transaction's payer-authentication gas and exempts pre-Regolith deposits.
     fn validate_transaction_gas_limit(
         &mut self,
         gas_limit: u64,

@@ -14,8 +14,8 @@ use revm::{
 };
 
 use crate::{
-    BaseTransactionBuilder, BaseTxTr, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
-    EIP8130_TRANSACTION_TYPE, Eip8130TransactionParts,
+    BASE_TRANSACTION_TYPE, BaseTransactionBuilder, BaseTxTr, DEPOSIT_TRANSACTION_TYPE,
+    DepositTransactionParts, TxBaseTransactionParts,
 };
 
 /// Base transaction.
@@ -39,12 +39,12 @@ pub struct BaseTransaction<T: Transaction> {
     pub enveloped_tx_fastlz_size: Option<u32>,
     /// Deposit transaction parts.
     pub deposit: DepositTransactionParts,
-    /// EIP-8130 account-abstraction transaction parts.
+    /// Base transaction parts.
     ///
-    /// `Some` only for EIP-8130 transactions, carrying the full signed envelope
+    /// `Some` only for Base transactions, carrying the full signed envelope
     /// the handler needs to run the authorize → apply → execute pipeline (the
     /// `base` `TxEnv` is only a placeholder projection for such transactions).
-    pub eip8130: Option<Eip8130TransactionParts>,
+    pub base_tx: Option<TxBaseTransactionParts>,
 }
 
 /// Ignores `enveloped_tx_fastlz_size`, a cache derived from `enveloped_tx`.
@@ -53,7 +53,7 @@ impl<T: Transaction + PartialEq> PartialEq for BaseTransaction<T> {
         self.base == other.base
             && self.enveloped_tx == other.enveloped_tx
             && self.deposit == other.deposit
-            && self.eip8130 == other.eip8130
+            && self.base_tx == other.base_tx
     }
 }
 
@@ -73,7 +73,7 @@ impl<T: Transaction> BaseTransaction<T> {
             enveloped_tx: None,
             enveloped_tx_fastlz_size: None,
             deposit: DepositTransactionParts::default(),
-            eip8130: None,
+            base_tx: None,
         }
     }
 }
@@ -92,7 +92,7 @@ impl Default for BaseTransaction<TxEnv> {
             enveloped_tx: Some(vec![0x00].into()),
             enveloped_tx_fastlz_size: None,
             deposit: DepositTransactionParts::default(),
-            eip8130: None,
+            base_tx: None,
         }
     }
 }
@@ -126,8 +126,8 @@ impl<T: Transaction> Transaction for BaseTransaction<T> {
         // If this is a deposit transaction (has source_hash set), return deposit type
         if self.deposit.source_hash != B256::ZERO {
             DEPOSIT_TRANSACTION_TYPE
-        } else if self.eip8130.is_some() {
-            EIP8130_TRANSACTION_TYPE
+        } else if self.base_tx.is_some() {
+            BASE_TRANSACTION_TYPE
         } else {
             self.base.tx_type()
         }
@@ -142,40 +142,40 @@ impl<T: Transaction> Transaction for BaseTransaction<T> {
     }
 
     fn value(&self) -> U256 {
-        // EIP-8130 transactions have no top-level value; the base env is a
+        // Base transactions have no top-level value; the base env is a
         // placeholder and any per-call value lives in the signed envelope.
         debug_assert!(
-            self.eip8130.is_none(),
-            "value() called on an EIP-8130 transaction; use the signed envelope"
+            self.base_tx.is_none(),
+            "value() called on a Base transaction; use the signed envelope"
         );
         self.base.value()
     }
 
     fn input(&self) -> &Bytes {
-        // EIP-8130 transactions have no top-level input; see `value`.
+        // Base transactions have no top-level input; see `value`.
         debug_assert!(
-            self.eip8130.is_none(),
-            "input() called on an EIP-8130 transaction; use the signed envelope"
+            self.base_tx.is_none(),
+            "input() called on a Base transaction; use the signed envelope"
         );
         self.base.input()
     }
 
     fn nonce(&self) -> u64 {
-        // EIP-8130 transactions use a 2D nonce; the base env carries only
+        // Base transactions use a 2D nonce; the base env carries only
         // `nonce_sequence` and drops `nonce_key`, so this is a misleading
         // placeholder (see `value`). Use the signed envelope.
         debug_assert!(
-            self.eip8130.is_none(),
-            "nonce() called on an EIP-8130 transaction; use the signed envelope"
+            self.base_tx.is_none(),
+            "nonce() called on a Base transaction; use the signed envelope"
         );
         self.base.nonce()
     }
 
     fn kind(&self) -> TxKind {
-        // EIP-8130 transactions have no single call target; see `value`.
+        // Base transactions have no single call target; see `value`.
         debug_assert!(
-            self.eip8130.is_none(),
-            "kind() called on an EIP-8130 transaction; use the signed envelope"
+            self.base_tx.is_none(),
+            "kind() called on a Base transaction; use the signed envelope"
         );
         self.base.kind()
     }
@@ -213,9 +213,9 @@ impl<T: Transaction> Transaction for BaseTransaction<T> {
         if self.tx_type() == DEPOSIT_TRANSACTION_TYPE {
             return self.gas_price();
         }
-        // The EIP-8130 placeholder env keeps the legacy `tx_type`, which would
+        // The Base transaction placeholder env keeps the legacy `tx_type`, which would
         // report `gas_price` (the fee cap) unchanged; price it as EIP-1559.
-        if self.eip8130.is_some() {
+        if self.base_tx.is_some() {
             let tip = self.max_priority_fee_per_gas().unwrap_or_default();
             return min(self.gas_price(), base_fee.saturating_add(tip));
         }
@@ -255,8 +255,8 @@ impl<T: Transaction> BaseTxTr for BaseTransaction<T> {
         self.deposit.is_system_transaction
     }
 
-    fn eip8130_parts(&self) -> Option<&Eip8130TransactionParts> {
-        self.eip8130.as_ref()
+    fn base_tx_parts(&self) -> Option<&TxBaseTransactionParts> {
+        self.base_tx.as_ref()
     }
 }
 
@@ -284,44 +284,44 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
                 enveloped_tx: Some(encoded),
                 enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
-                eip8130: None,
+                base_tx: None,
             },
             BaseTxEnvelope::Eip1559(tx) => Self {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
                 enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
-                eip8130: None,
+                base_tx: None,
             },
             BaseTxEnvelope::Eip2930(tx) => Self {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
                 enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
-                eip8130: None,
+                base_tx: None,
             },
             BaseTxEnvelope::Eip7702(tx) => Self {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
                 enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
-                eip8130: None,
+                base_tx: None,
             },
-            BaseTxEnvelope::Eip8130(signed) => {
-                // An EIP-8130 transaction has no single call to project into a
+            BaseTxEnvelope::Base(signed) => {
+                // A Base transaction has no single call to project into a
                 // `TxEnv`. The `base` env is a placeholder carrying only the
                 // fields shared by every transaction (caller, gas, fee caps,
                 // chain id); execution is driven from the signed envelope in
-                // `eip8130` by [`Eip8130Executor`], not from this `TxEnv`.
+                // `base_tx` by [`TxBaseExecutor`], not from this `TxEnv`.
                 //
                 // Consequently the `Transaction` accessors backed by the base
-                // env that have no EIP-8130 analogue — `kind`, `value`, and
+                // env that have no Base transaction analogue — `kind`, `value`, and
                 // `input` — return `TxEnv` defaults (a zero-address call, zero
-                // value, empty input) for an 8130 transaction and must not be
+                // value, empty input) for a Base transaction and must not be
                 // relied on for execution. `gas_price` carries the fee cap, and
                 // `BaseTransaction::effective_gas_price` prices it as EIP-1559
                 // (what the `GASPRICE` opcode reports). The handler routes
-                // 8130 transactions to the executor before any of these are hit
+                // Base transactions to the executor before any of these are hit
                 // (see `BaseEvm::transact_raw`).
                 //
                 // `signed.clone()` is required because `from_encoded_tx` borrows
@@ -343,7 +343,7 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
                     enveloped_tx: Some(encoded),
                     enveloped_tx_fastlz_size: None,
                     deposit: Default::default(),
-                    eip8130: Some(Eip8130TransactionParts::new(signed.clone())),
+                    base_tx: Some(TxBaseTransactionParts::new(signed.clone())),
                 }
             }
             BaseTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
@@ -371,7 +371,7 @@ impl FromTxWithEncoded<TxDeposit> for BaseTransaction<TxEnv> {
             enveloped_tx: Some(encoded),
             enveloped_tx_fastlz_size: None,
             deposit,
-            eip8130: None,
+            base_tx: None,
         }
     }
 }
@@ -381,7 +381,7 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_evm::Evm;
     use alloy_primitives::{address, bytes, keccak256};
-    use base_common_consensus::{BaseTxEnvelope, Call, Eip8130Signed, TxEip8130};
+    use base_common_consensus::{BaseTxEnvelope, Call, TxBase, TxBaseSigned};
     use k256::ecdsa::SigningKey;
     use revm::{
         context::{BlockEnv, CfgEnv, Context},
@@ -417,12 +417,12 @@ mod tests {
         assert_eq!(base_tx.max_fee_per_gas(), 100);
     }
 
-    /// An EIP-8130 envelope projects to a placeholder `TxEnv` carrying the shared
-    /// fields, reports the EIP-8130 transaction type, and retains the full signed
-    /// envelope in `eip8130` for the handler.
+    /// A Base transaction envelope projects to a placeholder `TxEnv` carrying the shared
+    /// fields, reports the Base transaction type, and retains the full signed
+    /// envelope in `base_tx` for the handler.
     #[test]
-    fn from_encoded_eip8130_populates_parts() {
-        let inner = TxEip8130 {
+    fn from_encoded_base_tx_populates_parts() {
+        let inner = TxBase {
             chain_id: 8453,
             gas_limit: 250_000,
             max_fee_per_gas: 5_000_000_000,
@@ -430,31 +430,31 @@ mod tests {
             nonce_sequence: 7,
             ..Default::default()
         };
-        let signed = Eip8130Signed::new(inner, Bytes::from(vec![0u8; 65]), Bytes::new());
-        let envelope = BaseTxEnvelope::Eip8130(signed.clone());
+        let signed = TxBaseSigned::new(inner, Bytes::from(vec![0u8; 65]), Bytes::new());
+        let envelope = BaseTxEnvelope::Base(signed.clone());
         let caller = Address::with_last_byte(0xab);
         let encoded: Bytes = envelope.encoded_2718().into();
 
         let tx = BaseTransaction::from_encoded_tx(&envelope, caller, encoded);
 
-        assert_eq!(tx.tx_type(), EIP8130_TRANSACTION_TYPE);
-        assert!(tx.is_eip8130());
-        assert_eq!(tx.eip8130_parts().map(|p| &p.signed), Some(&signed));
+        assert_eq!(tx.tx_type(), BASE_TRANSACTION_TYPE);
+        assert!(tx.is_base_tx());
+        assert_eq!(tx.base_tx_parts().map(|p| &p.signed), Some(&signed));
         assert_eq!(tx.caller(), caller);
         assert_eq!(tx.gas_limit(), 250_000);
         assert_eq!(tx.chain_id(), Some(8453));
         assert_eq!(tx.max_fee_per_gas(), 5_000_000_000);
-        // `nonce()` is a guarded placeholder for 8130 (it drops `nonce_key`);
+        // `nonce()` is a guarded placeholder for Base transactions (it drops `nonce_key`);
         // assert the projection on the base env directly to avoid the guard.
         assert_eq!(tx.base.nonce(), 7);
     }
 
-    /// `GASPRICE` inside an EIP-8130 call reports the EIP-1559 effective gas
+    /// `GASPRICE` inside a Base transaction call reports the EIP-1559 effective gas
     /// price `min(max_fee, base_fee + max_priority_fee)` that the payer is
     /// charged, not the `max_fee_per_gas` cap.
     #[cfg(feature = "std")]
     #[test]
-    fn eip8130_gasprice_opcode_reports_effective_gas_price() {
+    fn base_tx_gasprice_opcode_reports_effective_gas_price() {
         const BASE_FEE: u64 = 1_000_000_000;
         const MAX_PRIORITY_FEE: u128 = 7;
         const MAX_FEE: u128 = 5_000_000_000;
@@ -465,7 +465,7 @@ mod tests {
         let key = SigningKey::from_slice(&[0x31; 32]).unwrap();
         let point = key.verifying_key().to_encoded_point(false);
         let sender = Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..]);
-        let tx = TxEip8130 {
+        let tx = TxBase {
             chain_id: 8453,
             max_priority_fee_per_gas: MAX_PRIORITY_FEE,
             max_fee_per_gas: MAX_FEE,
@@ -478,7 +478,7 @@ mod tests {
         let mut sender_auth = signature.to_bytes().to_vec();
         sender_auth.push(recid.to_byte() + 27);
         let envelope =
-            BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth.into(), Bytes::new()));
+            BaseTxEnvelope::Base(TxBaseSigned::new(tx, sender_auth.into(), Bytes::new()));
 
         let mut db = InMemoryDB::default();
         db.insert_account_info(
@@ -502,7 +502,7 @@ mod tests {
             .build_with_inspector(NoOpInspector);
         let outcome = evm
             .transact_raw(BaseTransaction::from_recovered_tx(&envelope, sender))
-            .expect("8130 tx should execute");
+            .expect("Base tx should execute");
 
         assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
         let seen = outcome.state[&probe].storage[&U256::ZERO].present_value;

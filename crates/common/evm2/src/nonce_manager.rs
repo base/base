@@ -1,16 +1,17 @@
-//! EIP-8130 2D nonce-manager storage access for the EVM2 engine.
+//! Base transaction 2D nonce-manager storage access for the EVM2 engine.
 //!
-//! The nonce manager is a code-less EIP-8130 system account (given the `0xEF` reap-protection stub
-//! by the [`Everest`](crate::Everest) transition) that persists per-`(account, nonce_key)` 2D
-//! sequence nonces in the state trie. The engine-neutral slot layout — the system-account address,
-//! the ERC-7201 base slots, and the mapping-slot derivation — lives in
-//! [`base_common_eip8130::NonceManagerSlots`], shared with the revm path so the two engines cannot
+//! The nonce manager is a code-less Base transaction system account (given the `0xEF`
+//! reap-protection stub by the [`Everest`](crate::Everest) transition) that persists per-`(account,
+//! nonce_key)` 2D sequence nonces in the state trie. The engine-neutral slot layout — the
+//! system-account address, the ERC-7201 base slots, and the mapping-slot derivation — lives in
+//! [`base_common_base_tx::NonceManagerSlots`], shared with the revm path so the two engines cannot
 //! diverge. This module provides the EVM2-specific access layer over that layout: the untracked
 //! reads and the channel-nonce increment against an [`Evm`] state. The remaining precompile surface
-//! (ABI dispatch and the nonce-free replay ring buffer) is layered on with the EIP-8130 track.
+//! (ABI dispatch and the nonce-free replay ring buffer) is layered on with the Base transaction
+//! track.
 
 use alloy_primitives::{Address, B256, U256};
-use base_common_eip8130::NonceManagerSlots;
+use base_common_base_tx::NonceManagerSlots;
 use evm2::{
     Evm,
     registry::{HandlerError, HandlerResult},
@@ -24,13 +25,13 @@ pub struct NonceOverflow;
 
 impl core::fmt::Display for NonceOverflow {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("EIP-8130 2D channel nonce overflowed u64")
+        f.write_str("Base transaction 2D channel nonce overflowed u64")
     }
 }
 
 impl core::error::Error for NonceOverflow {}
 
-/// EVM2 access layer for the EIP-8130 2D nonce-manager storage.
+/// EVM2 access layer for the Base transaction 2D nonce-manager storage.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NonceManager;
 

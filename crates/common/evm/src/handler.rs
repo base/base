@@ -1203,7 +1203,7 @@ mod tests {
         let metered = MeteredGas::take().expect("a settled transaction publishes its metered gas");
         assert_eq!(
             metered.payer_auth_gas_reserved, None,
-            "only EIP-8130 meters payer authentication"
+            "only Base transactions meter payer authentication"
         );
 
         let balance = |address: Address| {

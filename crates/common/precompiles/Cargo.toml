@@ -20,7 +20,7 @@ alloy-primitives = { workspace = true, features = ["k256"] }
 
 # base
 base-common-genesis.workspace = true
-base-common-eip8130.workspace = true
+base-common-base-tx.workspace = true
 base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
 base-common-chains = { workspace = true, optional = true }
@@ -92,8 +92,8 @@ std = [
 	"alloy-evm?/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
-	"base-common-chains?/std",
-	"base-common-eip8130/std",
+	"base-common-base-tx/std",
+	"base-common-chains/std",
 	"base-common-genesis/std",
 	"base-precompile-storage/std",
 	"evm2?/std",

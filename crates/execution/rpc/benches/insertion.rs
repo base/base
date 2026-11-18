@@ -1,7 +1,8 @@
 //! Transaction insertion benchmarks through the production `BaseTransactionPool` wrapper.
 //!
 //! Compares exactly the call boundary changed by the shared-insertion-sender patch, excluding the
-//! RPC hook's unchanged prep (EIP-8130 check, event emission, raw broadcast) from both routes:
+//! RPC hook's unchanged prep (Base transaction check, event emission, raw broadcast) from both
+//! routes:
 //! - `direct`: `Pool::add_transaction` — the direct insertion call the pre-patch hook made
 //! - `sender/N`: `EthApi::add_pool_transaction` — reth's batch sender, the adopted route, with
 //!   `--txpool.max-batch-size` N

@@ -1,7 +1,7 @@
 //! Base transaction registry.
 
 use alloy_primitives::U256;
-use base_common_consensus::{DEPOSIT_TX_TYPE_ID, EIP8130_TX_TYPE_ID, TxDeposit};
+use base_common_consensus::{BASE_TX_TYPE_ID, DEPOSIT_TX_TYPE_ID, TxDeposit};
 use base_common_genesis::BaseUpgrade;
 use evm2::{
     Evm, SpecId, TxResult,
@@ -16,7 +16,7 @@ use evm2::{
     registry::{HandlerError, HandlerResult, TxRegistry, TxRequest, handler},
 };
 
-use crate::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope, BaseTxHandlerHooks, Eip8130Handler};
+use crate::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope, BaseTxHandlerHooks, TxBaseHandler};
 
 impl BaseEvmTypes {
     /// Builds the Base transaction registry for `spec`.
@@ -26,7 +26,7 @@ impl BaseEvmTypes {
     /// Prague; EIP-4844 blob transactions are unsupported on Base and
     /// intentionally omitted), the latter wired with [`BaseTxHandlerHooks`] so
     /// non-deposit transactions run the L1 fee settlement path, and the
-    /// enshrined EIP-8130 handler (type `0x79`, [`Eip8130Handler`]). Unregistered
+    /// enshrined Base transaction handler (type `0x79`, [`TxBaseHandler`]). Unregistered
     /// types are rejected with [`HandlerError::UnsupportedTransactionType`].
     pub fn tx_registry(spec: BaseSpecId) -> TxRegistry<Self, TxResult<Self>> {
         let mut registry = TxRegistry::new().with_handler(
@@ -73,9 +73,9 @@ impl BaseEvmTypes {
             );
         }
         registry.register(
-            EIP8130_TX_TYPE_ID,
-            BaseTxEnvelope::as_eip8130,
-            handler(Eip8130Handler::prepare, Eip8130Handler::execute),
+            BASE_TX_TYPE_ID,
+            BaseTxEnvelope::as_base_tx,
+            handler(TxBaseHandler::prepare, TxBaseHandler::execute),
         );
         registry
     }
@@ -293,7 +293,10 @@ mod tests {
             // Type 3 (EIP-4844 blob transactions) is intentionally unregistered — Base rejects
             // them.
             assert!(!registry.contains(3), "EIP-4844 blob handler must not be registered");
-            assert!(registry.contains(EIP8130_TX_TYPE_ID), "EIP-8130 handler must be registered");
+            assert!(
+                registry.contains(BASE_TX_TYPE_ID),
+                "Base transaction handler must be registered"
+            );
             assert_eq!(
                 registry.contains(4),
                 (upgrade as u8) >= (BaseUpgrade::Isthmus as u8),

@@ -1,13 +1,13 @@
-//! Everest EIP-8130 system-account stub transition.
+//! Everest Base transaction system-account stub transition.
 
 use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
-use base_common_eip8130::NonceManagerSlots;
+use base_common_base_tx::NonceManagerSlots;
 use base_common_genesis::BaseFeature;
 use evm2::{AccountInfo, Evm, bytecode::Bytecode, registry::HandlerResult};
 
 use crate::{BaseBlockState, BaseEvmTypes, BaseForkActivations, IrregularStateChange};
 
-/// Single-byte code stub planted on otherwise code-less EIP-8130 system accounts.
+/// Single-byte code stub planted on otherwise code-less Base transaction system accounts.
 ///
 /// `0xEF` is the EIP-3541 reserved prefix: it can never be produced by a normal `CREATE`/`CREATE2`
 /// deployment, so it is an unambiguous "this is a protocol system account" sentinel. Its only job
@@ -15,7 +15,7 @@ use crate::{BaseBlockState, BaseEvmTypes, BaseForkActivations, IrregularStateCha
 /// precompile, not by executing this byte.
 const SYSTEM_ACCOUNT_STUB: [u8; 1] = [0xEF];
 
-/// Code-less EIP-8130 system accounts that hold persistent storage but carry no code, and
+/// Code-less Base transaction system accounts that hold persistent storage but carry no code, and
 /// therefore must be made non-empty so EIP-161 end-of-block state clearing does not reap them
 /// together with their storage.
 ///
@@ -25,19 +25,19 @@ const SYSTEM_ACCOUNT_STUB: [u8; 1] = [0xEF];
 /// `base_common_precompiles` `NonceManagerStorage::ADDRESS`.
 const CODELESS_SYSTEM_ACCOUNTS: [Address; 1] = [NonceManagerSlots::ADDRESS];
 
-/// The Everest EIP-8130 system-account transition.
+/// The Everest Base transaction system-account transition.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Everest;
 
 impl Everest {
-    /// The Everest upgrade enables EIP-8130, whose enshrined execution path writes persistent state
-    /// to system accounts that hold storage but carry no code, leaving them EIP-161-"empty" and
-    /// liable to be reaped by end-of-block state clearing.
+    /// The Everest upgrade enables Base transactions, whose enshrined execution path writes
+    /// persistent state to system accounts that hold storage but carry no code, leaving them
+    /// EIP-161-"empty" and liable to be reaped by end-of-block state clearing.
     ///
     /// This force-deploys a one-byte code stub onto those accounts so they are no longer empty. It
     /// is planted only on an account that has no code yet, so it never overwrites a real
     /// deployment, and it is idempotent: it fires on the first Everest block and is a no-op after.
-    pub fn ensure_eip8130_system_accounts(
+    pub fn ensure_base_tx_system_accounts(
         chain_spec: &impl BaseForkActivations,
         timestamp: u64,
         evm: &mut Evm<'_, BaseEvmTypes>,

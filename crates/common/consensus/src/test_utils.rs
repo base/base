@@ -8,8 +8,8 @@ use base_common_genesis::{
 };
 
 use crate::{
-    AccountChange, Call, Delegation, Eip8130Signed, L1BlockInfoBedrock, L1BlockInfoEcotone,
-    L1BlockInfoIsthmus, L1BlockInfoTx, TxDeposit, TxEip8130,
+    AccountChange, Call, Delegation, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
+    L1BlockInfoTx, TxBase, TxBaseSigned, TxDeposit,
 };
 
 pub(crate) const RAW_BEDROCK_INFO_TX: [u8; L1BlockInfoBedrock::L1_INFO_TX_LEN] = hex!(
@@ -36,9 +36,9 @@ pub(crate) fn sample_deposit() -> TxDeposit {
     }
 }
 
-/// A signed EIP-8130 transaction, self-paying or sponsored by `0xcc`.
-pub(crate) fn sample_signed_8130(payer_present: bool) -> Eip8130Signed {
-    let tx = TxEip8130 {
+/// A signed Base transaction, self-paying or sponsored by `0xcc`.
+pub(crate) fn sample_signed_base_tx(payer_present: bool) -> TxBaseSigned {
+    let tx = TxBase {
         chain_id: 8453,
         sender: Some(address!("0x00000000000000000000000000000000000000aa")),
         nonce_key: U256::from(7u64),
@@ -56,7 +56,7 @@ pub(crate) fn sample_signed_8130(payer_present: bool) -> Eip8130Signed {
         payer: payer_present.then(|| address!("0x00000000000000000000000000000000000000cc")),
         ..Default::default()
     };
-    Eip8130Signed::new(
+    TxBaseSigned::new(
         tx,
         bytes!("deadbeef"),
         if payer_present { bytes!("cafebabe") } else { Bytes::new() },

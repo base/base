@@ -3237,9 +3237,9 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "base-execution-base-tx",
  "base-execution-chainspec",
  "base-execution-consensus",
- "base-execution-eip8130",
  "base-execution-evm",
  "base-execution-payload-builder",
  "base-execution-rpc",
@@ -3482,6 +3482,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-base-tx"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-common-consensus",
+]
+
+[[package]]
 name = "base-common-blobs"
 version = "0.0.0"
 dependencies = [
@@ -3543,14 +3551,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-eip8130"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-consensus",
-]
-
-[[package]]
 name = "base-common-evm"
 version = "0.0.0"
 dependencies = [
@@ -3567,7 +3567,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-l1-fees",
  "base-common-precompiles",
- "base-execution-eip8130",
+ "base-execution-base-tx",
  "base-metrics",
  "base-precompile-storage",
  "k256 0.13.4",
@@ -3590,15 +3590,15 @@ dependencies = [
  "alloy-hardforks 0.4.11",
  "alloy-primitives",
  "alloy-sol-types",
+ "base-common-base-tx",
  "base-common-chains",
  "base-common-consensus",
- "base-common-eip8130",
  "base-common-evm",
  "base-common-flz",
  "base-common-genesis",
  "base-common-l1-fees",
  "base-common-precompiles",
- "base-execution-eip8130",
+ "base-execution-base-tx",
  "base-precompile-storage",
  "evm2",
  "k256 0.13.4",
@@ -3673,8 +3673,8 @@ dependencies = [
  "alloy-evm",
  "alloy-primitives",
  "alloy-sol-types",
+ "base-common-base-tx",
  "base-common-chains",
- "base-common-eip8130",
  "base-common-genesis",
  "base-precompile-macros",
  "base-precompile-storage",
@@ -4191,6 +4191,74 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-base-tx"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-common-base-tx",
+ "base-common-consensus",
+ "base-common-precompiles",
+ "base-precompile-storage",
+ "k256 0.13.4",
+ "revm",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "base-execution-base-tx-rpc"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.5.0",
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "alloy-rpc-types",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-evm2",
+ "base-common-precompiles",
+ "base-common-rpc-types",
+ "base-execution-chainspec",
+ "base-execution-evm",
+ "evm2",
+ "jsonrpsee",
+ "jsonrpsee-types",
+ "reth-chainspec",
+ "reth-errors",
+ "reth-evm",
+ "reth-provider",
+ "reth-rpc-eth-api",
+ "reth-rpc-eth-types",
+ "reth-storage-api",
+ "tracing",
+]
+
+[[package]]
+name = "base-execution-base-tx-rpc-node"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.5.0",
+ "alloy-genesis",
+ "alloy-network 2.5.0",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-signer 2.5.0",
+ "base-common-consensus",
+ "base-common-evm2",
+ "base-common-precompiles",
+ "base-execution-base-tx-rpc",
+ "base-execution-chainspec",
+ "base-node-runner",
+ "base-protocol",
+ "base-test-utils",
+ "eyre",
+ "reth-rpc-eth-api",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-execution-chainspec"
 version = "0.0.0"
 dependencies = [
@@ -4229,9 +4297,9 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-genesis",
+ "base-execution-base-tx-rpc-node",
  "base-execution-chainspec",
  "base-execution-consensus",
- "base-execution-eip8130-rpc-node",
  "base-execution-evm",
  "base-execution-payer-rpc",
  "base-execution-payload-builder",
@@ -4324,74 +4392,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-eip8130"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-consensus",
- "base-common-eip8130",
- "base-common-precompiles",
- "base-precompile-storage",
- "k256 0.13.4",
- "revm",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "base-execution-eip8130-rpc"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.5.0",
- "alloy-eips 2.5.0",
- "alloy-primitives",
- "alloy-rpc-types",
- "base-common-chains",
- "base-common-consensus",
- "base-common-evm2",
- "base-common-precompiles",
- "base-common-rpc-types",
- "base-execution-chainspec",
- "base-execution-evm",
- "evm2",
- "jsonrpsee",
- "jsonrpsee-types",
- "reth-chainspec",
- "reth-errors",
- "reth-evm",
- "reth-provider",
- "reth-rpc-eth-api",
- "reth-rpc-eth-types",
- "reth-storage-api",
- "tracing",
-]
-
-[[package]]
-name = "base-execution-eip8130-rpc-node"
-version = "0.0.0"
-dependencies = [
- "alloy-eips 2.5.0",
- "alloy-genesis",
- "alloy-network 2.5.0",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-client",
- "alloy-signer 2.5.0",
- "base-common-consensus",
- "base-common-evm2",
- "base-common-precompiles",
- "base-execution-chainspec",
- "base-execution-eip8130-rpc",
- "base-node-runner",
- "base-protocol",
- "base-test-utils",
- "eyre",
- "reth-rpc-eth-api",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-execution-evm"
 version = "0.0.0"
 dependencies = [
@@ -4468,8 +4468,8 @@ dependencies = [
  "alloy-signer-local 2.5.0",
  "base-common-chains",
  "base-common-consensus",
+ "base-execution-base-tx-rpc",
  "base-execution-chainspec",
- "base-execution-eip8130-rpc",
  "base-execution-rpc",
  "base-node-runner",
  "base-test-utils",
@@ -4502,8 +4502,8 @@ dependencies = [
  "base-common-evm2",
  "base-common-l1-fees",
  "base-common-rpc-types-engine",
+ "base-execution-base-tx",
  "base-execution-chainspec",
- "base-execution-eip8130",
  "base-execution-evm",
  "base-execution-txpool",
  "base-metrics",
@@ -4569,8 +4569,8 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "base-execution-base-tx",
  "base-execution-chainspec",
- "base-execution-eip8130",
  "base-execution-evm",
  "base-execution-payload-builder",
  "base-execution-trie",
@@ -4692,8 +4692,8 @@ dependencies = [
  "base-common-genesis",
  "base-common-l1-fees",
  "base-common-precompiles",
+ "base-execution-base-tx",
  "base-execution-chainspec",
- "base-execution-eip8130",
  "base-execution-evm",
  "base-metrics",
  "base-observability-events",
@@ -6227,9 +6227,9 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-service",
  "base-builder-core",
+ "base-common-base-tx",
  "base-common-chains",
  "base-common-consensus",
- "base-common-eip8130",
  "base-common-genesis",
  "base-common-network",
  "base-common-precompiles",
@@ -6244,9 +6244,9 @@ dependencies = [
  "base-consensus-providers",
  "base-consensus-rpc",
  "base-consensus-sources",
+ "base-execution-base-tx-rpc-node",
  "base-execution-chainspec",
  "base-execution-cli",
- "base-execution-eip8130-rpc-node",
  "base-execution-rpc",
  "base-execution-txpool",
  "base-load-tests",

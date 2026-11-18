@@ -6,9 +6,9 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
-use base_common_consensus::Eip8130CommittedPhasesError;
+use base_common_consensus::TxBaseCommittedPhasesError;
 use base_common_rpc_types::BaseTxEnvError;
-use base_execution_eip8130::Eip8130Error;
+use base_execution_base_tx::TxBaseError;
 use base_execution_evm::BaseBlockExecutionError;
 use evm2::{interpreter::InstrStop, registry::HandlerError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
@@ -42,10 +42,10 @@ pub enum BaseEthApiError {
     /// Sequencer client error.
     #[error(transparent)]
     Sequencer(#[from] SequencerClientError),
-    /// A stored EIP-8130 receipt carries a committed phase count that violates the receipt
+    /// A stored Base transaction receipt carries a committed phase count that violates the receipt
     /// invariant.
-    #[error("invalid EIP-8130 receipt: {0}")]
-    Eip8130CommittedPhases(#[from] Eip8130CommittedPhasesError),
+    #[error("invalid Base transaction receipt: {0}")]
+    TxBaseCommittedPhases(#[from] TxBaseCommittedPhasesError),
 }
 
 impl AsEthApiError for BaseEthApiError {
@@ -65,7 +65,7 @@ impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
             BaseEthApiError::Evm(_)
             | BaseEthApiError::L1BlockFeeError
             | BaseEthApiError::L1BlockGasError
-            | BaseEthApiError::Eip8130CommittedPhases(_) => internal_rpc_err(err.to_string()),
+            | BaseEthApiError::TxBaseCommittedPhases(_) => internal_rpc_err(err.to_string()),
             BaseEthApiError::Sequencer(err) => err.into(),
         }
     }
@@ -74,27 +74,27 @@ impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
 /// Base-specific invalid transaction errors
 #[derive(thiserror::Error, Debug)]
 pub enum BaseInvalidTransactionError {
-    /// An EIP-8130 (account-abstraction) transaction was submitted via
+    /// A Base transaction was submitted via
     /// `eth_sendRawTransaction` before the Everest fork was active.
     ///
     /// The transaction type byte (`0x79`) is recognised by the consensus layer for
     /// decoding/serialization purposes, but RPC admission is rejected until the
     /// Everest fork is active. The txpool validator enforces the same fork gate for
     /// transactions arriving over devp2p.
-    #[error("{}", base_common_consensus::EIP8130_REJECTION_MSG)]
-    Eip8130NotAccepted,
-    /// An EIP-8130 (account-abstraction) transaction was rejected during its
+    #[error("{}", base_common_consensus::BASE_TX_REJECTION_MSG)]
+    TxBaseNotAccepted,
+    /// A Base transaction was rejected during its
     /// enshrined execution pipeline (authorization, nonce, intrinsic gas, fee, or
     /// account-change apply). The string carries the underlying rejection reason.
-    #[error("EIP-8130 transaction rejected: {0}")]
-    Eip8130Rejected(String),
+    #[error("Base transaction rejected: {0}")]
+    TxBaseRejected(String),
 }
 
 impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
     fn from(err: BaseInvalidTransactionError) -> Self {
         match err {
-            BaseInvalidTransactionError::Eip8130NotAccepted
-            | BaseInvalidTransactionError::Eip8130Rejected(_) => {
+            BaseInvalidTransactionError::TxBaseNotAccepted
+            | BaseInvalidTransactionError::TxBaseRejected(_) => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
         }
@@ -104,9 +104,9 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
 impl BaseInvalidTransactionError {
     /// Returns the Base-specific rejection an EVM handler error carries, if any.
     pub fn from_handler_error(error: &HandlerError) -> Option<Self> {
-        match error.external_ref::<Eip8130Error>()? {
-            Eip8130Error::Invalid(reason) => Some(Self::Eip8130Rejected(reason.clone())),
-            Eip8130Error::PayerCannotPay { .. } => None,
+        match error.external_ref::<TxBaseError>()? {
+            TxBaseError::Invalid(reason) => Some(Self::TxBaseRejected(reason.clone())),
+            TxBaseError::PayerCannotPay { .. } => None,
         }
     }
 }
@@ -182,7 +182,7 @@ impl From<BaseTxEnvError> for BaseEthApiError {
     fn from(value: BaseTxEnvError) -> Self {
         match value {
             BaseTxEnvError::Eth(error) => error.into(),
-            BaseTxEnvError::Eip8130Unsupported => {
+            BaseTxEnvError::TxBaseUnsupported => {
                 Self::Eth(EthApiError::InvalidParams(value.to_string()))
             }
         }
@@ -214,8 +214,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn eip8130_rejections_keep_their_reason_as_a_rejected_transaction() {
-        let error = map_handler_error(HandlerError::external(Eip8130Error::invalid(
+    fn base_tx_rejections_keep_their_reason_as_a_rejected_transaction() {
+        let error = map_handler_error(HandlerError::external(TxBaseError::invalid(
             "payer authorization expired",
         )));
 
@@ -223,12 +223,12 @@ mod tests {
 
         assert!(matches!(
             &error,
-            BaseEthApiError::InvalidTransaction(BaseInvalidTransactionError::Eip8130Rejected(reason))
+            BaseEthApiError::InvalidTransaction(BaseInvalidTransactionError::TxBaseRejected(reason))
                 if reason == "payer authorization expired"
         ));
         let error = jsonrpsee_types::error::ErrorObject::from(error);
         assert_eq!(error.code(), EthRpcErrorCode::TransactionRejected.code());
-        assert_eq!(error.message(), "EIP-8130 transaction rejected: payer authorization expired");
+        assert_eq!(error.message(), "Base transaction rejected: payer authorization expired");
     }
 
     #[test]

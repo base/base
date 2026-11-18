@@ -1,4 +1,4 @@
-//! ABI dispatch for the EIP-8130 2D nonce manager precompile.
+//! ABI dispatch for the Base transaction 2D nonce manager precompile.
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
@@ -22,7 +22,7 @@ impl NonceManagerStorage<'_> {
     ///
     /// Only the read-only `getNonce` getter is reachable through the ABI; the
     /// nonce-mutating entry points (`increment_nonce`, `check_and_mark_expiring_nonce`)
-    /// are driven by the EIP-8130 execution layer, not by EVM calls.
+    /// are driven by the Base transaction execution layer, not by EVM calls.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         // `getNonce` is nonpayable; reject attached ETH before charging calldata gas.
         if !ctx.call_value().is_zero() {
