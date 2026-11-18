@@ -27,6 +27,12 @@ let factory = BaseEvmFactory::default();
 let precompiles = BasePrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl)).install();
 ```
 
+## Deposit execution gas
+
+Deposit transactions are exempt from the per-transaction gas limit cap. A deposit therefore
+executes with its full declared gas limit, and only the gas it actually uses is reported as
+used. Non-deposit transactions follow the standard transaction gas accounting unchanged.
+
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

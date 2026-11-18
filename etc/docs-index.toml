@@ -212,7 +212,7 @@ digest = "e0d063f6c5"
 
 ["crates/common/evm/README.md"]
 summary = "Base revm-based EVM support: upgrade-to-SpecId mapping, BaseEvmFactory, block executors, receipt builders, and create2 deployer handling. Use when changing per-upgrade execution rules."
-digest = "835735d39b"
+digest = "0bfaf33862"
 
 ["crates/common/evm2/README.md"]
 summary = "Scaffold for Base's EVM2 integration (BaseEvmTypes, currently mirroring stock Ethereum), not wired into the node, for differential testing against revm. Use when working on EVM2 groundwork."
