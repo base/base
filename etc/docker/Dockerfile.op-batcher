@@ -3,10 +3,10 @@ FROM public.ecr.aws/docker/library/golang:1.24.13-alpine3.22 AS builder
 RUN apk add --no-cache git
 WORKDIR /app
 
-# Match the op-batcher source pin used by Base mainnet infrastructure.
-ARG OP_BATCHER_TAG=op-batcher/v1.16.5
-ARG OP_BATCHER_COMMIT=abe047afc995e0e22abf5ea9b157e267e907d494
-RUN git clone --depth 1 --branch "${OP_BATCHER_TAG}" https://github.com/ethereum-optimism/optimism.git . && \
+# op-batcher/v1.16.5 (the version Base mainnet runs) plus Base transaction (0x79) support.
+ARG OP_BATCHER_TAG=op-batcher/v1.16.5-basetx.2
+ARG OP_BATCHER_COMMIT=9b04c8002b4b73dc33dbf5926065c83be7e4be62
+RUN git clone --depth 1 --branch "${OP_BATCHER_TAG}" https://github.com/base/optimism.git . && \
     test "$(git rev-parse HEAD)" = "${OP_BATCHER_COMMIT}"
 RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags "-X main.Version=${OP_BATCHER_TAG#op-batcher/} -X main.GitCommit=${OP_BATCHER_COMMIT} -X main.GitDate=$(git show -s --format=%ct HEAD)" \
