@@ -77,7 +77,7 @@ impl<ChainSpec: Upgrades> BlockExecutorFactory for BaseBlockExecutorFactory<Chai
             ExecutionConfig::for_spec_and_version(spec, evm_env.version),
             spec,
             evm_env.block,
-            BaseEvmTypes::tx_registry(),
+            BaseEvmTypes::tx_registry(spec),
             db,
             BaseEvmTypes::native_precompiles(spec, self.chain_spec.activation_admin_address()),
         )

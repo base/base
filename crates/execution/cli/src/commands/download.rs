@@ -4,15 +4,16 @@
 //! Base-specific proofs database is downloaded separately by [`ProofsDownloader`]
 //! from the same snapshot source and manifest.
 
-use std::{ffi::OsString, sync::Arc};
+use std::{ffi::OsString, fs, path::Path, sync::Arc, time::SystemTime};
 
 use base_execution_chainspec::BaseChainSpec;
+use base_node_runner::MerkleStageDefaults;
 use clap::Parser;
 use eyre::Result;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::download::DownloadCommand;
-use tracing::info;
+use tracing::{info, warn};
 
 mod proofs;
 pub use proofs::{
@@ -48,30 +49,49 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
     pub async fn execute<N>(self) -> Result<()> {
         let Self { inner, proofs } = self;
 
-        let (data_dir, chain_id) = if proofs {
-            let chain = inner
-                .chain_spec()
-                .ok_or_else(|| eyre::eyre!("--proofs flag is only on Base"))?
-                .chain();
-            let chain_id = chain.id();
-            let dir = inner.env().datadir.clone().resolve_datadir(chain);
-            info!(target: "reth::cli", datadir = %dir.data_dir().display(), "Resolved datadir for proofs download");
-            (Some(dir), Some(chain_id))
-        } else {
-            (None, None)
-        };
+        let chain = inner
+            .chain_spec()
+            .ok_or_else(|| eyre::eyre!("download requires a Base chain spec"))?
+            .chain();
+        let data_dir = inner.env().datadir.clone().resolve_datadir(chain);
+        if proofs {
+            info!(target: "reth::cli", datadir = %data_dir.data_dir().display(), "Resolved datadir for proofs download");
+        }
+        let config_path = data_dir.config();
+        let config_modified_before = modified_at(&config_path);
 
-        inner.execute::<N>().await?;
+        let manifest_download = inner.execute::<N>().await?.is_some();
 
-        if let (Some(data_dir), Some(chain_id)) = (data_dir, chain_id) {
+        // Only manifest downloads generate reth.toml, and only for a new or cleared datadir; a
+        // `--url` archive may ship its own.
+        let config_modified_after = modified_at(&config_path);
+        if manifest_download
+            && config_modified_after.is_some()
+            && config_modified_after != config_modified_before
+            && let Err(error) = MerkleStageDefaults::apply(&config_path)
+        {
+            warn!(
+                target: "reth::cli",
+                %error,
+                path = %config_path.display(),
+                "failed to write merkle stage defaults to reth.toml"
+            );
+        }
+
+        if proofs {
             let target_dir = data_dir.data_dir().to_path_buf();
             let concurrency = resolve_download_concurrency_arg(std::env::args_os());
             let manifest_url = resolve_manifest_url_arg(std::env::args_os());
-            ProofsDownloader::run(&target_dir, chain_id, concurrency, manifest_url).await?;
+            ProofsDownloader::run(&target_dir, chain.id(), concurrency, manifest_url).await?;
         }
 
         Ok(())
     }
+}
+
+/// Returns when `path` was last modified, or `None` if it does not exist.
+fn modified_at(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
 }
 
 /// Matches reth's `--download-concurrency` default.

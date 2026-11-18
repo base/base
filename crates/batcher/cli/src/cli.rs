@@ -166,7 +166,8 @@ pub struct BatcherArgs {
     )]
     pub publish_retry_delay: Duration,
 
-    /// Minimum L1 priority fee per gas (in gwei). Accepts decimal strings (e.g. `0.01`).
+    /// Minimum L1 priority fee per gas (in gwei) of calldata transactions. Accepts decimal
+    /// strings (e.g. `0.01`).
     ///
     /// Used in place of the tip the L1 node suggests when that one is lower.
     #[arg(
@@ -177,8 +178,8 @@ pub struct BatcherArgs {
     )]
     pub min_tip_cap: u128,
 
-    /// Minimum L1 base fee (in gwei) the fee cap is computed from. Accepts decimal strings
-    /// (e.g. `0.25`).
+    /// Minimum L1 base fee (in gwei) the fee cap of calldata transactions is computed from.
+    /// Accepts decimal strings (e.g. `0.25`).
     ///
     /// Used in place of the base fee of the latest L1 block when that one is lower.
     #[arg(
@@ -188,6 +189,37 @@ pub struct BatcherArgs {
         value_parser = base_tx_manager::GweiParser::parse_value
     )]
     pub min_basefee: u128,
+
+    /// Lowest `max_priority_fee_per_gas` per blob (in gwei) of blob transactions, which the
+    /// first one starts at. Accepts decimal strings (e.g. `0.01`).
+    #[arg(
+        long = "max-priority-fee-per-gas-per-blob-lower-bound",
+        default_value = "0.01",
+        env = "BASE_BATCHER_MAX_PRIORITY_FEE_PER_GAS_PER_BLOB_LOWER_BOUND",
+        value_parser = base_tx_manager::GweiParser::parse_value
+    )]
+    pub max_priority_fee_per_gas_per_blob_lower_bound: u128,
+
+    /// Highest `max_priority_fee_per_gas` per blob (in gwei) of blob transactions. Accepts
+    /// decimal strings (e.g. `10`).
+    #[arg(
+        long = "max-priority-fee-per-gas-per-blob-upper-bound",
+        default_value = "10",
+        env = "BASE_BATCHER_MAX_PRIORITY_FEE_PER_GAS_PER_BLOB_UPPER_BOUND",
+        value_parser = base_tx_manager::GweiParser::parse_value
+    )]
+    pub max_priority_fee_per_gas_per_blob_upper_bound: u128,
+
+    /// Share, in percent (`0..=100`), of the `max_priority_fee_per_gas` per blob of a landed
+    /// blob transaction that the next blob transaction starts from. A lower value brings the
+    /// blob fee back down faster after a spike.
+    #[arg(
+        long = "max-priority-fee-per-gas-per-blob-decay-percent",
+        default_value = "90",
+        env = "BASE_BATCHER_MAX_PRIORITY_FEE_PER_GAS_PER_BLOB_DECAY_PERCENT",
+        value_parser = clap::value_parser!(u8).range(0..=100)
+    )]
+    pub max_priority_fee_per_gas_per_blob_decay_percent: u8,
 
     /// DA backlog in estimated compressed bytes from which the batcher throttles, lowering the
     /// DA limits it pushes to the `--sequencer-urls` endpoints.
@@ -404,6 +436,12 @@ impl BatcherArgs {
             publish_retry_delay: self.publish_retry_delay,
             min_tip_cap: self.min_tip_cap,
             min_basefee: self.min_basefee,
+            max_priority_fee_per_gas_per_blob_lower_bound: self
+                .max_priority_fee_per_gas_per_blob_lower_bound,
+            max_priority_fee_per_gas_per_blob_upper_bound: self
+                .max_priority_fee_per_gas_per_blob_upper_bound,
+            max_priority_fee_per_gas_per_blob_decay_percent: self
+                .max_priority_fee_per_gas_per_blob_decay_percent,
             throttle: if self.no_throttle {
                 None
             } else {
@@ -575,6 +613,9 @@ mod tests {
         assert_eq!(config.network_timeout, Duration::from_secs(10));
         assert_eq!(config.min_tip_cap, 0);
         assert_eq!(config.min_basefee, 0);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_lower_bound, 10_000_000);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_upper_bound, 10_000_000_000);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_decay_percent, 90);
         assert_eq!(config.throttle_strategy, ThrottleStrategy::Quadratic);
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
@@ -592,6 +633,19 @@ mod tests {
         args.extend_from_slice(["--brotli-quality", "12"].as_slice());
 
         assert!(BatcherArgs::try_parse_from(args).is_err());
+    }
+
+    /// A blob fee decay above 100% would raise the blob fee each time a transaction lands, so
+    /// it is refused at parse time.
+    #[test]
+    fn cli_rejects_blob_fee_decay_percent_above_a_hundred() {
+        let mut args = base_args();
+        args.extend_from_slice(
+            ["--max-priority-fee-per-gas-per-blob-decay-percent", "101"].as_slice(),
+        );
+
+        let error = BatcherArgs::try_parse_from(args).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     /// Zero in-flight transactions would mean the batcher never submits, so reject it at parse time.
@@ -639,6 +693,12 @@ mod tests {
             "0.01",
             "--min-basefee",
             "1.5",
+            "--max-priority-fee-per-gas-per-blob-lower-bound",
+            "0.02",
+            "--max-priority-fee-per-gas-per-blob-upper-bound",
+            "5",
+            "--max-priority-fee-per-gas-per-blob-decay-percent",
+            "50",
             "--max-channel-duration",
             "10",
             "--sub-safety-margin",
@@ -690,6 +750,9 @@ mod tests {
         assert_eq!(config.publish_retry_delay, Duration::from_secs(3));
         assert_eq!(config.min_tip_cap, 10_000_000);
         assert_eq!(config.min_basefee, 1_500_000_000);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_lower_bound, 20_000_000);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_upper_bound, 5_000_000_000);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_decay_percent, 50);
         assert_eq!(config.encoder_config.max_channel_duration, 10);
         assert_eq!(config.encoder_config.sub_safety_margin, 4);
         assert_eq!(config.max_pending_transactions, 4);

@@ -13,11 +13,14 @@
 //! stream. The guard returns the hashes it has dropped so the pool can evict the
 //! corresponding transactions.
 
-use std::collections::HashMap;
+use alloy_primitives::{
+    Address, TxHash, U256,
+    map::{AddressMap, B256Map},
+};
 
-use alloy_primitives::{Address, TxHash, U256};
-
-use crate::{InflightCounters, InvalidationIndex, InvalidationKey, PayerBook, WatchSet};
+use crate::{
+    InflightCounters, InvalidationIndex, InvalidationKey, PayerBook, UnixMillis, WatchSet,
+};
 
 /// Default cap on inflight signatures per unlocked account.
 pub const DEFAULT_SIGNATURE_LIMIT: u32 = 4;
@@ -166,8 +169,8 @@ pub struct MempoolGuard {
     index: InvalidationIndex,
     signature_counts: InflightCounters,
     payment_counts: InflightCounters,
-    payer_books: HashMap<Address, PayerBook>,
-    records: HashMap<TxHash, AdmissionRecord>,
+    payer_books: AddressMap<PayerBook>,
+    records: B256Map<(AdmissionRecord, WatchSet)>,
     limits: GuardLimits,
 }
 
@@ -192,8 +195,8 @@ impl MempoolGuard {
             index: InvalidationIndex::new(),
             signature_counts: InflightCounters::new(),
             payment_counts: InflightCounters::new(),
-            payer_books: HashMap::new(),
-            records: HashMap::new(),
+            payer_books: AddressMap::default(),
+            records: B256Map::default(),
             limits,
         }
     }
@@ -232,7 +235,7 @@ impl MempoolGuard {
     /// Returns the tracked transactions watching `key`.
     #[must_use]
     pub fn watchers(&self, key: &InvalidationKey) -> Vec<TxHash> {
-        self.index.watchers(key).map(|hashes| hashes.iter().copied().collect()).unwrap_or_default()
+        self.index.watchers(key).copied().collect()
     }
 
     /// Returns the hashes of every currently tracked transaction. Used by the
@@ -250,7 +253,7 @@ impl MempoolGuard {
     /// On rejection no state is mutated (any partial reservation is rolled
     /// back), so the caller may safely drop the transaction.
     pub fn try_admit(&mut self, admission: Admission) -> Result<(), LimitRejection> {
-        if let Some(record) = self.records.get(&admission.hash) {
+        if let Some((record, watch_set)) = self.records.get(&admission.hash) {
             debug_assert_eq!(record.sender, admission.sender, "re-admission changed sender");
             debug_assert_eq!(record.payer, admission.payer, "re-admission changed payer");
             debug_assert_eq!(record.max_cost, admission.max_cost, "re-admission changed max cost");
@@ -267,8 +270,7 @@ impl MempoolGuard {
             // accounting to count accounting, but never vice versa.
             debug_assert!(!record.payer_booked || self.payment_bounds(&admission).0);
             debug_assert_eq!(
-                self.index.watch_set(&admission.hash),
-                Some(&admission.watch_set),
+                watch_set, &admission.watch_set,
                 "re-admission changed invalidation surfaces"
             );
             return Ok(());
@@ -334,20 +336,23 @@ impl MempoolGuard {
             return Err(rejection);
         }
 
+        self.index.insert(admission.hash, &admission.watch_set);
         self.records.insert(
             admission.hash,
-            AdmissionRecord {
-                sender: admission.sender,
-                payer: admission.payer,
-                sender_signature_charged,
-                payer_signature_charged,
-                // Rejections returned above, so a wanted book was reserved.
-                payer_booked: wants_book,
-                payment_counted,
-                max_cost: admission.max_cost,
-            },
+            (
+                AdmissionRecord {
+                    sender: admission.sender,
+                    payer: admission.payer,
+                    sender_signature_charged,
+                    payer_signature_charged,
+                    // Rejections returned above, so a wanted book was reserved.
+                    payer_booked: wants_book,
+                    payment_counted,
+                    max_cost: admission.max_cost,
+                },
+                admission.watch_set,
+            ),
         );
-        self.index.insert(admission.hash, admission.watch_set);
         Ok(())
     }
 
@@ -368,7 +373,7 @@ impl MempoolGuard {
     /// expiry. The fallback keeps the "never reject" guarantee while ensuring
     /// the record stays reachable by the next balance-driven eviction.
     pub fn insert_forced(&mut self, admission: Admission) {
-        if let Some(record) = self.records.get(&admission.hash) {
+        if let Some((record, watch_set)) = self.records.get(&admission.hash) {
             debug_assert_eq!(record.sender, admission.sender, "forced re-admission changed sender");
             debug_assert_eq!(record.payer, admission.payer, "forced re-admission changed payer");
             debug_assert_eq!(
@@ -388,8 +393,7 @@ impl MempoolGuard {
             // accounting to count accounting, but never vice versa.
             debug_assert!(!record.payer_booked || self.payment_bounds(&admission).0);
             debug_assert_eq!(
-                self.index.watch_set(&admission.hash),
-                Some(&admission.watch_set),
+                watch_set, &admission.watch_set,
                 "forced re-admission changed invalidation surfaces"
             );
             return;
@@ -432,19 +436,22 @@ impl MempoolGuard {
             self.payer_books.remove(&admission.payer);
         }
 
+        self.index.insert(admission.hash, &admission.watch_set);
         self.records.insert(
             admission.hash,
-            AdmissionRecord {
-                sender: admission.sender,
-                payer: admission.payer,
-                sender_signature_charged,
-                payer_signature_charged,
-                payer_booked,
-                payment_counted,
-                max_cost: admission.max_cost,
-            },
+            (
+                AdmissionRecord {
+                    sender: admission.sender,
+                    payer: admission.payer,
+                    sender_signature_charged,
+                    payer_signature_charged,
+                    payer_booked,
+                    payment_counted,
+                    max_cost: admission.max_cost,
+                },
+                admission.watch_set,
+            ),
         );
-        self.index.insert(admission.hash, admission.watch_set);
     }
 
     /// Checks, without mutating, whether replacing the tracked `replaced` with
@@ -460,7 +467,7 @@ impl MempoolGuard {
         replaced: &TxHash,
         admission: &Admission,
     ) -> Result<(), LimitRejection> {
-        if self.records.get(replaced).is_none_or(|record| record.payer == admission.payer) {
+        if self.records.get(replaced).is_none_or(|(record, _)| record.payer == admission.payer) {
             return Ok(());
         }
         if admission.payer != admission.sender
@@ -487,7 +494,7 @@ impl MempoolGuard {
     /// the transaction was tracked. Used both for normal removal (mined,
     /// replaced) and as the internal step of invalidation.
     pub fn release(&mut self, hash: &TxHash) -> bool {
-        let Some(record) = self.records.remove(hash) else {
+        let Some((record, watch_set)) = self.records.remove(hash) else {
             return false;
         };
         if record.sender_signature_charged {
@@ -507,7 +514,7 @@ impl MempoolGuard {
         if record.payment_counted {
             self.payment_counts.decrement(record.payer);
         }
-        self.index.remove(hash);
+        self.index.remove(hash, &watch_set);
         true
     }
 
@@ -541,12 +548,16 @@ impl MempoolGuard {
         dropped
     }
 
-    /// Invalidates all transactions in occupied expiry buckets at or below
-    /// `horizon`, returning the dropped hashes and number of buckets fired.
-    pub fn invalidate_expiry_buckets_through(&mut self, horizon: u64) -> (Vec<TxHash>, usize) {
-        let due = self.index.due_expiry_buckets(horizon);
-        let bucket_count = due.len();
-        (self.invalidate_exact(due), bucket_count)
+    /// Invalidates every transaction whose expiry deadline has passed at the
+    /// block time `now`, returning the dropped hashes and the
+    /// number of distinct deadlines fired.
+    pub fn invalidate_expired(&mut self, now: UnixMillis) -> (Vec<TxHash>, usize) {
+        let due = self.index.take_expired(now);
+        let deadline_count = due.chunk_by(|a, b| a.0 == b.0).count();
+        // `release` is false for a hash already dropped via an earlier deadline.
+        let dropped =
+            due.into_iter().filter_map(|(_, hash)| self.release(&hash).then_some(hash)).collect();
+        (dropped, deadline_count)
     }
 
     /// Re-evaluates a payer's balance against its sponsored transactions.
@@ -567,22 +578,21 @@ impl MempoolGuard {
 
         // Per-transaction threshold for count-limited payers/self-pay. Collect
         // first to avoid borrowing the index while releasing.
-        if let Some(watchers) = self.index.watchers(&InvalidationKey::Balance(account)) {
-            let unaffordable: Vec<TxHash> = watchers
-                .iter()
-                .filter(|hash| {
-                    self.records.get(*hash).is_some_and(|record| {
-                        debug_assert_eq!(
-                            record.payer, account,
-                            "balance watcher must match the transaction payer"
-                        );
-                        !record.payer_booked && record.max_cost > new_balance
-                    })
+        let unaffordable: Vec<TxHash> = self
+            .index
+            .watchers(&InvalidationKey::Balance(account))
+            .filter(|hash| {
+                self.records.get(*hash).is_some_and(|(record, _)| {
+                    debug_assert_eq!(
+                        record.payer, account,
+                        "balance watcher must match the transaction payer"
+                    );
+                    !record.payer_booked && record.max_cost > new_balance
                 })
-                .copied()
-                .collect();
-            dropped.extend(unaffordable);
-        }
+            })
+            .copied()
+            .collect();
+        dropped.extend(unaffordable);
 
         dropped.sort_unstable();
         dropped.dedup();
@@ -853,22 +863,28 @@ mod tests {
     }
 
     #[test]
-    fn expiry_invalidation_fires_only_occupied_due_buckets() {
+    fn expiry_invalidation_fires_only_passed_deadlines() {
         let mut guard = MempoolGuard::new(GuardLimits::default());
-        let make = |id, bucket| Admission {
-            watch_set: WatchSet::new().watch(InvalidationKey::ExpiryBucket(bucket)),
+        let make = |id, deadline| Admission {
+            watch_set: WatchSet::new()
+                .watch(InvalidationKey::Expiry(UnixMillis::from_millis(deadline))),
             ..self_pay(id, addr(id), 10)
         };
 
         assert!(guard.try_admit(make(1, 1)).is_ok());
-        assert!(guard.try_admit(make(2, 850_000_000)).is_ok());
-        assert!(guard.try_admit(make(3, 900_000_000)).is_ok());
+        assert!(guard.try_admit(make(2, 1_700_000_000_200)).is_ok());
+        assert!(guard.try_admit(make(3, 1_700_000_000_400)).is_ok());
+        // Two passed deadlines still drop the transaction once.
+        let mut twice = make(4, 5);
+        twice.watch_set.push(InvalidationKey::Expiry(UnixMillis::from_millis(1_700_000_000_100)));
+        assert!(guard.try_admit(twice).is_ok());
 
-        let (mut dropped, buckets) = guard.invalidate_expiry_buckets_through(850_000_000);
+        let (mut dropped, deadlines) =
+            guard.invalidate_expired(UnixMillis::from_millis(1_700_000_000_400));
         dropped.sort_unstable();
-        assert_eq!(dropped, vec![hash(1), hash(2)]);
-        assert_eq!(buckets, 2);
-        assert!(guard.contains(&hash(3)));
+        assert_eq!(dropped, vec![hash(1), hash(2), hash(4)]);
+        assert_eq!(deadlines, 4);
+        assert!(guard.contains(&hash(3)), "valid through its deadline millisecond");
     }
 
     #[test]

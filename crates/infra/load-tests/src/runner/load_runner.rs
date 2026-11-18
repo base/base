@@ -4,19 +4,15 @@ use std::{
     collections::HashMap,
     fs,
     path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-use alloy_network::{Ethereum, EthereumWallet, ReceiptResponse, TransactionBuilder};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, TxHash, U256};
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::Eip8130Constants;
-use base_tx_manager::NonceManager;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument};
@@ -40,7 +36,6 @@ use crate::{
     },
 };
 
-pub(super) const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const FRESH_RECIPIENT_RNG_SALT: u64 = 0x6672_6573_685f_7263; // "fresh_rc"
 const START_FILE_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -52,9 +47,8 @@ pub struct LoadRunner {
     pub(super) accounts: AccountPool,
     pub(super) generator: WorkloadGenerator,
     pub(super) collector: MetricsCollector,
-    pub(super) stop_flag: Arc<AtomicBool>,
+    pub(super) stop: CancellationToken,
     pub(super) cancel_token: CancellationToken,
-    pub(super) nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     pub(super) signers: Arc<HashMap<Address, PrivateKeySigner>>,
     pub(super) submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
     pub(super) validity_router: ValidityRouter,
@@ -176,9 +170,8 @@ impl LoadRunner {
             accounts,
             generator,
             collector: MetricsCollector::new(),
-            stop_flag: Arc::new(AtomicBool::new(false)),
+            stop: CancellationToken::new(),
             cancel_token: CancellationToken::new(),
-            nonce_managers: Arc::new(HashMap::new()),
             signers,
             submission_batch_rpcs,
             validity_router,
@@ -403,7 +396,7 @@ impl LoadRunner {
         let path = control_dir.join("start");
         let started = Instant::now();
         while !path.exists() {
-            if self.stop_flag.load(Ordering::SeqCst) || self.cancel_token.is_cancelled() {
+            if self.stop.is_cancelled() || self.cancel_token.is_cancelled() {
                 return Err(BaselineError::Transaction(
                     "stopped while waiting for start handshake".into(),
                 ));
@@ -440,9 +433,6 @@ impl LoadRunner {
         self.generator.prepare_all(&mut ctx).await?;
         if let Some(salt) = ctx.outputs.b20_run_salt {
             self.b20_run_salt = Some(salt);
-        }
-        if ctx.outputs.needs_sender_refresh {
-            self.refresh_sender_state().await?;
         }
         Ok(())
     }
@@ -589,16 +579,16 @@ impl LoadRunner {
 
     /// Signals the load test to stop gracefully.
     ///
-    /// Sets `stop_flag` and cancels background watcher tasks. The caller must ensure
+    /// Cancels the stop token and background watcher tasks. The caller must ensure
     /// [`run()`](Self::run) completes, which handles draining confirmations.
     pub fn stop(&self) {
-        self.stop_flag.store(true, Ordering::SeqCst);
+        self.stop.cancel();
         self.cancel_token.cancel();
     }
 
-    /// Returns a clone of the stop flag for external coordination.
-    pub fn stop_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.stop_flag)
+    /// Returns the token that stops the run when cancelled.
+    pub fn stop_token(&self) -> CancellationToken {
+        self.stop.clone()
     }
 
     /// Attaches a live progress-bar display.

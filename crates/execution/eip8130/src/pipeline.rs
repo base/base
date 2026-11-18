@@ -253,26 +253,19 @@ impl Eip8130Pipeline {
         Ok(())
     }
 
-    /// Consensus-level validity window. The transaction is includable only
-    /// within the inclusive interval `[valid_after, valid_before]` on the
-    /// millisecond axis (`now_ms`, the block's millisecond timestamp). Per the
-    /// EIP a transaction is still valid at `now_ms == valid_before`, so the
-    /// upper bound is inclusive: reject only once `now_ms` is strictly past
-    /// `valid_before`.
-    ///
-    /// Validity bounds are normalized to Unix milliseconds (seconds bounds are
-    /// scaled by 1000 per EIP-8130 Timestamp Normalization); `0` disables the
-    /// respective bound. Both bounds apply to nonce-free and nonce-bearing
-    /// transactions alike. The nonce-free replay ring separately enforces its own
-    /// admission window (`valid_before > now_ms`) when it records the nonce, so a
-    /// nonce-free transaction at the boundary still fails there.
+    /// Consensus-level validity window on the millisecond axis (`now_ms`, the
+    /// block's millisecond timestamp). Validity bounds are normalized to Unix
+    /// milliseconds (seconds bounds are scaled by 1000 per EIP-8130 Timestamp
+    /// Normalization); `0` disables the respective bound. The upper bound is the
+    /// shared expiry rule (`TxEip8130::is_expired_at`): inclusive for
+    /// nonce-bearing transactions, exclusive for nonce-free ones, whose replay
+    /// ring only records a strictly-future `valid_before`.
     pub fn check_validity_window(tx: &TxEip8130, now_ms: u64) -> Result<(), Eip8130Error> {
         let valid_after = tx.valid_after_ms();
-        let valid_before = tx.valid_before_ms();
         if valid_after != 0 && now_ms < valid_after {
             return Err(Eip8130Error::invalid("transaction is not yet valid"));
         }
-        if valid_before != 0 && now_ms > valid_before {
+        if tx.is_expired_at(now_ms) {
             return Err(Eip8130Error::invalid("transaction validity window has expired"));
         }
         Ok(())

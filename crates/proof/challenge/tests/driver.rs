@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     AnchorUpdater, ChallengeSubmitter, ChallengerProofAdapter, DisputeProofManager, Driver,
@@ -31,6 +32,7 @@ use base_prover_service_protocol::{
     ZkBackend, ZkProofRequest, ZkVm,
 };
 use base_tx_manager::TxManagerError;
+use rstest::rstest;
 use tokio_util::sync::CancellationToken;
 
 const STORAGE_HASH: B256 = B256::repeat_byte(0xBB);
@@ -200,6 +202,13 @@ fn succeeded_tee_prover(aggregate_proposal: Proposal) -> Arc<MockZkProofProvider
 /// invalid-game test scenarios. Layout: starting=10, `l2_block=20`,
 /// interval=5, checkpoints at blocks 15 and 20.
 fn base_game_mocks() -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, B256, B256) {
+    finalized_game_mocks(None)
+}
+
+/// Like [`base_game_mocks`], with the L2 node reporting `finalized_block_number` as finalized.
+fn finalized_game_mocks(
+    finalized_block_number: Option<u64>,
+) -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, B256, B256) {
     let (header_15, account_15) = build_test_header_and_account(15, STORAGE_HASH);
     let root_15 =
         OutputRoot::from_parts(header_15.state_root, STORAGE_HASH, header_15.hash_slow()).hash();
@@ -207,7 +216,7 @@ fn base_game_mocks() -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, B256,
     let root_20 =
         OutputRoot::from_parts(header_20.state_root, STORAGE_HASH, header_20.hash_slow()).hash();
 
-    let mut l2 = MockL2Provider::default();
+    let mut l2 = MockL2Provider { finalized_block_number, ..Default::default() };
     l2.insert_block(15, header_15, account_15);
     l2.insert_block(20, header_20, account_20);
     let l2 = Arc::new(l2);
@@ -215,6 +224,15 @@ fn base_game_mocks() -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, B256,
     let factory = single_game_factory();
 
     (l2, factory, root_15, root_20)
+}
+
+/// An unchallenged TEE proposal whose roots match the L2 checkpoints at blocks 15 and 20.
+fn valid_tee_proposal(root_15: B256, root_20: B256) -> MockGameState {
+    MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        intermediate_output_roots: vec![root_15, root_20],
+        ..game_state(20)
+    }
 }
 
 /// Builds the common L2, factory, and verifier mocks for an invalid-game
@@ -334,6 +352,65 @@ async fn test_step_validation_error_blocks_not_available() {
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
     driver.step().await.unwrap();
+}
+
+/// A valid game is revalidated every poll until its L2 block is finalized, then skipped.
+///
+/// Validation reads both checkpoint headers, so skipping it saves two header requests on the
+/// second poll. The finalized head is read before any checkpoint: reading it afterwards would let
+/// a fork that finalized mid-validation cache roots that were only checked on the abandoned fork.
+#[rstest]
+#[case::finalized(20, 2)]
+#[case::not_finalized(15, 0)]
+#[tokio::test]
+async fn test_step_skips_revalidating_finalized_valid_games(
+    #[case] finalized_block_number: u64,
+    #[case] expected_saved_header_requests: usize,
+) {
+    let (l2, factory, root_15, root_20) = finalized_game_mocks(Some(finalized_block_number));
+    let verifier = single_game_verifier(valid_tee_proposal(root_15, root_20));
+    let mut driver =
+        test_driver(factory, verifier, Arc::clone(&l2), default_zk_prover(), default_tx_manager());
+
+    driver.step().await.unwrap();
+    let first_step_header_requests = l2.header_requests.lock().unwrap().clone();
+    driver.step().await.unwrap();
+    let second_step_header_requests =
+        l2.header_requests.lock().unwrap().len() - first_step_header_requests.len();
+
+    let position = |block| first_step_header_requests.iter().position(|b| *b == block).unwrap();
+    assert!(
+        position(BlockNumberOrTag::Finalized) < position(BlockNumberOrTag::Number(15)),
+        "finalized head must be read before validation: {first_step_header_requests:?}"
+    );
+    assert_eq!(
+        first_step_header_requests.len() - second_step_header_requests,
+        expected_saved_header_requests,
+    );
+    assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
+}
+
+/// A fraudulent ZK challenge filed against a game already cached as valid is still nullified.
+#[tokio::test]
+async fn test_step_nullifies_fraudulent_zk_challenge_against_cached_valid_game() {
+    let (l2, factory, root_15, root_20) = finalized_game_mocks(Some(20));
+    let valid_proposal = valid_tee_proposal(root_15, root_20);
+    let verifier = single_game_verifier(valid_proposal.clone());
+    let tx_manager = default_tx_manager();
+    let mut driver =
+        test_driver(factory, Arc::clone(&verifier), l2, succeeded_zk_prover(), tx_manager.clone());
+
+    driver.step().await.unwrap();
+    assert!(driver.valid_games.contains(&addr(0)), "first poll should cache the valid game");
+
+    verifier.update_game(
+        addr(0),
+        MockGameState { zk_prover: ZK_PROVER_ADDR, countered_index: 2, ..valid_proposal },
+    );
+    driver.step().await.unwrap();
+    assert!(driver.proof_manager.has_pending_proof(addr(0)), "proof should be requested");
+    driver.step().await.unwrap();
+    assert_eq!(sent_disputes(&tx_manager), vec![(addr(0), DisputeKind::Nullify)]);
 }
 
 #[tokio::test]

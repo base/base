@@ -12,6 +12,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 BRANCH_NAME="${1:-}"
+SP1_GUEST_MANIFEST="crates/proof/zk/programs/succinct/Cargo.toml"
 
 if [[ -z "$BRANCH_NAME" ]]; then
     echo "Usage: $0 <branch_name>"
@@ -55,7 +56,9 @@ main() {
     fi
 
     cargo update --workspace
-    git add Cargo.toml Cargo.lock
+    # The SP1 guest sub-workspace locks the root crates' versions through path dependencies.
+    cargo update --workspace --manifest-path "$SP1_GUEST_MANIFEST"
+    git add Cargo.toml Cargo.lock "$(dirname "$SP1_GUEST_MANIFEST")/Cargo.lock"
     git commit -m "chore(release): set version to $BRANCH_VERSION"
 
     if [[ "${DRY_RUN:-}" == "true" ]]; then

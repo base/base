@@ -39,9 +39,9 @@ use tracing::warn;
 use crate::{
     ChainSpecSource, DevnetBlockInterval, ExportedBlock, InProcessClient, InProcessClientConfig,
     InProcessNodeRuntime, LocalBenchmarkArgs, PrometheusBlockCollector, ProofsSummary,
-    ReplayManifest, ReplayProofsProbe, SnapshotBenchmarkArgs, SnapshotBenchmarkReportConfig,
-    SnapshotChainConfig, SnapshotL2Stack, VisualizerBlockMetrics, read_export_manifest,
-    read_exported_blocks,
+    RecordedReplay, ReplayManifest, ReplayProofsProbe, SnapshotBenchmarkArgs,
+    SnapshotBenchmarkReportConfig, SnapshotChainConfig, SnapshotL2Stack, VisualizerBlockMetrics,
+    read_export_manifest, read_exported_blocks,
 };
 
 /// File the replay result is written to inside `--output-dir`.
@@ -58,9 +58,9 @@ const WITNESS_COPY_DIR: &str = "invalid-block-hooks";
 /// Placeholder trusted peer for the replay node. [`InProcessClient`] always configures one
 /// trusted peer; the replay node must not sync from anyone, so it gets an unreachable one. The
 /// node ID is the secp256k1 generator point, a valid public key that no peer will answer for.
-const UNREACHABLE_PEER_ENODE: &str = "enode://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8@127.0.0.1:1";
+pub(crate) const UNREACHABLE_PEER_ENODE: &str = "enode://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8@127.0.0.1:1";
 /// Placeholder `rollup.sequencer` URL; the replay node receives no transactions to forward.
-const UNUSED_SEQUENCER_URL: &str = "http://127.0.0.1:1";
+pub(crate) const UNUSED_SEQUENCER_URL: &str = "http://127.0.0.1:1";
 /// Exported blocks decoded ahead of the engine calls, off the async runtime.
 const PREFETCH_BLOCKS: usize = 64;
 
@@ -96,6 +96,11 @@ pub struct ReplayBenchmarkArgs {
     /// history covers while all are busy are skipped.
     #[arg(long, default_value = "2")]
     pub proofs_concurrency: NonZeroUsize,
+    /// Directory a node wrote with `--debug.engine-api-store`. Replays its messages verbatim
+    /// instead of the export's blocks, from the first payload built on the datadir head, and
+    /// writes `recorded-replay-result.json`. The export supplies only the chain spec.
+    #[arg(long, conflicts_with_all = ["paced", "proofs_dir"])]
+    pub engine_store_dir: Option<PathBuf>,
     /// Skip checking each block's state root task trie updates against a serial computation.
     /// The check logs differences even when the state root matches; it does not fail the replay.
     #[arg(long)]
@@ -328,7 +333,10 @@ impl ReplayBenchmarkArgs {
         .await
         .wrap_err("failed to start replay node")?;
 
-        let output_result = self.execute(&client, manifest, block_interval, jwt_secret).await;
+        let output_result = match &self.engine_store_dir {
+            Some(dir) => RecordedReplay::run(&client, jwt_secret, dir, &self.output_dir).await,
+            None => self.execute(&client, manifest, block_interval, jwt_secret).await,
+        };
         if let Err(error) = &output_result {
             eprintln!("replay failed: {error:?}");
             let _ = std::io::stderr().flush();
@@ -705,7 +713,8 @@ impl ReplayBenchmarkArgs {
     }
 
     /// Resolves the chain the way `base-bench snapshot` does and applies the run's schedule:
-    /// Denim at the first produced block for 200 ms, never for 2 s.
+    /// Denim at the first produced block for 200 ms, never for 2 s. An export of canonical blocks
+    /// keeps the chain's own schedule.
     pub fn replay_chain_spec(
         manifest: &ReplayManifest,
     ) -> Result<(BaseChainSpec, DevnetBlockInterval)> {
@@ -721,11 +730,15 @@ impl ReplayBenchmarkArgs {
             rollup_config: manifest.rollup_config.clone(),
         }
         .resolve()?;
-        let chain_spec = SnapshotL2Stack::chain_spec(
-            (*chain.chain_spec).clone(),
-            manifest.first_block_timestamp,
-            block_interval,
-        );
+        let chain_spec = if manifest.source.is_some() {
+            (*chain.chain_spec).clone()
+        } else {
+            SnapshotL2Stack::chain_spec(
+                (*chain.chain_spec).clone(),
+                manifest.first_block_timestamp,
+                block_interval,
+            )
+        };
         Ok((chain_spec, block_interval))
     }
 
@@ -789,7 +802,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
     use alloy_rpc_types_engine::{ExecutionPayloadV1, PayloadStatus, PayloadStatusEnum};
-    use base_common_chains::Upgrades;
+    use base_common_chains::{ChainConfig, Upgrades};
     use base_common_genesis::BaseUpgrade;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use clap::Parser;
@@ -801,7 +814,8 @@ mod tests {
         ReplayRun,
     };
     use crate::{
-        BenchmarkCli, BenchmarkCommand, DevnetBlockInterval, ExportedBlock, ReplayManifest,
+        BenchmarkCli, BenchmarkCommand, DevnetBlockInterval, ExportSource, ExportedBlock,
+        ReplayManifest,
     };
 
     const FIRST_BLOCK_TIMESTAMP: u64 = 2_000_000_000;
@@ -818,6 +832,7 @@ mod tests {
             last_hash: B256::repeat_byte(2),
             last_state_root: B256::repeat_byte(3),
             block_count: 2,
+            source: None,
         }
     }
 
@@ -1031,6 +1046,22 @@ mod tests {
 
         assert_eq!(interval, DevnetBlockInterval::TwoSeconds);
         assert_eq!(chain_spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
+    }
+
+    #[test]
+    fn canonical_manifest_keeps_the_chain_denim_schedule() {
+        let mut manifest = manifest(2_000);
+        manifest.source = Some(ExportSource {
+            datadir: "datadir".into(),
+            head_number: manifest.last_number,
+            head_timestamp: FIRST_BLOCK_TIMESTAMP,
+        });
+        let (chain_spec, _) = ReplayBenchmarkArgs::replay_chain_spec(&manifest).unwrap();
+
+        assert_eq!(
+            chain_spec.fork(BaseUpgrade::Denim),
+            ForkCondition::Timestamp(ChainConfig::mainnet().denim_timestamp.unwrap())
+        );
     }
 
     #[test]

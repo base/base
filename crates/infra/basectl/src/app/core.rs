@@ -15,7 +15,7 @@ use crate::{
     app::EVENT_POLL_TIMEOUT,
     config::MonitoringConfig,
     output::COLOR_BASE_BLUE,
-    tui::{AppFrame, Toast, restore_terminal, setup_terminal},
+    tui::{AppFrame, ConsensusBadge, Toast, restore_terminal, setup_terminal},
 };
 
 // ---------------------------------------------------------------------------
@@ -143,6 +143,10 @@ impl App {
                     &self.resources.config,
                     self.using_public_rpc,
                     self.pending_network.is_some(),
+                    ConsensusBadge::resolve(
+                        &self.resources.config,
+                        self.resources.conductor.gateway.is_some(),
+                    ),
                     current_view.keybindings(),
                 );
                 // Network picker overlays the entire frame, above the view.
@@ -159,7 +163,10 @@ impl App {
                     break;
                 }
 
-                let action = if self.network_picker.is_some() {
+                let action = if self.resources.toasts.dismiss_sticky() {
+                    // A key that dismisses a sticky toast does nothing else.
+                    Action::None
+                } else if self.network_picker.is_some() {
                     // All keys feed the picker when it is open.
                     self.handle_network_picker_key(key);
                     Action::None

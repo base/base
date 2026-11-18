@@ -217,7 +217,7 @@ mod tests {
         Evm::new(
             spec,
             BlockEnv::<BaseEvmTypes>::default(),
-            BaseEvmTypes::tx_registry(),
+            BaseEvmTypes::tx_registry(spec),
             InMemoryDB::default(),
             Precompiles::base(spec.into()),
         )

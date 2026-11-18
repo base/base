@@ -451,6 +451,14 @@ could repeatedly attempt to connect, wasting resources. The gater ensures that c
 are bounded and that known-bad actors can be blocked at the connection level rather than just at the
 gossip level.
 
+Protecting a peer (with `opp2p_protectPeer`, or at startup with `--p2p.trusted-peers`) exempts it
+from the redial limit, from the `--p2p.peers.hi` connection cap, and from score bans.
+`--p2p.trusted-peers` takes comma-separated multiaddrs with a `/p2p/<peer-id>` component, or ENRs
+(the `ENR` field of `opp2p_self`). Besides protecting each peer, the node dials it at startup,
+redials it every minute while disconnected, and adds it as a GossipSub explicit peer, so it receives
+every gossiped block regardless of mesh selection. Explicit peering is configured per node: a node
+refuses mesh GRAFTs from peers it trusts, so operators should list each other on both sides.
+
 
 ### The libp2p Behaviour: combining protocols
 

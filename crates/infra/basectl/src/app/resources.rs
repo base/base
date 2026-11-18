@@ -9,8 +9,8 @@ use crate::{
     app::{DaTracker, LoadingState},
     config::{ConductorNodeConfig, MonitoringConfig},
     rpc::{
-        BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, ConductorPollUpdate, L1BlockInfo,
-        L1ConnectionMode, PodsSnapshot, ProofsSnapshot, ValidatorNodeStatus,
+        BacklogFetchResult, BlockDaInfo, ClusterResponse, ConductorNodeStatus, ConductorPollUpdate,
+        L1BlockInfo, L1ConnectionMode, PodsSnapshot, ProofsSnapshot, ValidatorNodeStatus,
     },
     tui::ToastState,
 };
@@ -44,6 +44,18 @@ pub struct ConductorState {
     pub cluster_membership: Option<Arc<ClusterMembership>>,
     /// Whether the active node list comes from a static config or live discovery.
     pub source_label: SourceLabel,
+    /// Set when the view is fed by the approval gateway's cluster view
+    /// instead of direct conductor RPCs.
+    pub gateway: Option<GatewayClusterView>,
+}
+
+/// Latest approval-gateway cluster view shown by the conductor view.
+#[derive(Debug, Clone, Default)]
+pub struct GatewayClusterView {
+    /// Most recent cluster snapshot, if one has arrived.
+    pub cluster: Option<ClusterResponse>,
+    /// Why the last refresh failed, cleared by the next snapshot.
+    pub notice: Option<String>,
 }
 
 impl ConductorState {
@@ -86,8 +98,27 @@ impl ConductorState {
                     }
                 }
                 ConductorPollUpdate::NodeListRefreshed(nodes) => self.nodes_config = nodes,
+                ConductorPollUpdate::GateSnapshot(cluster) => {
+                    self.nodes = cluster.statuses();
+                    let gateway = self.gateway.get_or_insert_default();
+                    gateway.cluster = Some(*cluster);
+                    gateway.notice = None;
+                }
+                ConductorPollUpdate::GateNotice(notice) => {
+                    self.gateway.get_or_insert_default().notice = Some(notice);
+                }
             }
         }
+    }
+
+    /// Raft server ID of the node shown as `name`, the target ID for a
+    /// transfer proposal: from the gateway's cluster view in gateway mode,
+    /// else from the conductor config.
+    pub fn server_id_for(&self, name: &str) -> Option<&str> {
+        if let Some(cluster) = self.gateway.as_ref().and_then(|gateway| gateway.cluster.as_ref()) {
+            return cluster.servers.iter().find(|server| server.name() == name)?.id.as_deref();
+        }
+        self.nodes_config.iter().find(|node| node.name == name).map(|node| node.server_id.as_str())
     }
 
     /// Returns the safe L2 block number reported by the current Raft leader, if known.

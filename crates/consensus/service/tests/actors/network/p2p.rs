@@ -104,3 +104,30 @@ async fn test_protected_peer_bypasses_connection_limits() -> anyhow::Result<()> 
 
     Ok(())
 }
+
+/// A node dials its trusted peers at startup without discovery, reports them as protected, and
+/// connects to all of them even when they outnumber its connection limit.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trusted_peers_bypass_connection_limits() -> anyhow::Result<()> {
+    let mut builder = TestNetworkBuilder::new();
+    let trusted_1 = builder.build(vec![]).await;
+    let trusted_2 = builder.build(vec![]).await;
+    let trusted_peers = vec![
+        trusted_1.listen_multiaddr().await?.parse()?,
+        trusted_2.listen_multiaddr().await?.parse()?,
+    ];
+
+    let node = builder
+        .with_connection_limits_config(ConnectionLimitsConfig::new(1))
+        .with_trusted_peers(trusted_peers)
+        .build(vec![])
+        .await;
+
+    node.is_connected_to_with_retries(&trusted_1).await?;
+    node.is_connected_to_with_retries(&trusted_2).await?;
+    let peers = node.peers().await?;
+    assert_eq!(peers.total_connected, 2);
+    assert!(peers.peers.values().all(|peer| peer.protected));
+
+    Ok(())
+}

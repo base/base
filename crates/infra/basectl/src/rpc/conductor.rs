@@ -1,9 +1,6 @@
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
-use base_consensus_rpc::{
-    AdminApiClient, BaseP2PApiClient, ClusterMembership, ConductorApiClient, RollupNodeApiClient,
-    ServerSuffrage,
-};
+use base_consensus_rpc::{ClusterMembership, ConductorApiClient, ServerSuffrage};
 use futures::{StreamExt, stream, stream::FuturesUnordered};
 use jsonrpsee::{
     core::client::{ClientT, Error as JsonRpcClientError},
@@ -13,7 +10,11 @@ use jsonrpsee::{
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use crate::config::{ConductorNodeConfig, ConductorSource};
+use super::ConsensusClient;
+use crate::{
+    ClusterResponse, ConductorFeed,
+    config::{ConductorNodeConfig, ConductorSource},
+};
 
 /// Live status snapshot for a single node in an HA conductor cluster.
 #[derive(Debug, Clone)]
@@ -878,13 +879,18 @@ pub enum ConductorPollUpdate {
     /// change. Subscribers may use this to update displayed config without
     /// restarting the poller.
     NodeListRefreshed(Vec<ConductorNodeConfig>),
+    /// Latest cluster view from the approval gateway (gateway feed only).
+    GateSnapshot(Box<ClusterResponse>),
+    /// Why the approval gateway's cluster view could not be refreshed
+    /// (gateway feed only); the last snapshot stays on screen.
+    GateNotice(String),
 }
 
 type ConductorClientTuple = (
     String,
     String,
     jsonrpsee::http_client::HttpClient,
-    jsonrpsee::http_client::HttpClient,
+    ConsensusClient,
     Option<jsonrpsee::http_client::HttpClient>,
 );
 
@@ -902,13 +908,12 @@ fn build_conductor_clients(
                     warn!(error = %e, node = %node.name, "failed to build conductor HTTP client");
                 })
                 .ok()?;
-            let cl_client = HttpClientBuilder::default()
-                .request_timeout(timeout)
-                .build(node.cl_rpc.as_str())
+            let cl_client = ConsensusClient::connect(&node.cl_rpc)
                 .inspect_err(|e| {
-                    warn!(error = %e, node = %node.name, "failed to build CL HTTP client");
+                    warn!(error = ?e, node = %node.name, "failed to build CL HTTP client");
                 })
-                .ok()?;
+                .ok()?
+                .with_timeout(timeout);
             let el_client = node.el_rpc.as_ref().and_then(|url| {
                 HttpClientBuilder::default()
                     .request_timeout(timeout)
@@ -956,9 +961,9 @@ async fn fetch_conductor_statuses(
                 ConductorApiClient::conductor_paused(conductor_client),
                 ConductorApiClient::conductor_stopped(conductor_client),
                 ConductorApiClient::conductor_sequencer_healthy(conductor_client),
-                AdminApiClient::admin_sequencer_active(cl_client),
-                RollupNodeApiClient::sync_status(cl_client),
-                BaseP2PApiClient::opp2p_peer_stats(cl_client),
+                cl_client.sequencer_active(),
+                cl_client.sync_status(),
+                cl_client.peer_stats(),
                 async {
                     if let Some(el) = el_client {
                         let r: Result<alloy_primitives::U64, _> =
@@ -1019,7 +1024,8 @@ async fn fetch_conductor_statuses(
     .await
 }
 
-/// Polls every conductor in the active source every 200 ms and forwards updates.
+/// Polls every conductor in the active source every
+/// [`ConductorFeed::DIRECT_POLL_INTERVAL`] and forwards updates.
 ///
 /// Builds one pair of HTTP clients per node (conductor RPC + CL RPC) so connection
 /// setup cost is paid only once per node lifetime. Each poll fires all per-node
@@ -1032,7 +1038,6 @@ async fn fetch_conductor_statuses(
 /// update. For `Discover` sources, the synthesised peer list is rebuilt from the
 /// new membership and the per-node clients are recreated in place.
 pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<ConductorPollUpdate>) {
-    const POLL_INTERVAL: Duration = Duration::from_millis(200);
     const RPC_TIMEOUT: Duration = Duration::from_millis(500);
 
     let discovered = source.is_discover();
@@ -1045,7 +1050,7 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
     let mut last_membership: Option<Arc<ClusterMembership>> = None;
     let mut membership_round_robin: usize = 0;
 
-    let mut interval = tokio::time::interval(POLL_INTERVAL);
+    let mut interval = tokio::time::interval(ConductorFeed::DIRECT_POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {

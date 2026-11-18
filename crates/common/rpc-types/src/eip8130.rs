@@ -326,7 +326,7 @@ mod tests {
             ExecutionConfig::for_spec_and_version(spec, version),
             spec,
             BlockEnv::<BaseEvmTypes>::default(),
-            BaseEvmTypes::tx_registry(),
+            BaseEvmTypes::tx_registry(spec),
             InMemoryDB::default(),
             BaseEvmTypes::native_precompiles(spec, None),
         );

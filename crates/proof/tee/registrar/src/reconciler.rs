@@ -146,13 +146,10 @@ impl SignerReconciler {
                     "instance unavailable, preserving last-known active signers"
                 );
                 active_signers.extend(entry.signers.iter().copied());
-                if entry.signers.is_empty() {
-                    // We cannot identify signers to protect for an unhealthy
-                    // instance first observed after a restart.
-                    unresolved_instance_ids.insert(instance_id.clone());
-                } else if !unhealthy_instance_ids.contains(instance_id) {
-                    // A missing instance could have changed signers since its
-                    // cached addresses were last refreshed.
+                // An empty cache cannot name the signers of an unhealthy instance first
+                // observed after a restart, and a missing instance could have changed
+                // signers since its cached addresses were last refreshed.
+                if entry.signers.is_empty() || !unhealthy_instance_ids.contains(instance_id) {
                     unresolved_instance_ids.insert(instance_id.clone());
                 }
                 true

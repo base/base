@@ -38,6 +38,9 @@ pub trait Executor {
     fn update_safe_head(&mut self, header: Sealed<Header>);
 
     /// Execute the given payload attributes to build and execute a block.
+    ///
+    /// The seal on the returned header must be the header's true hash: the driver uses it as the
+    /// block hash without recomputing it.
     async fn execute_payload(
         &mut self,
         attributes: BasePayloadAttributes,

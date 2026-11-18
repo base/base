@@ -1,36 +1,29 @@
 use std::{
-    cmp::{Ordering, min},
     env, fmt, fs,
     num::NonZeroU64,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alloy_consensus::{BlockHeader, Header};
-use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_network::{BlockResponse, Network, primitives::HeaderResponse};
-use alloy_primitives::{Address, B256, U256, keccak256};
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
-use alloy_rlp::Decodable;
+use alloy_consensus::{EMPTY_ROOT_HASH, Header};
+use alloy_eips::BlockId;
+use alloy_primitives::{Address, B256, keccak256};
+use alloy_provider::{
+    Provider, ProviderBuilder, RootProvider, network::primitives::HeaderResponse,
+};
 use alloy_sol_types::SolValue;
-use anyhow::{Context, Result, anyhow, bail};
-use base_common_consensus::BaseBlock;
+use anyhow::{Context, Result, bail};
+use base_common_consensus::Predeploys;
 use base_common_genesis::{BaseFeature, RollupConfig};
 use base_common_network::Base;
-use base_optimism_rpc::DebugProviderExt;
 use base_proof_host::HostConfig;
 use base_proof_zk_utils::boot::BootInfoStruct;
-use base_protocol::L2BlockInfo;
 use futures::{StreamExt, stream};
 use reqwest::Url;
 use serde_json::{Value, json};
 
-use crate::{
-    L2Output,
-    rpc_types::{OutputResponse, SafeHeadResponse},
-};
+use crate::L2Output;
 
 #[derive(Clone)]
 /// The `OPSuccinctDataFetcher` struct is used to fetch the L2 output data and L2 claim data for a
@@ -54,12 +47,6 @@ pub struct OPSuccinctDataFetcher {
 impl fmt::Debug for OPSuccinctDataFetcher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OPSuccinctDataFetcher").finish_non_exhaustive()
-    }
-}
-
-impl Default for OPSuccinctDataFetcher {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -103,94 +90,8 @@ fn resolve_config_dir(explicit: Option<&Path>, env_name: &str, default: &str) ->
     })
 }
 
-/// The mode corresponding to the chain we are fetching data for.
-#[derive(Clone, Copy, Debug)]
-pub enum RPCMode {
-    /// L1 execution layer.
-    L1,
-    /// L1 beacon chain.
-    L1Beacon,
-    /// L2 execution layer.
-    L2,
-    /// L2 consensus node.
-    L2Node,
-}
-
-/// Gets the RPC URLs from environment variables.
-///
-/// `L1_RPC`: The L1 RPC URL.
-/// `L1_BEACON_RPC`: The L1 beacon RPC URL.
-/// `L2_RPC`: The L2 RPC URL.
-/// `L2_NODE_RPC`: The L2 node RPC URL.
-pub fn get_rpcs_from_env() -> RPCConfig {
-    let l1_rpc = env::var("L1_RPC").expect("L1_RPC must be set");
-    let maybe_l1_beacon_rpc = env::var("L1_BEACON_RPC").ok();
-
-    // L1_BEACON_RPC is optional. If not set or empty, set to None.
-    let l1_beacon_rpc = maybe_l1_beacon_rpc
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| Url::parse(s).expect("L1_BEACON_RPC must be a valid URL"));
-
-    let l2_rpc = env::var("L2_RPC").expect("L2_RPC must be set");
-    let l2_node_rpc = env::var("L2_NODE_RPC").expect("L2_NODE_RPC must be set");
-
-    RPCConfig {
-        l1_rpc: Url::parse(&l1_rpc).expect("L1_RPC must be a valid URL"),
-        l1_beacon_rpc,
-        l2_rpc: Url::parse(&l2_rpc).expect("L2_RPC must be a valid URL"),
-        l2_node_rpc: Url::parse(&l2_node_rpc).expect("L2_NODE_RPC must be a valid URL"),
-        l1_config_dir: None,
-        l2_config_dir: None,
-    }
-}
-
-/// The fee data for a block.
-#[derive(Debug)]
-pub struct FeeData {
-    /// Block number.
-    pub block_number: u64,
-    /// Transaction index.
-    pub tx_index: u64,
-    /// Transaction hash.
-    pub tx_hash: B256,
-    /// L1 gas cost.
-    pub l1_gas_cost: U256,
-    /// Transaction fee.
-    pub tx_fee: u128,
-}
-
 impl OPSuccinctDataFetcher {
-    /// Gets the RPC URL's and saves the rollup config for the chain to the rollup config file.
-    pub fn new() -> Self {
-        let rpc_config = get_rpcs_from_env();
-
-        let l1_provider =
-            Arc::new(ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone()));
-        let l2_provider =
-            Arc::new(ProviderBuilder::default().connect_http(rpc_config.l2_rpc.clone()));
-
-        Self {
-            rpc_config,
-            l1_provider,
-            l2_provider,
-            rollup_config: None,
-            rollup_config_path: None,
-            l1_config_path: None,
-        }
-    }
-
-    /// Initialize the fetcher with a rollup config, reading RPC URLs from environment variables.
-    pub async fn new_with_rollup_config() -> Result<Self> {
-        let rpc_config = get_rpcs_from_env();
-        Self::from_rpc_config_with_rollup_config(rpc_config).await
-    }
-
     /// Initialize the fetcher with an explicit [`RPCConfig`] and a rollup config.
-    ///
-    /// Prefer this over [`new_with_rollup_config`](Self::new_with_rollup_config) when the RPC
-    /// URLs are already known, avoiding reliance on environment variables.
     pub async fn from_rpc_config_with_rollup_config(rpc_config: RPCConfig) -> Result<Self> {
         let l1_provider =
             Arc::new(ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone()));
@@ -223,21 +124,6 @@ impl OPSuccinctDataFetcher {
         })
     }
 
-    /// Fetch the L2 chain ID.
-    pub async fn get_l2_chain_id(&self) -> Result<u64> {
-        Ok(self.l2_provider.get_chain_id().await?)
-    }
-
-    /// Fetch the latest L2 block header.
-    pub async fn get_l2_head(&self) -> Result<Header> {
-        let block = self.l2_provider.get_block_by_number(BlockNumberOrTag::Latest).await?;
-        if let Some(block) = block {
-            Ok(block.header.inner.into())
-        } else {
-            bail!("Failed to get L2 head");
-        }
-    }
-
     /// Fetch an L1 block header by ID.
     pub async fn get_l1_header(&self, block_number: BlockId) -> Result<Header> {
         let block = self.l1_provider.get_block(block_number).await?;
@@ -246,80 +132,6 @@ impl OPSuccinctDataFetcher {
             Ok(block.header.inner)
         } else {
             bail!("Failed to get L1 header for block {block_number}");
-        }
-    }
-
-    /// Fetch an L2 block header by ID.
-    pub async fn get_l2_header(&self, block_number: BlockId) -> Result<Header> {
-        let block = self.l2_provider.get_block(block_number).await?;
-
-        if let Some(block) = block {
-            Ok(block.header.inner.into())
-        } else {
-            bail!("Failed to get L2 header for block {block_number}");
-        }
-    }
-
-    /// Finds the L1 block at the provided timestamp.
-    pub async fn find_l1_block_by_timestamp(&self, target_timestamp: u64) -> Result<(B256, u64)> {
-        self.find_block_by_timestamp(&self.l1_provider, target_timestamp).await
-    }
-
-    /// Finds the block at the provided timestamp, using the provided provider.
-    async fn find_block_by_timestamp<N>(
-        &self,
-        provider: &RootProvider<N>,
-        target_timestamp: u64,
-    ) -> Result<(B256, u64)>
-    where
-        N: Network,
-    {
-        let latest_block = provider.get_block(BlockId::finalized()).await?;
-        let mut low = 0;
-        let mut high = if let Some(block) = latest_block {
-            block.header().number()
-        } else {
-            bail!("Failed to get latest block");
-        };
-
-        while low <= high {
-            let mid = (low + high) / 2;
-            let block = provider.get_block(mid.into()).await?;
-            if let Some(block) = block {
-                let block_timestamp = block.header().timestamp();
-
-                match block_timestamp.cmp(&target_timestamp) {
-                    Ordering::Equal => {
-                        return Ok((block.header().hash().0.into(), block.header().number()));
-                    }
-                    Ordering::Less => low = mid + 1,
-                    Ordering::Greater => high = mid - 1,
-                }
-            } else {
-                bail!("Failed to get block for block {mid}");
-            }
-        }
-
-        // Return the block hash of the closest block after the target timestamp
-        let block = provider.get_block(low.into()).await?;
-        if let Some(block) = block {
-            Ok((block.header().hash().0.into(), block.header().number()))
-        } else {
-            bail!("Failed to get block for block {low}");
-        }
-    }
-
-    /// Get the RPC URL for the given RPC mode.
-    pub fn get_rpc_url(&self, rpc_mode: RPCMode) -> Result<&Url> {
-        match rpc_mode {
-            RPCMode::L1 => Ok(&self.rpc_config.l1_rpc),
-            RPCMode::L2 => Ok(&self.rpc_config.l2_rpc),
-            RPCMode::L1Beacon => self
-                .rpc_config
-                .l1_beacon_rpc
-                .as_ref()
-                .ok_or_else(|| anyhow!("L1 beacon RPC URL is not set")),
-            RPCMode::L2Node => Ok(&self.rpc_config.l2_node_rpc),
         }
     }
 
@@ -440,20 +252,6 @@ impl OPSuccinctDataFetcher {
         serde_json::from_value(response["result"].clone()).map_err(Into::into)
     }
 
-    /// Fetch arbitrary data from the RPC.
-    pub async fn fetch_rpc_data_with_mode<T>(
-        &self,
-        rpc_mode: RPCMode,
-        method: &str,
-        params: Vec<Value>,
-    ) -> Result<T>
-    where
-        T: serde::de::DeserializeOwned,
-    {
-        let url = self.get_rpc_url(rpc_mode)?;
-        Self::fetch_rpc_data(url, method, params).await
-    }
-
     /// Get the earliest L1 header in a batch of boot infos.
     pub async fn get_earliest_l1_head_in_batch(
         &self,
@@ -533,158 +331,6 @@ impl OPSuccinctDataFetcher {
         Ok(headers)
     }
 
-    /// Fetch the L2 output at a given block number.
-    pub async fn get_l2_output_at_block(&self, block_number: u64) -> Result<OutputResponse> {
-        let block_number_hex = format!("0x{block_number:x}");
-        let l2_output_data: OutputResponse = self
-            .fetch_rpc_data_with_mode(
-                RPCMode::L2Node,
-                "optimism_outputAtBlock",
-                vec![block_number_hex.into()],
-            )
-            .await?;
-        Ok(l2_output_data)
-    }
-
-    /// Get the L1 block from which the `l2_end_block` can be derived.
-    ///
-    /// Use binary search to find the first L1 block with an L2 safe head >= `l2_end_block`.
-    pub async fn get_safe_l1_block_for_l2_block(&self, l2_end_block: u64) -> Result<(B256, u64)> {
-        let latest_l1_header = self.get_l1_header(BlockId::finalized()).await?;
-
-        // Get the l1 origin of the l2 end block.
-        let l2_end_block_hex = format!("0x{l2_end_block:x}");
-        let optimism_output_data: OutputResponse = self
-            .fetch_rpc_data_with_mode(
-                RPCMode::L2Node,
-                "optimism_outputAtBlock",
-                vec![l2_end_block_hex.into()],
-            )
-            .await?;
-
-        let l1_origin = optimism_output_data.block_ref.l1_origin;
-
-        // Binary search for the first L1 block with L2 safe head >= l2_end_block.
-        let mut low = l1_origin.number;
-        let mut high = latest_l1_header.number;
-        let mut first_valid = None;
-
-        while low <= high {
-            let mid = low + (high - low) / 2;
-            let l1_block_number_hex = format!("0x{mid:x}");
-            let result: SafeHeadResponse = self
-                .fetch_rpc_data_with_mode(
-                    RPCMode::L2Node,
-                    "optimism_safeHeadAtL1Block",
-                    vec![l1_block_number_hex.into()],
-                )
-                .await?;
-            let l2_safe_head = result.safe_head.number;
-
-            if l2_safe_head >= l2_end_block {
-                // Found a valid block, save it and keep searching lower.
-                first_valid = Some((result.l1_block.hash, result.l1_block.number));
-                high = mid - 1;
-            } else {
-                // Need to search higher
-                low = mid + 1;
-            }
-        }
-
-        first_valid.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Could not find an L1 block with an L2 safe head greater than the L2 end block."
-            )
-        })
-    }
-
-    /// If the safeDB is activated, use it to fetch the L1 block where the batch including the data
-    /// for the end L2 block was posted. If the safeDB is not activated:
-    ///   - If `safe_db_fallback` is `true`, estimate the L1 head based on the L2 block timestamp.
-    ///   - Else, return an error.
-    pub async fn get_l1_head(
-        &self,
-        l2_end_block: u64,
-        safe_db_fallback: bool,
-    ) -> Result<(B256, u64)> {
-        if self.rollup_config.is_none() {
-            return Err(anyhow::anyhow!("Rollup config not loaded."));
-        }
-
-        match self.get_safe_l1_block_for_l2_block(l2_end_block).await {
-            Ok(safe_head) => Ok(safe_head),
-            Err(e) => {
-                if safe_db_fallback {
-                    tracing::warn!(
-                        "SafeDB not activated - falling back to timestamp-based L1 head estimation. WARNING: This fallback method is more expensive and less reliable. Derivation may fail if the L2 block batch is posted after our estimated L1 head. Enable SafeDB on op-node to fix this."
-                    );
-                    // Fallback: estimate L1 block based on timestamp
-                    let max_batch_post_delay_minutes = 40;
-                    let l2_block_timestamp =
-                        self.get_l2_header(l2_end_block.into()).await?.timestamp;
-                    let finalized_l1_timestamp =
-                        self.get_l1_header(BlockId::finalized()).await?.timestamp;
-
-                    let target_timestamp = min(
-                        l2_block_timestamp + (max_batch_post_delay_minutes * 60),
-                        finalized_l1_timestamp,
-                    );
-                    self.find_l1_block_by_timestamp(target_timestamp).await
-                } else {
-                    Err(anyhow::anyhow!(
-                        "SafeDB is not activated on your op-node and the `SAFE_DB_FALLBACK` flag is set to false. Please enable the safeDB on your op-node to fix this, or set `SAFE_DB_FALLBACK` flag to true, which will be more expensive: {e}"
-                    ))
-                }
-            }
-        }
-    }
-
-    // Source from: https://github.com/anton-rs/kona/blob/85b1c88b44e5f54edfc92c781a313717bad5dfc7/crates/derive-alloy/src/alloy_providers.rs#L225.
-    /// Fetch an L2 block by number.
-    pub async fn get_l2_block_by_number(&self, block_number: u64) -> Result<BaseBlock> {
-        let raw_block = self.l2_provider.debug_get_raw_block(block_number).await?;
-        let block = BaseBlock::decode(&mut raw_block.as_ref()).map_err(|e| anyhow::anyhow!(e))?;
-        Ok(block)
-    }
-
-    /// Fetch L2 block info by number.
-    pub async fn l2_block_info_by_number(&self, block_number: u64) -> Result<L2BlockInfo> {
-        // If the rollup config is not already loaded, fetch and save it.
-        if self.rollup_config.is_none() {
-            return Err(anyhow::anyhow!("Rollup config not loaded."));
-        }
-        let genesis = self.rollup_config.as_ref().unwrap().genesis;
-        let block = self.get_l2_block_by_number(block_number).await?;
-        Ok(L2BlockInfo::from_block_and_genesis(&block, &genesis)?)
-    }
-
-    /// Get the L2 safe head corresponding to the L1 block number using `optimism_safeHeadAtL1Block`.
-    pub async fn get_l2_safe_head_from_l1_block_number(&self, l1_block_number: u64) -> Result<u64> {
-        let l1_block_number_hex = format!("0x{l1_block_number:x}");
-        let result: SafeHeadResponse = self
-            .fetch_rpc_data_with_mode(
-                RPCMode::L2Node,
-                "optimism_safeHeadAtL1Block",
-                vec![l1_block_number_hex.into()],
-            )
-            .await?;
-        Ok(result.safe_head.number)
-    }
-
-    /// Check if the safeDB is activated on the L2 node.
-    pub async fn is_safe_db_activated(&self) -> Result<bool> {
-        let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
-        let l1_block_number_hex = format!("0x{:x}", finalized_l1_header.number);
-        let result: Result<SafeHeadResponse, _> = self
-            .fetch_rpc_data_with_mode(
-                RPCMode::L2Node,
-                "optimism_safeHeadAtL1Block",
-                vec![l1_block_number_hex.into()],
-            )
-            .await;
-        Ok(result.is_ok())
-    }
-
     /// Get the L2 output data for a given block number and save the boot info to a file in the data
     /// directory with `block_number`. Return the arguments to be passed to the native host for
     /// datagen.
@@ -716,14 +362,9 @@ impl OPSuccinctDataFetcher {
             .ok_or_else(|| anyhow::anyhow!("Block not found for block number {l2_start_block}"))?;
         let l2_output_state_root = l2_output_block.header.state_root;
         let agreed_l2_head_hash = l2_output_block.header.hash;
-        let l2_output_storage_hash = l2_provider
-            .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
-            .block_id(l2_start_block.into())
-            .await
-            .with_context(|| {
-                format!("eth_getProof L2ToL1MessagePasser at L2 block {l2_start_block}")
-            })?
-            .storage_hash;
+        let l2_output_storage_hash = self
+            .l2_to_l1_message_passer_storage_root(rollup_config, &l2_output_block.header)
+            .await?;
 
         let l2_output_encoded = L2Output {
             zero: 0,
@@ -741,14 +382,9 @@ impl OPSuccinctDataFetcher {
             .ok_or_else(|| anyhow::anyhow!("Block not found for block number {l2_end_block}"))?;
         let l2_claim_state_root = l2_claim_block.header.state_root;
         let l2_claim_hash = l2_claim_block.header.hash;
-        let l2_claim_storage_hash = l2_provider
-            .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
-            .block_id(l2_end_block.into())
-            .await
-            .with_context(|| {
-                format!("eth_getProof L2ToL1MessagePasser at L2 block {l2_end_block}")
-            })?
-            .storage_hash;
+        let l2_claim_storage_hash = self
+            .l2_to_l1_message_passer_storage_root(rollup_config, &l2_claim_block.header)
+            .await?;
 
         let l2_claim_encoded = L2Output {
             zero: 0,
@@ -812,11 +448,181 @@ impl OPSuccinctDataFetcher {
 
         Ok(HostConfig { request, prover, data_dir: None })
     }
+
+    /// Returns the storage root of the L2-to-L1 message passer at `header`.
+    ///
+    /// Returns `header.withdrawals_root()` without an RPC call when Isthmus is active at
+    /// `header.timestamp()` and the root is present and not [`EMPTY_ROOT_HASH`]. Otherwise
+    /// queries `eth_getProof` pinned to `header.hash()`, so the result cannot come from a
+    /// different block at the same height.
+    pub async fn l2_to_l1_message_passer_storage_root(
+        &self,
+        rollup_config: &RollupConfig,
+        header: &impl HeaderResponse,
+    ) -> Result<B256> {
+        if rollup_config.is_isthmus_active(header.timestamp())
+            && let Some(root) = header.withdrawals_root()
+            && root != EMPTY_ROOT_HASH
+        {
+            return Ok(root);
+        }
+
+        let block_hash = header.hash();
+        Ok(self
+            .l2_provider
+            .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Vec::new())
+            .block_id(block_hash.into())
+            .await
+            .with_context(|| {
+                format!(
+                    "eth_getProof L2ToL1MessagePasser at L2 block {} ({block_hash})",
+                    header.number()
+                )
+            })?
+            .storage_hash)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
+    use alloy_eips::BlockNumberOrTag;
+    use alloy_json_rpc::{RequestPacket, ResponsePacket};
+    use alloy_provider::transport::{TransportError, TransportFut};
+    use alloy_rpc_client::RpcClient;
+    use base_common_genesis::UpgradeConfig;
+    use base_protocol::OutputRoot;
+    use tower::{ServiceExt, service_fn};
+
     use super::*;
+
+    const ISTHMUS_TIME: u64 = 100;
+    const PROOF_STORAGE_HASH: B256 = B256::repeat_byte(0xCD);
+
+    fn rpc_block(header: &Header) -> Value {
+        let mut block = serde_json::to_value(header).unwrap();
+        block["hash"] = json!(header.hash_slow());
+        block["transactions"] = json!([]);
+        block["uncles"] = json!([]);
+        block
+    }
+
+    /// Serves `blocks` by number or hash, answers every `eth_getProof` with
+    /// [`PROOF_STORAGE_HASH`], and records the block each proof was requested at.
+    fn scripted_client(blocks: Vec<Header>, proof_blocks: Arc<Mutex<Vec<BlockId>>>) -> RpcClient {
+        let transport = service_fn(move |request: RequestPacket| {
+            let blocks = blocks.clone();
+            let proof_blocks = Arc::clone(&proof_blocks);
+            async move {
+                let RequestPacket::Single(request) = request else { panic!("unexpected batch") };
+                let params: Value =
+                    serde_json::from_str(request.params().map_or("[]", |p| p.get())).unwrap();
+                let result = match request.method() {
+                    "eth_getBlockByNumber" => {
+                        let number: BlockNumberOrTag =
+                            serde_json::from_value(params[0].clone()).unwrap();
+                        rpc_block(
+                            blocks.iter().find(|h| Some(h.number) == number.as_number()).unwrap(),
+                        )
+                    }
+                    "eth_getBlockByHash" => {
+                        let hash: B256 = serde_json::from_value(params[0].clone()).unwrap();
+                        rpc_block(blocks.iter().find(|h| h.hash_slow() == hash).unwrap())
+                    }
+                    "eth_getProof" => {
+                        proof_blocks
+                            .lock()
+                            .unwrap()
+                            .push(serde_json::from_value(params[2].clone()).unwrap());
+                        json!({
+                            "address": Predeploys::L2_TO_L1_MESSAGE_PASSER,
+                            "balance": "0x0",
+                            "codeHash": B256::ZERO,
+                            "nonce": "0x0",
+                            "storageHash": PROOF_STORAGE_HASH,
+                            "accountProof": [],
+                            "storageProof": [],
+                        })
+                    }
+                    method => panic!("unexpected RPC method {method}"),
+                };
+                let response = json!({ "jsonrpc": "2.0", "id": request.id(), "result": result });
+                Ok::<_, TransportError>(serde_json::from_value::<ResponsePacket>(response).unwrap())
+            }
+        })
+        .map_future(|future| Box::pin(future) as TransportFut<'static>);
+        RpcClient::new(transport, true)
+    }
+
+    #[tokio::test]
+    async fn host_args_read_message_passer_root_from_header_after_isthmus() {
+        let isthmus_root = B256::repeat_byte(0xEE);
+        let cases = [
+            ("isthmus root", Some(isthmus_root), isthmus_root, 1),
+            ("empty root", Some(EMPTY_ROOT_HASH), PROOF_STORAGE_HASH, 2),
+            ("missing root", None, PROOF_STORAGE_HASH, 2),
+        ];
+
+        for (name, end_withdrawals_root, expected_end_storage, expected_proofs) in cases {
+            // The start block is pre-Isthmus, so its withdrawals_root must be ignored.
+            let start = Header {
+                number: 5,
+                timestamp: ISTHMUS_TIME - 2,
+                state_root: B256::repeat_byte(0x01),
+                withdrawals_root: Some(B256::repeat_byte(0xAB)),
+                ..Default::default()
+            };
+            let end = Header {
+                number: 7,
+                timestamp: ISTHMUS_TIME,
+                state_root: B256::repeat_byte(0x02),
+                withdrawals_root: end_withdrawals_root,
+                ..Default::default()
+            };
+            let l1_head = Header { number: 1_000, ..Default::default() };
+            let (start_hash, end_hash, l1_head_hash) =
+                (start.hash_slow(), end.hash_slow(), l1_head.hash_slow());
+
+            let proof_blocks = Arc::new(Mutex::new(Vec::new()));
+            let client = scripted_client(
+                vec![start.clone(), end.clone(), l1_head],
+                Arc::clone(&proof_blocks),
+            );
+            let fetcher = OPSuccinctDataFetcher {
+                rpc_config: rpc_config(None, None),
+                l1_provider: Arc::new(RootProvider::new(client.clone())),
+                l2_provider: Arc::new(RootProvider::new(client)),
+                rollup_config: Some(RollupConfig {
+                    l1_chain_id: 1,
+                    upgrades: UpgradeConfig {
+                        isthmus_time: Some(ISTHMUS_TIME),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                rollup_config_path: None,
+                l1_config_path: None,
+            };
+
+            let host_args =
+                fetcher.get_host_args(5, 7, l1_head_hash, None, NonZeroU64::MIN).await.unwrap();
+
+            assert_eq!(
+                host_args.request.agreed_l2_output_root,
+                OutputRoot::from_parts(start.state_root, PROOF_STORAGE_HASH, start_hash).hash(),
+                "{name}"
+            );
+            assert_eq!(
+                host_args.request.claimed_l2_output_root,
+                OutputRoot::from_parts(end.state_root, expected_end_storage, end_hash).hash(),
+                "{name}"
+            );
+            let expected_proof_blocks: Vec<BlockId> =
+                [start_hash, end_hash].into_iter().take(expected_proofs).map(Into::into).collect();
+            assert_eq!(*proof_blocks.lock().unwrap(), expected_proof_blocks, "{name}");
+        }
+    }
 
     fn rpc_config(l1: Option<PathBuf>, l2: Option<PathBuf>) -> RPCConfig {
         RPCConfig {

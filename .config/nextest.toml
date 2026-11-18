@@ -20,6 +20,12 @@ retries = 1
 filter = 'package(base-action-harness)'
 slow-timeout = { period = "90s", terminate-after = 2 }
 
+# Asserts which 200 ms block a transaction lands in, so it must not share the host with other
+# tests. First matching override wins per setting, so the group and timeouts below still apply.
+[[profile.ci.overrides]]
+filter = 'binary(early_broadcast)'
+threads-required = 'num-test-threads'
+
 # Nextest profiles do not inherit default-profile overrides. Without this, CI
 # starts every Docker-backed system test at once and the runner gets OOM-killed.
 [[profile.ci.overrides]]
@@ -50,6 +56,11 @@ retries = 1
 filter = 'binary(eip8130)'
 retries = 0
 slow-timeout = { period = "5m", terminate-after = 5 }
+
+# See the `ci` profile: wall-clock inclusion assertions need the host to themselves.
+[[profile.default.overrides]]
+filter = 'binary(early_broadcast)'
+threads-required = 'num-test-threads'
 
 [[profile.default.overrides]]
 filter = 'package(base-system-tests)'

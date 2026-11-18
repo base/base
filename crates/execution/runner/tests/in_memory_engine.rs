@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_eips::BlockNumberOrTag;
+use alloy_eips::{BlockNumberOrTag, Encodable2718};
 use alloy_primitives::{B64, B256, U64};
 use alloy_provider::{Provider, RootProvider, transport::TransportResult};
 use alloy_rpc_client::RpcClient;
@@ -20,12 +20,16 @@ use alloy_rpc_types_engine::{
 use base_common_consensus::JovianExtraData;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadReady};
 use base_consensus_engine::{EngineClient, EngineClientBuilder, EngineEndpoint, InMemoryTransport};
 use base_consensus_providers::L1_RPC_TIMEOUT;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_core::args::RollupArgs;
-use base_node_runner::{BaseNodeRunner, test_utils::BLOCK_TIME_SECONDS};
+use base_node_runner::{
+    BaseNodeRunner,
+    test_utils::{BLOCK_TIME_SECONDS, L1_BLOCK_INFO_DEPOSIT_TX},
+};
+use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::build_test_genesis;
 use eyre::{Result, WrapErr, eyre};
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
@@ -41,9 +45,34 @@ use serde_json::json;
 /// Seals one block through the in-memory Engine API and reads it back over both transports.
 #[tokio::test(flavor = "multi_thread")]
 async fn in_memory_engine_seals_one_block() -> Result<()> {
+    seal_one_block(false, true).await
+}
+
+/// A CL can retrieve a complete Denim payload as soon as its ready hint arrives.
+#[tokio::test(flavor = "multi_thread")]
+async fn frozen_sequencer_payload_signals_ready() -> Result<()> {
+    seal_one_block(true, false).await
+}
+
+/// A pre-Denim improvement is not final and must not trigger early sealing.
+#[tokio::test(flavor = "multi_thread")]
+async fn improving_sequencer_payload_does_not_signal_ready() -> Result<()> {
+    seal_one_block(false, false).await
+}
+
+/// Deterministic replay also freezes, but must not notify the sequencer.
+#[tokio::test(flavor = "multi_thread")]
+async fn replay_payload_does_not_signal_ready() -> Result<()> {
+    seal_one_block(true, true).await
+}
+
+async fn seal_one_block(denim: bool, no_tx_pool: bool) -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
 
     let mut genesis = build_test_genesis();
+    if denim {
+        genesis.config.extra_fields.insert("base".into(), json!({ "denim": 0 }));
+    }
     let base_fee_params = BaseChainSpec::from_genesis(genesis.clone())
         .base_fee_params_at_timestamp(genesis.timestamp);
     // Jovian is active at genesis, so a child of genesis that misses reth's built-payload cache
@@ -73,7 +102,7 @@ async fn in_memory_engine_seals_one_block() -> Result<()> {
     .wrap_err("Failed to create test database")?;
 
     let runtime = Runtime::test();
-    let launched = BaseNodeRunner::new(RollupArgs::default())
+    let mut launched = BaseNodeRunner::new(RollupArgs::default())
         .launch(
             NodeBuilder::new(node_config).with_database(db).with_launch_context(runtime.clone()),
         )
@@ -112,9 +141,13 @@ async fn in_memory_engine_seals_one_block() -> Result<()> {
         .await?
         .ok_or_else(|| eyre!("missing genesis block"))?;
     let parent_hash = parent.header.hash;
+    let mut transactions = vec![L1_BLOCK_INFO_DEPOSIT_TX];
+    if denim {
+        transactions.push(BaseTimeUpdateTx::new(200)?.into_deposit_tx(1).encoded_2718().into());
+    }
     let attributes = BasePayloadAttributes {
         payload_attributes: PayloadAttributes {
-            timestamp: parent.header.timestamp + BLOCK_TIME_SECONDS,
+            timestamp: parent.header.timestamp + if denim { 0 } else { BLOCK_TIME_SECONDS },
             prev_randao: B256::ZERO,
             suggested_fee_recipient: parent.header.beneficiary,
             withdrawals: Some(vec![]),
@@ -124,8 +157,8 @@ async fn in_memory_engine_seals_one_block() -> Result<()> {
             slot_number: None,
             target_gas_limit: None,
         },
-        transactions: Some(vec![]),
-        no_tx_pool: Some(true),
+        transactions: Some(transactions.clone()),
+        no_tx_pool: Some(no_tx_pool),
         gas_limit: Some(parent.header.gas_limit),
         eip_1559_params: Some(B64::from(
             ((base_fee_params.max_change_denominator as u64) << 32)
@@ -145,8 +178,22 @@ async fn in_memory_engine_seals_one_block() -> Result<()> {
         .await?;
     let payload_id =
         started.payload_id.ok_or_else(|| eyre!("forkchoice did not start a payload"))?;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    if denim && !no_tx_pool {
+        let ready =
+            tokio::time::timeout(Duration::from_secs(5), launched.payload_ready.recv()).await??;
+        assert_eq!(ready, PayloadReady { payload_id, parent_hash });
+    } else {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
     let envelope = engine.get_payload_v4(payload_id).await?;
+    assert_eq!(
+        envelope.execution_payload.payload_inner.payload_inner.payload_inner.transactions,
+        transactions
+    );
+    assert_eq!(
+        launched.payload_ready.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    );
     let status = engine
         .new_payload_v4(envelope.execution_payload, envelope.parent_beacon_block_root)
         .await?;

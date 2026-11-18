@@ -13,6 +13,8 @@ use base_tx_manager::TxManagerError;
 use jsonrpsee::core::client::Error as JsonRpcClientError;
 use thiserror::Error;
 
+use crate::GateError;
+
 /// Error returned when a CLI block reference cannot be parsed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
@@ -414,6 +416,54 @@ pub enum BatcherCommandError {
     },
 }
 
+/// Error returned by [`ConsensusClient`](crate::ConsensusClient) calls.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum ConsensusRpcError {
+    /// The consensus-node RPC client could not be built.
+    #[error("failed to build consensus-node RPC client for {rpc}")]
+    BuildClient {
+        /// The consensus-node RPC URL origin, without credentials, path, or query.
+        rpc: String,
+        /// The underlying client construction error.
+        #[source]
+        source: JsonRpcClientError,
+    },
+    /// The consensus node does not expose the called method.
+    #[error("consensus-node RPC method `{method}` is not exposed by {rpc}")]
+    MethodUnavailable {
+        /// The consensus-node RPC URL origin, without credentials, path, or query.
+        rpc: String,
+        /// The unavailable RPC method.
+        method: &'static str,
+    },
+    /// A consensus-node RPC call failed for a reason other than method availability.
+    #[error("consensus-node RPC method `{method}` failed on {rpc}")]
+    Rpc {
+        /// The consensus-node RPC URL origin, without credentials, path, or query.
+        rpc: String,
+        /// The RPC method that failed.
+        method: &'static str,
+        /// The underlying RPC error.
+        #[source]
+        source: JsonRpcClientError,
+    },
+    /// A consensus-node RPC call did not answer within its timeout.
+    #[error("consensus-node RPC method `{method}` timed out after {timeout:?} on {rpc}")]
+    Timeout {
+        /// The consensus-node RPC URL origin, without credentials, path, or query.
+        rpc: String,
+        /// The RPC method that timed out.
+        method: &'static str,
+        /// The timeout the call was given.
+        timeout: Duration,
+    },
+    /// `admin_startSequencer` was asked to start from the zero hash, which is never a valid
+    /// unsafe head.
+    #[error("unsafe head must not be zero")]
+    ZeroUnsafeHead,
+}
+
 /// Error returned by txpool RPC helpers and command execution.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -483,6 +533,19 @@ pub enum ConductorCommandError {
     /// The shared conductor source or node lookup failed.
     #[error("conductor {0}")]
     NodeLookup(#[from] NodeLookupError),
+    /// Direct leader transfer is disabled because an approval gateway is configured.
+    #[error(
+        "conductor leader transfer requires approval through the configured gateway; run `basectl conductor transfer propose --to <TARGET> --reason <TEXT>`; a different engineer approves it at the review URL; then run `basectl conductor transfer execute <ID>`"
+    )]
+    GateRequired,
+    /// A gateway command ran without a configured gateway.
+    #[error(
+        "no approval gateway configured; pass --gate-url, set BASECTL_GATE_URL, or set `gate_url` in config"
+    )]
+    GateNotConfigured,
+    /// The approval gateway request failed.
+    #[error(transparent)]
+    Gate(#[from] GateError),
 }
 
 /// Error returned by sequencer command validation and preflight checks.
@@ -620,6 +683,12 @@ mod tests {
     use std::error::Error as _;
 
     use super::*;
+
+    #[test]
+    fn gate_errors_read_as_the_gateway_error() {
+        let error = ConductorCommandError::from(crate::GateError::ReasonRequired);
+        assert_eq!(error.to_string(), "reason required");
+    }
 
     #[test]
     fn rpc_error_variants_preserve_source_chain() {

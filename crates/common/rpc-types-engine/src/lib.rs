@@ -13,6 +13,9 @@ extern crate alloc;
 mod attributes;
 pub use attributes::BasePayloadAttributes;
 
+mod payload_ready;
+pub use payload_ready::PayloadReady;
+
 mod envelope;
 pub use envelope::{
     BaseExecutionPayloadEnvelope, ExecutionData, MAX_DECOMPRESSED_ENVELOPE_BYTES,

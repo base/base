@@ -41,7 +41,7 @@ fn evm2_fetch(upgrade: BaseUpgrade, scalars: U256) -> base_common_l1_fees::L1Fee
     let mut evm = Evm::new(
         spec,
         BlockEnv::<BaseEvmTypes>::default(),
-        BaseEvmTypes::tx_registry(),
+        BaseEvmTypes::tx_registry(spec),
         db,
         Precompiles::base(spec.into()),
     );

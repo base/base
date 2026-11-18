@@ -19,6 +19,23 @@ pub struct AppLayout {
     pub sidebar: Option<Rect>,
 }
 
+/// Whether the network badge shows the consensus-layer (CL) endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsensusBadge {
+    /// Show `CL <host:port>`, or `CL -` when none is configured.
+    Shown,
+    /// Omit the CL segment.
+    Hidden,
+}
+
+impl ConsensusBadge {
+    /// Hidden only in approval-gateway mode with no CL configured, where
+    /// `CL -` says nothing useful; otherwise the badge is unchanged.
+    pub const fn resolve(config: &MonitoringConfig, gateway_mode: bool) -> Self {
+        if gateway_mode && config.consensus_node_rpc.is_none() { Self::Hidden } else { Self::Shown }
+    }
+}
+
 /// Handles the top-level application frame layout and help sidebar rendering.
 #[derive(Debug)]
 pub struct AppFrame;
@@ -45,9 +62,17 @@ impl AppFrame {
         config: &MonitoringConfig,
         using_public_rpc: bool,
         pending_network: bool,
+        consensus: ConsensusBadge,
         keybindings: &[Keybinding],
     ) {
-        render_network_badge(f, layout.content, config, using_public_rpc, pending_network);
+        render_network_badge(
+            f,
+            layout.content,
+            config,
+            using_public_rpc,
+            pending_network,
+            consensus,
+        );
         if let Some(sidebar) = layout.sidebar {
             render_help_sidebar(f, sidebar, &config.name, keybindings);
         }
@@ -71,6 +96,7 @@ fn render_network_badge(
     config: &MonitoringConfig,
     using_public_rpc: bool,
     pending_network: bool,
+    consensus: ConsensusBadge,
 ) {
     let mode = if using_public_rpc { "pub" } else { "cfg" };
     let toggle = if config.public_rpc.is_some() {
@@ -83,12 +109,18 @@ fn render_network_badge(
         " [...] ".to_string()
     } else {
         let el = AppFrame::endpoint_label(&config.rpc);
-        let cl = config
-            .consensus_node_rpc
-            .as_ref()
-            .map(AppFrame::endpoint_label)
-            .unwrap_or_else(|| "-".to_string());
-        format!(" [{} | EL {mode} {el} | CL {cl}{toggle}] ", config.name)
+        let cl = match consensus {
+            ConsensusBadge::Shown => {
+                let endpoint = config
+                    .consensus_node_rpc
+                    .as_ref()
+                    .map(AppFrame::endpoint_label)
+                    .unwrap_or_else(|| "-".to_string());
+                format!(" | CL {endpoint}")
+            }
+            ConsensusBadge::Hidden => String::new(),
+        };
+        format!(" [{} | EL {mode} {el}{cl}{toggle}] ", config.name)
     };
     let badge_width = Line::from(badge.as_str()).width() as u16;
     if area.height == 0 {
@@ -160,7 +192,48 @@ fn render_help_sidebar(
 
 #[cfg(test)]
 mod tests {
-    use ratatui::text::Line;
+    use ratatui::{Terminal, backend::TestBackend, text::Line};
+    use url::Url;
+
+    use super::{AppFrame, ConsensusBadge};
+    use crate::config::MonitoringConfig;
+
+    fn header(config: &MonitoringConfig, consensus: ConsensusBadge) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(120, 34)).unwrap();
+        terminal
+            .draw(|frame| {
+                let layout = AppFrame::split_layout(frame.area(), false);
+                AppFrame::render(frame, &layout, config, false, false, consensus, &[]);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..120).map(|x| buffer[(x, 0)].symbol()).collect::<String>().trim().to_string()
+    }
+
+    #[test]
+    fn gateway_mode_header_omits_the_unconfigured_cl() {
+        let mut config = MonitoringConfig::mainnet();
+        config.consensus_node_rpc = None;
+        config.public_rpc = None;
+        let el = AppFrame::endpoint_label(&config.rpc);
+
+        let consensus = ConsensusBadge::resolve(&config, true);
+        assert_eq!(consensus, ConsensusBadge::Hidden);
+        assert_eq!(header(&config, consensus), format!("[{} | EL cfg {el}]", config.name));
+
+        // Direct conductor config: unchanged, including `CL -`.
+        let consensus = ConsensusBadge::resolve(&config, false);
+        assert_eq!(consensus, ConsensusBadge::Shown);
+        assert_eq!(header(&config, consensus), format!("[{} | EL cfg {el} | CL -]", config.name));
+
+        // A configured CL stays visible in gateway mode too.
+        config.consensus_node_rpc = Some(Url::parse("http://127.0.0.1:7545").unwrap());
+        let consensus = ConsensusBadge::resolve(&config, true);
+        assert_eq!(
+            header(&config, consensus),
+            format!("[{} | EL cfg {el} | CL 127.0.0.1:7545]", config.name)
+        );
+    }
 
     #[test]
     fn unicode_badge_width_uses_display_columns() {

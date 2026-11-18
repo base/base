@@ -65,7 +65,7 @@ fn executes_block_of_deposit_then_standard_tx() {
         ..Default::default()
     };
     let evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(spec), db, Precompiles::base(spec.into()))
             .with_ext(preloaded_l1_fee_params());
     let mut executor = BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default());
 
@@ -141,7 +141,7 @@ fn executor_with_block_gas_limit(
         ..Default::default()
     };
     let evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(spec), db, Precompiles::base(spec.into()));
     BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default())
 }
 
@@ -203,7 +203,7 @@ fn jovian_executor(block_gas_limit: u64, da_scalar: u128) -> BaseBlockExecutor<'
     };
     let spec = BaseSpecId::new(BaseUpgrade::Jovian);
     let evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(spec), db, Precompiles::base(spec.into()))
             .with_ext(preloaded_l1_fee_params());
     BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default())
 }

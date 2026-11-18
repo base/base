@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use alloy_primitives::B256;
+use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;
 use base_execution_txpool::{
     BuilderApiImpl, BuilderApiServer, InsertMetering, TransactionValidity,
@@ -103,7 +103,7 @@ impl FromExtensionConfig for BuilderApiExtension {
 pub struct InsertMeteringAdapter(pub SharedMeteringProvider);
 
 impl InsertMetering for InsertMeteringAdapter {
-    fn insert_metering(&self, encoded_hash: B256, metering: MeterBundleResponse) {
-        self.0.insert(encoded_hash, metering);
+    fn insert_metering(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
+        self.0.insert(tx_hash, metering);
     }
 }

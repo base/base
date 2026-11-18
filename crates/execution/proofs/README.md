@@ -8,7 +8,7 @@ This extension provides the infrastructure for maintaining a historical record o
 
 ## Features
 
-- **On-disk proofs storage**: Uses MDBX for efficient storage of historical proofs
+- **On-disk proofs storage**: Stores historical proofs in `MDBX` (default) or `RocksDB`, selected with `--proofs-history.db`
 - **Configurable retention window**: Set how far back proofs are retained
 - **Automatic pruning**: Periodically removes old proofs beyond the retention window
 - **Proof verification**: Optionally verify stored proofs at configurable intervals
@@ -20,7 +20,8 @@ This extension provides the infrastructure for maintaining a historical record o
 The extension is configured through `RollupArgs`:
 
 - `proofs_history`: Enable/disable proofs history
-- `proofs_history_storage_path`: Path to MDBX storage directory
+- `proofs_history_storage_path`: Path to the proofs storage directory
+- `proofs_history_db`: Storage backend, `mdbx` (default) or `rocksdb`
 - `proofs_history_window`: Number of blocks to retain proofs for
 - `proofs_history_prune_interval`: How often to prune old proofs
 - `proofs_history_verification_interval`: How often to verify stored proofs
@@ -30,7 +31,7 @@ The extension is configured through `RollupArgs`:
 The extension is installed as part of the node builder and automatically:
 
 1. Captures proofs during block execution
-2. Stores them in the configured MDBX database
+2. Stores them in the configured database
 3. Serves proof requests via extended RPC methods
 4. Prunes old proofs based on the retention window
 5. Reports metrics for monitoring storage and performance

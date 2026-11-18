@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Integration tests for the builder's transaction pool handling.
 
 use alloy_consensus::Transaction;
 use base_builder_core::{

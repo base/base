@@ -4,7 +4,7 @@ use alloy_primitives::U256;
 use base_common_consensus::{DEPOSIT_TX_TYPE_ID, EIP8130_TX_TYPE_ID, TxDeposit};
 use base_common_genesis::BaseUpgrade;
 use evm2::{
-    Evm, TxResult,
+    Evm, SpecId, TxResult,
     env::TxEnvExt,
     ethereum::{
         TxEnvelope, eip1559, eip2930, eip7702, execute_initial_frame, finalize_gas,
@@ -16,18 +16,19 @@ use evm2::{
     registry::{HandlerError, HandlerResult, TxRegistry, TxRequest, handler},
 };
 
-use crate::{BaseEvmTypes, BaseTxEnvelope, BaseTxHandlerHooks, Eip8130Handler};
+use crate::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope, BaseTxHandlerHooks, Eip8130Handler};
 
 impl BaseEvmTypes {
-    /// Builds the Base transaction registry.
+    /// Builds the Base transaction registry for `spec`.
     ///
     /// Registers the deposit handler (type `0x7e`), the standard Ethereum
-    /// transaction handlers (legacy/2930/1559/7702; EIP-4844 blob transactions
-    /// are unsupported on Base and intentionally omitted), the latter wired with
-    /// [`BaseTxHandlerHooks`] so non-deposit transactions run the L1 fee
-    /// settlement path, and the enshrined EIP-8130 handler (type `0x79`,
-    /// [`Eip8130Handler`]).
-    pub fn tx_registry() -> TxRegistry<Self, TxResult<Self>> {
+    /// transaction handlers (legacy/2930/1559, plus 7702 once `spec` enables
+    /// Prague; EIP-4844 blob transactions are unsupported on Base and
+    /// intentionally omitted), the latter wired with [`BaseTxHandlerHooks`] so
+    /// non-deposit transactions run the L1 fee settlement path, and the
+    /// enshrined EIP-8130 handler (type `0x79`, [`Eip8130Handler`]). Unregistered
+    /// types are rejected with [`HandlerError::UnsupportedTransactionType`].
+    pub fn tx_registry(spec: BaseSpecId) -> TxRegistry<Self, TxResult<Self>> {
         let mut registry = TxRegistry::new().with_handler(
             DEPOSIT_TX_TYPE_ID,
             BaseTxEnvelope::as_deposit,
@@ -59,14 +60,18 @@ impl BaseEvmTypes {
         );
         // Type 3 (EIP-4844 blob transactions) is intentionally not registered:
         // Base rejects blob transactions, so no handler exists for them.
-        registry.register(
-            4,
-            |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip7702),
-            handler(
-                eip7702::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
-                eip7702::execute_prepared::<Self, BaseTxHandlerHooks>,
-            ),
-        );
+        // Set-code transactions activate with Prague (Isthmus on Base), matching upstream
+        // `ethereum_tx_registry` and the revm reference's `Eip7702NotSupported` rejection.
+        if SpecId::from(spec).enables(SpecId::PRAGUE) {
+            registry.register(
+                4,
+                |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip7702),
+                handler(
+                    eip7702::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
+                    eip7702::execute_prepared::<Self, BaseTxHandlerHooks>,
+                ),
+            );
+        }
         registry.register(
             EIP8130_TX_TYPE_ID,
             BaseTxEnvelope::as_eip8130,
@@ -222,7 +227,6 @@ mod tests {
     use evm2::{Evm, Precompiles, env::BlockEnv, evm::InMemoryDB};
 
     use super::*;
-    use crate::BaseSpecId;
 
     const SENDER: Address = Address::repeat_byte(0x11);
     const TARGET: Address = Address::repeat_byte(0x22);
@@ -233,7 +237,7 @@ mod tests {
         Evm::new(
             SPEC,
             BlockEnv::<BaseEvmTypes>::default(),
-            BaseEvmTypes::tx_registry(),
+            BaseEvmTypes::tx_registry(SPEC),
             InMemoryDB::default(),
             Precompiles::base(SPEC.into()),
         )
@@ -273,15 +277,29 @@ mod tests {
 
     #[test]
     fn registry_registers_deposit_and_standard_handlers() {
-        let registry = BaseEvmTypes::tx_registry();
-        assert!(registry.contains(DEPOSIT_TX_TYPE_ID), "deposit handler must be registered");
-        // Legacy (0), EIP-2930 (1), EIP-1559 (2), EIP-7702 (4). Type 3 (EIP-4844
-        // blob transactions) is intentionally unregistered — Base rejects them.
-        for ty in [0, 1, 2, 4] {
-            assert!(registry.contains(ty), "standard handler {ty} must be registered");
+        // PectraBlobSchedule maps to Cancun despite its name; Azul inherits Osaka.
+        for upgrade in [
+            BaseUpgrade::Regolith,
+            BaseUpgrade::Holocene,
+            BaseUpgrade::PectraBlobSchedule,
+            BaseUpgrade::Isthmus,
+            BaseUpgrade::Azul,
+        ] {
+            let registry = BaseEvmTypes::tx_registry(BaseSpecId::new(upgrade));
+            assert!(registry.contains(DEPOSIT_TX_TYPE_ID), "deposit handler must be registered");
+            for ty in [0, 1, 2] {
+                assert!(registry.contains(ty), "standard handler {ty} must be registered");
+            }
+            // Type 3 (EIP-4844 blob transactions) is intentionally unregistered — Base rejects
+            // them.
+            assert!(!registry.contains(3), "EIP-4844 blob handler must not be registered");
+            assert!(registry.contains(EIP8130_TX_TYPE_ID), "EIP-8130 handler must be registered");
+            assert_eq!(
+                registry.contains(4),
+                (upgrade as u8) >= (BaseUpgrade::Isthmus as u8),
+                "EIP-7702 handler must be registered from Isthmus (Prague) only, at {upgrade:?}",
+            );
         }
-        assert!(!registry.contains(3), "EIP-4844 blob handler must not be registered");
-        assert!(registry.contains(EIP8130_TX_TYPE_ID), "EIP-8130 handler must be registered");
     }
 
     #[test]
@@ -372,7 +390,7 @@ mod tests {
         let mut evm = Evm::new(
             SPEC,
             BlockEnv::<BaseEvmTypes>::default(),
-            BaseEvmTypes::tx_registry(),
+            BaseEvmTypes::tx_registry(SPEC),
             db,
             Precompiles::base(SPEC.into()),
         );
@@ -420,7 +438,7 @@ mod tests {
             let mut evm = Evm::new(
                 spec,
                 block,
-                BaseEvmTypes::tx_registry(),
+                BaseEvmTypes::tx_registry(spec),
                 db,
                 Precompiles::base(spec.into()),
             );

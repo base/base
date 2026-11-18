@@ -132,8 +132,8 @@ configured.
 *requests*. If the submission RPC is rate-limiting you (e.g. `over rate limit` failures) rather than
 its mempool overflowing, set `max_concurrent_submit_requests` instead: it caps how many
 `eth_sendRawTransaction` batch requests may be outstanding to the submission RPC(s) at once, without
-shrinking the in-flight inventory target. When set, it also expands the signer and sender worker
-pools so the configured request concurrency can be reached. The shared semaphore remains the
+shrinking the in-flight inventory target. When set, it also expands the sender worker
+pool so the configured request concurrency can be reached. The shared semaphore remains the
 authoritative outbound request limit. `batch_size` controls the maximum transactions per JSON-RPC
 batch request and defaults to 100.
 
@@ -717,6 +717,6 @@ not unsatisfied predicates. A transaction whose predicate is false is skipped by
 simply never confirms (it is not distinguishable from an ordinary drop by a
 counter alone). Compare the `by_cohort` inclusion rates *relative to each other*
 rather than against an absolute target; to confirm the skip path directly,
-observe the builder's `BuilderRejected` event with reason
-`validity_predicate_not_satisfied`, or run the builder with
-`RUST_LOG=payload_builder=trace`.
+watch the builder's
+`base_builder_validity_predicate_evaluations_total{outcome="not_satisfied"}`
+counter, or run the builder with `RUST_LOG=payload_builder=trace`.

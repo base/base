@@ -252,7 +252,7 @@ impl World {
             evm2::ExecutionConfig::for_spec_and_version(spec, version),
             spec,
             block,
-            BaseEvmTypes::tx_registry(),
+            BaseEvmTypes::tx_registry(spec),
             db,
             BaseEvmTypes::native_precompiles(spec, None),
         )

@@ -42,9 +42,6 @@ pub use metrics::{
     BuilderMetrics, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
 };
 
-mod deferrals;
-pub use deferrals::BlockDeferrals;
-
 mod resting;
 pub use resting::{
     FinishingRestingPredicates, HoldInterrupt, RESTING_UNSEEN_RETAINED_BLOCKS, RestingCarryOver,

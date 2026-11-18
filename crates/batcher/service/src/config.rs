@@ -62,12 +62,20 @@ pub struct BatcherConfig {
     pub publish_max_retries: usize,
     /// Delay between those retries.
     pub publish_retry_delay: Duration,
-    /// Minimum L1 priority fee per gas (in wei), used in place of the tip the L1 node suggests
-    /// when that one is lower.
+    /// Minimum L1 priority fee per gas (in wei) of calldata transactions, used in place of the
+    /// tip the L1 node suggests when that one is lower.
     pub min_tip_cap: u128,
-    /// Minimum L1 base fee (in wei) the fee cap is computed from, used in place of the base fee
-    /// of the latest L1 block when that one is lower.
+    /// Minimum L1 base fee (in wei) the fee cap of calldata transactions is computed from, used
+    /// in place of the base fee of the latest L1 block when that one is lower.
     pub min_basefee: u128,
+    /// Lowest `max_priority_fee_per_gas` per blob (in wei) of blob transactions, which the
+    /// first one starts at.
+    pub max_priority_fee_per_gas_per_blob_lower_bound: u128,
+    /// Highest `max_priority_fee_per_gas` per blob (in wei) of blob transactions.
+    pub max_priority_fee_per_gas_per_blob_upper_bound: u128,
+    /// Share, in percent, of the `max_priority_fee_per_gas` per blob of a landed blob
+    /// transaction that the next blob transaction starts from.
+    pub max_priority_fee_per_gas_per_blob_decay_percent: u8,
     /// DA throttle configuration, `None` to disable the throttle.
     ///
     /// Must be `None` when [`shadow`](Self::shadow) is set.
@@ -133,6 +141,9 @@ impl Default for BatcherConfig {
             publish_retry_delay: Duration::from_secs(1),
             min_tip_cap: 0,
             min_basefee: 0,
+            max_priority_fee_per_gas_per_blob_lower_bound: 10_000_000,
+            max_priority_fee_per_gas_per_blob_upper_bound: 10_000_000_000,
+            max_priority_fee_per_gas_per_blob_decay_percent: 90,
             throttle: Some(ThrottleConfig::default()),
             throttle_strategy: ThrottleStrategy::Quadratic,
             check_recent_txs_depth: 0,
@@ -156,6 +167,12 @@ impl BatcherConfig {
             publish_retry_delay: self.publish_retry_delay,
             min_tip_cap: self.min_tip_cap,
             min_basefee: self.min_basefee,
+            max_priority_fee_per_gas_per_blob_lower_bound: self
+                .max_priority_fee_per_gas_per_blob_lower_bound,
+            max_priority_fee_per_gas_per_blob_upper_bound: self
+                .max_priority_fee_per_gas_per_blob_upper_bound,
+            max_priority_fee_per_gas_per_blob_decay_percent: self
+                .max_priority_fee_per_gas_per_blob_decay_percent,
             network_timeout: self.network_timeout,
             ..TxManagerConfig::default()
         }
@@ -224,6 +241,9 @@ mod tests {
             publish_retry_delay: Duration::from_secs(2),
             min_tip_cap: 10_000_000,
             min_basefee: 250_000_000,
+            max_priority_fee_per_gas_per_blob_lower_bound: 20_000_000,
+            max_priority_fee_per_gas_per_blob_upper_bound: 5_000_000_000,
+            max_priority_fee_per_gas_per_blob_decay_percent: 50,
             network_timeout: Duration::from_secs(4),
             ..BatcherConfig::default()
         };
@@ -237,6 +257,9 @@ mod tests {
                 publish_retry_delay: Duration::from_secs(2),
                 min_tip_cap: 10_000_000,
                 min_basefee: 250_000_000,
+                max_priority_fee_per_gas_per_blob_lower_bound: 20_000_000,
+                max_priority_fee_per_gas_per_blob_upper_bound: 5_000_000_000,
+                max_priority_fee_per_gas_per_blob_decay_percent: 50,
                 network_timeout: Duration::from_secs(4),
                 ..TxManagerConfig::default()
             }

@@ -64,6 +64,8 @@ pub enum BenchmarkCommand {
     Replay(crate::ReplayBenchmarkArgs),
     /// Measure the L1 data an exported run or an RPC block range needs.
     Da(crate::DaBenchmarkArgs),
+    /// Export canonical blocks from a node datadir for replay.
+    Export(crate::ExportBenchmarkArgs),
 }
 
 /// Arguments for a fresh-devnet benchmark.
@@ -260,6 +262,7 @@ impl BenchmarkCli {
             Some(BenchmarkCommand::Aggregate(args)) => args.run(),
             Some(BenchmarkCommand::Replay(args)) => args.run().await,
             Some(BenchmarkCommand::Da(args)) => args.run().await,
+            Some(BenchmarkCommand::Export(args)) => args.run().await,
         }
     }
 }
@@ -1316,6 +1319,7 @@ impl SnapshotBenchmarkArgs {
             last_hash: B256::ZERO,
             last_state_root: B256::ZERO,
             block_count: 0,
+            source: None,
         })?;
         let bytes = fs::metadata(dir.join(EXPORT_BLOCKS_FILE))
             .wrap_err("failed to stat exported blocks")?

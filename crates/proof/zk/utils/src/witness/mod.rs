@@ -1,3 +1,5 @@
+//! Witness data passed to the zkVM: preimages, blobs, and the oracle built from them.
+
 /// Pipeline construction and block execution.
 pub mod executor;
 pub use executor::WitnessExecutor;

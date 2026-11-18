@@ -25,7 +25,6 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base
 base-cli-utils.workspace = true
-base-tx-manager.workspace = true
 base-common-network.workspace = true
 base-execution-txpool.workspace = true
 base-common-consensus = { workspace = true, features = ["k256"] }
@@ -48,11 +47,12 @@ tracing.workspace = true
 humantime.workspace = true
 thiserror.workspace = true
 tokio-util.workspace = true
-serde_json.workspace = true
 serde_yaml.workspace = true
 parking_lot.workspace = true
+async-channel.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["signal"] }
+serde_json = { workspace = true, features = ["raw_value"] }
 
 [dev-dependencies]
 alloy-node-bindings.workspace = true

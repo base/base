@@ -138,13 +138,21 @@ impl MetricsCollector {
     /// Records a failed transaction with a categorized reason.
     pub fn record_failed(&mut self, _tx_hash: TxHash, reason: &str) {
         self.failed_count += 1;
-        *self.failure_reasons.entry(reason.to_string()).or_insert(0) += 1;
+        self.add_failure_reason(reason, 1);
     }
 
     /// Records multiple failures with the same reason.
     pub fn record_failures(&mut self, reason: &str, count: u64) {
         self.failed_count += count;
-        *self.failure_reasons.entry(reason.to_string()).or_insert(0) += count;
+        self.add_failure_reason(reason, count);
+    }
+
+    fn add_failure_reason(&mut self, reason: &str, count: u64) {
+        if let Some(existing) = self.failure_reasons.get_mut(reason) {
+            *existing += count;
+        } else {
+            self.failure_reasons.insert(reason.to_owned(), count);
+        }
     }
 
     /// Returns the number of confirmed transactions.

@@ -16,9 +16,12 @@
 //! balance. For a trusted account ETH can only leave through gas it sponsors, so
 //! `Σ max_cost ≤ balance` is a true upper bound on the only drain.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_primitives::{
+    Address, TxHash, U256,
+    map::{AddressMap, B256Map},
+};
 
 /// Per-account inflight transaction counters with a caller-supplied cap.
 ///
@@ -28,7 +31,7 @@ use alloy_primitives::{Address, TxHash, U256};
 /// limit).
 #[derive(Debug, Default)]
 pub struct InflightCounters {
-    counts: HashMap<Address, u32>,
+    counts: AddressMap<u32>,
 }
 
 impl InflightCounters {
@@ -87,7 +90,7 @@ pub struct PayerBook {
     /// Ordered by `(priority, hash)` ascending; the front is evicted first.
     by_priority: BTreeMap<(u128, TxHash), U256>,
     /// `hash -> (priority, max_cost)` for O(1) removal and idempotency checks.
-    entries: HashMap<TxHash, (u128, U256)>,
+    entries: B256Map<(u128, U256)>,
 }
 
 impl PayerBook {
@@ -98,7 +101,7 @@ impl PayerBook {
             balance,
             reserved: U256::ZERO,
             by_priority: BTreeMap::new(),
-            entries: HashMap::new(),
+            entries: B256Map::default(),
         }
     }
 

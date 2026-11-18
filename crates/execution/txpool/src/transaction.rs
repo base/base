@@ -779,7 +779,7 @@ mod tests {
 
     use crate::{
         BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
-        ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
+        UnixMillis, ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
     };
 
     fn meter_response(results: usize) -> MeterBundleResponse {
@@ -1026,7 +1026,7 @@ mod tests {
             ],
             Address::ZERO,
             U256::ZERO,
-            u64::MAX,
+            UnixMillis::MAX,
         );
         let slots_size = core::mem::size_of_val(manifest.config_slots());
 

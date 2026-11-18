@@ -1388,7 +1388,7 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_accepts_bound_on_the_block_being_built() {
         // With the head at block 100, `block_number = 101` targets the block currently
-        // being built and may still land in one of its flashblocks, so validation passes
+        // being built and may still land in it, so validation passes
         // and submission proceeds to the pool (which the noop pool then rejects).
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();

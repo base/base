@@ -13,7 +13,7 @@ use alloy_rlp::encode;
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_evm2::MeteredGasEvmTypes;
-use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
+use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData, PayloadReady};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
@@ -1000,6 +1000,8 @@ pub struct BasePayloadBuilder {
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     pub rejection_cache: RejectionCache,
+    /// Optional notifications for frozen sequencer payloads.
+    pub payload_ready: Option<tokio::sync::broadcast::Sender<PayloadReady>>,
 }
 
 impl Default for BasePayloadBuilder {
@@ -1012,6 +1014,7 @@ impl Default for BasePayloadBuilder {
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            payload_ready: None,
         }
     }
 }
@@ -1020,6 +1023,15 @@ impl BasePayloadBuilder {
     /// Create a new instance with the default configuration.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Configures the in-process frozen-payload notification channel.
+    pub fn with_payload_ready(
+        mut self,
+        sender: Option<tokio::sync::broadcast::Sender<PayloadReady>>,
+    ) -> Self {
+        self.payload_ready = sender;
+        self
     }
 
     /// Configure the data availability configuration for the payload builder.
@@ -1117,7 +1129,8 @@ where
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
                 },
             )
-            .with_task_executor(ctx.task_executor().clone());
+            .with_task_executor(ctx.task_executor().clone())
+            .with_payload_ready(self.payload_ready);
         Ok(payload_builder)
     }
 }

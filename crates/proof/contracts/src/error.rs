@@ -71,6 +71,29 @@ impl ContractError {
         };
         source.as_revert_data().is_some_and(|data| !data.is_empty())
     }
+
+    /// Returns whether a call failed in the transport layer and may succeed on retry.
+    ///
+    /// Covers HTTP 429/5xx responses and connection-level failures. JSON-RPC error responses,
+    /// including execution reverts, are terminal because the node answered the request.
+    #[must_use]
+    pub fn is_transient(&self) -> bool {
+        let error = match self {
+            Self::Call { source, .. } => match source.as_ref() {
+                alloy_contract::Error::TransportError(error) => error,
+                _ => return false,
+            },
+            Self::Provider { source, .. } => source,
+            Self::Validation(_) => return false,
+        };
+        let alloy_transport::TransportError::Transport(kind) = error else {
+            return false;
+        };
+        kind.as_http_error().map_or_else(
+            || !kind.is_non_retryable() && !kind.is_pubsub_unavailable(),
+            |http| http.status == 429 || http.status >= 500,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -164,5 +187,30 @@ mod tests {
     #[test]
     fn missing_method_rejects_validation_error() {
         assert!(!ContractError::validation("invalid value").is_missing_method());
+    }
+
+    #[test]
+    fn transient_covers_server_errors_and_connection_failures_but_not_reverts() {
+        let call = |source| ContractError::call("isRevoked failed", source);
+        let transport = |error| call(AlloyContractError::TransportError(error));
+        let revert = transport(alloy_transport::TransportError::ErrorResp(
+            serde_json::from_str(r#"{"code":3,"message":"execution reverted","data":"0x1234"}"#)
+                .unwrap(),
+        ));
+
+        assert!(
+            transport(TransportErrorKind::http_error(502, "Bad Gateway".into())).is_transient()
+        );
+        assert!(transport(TransportErrorKind::http_error(429, String::new())).is_transient());
+        assert!(transport(TransportErrorKind::custom_str("connection reset")).is_transient());
+        assert!(
+            ContractError::provider("eth_call failed", TransportErrorKind::backend_gone())
+                .is_transient()
+        );
+        assert!(!transport(TransportErrorKind::http_error(401, String::new())).is_transient());
+        assert!(!transport(TransportErrorKind::non_retryable_str("bad url")).is_transient());
+        assert!(!revert.is_transient());
+        assert!(!call(AlloyContractError::from(SolTypesError::Overrun)).is_transient());
+        assert!(!ContractError::validation("invalid value").is_transient());
     }
 }

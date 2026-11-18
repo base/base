@@ -119,8 +119,6 @@ pub struct ChainPrepOutputs {
     pub b20_run_salt: Option<alloy_primitives::B256>,
     /// Whether real-token balances were prepared (at most once per run).
     pub real_tokens_prepared: bool,
-    /// Whether sender nonces/balances should be refreshed after prepare.
-    pub needs_sender_refresh: bool,
 }
 
 /// Context passed to [`crate::workload::Payload::prepare`] / `teardown`.
@@ -182,7 +180,7 @@ pub(crate) fn create2_address(init_code: &[u8]) -> Address {
 }
 
 /// Deploys `init_code` through the CREATE2 deployment proxy unless its address already has code.
-pub(crate) async fn deploy_create2(ctx: &mut ChainPrepContext<'_>, init_code: &[u8]) -> Result<()> {
+pub(crate) async fn deploy_create2(ctx: &ChainPrepContext<'_>, init_code: &[u8]) -> Result<()> {
     let account = &ctx.accounts.accounts()[0];
     // The query node may lag the submission node, which confirms the deployment.
     let provider = create_wallet_provider(
@@ -216,7 +214,6 @@ pub(crate) async fn deploy_create2(ctx: &mut ChainPrepContext<'_>, init_code: &[
         .get_receipt()
         .await
         .rpc("contract deployment receipt")?;
-    ctx.outputs.needs_sender_refresh = true;
     // A concurrent run may have deployed it first, reverting this deployment.
     if provider.get_code_at(contract).await.rpc("get contract code")?.is_empty() {
         return Err(BaselineError::Transaction(format!(
@@ -309,6 +306,5 @@ mod tests {
         let outputs = ChainPrepOutputs::default();
         assert!(outputs.b20_run_salt.is_none());
         assert!(!outputs.real_tokens_prepared);
-        assert!(!outputs.needs_sender_refresh);
     }
 }

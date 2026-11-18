@@ -2,7 +2,7 @@
 
 /// Application frame layout and help sidebar.
 mod app_frame;
-pub use app_frame::{AppFrame, AppLayout};
+pub use app_frame::{AppFrame, AppLayout, ConsensusBadge};
 
 /// Default web browser launcher.
 mod browser;

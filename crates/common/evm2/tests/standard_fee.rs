@@ -77,7 +77,7 @@ fn build_evm2(upgrade: BaseUpgrade, balance: U256) -> Evm<'static, BaseEvmTypes>
         ext: l1_fee_params(),
         ..Default::default()
     };
-    Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+    Evm::new(spec, block, BaseEvmTypes::tx_registry(spec), db, Precompiles::base(spec.into()))
         .with_ext(preloaded_l1_fee_params())
 }
 
@@ -233,7 +233,7 @@ fn l1_fee_is_priced_from_the_l1_block_predeploy() {
         ..Default::default()
     };
     let mut evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(spec), db, Precompiles::base(spec.into()));
 
     let _ = evm.transact(&Recovered::new_unchecked(eip1559_envelope(), SENDER)).unwrap().commit();
 

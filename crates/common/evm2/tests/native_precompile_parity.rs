@@ -50,7 +50,7 @@ fn run_evm2(upgrade: BaseUpgrade, to: Address, input: &Bytes) -> Outcome {
     let mut evm = Evm::new(
         spec,
         BlockEnv::<BaseEvmTypes>::default(),
-        BaseEvmTypes::tx_registry(),
+        BaseEvmTypes::tx_registry(spec),
         db,
         BaseEvmTypes::native_precompiles(spec, None),
     )

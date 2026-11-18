@@ -19,10 +19,14 @@ base-proof-mpt = { workspace = true }
 ```
 
 ```rust,ignore
-use base_proof_mpt::{TrieNode, TrieProvider};
+use alloy_primitives::keccak256;
+use alloy_trie::Nibbles;
+use base_proof_mpt::TrieNode;
 
-let root = TrieNode::from_hash(state_root);
-let value = root.get(key, &provider)?;
+let mut root = TrieNode::new_blinded(state_root);
+let path = Nibbles::unpack(keccak256(address));
+// Fetches and unblinds the nodes along `path` through the `TrieProvider`.
+let value = root.open(&path, &provider)?;
 ```
 
 ## License

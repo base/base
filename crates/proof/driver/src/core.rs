@@ -3,10 +3,8 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
-use alloy_consensus::BlockBody;
 use alloy_primitives::B256;
-use alloy_rlp::Decodable;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, OpTxType};
+use base_common_consensus::OpTxType;
 use base_common_genesis::{BaseFeature, RollupConfig};
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
 use base_protocol::L2BlockInfo;
@@ -136,34 +134,17 @@ where
                 }
             };
 
-            // Construct the block.
-            let block = BaseBlock {
-                header: outcome.header.inner().clone(),
-                body: BlockBody {
-                    transactions: attributes
-                        .transactions
-                        .as_ref()
-                        .unwrap_or(&Vec::new())
-                        .iter()
-                        .map(|tx| {
-                            BaseTxEnvelope::decode(&mut tx.as_ref()).map_err(DriverError::Rlp)
-                        })
-                        .collect::<DriverResult<Vec<BaseTxEnvelope>, E::Error>>()?,
-                    ommers: Vec::new(),
-                    withdrawals: None,
-                },
-            };
-
             // Get the pipeline origin and update the tip cursor.
             let origin = self.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-            let l2_info = L2BlockInfo::from_block_and_genesis(
-                &block,
+            let l2_info = L2BlockInfo::from_header_and_first_tx(
+                &outcome.header,
+                attributes.transactions.as_ref().and_then(|txs| txs.first()),
                 &self.pipeline.rollup_config().genesis,
             )?;
             let output_root = self.executor.compute_output_root().map_err(DriverError::Executor)?;
             on_block(l2_info, output_root);
             result = Some((l2_info, output_root));
-            let tip_cursor = TipCursor::new(l2_info, outcome.header.clone(), output_root);
+            let tip_cursor = TipCursor::new(l2_info, outcome.header, output_root);
             // Advance the derivation pipeline cursor
             drop(pipeline_cursor);
             self.cursor.write().advance(origin, tip_cursor);

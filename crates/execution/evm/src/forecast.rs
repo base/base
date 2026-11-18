@@ -107,7 +107,7 @@ impl BasePendingForecast {
         let mut evm = Evm::new(
             spec,
             BlockEnv::<BaseEvmTypes>::default(),
-            BaseEvmTypes::tx_registry(),
+            BaseEvmTypes::tx_registry(spec),
             Db::new(db),
             Precompiles::base(spec.into()),
         );

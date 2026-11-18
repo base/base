@@ -12,7 +12,6 @@ repository.workspace = true
 # ethereum
 base-common-consensus.workspace = true
 alloy-consensus.workspace = true
-alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
@@ -50,6 +49,7 @@ kzg-rs = { workspace = true, features = ["serde", "rkyv"] }
 cfg-if.workspace = true
 
 [dev-dependencies]
+alloy-rlp.workspace = true
 base-common-chains.workspace = true
 
 [lints]

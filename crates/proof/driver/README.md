@@ -20,12 +20,15 @@ base-proof-driver = { workspace = true }
 ```
 
 ```rust,ignore
-use base_proof_driver::{Driver, DriverPipeline, Executor};
+use base_proof_driver::Driver;
 
-let mut driver = Driver::new(pipeline, executor, cfg);
-loop {
-    driver.step().await?;
-}
+// `cursor` is the shared `Arc<RwLock<PipelineCursor>>` the pipeline was built from.
+let mut driver = Driver::new(cursor, executor, pipeline);
+
+// Derive and execute until the safe head reaches `target` (or the data source is exhausted),
+// calling the closure with each derived block and its output root.
+let (safe_head, output_root) =
+    driver.advance_to_target(&rollup_config, Some(target), |_block, _output_root| {}).await?;
 ```
 
 ## License

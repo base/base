@@ -27,6 +27,7 @@ pub(crate) struct TestNetworkBuilder {
     unsafe_block_signer: Address,
     custom_keypair: Option<Keypair>,
     connection_limits_config: Option<ConnectionLimitsConfig>,
+    trusted_peers: Vec<Multiaddr>,
 }
 
 impl TestNetworkBuilder {
@@ -42,6 +43,7 @@ impl TestNetworkBuilder {
             unsafe_block_signer: Address::ZERO,
             custom_keypair: None,
             connection_limits_config: None,
+            trusted_peers: Vec::new(),
         }
     }
 
@@ -51,6 +53,12 @@ impl TestNetworkBuilder {
         config: ConnectionLimitsConfig,
     ) -> Self {
         self.connection_limits_config = Some(config);
+        self
+    }
+
+    /// Sets the trusted peers for the next network built.
+    pub(crate) fn with_trusted_peers(mut self, trusted_peers: Vec<Multiaddr>) -> Self {
+        self.trusted_peers = trusted_peers;
         self
     }
 
@@ -116,6 +124,7 @@ impl TestNetworkBuilder {
         if let Some(connection_limits_config) = self.connection_limits_config.take() {
             builder = builder.with_connection_limits_config(connection_limits_config);
         }
+        builder = builder.with_trusted_peers(std::mem::take(&mut self.trusted_peers));
 
         let (blocks_tx, blocks_rx) = mpsc::channel(1024);
         let (inbound_data, actor) = NetworkActor::new(

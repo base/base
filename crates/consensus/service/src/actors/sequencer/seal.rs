@@ -47,6 +47,25 @@ impl SealState {
     }
 }
 
+/// What prompted the sequencer to request a sealed payload from the engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealTrigger {
+    /// The execution layer reported the payload frozen before the seal deadline.
+    ReadyHint,
+    /// The seal deadline elapsed without a usable frozen-payload hint.
+    Deadline,
+}
+
+impl SealTrigger {
+    /// Returns the bounded metrics label for this trigger.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadyHint => "ready_hint",
+            Self::Deadline => "deadline",
+        }
+    }
+}
+
 /// Drives a sealed payload through the commit → gossip → insert pipeline.
 ///
 /// Each call to [`PayloadSealer::step`] performs exactly one async operation

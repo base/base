@@ -4001,8 +4001,8 @@ mod tests {
         assert_eq!(transact(false, 0, now_ms), Ok(true));
         assert_eq!(
             rejection(transact(true, 0, now_ms)),
-            "Revert",
-            "the replay ring requires `valid_before` strictly after `now_ms`"
+            "transaction validity window has expired",
+            "a nonce-free `valid_before` must be strictly after `now_ms`"
         );
     }
 

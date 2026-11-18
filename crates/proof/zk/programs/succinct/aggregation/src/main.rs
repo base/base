@@ -11,7 +11,7 @@ use alloy_primitives::{B256, Bytes, keccak256};
 use alloy_sol_types::SolValue;
 use base_proof_zk_utils::{
     boot::BootInfoStruct,
-    types::{AggregationInputs, AggregationOutputs, u32_to_u8},
+    types::{AggregationInputs, AggregationOutputs},
 };
 use sha2::{Digest, Sha256};
 
@@ -103,7 +103,8 @@ pub fn main() {
     };
 
     // Convert the range vkey to a B256.
-    let multi_block_vkey_b256 = B256::from(u32_to_u8(agg_inputs.multi_block_vkey));
+    let multi_block_vkey_b256 =
+        B256::from_slice(agg_inputs.multi_block_vkey.map(u32::to_be_bytes).as_flattened());
 
     let agg_outputs = AggregationOutputs {
         proverAddress: agg_inputs.prover_address,

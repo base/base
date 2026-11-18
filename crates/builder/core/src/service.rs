@@ -1,5 +1,6 @@
 //! Payload service wiring for the Base block builder.
 
+use base_common_rpc_types_engine::PayloadReady;
 use base_execution_evm::BaseEvmConfig;
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineTypes, BaseExecutorBuilder, BaseNetworkBuilder,
@@ -16,6 +17,7 @@ use reth_node_builder::{
 };
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
+use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::{BuilderConfig, NodeBounds, PoolBounds};
@@ -29,12 +31,14 @@ use crate::{BuilderConfig, NodeBounds, PoolBounds};
 pub struct NativePayloadServiceBuilder {
     /// Builder configuration shared with the RPC extensions.
     pub builder_config: BuilderConfig,
+    /// Optional notifications for frozen sequencer payloads.
+    pub payload_ready: Option<broadcast::Sender<PayloadReady>>,
 }
 
 impl NativePayloadServiceBuilder {
     /// Creates a payload service builder from the given builder configuration.
     pub const fn new(builder_config: BuilderConfig) -> Self {
-        Self { builder_config }
+        Self { builder_config, payload_ready: None }
     }
 }
 
@@ -63,7 +67,8 @@ where
                 evm_config,
                 builder_config.payload_builder_config(),
             )
-            .with_task_executor(ctx.task_executor().clone());
+            .with_task_executor(ctx.task_executor().clone())
+            .with_payload_ready(self.payload_ready);
 
         let payload_config = ctx.config().builder.clone();
         let payload_job_config = BasicPayloadJobGeneratorConfig::default()
@@ -101,7 +106,8 @@ impl BasePayloadServiceBuilder for NativePayloadServiceBuilder {
         BaseConsensusBuilder,
     >;
 
-    fn build_components(self, base_node: &BaseNode) -> Self::ComponentsBuilder {
+    fn build_components(mut self, base_node: &BaseNode) -> Self::ComponentsBuilder {
+        self.payload_ready = base_node.payload_ready.clone();
         base_node.components::<BaseNodeTypes>().payload(self)
     }
 }

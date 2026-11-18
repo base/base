@@ -92,7 +92,7 @@ fn run_evm2(upgrade: BaseUpgrade) -> BlockOutcome {
         ..Default::default()
     };
     let evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(spec), db, Precompiles::base(spec.into()))
             .with_ext(preloaded_l1_fee_params());
     let mut executor = BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default());
 

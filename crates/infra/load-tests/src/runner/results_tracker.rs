@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    ops::Range,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -9,11 +10,8 @@ use std::{
 use alloy_primitives::{Address, TxHash};
 use parking_lot::RwLock;
 
-use super::SubmitCohort;
+use super::{RefillLedger, SubmitCohort};
 use crate::metrics::TransactionMetrics;
-
-/// Maximum terminal batch timestamps retained after refill timeouts.
-const MAX_COMPLETED_BATCH_CACHE_SIZE: usize = 4_096;
 
 /// A transaction accepted by a submission RPC.
 #[derive(Debug, Clone, Copy)]
@@ -71,6 +69,27 @@ pub struct MeasurementWindow {
     pub block_count: u64,
 }
 
+/// Lifecycle of the measured window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Measurement {
+    /// Before measurement: landings feed only the live display.
+    Warmup,
+    /// Measured submission is running. `end_block` is set for block-count runs.
+    Measuring {
+        /// Exclusive block number immediately before measured submission started.
+        start_block: u64,
+        /// Inclusive canonical block that ends measurement.
+        end_block: Option<u64>,
+    },
+    /// The configured end block has been observed.
+    Finished {
+        /// Exclusive block number immediately before measured submission started.
+        start_block: u64,
+        /// Inclusive canonical block that ended measurement.
+        end_block: u64,
+    },
+}
+
 /// Canonical receipt data for a transaction, fetched in a single batch pass at the
 /// end of the load test (not during the run). Used to backfill gas, effective gas
 /// price, and revert status.
@@ -105,14 +124,9 @@ struct ResultsTrackerInner {
     /// Block numbers in which at least one of our transactions landed, used to scope
     /// the end-of-run `eth_getBlockReceipts` pass to only relevant blocks.
     landed_blocks: BTreeSet<u64>,
-    measurement_started: bool,
-    measurement_start_block: Option<u64>,
-    measurement_end_block: Option<u64>,
-    measurement_target_count: Option<u64>,
-    measurement_finished: bool,
+    measurement: Measurement,
     measured_landed: HashSet<TxHash>,
-    completed_batches: HashMap<u64, Instant>,
-    pending_refills: VecDeque<PendingRefill>,
+    refills: RefillLedger,
     completed_refill_lags: VecDeque<Duration>,
     observed_gas_total: u128,
     observed_gas_count: u64,
@@ -132,33 +146,6 @@ struct PendingTransaction {
     cohort: SubmitCohort,
 }
 
-#[derive(Debug)]
-struct PendingRefill {
-    batch_ids: Vec<u64>,
-    started_at: Instant,
-}
-
-impl ResultsTrackerInner {
-    fn resolve_pending_refills(&mut self) {
-        for index in (0..self.pending_refills.len()).rev() {
-            let refill = &self.pending_refills[index];
-            if refill.batch_ids.iter().any(|id| !self.completed_batches.contains_key(id)) {
-                continue;
-            }
-
-            let latest = refill
-                .batch_ids
-                .iter()
-                .filter_map(|id| self.completed_batches.remove(id))
-                .max()
-                .expect("pending refill contains at least one batch");
-            let refill = self.pending_refills.swap_remove_back(index).expect("index is in bounds");
-            self.completed_refill_lags
-                .push_back(latest.saturating_duration_since(refill.started_at));
-        }
-    }
-}
-
 impl ResultsTracker {
     /// Creates a new tracker for the given sender addresses.
     pub fn new(sender_addresses: &[Address]) -> Self {
@@ -173,14 +160,9 @@ impl ResultsTracker {
                 unconfirmed_gas: 0,
                 confirmed_gas: 0,
                 landed_blocks: BTreeSet::new(),
-                measurement_started: false,
-                measurement_start_block: None,
-                measurement_end_block: None,
-                measurement_target_count: None,
-                measurement_finished: false,
+                measurement: Measurement::Warmup,
                 measured_landed: HashSet::new(),
-                completed_batches: HashMap::new(),
-                pending_refills: VecDeque::new(),
+                refills: RefillLedger::default(),
                 completed_refill_lags: VecDeque::new(),
                 observed_gas_total: 0,
                 observed_gas_count: 0,
@@ -210,7 +192,7 @@ impl ResultsTracker {
                 continue;
             }
 
-            let measured = transaction.measured && inner.measurement_started;
+            let measured = transaction.measured && inner.measurement != Measurement::Warmup;
             inner.pending.insert(
                 transaction.tx_hash,
                 PendingTransaction {
@@ -345,25 +327,29 @@ impl ResultsTracker {
     /// Records terminal completion of one submission batch.
     pub fn record_batch_completed(&self, id: u64, completed_at: Instant) {
         let mut inner = self.inner.write();
-        if inner.completed_batches.len() >= MAX_COMPLETED_BATCH_CACHE_SIZE {
-            let oldest_retained = id.saturating_sub((MAX_COMPLETED_BATCH_CACHE_SIZE / 2) as u64);
-            inner.completed_batches.retain(|batch_id, _| *batch_id >= oldest_retained);
+        if let Some(lag) = inner.refills.complete(id, completed_at) {
+            inner.completed_refill_lags.push_back(lag);
         }
-        inner.completed_batches.insert(id, completed_at);
-        inner.resolve_pending_refills();
     }
 
-    /// Registers batches whose acknowledgement completed after the synchronous refill budget.
-    pub fn register_pending_refill(&self, batch_ids: Vec<u64>, started_at: Instant) {
-        if batch_ids.is_empty() {
-            return;
-        }
-        let mut inner = self.inner.write();
-        if inner.pending_refills.len() >= MAX_COMPLETED_BATCH_CACHE_SIZE {
-            inner.pending_refills.pop_front();
-        }
-        inner.pending_refills.push_back(PendingRefill { batch_ids, started_at });
-        inner.resolve_pending_refills();
+    /// Starts tracking a refill cycle's batches. See [`RefillLedger::open`].
+    pub fn open_refill(&self, batches: Range<u64>, started_at: Instant) {
+        self.inner.write().refills.open(batches, started_at);
+    }
+
+    /// Drops a batch that was never sent from its refill cycle.
+    pub fn abandon_refill_batch(&self, id: u64) {
+        self.inner.write().refills.abandon(id);
+    }
+
+    /// Returns whether every batch of a waiting refill cycle has completed.
+    pub fn refill_acked(&self, batches: &Range<u64>) -> bool {
+        self.inner.read().refills.is_acked(batches)
+    }
+
+    /// Ends a refill cycle's synchronous wait. See [`RefillLedger::stop_waiting`].
+    pub fn stop_refill_wait(&self, batches: &Range<u64>) -> Option<Duration> {
+        self.inner.write().refills.stop_waiting(batches)
     }
 
     /// Drains exact acknowledgement latencies for refills that completed asynchronously.
@@ -371,30 +357,13 @@ impl ResultsTracker {
         self.inner.write().completed_refill_lags.drain(..).collect()
     }
 
-    /// Removes completed entries for `batch_ids`, returning the latest completion time.
-    pub fn take_completed_batches(&self, batch_ids: &[u64]) -> Option<Instant> {
-        let mut inner = self.inner.write();
-        if batch_ids.iter().any(|id| !inner.completed_batches.contains_key(id)) {
-            return None;
-        }
-        let mut latest = None;
-        for id in batch_ids {
-            let completed_at = inner.completed_batches.remove(id).expect("presence checked above");
-            latest =
-                Some(latest.map_or(completed_at, |current: Instant| current.max(completed_at)));
-        }
-        latest
-    }
-
     /// Starts measurement. Transactions already accepted remain warmup transactions.
     pub fn begin_measurement(&self, start_block: u64, measurement_blocks: Option<u64>) {
         let mut inner = self.inner.write();
-        inner.measurement_started = true;
-        inner.measurement_start_block = Some(start_block);
-        inner.measurement_target_count = measurement_blocks;
-        inner.measurement_end_block =
-            measurement_blocks.map(|count| start_block.saturating_add(count));
-        inner.measurement_finished = false;
+        inner.measurement = Measurement::Measuring {
+            start_block,
+            end_block: measurement_blocks.map(|count| start_block.saturating_add(count)),
+        };
         inner.unreported_confirmations.clear();
         inner.landed_blocks.clear();
         inner.measured_landed.clear();
@@ -442,7 +411,7 @@ impl ResultsTracker {
 
     /// Returns whether the configured measurement block target has been observed.
     pub fn measurement_finished(&self) -> bool {
-        self.inner.read().measurement_finished
+        matches!(self.inner.read().measurement, Measurement::Finished { .. })
     }
 
     /// Records that a canonical head was observed, independently of transaction hash scanning.
@@ -452,15 +421,18 @@ impl ResultsTracker {
 
     /// Returns the configured measurement window boundaries.
     pub fn measurement_window(&self) -> MeasurementWindow {
-        let inner = self.inner.read();
-        let block_count = inner
-            .measurement_start_block
-            .zip(inner.measurement_end_block)
-            .map_or(0, |(start, end)| end.saturating_sub(start));
-        MeasurementWindow {
-            start_block: inner.measurement_start_block,
-            end_block: inner.measurement_end_block,
-            block_count,
+        match self.inner.read().measurement {
+            Measurement::Warmup => MeasurementWindow::default(),
+            Measurement::Measuring { start_block, end_block } => MeasurementWindow {
+                start_block: Some(start_block),
+                end_block,
+                block_count: end_block.map_or(0, |end| end.saturating_sub(start_block)),
+            },
+            Measurement::Finished { start_block, end_block } => MeasurementWindow {
+                start_block: Some(start_block),
+                end_block: Some(end_block),
+                block_count: end_block.saturating_sub(start_block),
+            },
         }
     }
 }
@@ -487,7 +459,7 @@ impl ResultsTrackerInner {
         // Measured txs always emit metrics. Pre-measurement txs emit only before
         // begin_measurement so live TUI/headroom can see inclusions; after
         // begin_measurement they only release in-flight (already handled above).
-        let emit_metrics = pending.measured || !self.measurement_started;
+        let emit_metrics = pending.measured || self.measurement == Measurement::Warmup;
         if !emit_metrics {
             return Some(pending.estimated_gas);
         }
@@ -521,13 +493,10 @@ impl ResultsTrackerInner {
     }
 
     const fn observe_measurement_block(&mut self, observed_block: u64) {
-        if !self.measurement_started || self.measurement_finished {
-            return;
-        }
-        if let Some(target_end_block) = self.measurement_end_block
-            && observed_block >= target_end_block
+        if let Measurement::Measuring { start_block, end_block: Some(end_block) } = self.measurement
+            && observed_block >= end_block
         {
-            self.measurement_finished = true;
+            self.measurement = Measurement::Finished { start_block, end_block };
         }
     }
 }
@@ -768,7 +737,9 @@ mod tests {
     fn preserves_late_refill_acknowledgement_latency() {
         let tracker = ResultsTracker::new(&[]);
         let started_at = Instant::now();
-        tracker.register_pending_refill(vec![10, 11], started_at);
+        tracker.open_refill(10..12, started_at);
+        assert!(!tracker.refill_acked(&(10..12)));
+        assert_eq!(tracker.stop_refill_wait(&(10..12)), None);
 
         tracker.record_batch_completed(10, started_at + Duration::from_millis(120));
         assert!(tracker.drain_completed_refill_lags().is_empty());

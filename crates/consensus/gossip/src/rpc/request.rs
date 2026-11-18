@@ -121,14 +121,8 @@ impl P2pRpcRequest {
             Self::BlockAddr { address } => gossip.connection_gate.block_addr(address),
             Self::UnblockAddr { address } => gossip.connection_gate.unblock_addr(address),
             Self::ListBlockedAddrs(s) => Self::list_blocked_addrs(s, gossip),
-            Self::ProtectPeer { peer_id } => {
-                gossip.connection_gate.protect_peer(peer_id);
-                gossip.swarm.behaviour_mut().connection_limits.bypass_peer_id(&peer_id);
-            }
-            Self::UnprotectPeer { peer_id } => {
-                gossip.connection_gate.unprotect_peer(peer_id);
-                gossip.swarm.behaviour_mut().connection_limits.remove_peer_id(&peer_id);
-            }
+            Self::ProtectPeer { peer_id } => gossip.protect_peer(peer_id),
+            Self::UnprotectPeer { peer_id } => gossip.unprotect_peer(peer_id),
             Self::BlockSubnet { address } => gossip.connection_gate.block_subnet(address),
             Self::UnblockSubnet { address } => gossip.connection_gate.unblock_subnet(address),
             Self::ListBlockedSubnets(s) => Self::list_blocked_subnets(s, gossip),

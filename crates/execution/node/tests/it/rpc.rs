@@ -32,14 +32,23 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
         .with_network(network_args)
         .with_rpc(RpcServerArgs::default().with_unused_ports().with_http());
 
-    let NodeHandle { node, node_exit_future: _ } =
-        NodeBuilder::new(node_config).testing_node(exec).node(BaseNode::default()).launch().await?;
+    let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
+        .testing_node(exec.clone())
+        .node(BaseNode::default())
+        .launch()
+        .await?;
 
     let api = node.add_ons_handle.admin_api();
 
     let info = api.node_info().await.unwrap();
 
     assert_eq!(info.ip, external_ip);
+
+    // Stop the node's tasks before the process exits, otherwise they can still run during exit
+    // teardown and abort the test binary.
+    drop(api);
+    drop(node);
+    exec.graceful_shutdown();
 
     Ok(())
 }

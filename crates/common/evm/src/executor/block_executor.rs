@@ -2,9 +2,7 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
-use alloy_consensus::{
-    Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt, transaction::TxHashRef,
-};
+use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::{
     Database, Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
@@ -170,10 +168,7 @@ where
             Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
         >,
     R: BaseReceiptBuilder<
-            Transaction: Transaction
-                             + Encodable2718
-                             + TxHashRef
-                             + TransactionEnvelope<TxType: Send + 'static>,
+            Transaction: Transaction + Encodable2718 + TransactionEnvelope<TxType: Send + 'static>,
             Receipt: TxReceipt,
         >,
     Spec: Upgrades,
@@ -269,7 +264,7 @@ where
 
         // Execute transaction and return the result
         let result = self.evm.transact(tx_env).map_err(|err| {
-            let hash = *tx.tx().tx_hash();
+            let hash = tx.tx().trie_hash();
             BlockExecutionError::evm(err, hash)
         })?;
         let eip8130_committed_phases = if tx.tx().ty() == EIP8130_TRANSACTION_TYPE {

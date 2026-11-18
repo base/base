@@ -567,6 +567,10 @@ pub struct MockL2Provider {
     pub error_blocks: Vec<u64>,
     /// Delay applied before returning a header.
     pub header_delay: Option<Duration>,
+    /// Block number served for [`BlockNumberOrTag::Finalized`] header requests.
+    pub finalized_block_number: Option<u64>,
+    /// Blocks passed to `header_by_number`, in call order.
+    pub header_requests: Mutex<Vec<BlockNumberOrTag>>,
 }
 
 impl MockL2Provider {
@@ -606,8 +610,12 @@ impl L2Provider for MockL2Provider {
     }
 
     async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseHeader> {
+        self.header_requests.lock().unwrap().push(block);
         let block_number = match block {
             BlockNumberOrTag::Number(number) => number,
+            BlockNumberOrTag::Finalized => self
+                .finalized_block_number
+                .ok_or_else(|| RpcError::HeaderNotFound("no finalized block configured".into()))?,
             other => panic!("MockL2Provider::header_by_number does not support tag {other:?}"),
         };
         if let Some(delay) = self.header_delay {
@@ -942,10 +950,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[should_panic(expected = "MockL2Provider::header_by_number does not support tag finalized")]
+    #[should_panic(expected = "MockL2Provider::header_by_number does not support tag latest")]
     async fn test_mock_l2_provider_rejects_block_tags() {
         let provider = MockL2Provider::default();
 
-        let _ = provider.header_by_number(BlockNumberOrTag::Finalized).await;
+        let _ = provider.header_by_number(BlockNumberOrTag::Latest).await;
     }
 }

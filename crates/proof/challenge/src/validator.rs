@@ -126,7 +126,8 @@ pub struct IntermediateValidationParams<'a> {
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
 /// recompute expected output roots and compare them against onchain claims.
 pub struct OutputValidator<L2: L2Provider + ?Sized> {
-    l2_provider: Arc<L2>,
+    /// L2 node the expected output roots are computed against.
+    pub l2_provider: Arc<L2>,
 }
 
 impl<L2: L2Provider + ?Sized> Clone for OutputValidator<L2> {

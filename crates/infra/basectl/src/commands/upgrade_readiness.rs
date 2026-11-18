@@ -10,7 +10,7 @@ use base_upgrade_signal::UpgradeReadiness;
 use clap::Args;
 use url::Url;
 
-use crate::{CommandOutcome, JsonOutput, KeyValueTable, MonitoringConfig, fetch_upgrade_readiness};
+use crate::{CommandOutcome, ConsensusClient, JsonOutput, KeyValueTable, MonitoringConfig};
 
 /// Arguments for the upgrade-readiness pre-flight check.
 #[derive(Debug, Args)]
@@ -38,7 +38,8 @@ impl UpgradeReadinessCommand {
     /// Fetches upgrade readiness and renders it, returning a non-zero outcome when not ready.
     pub async fn run(self, config: MonitoringConfig) -> Result<CommandOutcome> {
         let cl_rpc = config.resolve_cl_rpc(self.cl_rpc.as_ref(), "upgrade-readiness")?;
-        let readiness = fetch_upgrade_readiness(&cl_rpc, self.target_version).await?;
+        let readiness =
+            ConsensusClient::connect(&cl_rpc)?.upgrade_readiness(self.target_version).await?;
 
         if self.json {
             JsonOutput::print(&readiness)?;

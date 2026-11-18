@@ -62,10 +62,6 @@ impl DaEgress {
             }
         }
 
-        if frames.is_empty() {
-            return None;
-        }
-
         let saturated = remaining < Frame::ENCODED_OVERHEAD + 1;
         if saturated || release_due { Some(frames) } else { None }
     }
@@ -215,29 +211,22 @@ impl DaEgress {
     /// Plans one calldata frame without mutating channel output.
     fn plan_calldata(channels: &VecDeque<Channel>) -> Option<(ChannelId, usize, bool)> {
         // Preserve FIFO ordering: only the first unfinished channel may emit.
-        for channel in channels {
-            if channel.framing_complete() {
-                continue;
-            }
+        let channel = channels.iter().find(|channel| !channel.framing_complete())?;
+        let available = channel.available_output();
 
-            let available = channel.available_output();
-
-            // Full frames may stream before the channel closes.
-            if available >= channel.max_frame_data() {
-                let data_len = channel.max_frame_data();
-                let is_last = data_len == available && channel.terminal_pending();
-                return Some((channel.id(), data_len, is_last));
-            }
-
-            // A closed channel releases its final, possibly empty, frame.
-            if channel.terminal_pending() {
-                return Some((channel.id(), available, true));
-            }
-
-            // Partial output from an open channel remains buffered.
-            return None;
+        // Full frames may stream before the channel closes.
+        if available >= channel.max_frame_data() {
+            let data_len = channel.max_frame_data();
+            let is_last = data_len == available && channel.terminal_pending();
+            return Some((channel.id(), data_len, is_last));
         }
 
+        // A closed channel releases its final, possibly empty, frame.
+        if channel.terminal_pending() {
+            return Some((channel.id(), available, true));
+        }
+
+        // Partial output from an open channel remains buffered.
         None
     }
 

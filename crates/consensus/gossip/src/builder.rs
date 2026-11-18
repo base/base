@@ -47,6 +47,8 @@ pub struct GossipDriverBuilder {
     topic_scoring: bool,
     /// Whether outbound TCP connections may reuse the listener port.
     reuse_listener_port: bool,
+    /// Trusted peer addresses, each with a `/p2p/<peer-id>` component.
+    trusted_peers: Vec<Multiaddr>,
 }
 
 impl GossipDriverBuilder {
@@ -73,6 +75,7 @@ impl GossipDriverBuilder {
             rollup_config,
             topic_scoring: false,
             reuse_listener_port: true,
+            trusted_peers: Vec::new(),
         }
     }
 
@@ -87,6 +90,13 @@ impl GossipDriverBuilder {
     /// reuses ports by binding outbound sockets to the wildcard address.
     pub const fn with_reuse_listener_port(mut self, reuse: bool) -> Self {
         self.reuse_listener_port = reuse;
+        self
+    }
+
+    /// Sets the trusted peers. Each address must contain a `/p2p/<peer-id>` component; addresses
+    /// without one, or for the local peer, are ignored.
+    pub fn with_trusted_peers(mut self, trusted_peers: Vec<Multiaddr>) -> Self {
+        self.trusted_peers = trusted_peers;
         self
     }
 
@@ -272,6 +282,7 @@ impl GossipDriverBuilder {
                     peer_monitoring: self.peer_monitoring,
                     connection_limits_config,
                     reuse_listener_port: self.reuse_listener_port,
+                    trusted_peers: self.trusted_peers,
                 },
             ),
             signer_tx,

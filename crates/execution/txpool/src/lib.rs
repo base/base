@@ -14,10 +14,13 @@ pub use guard::{
 };
 
 mod invalidation;
-pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet};
+pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet, Watchers};
 
 mod manifest;
 pub use manifest::{ConfigSlot, ManifestStale, WatchManifest};
+
+mod unix_millis;
+pub use unix_millis::UnixMillis;
 
 mod limits;
 pub use limits::{InflightCounters, PayerBook};
@@ -83,7 +86,7 @@ pub use pool_error_label::PoolRejectionLabel;
 
 mod builder;
 pub use builder::{
-    BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering, KeyedMetering,
+    BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering,
     MAX_VALIDATED_INSERT_BATCH, is_already_imported_rejection,
 };
 

@@ -339,6 +339,20 @@ wrote for that block, copied from `<datadir>/invalid_block_hooks/witness/` to
 `<output-dir>/invalid-block-hooks/`. The hook runs only for blocks the node executed, so a block
 rejected before execution (for example on a hash mismatch) has none.
 
+`base-bench export` writes the same format from canonical blocks in a node datadir, opened
+read-only, with no running node or RPC:
+
+```bash
+just devnet bench export --chain mainnet --datadir "$SNAPSHOT_DATADIR" \
+  --from 53091727 --output-dir "$EXPORT_DIR"
+```
+
+`--to` defaults to the datadir head; a range must not span Denim activation, because a manifest
+holds one block interval. The boundary is block `--from - 1`, so replay into a copy of
+the datadir unwound to it (`base reth stage unwind to-block`). The manifest's `source` records the
+datadir, its head, and the head's timestamp, and a replay of it keeps the chain's own fork
+schedule.
+
 ## Measure DA bytes for a block range
 
 `base-bench da` runs blocks through the batcher encoder with the Rust batcher's default settings

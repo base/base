@@ -32,13 +32,3 @@ sol! {
         bytes32 scheduleId;
     }
 }
-
-/// Convert a u32 array to a u8 array. Useful for converting the range vkey to a B256.
-pub fn u32_to_u8(input: [u32; 8]) -> [u8; 32] {
-    let mut output = [0u8; 32];
-    for (i, &value) in input.iter().enumerate() {
-        let bytes = value.to_be_bytes();
-        output[i * 4..(i + 1) * 4].copy_from_slice(&bytes);
-    }
-    output
-}

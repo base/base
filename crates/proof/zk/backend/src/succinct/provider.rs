@@ -271,11 +271,11 @@ impl OpSuccinctWitnessProvider {
             L1HeadSource::Pinned(hash) => {
                 info!(hash = %hash, "using pinned L1 head");
                 self.host
-                    .fetch(
+                    .fetcher
+                    .get_host_args(
                         start_block,
                         end_block,
-                        Some(hash),
-                        false,
+                        hash,
                         params.schedule_l2_block_number,
                         params.intermediate_block_interval,
                     )
@@ -300,11 +300,11 @@ impl OpSuccinctWitnessProvider {
                     "L1 head calculated from sequence window"
                 );
                 self.host
-                    .fetch(
+                    .fetcher
+                    .get_host_args(
                         start_block,
                         end_block,
-                        Some(l1_head_hash),
-                        false,
+                        l1_head_hash,
                         params.schedule_l2_block_number,
                         params.intermediate_block_interval,
                     )
