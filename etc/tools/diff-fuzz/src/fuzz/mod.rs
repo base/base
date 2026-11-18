@@ -23,4 +23,4 @@ pub use engine::{
 };
 
 mod chain;
-pub use chain::{ChainDriver, ChainEnd, ChainOutcome, ChainSummary};
+pub use chain::{ChainDriver, ChainEnd, ChainOutcome, ChainRecord, ChainSummary};

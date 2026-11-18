@@ -16,8 +16,8 @@ use std::{
 use serde::Serialize;
 
 use crate::{
-    Adapter, AdapterSpec, Campaign, ChainGenerator, FindingSignature, Fuzzer, GeneratorOptions,
-    Minimizer, Request, Verdict,
+    Adapter, AdapterSpec, Campaign, ChainGenerator, Era, FindingSignature, Fuzzer,
+    GeneratorOptions, Minimizer, Request, Verdict,
 };
 
 /// Settings of a chain run.
@@ -63,6 +63,35 @@ pub struct ChainSummary {
     pub stopped: BTreeMap<String, u64>,
     /// Finding directories.
     pub findings: Vec<String>,
+    /// Agreed blocks by the era they executed in.
+    pub agreed_by_era: BTreeMap<Era, u64>,
+    /// Chains whose agreed blocks span a fork activation, by the first era they entered.
+    pub crossings: BTreeMap<Era, u64>,
+    /// The longest chains, longest first.
+    pub longest: Vec<ChainRecord>,
+}
+
+/// One chain in the summary.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainRecord {
+    /// Chain seed.
+    pub seed: u64,
+    /// Agreed blocks.
+    pub blocks: u64,
+    /// Number of the first block.
+    pub start: u64,
+    /// Era of the first block.
+    pub first_era: Era,
+    /// Era of the last agreed block.
+    pub last_era: Era,
+    /// How it ended.
+    pub end: String,
+}
+
+impl ChainSummary {
+    /// Longest chains the summary keeps.
+    pub const LONGEST: usize = 20;
 }
 
 impl ChainDriver {
@@ -111,6 +140,31 @@ impl ChainDriver {
                         let mut s = summary.lock().unwrap();
                         s.chains += 1;
                         s.agreed_blocks += outcome.agreed;
+                        for (era, blocks) in &outcome.eras {
+                            *s.agreed_by_era.entry(*era).or_default() += blocks;
+                        }
+                        for era in outcome.eras.keys().skip(1) {
+                            *s.crossings.entry(*era).or_default() += 1;
+                        }
+                        let end = match &outcome.end {
+                            ChainEnd::Completed => "completed".to_owned(),
+                            ChainEnd::Stopped(why) => format!("stopped: {why}"),
+                            ChainEnd::Finding { dir, .. } => format!("finding: {dir}"),
+                        };
+                        if let (Some(first_era), Some(last_era)) =
+                            (outcome.eras.keys().next(), outcome.eras.keys().next_back())
+                        {
+                            s.longest.push(ChainRecord {
+                                seed,
+                                blocks: outcome.agreed,
+                                start: outcome.start,
+                                first_era: *first_era,
+                                last_era: *last_era,
+                                end,
+                            });
+                            s.longest.sort_by(|a, b| b.blocks.cmp(&a.blocks));
+                            s.longest.truncate(ChainSummary::LONGEST);
+                        }
                         match outcome.end {
                             ChainEnd::Completed => s.completed += 1,
                             ChainEnd::Stopped(why) => *s.stopped.entry(why).or_default() += 1,
@@ -149,8 +203,15 @@ impl ChainDriver {
         let built =
             catch_unwind(AssertUnwindSafe(|| ChainGenerator::new(seed, self.options.clone())));
         let Ok(mut chain) = built else {
-            return ChainOutcome { agreed: 0, end: ChainEnd::Stopped("generator panicked".into()) };
+            return ChainOutcome {
+                agreed: 0,
+                start: 0,
+                eras: BTreeMap::new(),
+                end: ChainEnd::Stopped("generator panicked".into()),
+            };
         };
+        let start = chain.request().header.number;
+        let mut eras: BTreeMap<Era, u64> = BTreeMap::new();
         let mut prefix: VecDeque<Request> = VecDeque::with_capacity(Self::PREFIX_LEN);
         let reference = adapters
             .iter()
@@ -175,27 +236,54 @@ impl ChainDriver {
                 );
                 return ChainOutcome {
                     agreed: chain.blocks(),
+                    start,
+                    eras,
                     end: ChainEnd::Finding { failure: signature.failure, dir },
                 };
             }
             let Ok(response) = &results[reference].1 else {
                 unreachable!("agreement needs responses")
             };
+            *eras.entry(Era::at(request.header.timestamp)).or_default() += 1;
             match catch_unwind(AssertUnwindSafe(|| chain.next(response))) {
                 Ok(Ok(_)) => {}
                 Ok(Err(err)) => {
                     let why: String = format!("{err:#}").chars().take(120).collect();
-                    return ChainOutcome { agreed: chain.blocks(), end: ChainEnd::Stopped(why) };
+                    // Keep the chain so the generator gap can be reproduced.
+                    let dir = self.out.join("stopped").join(Fuzzer::sanitize(&request.id));
+                    let saved = fs::create_dir_all(&dir).and_then(|()| {
+                        let mut jsonl = String::new();
+                        for request in &prefix {
+                            jsonl.push_str(&serde_json::to_string(request).unwrap_or_default());
+                            jsonl.push('\n');
+                        }
+                        fs::write(dir.join("prefix.jsonl"), jsonl)?;
+                        fs::write(
+                            dir.join("response.json"),
+                            serde_json::to_vec_pretty(response).unwrap_or_default(),
+                        )
+                    });
+                    if let Err(err) = saved {
+                        eprintln!("saving stopped chain {}: {err:#}", request.id);
+                    }
+                    return ChainOutcome {
+                        agreed: chain.blocks(),
+                        start,
+                        eras,
+                        end: ChainEnd::Stopped(why),
+                    };
                 }
                 Err(_) => {
                     return ChainOutcome {
                         agreed: chain.blocks(),
+                        start,
+                        eras,
                         end: ChainEnd::Stopped("generator panicked".into()),
                     };
                 }
             }
         }
-        ChainOutcome { agreed: chain.blocks(), end: ChainEnd::Completed }
+        ChainOutcome { agreed: chain.blocks(), start, eras, end: ChainEnd::Completed }
     }
 
     fn record(
@@ -251,6 +339,10 @@ impl ChainDriver {
 pub struct ChainOutcome {
     /// Blocks agreed before the end.
     pub agreed: u64,
+    /// Number of the first block.
+    pub start: u64,
+    /// Agreed blocks by the era they executed in.
+    pub eras: BTreeMap<Era, u64>,
     /// The end.
     pub end: ChainEnd,
 }

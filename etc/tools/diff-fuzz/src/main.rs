@@ -213,6 +213,9 @@ enum Command {
         /// Candidate requests one minimization may run (0 disables minimization).
         #[arg(long, default_value_t = 60)]
         minimize_budget: usize,
+        /// Percentage of chains started just before a fork activation (Isthmus to Denim).
+        #[arg(long, default_value_t = 45)]
+        crossing_percent: u64,
     },
     /// Writes the genesis file that starts real nodes on synthetic chain `seed`.
     NodeGenesis {
@@ -798,7 +801,15 @@ fn main() -> eyre::Result<()> {
             fs::write(&out, lines.join("\n"))?;
             println!("{} names from {total} cases", names.len());
         }
-        Command::Chain { common, seed, chains, length, reference, minimize_budget } => {
+        Command::Chain {
+            common,
+            seed,
+            chains,
+            length,
+            reference,
+            minimize_budget,
+            crossing_percent,
+        } => {
             let campaign = common.campaign()?;
             let driver = ChainDriver {
                 adapters: campaign.adapters,
@@ -809,7 +820,10 @@ fn main() -> eyre::Result<()> {
                 seed,
                 chains,
                 length,
-                options: GeneratorOptions::default(),
+                options: GeneratorOptions {
+                    activation_percent: crossing_percent.div_ceil(3),
+                    ..GeneratorOptions::default()
+                },
                 minimize_budget,
             };
             let summary = driver.run()?;

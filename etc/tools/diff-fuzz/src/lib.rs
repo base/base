@@ -18,7 +18,7 @@ pub use campaign::{Campaign, Summary};
 
 mod fuzz;
 pub use fuzz::{
-    AdapterResults, ByteEdit, ChainDriver, ChainEnd, ChainOutcome, ChainSummary, CodeEdit, Corpus,
+    AdapterResults, ByteEdit, ChainDriver, ChainEnd, ChainOutcome, ChainRecord, ChainSummary, CodeEdit, Corpus,
     CorpusCase, CorpusEntry, CoverageReport, FeeTarget, Finding, FindingGroup, FindingSignature,
     FuzzCase, FuzzConfig, FuzzState, FuzzStats, Fuzzer, GasTarget, L1Tweak, Minimized, Minimizer,
     Mutation, MutationStats, Mutator, Sample, Slot, SlotKind, Tweak,
