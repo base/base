@@ -48,6 +48,15 @@ impl L1BlockFetcher for StalledL1Fetcher {
         Ok(vec![])
     }
 
+    async fn get_storage_at(
+        &self,
+        _: alloy_primitives::Address,
+        _: B256,
+        _: BlockId,
+    ) -> Result<B256, Self::Error> {
+        unreachable!("the watcher reads signer state only when it has a signer channel")
+    }
+
     async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
         std::future::pending().await
     }

@@ -2,6 +2,8 @@
 //! RPC.
 
 use std::{
+    fmt::Display,
+    future::Future,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -14,7 +16,8 @@ use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Filter, Log};
 use async_trait::async_trait;
 use base_common_genesis::{
-    BaseFeature, RollupConfig, SystemConfigLog, SystemConfigUpdate, UnsafeBlockSignerUpdate,
+    BaseFeature, RollupConfig, SystemConfig, SystemConfigLog, SystemConfigUpdate,
+    UnsafeBlockSignerUpdate,
 };
 use base_protocol::BlockInfo;
 use futures::{Stream, StreamExt};
@@ -33,7 +36,7 @@ use crate::{
     actors::{CancellableContext, l1_watcher::error::L1WatcherActorError},
 };
 
-/// Stateless helper that wraps the log-fetch retry loop for [`L1WatcherActor`].
+/// Stateless helper that wraps the L1 request retry loop for [`L1WatcherActor`].
 ///
 /// Extracted as a separate type so the retry logic can be unit-tested independently of the actor's
 /// full channel and stream setup.
@@ -42,17 +45,7 @@ pub struct LogRetrier;
 
 impl LogRetrier {
     /// Fetch logs matching `filter`, retrying with capped exponential backoff until the fetch
-    /// succeeds or `cancel` fires.
-    ///
-    /// Returns `Some(logs)` on success and `None` once `cancel` fires, whether during a request
-    /// or a backoff sleep.
-    ///
-    /// There is no attempt limit. Every L1 RPC failure is treated as transient, because exiting
-    /// cannot help: a restarted node needs the same L1 to start and to make progress. Retrying
-    /// keeps the node alive through an L1 outage, so it resumes as soon as L1 recovers. Each
-    /// request is still bounded by the provider's request timeout.
-    ///
-    /// `initial_backoff` and `max_backoff` are caller-supplied so tests can use tiny values.
+    /// succeeds or `cancel` fires. See [`Self::retry`].
     pub async fn fetch_logs_with_retry<F>(
         provider: &F,
         filter: Filter,
@@ -64,25 +57,61 @@ impl LogRetrier {
     where
         F: L1BlockFetcher,
     {
+        Self::retry(
+            || provider.get_logs(filter.clone()),
+            "logs",
+            cancel,
+            block_info,
+            initial_backoff,
+            max_backoff,
+        )
+        .await
+    }
+
+    /// Run the L1 `request` made for `block_info`, retrying with capped exponential backoff until
+    /// it succeeds or `cancel` fires. `kind` names the request in logs.
+    ///
+    /// Returns `Some` with the response on success and `None` once `cancel` fires, whether during
+    /// a request or a backoff sleep.
+    ///
+    /// There is no attempt limit. Every L1 RPC failure is treated as transient, because exiting
+    /// cannot help: a restarted node needs the same L1 to start and to make progress. Retrying
+    /// keeps the node alive through an L1 outage, so it resumes as soon as L1 recovers. Each
+    /// request is still bounded by the provider's request timeout.
+    ///
+    /// `initial_backoff` and `max_backoff` are caller-supplied so tests can use tiny values.
+    pub async fn retry<T, E, Fut>(
+        mut request: impl FnMut() -> Fut,
+        kind: &'static str,
+        cancel: &CancellationToken,
+        block_info: BlockInfo,
+        initial_backoff: Duration,
+        max_backoff: Duration,
+    ) -> Option<T>
+    where
+        Fut: Future<Output = Result<T, E>>,
+        E: Display,
+    {
         let mut backoff = initial_backoff;
         let mut attempt: u64 = 0;
         loop {
             attempt += 1;
             let result = select! {
                 _ = cancel.cancelled() => return None,
-                result = provider.get_logs(filter.clone()) => result,
+                result = request() => result,
             };
             match result {
-                Ok(logs) => return Some(logs),
+                Ok(response) => return Some(response),
                 Err(e) => {
                     warn!(
                         target: "l1_watcher",
                         error = %e,
+                        request = kind,
                         block_hash = %block_info.hash,
                         block_number = block_info.number,
                         attempt,
                         retry_in = ?backoff,
-                        "Failed to fetch logs for L1 head"
+                        "L1 request for L1 head failed"
                     );
                     select! {
                         _ = cancel.cancelled() => return None,
@@ -218,6 +247,8 @@ where
         // A head that arrived while logs for an older head were still being fetched. It is
         // processed next, ahead of the streams.
         let mut superseding_head: Option<BlockInfo> = None;
+        // The last L1 block whose unsafe block signer state was applied.
+        let mut last_signer_block: Option<BlockInfo> = None;
 
         loop {
             let head_block_info = match superseding_head.take() {
@@ -312,42 +343,95 @@ where
                 L1WatcherActorError::DerivationClientError(e)
             })?;
 
-            // For each log, attempt to construct a [`SystemConfigLog`].
-            // Build the [`SystemConfigUpdate`] from the log.
-            // If the update is an Unsafe block signer update, send the address
-            // to the block signer sender.
-            let filter_address = self.rollup_config.l1_system_config_address;
-            let filter = Filter::new().address(filter_address).select(derivation_block.hash);
+            // Unsafe block signer updates are read from each head's SystemConfig logs. Heads are
+            // polled as the latest block, though, so the watcher can skip blocks, most of all
+            // after an L1 outage, a reorg can replace blocks already read, and an abandoned head
+            // is never read. Unless this head is the child of the last block whose signer state
+            // was applied, the current signer is instead read from the SystemConfig contract's
+            // state at this head. Only the latest signer matters, so the updates in between are
+            // not needed.
+            let system_config = self.rollup_config.l1_system_config_address;
+            let read_signer_state = self.block_signer_sender.is_some()
+                && last_signer_block.is_none_or(|last| !last.is_parent_of(&derivation_block));
+            let ecotone_active = self.rollup_config.is_feature_active_cascading(
+                BaseFeature::BlobAwareL1Fees,
+                derivation_block.timestamp,
+            );
 
             // Log requests are retried until they succeed or the node shuts down, so an L1
             // outage pauses this watcher instead of exiting the node. While waiting, the safe and
             // finalized streams are still served. The first head that arrives meanwhile is kept
             // and processed next, and the head stream is not polled again until then.
             //
-            // This head is abandoned only once L1 reports a different block at its height, that
-            // is, once it has been reorged out and the RPC may never serve its logs. A canonical
-            // head is never abandoned, because its logs may carry an unsafe block signer update
-            // that later heads' filters would not include.
-            let fetch = LogRetrier::fetch_logs_with_retry(
-                &self.l1_provider,
-                filter,
-                &cancel,
-                derivation_block,
-                INITIAL_BACKOFF,
-                MAX_BACKOFF,
-            );
+            // A state read is abandoned as soon as a newer head arrives, which reads the state
+            // again: the newer state is just as good, and a node that keeps only recent state may
+            // never serve this one. A log read is abandoned only once L1 reports a different block
+            // at its height, that is, once it has been reorged out and the RPC may never serve its
+            // logs. A canonical head is never abandoned, because its logs may carry an unsafe
+            // block signer update that later heads' filters would not include.
+            let provider = &self.l1_provider;
+            let fetch = async {
+                if read_signer_state {
+                    let slot = LogRetrier::retry(
+                        || {
+                            provider.get_storage_at(
+                                system_config,
+                                SystemConfig::UNSAFE_BLOCK_SIGNER_SLOT,
+                                BlockId::hash(derivation_block.hash),
+                            )
+                        },
+                        "unsafe_block_signer",
+                        &cancel,
+                        derivation_block,
+                        INITIAL_BACKOFF,
+                        MAX_BACKOFF,
+                    )
+                    .await?;
+                    let signer = Address::from_word(slot);
+                    // Zero means the contract has not set a signer at this block. Keep the
+                    // current one, as startup does.
+                    return Some(if signer.is_zero() { Vec::new() } else { vec![signer] });
+                }
+                let filter = Filter::new().address(system_config).select(derivation_block.hash);
+                let logs = LogRetrier::fetch_logs_with_retry(
+                    provider,
+                    filter,
+                    &cancel,
+                    derivation_block,
+                    INITIAL_BACKOFF,
+                    MAX_BACKOFF,
+                )
+                .await?;
+                Some(
+                    logs.into_iter()
+                        .filter_map(|log| {
+                            match SystemConfigLog::new(log.into(), ecotone_active).build() {
+                                Ok(SystemConfigUpdate::UnsafeBlockSigner(
+                                    UnsafeBlockSignerUpdate { unsafe_block_signer },
+                                )) => Some(unsafe_block_signer),
+                                _ => None,
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            };
             tokio::pin!(fetch);
             let mut next_reorg_check = tokio::time::Instant::now() + REORG_CHECK_INTERVAL;
             let mut newer_head: Option<BlockInfo> = None;
-            let logs = loop {
+            let signers = loop {
                 select! {
-                    logs = &mut fetch => match logs {
-                        Some(logs) => break Some(logs),
+                    signers = &mut fetch => match signers {
+                        Some(signers) => break Some(signers),
                         None => return Ok(()),
                     },
                     new_head = self.head_stream.next(), if newer_head.is_none() => match new_head {
                         None => return Err(L1WatcherActorError::StreamEnded),
-                        Some(new_head) => newer_head = Some(new_head),
+                        Some(new_head) => {
+                            newer_head = Some(new_head);
+                            if read_signer_state {
+                                break None;
+                            }
+                        }
                     },
                     new_safe = self.safe_stream.next() => match new_safe {
                         None => return Err(L1WatcherActorError::StreamEnded),
@@ -384,40 +468,33 @@ where
                 }
             };
             superseding_head = newer_head;
-            let Some(logs) = logs else {
+            let Some(signers) = signers else {
                 warn!(
                     target: "l1_watcher",
                     block_hash = %derivation_block.hash,
                     block_number = derivation_block.number,
                     new_head = ?superseding_head.map(|head| head.number),
-                    "L1 head was reorged out before its logs were fetched; moving to the newer head"
+                    "Abandoning L1 head before its signer state or logs were read; moving to the newer head"
                 );
                 continue;
             };
-            let ecotone_active = self.rollup_config.is_feature_active_cascading(
-                BaseFeature::BlobAwareL1Fees,
-                derivation_block.timestamp,
-            );
-            for log in logs {
-                let sys_cfg_log = SystemConfigLog::new(log.into(), ecotone_active);
-                if let Ok(SystemConfigUpdate::UnsafeBlockSigner(UnsafeBlockSignerUpdate {
-                    unsafe_block_signer,
-                })) = sys_cfg_log.build()
+            last_signer_block = Some(derivation_block);
+            for unsafe_block_signer in signers {
+                info!(
+                    target: "l1_watcher",
+                    signer = %unsafe_block_signer,
+                    block_number = derivation_block.number,
+                    from_state = read_signer_state,
+                    "Unsafe block signer update"
+                );
+                if let Some(ref block_signer_sender) = self.block_signer_sender
+                    && let Err(e) = block_signer_sender.send(unsafe_block_signer).await
                 {
-                    info!(
+                    error!(
                         target: "l1_watcher",
-                        signer = %unsafe_block_signer,
-                        "Unsafe block signer update"
+                        error = %e,
+                        "Error sending unsafe block signer update"
                     );
-                    if let Some(ref block_signer_sender) = self.block_signer_sender
-                        && let Err(e) = block_signer_sender.send(unsafe_block_signer).await
-                    {
-                        error!(
-                            target: "l1_watcher",
-                            error = %e,
-                            "Error sending unsafe block signer update"
-                        );
-                    }
                 }
             }
         }
@@ -447,13 +524,13 @@ mod tests {
     };
 
     use alloy_eips::BlockId;
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, LogData};
     use alloy_rpc_types_eth::{Block, Filter, Log};
     use async_trait::async_trait;
-    use base_common_genesis::RollupConfig;
+    use base_common_genesis::{RollupConfig, SystemConfigUpdateKind};
     use tokio_util::sync::CancellationToken;
 
-    use super::*;
+    use super::{super::fetcher::MockL1BlockFetcher, *};
     use crate::DerivationClientResult;
 
     type BoxedBlockStream = Pin<Box<dyn Stream<Item = BlockInfo> + Unpin + Send>>;
@@ -490,6 +567,15 @@ mod tests {
             if count < self.fail_count { Err("transient error".to_string()) } else { Ok(vec![]) }
         }
 
+        async fn get_storage_at(
+            &self,
+            _: Address,
+            _: B256,
+            _: BlockId,
+        ) -> Result<B256, Self::Error> {
+            unreachable!("the watcher reads signer state only when it has a signer channel")
+        }
+
         async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
             Ok(None)
         }
@@ -507,6 +593,15 @@ mod tests {
 
         async fn get_logs(&self, _: Filter) -> Result<Vec<Log>, Self::Error> {
             futures::future::pending().await
+        }
+
+        async fn get_storage_at(
+            &self,
+            _: Address,
+            _: B256,
+            _: BlockId,
+        ) -> Result<B256, Self::Error> {
+            unreachable!("the watcher reads signer state only when it has a signer channel")
         }
 
         async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
@@ -563,6 +658,15 @@ mod tests {
             }
             self.fetched.lock().unwrap().push(hash);
             Ok(vec![])
+        }
+
+        async fn get_storage_at(
+            &self,
+            _: Address,
+            _: B256,
+            _: BlockId,
+        ) -> Result<B256, Self::Error> {
+            unreachable!("the watcher reads signer state only when it has a signer channel")
         }
 
         async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
@@ -643,6 +747,15 @@ mod tests {
             Ok(vec![])
         }
 
+        async fn get_storage_at(
+            &self,
+            _: Address,
+            _: B256,
+            _: BlockId,
+        ) -> Result<B256, Self::Error> {
+            unreachable!("the watcher reads signer state only when it has a signer channel")
+        }
+
         async fn get_block(&self, id: BlockId) -> Result<Option<Block>, Self::Error> {
             self.get_block_requested_ids.lock().unwrap().push(id);
             let call_count = self.get_block_call_count.fetch_add(1, Ordering::SeqCst);
@@ -696,7 +809,7 @@ mod tests {
         BlockInfo {
             hash: B256::from([number as u8; 32]),
             number,
-            parent_hash: B256::ZERO,
+            parent_hash: B256::from([number.wrapping_sub(1) as u8; 32]),
             timestamp: number * 12,
         }
     }
@@ -1158,5 +1271,176 @@ mod tests {
         // Only the second head triggered a get_block call.
         assert_eq!(ids.lock().unwrap().len(), 1);
         assert_eq!(ids.lock().unwrap()[0], BlockId::Number(6u64.into()));
+    }
+
+    // Unsafe block signer tests
+
+    /// The signer the tests' L1 sets.
+    const SIGNER: Address = Address::repeat_byte(0x5e);
+
+    /// A `SystemConfig` log that sets the unsafe block signer to [`SIGNER`].
+    fn signer_log() -> Log {
+        let mut data = vec![0u8; 96];
+        data[31] = 0x20;
+        data[63] = 0x20;
+        data[76..].copy_from_slice(SIGNER.as_slice());
+        Log {
+            inner: alloy_primitives::Log {
+                address: RollupConfig::default().l1_system_config_address,
+                data: LogData::new_unchecked(
+                    vec![
+                        SystemConfigUpdate::TOPIC,
+                        SystemConfigUpdate::EVENT_VERSION_0,
+                        B256::with_last_byte(SystemConfigUpdateKind::UnsafeBlockSigner as u8),
+                    ],
+                    data.into(),
+                ),
+            },
+            ..Default::default()
+        }
+    }
+
+    /// The hash of the block a signer state read is made at.
+    fn state_block(block: BlockId) -> B256 {
+        match block {
+            BlockId::Hash(hash) => hash.block_hash,
+            BlockId::Number(_) => panic!("signer state must be read at a block hash"),
+        }
+    }
+
+    /// Runs the watcher with a signer channel over `heads`, one per second, for five minutes and
+    /// returns the signers it sent.
+    async fn sent_signers(fetcher: MockL1BlockFetcher, heads: Vec<BlockInfo>) -> Vec<Address> {
+        let (signer_tx, mut signer_rx) = mpsc::channel(16);
+        let pending: fn() -> BoxedBlockStream = || Box::pin(futures::stream::pending());
+        // One head per second, so each is processed before the next arrives.
+        let heads: BoxedBlockStream = Box::pin(
+            futures::stream::iter(heads)
+                .then(|head| async move {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    head
+                })
+                .boxed()
+                .chain(futures::stream::pending()),
+        );
+        let actor = L1WatcherActor::new(
+            Arc::new(RollupConfig::default()),
+            fetcher,
+            watch::channel(None).0,
+            watch::channel(None).0,
+            watch::channel(None).0,
+            RecordingDerivationClient::default(),
+            Some(signer_tx),
+            CancellationToken::new(),
+            heads,
+            pending(),
+            pending(),
+            0,
+            Arc::new(AtomicU64::new(0)),
+        );
+        let _ = tokio::time::timeout(Duration::from_secs(5 * 60), actor.start(())).await;
+        let mut signers = Vec::new();
+        while let Ok(signer) = signer_rx.try_recv() {
+            signers.push(signer);
+        }
+        signers
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_head_reads_signer_from_state() {
+        // The signer may have changed between startup and the first head.
+        let mut fetcher = MockL1BlockFetcher::new();
+        fetcher.expect_get_logs().never();
+        fetcher.expect_get_storage_at().times(1).returning(|address, slot, block| {
+            assert_eq!(address, RollupConfig::default().l1_system_config_address);
+            assert_eq!(slot, SystemConfig::UNSAFE_BLOCK_SIGNER_SLOT);
+            assert_eq!(state_block(block), block_at(1).hash);
+            Ok(SIGNER.into_word())
+        });
+
+        assert_eq!(sent_signers(fetcher, vec![block_at(1)]).await, vec![SIGNER]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn consecutive_head_reads_signer_from_logs() {
+        // The first head reads the state, which has no signer set; the next head's logs set one.
+        let mut fetcher = MockL1BlockFetcher::new();
+        fetcher.expect_get_storage_at().times(1).returning(|_, _, _| Ok(B256::ZERO));
+        fetcher.expect_get_logs().times(1).returning(|_| Ok(vec![signer_log()]));
+
+        assert_eq!(sent_signers(fetcher, vec![block_at(1), block_at(2)]).await, vec![SIGNER]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn head_not_following_last_head_reads_signer_from_state() {
+        // After block 1, the watcher sees block 5, so blocks 2 to 4 were never read; or a block at
+        // the same height as block 1, or a block 2 whose parent is not block 1, both after a
+        // reorg replaced block 1. Any of those unread blocks may have changed the signer.
+        let other_fork = B256::repeat_byte(0xaa);
+        for second in [
+            block_at(5),
+            BlockInfo { hash: other_fork, ..block_at(1) },
+            BlockInfo { parent_hash: other_fork, ..block_at(2) },
+        ] {
+            let mut fetcher = MockL1BlockFetcher::new();
+            fetcher.expect_get_logs().never();
+            fetcher.expect_get_storage_at().times(2).returning(move |_, _, block| {
+                Ok(if state_block(block) == second.hash { SIGNER.into_word() } else { B256::ZERO })
+            });
+
+            assert_eq!(sent_signers(fetcher, vec![block_at(1), second]).await, vec![SIGNER]);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failing_signer_state_read_is_retried() {
+        let failures = Arc::new(AtomicU32::new(0));
+        let mut fetcher = MockL1BlockFetcher::new();
+        fetcher.expect_get_storage_at().returning(move |_, _, _| {
+            if failures.fetch_add(1, Ordering::SeqCst) < 5 {
+                Err("L1 unavailable".to_string())
+            } else {
+                Ok(SIGNER.into_word())
+            }
+        });
+
+        assert_eq!(sent_signers(fetcher, vec![block_at(1)]).await, vec![SIGNER]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn newer_head_replaces_failing_signer_state_read() {
+        // A node that keeps only recent state may never serve block 1's state again. Once block 2
+        // arrives, its state is read instead.
+        let mut fetcher = MockL1BlockFetcher::new();
+        fetcher.expect_get_logs().never();
+        fetcher.expect_get_storage_at().returning(|_, _, block| {
+            if state_block(block) == block_at(1).hash {
+                Err("missing trie node".to_string())
+            } else {
+                Ok(SIGNER.into_word())
+            }
+        });
+
+        assert_eq!(sent_signers(fetcher, vec![block_at(1), block_at(2)]).await, vec![SIGNER]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn head_after_abandoned_head_reads_signer_from_state() {
+        // Head 2's logs never arrive and it is reorged out, so its block is never read. Head 3
+        // follows it but not the last head read, so the signer comes from state.
+        let mut fetcher = MockL1BlockFetcher::new();
+        fetcher.expect_get_logs().returning(|_| Err("L1 unavailable".to_string()));
+        fetcher.expect_get_block().returning(|_| {
+            let mut block: Block = Block::default();
+            block.header.hash = B256::repeat_byte(0xee);
+            Ok(Some(block))
+        });
+        fetcher.expect_get_storage_at().times(2).returning(|_, _, block| {
+            Ok(if state_block(block) == block_at(3).hash { SIGNER.into_word() } else { B256::ZERO })
+        });
+
+        let signers = sent_signers(fetcher, vec![block_at(1), block_at(2), block_at(3)]).await;
+
+        assert_eq!(signers, vec![SIGNER]);
     }
 }
