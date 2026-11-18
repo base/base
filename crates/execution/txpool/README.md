@@ -112,8 +112,8 @@ cheap-first ordering and does not affect the signing contract.
 
 Raw ingress reuses the recovered envelope sender to verify sidecar signatures
 and rejects high-s signatures. Only sender-address secp256k1
-authorization is supported; contract wallets or EIP-8130 actors without that
-key cannot use signed sidecars. Deposits and unprotected legacy transactions
+authorization is supported; contract wallets without that key cannot use
+signed sidecars. Deposits and unprotected legacy transactions
 have no chain-bound signing domain and cannot authorize signed predicates.
 Shadow-only predicate injection is incompatible with signature enforcement.
 Predicates remain builder-side metadata, not on-chain consensus rules: a holder

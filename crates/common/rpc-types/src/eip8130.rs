@@ -7,12 +7,12 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_consensus::{
-    BaseTxEnvelope, Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    Eip8130StructuralError, Eip8130Structure, TxEip8130,
+    BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Eip8130StructuralError,
+    Eip8130Structure, TxEip8130,
 };
 use base_common_evm2::{BaseTxEnvelope as BaseTxEnv, Eip8130Simulation, Eip8130SimulationMode};
 
-use crate::{BaseTransactionRequest, Eip8130AuthScheme};
+use crate::BaseTransactionRequest;
 
 /// Filler byte for synthesized authentication stubs.
 pub(crate) const STUB_AUTH_FILL: u8 = 0xff;
@@ -20,9 +20,8 @@ pub(crate) const STUB_AUTH_FILL: u8 = 0xff;
 /// Length of the authenticator selector on a prefixed authentication blob.
 const AUTHENTICATOR_SELECTOR_LEN: usize = 20;
 
-/// Leading bytes of a delegate authentication blob that select what is priced:
-/// the delegate selector, the delegate account, and the nested selector.
-const DELEGATE_AUTH_PREFIX_LEN: usize = 3 * AUTHENTICATOR_SELECTOR_LEN;
+/// Length of a secp256k1 signature, `r || s || v`.
+pub(crate) const K1_SIGNATURE_LEN: usize = 65;
 
 /// Why an EIP-8130 `eth_estimateGas` / `eth_call` request cannot be simulated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -36,15 +35,9 @@ pub enum Eip8130SimulationRequestError {
     /// `sender` and `from` are both set and differ.
     #[error("`sender` and `from` differ")]
     SenderFromMismatch,
-    /// The `senderAuth` data is larger than an authentication blob may be.
-    #[error("`senderAuth` data exceeds the maximum authentication size")]
-    SenderAuthTooLarge,
-    /// The `payerAuth` data is larger than an authentication blob may be.
-    #[error("`payerAuth` data exceeds the maximum authentication size")]
-    PayerAuthTooLarge,
-    /// A named payer's `payerAuth` does not start with a recognized
-    /// authenticator selector.
-    #[error("`payerAuth` for a named payer must start with a recognized authenticator")]
+    /// A named payer's `payerAuth` does not start with the k1 authenticator
+    /// selector.
+    #[error("`payerAuth` for a named payer must start with the k1 authenticator")]
     UnrecognizedPayerAuthenticator,
     /// The request sets both `calls` and a top-level `to` / `value` / `data`.
     #[error("set either `calls` or a top-level `to`/`value`/`data`, not both")]
@@ -55,16 +48,10 @@ pub enum Eip8130SimulationRequestError {
     /// The top-level `to` is a contract creation, which EIP-8130 calls cannot do.
     #[error("an EIP-8130 call cannot create a contract")]
     ContractCreation,
-    /// `senderActorId` is `bytes32(0)`, the reserved "no actor" id.
-    #[error("`senderActorId` must not be zero")]
-    ZeroSenderActorId,
     /// The transaction fails the structural rules pool admission enforces.
     #[error(transparent)]
     Structural(#[from] Eip8130StructuralError),
 }
-
-/// Maximum caller-supplied authentication payload length.
-pub(crate) const MAX_AUTH_SIZE: u32 = 8_192;
 
 /// Canonical invalid-params message for EIP-8130 RPC reads before Everest.
 pub const EIP8130_PRE_EVEREST_RPC_ERROR: &str = "EIP-8130 RPC features are not active before the Everest hard fork; the `nonce_key` parameter is not supported at this block";
@@ -114,9 +101,6 @@ impl BaseTransactionRequest {
     ) -> Result<Recovered<BaseTxEnv>, Eip8130SimulationRequestError> {
         let aa = self.as_eip8130().ok_or(Eip8130SimulationRequestError::NotEip8130)?;
         let req = self.as_ref();
-        if aa.sender_actor_id.is_some_and(|actor_id| actor_id.is_zero()) {
-            return Err(Eip8130SimulationRequestError::ZeroSenderActorId);
-        }
 
         let account = match (aa.sender, req.from) {
             (Some(sender), Some(from)) if sender != from => {
@@ -131,8 +115,6 @@ impl BaseTransactionRequest {
         let (sender, sender_auth) = match &aa.sender_auth {
             Some(blob) => {
                 let prefixed = Self::is_prefixed_auth(blob);
-                Self::check_auth_len(blob, prefixed)
-                    .ok_or(Eip8130SimulationRequestError::SenderAuthTooLarge)?;
                 (prefixed.then_some(account), Self::stub_supplied_auth(blob, prefixed))
             }
             None if sender_declared => (Some(account), Self::default_prefixed_auth()),
@@ -150,8 +132,6 @@ impl BaseTransactionRequest {
                                 Eip8130SimulationRequestError::UnrecognizedPayerAuthenticator,
                             );
                         }
-                        Self::check_auth_len(blob, named)
-                            .ok_or(Eip8130SimulationRequestError::PayerAuthTooLarge)?;
                         // An open payer is whoever its signature recovers to, so
                         // its bytes are kept to publish that payer.
                         if named { Self::stub_supplied_auth(blob, true) } else { blob.clone() }
@@ -189,7 +169,7 @@ impl BaseTransactionRequest {
         // never returned for a transaction that could not be submitted.
         Eip8130Structure::validate(&signed)?;
         let enveloped = BaseTxEnvelope::Eip8130(signed.clone()).encoded_2718().into();
-        let simulation = Eip8130Simulation { mode, sender_actor_id: aa.sender_actor_id };
+        let simulation = Eip8130Simulation { mode };
         Ok(Recovered::new_unchecked(
             BaseTxEnv::eip8130_simulation(signed, enveloped, simulation),
             account,
@@ -228,50 +208,21 @@ impl BaseTransactionRequest {
     }
 
     fn default_bare_auth() -> Bytes {
-        Bytes::from(vec![STUB_AUTH_FILL; Eip8130AuthScheme::Secp256k1.default_data_len()])
+        Bytes::from(vec![STUB_AUTH_FILL; K1_SIGNATURE_LEN])
     }
 
-    fn check_auth_len(blob: &Bytes, prefixed: bool) -> Option<()> {
-        let data_len = if prefixed {
-            blob.len().saturating_sub(AUTHENTICATOR_SELECTOR_LEN)
-        } else {
-            blob.len()
-        };
-        (data_len as u64 <= u64::from(MAX_AUTH_SIZE)).then_some(())
-    }
-
-    /// Leading authenticator selector, when the blob is long enough to carry one.
-    fn authenticator_selector(blob: &Bytes) -> Option<Address> {
-        (blob.len() >= AUTHENTICATOR_SELECTOR_LEN)
-            .then(|| Address::from_slice(&blob[..AUTHENTICATOR_SELECTOR_LEN]))
-    }
-
-    /// Whether the blob is a configured-account authorization: its leading 20
-    /// bytes name native k1 or a canonical authenticator. Any other prefix is
-    /// treated as a bare EOA signature. Simulation rejects an authenticator the
-    /// chain does not support, matching txpool admission.
+    /// Whether the blob is a named-account authorization: its leading 20 bytes
+    /// name the k1 authenticator. Any other blob is treated as a bare EOA
+    /// signature.
     fn is_prefixed_auth(blob: &Bytes) -> bool {
-        Self::authenticator_selector(blob).is_some_and(|selector| {
-            selector == Eip8130Constants::K1_AUTHENTICATOR
-                || Eip8130Contracts::is_canonical_authenticator(&selector)
-        })
+        blob.starts_with(Eip8130Constants::K1_AUTHENTICATOR.as_slice())
     }
 
-    /// A supplied blob is used for its shape and length only: the bytes that
-    /// select the priced authenticator are kept and every other byte becomes
-    /// [`STUB_AUTH_FILL`]. Calldata prices a zero byte below a non-zero one, so
-    /// this keeps a zero-filled placeholder from estimating less gas than the
-    /// real authentication of the same length.
+    /// A supplied blob is used for its shape and length only: the
+    /// authenticator selector is kept and every other byte becomes
+    /// [`STUB_AUTH_FILL`].
     fn stub_supplied_auth(blob: &Bytes, prefixed: bool) -> Bytes {
-        let kept = if !prefixed {
-            0
-        } else if Self::authenticator_selector(blob)
-            == Some(Eip8130Contracts::DELEGATE_AUTHENTICATOR)
-        {
-            DELEGATE_AUTH_PREFIX_LEN
-        } else {
-            AUTHENTICATOR_SELECTOR_LEN
-        };
+        let kept = if prefixed { AUTHENTICATOR_SELECTOR_LEN } else { 0 };
         let mut stub = blob.to_vec();
         if let Some(data) = stub.get_mut(kept..) {
             data.fill(STUB_AUTH_FILL);
@@ -282,15 +233,15 @@ impl BaseTransactionRequest {
     /// A canonical k1 authenticator selector followed by k1-signature-sized
     /// filler, standing in for auth the request does not carry.
     fn default_prefixed_auth() -> Bytes {
-        let mut blob = Eip8130AuthScheme::Secp256k1.authenticator().to_vec();
-        blob.resize(blob.len() + Eip8130AuthScheme::Secp256k1.default_data_len(), STUB_AUTH_FILL);
+        let mut blob = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+        blob.resize(blob.len() + K1_SIGNATURE_LEN, STUB_AUTH_FILL);
         Bytes::from(blob)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256, hex};
+    use alloy_primitives::{address, hex};
     use alloy_rpc_types_eth::state::AccountOverride;
     use base_common_chains::BaseUpgrade;
     use base_common_consensus::{Eip8130Constants, Eip8130Signed};
@@ -362,36 +313,16 @@ mod tests {
         let bare_sender = |auth: &[u8]| json!({ "from": FROM, "calls": [], "senderAuth": hex::encode_prefixed(auth) });
         assert!(estimated_gas(bare_sender(&zero)) >= estimated_gas(bare_sender(&real)));
 
-        let configured_sender =
+        let named_sender =
             |auth: &[u8]| json!({ "sender": SENDER, "calls": [], "senderAuth": prefixed(auth) });
-        assert!(estimated_gas(configured_sender(&zero)) >= estimated_gas(configured_sender(&real)));
+        assert!(estimated_gas(named_sender(&zero)) >= estimated_gas(named_sender(&real)));
 
         let named_payer = |auth: &[u8]| json!({ "from": FROM, "calls": [], "payer": payer, "payerAuth": prefixed(auth) });
         assert!(estimated_gas(named_payer(&zero)) >= estimated_gas(named_payer(&real)));
     }
 
-    /// A supplied delegate blob keeps the bytes that choose the priced nested
-    /// authenticator and the delegate account; only the signature is replaced.
     #[test]
-    fn supplied_delegate_auth_keeps_its_structure() {
-        let delegate_account = address!("00000000000000000000000000000000000000d4");
-        let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
-        blob.extend_from_slice(delegate_account.as_slice());
-        blob.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
-        blob.extend_from_slice(&[0u8; 65]);
-        let tx = simulation(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderAuth": hex::encode_prefixed(&blob),
-        }));
-        let auth = signed(&tx).sender_auth();
-        assert_eq!(auth.len(), blob.len());
-        assert_eq!(auth[..DELEGATE_AUTH_PREFIX_LEN], blob[..DELEGATE_AUTH_PREFIX_LEN]);
-        assert!(auth[DELEGATE_AUTH_PREFIX_LEN..].iter().all(|&byte| byte == STUB_AUTH_FILL));
-    }
-
-    #[test]
-    fn configured_sender_gets_prefixed_k1_stub() {
+    fn named_sender_gets_prefixed_k1_stub() {
         let tx = simulation(json!({ "sender": SENDER, "calls": [] }));
         assert_eq!(signed(&tx).tx().sender, Some(SENDER));
         assert_eq!(&signed(&tx).sender_auth()[..20], Eip8130Constants::K1_AUTHENTICATOR.as_slice());
@@ -401,10 +332,7 @@ mod tests {
     fn from_only_request_uses_eoa_path() {
         let tx = simulation(json!({ "from": FROM, "calls": [] }));
         assert!(signed(&tx).tx().sender.is_none());
-        assert_eq!(
-            signed(&tx).sender_auth().len(),
-            Eip8130AuthScheme::Secp256k1.default_data_len()
-        );
+        assert_eq!(signed(&tx).sender_auth().len(), K1_SIGNATURE_LEN);
     }
 
     #[test]
@@ -495,22 +423,6 @@ mod tests {
         assert_eq!(signed(&tx).tx().gas_limit, 21_000);
     }
 
-    #[test]
-    fn zero_sender_actor_id_is_rejected() {
-        let request = serde_json::from_value::<BaseTransactionRequest>(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderActorId": B256::ZERO,
-        }))
-        .unwrap();
-        assert_eq!(
-            request
-                .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
-                .err(),
-            Some(Eip8130SimulationRequestError::ZeroSenderActorId)
-        );
-    }
-
     /// The structural limits enforced at pool admission also bound simulation;
     /// over JSON the phase cap already applies while decoding.
     #[test]
@@ -545,28 +457,9 @@ mod tests {
     }
 
     #[test]
-    fn oversized_auth_is_rejected() {
-        let auth =
-            alloy_primitives::hex::encode_prefixed([STUB_AUTH_FILL; MAX_AUTH_SIZE as usize + 1]);
-        let request = serde_json::from_value::<BaseTransactionRequest>(json!({
-            "from": FROM,
-            "calls": [],
-            "senderAuth": auth
-        }))
-        .unwrap();
-        assert_eq!(
-            request
-                .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
-                .err(),
-            Some(Eip8130SimulationRequestError::SenderAuthTooLarge)
-        );
-    }
-
-    #[test]
-    fn actor_hint_and_simulation_mode_are_retained() {
-        let actor = b256!("30df39d5edcf9ed82b6d77d27bff1192ac265918000000000000000000000000");
+    fn simulation_mode_is_retained() {
         let request = serde_json::from_value::<BaseTransactionRequest>(
-            json!({ "sender": SENDER, "calls": [], "senderActorId": actor }),
+            json!({ "sender": SENDER, "calls": [] }),
         )
         .unwrap();
         let tx = request
@@ -574,10 +467,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             tx.inner().as_eip8130().unwrap().simulation,
-            Some(Eip8130Simulation {
-                mode: Eip8130SimulationMode::Call,
-                sender_actor_id: Some(actor)
-            })
+            Some(Eip8130Simulation { mode: Eip8130SimulationMode::Call })
         );
     }
 

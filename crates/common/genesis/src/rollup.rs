@@ -701,7 +701,6 @@ mod tests {
                 | BaseFeature::Eip8430
                 | BaseFeature::NativeNonceManager
                 | BaseFeature::GasLimitBilling => BaseUpgrade::Everest,
-                BaseFeature::Keystore => BaseUpgrade::Zenith,
             };
             assert_eq!(feature.activation_upgrade(), upgrade, "{feature:?}");
             let mut cfg = RollupConfig::default();
@@ -761,15 +760,13 @@ mod tests {
         assert!(cfg.is_feature_active_cascading(BaseFeature::SubsecondBlocks, 0));
         assert!(!cfg.is_feature_active_cascading(BaseFeature::DaFootprint, u64::MAX));
         assert!(!cfg.is_feature_active_cascading(BaseFeature::AssetPrecompileV2, u64::MAX));
-        assert!(!cfg.is_feature_active_cascading(BaseFeature::Keystore, u64::MAX));
     }
 
     #[test]
-    fn feature_gates_observe_runtime_never_and_genesis_only_keystore() {
+    fn feature_gates_observe_runtime_never() {
         const CHAIN_ID: u64 = 9_847_501;
         let mut cfg = RollupConfig { l2_chain_id: Chain::from_id(CHAIN_ID), ..Default::default() };
         cfg.upgrades.base.denim = Some(10);
-        cfg.upgrades.base.zenith = Some(20);
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
         RuntimeUpgradeRegistry::clear_activation_timestamp(CHAIN_ID, BaseUpgrade::Denim);
         assert_eq!(cfg.configured_feature_activation_timestamp(BaseFeature::SubsecondBlocks), None);
@@ -778,10 +775,6 @@ mod tests {
         RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Denim, 30);
         assert!(!cfg.is_feature_active_cascading(BaseFeature::SubsecondBlocks, 29));
         assert!(cfg.is_feature_activation_block_cascading(BaseFeature::SubsecondBlocks, 30, 29));
-        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Zenith, 0);
-        assert_eq!(cfg.configured_feature_activation_timestamp(BaseFeature::Keystore), Some(20));
-        assert!(!cfg.is_feature_active_cascading(BaseFeature::Keystore, 19));
-        assert!(cfg.is_feature_activation_block_cascading(BaseFeature::Keystore, 20, 19));
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
     }
 

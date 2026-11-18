@@ -7,10 +7,10 @@
 //! and the post-state balances, nonces, code, and storage of every account either engine touched.
 //!
 //! Scenarios cover EOA self-pay, phased calls with a reverting or halting phase, payer
-//! sponsorship, account changes (counterfactual create, delegation, config change), 2D and
-//! nonce-free nonces with the replay ring and validity window, the policy gate, rejected
-//! transactions (insufficient payer funds, invalid authentication, inactive fork), read-only
-//! simulation, and a block mixing deposit, standard, and EIP-8130 transactions.
+//! sponsorship, a named sender, delegation, 2D and nonce-free nonces with the replay ring and
+//! validity window, rejected transactions (insufficient payer funds, invalid authentication,
+//! inactive fork), read-only simulation, and a block mixing deposit, standard, and EIP-8130
+//! transactions.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,12 +21,11 @@ use alloy_hardforks::ForkCondition;
 use alloy_primitives::{
     Address, B256, Bytes, KECCAK256_EMPTY, Log, Sealed, Signature, TxKind, U256, address, keccak256,
 };
-use alloy_sol_types::{SolValue, sol};
+use alloy_sol_types::sol;
 use base_common_chains::ChainUpgrades;
 use base_common_consensus::{
-    AccountChange, AccountChangeChannel, BaseReceipt, BaseReceiptEnvelope,
-    BaseTxEnvelope as ConsensusTx, Call, ChangeType, CreateEntry, Delegation, Eip8130Constants,
-    Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
+    AccountChange, BaseReceipt, BaseReceiptEnvelope, BaseTxEnvelope as ConsensusTx, Call,
+    Delegation, Eip8130Constants, Eip8130Signed, TxDeposit, TxEip8130,
 };
 use base_common_evm::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx as RevmBlockExecutionCtx,
@@ -41,19 +40,13 @@ use base_common_evm2::{
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
 use base_common_precompiles::NonceManagerStorage;
-use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationStorage, ConfigChangeAuthorizer, Eip8130Error,
-};
-use base_precompile_storage::{Handler as _, JournalStorageProvider, StorageCtx};
+use base_execution_eip8130::Eip8130Error;
 use evm2::{Evm, env::BlockEnv, evm::InMemoryDB, registry::HandlerError};
 use k256::ecdsa::SigningKey;
 use revm::{
     Database as _, DatabaseCommit as _,
     context::{BlockEnv as RevmBlockEnv, CfgEnv, Context},
-    context_interface::{
-        ContextTr as _, JournalTr as _,
-        result::{EVMError, ExecutionResult, InvalidTransaction},
-    },
+    context_interface::result::{EVMError, ExecutionResult, InvalidTransaction},
     database::{InMemoryDB as RevmDb, State},
     inspector::NoOpInspector,
     state::{AccountInfo as RevmAccountInfo, Bytecode as RevmBytecode},
@@ -307,23 +300,6 @@ impl World {
     }
 }
 
-/// Storage written by `seed` against an empty journal, for seeding both engines identically.
-fn seeded_storage(seed: impl FnOnce(StorageCtx<'_>)) -> Vec<(Address, U256, U256)> {
-    let mut evm = Context::base().with_db(RevmDb::default()).build_base();
-    {
-        let internals = alloy_evm::EvmInternals::from_context(evm.ctx_mut());
-        let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
-        StorageCtx::enter(&mut provider, seed);
-    }
-    let state = evm.ctx_mut().journal_mut().finalize();
-    state
-        .into_iter()
-        .flat_map(|(address, account)| {
-            account.storage.into_iter().map(move |(key, slot)| (address, key, slot.present_value))
-        })
-        .collect()
-}
-
 /// Why an engine rejected a transaction.
 #[derive(Debug, PartialEq, Eq)]
 enum Rejection {
@@ -383,7 +359,7 @@ impl Run {
     }
 
     const fn simulated(signed: Eip8130Signed, from: Address, mode: Eip8130SimulationMode) -> Self {
-        let simulation = Eip8130Simulation { mode, sender_actor_id: None };
+        let simulation = Eip8130Simulation { mode };
         Self { signed, signer: from, simulation: Some(simulation) }
     }
 
@@ -471,7 +447,6 @@ fn run_revm(world: &World, runs: &[Run], touched: &mut Touched) -> Outcome {
                 Eip8130SimulationMode::Call => Eip8130ExecutionMode::Call,
                 Eip8130SimulationMode::Estimate => Eip8130ExecutionMode::Simulate,
             };
-            parts.simulation_sender_actor_id = simulation.sender_actor_id;
         }
         match evm.transact_raw(tx) {
             Ok(outcome) => {
@@ -666,30 +641,18 @@ fn fee_charge_disabled_execution_moves_no_fees() {
 }
 
 #[test]
-fn counterfactual_create_and_call() {
+fn named_sender_with_k1_authenticator() {
     let key = signing_key(0x25);
-    let owner = eoa_address(&key);
-    let mut actor_id = [0u8; 32];
-    actor_id[12..].copy_from_slice(owner.as_slice());
-    let initial_actors =
-        vec![InitialActor::owner(B256::from(actor_id), Eip8130Constants::K1_AUTHENTICATOR)];
-    let create = CreateEntry { user_salt: B256::ZERO, code: storer_code(), initial_actors };
-    let account = AccountChangeApplier::compute_address(
-        create.user_salt,
-        &create.code,
-        &create.initial_actors,
-    )
-    .unwrap();
+    let sender = eoa_address(&key);
     let mut tx = base_tx();
-    tx.sender = Some(account);
-    tx.account_changes = vec![AccountChange::Create(create)];
-    tx.calls = vec![vec![call(account, 0, &[0x04; 32])]];
-    // Account creation needs the Keystore (Zenith).
-    let world = World::new(BaseUpgrade::Zenith, &[]).with_balance(account, U256::from(RICH));
-    let outcome = assert_parity(&world, &[Run::verified(configured_signed(tx, &key), account)]);
+    tx.sender = Some(sender);
+    tx.calls = vec![vec![call(STORER, 0, &[0x04; 32])]];
+    let outcome = assert_parity(
+        &World::new(BaseUpgrade::Everest, &[sender]),
+        &[Run::verified(configured_signed(tx, &key), sender)],
+    );
     assert!(included(&outcome, 0).success);
-    assert_eq!(outcome.accounts[&account].2, keccak256(storer_code()), "the code is installed");
-    assert_eq!(outcome.storage[&(account, U256::ZERO)], U256::from_be_bytes([0x04; 32]));
+    assert_eq!(outcome.storage[&(STORER, U256::ZERO)], U256::from_be_bytes([0x04; 32]));
 }
 
 #[test]
@@ -719,70 +682,6 @@ sol! {
         address authenticator;
         uint48 expiry;
         uint16 scope;
-    }
-}
-
-#[test]
-fn config_change_authorizes_an_actor_at_zenith() {
-    let owner_key = signing_key(0x27);
-    let owner = eoa_address(&owner_key);
-    let session = eoa_address(&signing_key(0x28));
-    let session_actor = AccountConfigurationStorage::self_actor_id(session);
-    let config = ActorConfigAbi {
-        authenticator: Eip8130Constants::K1_AUTHENTICATOR,
-        expiry: alloy_primitives::aliases::U48::from(0u64),
-        scope: Eip8130Constants::SCOPE_SELF_PAYER,
-    };
-    let payload = Bytes::from((session_actor, config, Bytes::new()).abi_encode_params());
-    let mut change = SignedAccountChanges {
-        channel: AccountChangeChannel::Local,
-        sequence: 0,
-        changes: vec![SignedChange { change_type: ChangeType::AuthorizeActor, payload }],
-        signature: Bytes::new(),
-    };
-    let digest = ConfigChangeAuthorizer::changes_digest(owner, CHAIN_ID, &change);
-    let mut signature = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
-    signature.extend_from_slice(&eoa_sig(&owner_key, digest));
-    change.signature = Bytes::from(signature);
-    let mut tx = base_tx();
-    tx.sender = Some(owner);
-    tx.account_changes = vec![AccountChange::ConfigChange(change)];
-    tx.calls = vec![vec![call(STORER, 0, &[0x06; 32])]];
-    let signed = configured_signed(tx, &owner_key);
-    let world = World::new(BaseUpgrade::Zenith, &[owner]);
-    let outcome = assert_parity(&world, &[Run::verified(signed.clone(), owner)]);
-    let result = included(&outcome, 0);
-    assert!(result.success);
-    assert!(result.logs.iter().any(|log| log.address != STORER), "ActorAuthorized is logged");
-    assert!(outcome.storage.values().any(|value| !value.is_zero()), "the actor is configured");
-    // The same change through simulation applies and commits nothing.
-    assert_parity(&world, &[Run::simulated(signed, owner, Eip8130SimulationMode::Call)]);
-}
-
-#[test]
-fn policy_gate_blocks_unauthorized_targets() {
-    let signer = signing_key(0x29);
-    let signer_addr = eoa_address(&signer);
-    let account = address!("0x00000000000000000000000000000000000000a5");
-    let actor_id = AccountConfigurationStorage::self_actor_id(signer_addr);
-    let storage = seeded_storage(|sctx| {
-        let mut acc = AccountConfigurationStorage::new(sctx);
-        let scope = Eip8130Constants::SCOPE_POLICY
-            | Eip8130Constants::SCOPE_SELF_PAYER
-            | Eip8130Constants::SCOPE_NONCE;
-        let packed = U256::from_be_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice())
-            | (U256::from(scope) << 208);
-        acc.actors.at_mut(&actor_id).at_mut(&account).write(packed).unwrap();
-        acc.set_policy(account, actor_id, STORER, B256::ZERO).unwrap();
-    });
-    let world = World::new(BaseUpgrade::Zenith, &[account]).with_storage(storage);
-    for (target, allowed) in [(STORER, true), (REVERTER, false)] {
-        let mut tx = base_tx();
-        tx.sender = Some(account);
-        tx.calls = vec![vec![call(target, 0, &[0x07; 32])]];
-        let outcome =
-            assert_parity(&world, &[Run::verified(configured_signed(tx, &signer), account)]);
-        assert_eq!(included(&outcome, 0).success, allowed, "policy gate for {target}");
     }
 }
 

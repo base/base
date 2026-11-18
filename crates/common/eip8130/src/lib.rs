@@ -5,7 +5,7 @@ mod schedule;
 pub use schedule::Eip8130GasSchedule;
 
 mod intrinsic;
-pub use intrinsic::{AuthWireForm, IntrinsicGas, IntrinsicGasError};
+pub use intrinsic::IntrinsicGas;
 
 mod nonce;
 pub use nonce::NonceManagerSlots;

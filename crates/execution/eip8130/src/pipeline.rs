@@ -1,22 +1,20 @@
 //! Engine-neutral EIP-8130 execution pipeline.
 //!
-//! The storage-backed pre-call pipeline (authorization, account changes, nonce, intrinsic gas,
+//! The storage-backed pre-call pipeline (authorization, delegation, nonce, intrinsic gas,
 //! fee checks, and the transaction-context publish), its read-only simulation variant, and the
 //! gas-settlement arithmetic. Every step runs over a [`StorageCtx`], so the revm and EVM2 engines
 //! execute the identical code against their own gas-free journal providers.
 
 use core::fmt::Display;
 
-use alloy_primitives::{Address, B256, Bytes, U256, address};
-use base_common_consensus::{
-    AccountChange, Delegation, Eip8130Constants, Eip8130Signed, TxEip8130,
-};
+use alloy_primitives::{Address, B256, U256, address};
+use base_common_consensus::{Eip8130Constants, Eip8130Signed, TxEip8130};
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
-use base_precompile_storage::{Bytecode, StorageCtx};
+use base_precompile_storage::StorageCtx;
 
 use crate::{
-    AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect, FeeCheck,
-    FeeError, IntrinsicGas, NonceMode, NonceValidator, ResolvedSender, TransactionAuthorizer,
+    FeeCheck, FeeError, IntrinsicGas, NonceMode, NonceValidator, ResolvedSender,
+    TransactionAuthorizer,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
@@ -64,8 +62,6 @@ impl core::error::Error for Eip8130Error {}
 pub struct Eip8130BlockContext {
     /// The local chain id.
     pub chain_id: u64,
-    /// The block timestamp in Unix seconds (the clock of `ActorConfig::expiry`).
-    pub now: u64,
     /// The block timestamp in Unix milliseconds (the clock of the validity window and the
     /// nonce-free replay ring).
     pub now_ms: u64,
@@ -73,8 +69,6 @@ pub struct Eip8130BlockContext {
     pub base_fee: u128,
     /// The EIP-7825 per-transaction gas cap.
     pub tx_gas_limit_cap: u64,
-    /// Whether the Keystore (`AccountConfiguration`) is active (Zenith onwards).
-    pub keystore: bool,
     /// Whether fees are charged. `eth_call`, `eth_estimateGas` and unvalidated
     /// `eth_simulateV1` disable fee charging: nothing is pre-charged or settled, so the payer's
     /// ability to afford the worst-case fee is not checked either.
@@ -82,8 +76,8 @@ pub struct Eip8130BlockContext {
 }
 
 /// The resolved pre-call context of an EIP-8130 transaction: the authorized
-/// actors, the policy gate target, and the gas/fee parameters needed to dispatch
-/// `calls` and settle the fee.
+/// sender and payer, and the gas/fee parameters needed to dispatch `calls` and
+/// settle the fee.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Eip8130Outcome {
@@ -91,14 +85,6 @@ pub struct Eip8130Outcome {
     pub sender: Address,
     /// The resolved gas payer (the sender, for self-pay).
     pub payer: Address,
-    /// The authenticated sender actor's id (published to the transaction context
-    /// and used as the policy-gate subject).
-    pub sender_actor_id: B256,
-    /// Whether the authenticated sender actor has `SCOPE_POLICY`.
-    pub policy_gated: bool,
-    /// The policy gate target (`policy_manager(sender, actorId)`) resolved once
-    /// at authorization; every `call.to` must equal this when policy-gated.
-    pub policy_target: Address,
     /// The transaction's `gas_limit` (the sender-signed budget for sender
     /// authentication, intrinsic costs, account changes, and call execution).
     pub gas_limit: u64,
@@ -271,8 +257,8 @@ impl Eip8130Pipeline {
         Ok(())
     }
 
-    /// Runs the storage-backed pre-call pipeline (nonce check, authorize and apply
-    /// account changes, nonce advance, intrinsic gas, fee-cap check) and publishes the transaction
+    /// Runs the storage-backed pre-call pipeline (nonce check, authorization,
+    /// delegation, nonce advance, intrinsic gas, fee-cap check) and publishes the transaction
     /// context, returning the resolved [`Eip8130Outcome`]. Storage writes land on
     /// `sctx` directly; the caller MUST discard the transaction on error.
     ///
@@ -294,15 +280,14 @@ impl Eip8130Pipeline {
         // `valid_before` remains the signed/encoded/replay-committed field.
         let valid_before = tx.valid_before_ms();
 
-        // Ordering note: the apply step (2) and code effects (3) write journal
-        // storage before the nonce advances (4). Any `Err` returned here makes the
-        // caller discard the transaction, so these earlier writes never persist for
-        // a rejected transaction. This mirrors the caller-MUST-discard contract
-        // documented on `TransactionAuthorizer::authorize_and_apply`.
+        // Ordering note: the delegation (3) writes journal state before the nonce
+        // advances (4). Any `Err` returned here makes the caller discard the
+        // transaction, so these earlier writes never persist for a rejected
+        // transaction.
 
         // 1. Validate the nonce against the pre-transaction state, before any
-        //    authentication or account-change work, so a stale transaction fails on
-        //    a single read.
+        //    authentication or delegation work, so a stale transaction fails on a
+        //    single read.
         let resolved_sender = ResolvedSender::resolve(signed).map_err(Eip8130Error::invalid)?;
         let sender = resolved_sender.account();
         let protocol_nonce =
@@ -317,45 +302,19 @@ impl Eip8130Pipeline {
         )
         .map_err(Eip8130Error::invalid)?;
 
-        // 2. Authorize and apply the account changes interleaved against the
-        //    evolving state, then authenticate sender/payer against the resulting
-        //    post-apply state. Before Zenith there is no Keystore: authorization
-        //    is pure secp256k1 recovery and never reads `AccountConfiguration`.
-        let mut acc = AccountConfigurationStorage::new(sctx);
-        let applied_tx = if block.keystore {
-            TransactionAuthorizer::authorize_and_apply(
-                signed,
-                resolved_sender,
-                &mut acc,
-                block.chain_id,
-                block.now,
-            )
-        } else {
-            TransactionAuthorizer::authorize_without_keystore(signed, resolved_sender)
-        }
-        .map_err(Eip8130Error::invalid)?;
-        let sender_actor = applied_tx.actors.sender.resolved;
-        let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
-        // Defense-in-depth: `verify_sender` already gates `can_use_nonce_key`; kept
-        // so this entry point stays sound if sender resolution is ever refactored.
-        if !sender_actor.can_use_nonce_key(nonce_key) {
-            return Err(Eip8130Error::invalid(
-                "sender actor scope does not authorize sequenced nonces",
-            ));
-        }
+        // 2. Authenticate the sender and payer by secp256k1 recovery. This reads no
+        //    state.
+        let authorized = TransactionAuthorizer::authorize(signed, resolved_sender)
+            .map_err(Eip8130Error::invalid)?;
+        let payer = authorized.payer;
 
-        // 3. Install the deferred account-*code* effects (created-account
-        //    bytecode, delegation indicator) the apply step surfaced.
-        if let Some(created) = &applied_tx.applied.created {
-            Self::install_created_code(sctx, created.address, &created.code)?;
-        }
-        if let Some(delegation) = &applied_tx.applied.delegation {
+        // 3. Install the delegation indicator.
+        if let Some(delegation) = &authorized.delegation {
             delegation.install(sctx).map_err(Eip8130Error::invalid)?;
         }
 
-        // 4. Advance the nonce validated in step 1. It follows the account changes
-        //    so a create entry sees the sender's pre-transaction zero nonce. The
-        //    protocol nonce (key 0) is bumped with the caller.
+        // 4. Advance the nonce validated in step 1. The protocol nonce (key 0) is
+        //    bumped with the caller.
         let mut nonce_mgr = NonceManagerStorage::new(sctx);
         let bump_protocol_nonce = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
             nonce_mgr
@@ -409,15 +368,12 @@ impl Eip8130Pipeline {
         // 7. Publish the transaction context (sender / payer / actor id) so it is
         //    readable by the `TxContext` precompile during `calls`.
         TxContextStorage::new(sctx)
-            .set_context(sender, payer, sender_actor.actor_id)
+            .set_context(sender, payer, Self::sender_actor_id(sender))
             .map_err(Eip8130Error::invalid)?;
 
         Ok(Eip8130Outcome {
             sender,
             payer,
-            sender_actor_id: sender_actor.actor_id,
-            policy_gated: sender_actor.is_policy_gated(),
-            policy_target: sender_actor.policy_target,
             gas_limit,
             sender_intrinsic: intrinsic.sender_intrinsic(),
             sender_floor: intrinsic.sender_floor(),
@@ -430,32 +386,23 @@ impl Eip8130Pipeline {
     }
 
     /// Resolves the [`Eip8130Outcome`] for read-only simulation (`eth_call` /
-    /// `eth_estimateGas`): prices intrinsic gas and checks it against the gas
-    /// limit, then applies account changes, then resolves the acting actor (an
-    /// optional RPC hint, else the account's self-actor) and its policy from the
-    /// post-apply state — no signature recovery — and advances the nonce without
-    /// validating it, so calls that read the Nonce Manager see the sequence they
-    /// would on inclusion. The payer balance is not checked. The authentication gas for the
-    /// sender's (and any payer's) declared authenticator is priced from the
-    /// synthesized auth-blob shape via [`IntrinsicGas`]. Storage writes land on
-    /// `sctx`; the caller reverts them.
-    ///
-    /// `acting_actor_hint` is the optional `senderActorId` from the estimate
-    /// request. Without it, simulation publishes the self-actor.
+    /// `eth_estimateGas`): checks the auth shape, prices intrinsic gas and checks
+    /// it against the gas limit, then installs the delegation — no signature
+    /// recovery — and advances the nonce without validating it, so calls that
+    /// read the Nonce Manager see the sequence they would on inclusion. The payer
+    /// balance is not checked. Storage writes land on `sctx`; the caller reverts
+    /// them.
     pub fn simulate_resolve(
         sctx: StorageCtx<'_>,
         signed: &Eip8130Signed,
         sender: Address,
-        acting_actor_hint: Option<B256>,
         block: &Eip8130BlockContext,
     ) -> Result<Eip8130Outcome, Eip8130Error> {
         let tx = signed.tx();
-        let keystore = block.keystore;
         // EIP-7825: execution bounds `gas_limit` plus payer authentication by the
         // per-transaction cap, so simulate at most the gas a real transaction could
         // carry.
-        let payer_auth_cost =
-            IntrinsicGas::payer_auth_cost_of(signed).map_err(Eip8130Error::invalid)?;
+        let payer_auth_cost = IntrinsicGas::payer_auth_cost_of(signed);
         let gas_limit = tx.gas_limit.min(block.tx_gas_limit_cap.saturating_sub(payer_auth_cost));
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
@@ -465,56 +412,40 @@ impl Eip8130Pipeline {
         // `payer_auth` recovers to; before a payer has signed the payer is unknown
         // and published as `UNSIGNED_OPEN_PAYER`, never the sender.
         let payer = signed.resolved_payer(sender).unwrap_or(Self::UNSIGNED_OPEN_PAYER);
-        if !keystore {
-            TransactionAuthorizer::check_without_keystore(signed).map_err(Eip8130Error::invalid)?;
-        }
+        TransactionAuthorizer::check(signed).map_err(Eip8130Error::invalid)?;
 
         // 1. Intrinsic gas. It is a pure function of the signed transaction and its
-        //    sender (auth gas is priced from the auth-blob shape, so a stub signature
-        //    of the right authenticator type estimates exactly), so it equals what
-        //    execution charges. Estimation does not validate the nonce. A `gas_limit`
-        //    that cannot cover it is rejected before any change is applied.
+        //    sender, so it equals what execution charges. Estimation does not
+        //    validate the nonce. A `gas_limit` that cannot cover it is rejected
+        //    before the delegation is installed.
         let (intrinsic, execution_gas_available) =
             Self::resolve_execution_gas(signed, sender, gas_limit)?;
 
-        // 2. Apply account changes and install deferred code effects so the calls
-        //    run against post-change code. Must precede actor/policy resolution so
-        //    an actor authorized in this same request is visible.
-        Self::apply_account_changes(signed, sctx, sender, block.now)?;
+        // 2. Install the delegation so the calls run against post-change code.
+        if let Some(delegation) =
+            TransactionAuthorizer::delegation(signed, sender).map_err(Eip8130Error::invalid)?
+        {
+            delegation.install(sctx).map_err(Eip8130Error::invalid)?;
+        }
 
-        // 3. Advance a 2D nonce channel after the account changes, as inclusion
-        //    does. The protocol nonce is bumped with the caller overwrite in the
-        //    engine's simulate; nonce-free replay ids are not readable from the EVM,
-        //    so they are not recorded.
+        // 3. Advance a 2D nonce channel after the delegation, as inclusion does.
+        //    The protocol nonce is bumped with the caller overwrite in the engine's
+        //    simulate; nonce-free replay ids are not readable from the EVM, so they
+        //    are not recorded.
         if !tx.nonce_key.is_zero() && tx.nonce_key != Eip8130Constants::NONCE_KEY_MAX {
             NonceManagerStorage::new(sctx)
                 .increment_nonce(sender, tx.nonce_key)
                 .map_err(Eip8130Error::invalid)?;
         }
 
-        // 4. Resolve the acting actor's real policy gate from the post-apply state.
-        //    This drives only call-gating; intrinsic gas always charges the policy
-        //    read. Before Zenith the sender is always its own ungated self-actor.
-        let sender_actor_id = acting_actor_hint
-            .filter(|_| keystore)
-            .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
-        let (policy_gated, policy_target) = if keystore {
-            Self::simulate_policy_gate(sctx, sender, sender_actor_id)?
-        } else {
-            (false, Address::ZERO)
-        };
-
-        // 5. Publish the transaction context for the `TxContext` precompile.
+        // 4. Publish the transaction context for the `TxContext` precompile.
         TxContextStorage::new(sctx)
-            .set_context(sender, payer, sender_actor_id)
+            .set_context(sender, payer, Self::sender_actor_id(sender))
             .map_err(Eip8130Error::invalid)?;
 
         Ok(Eip8130Outcome {
             sender,
             payer,
-            sender_actor_id,
-            policy_gated,
-            policy_target,
             gas_limit,
             sender_intrinsic: intrinsic.sender_intrinsic(),
             sender_floor: intrinsic.sender_floor(),
@@ -524,120 +455,6 @@ impl Eip8130Pipeline {
             base_fee: block.base_fee,
             bump_protocol_nonce: tx.nonce_key.is_zero(),
         })
-    }
-
-    /// Resolves the simulated acting actor's policy gate from the Keystore:
-    /// whether it is policy-gated and, if so, its policy target.
-    ///
-    /// The acting scope comes from the effective-config resolver (an explicit
-    /// `actor_config` entry, or the inline secp256k1 self; a revoked default EOA
-    /// resolves to scope 0). The policy target is read with `get_policy_manager`
-    /// only when gated, avoiding `get_policy`'s unused `policy_commitment` SLOAD.
-    pub fn simulate_policy_gate(
-        sctx: StorageCtx<'_>,
-        sender: Address,
-        sender_actor_id: B256,
-    ) -> Result<(bool, Address), Eip8130Error> {
-        let acc = AccountConfigurationStorage::new(sctx);
-        let actor_scope =
-            acc.resolve_actor_config(sender, sender_actor_id).map_err(Eip8130Error::invalid)?.scope;
-        let policy_gated = Eip8130Constants::sender_is_policy_gated(actor_scope);
-        let policy_target = if policy_gated {
-            acc.get_policy_manager(sender, sender_actor_id).map_err(Eip8130Error::invalid)?
-        } else {
-            Address::ZERO
-        };
-        Ok((policy_gated, policy_target))
-    }
-
-    /// Applies the transaction's account-configuration changes and installs the
-    /// deferred account-*code* effects (created-account code and delegation)
-    /// *without* authenticating the changes. Used by the read-only simulation so
-    /// the post-change code the `calls` run against matches inclusion. The
-    /// verifying pipeline instead routes through
-    /// [`TransactionAuthorizer::authorize_and_apply`], which interleaves the same
-    /// application with authorization against the evolving state.
-    ///
-    /// `now` is the block timestamp (Unix seconds) so the JIT expiry skip matches
-    /// consensus: a lapsed unsequenced grant is dropped in both the estimate and at
-    /// inclusion.
-    pub fn apply_account_changes(
-        signed: &Eip8130Signed,
-        sctx: StorageCtx<'_>,
-        sender: Address,
-        now: u64,
-    ) -> Result<(), Eip8130Error> {
-        let mut acc_mut = AccountConfigurationStorage::new(sctx);
-        let mut created_effect: Option<(Address, Bytes)> = None;
-        let mut delegation_effect: Option<DelegationEffect> = None;
-        for (index, change) in signed.tx().account_changes.iter().enumerate() {
-            match change {
-                AccountChange::Create(entry) => {
-                    if delegation_effect.is_some() {
-                        return Err(Eip8130Error::invalid(ApplyError::CreateAndDelegation));
-                    }
-                    if index != 0 || created_effect.is_some() {
-                        return Err(Eip8130Error::invalid(ApplyError::InvalidCreatePosition));
-                    }
-                    let created = AccountChangeApplier::apply_create(&mut acc_mut, entry)
-                        .map_err(Eip8130Error::invalid)?;
-                    created_effect = Some((created.address, created.code));
-                }
-                AccountChange::ConfigChange(cc) => {
-                    AccountChangeApplier::apply_config_change(
-                        &mut acc_mut,
-                        sender,
-                        &cc.changes,
-                        cc.channel,
-                        cc.sequence,
-                        now,
-                    )
-                    .map_err(Eip8130Error::invalid)?;
-                }
-                AccountChange::Delegation(Delegation { target }) => {
-                    if delegation_effect.is_some() {
-                        return Err(Eip8130Error::invalid(ApplyError::MultipleDelegations));
-                    }
-                    if created_effect.is_some() {
-                        return Err(Eip8130Error::invalid(ApplyError::CreateAndDelegation));
-                    }
-                    delegation_effect = Some(DelegationEffect::new(sender, *target));
-                }
-            }
-        }
-        if let Some((address, code)) = &created_effect {
-            Self::install_created_code(sctx, *address, code)?;
-        }
-        if let Some(delegation) = delegation_effect {
-            delegation.install(sctx).map_err(Eip8130Error::invalid)?;
-        }
-        Ok(())
-    }
-
-    /// Installs a created account's runtime code, enforcing the CREATE2 collision
-    /// rule the reference contract gets for free from a real deploy: the
-    /// destination must be empty (no code, zero nonce). The account info is read
-    /// from the real journal (not the config overlay), so block inclusion
-    /// enforces what mempool admission checks separately — an inclusion path that
-    /// bypasses the pool cannot overwrite preexisting third-party code.
-    ///
-    /// The runtime is already validated non-empty, `<= MAX_CODE_SIZE`, and not
-    /// `0xEF`-prefixed by [`AccountChangeApplier::apply_create`], so it is always
-    /// legacy bytecode.
-    pub fn install_created_code(
-        sctx: StorageCtx<'_>,
-        address: Address,
-        code: &Bytes,
-    ) -> Result<(), Eip8130Error> {
-        let occupied = sctx
-            .with_account_info(address, |info| Ok(!info.is_empty_code_hash() || info.nonce != 0))
-            .map_err(Eip8130Error::invalid)?;
-        if occupied {
-            return Err(Eip8130Error::invalid(
-                "create destination already has code or a non-zero nonce",
-            ));
-        }
-        sctx.set_code(address, Bytecode::new_legacy(code.clone())).map_err(Eip8130Error::invalid)
     }
 
     /// Computes the EIP-8130 intrinsic gas and the gas left for `calls`.
@@ -653,7 +470,7 @@ impl Eip8130Pipeline {
         sender: Address,
         gas_limit: u64,
     ) -> Result<(IntrinsicGas, u64), Eip8130Error> {
-        let intrinsic = IntrinsicGas::compute(signed, sender).map_err(Eip8130Error::invalid)?;
+        let intrinsic = IntrinsicGas::compute(signed, sender);
         if gas_limit < intrinsic.sender_floor() {
             return Err(Eip8130Error::invalid(
                 "EIP-8130 gas limit is below the EIP-7623 calldata floor",
@@ -675,33 +492,21 @@ impl Eip8130Pipeline {
         u64::try_from(signed_refund.max(0)).unwrap_or(0).min(gross_used / MAX_REFUND_QUOTIENT)
     }
 
-    /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
-    /// protocol revert: the 4-byte selector followed by the two 32-byte words.
-    pub fn actor_policy_violation_data(actor_id: B256, target: Address) -> Bytes {
-        // `keccak256(b"ActorPolicyViolation(bytes32,address)")[..4]`, hardcoded to
-        // avoid hashing on every policy-gate revert; pinned by a test.
-        const SELECTOR: [u8; 4] = [0x1f, 0x1c, 0x0d, 0x27];
-        let mut out = Vec::with_capacity(4 + 32 + 32);
-        out.extend_from_slice(&SELECTOR);
-        out.extend_from_slice(actor_id.as_slice());
-        out.extend_from_slice(target.into_word().as_slice());
-        Bytes::from(out)
+    /// The sender actor id published to the `TxContext` precompile: the sender
+    /// address, right-aligned in a 32-byte word.
+    pub fn sender_actor_id(sender: Address) -> B256 {
+        sender.into_word()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_sol_types::{SolError, sol};
-
     use super::*;
 
     fn outcome() -> Eip8130Outcome {
         Eip8130Outcome {
             sender: Address::ZERO,
             payer: Address::ZERO,
-            sender_actor_id: B256::ZERO,
-            policy_gated: false,
-            policy_target: Address::ZERO,
             gas_limit: 1_000_000,
             sender_intrinsic: 100_000,
             sender_floor: 130_000,
@@ -779,16 +584,5 @@ mod tests {
         assert!(Eip8130Pipeline::check_validity_window(&tx, after).is_ok());
         assert!(Eip8130Pipeline::check_validity_window(&tx, before).is_ok());
         assert!(Eip8130Pipeline::check_validity_window(&tx, before + 1).is_err());
-    }
-
-    #[test]
-    fn actor_policy_violation_data_is_abi_encoded() {
-        sol! { error ActorPolicyViolation(bytes32 actorId, address target); }
-        let actor_id = B256::repeat_byte(0x42);
-        let target = Address::repeat_byte(0x24);
-        assert_eq!(
-            Eip8130Pipeline::actor_policy_violation_data(actor_id, target).as_ref(),
-            ActorPolicyViolation { actorId: actor_id, target }.abi_encode().as_slice(),
-        );
     }
 }

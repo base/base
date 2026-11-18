@@ -20,9 +20,7 @@ const SYSTEM_ACCOUNT_STUB: [u8; 1] = [0xEF];
 /// Only the [`NonceManager`](NonceManagerStorage) qualifies: it persists the 2D
 /// nonce channels in the state trie while never being a deployed contract. The
 /// transaction-context precompile (`0x8130…aa02`) uses transient storage only
-/// (cleared every transaction, never trie-resident) so it needs no stub, and
-/// `AccountConfiguration` is a genuinely deployed contract (it carries code) on
-/// every chain where EIP-8130 is enabled.
+/// (cleared every transaction, never trie-resident) so it needs no stub.
 const CODELESS_SYSTEM_ACCOUNTS: [Address; 1] = [NonceManagerStorage::ADDRESS];
 
 /// The Everest upgrade enables EIP-8130. The enshrined execution path writes

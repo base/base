@@ -91,8 +91,8 @@ results across the execution fork ladder (`BaseUpgrade::EXECUTION_VARIANTS`):
 - `l1_block_parity`: the L1 fee parameters read from the `L1Block` predeploy storage.
 - `native_precompile_parity`: calls to the stateful native precompiles, Azul onward.
 - `eip8130_parity`: signed EIP-8130 transactions (self-pay, phased reverts and halts, payer
-  sponsorship, create, delegation, configuration change, policy gate, 2D and nonce-free nonces,
-  the validity window, refunds, rejections, and simulation), comparing inclusion or rejection,
+  sponsorship, named senders, delegation, 2D and nonce-free nonces, the validity window,
+  refunds, rejections, and simulation), comparing inclusion or rejection,
   status, gas, output, logs, committed phases, and every touched account and slot; plus a block
   mixing deposit, standard, and EIP-8130 transactions compared receipt by receipt, with the
   DA footprint and post-block state.

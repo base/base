@@ -46,9 +46,6 @@ pub struct Eip8130Simulation {
     /// Whether to run the calls once (`eth_call`) or search for the minimum gas limit at which
     /// they succeed (`eth_estimateGas`).
     pub mode: Eip8130SimulationMode,
-    /// The acting sender actor, when the request names one (e.g. a session key). Without it the
-    /// account's self-actor acts.
-    pub sender_actor_id: Option<B256>,
 }
 
 /// How an EIP-8130 simulation measures gas.

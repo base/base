@@ -2,9 +2,9 @@
 //!
 //! `calls` is a two-level structure (`Vec<Vec<Call>>`): an ordered list of **phases**, each an
 //! ordered list of calls. Phases draw from a single gas pool and commit independently in sequence;
-//! the calls within a phase are atomic (all-or-nothing). If any call in a phase reverts (or is
-//! blocked by the policy gate), that phase's state changes are discarded and every later phase is
-//! skipped, but the gas already consumed is still charged and the transaction is still included.
+//! the calls within a phase are atomic (all-or-nothing). If any call in a phase reverts, that
+//! phase's state changes are discarded and every later phase is skipped, but the gas already
+//! consumed is still charged and the transaction is still included.
 //!
 //! The engine supplies the state primitives through [`Eip8130CallHost`]; the phase semantics live
 //! here once so every engine dispatches calls identically.
@@ -12,7 +12,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use base_common_consensus::{Call, Eip8130Signed};
 
-use crate::{Eip8130Error, Eip8130GasSchedule, Eip8130Outcome, Eip8130Pipeline};
+use crate::{Eip8130Error, Eip8130GasSchedule, Eip8130Outcome};
 
 /// Maximum number of bisection steps the gas-limit search runs before returning the tightest
 /// verified-feasible pool it has found. The [`POOL_SEARCH_TOLERANCE_PER_MILLE`] early exit
@@ -107,12 +107,11 @@ pub struct Eip8130CallsResult {
     /// would under a single continuous EVM execution. Clamped and EIP-3529-capped once, by
     /// [`Eip8130Outcome::billable_gas`].
     pub refund: i64,
-    /// `true` if any phase reverted (or was blocked by the policy gate); later phases are then
-    /// skipped.
+    /// `true` if any phase reverted; later phases are then skipped.
     pub reverted: bool,
-    /// The return data of the call that reverted the transaction (or the `ActorPolicyViolation`
-    /// payload for a policy-gate block), or on success the return data of the last call (empty
-    /// when `calls` was empty), which is what an EIP-8130 `eth_call` returns.
+    /// The return data of the call that reverted the transaction, or on success the return data
+    /// of the last call (empty when `calls` was empty), which is what an EIP-8130 `eth_call`
+    /// returns.
     pub output: Bytes,
     /// Number of leading phases that committed. Phases run in order and stop at the first revert,
     /// so every phase at or after this index reverted or was skipped. This is the EIP-8130
@@ -143,12 +142,10 @@ impl Eip8130Calls {
     /// Dispatches the transaction's `calls` phase by phase from a single gas `pool`.
     ///
     /// Each phase runs under a checkpoint: a successful phase commits and its gas refund counts; a
-    /// reverting phase (or one blocked by the policy gate) rolls back, is charged for the gas
-    /// already consumed without refund, and skips every later phase.
+    /// reverting phase rolls back, is charged for the gas already consumed without refund, and
+    /// skips every later phase.
     ///
-    /// When the authenticating actor is policy-gated, every `call.to` must equal the resolved
-    /// policy target: a mismatched call is not dispatched and fails its phase deterministically
-    /// with `ActorPolicyViolation`, charging no call gas for it. Each dispatched call first draws
+    /// Each dispatched call first draws
     /// its root account-access gas and, when it creates its target, the new-account charge from
     /// the pool; a charge that does not fit fails the phase without consuming the unspent balance.
     ///
@@ -172,14 +169,6 @@ impl Eip8130Calls {
             let mut phase_failure: Option<Bytes> = None;
 
             for call in phase {
-                if outcome.policy_gated && call.to != outcome.policy_target {
-                    phase_failure = Some(Eip8130Pipeline::actor_policy_violation_data(
-                        outcome.sender_actor_id,
-                        call.to,
-                    ));
-                    break;
-                }
-
                 let access_gas = host.root_call_access_gas(call.to, first_call)?;
                 first_call = false;
                 let Some(left) = remaining.checked_sub(access_gas) else {
@@ -386,9 +375,6 @@ mod tests {
         Eip8130Outcome {
             sender: Address::ZERO,
             payer: Address::ZERO,
-            sender_actor_id: Default::default(),
-            policy_gated: false,
-            policy_target: Address::ZERO,
             gas_limit: 0,
             sender_intrinsic: 0,
             sender_floor: 0,
@@ -413,23 +399,6 @@ mod tests {
         assert_eq!(result.refund, 10, "only the committed phase's refund counts");
         assert_eq!(result.output, Bytes::from(vec![2]));
         assert_eq!((host.committed_phases, host.reverted_phases), (1, 1));
-    }
-
-    #[test]
-    fn a_policy_gated_call_to_another_target_fails_its_phase_without_gas() {
-        let mut host = ScriptedHost::default();
-        let mut outcome = outcome();
-        outcome.policy_gated = true;
-        outcome.policy_target = Address::repeat_byte(1);
-        let tx = signed(vec![vec![call(1)], vec![call(9)]]);
-        let result = Eip8130Calls::execute(&mut host, &tx, &outcome, 1_000_000).unwrap();
-        assert!(result.reverted);
-        assert_eq!(result.committed_phases, 1);
-        assert_eq!(result.call_gas_spent, 1_100);
-        assert_eq!(
-            result.output,
-            Eip8130Pipeline::actor_policy_violation_data(outcome.sender_actor_id, call(9).to)
-        );
     }
 
     #[test]

@@ -298,9 +298,6 @@ mod tests {
             sender: SENDER,
             payer: PAYER,
             classification_generation: 0,
-            sender_locked: false,
-            payer_locked: false,
-            payer_trusted: false,
             payer_allowlisted: false,
             payer_balance: U256::from(42_000u64),
             max_cost: U256::from(42_000u64),
@@ -308,36 +305,6 @@ mod tests {
         assert!(
             !without_l1_fees().unaffordable(&tx, 0, &mut db),
             "the classified payer covers gas and the sender covers the tip"
-        );
-    }
-
-    /// A policy-gated sender's fee-vault tip reverts and is never charged, so
-    /// it cannot make the transaction unaffordable.
-    #[test]
-    fn policy_gated_sender_tip_is_not_priced() {
-        let mut db = InMemoryDB::default();
-        fund(&mut db, SENDER, U256::from(1_000u64));
-        let tx = unrecoverable_open_payer_tip();
-        tx.set_limit_class(LimitClass {
-            sender: SENDER,
-            payer: SENDER,
-            classification_generation: 0,
-            sender_locked: false,
-            payer_locked: false,
-            payer_trusted: false,
-            payer_allowlisted: false,
-            payer_balance: U256::from(1_000u64),
-            max_cost: U256::from(42_000u64),
-        });
-        assert!(
-            without_l1_fees().unaffordable(&tx, 0, &mut db),
-            "an ungated sender short of gas plus the tip is unaffordable"
-        );
-
-        tx.set_sender_policy_target(Address::repeat_byte(0x77));
-        assert!(
-            !without_l1_fees().unaffordable(&tx, 0, &mut db),
-            "a gated sender's reverting tip is not priced"
         );
     }
 

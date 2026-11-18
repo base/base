@@ -254,7 +254,6 @@ impl BaseNode {
             discovery_v4,
             txpool_ordering,
             max_inflight_delegated_slots,
-            mempool_sender_limit,
             mempool_payer_limit,
             mempool_allowlisted_payer_limit,
             ..
@@ -271,14 +270,10 @@ impl BaseNode {
                     .with_ordering(ordering)
                     .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
                     .with_guard_limits(GuardLimits {
-                        signature_limit: mempool_sender_limit,
                         payment_limit: mempool_payer_limit,
                         allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
                     .with_validity_pool_limits(self.args.validity_pool_limits())
-                    .with_additional_trusted_delegation_targets(
-                        self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    )
                     .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
             )
             .payload(BasePayloadServiceBuilder::new(
@@ -812,8 +807,6 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub guard_limits: GuardLimits,
     /// Capacity of the validity pool; unset fields copy the pending subpool limit.
     pub validity_pool_limits: ValidityPoolLimits,
-    /// Additional trusted EIP-7702 delegation targets for locked payers.
-    pub additional_trusted_delegation_targets: AddressSet,
     /// Operator-allowlisted EIP-8130 payers.
     pub allowlisted_payers: AddressSet,
     /// Marker for the pooled transaction type.
@@ -827,7 +820,6 @@ impl<T> Default for BasePoolBuilder<T> {
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
             validity_pool_limits: ValidityPoolLimits::inherit(),
-            additional_trusted_delegation_targets: AddressSet::default(),
             allowlisted_payers: AddressSet::default(),
             _pd: Default::default(),
         }
@@ -841,9 +833,6 @@ impl<T> Clone for BasePoolBuilder<T> {
             max_inflight_delegated_slots: self.max_inflight_delegated_slots,
             guard_limits: self.guard_limits,
             validity_pool_limits: self.validity_pool_limits,
-            additional_trusted_delegation_targets: self
-                .additional_trusted_delegation_targets
-                .clone(),
             allowlisted_payers: self.allowlisted_payers.clone(),
             _pd: core::marker::PhantomData,
         }
@@ -875,15 +864,6 @@ impl<T> BasePoolBuilder<T> {
         self
     }
 
-    /// Sets additional trusted delegation targets for balance-bounded locked payers.
-    pub fn with_additional_trusted_delegation_targets(
-        mut self,
-        targets: impl IntoIterator<Item = Address>,
-    ) -> Self {
-        self.additional_trusted_delegation_targets = targets.into_iter().collect();
-        self
-    }
-
     /// Sets the operator-allowlisted EIP-8130 payers, limited to
     /// [`GuardLimits::allowlisted_payment_limit`] inflight payments and bounded
     /// by their balance.
@@ -911,7 +891,6 @@ where
             max_inflight_delegated_slots,
             guard_limits,
             validity_pool_limits,
-            additional_trusted_delegation_targets,
             allowlisted_payers,
             ..
         } = self;
@@ -932,9 +911,6 @@ where
                         // In --dev mode we can't require gas fees because we're unable to decode
                         // the L1 block info
                         .require_l1_data_gas_fee(!ctx.config().dev.dev)
-                        .with_additional_trusted_delegation_targets(
-                            additional_trusted_delegation_targets.clone(),
-                        )
                         .with_allowlisted_payers(allowlisted_payers.iter().copied())
                         .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
                 });
@@ -962,7 +938,6 @@ where
         info!(
             target: "reth::cli",
             max_inflight_delegated_slots = max_inflight_delegated_slots,
-            sender_limit = guard_limits.signature_limit,
             payer_limit = guard_limits.payment_limit,
             allowlisted_payer_limit = guard_limits.allowlisted_payment_limit,
             allowlisted_payers = allowlisted_payer_count,
@@ -990,7 +965,7 @@ pub struct BasePayloadBuilder {
     /// This is used to configure gas limit related constraints for the payload builder.
     pub gas_limit_config: GasLimitConfig,
     /// Whether to drop positively stale EIP-8130 transactions using their
-    /// captured authorization manifest before execution.
+    /// captured payer and expiry predicates before execution.
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,
@@ -1046,7 +1021,7 @@ impl BasePayloadBuilder {
         self
     }
 
-    /// Configure whether EIP-8130 authorization manifests are checked before execution.
+    /// Configure whether EIP-8130 payer and expiry manifests are checked before execution.
     pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
         self.manifest_precheck_enabled = enabled;
         self

@@ -302,9 +302,6 @@ where
             hash: *transaction.hash(),
             sender: class.sender,
             payer: class.payer,
-            sender_locked: class.sender_locked,
-            payer_locked: class.payer_locked,
-            payer_trusted: class.payer_trusted,
             payer_allowlisted: class.payer_allowlisted,
             payer_balance: class.payer_balance,
             max_cost: class.max_cost,
@@ -361,8 +358,6 @@ where
     fn limit_rejection_error(hash: TxHash, rejection: LimitRejection) -> PoolError {
         GuardMetrics::admission_rejected(GuardMetrics::rejection_reason(rejection)).increment(1);
         let reason = match rejection {
-            LimitRejection::SenderLimit => "sender EIP-8130 signature limit reached",
-            LimitRejection::PayerLimit => "payer EIP-8130 signature limit reached",
             LimitRejection::PaymentLimit => "payer EIP-8130 payment limit reached",
             LimitRejection::PayerBalance => "payer cannot fund another EIP-8130 transaction",
         };
@@ -378,7 +373,7 @@ where
         // Keep classification-generation changes atomic with protocol admission.
         let _admission_guard = self.protocol_admission_lock.lock();
         // Advance validator classification generation before dropping guard records.
-        self.validator().validator().invalidate_limit_class_cache(diffs);
+        self.validator().validator().invalidate_limit_classes(diffs);
         let mut exact = Vec::new();
         let mut advances = Vec::new();
         for diff in diffs {
@@ -459,7 +454,7 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
         // Keep classification-generation changes atomic with protocol admission.
         let _admission_guard = self.protocol_admission_lock.lock();
-        self.validator().validator().clear_limit_class_cache();
+        self.validator().validator().clear_limit_classes();
         let dropped = self.guard.write().invalidate_all();
         let removed = self.remove_from_stores(dropped, RemoveMode::Exact);
         GuardMetrics::record_bulk_invalidations(removed.len(), cause);
@@ -817,10 +812,10 @@ where
         let Some(signed) = transaction.as_eip8130() else {
             return Ok(());
         };
-        let reserved_gas = IntrinsicGas::payer_auth_cost_of(signed)
-            .map_or(u64::MAX, |payer_auth| {
-                FeeCheck::max_chargeable_gas(transaction.gas_limit(), payer_auth)
-            });
+        let reserved_gas = FeeCheck::max_chargeable_gas(
+            transaction.gas_limit(),
+            IntrinsicGas::payer_auth_cost_of(signed),
+        );
         let block_gas_limit = self.protocol_pool.block_info().block_gas_limit;
         if reserved_gas > block_gas_limit {
             return Err(PoolError::new(
@@ -1026,7 +1021,7 @@ where
         let current = validated.as_valid_transaction().is_none_or(|transaction| {
             transaction.transaction().limit_class().is_none_or(|class| {
                 class.classification_generation
-                    == self.validator().validator().limit_class_cache_generation()
+                    == self.validator().validator().limit_class_generation()
             })
         });
         if current { Ok(()) } else { Err(Self::stale_classification_error(hash)) }
@@ -1179,8 +1174,7 @@ where
             return Ok(());
         };
         let current = transaction.transaction.limit_class().is_some_and(|class| {
-            class.classification_generation
-                == self.validator().validator().limit_class_cache_generation()
+            class.classification_generation == self.validator().validator().limit_class_generation()
         });
         if !current {
             // All generation updates take `protocol_admission_lock`, which is
@@ -1378,7 +1372,7 @@ where
                 }
                 listeners.on_discarded(&outcome.anchor.discarded);
                 let current = generation.is_none_or(|generation| {
-                    generation == self.validator().validator().limit_class_cache_generation()
+                    generation == self.validator().validator().limit_class_generation()
                 });
                 let replaced_hash = outcome
                     .replaced
@@ -2946,9 +2940,6 @@ mod tests {
             sender: address,
             payer: address,
             classification_generation: 0,
-            sender_locked: false,
-            payer_locked: false,
-            payer_trusted: false,
             payer_allowlisted: false,
             payer_balance: U256::from(1_000_000),
             max_cost: U256::from(1_000),
@@ -3170,26 +3161,20 @@ mod tests {
 
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(false, PoolConfig::default(), false)
-    }
-
-    /// [`build_integration_pool`] with the Keystore active (Zenith at genesis).
-    fn build_zenith_integration_pool()
-    -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(true, PoolConfig::default(), false)
+        build_integration_pool_at(PoolConfig::default(), false)
     }
 
     fn build_integration_pool_with_config(
         config: PoolConfig,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(false, config, false)
+        build_integration_pool_at(config, false)
     }
 
     /// [`build_integration_pool`] charging the L1 data and operator fees of
     /// [`ISTHMUS_L1_INFO_CALLDATA`].
     fn build_integration_pool_with_l1_fees()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(false, PoolConfig::default(), true)
+        build_integration_pool_at(PoolConfig::default(), true)
     }
 
     /// Operator pool policies the node passes to the validator.
@@ -3216,33 +3201,23 @@ mod tests {
     fn build_integration_pool_with_policies(
         policies: PoolPolicies,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_full(false, PoolConfig::default(), false, policies)
+        build_integration_pool_full(PoolConfig::default(), false, policies)
     }
 
     fn build_integration_pool_at(
-        zenith: bool,
         config: PoolConfig,
         l1_fees: bool,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_full(zenith, config, l1_fees, PoolPolicies::default())
+        build_integration_pool_full(config, l1_fees, PoolPolicies::default())
     }
 
     fn build_integration_pool_full(
-        zenith: bool,
         config: PoolConfig,
         l1_fees: bool,
         policies: PoolPolicies,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
-        if zenith {
-            genesis.config.extra_fields.insert(
-                "base".to_string(),
-                serde_json::json!({
-                    "azul": 0, "beryl": 0, "cobalt": 0, "denim": 0, "everest": 0, "zenith": 0
-                }),
-            );
-        }
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
@@ -3660,7 +3635,7 @@ mod tests {
         let signer = signer();
         fund(&client, signer.address());
 
-        let count = u64::from(GuardLimits::default().signature_limit) + 2;
+        let count = u64::from(GuardLimits::default().payment_limit) + 2;
         for nonce in 0..count {
             let result =
                 pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, nonce)).await;
@@ -3701,10 +3676,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn protocol_and_sidecar_eip8130_routes_enforce_sender_limit() {
-        let cap = u64::from(GuardLimits::default().signature_limit);
+    async fn protocol_and_sidecar_eip8130_routes_enforce_payment_limit() {
+        const CAP: u32 = 4;
+        let cap = u64::from(CAP);
+        let limits = GuardLimits { payment_limit: CAP, ..GuardLimits::default() };
 
-        let (protocol_pool, protocol_client) = build_zenith_integration_pool();
+        let (protocol_pool, protocol_client) = build_integration_pool();
+        let protocol_pool = protocol_pool.with_guard_limits(limits);
         let protocol_signer = signer();
         fund(&protocol_client, protocol_signer.address());
         for sequence in 0..cap {
@@ -3720,14 +3698,15 @@ mod tests {
             .add_transaction(TransactionOrigin::Local, over)
             .await
             .expect_err("protocol-resident transaction above the cap must be rejected");
-        assert!(error.to_string().contains("sender EIP-8130 signature limit"));
+        assert!(error.to_string().contains("payer EIP-8130 payment limit"));
         assert!(protocol_pool.get(&over_hash).is_none());
         assert!(
             tokio::time::timeout(Duration::from_millis(50), protocol_events.next()).await.is_err(),
             "guard-rejected protocol transaction must not publish pool events"
         );
 
-        let (sidecar_pool, sidecar_client) = build_zenith_integration_pool();
+        let (sidecar_pool, sidecar_client) = build_integration_pool();
+        let sidecar_pool = sidecar_pool.with_guard_limits(limits);
         let sidecar_signer = signer();
         fund(&sidecar_client, sidecar_signer.address());
         for key in 1..=cap {
@@ -3743,31 +3722,20 @@ mod tests {
             .add_transaction(TransactionOrigin::Local, over)
             .await
             .expect_err("sidecar transaction above the cap must be rejected");
-        assert!(error.to_string().contains("sender EIP-8130 signature limit"));
+        assert!(error.to_string().contains("payer EIP-8130 payment limit"));
         assert!(sidecar_pool.get(&over_hash).is_none());
         assert!(matches!(over_events.next().await, Some(TransactionEvent::Discarded)));
     }
 
-    /// Without the Keystore a signer's key can never change, so the sender
-    /// signature limit does not apply: a sender may queue past it.
-    #[tokio::test]
-    async fn sender_signature_limit_does_not_apply_before_zenith() {
-        let (pool, client) = build_integration_pool();
-        let signer = signer();
-        fund(&client, signer.address());
-        let cap = u64::from(GuardLimits::default().signature_limit);
-        for sequence in 0..cap + 2 {
-            let transaction = self_paid_eoa_8130(&signer, U256::ZERO, sequence, 0, 1_000);
-            assert!(pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok());
-        }
-    }
-
     #[tokio::test]
     async fn nonce_free_sidecar_members_are_guarded_independently() {
-        let (pool, client) = build_zenith_integration_pool();
+        const CAP: u32 = 4;
+        let (pool, client) = build_integration_pool();
+        let pool =
+            pool.with_guard_limits(GuardLimits { payment_limit: CAP, ..GuardLimits::default() });
         let signer = signer();
         fund(&client, signer.address());
-        let cap = u64::from(GuardLimits::default().signature_limit);
+        let cap = u64::from(CAP);
 
         // Distinct millisecond `valid_before` bounds, each inside the nonce-free
         // admission window `(now_ms, now_ms + NONCE_FREE_MAX_EXPIRY_WINDOW]`, so
@@ -3812,10 +3780,13 @@ mod tests {
 
     #[tokio::test]
     async fn protocol_replacement_at_limit_is_forced_and_reaccounted() {
+        const CAP: u32 = 4;
         let (pool, client) = build_integration_pool();
+        let pool =
+            pool.with_guard_limits(GuardLimits { payment_limit: CAP, ..GuardLimits::default() });
         let signer = signer();
         fund(&client, signer.address());
-        let cap = u64::from(GuardLimits::default().signature_limit);
+        let cap = u64::from(CAP);
 
         let original = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000);
         let original_hash = *original.hash();
@@ -3927,7 +3898,7 @@ mod tests {
         let replacement_nonce = replacement.nonce();
         let validated =
             pool.validator().validate_transaction(TransactionOrigin::Local, replacement).await;
-        pool.validator().validator().clear_limit_class_cache();
+        pool.validator().validator().clear_limit_classes();
 
         let error = pool
             .add_validated_protocol_transaction(
@@ -4106,7 +4077,7 @@ mod tests {
             };
             let transaction = sign_sponsored_8130(signer, payer, tx);
             let signed = transaction.as_eip8130().expect("EIP-8130 transaction");
-            let payer_auth = IntrinsicGas::payer_auth_cost_of(signed).unwrap();
+            let payer_auth = IntrinsicGas::payer_auth_cost_of(signed);
             assert!(payer_auth > 0);
             if gas_limit + payer_auth == reserved_gas {
                 return transaction;
@@ -4244,7 +4215,7 @@ mod tests {
             let transaction = sponsored_eoa_8130(&signer, &payer, nonce_key, POLICY_MAX_FEE);
             let signed = transaction.as_eip8130().expect("EIP-8130 transaction");
             assert_eq!(signed.tx().gas_limit, SPONSORED_GAS_LIMIT);
-            let payer_auth = IntrinsicGas::payer_auth_cost_of(signed).unwrap();
+            let payer_auth = IntrinsicGas::payer_auth_cost_of(signed);
             assert!(payer_auth > 0);
 
             let error = pool
@@ -4467,7 +4438,7 @@ mod tests {
         let balance_epoch = pool.sidecar.pool.read().balance_epoch();
         let validated =
             pool.validator().validate_transaction(TransactionOrigin::Local, replacement).await;
-        pool.validator().validator().clear_limit_class_cache();
+        pool.validator().validator().clear_limit_classes();
 
         let error = pool
             .add_validated_lane_transaction(
@@ -4520,7 +4491,7 @@ mod tests {
             },
             other => panic!("successor must validate: {other:?}"),
         };
-        pool.validator().validator().clear_limit_class_cache();
+        pool.validator().validator().clear_limit_classes();
 
         pool.add_validated_lane_transaction(
             PoolStore::Sidecar,
@@ -5487,9 +5458,6 @@ mod tests {
             sender: signer.address(),
             payer,
             classification_generation: 0,
-            sender_locked: false,
-            payer_locked: true,
-            payer_trusted: false,
             payer_allowlisted: false,
             payer_balance: U256::from(1_000),
             max_cost: U256::from(1_000),

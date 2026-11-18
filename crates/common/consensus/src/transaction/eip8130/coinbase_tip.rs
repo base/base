@@ -61,11 +61,11 @@ mod tests {
             CoinbaseTip::decode(&with_phase0(vec![tip_call(COINBASE)])),
             Some(U256::from(TIP_AMOUNT))
         );
-        let configured = TxEip8130 {
+        let named = TxEip8130 {
             sender: Some(address!("0x00000000000000000000000000000000000000bb")),
             ..with_phase0(vec![tip_call(COINBASE)])
         };
-        assert_eq!(CoinbaseTip::decode(&configured), Some(U256::from(TIP_AMOUNT)));
+        assert_eq!(CoinbaseTip::decode(&named), Some(U256::from(TIP_AMOUNT)));
     }
 
     #[test]

@@ -6,7 +6,6 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718, transaction::TxHashRef};
-
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
@@ -62,9 +61,8 @@ use crate::{
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
     PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
     StateChangeEffects, StateView, ValidityEvaluationCounters, ValidityEvaluationOutcome,
-    ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -1338,7 +1336,7 @@ where
                     target: "payload_builder",
                     tx_hash = ?tx.hash(),
                     cause = stale.cause(),
-                    "skipping EIP-8130 transaction with stale authorization manifest"
+                    "skipping EIP-8130 transaction with a stale admission manifest"
                 );
                 GuardMetrics::record_builder_precheck_drop(&stale);
                 if has_validity_predicates {
@@ -1360,36 +1358,7 @@ where
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit` (`0` for
             // non-8130 / self-pay); see `IntrinsicGas::payer_auth_cost_of`.
-            let tx_payer_auth = match tx.as_eip8130() {
-                Some(signed) => match IntrinsicGas::payer_auth_cost_of(signed) {
-                    Ok(payer_auth) => payer_auth,
-                    Err(err) => {
-                        trace!(
-                            target: "payload_builder",
-                            %err,
-                            tx_hash = ?tx.hash(),
-                            "skipping EIP-8130 transaction with unschedulable payer authenticator"
-                        );
-                        if has_validity_predicates {
-                            self.emit_validity_rejection(
-                                tx_hash,
-                                validity_consideration_index,
-                                "unschedulable_payer_authenticator",
-                                "EIP-8130 payer authenticator cannot be scheduled against the gas budget",
-                                false,
-                            );
-                        }
-                        Self::skip_current(
-                            &mut best_txs,
-                            tx.sender(),
-                            tx.nonce(),
-                            replay_independent,
-                        );
-                        continue;
-                    }
-                },
-                None => 0,
-            };
+            let tx_payer_auth = tx.as_eip8130().map_or(0, IntrinsicGas::payer_auth_cost_of);
 
             if coinbase_tip_affordability.unaffordable(
                 tx,
@@ -1703,7 +1672,7 @@ where
             let gas_used = gas_output.tx_gas_used();
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
             // The tip is a phase-0 transfer, so it is revenue only if that phase
-            // committed; a reverted or policy-blocked phase pays nothing.
+            // committed; a reverted phase pays nothing.
             let coinbase_tip = coinbase_tip.filter(|_| {
                 builder
                     .executor()
@@ -2485,12 +2454,7 @@ mod tests {
         let block_ms = DENIM_TIMESTAMP * 1_000 + u64::from(MILLIS_PART);
         let included = |deadline: UnixMillis| {
             let transaction = pool_transaction_to(0, Address::repeat_byte(0x8a), U256::ZERO);
-            transaction.set_watch_manifest(WatchManifest::new(
-                Vec::new(),
-                Address::ZERO,
-                U256::ZERO,
-                deadline,
-            ));
+            transaction.set_watch_manifest(WatchManifest::new(Address::ZERO, U256::ZERO, deadline));
             let provider = funded_provider(&[transaction.sender()]);
             provider.add_account(
                 Predeploys::BASE_TIME,

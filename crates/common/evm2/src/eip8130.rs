@@ -93,11 +93,9 @@ impl Eip8130Handler {
         let now = Eip8130Pipeline::block_timestamp(host.block().timestamp).map_err(Self::reject)?;
         let mut block = Eip8130BlockContext {
             chain_id: host.version().chain_id,
-            now,
             now_ms: 0,
             base_fee: host.block().basefee.saturating_to(),
             tx_gas_limit_cap: host.version().tx_gas_limit_cap,
-            keystore: upgrade.is_feature_enabled(BaseFeature::Keystore),
             // Simulation never checks the payer's balance; the verified path sets this below.
             fee_charge: false,
         };
@@ -105,13 +103,7 @@ impl Eip8130Handler {
         if let Some(simulation) = tx.simulation {
             let start = host.state().checkpoint();
             let outcome = Self::run_pre_call(host, |sctx| {
-                Eip8130Pipeline::simulate_resolve(
-                    sctx,
-                    &tx.signed,
-                    signer,
-                    simulation.sender_actor_id,
-                    &block,
-                )
+                Eip8130Pipeline::simulate_resolve(sctx, &tx.signed, signer, &block)
             })?;
             // Bump the protocol nonce as inclusion does; the simulation rolls back to `start`.
             Self::consume_sender_nonce(host, &outcome)?;
