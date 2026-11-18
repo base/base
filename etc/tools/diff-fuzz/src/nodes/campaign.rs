@@ -628,9 +628,11 @@ impl RpcCampaign {
     /// base/base answers a priced estimate from an unfunded sender otherwise than Nethermind's
     /// (and geth's) "gas required exceeds allowance (0)".
     pub const KNOWN_BASE_ESTIMATE_ALLOWANCE: &str = "base: estimate without allowance (0)";
-    /// base/base's prestate tracer drops `codeHash` and the authorities of invalid EIP-7702
-    /// authorizations, which Nethermind (with geth) lists.
-    pub const KNOWN_BASE_PRESTATE: &str = "base: prestate without codeHash and invalid authorities";
+    /// base/base's prestate tracer lists another set of accounts than Nethermind's (which follows
+    /// geth): it drops `codeHash` and the authorities of invalid EIP-7702 authorizations, lists
+    /// the zero-credit fee vaults instead of the coinbase for a fee-free call, and keeps an
+    /// empty sender in a diffMode `pre`. Only the account sets differ; shared accounts agree.
+    pub const KNOWN_BASE_PRESTATE: &str = "base: prestate account set";
     /// base/base's 4byteTracer (revm-inspectors) counts calls to precompiles, which Nethermind's
     /// (with geth's) skips.
     pub const KNOWN_BASE_4BYTE_PRECOMPILES: &str = "base: 4byteTracer counts precompile calls";
@@ -748,7 +750,8 @@ impl RpcCampaign {
         } else if case.body.contains("4byteTracer") && Self::counts_within(reference, ours) {
             Self::KNOWN_BASE_4BYTE_PRECOMPILES
         } else if case.body.contains("prestateTracer")
-            && Self::without_extra_accounts(reference, ours) == *ours
+            && Self::without_extra_accounts(reference, ours)
+                == Self::without_extra_accounts(ours, reference)
         {
             Self::KNOWN_BASE_PRESTATE
         } else {
@@ -1286,7 +1289,14 @@ mod tests {
             classify(&trace, base, full.clone(), full.clone()),
             base_cause(RpcCampaign::KNOWN_BASE_PRESTATE)
         );
-        assert_eq!(classify(&trace, other, full.clone(), full), None);
+        assert_eq!(classify(&trace, other, full.clone(), full.clone()), None);
+        // Accounts only base lists (zero-credit fee vaults, an empty diffMode sender) are known too.
+        let c = "0x00000000000000000000000000000000000000cc";
+        let base_more = json!({"id":1,"result":{a:{"balance":"0x1"},c:{"balance":"0x0"}}});
+        assert_eq!(
+            classify(&trace, base_more, full.clone(), full),
+            base_cause(RpcCampaign::KNOWN_BASE_PRESTATE)
+        );
         // 4byteTracer: extra or higher counts on base are known; a lower count is not.
         let four = RpcCase::new(
             "trace",
