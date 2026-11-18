@@ -635,11 +635,30 @@ impl RpcCampaign {
     /// (with geth's) skips.
     pub const KNOWN_BASE_4BYTE_PRECOMPILES: &str = "base: 4byteTracer counts precompile calls";
 
+    /// base/base accepts call requests of type 0x7e (deposit) and `debug_traceBlockByNumber` at
+    /// "pending", which Nethermind refuses.
+    pub const KNOWN_BASE_DEPOSIT_CALL_PENDING_TRACE: &str =
+        "base: deposit-typed calls and pending traces accepted";
+    /// Settled base/base differences from Nethermind: base accepts `eth_feeHistory` without
+    /// rewardPercentiles, refuses a `null` boolean argument, and refuses tracer names it has no
+    /// native tracer for, which Nethermind runs as JS tracers.
+    pub const KNOWN_BASE_SETTLED: &str = "base: settled (feeHistory, null boolean, JS tracer)";
+
     /// Simulated block headers: Nethermind computes `stateRoot` and `withdrawalsRoot` and uses a
     /// zero `parentBeaconBlockRoot`, as geth does; base/base (and needlefish, following it) leave
     /// both roots zero and copy the parent's beacon root. The block hash, which covers them,
     /// differs with them. A settled difference: compared on base and needlefish only.
     pub const KNOWN_SIMULATE_HEADER: &str = "settled: simulated header roots";
+
+    /// Tracer names base/base implements natively.
+    const NATIVE_TRACERS: [&str; 6] = [
+        "callTracer",
+        "prestateTracer",
+        "4byteTracer",
+        "noopTracer",
+        "flatCallTracer",
+        "muxTracer",
+    ];
 
     /// The known base/base difference from Nethermind, the RPC reference, if any, that explains
     /// base's answer to `case`, with base's index: needlefish answers like Nethermind and base
@@ -664,7 +683,28 @@ impl RpcCampaign {
         let body: Value = serde_json::from_str(&case.body).ok()?;
         let params = body.get("params").and_then(Value::as_array);
         let strings = Self::strings(&body["params"]);
-        let cause = if ok(reference) && code(ours) == Some(-32602) {
+        let null_bool = case.method.starts_with("eth_getBlockBy")
+            && params.is_some_and(|p| p.get(1).is_some_and(Value::is_null));
+        let named_tracer = |o: &serde_json::Map<String, Value>| {
+            o.get("tracer")
+                .and_then(Value::as_str)
+                .is_some_and(|t| !Self::NATIVE_TRACERS.contains(&t))
+        };
+        let cause = if ok(ours)
+            && code(reference).is_some()
+            && (body["params"].to_string().contains("\"type\":\"0x7e\"")
+                || case.method == "debug_traceBlockByNumber" && strings.contains(&"pending"))
+        {
+            Self::KNOWN_BASE_DEPOSIT_CALL_PENDING_TRACE
+        } else if (case.method == "eth_feeHistory"
+            && params.is_some_and(|p| p.len() == 2)
+            && ok(ours)
+            && code(reference).is_some())
+            || (null_bool && ok(reference) && code(ours) == Some(-32602))
+            || (code(ours) == Some(-32603) && Self::any_object(&body["params"], &named_tracer))
+        {
+            Self::KNOWN_BASE_SETTLED
+        } else if ok(reference) && code(ours) == Some(-32602) {
             let last = params.and_then(|p| p.last());
             let block_like = last.is_some_and(|v| {
                 v.is_null() || v == "" || v.as_str().is_some_and(|s| s.len() == 66)
@@ -1191,7 +1231,30 @@ mod tests {
         // Not while needlefish sides with base (a needlefish finding), nor for a block number.
         assert_eq!(classify(&by_hash, invalid.clone(), invalid.clone(), ok.clone()), None);
         let by_number = RpcCase::new("state", "eth_getBalance", json!(["0x01", "0x10"]));
-        assert_eq!(classify(&by_number, invalid, ok.clone(), ok), None);
+        assert_eq!(classify(&by_number, invalid.clone(), ok.clone(), ok.clone()), None);
+        // Deposit-typed calls and settled items: known when needlefish answers like Nethermind.
+        let deposit = RpcCase::new("call", "eth_call", json!([{"type": "0x7e"}, "latest"]));
+        assert_eq!(
+            classify(&deposit, ok.clone(), invalid.clone(), invalid.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_DEPOSIT_CALL_PENDING_TRACE)
+        );
+        let fee = RpcCase::new("fees", "eth_feeHistory", json!(["0x1", "latest"]));
+        assert_eq!(
+            classify(&fee, ok.clone(), invalid.clone(), invalid),
+            base_cause(RpcCampaign::KNOWN_BASE_SETTLED)
+        );
+        let js = RpcCase::new("trace", "debug_traceTransaction", json!(["0x01", {"tracer": "x"}]));
+        let internal = json!({"id":1,"error":{"code":-32603,"message":"JS Tracer is not enabled"}});
+        assert_eq!(
+            classify(&js, internal.clone(), ok.clone(), ok.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_SETTLED)
+        );
+        let named = RpcCase::new(
+            "trace",
+            "debug_traceTransaction",
+            json!(["0x01", {"tracer": "callTracer"}]),
+        );
+        assert_eq!(classify(&named, internal, ok.clone(), ok), None);
         // Simulated header roots (settled): Nethermind is set aside when only they differ.
         let simulate = RpcCase::new("call", "eth_simulateV1", json!([{"blockStateCalls": []}]));
         let block = |root: &str, hash: &str, gas: &str| {
