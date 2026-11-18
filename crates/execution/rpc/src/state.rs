@@ -5,7 +5,9 @@ use base_execution_trie::{
     BaseProofsStorage, BaseProofsStore, provider::BaseProofsStateProviderRef,
 };
 use jsonrpsee_types::error::ErrorObject;
-use reth_provider::{BlockIdReader, ProviderError, ProviderResult, StateProvider};
+use reth_provider::{
+    BlockHashReader, BlockIdReader, BlockNumReader, ProviderError, ProviderResult, StateProvider,
+};
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
 
@@ -45,7 +47,7 @@ where
         let historical_provider =
             self.eth_api.state_at_block_id(block_id).await.map_err(ProviderError::other)?;
 
-        let (Some((latest_block_number, _)), Some((earliest_block_number, _))) = (
+        let (Some((latest_block_number, latest_block_hash)), Some((earliest_block_number, _))) = (
             self.preimage_store
                 .get_latest_block_number()
                 .map_err(|e| ProviderError::Database(e.into()))?,
@@ -58,6 +60,18 @@ where
         };
 
         if block_number < earliest_block_number || block_number > latest_block_number {
+            return Err(ProviderError::StateForNumberNotFound(block_number));
+        }
+
+        // After a reorg the store keeps the abandoned branch until the proofs ExEx rewrites it,
+        // and its reads for any block above the fork point would come from that branch. Serve
+        // nothing until the store's latest block is canonical again. A reorg to a lower head
+        // leaves the abandoned blocks' hashes in the database until they are unwound, so the
+        // store's latest block must also not be above the canonical head.
+        let provider = self.eth_api.provider();
+        if latest_block_number > provider.best_block_number()?
+            || provider.block_hash(latest_block_number)? != Some(latest_block_hash)
+        {
             return Err(ProviderError::StateForNumberNotFound(block_number));
         }
 
