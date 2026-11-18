@@ -3,9 +3,7 @@
 use alloc::vec::Vec;
 
 use alloy_consensus::{Eip658Value, Receipt};
-#[cfg(feature = "serde")]
-use alloy_primitives::B256;
-use alloy_primitives::{Address, B64, Log, U256};
+use alloy_primitives::{Address, B64, B256, Log, U256, b256};
 
 use crate::{
     RollupConfig, SystemConfigLog, SystemConfigUpdate, SystemConfigUpdateError,
@@ -120,6 +118,11 @@ impl<'a> serde::Deserialize<'a> for SystemConfig {
 }
 
 impl SystemConfig {
+    /// Storage slot of the unsafe block signer address in the L1 `SystemConfig` contract:
+    /// `bytes32(uint256(keccak256("systemconfig.unsafeblocksigner")) - 1)`.
+    pub const UNSAFE_BLOCK_SIGNER_SLOT: B256 =
+        b256!("0x65a7ed542fb37fe237fdfbdd70b31598523fe5b32879e307bae27a0bd9581c08");
+
     /// Filters all L1 receipts to find config updates and applies the config updates.
     ///
     /// Each config update log is applied independently. Malformed or invalid updates are

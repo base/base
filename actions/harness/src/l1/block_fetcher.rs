@@ -1,6 +1,7 @@
 //! In-memory [`L1BlockFetcher`] implementation for action tests.
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_primitives::{Address, B256};
 use alloy_rpc_types_eth::{Block, Filter, Header, Log};
 use async_trait::async_trait;
 use base_consensus_node::L1BlockFetcher;
@@ -20,6 +21,8 @@ pub struct ActionL1FetcherError(String);
 /// - `get_logs` returns an empty `Vec` in all cases. Most action tests do not
 ///   emit signer-rotation logs, so this is the correct behaviour for the
 ///   current test suite.
+/// - `get_storage_at` returns zero in all cases, so the watcher treats the
+///   unsafe block signer as unset in L1 state and keeps the current one.
 /// - `get_block` looks the block up by number or hash in the shared chain and
 ///   converts it to an [`alloy_rpc_types_eth::Block`].
 ///
@@ -61,5 +64,15 @@ impl L1BlockFetcher for ActionL1BlockFetcher {
             },
         };
         Ok(l1_block.map(l1_block_to_rpc))
+    }
+
+    async fn get_storage_at(
+        &self,
+        _address: Address,
+        _slot: B256,
+        _block: BlockId,
+    ) -> Result<B256, Self::Error> {
+        // Action tests do not deploy a SystemConfig contract. Report an unset slot.
+        Ok(B256::ZERO)
     }
 }

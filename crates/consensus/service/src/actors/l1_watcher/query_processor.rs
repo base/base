@@ -315,6 +315,15 @@ mod tests {
             Ok(vec![])
         }
 
+        async fn get_storage_at(
+            &self,
+            _: alloy_primitives::Address,
+            _: alloy_primitives::B256,
+            _: BlockId,
+        ) -> Result<alloy_primitives::B256, Self::Error> {
+            unreachable!("the query processor never reads storage")
+        }
+
         async fn get_block(&self, id: BlockId) -> Result<Option<Block>, Self::Error> {
             let current = self.current_calls.fetch_add(1, Ordering::SeqCst) + 1;
             self.max_calls.fetch_max(current, Ordering::SeqCst);
