@@ -2,7 +2,7 @@
 
 use std::{
     cmp::Reverse,
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     env, fs,
     path::{Path, PathBuf},
     process, thread,
@@ -10,7 +10,7 @@ use std::{
 
 use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header};
 use alloy_eips::Encodable2718;
-use alloy_primitives::{B64, B256, Bytes, U256, keccak256};
+use alloy_primitives::{Address, B64, B256, Bytes, U256, keccak256};
 use alloy_rlp::Decodable;
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
@@ -21,8 +21,8 @@ use base_common_rpc_types::BaseBlockResponse;
 use eyre::{Context, bail, ensure, eyre};
 use serde_json::json;
 
-use super::RpcClient;
-use crate::{HeaderResults, Mode, Request, RequestHeader, Witness};
+use super::{ProofWitness, RpcClient, Touched};
+use crate::{Adapter, AdapterSpec, HeaderResults, Mode, Request, RequestHeader, Witness};
 
 /// Turns Base mainnet block numbers into complete validate-mode [`Request`]s.
 ///
@@ -52,6 +52,10 @@ pub struct MainnetFetcher {
     pub proofs: RpcClient,
     /// When set, only cached cases are returned and nothing is fetched.
     pub offline: bool,
+    /// When set, witnesses are rebuilt from `debug_traceBlockByNumber` on the witness endpoints
+    /// and `eth_getProof` on the proof endpoints (see [`ProofWitness`]) instead of
+    /// `debug_executionWitness`.
+    pub witness_from_proofs: bool,
 }
 
 impl MainnetFetcher {
@@ -72,6 +76,13 @@ impl MainnetFetcher {
     pub const PROOF_RPC_ENV: &str = "BASE_DIFF_PROOF_RPC";
     /// Environment variable overriding the witness endpoints (comma-separated URLs).
     pub const WITNESS_RPC_ENV: &str = "BASE_DIFF_WITNESS_RPC";
+    /// Environment variable naming an adapter command that reports missing witness entries by
+    /// account and slot, used to complete proof-built witnesses (see [`Self::complete`]).
+    pub const WITNESS_COMPLETER_ENV: &str = "BASE_DIFF_WITNESS_COMPLETER";
+    /// Most entries [`Self::complete`] adds to one witness.
+    pub const COMPLETE_ROUNDS: usize = 48;
+    /// Environment variable that, set to `1`, rebuilds witnesses from proofs.
+    pub const WITNESS_FROM_PROOFS_ENV: &str = "BASE_DIFF_WITNESS_FROM_PROOFS";
     /// Environment variable overriding the block endpoints (comma-separated URLs).
     pub const BLOCK_RPC_ENV: &str = "BASE_DIFF_BLOCK_RPC";
 
@@ -88,6 +99,7 @@ impl MainnetFetcher {
             blocks: RpcClient::new(block_urls)?,
             proofs: RpcClient::new(proof_urls)?,
             offline: false,
+            witness_from_proofs: false,
         })
     }
 
@@ -102,12 +114,15 @@ impl MainnetFetcher {
                 .collect(),
             _ => defaults.iter().map(|url| url.to_string()).collect(),
         };
-        Self::new(
+        let mut fetcher = Self::new(
             cache_dir,
             urls(Self::WITNESS_RPC_ENV, &Self::DEFAULT_WITNESS_URLS),
             urls(Self::BLOCK_RPC_ENV, &Self::DEFAULT_BLOCK_URLS),
             urls(Self::PROOF_RPC_ENV, &Self::DEFAULT_PROOF_URLS),
-        )
+        )?;
+        fetcher.witness_from_proofs =
+            env::var(Self::WITNESS_FROM_PROOFS_ENV).is_ok_and(|v| v == "1");
+        Ok(fetcher)
     }
 
     /// Path of the cached request for block `number`.
@@ -284,7 +299,10 @@ impl MainnetFetcher {
 
         // Some gateway backends answer with an empty witness; ask again.
         let mut witness = ExecutionWitness::default();
-        for _ in 0..6 {
+        if self.witness_from_proofs {
+            witness = self.proof_witness(&header, &transactions)?;
+        }
+        for _ in 0..if self.witness_from_proofs { 0 } else { 6 } {
             witness =
                 serde_json::from_value(self.witness.call("debug_executionWitness", tag.clone())?)?;
             if !witness.state.is_empty() {
@@ -349,7 +367,66 @@ impl MainnetFetcher {
             "witness headers do not end at the block's parent"
         );
         Self::validate(&request)?;
+        let mut request = request;
+        if self.witness_from_proofs
+            && let Some(command) =
+                env::var(Self::WITNESS_COMPLETER_ENV).ok().filter(|c| !c.is_empty())
+        {
+            self.complete(&mut request, &command)?;
+        }
         Ok(request)
+    }
+
+    /// Fills a proof-built witness with what an adapter reports missing: native precompiles
+    /// read storage outside the EVM, which no struct log shows. `command` must name the account
+    /// and slot it lacks in its error, as needlefish's adapter does ("reading slot S of A",
+    /// "reading account A"). Gives up after [`Self::COMPLETE_ROUNDS`] additions.
+    pub fn complete(&self, request: &mut Request, command: &str) -> eyre::Result<()> {
+        let spec = AdapterSpec::parse(&format!("completer={command}"))?;
+        let mut adapter = Adapter::new(spec, std::time::Duration::from_secs(120));
+        let builder =
+            ProofWitness { trace: self.witness.clone(), rpc: self.proofs.clone(), concurrency: 1 };
+        let parent = request.header.number - 1;
+        let mut known: HashSet<B256> = request.witness.state.iter().map(keccak256).collect();
+        for _ in 0..Self::COMPLETE_ROUNDS {
+            let Ok(response) = adapter.call(request) else { return Ok(()) };
+            let Some(error) = response.error.filter(|_| !response.ok) else { return Ok(()) };
+            let word = |after: &str| -> Option<String> {
+                let start = error.find(after)? + after.len();
+                Some(
+                    error[start..]
+                        .split(|c: char| !c.is_ascii_hexdigit() && c != 'x')
+                        .next()?
+                        .to_owned(),
+                )
+            };
+            let (address, slots): (Address, Vec<B256>) = if let Some(slot) = word("reading slot ") {
+                (
+                    word(" of ").ok_or_else(|| eyre!("no account in {error}"))?.parse()?,
+                    vec![slot.parse()?],
+                )
+            } else if let Some(account) = word("reading account ") {
+                (account.parse()?, Vec::new())
+            } else {
+                return Ok(());
+            };
+            let touched = Touched {
+                accounts: [(address, slots.into_iter().collect())].into_iter().collect(),
+                ..Default::default()
+            };
+            let (nodes, codes) = builder.fetch(parent, &touched)?;
+            let before = known.len();
+            for node in nodes {
+                if known.insert(keccak256(&node)) {
+                    request.witness.state.push(node);
+                }
+            }
+            request.witness.codes.extend(codes);
+            if known.len() == before {
+                return Ok(());
+            }
+        }
+        Ok(())
     }
 
     /// Rebuilds block `number`'s header RLP and EIP-2718 transactions from
@@ -367,6 +444,40 @@ impl MainnetFetcher {
             .map(|tx| Bytes::from(tx.inner.inner.into_inner().encoded_2718()))
             .collect();
         Ok((raw_header, transactions))
+    }
+
+    /// The witness of block `header` rebuilt from traces and proofs at its parent, with the
+    /// ancestor headers its `BLOCKHASH` reads need.
+    pub fn proof_witness(
+        &self,
+        header: &Header,
+        transactions: &[Bytes],
+    ) -> eyre::Result<ExecutionWitness> {
+        let builder =
+            ProofWitness { trace: self.witness.clone(), rpc: self.proofs.clone(), concurrency: 6 };
+        let touched =
+            builder.touched(header.number, header.timestamp, header.beneficiary, transactions)?;
+        let (state, codes) = builder.fetch(header.number - 1, &touched)?;
+        let oldest = touched
+            .block_hashes
+            .iter()
+            .copied()
+            .filter(|n| *n < header.number && header.number - n <= Self::MAX_ANCESTORS as u64)
+            .min()
+            .unwrap_or(header.number - 1);
+        let headers = (oldest..header.number)
+            .map(|n| {
+                let block: BaseBlockResponse = serde_json::from_value(
+                    self.blocks.call("eth_getBlockByNumber", json!([format!("{n:#x}"), false]))?,
+                )?;
+                Ok(Bytes::from(alloy_rlp::encode(&block.header.inner.inner)))
+            })
+            .collect::<eyre::Result<Vec<_>>>()?;
+        let mut keys: Vec<Bytes> =
+            touched.accounts.keys().map(|a| Bytes::copy_from_slice(a.as_slice())).collect();
+        let slots: BTreeSet<B256> = touched.accounts.values().flatten().copied().collect();
+        keys.extend(slots.iter().map(|s| Bytes::copy_from_slice(s.as_slice())));
+        Ok(ExecutionWitness { state, codes, keys, headers })
     }
 
     /// Fetches the `L2ToL1MessagePasser` account proof at block `number` and verifies it against

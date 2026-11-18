@@ -25,7 +25,7 @@ pub use fuzz::{
 };
 
 mod mainnet;
-pub use mainnet::{MainnetFetcher, RpcClient};
+pub use mainnet::{MainnetFetcher, ProofWitness, RpcClient, Touched};
 
 mod r#gen;
 pub use r#gen::{

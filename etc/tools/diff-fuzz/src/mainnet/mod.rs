@@ -8,3 +8,6 @@ pub use rpc::RpcClient;
 
 mod fetcher;
 pub use fetcher::MainnetFetcher;
+
+mod proofs;
+pub use proofs::{ProofWitness, Touched};
