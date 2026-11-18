@@ -118,6 +118,9 @@ impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
                 Ok(true)
             }
             PayloadStatusEnum::Syncing => {
+                if !state.el_sync_finished {
+                    state.el_sync_started = true;
+                }
                 // The EL stored the block but cannot validate it yet (e.g. missing
                 // parent).  We intentionally do NOT apply the sync-state update so
                 // that unsafe_head stays at the last *confirmed* value.  This

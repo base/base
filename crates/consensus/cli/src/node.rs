@@ -234,6 +234,10 @@ pub struct ConsensusNodeConfigArgs {
     #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
     pub safedb_path: Option<PathBuf>,
 
+    /// Seconds behind the synced EL head when no usable SafeDB anchor exists.
+    #[arg(long = "sync.el-safe-offset", default_value_t = 43_200)]
+    pub el_safe_offset: u64,
+
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
     pub checkpoint_path: Option<PathBuf>,
@@ -273,6 +277,10 @@ pub struct EmbeddedConsensusNodeConfigArgs {
     /// Path to the `SafeDB` directory. If not set, safe head tracking is disabled.
     #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
     pub safedb_path: Option<PathBuf>,
+
+    /// Seconds behind the synced EL head when no usable SafeDB anchor exists.
+    #[arg(long = "sync.el-safe-offset", default_value_t = 43_200)]
+    pub el_safe_offset: u64,
 
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
@@ -314,6 +322,10 @@ pub struct EmbeddedSequencerConsensusNodeConfigArgs {
     #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
     pub safedb_path: Option<PathBuf>,
 
+    /// Seconds behind the synced EL head when no usable SafeDB anchor exists.
+    #[arg(long = "sync.el-safe-offset", default_value_t = 43_200)]
+    pub el_safe_offset: u64,
+
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
     pub checkpoint_path: Option<PathBuf>,
@@ -331,6 +343,7 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
             rpc_flags: args.rpc_flags.into(),
             sequencer_flags: SequencerArgs::default(),
             safedb_path: args.safedb_path,
+            el_safe_offset: args.el_safe_offset,
             checkpoint_path: args.checkpoint_path,
             upgrade_signal: UpgradeSignalArgs::default(),
         }
@@ -349,6 +362,7 @@ impl From<EmbeddedSequencerConsensusNodeConfigArgs> for ConsensusNodeConfigArgs 
             rpc_flags: args.rpc_flags.into(),
             sequencer_flags: args.sequencer_flags,
             safedb_path: args.safedb_path,
+            el_safe_offset: args.el_safe_offset,
             checkpoint_path: args.checkpoint_path,
             upgrade_signal: UpgradeSignalArgs::default(),
         }
@@ -569,6 +583,7 @@ impl ConsensusNodeArgs {
             l1_rpc: upgrade_signal_l1_rpc,
         });
 
+        builder = builder.with_el_safe_offset(self.config.el_safe_offset);
         if let Some(interval) = self.config.l1_rpc_args.l1_finalized_poll_interval {
             builder = builder.with_finalized_poll_interval(interval);
         }
@@ -727,6 +742,7 @@ mod tests {
             rpc_flags: RpcArgs::default(),
             sequencer_flags: SequencerArgs::default(),
             safedb_path: None,
+            el_safe_offset: 43_200,
             checkpoint_path: None,
             upgrade_signal: UpgradeSignalArgs::default(),
         }
@@ -736,6 +752,28 @@ mod tests {
     struct CommandParser<T: Args> {
         #[command(flatten)]
         args: T,
+    }
+
+    /// The offset flag defaults to twelve hours and permits zero for a tip anchor.
+    #[test]
+    fn parses_el_safe_offset() {
+        let defaults = CommandParser::<ConsensusNodeConfigArgs>::parse_from([
+            "base-consensus", "--l1-eth-rpc", "http://localhost:8545",
+            "--l1-beacon", "http://localhost:5052", "--l2-engine-rpc", "http://localhost:8551",
+        ]);
+        assert_eq!(defaults.args.el_safe_offset, 43_200, "default offset is twelve hours in seconds");
+        let zero = CommandParser::<ConsensusNodeConfigArgs>::parse_from([
+            "base-consensus", "--l1-eth-rpc", "http://localhost:8545",
+            "--l1-beacon", "http://localhost:5052", "--l2-engine-rpc", "http://localhost:8551",
+            "--sync.el-safe-offset", "0",
+        ]);
+        assert_eq!(zero.args.el_safe_offset, 0, "zero selects the synced tip rather than disabling promotion");
+        let embedded = CommandParser::<EmbeddedSequencerConsensusNodeConfigArgs>::parse_from([
+            "base", "--l1-eth-rpc", "http://localhost:8545", "--l1-beacon", "http://localhost:5052",
+            "--sync.el-safe-offset", "60",
+        ]);
+        let converted = ConsensusNodeConfigArgs::from(embedded.args);
+        assert_eq!(converted.el_safe_offset, 60, "embedded conversion retains the configured seconds");
     }
 
     #[test]
@@ -1206,6 +1244,7 @@ mod tests {
             l1_config: L1ConfigFile::default(),
             l2_config: L2ConfigFile::default(),
             safedb_path: None,
+            el_safe_offset: 43_200,
             checkpoint_path: None,
         };
 

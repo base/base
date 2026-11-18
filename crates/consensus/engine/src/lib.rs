@@ -52,6 +52,7 @@ pub use metrics::Metrics;
 
 mod sync;
 pub use sync::{
+    ElSyncAnchor,
     ForkchoiceCheckpointError, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
     L2ForkchoiceState, NoopForkchoiceCheckpointReader, SyncStartError, find_starting_forkchoice,
     find_starting_forkchoice_with_checkpoint_reader,

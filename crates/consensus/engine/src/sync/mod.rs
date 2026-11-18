@@ -6,6 +6,9 @@ use alloy_eips::BlockNumberOrTag;
 use base_common_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
 
+mod el_sync;
+pub use el_sync::ElSyncAnchor;
+
 mod forkchoice;
 pub use forkchoice::L2ForkchoiceState;
 

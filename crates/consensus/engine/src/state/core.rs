@@ -138,6 +138,9 @@ pub struct EngineState {
 
     /// Whether or not the EL has finished syncing.
     pub el_sync_finished: bool,
+
+    /// Whether the EL reported SYNCING before its first VALID forkchoice response.
+    pub el_sync_started: bool,
 }
 
 #[cfg(test)]

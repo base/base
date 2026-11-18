@@ -80,6 +80,8 @@ pub struct RollupNodeBuilder {
     /// When set, enables persistent safe head tracking via redb and serves
     /// `optimism_safeHeadAtL1Block` RPC requests from the database.
     pub safedb_path: Option<PathBuf>,
+    /// Seconds behind the EL-synced head to resume derivation when SafeDB is unavailable.
+    pub el_safe_offset: u64,
     /// Upgrade signal configuration.
     pub upgrade_signal_config: UpgradeSignalBuilderConfig,
 }
@@ -119,6 +121,7 @@ impl RollupNodeBuilder {
             finalized_poll_interval: None,
             checkpoint_path: None,
             safedb_path: None,
+            el_safe_offset: base_consensus_engine::ElSyncAnchor::DEFAULT_OFFSET_SECONDS,
             upgrade_signal_config: UpgradeSignalBuilderConfig {
                 metrics_config: None,
                 l1_rpc: None,
@@ -148,6 +151,11 @@ impl RollupNodeBuilder {
     /// specific interval regardless of chain (e.g. in integration tests).
     pub fn with_finalized_poll_interval(self, interval: Duration) -> Self {
         Self { finalized_poll_interval: Some(interval), ..self }
+    }
+
+    /// Sets the EL-sync derivation offset in seconds.
+    pub fn with_el_safe_offset(self, seconds: u64) -> Self {
+        Self { el_safe_offset: seconds, ..self }
     }
 
     /// Enables persistent safe head tracking by setting the path to the redb database file.
@@ -244,6 +252,7 @@ impl RollupNodeBuilder {
             sequencer_config,
             checkpoint_path,
             safedb_path: self.safedb_path,
+            el_safe_offset: self.el_safe_offset,
             upgrade_signal_config,
             payload_ready: None,
         })

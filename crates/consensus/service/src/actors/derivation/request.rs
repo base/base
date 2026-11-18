@@ -21,6 +21,8 @@ pub enum DerivationClientError {
 /// Inbound requests that the [`crate::DerivationActor`] can process.
 #[derive(Debug)]
 pub enum DerivationActorRequest {
+    /// Reset the pipeline at a validated EL-sync anchor and acknowledge initialization.
+    ResetELSyncAnchor(Box<L2BlockInfo>, tokio::sync::oneshot::Sender<Result<(), String>>),
     /// Request to process the fact that Engine sync has completed, along with the current safe
     /// head.
     ProcessEngineSyncCompletionRequest(Box<L2BlockInfo>),
