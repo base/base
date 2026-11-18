@@ -214,6 +214,11 @@ pub struct StandaloneDerivationClient;
 
 #[async_trait]
 impl EngineDerivationClient for StandaloneDerivationClient {
+    async fn reset_el_sync_anchor(&self, _safe_head: L2BlockInfo) -> DerivationClientResult<()> {
+        // Standalone sequencing has no derivation pipeline to initialize.
+        Ok(())
+    }
+
     async fn notify_sync_completed(&self, _safe_head: L2BlockInfo) -> DerivationClientResult<()> {
         Ok(())
     }

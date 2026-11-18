@@ -8,7 +8,7 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::PayloadReady;
-use base_consensus_engine::EngineEndpoint;
+use base_consensus_engine::{ElSyncAnchor, EngineEndpoint};
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NodeMode, NodeOperatingMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
@@ -235,7 +235,9 @@ pub struct ConsensusNodeConfigArgs {
     pub safedb_path: Option<PathBuf>,
 
     /// Seconds behind the synced EL head when no usable SafeDB anchor exists.
-    #[arg(long = "sync.el-safe-offset", default_value_t = 43_200)]
+    /// Zero trusts the execution-valid synced tip as safe; this does not establish L1 finality.
+    #[arg(long = "el-sync-safe-offset", env = "BASE_NODE_EL_SYNC_SAFE_OFFSET",
+        default_value_t = ElSyncAnchor::DEFAULT_OFFSET_SECONDS)]
     pub el_safe_offset: u64,
 
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
@@ -279,7 +281,9 @@ pub struct EmbeddedConsensusNodeConfigArgs {
     pub safedb_path: Option<PathBuf>,
 
     /// Seconds behind the synced EL head when no usable SafeDB anchor exists.
-    #[arg(long = "sync.el-safe-offset", default_value_t = 43_200)]
+    /// Zero trusts the execution-valid synced tip as safe; this does not establish L1 finality.
+    #[arg(long = "el-sync-safe-offset", env = "BASE_NODE_EL_SYNC_SAFE_OFFSET",
+        default_value_t = ElSyncAnchor::DEFAULT_OFFSET_SECONDS)]
     pub el_safe_offset: u64,
 
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
@@ -323,7 +327,9 @@ pub struct EmbeddedSequencerConsensusNodeConfigArgs {
     pub safedb_path: Option<PathBuf>,
 
     /// Seconds behind the synced EL head when no usable SafeDB anchor exists.
-    #[arg(long = "sync.el-safe-offset", default_value_t = 43_200)]
+    /// Zero trusts the execution-valid synced tip as safe; this does not establish L1 finality.
+    #[arg(long = "el-sync-safe-offset", env = "BASE_NODE_EL_SYNC_SAFE_OFFSET",
+        default_value_t = ElSyncAnchor::DEFAULT_OFFSET_SECONDS)]
     pub el_safe_offset: u64,
 
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
@@ -742,7 +748,7 @@ mod tests {
             rpc_flags: RpcArgs::default(),
             sequencer_flags: SequencerArgs::default(),
             safedb_path: None,
-            el_safe_offset: 43_200,
+            el_safe_offset: ElSyncAnchor::DEFAULT_OFFSET_SECONDS,
             checkpoint_path: None,
             upgrade_signal: UpgradeSignalArgs::default(),
         }
@@ -761,16 +767,17 @@ mod tests {
             "base-consensus", "--l1-eth-rpc", "http://localhost:8545",
             "--l1-beacon", "http://localhost:5052", "--l2-engine-rpc", "http://localhost:8551",
         ]);
-        assert_eq!(defaults.args.el_safe_offset, 43_200, "default offset is twelve hours in seconds");
+        assert_eq!(defaults.args.el_safe_offset, ElSyncAnchor::DEFAULT_OFFSET_SECONDS,
+            "default offset uses the shared twelve-hour policy");
         let zero = CommandParser::<ConsensusNodeConfigArgs>::parse_from([
             "base-consensus", "--l1-eth-rpc", "http://localhost:8545",
             "--l1-beacon", "http://localhost:5052", "--l2-engine-rpc", "http://localhost:8551",
-            "--sync.el-safe-offset", "0",
+            "--el-sync-safe-offset", "0",
         ]);
         assert_eq!(zero.args.el_safe_offset, 0, "zero selects the synced tip rather than disabling promotion");
         let embedded = CommandParser::<EmbeddedSequencerConsensusNodeConfigArgs>::parse_from([
             "base", "--l1-eth-rpc", "http://localhost:8545", "--l1-beacon", "http://localhost:5052",
-            "--sync.el-safe-offset", "60",
+            "--el-sync-safe-offset", "60",
         ]);
         let converted = ConsensusNodeConfigArgs::from(embedded.args);
         assert_eq!(converted.el_safe_offset, 60, "embedded conversion retains the configured seconds");
@@ -1244,7 +1251,7 @@ mod tests {
             l1_config: L1ConfigFile::default(),
             l2_config: L2ConfigFile::default(),
             safedb_path: None,
-            el_safe_offset: 43_200,
+            el_safe_offset: ElSyncAnchor::DEFAULT_OFFSET_SECONDS,
             checkpoint_path: None,
         };
 
