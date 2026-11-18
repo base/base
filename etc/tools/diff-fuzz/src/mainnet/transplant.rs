@@ -328,6 +328,7 @@ impl Transplant {
             sys: &sys,
             origin: &origin,
             ancestors: &genesis.ancestors,
+            number_offset: 0,
             mix: TrafficMix {
                 min_txs: 0,
                 max_txs: self.synthetic as usize,

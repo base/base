@@ -38,6 +38,9 @@ pub struct GeneratorOptions {
     /// Whether user deposits may create contracts from the key whose nonce is `u64::MAX`.
     /// Real-node chains, which advance only on base/base's block, leave these out.
     pub max_nonce_deposit_creates: bool,
+    /// Whether chains carry the state-stress contract and accounts at genesis (see
+    /// [`crate::Stress`]), so blocks can be planned with a [`crate::StressPlan`].
+    pub state_stress: bool,
 }
 
 impl Default for GeneratorOptions {
@@ -49,6 +52,7 @@ impl Default for GeneratorOptions {
             invalid_percent: 8,
             activation_percent: 15,
             max_nonce_deposit_creates: true,
+            state_stress: false,
         }
     }
 }
@@ -191,6 +195,7 @@ impl Generator {
             origin: &origin,
             ancestors: &genesis.ancestors,
             mix: self.options.mix(),
+            number_offset: 0,
         };
         let activate = Native::active(upgrade) && !Native::active(state_era.upgrade());
         Template::build(&mut rng, input, &mut |planner, deposits| {

@@ -16,8 +16,9 @@ use crate::{
         rng::Rng,
         scenario::Scenarios,
         state::WorldState,
+        stress::{Stress, StressPlan},
         sysconfig::ConfigLogs,
-        template::{Template, TemplateInput},
+        template::{Template, TemplateInput, TrafficMix},
     },
 };
 
@@ -30,8 +31,9 @@ const CROSSINGS: [Era; 6] =
 /// request's inputs and the agreed response's computed fields, and the pre-state is the
 /// previous pre-state with the agreed post-state diff applied.
 ///
-/// The chain is a deterministic function of the seed, the options, and the agreed responses.
-#[derive(Debug)]
+/// The chain is a deterministic function of the seed, the options, the agreed responses, and the
+/// [`Self::prepare`] calls.
+#[derive(Debug, Clone)]
 pub struct ChainGenerator {
     seed: u64,
     options: GeneratorOptions,
@@ -46,6 +48,10 @@ pub struct ChainGenerator {
     blocks: u64,
     /// Further consecutive blocks that start an epoch with a system config update.
     burst: u64,
+    /// State-stress traffic of the pending block.
+    stress: Option<StressPlan>,
+    /// Mainnet block number minus chain block number (see [`Self::rebase`]).
+    number_offset: u64,
 }
 
 impl ChainGenerator {
@@ -77,19 +83,27 @@ impl ChainGenerator {
             Genesis::build(&mut rng, era, parent_number, &sys, Self::MAX_ANCESTORS as u64);
         let origin = L1Origin::random(&mut rng, parent_timestamp);
         let scenarios = Scenarios::new(&mut rng, era);
+        let mut state = genesis.state;
+        let mut ancestors = genesis.ancestors;
+        if options.state_stress {
+            Stress::seed_genesis(&mut state, seed);
+            ancestors[0].state_root = state.witness().0;
+        }
         let mut chain = Self {
             seed,
             options,
             rng,
-            state: genesis.state,
+            state,
             registry: genesis.registry,
             sys,
             origin,
-            ancestors: genesis.ancestors,
+            ancestors,
             scenarios,
             pending: Self::placeholder(),
             blocks: 0,
             burst: 0,
+            stress: None,
+            number_offset: 0,
         };
         chain.pending = chain.plan();
         chain
@@ -147,10 +161,16 @@ impl ChainGenerator {
     /// Replaces the ancestors with the single header `parent` and re-plans the pending block on
     /// it. Real nodes started from a genesis file at the parent block compute their own genesis
     /// header (empty body, genesis defaults) and know no earlier blocks; rebasing makes the chain
-    /// build on that header. `parent` must commit to the current state.
+    /// build on that header. `parent` must commit to the current state. A `parent` at a lower
+    /// number (a genesis file moved to block zero) shifts every later block number down by the
+    /// difference, while timestamps still follow mainnet's schedule at the original numbers.
     pub fn rebase(&mut self, parent: Header) -> eyre::Result<()> {
         ensure!(self.blocks == 0, "only an unstarted chain can be rebased");
         self.state.check_root(parent.state_root)?;
+        self.number_offset = self.ancestors[0]
+            .number
+            .checked_sub(parent.number)
+            .ok_or_else(|| eyre::eyre!("cannot rebase onto a later block number"))?;
         self.ancestors = vec![parent];
         self.pending = self.plan();
         Ok(())
@@ -163,6 +183,16 @@ impl ChainGenerator {
         self.pending.request.header.base_fee_per_gas = base_fee;
     }
 
+    /// Re-plans the pending block from fresh randomness drawn from `salt` and the block height,
+    /// with `stress` traffic (which needs `GeneratorOptions::state_stress`). Two generators in the
+    /// same state prepared with the same arguments plan the same block; different salts give
+    /// sibling blocks.
+    pub fn prepare(&mut self, stress: Option<StressPlan>, salt: u64) {
+        self.stress = stress.filter(|_| self.options.state_stress);
+        self.rng = Rng::new(&[self.seed, salt, self.blocks, 0x57a7_e000]);
+        self.pending = self.plan();
+    }
+
     fn plan(&mut self) -> Template {
         let number = self.ancestors[0].number + 1;
         let input = TemplateInput {
@@ -172,16 +202,43 @@ impl ChainGenerator {
             sys: &self.sys,
             origin: &self.origin,
             ancestors: &self.ancestors,
-            mix: self.options.mix(),
+            number_offset: self.number_offset,
+            mix: self.stress.map_or_else(
+                || self.options.mix(),
+                |stress| {
+                    let txs = usize::from(stress.random_txs);
+                    TrafficMix { min_txs: txs, max_txs: txs, ..self.options.mix() }
+                },
+            ),
         };
         let scenarios = &mut self.scenarios;
+        let stress = self.stress;
         Template::build(&mut self.rng, input, &mut |planner, deposits| {
-            scenarios.step(planner, deposits)
+            scenarios.step(planner, deposits);
+            if let Some(stress) = &stress
+                && !deposits
+            {
+                Stress::plan(planner, stress);
+            }
         })
     }
 
     /// Applies the agreed response to the pending request and plans the next block.
     pub fn next(&mut self, agreed: &Response) -> eyre::Result<Request> {
+        self.advance(agreed)?;
+        self.pending = self.plan();
+        Ok(self.pending.request.clone())
+    }
+
+    /// Drops the pending block's plan (its request carries a witness of the whole state) until
+    /// [`Self::prepare`] plans one again, so idle snapshots of the chain stay small.
+    pub fn park(&mut self) {
+        self.pending = Self::placeholder();
+    }
+
+    /// Applies the agreed response to the pending request without planning the next block:
+    /// call [`Self::prepare`] before the next [`Self::request`].
+    pub fn advance(&mut self, agreed: &Response) -> eyre::Result<()> {
         let request = &self.pending.request;
         ensure!(agreed.id == request.id, "response {} does not answer {}", agreed.id, request.id);
         if !agreed.ok {
@@ -230,7 +287,8 @@ impl ChainGenerator {
 
         let schedule = Schedule::mainnet();
         let parent_timestamp = self.ancestors[0].timestamp;
-        let next_timestamp = schedule.timestamp_parts(self.ancestors[0].number + 1).0;
+        let next_timestamp =
+            schedule.timestamp_parts(self.ancestors[0].number + 1 + self.number_offset).0;
         // Upgrade activation blocks start a new epoch when they can, and usually change the
         // system config, so config changes land on fork boundaries. A burst gives consecutive
         // blocks an update each, for as long as the L1 origin can advance every block.
@@ -268,8 +326,7 @@ impl ChainGenerator {
             self.sys.config.eip1559_denominator =
                 self.sys.config.eip1559_denominator.map(|d| d.saturating_mul(factor));
         }
-        self.pending = self.plan();
-        Ok(self.pending.request.clone())
+        Ok(())
     }
 }
 

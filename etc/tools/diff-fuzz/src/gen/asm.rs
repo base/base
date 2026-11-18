@@ -84,9 +84,13 @@ impl Op {
     pub const DUP1: u8 = 0x80;
     pub const DUP2: u8 = 0x81;
     pub const DUP3: u8 = 0x82;
+    pub const DUP4: u8 = 0x83;
+    pub const DUP5: u8 = 0x84;
     pub const DUP6: u8 = 0x85;
     pub const DUP7: u8 = 0x86;
+    pub const DUP8: u8 = 0x87;
     pub const SWAP1: u8 = 0x90;
+    pub const SWAP2: u8 = 0x91;
     pub const LOG0: u8 = 0xa0;
     pub const CREATE: u8 = 0xf0;
     pub const CALL: u8 = 0xf1;

@@ -39,9 +39,9 @@ pub use r#gen::{
     ConfigUpdate, DESTRUCTOR_TO, DeployedProgram, Ending, Era, FILLER, Fragment, Generator,
     GeneratorOptions, Genesis, Keys, L1Origin, Native, NativeAbi, NativeCall, NativeTarget, Op,
     Param, PendingDeploy, PlannedTx, Planner, Policy, PrecompileCall, Precompiles, Program,
-    ProgramCtx, RECURSER, REFUNDER, RELAY, Registry, Rng, Scenarios, Schedule, Shape, SysConfig,
-    Template, TemplateInput, Templates, Token, TrafficMix, TrieBuilder, TxSpec, Txs, WorldState,
-    era_blocks,
+    ProgramCtx, RECURSER, REFUNDER, RELAY, Registry, Rng, STRESSOR, Scenarios, Schedule, Shape,
+    Stress, StressPlan, SysConfig, Template, TemplateInput, Templates, Token, TrafficMix,
+    TrieBuilder, TxSpec, Txs, WorldState, era_blocks,
 };
 
 mod nodes;

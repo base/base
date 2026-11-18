@@ -60,6 +60,9 @@ pub use template::{CHAIN, Template, TemplateInput, TrafficMix};
 mod scenario;
 pub use scenario::Scenarios;
 
+mod stress;
+pub use stress::{STRESSOR, Stress, StressPlan};
+
 mod case;
 pub use case::{Generator, GeneratorOptions, era_blocks};
 
