@@ -633,6 +633,11 @@ impl RpcCampaign {
     /// counts them.
     pub const KNOWN_NM_4BYTE_PRECOMPILES: &str = "nethermind: 4byteTracer skips precompile calls";
 
+    /// Nethermind computes a simulated block's `stateRoot` and `withdrawalsRoot` and uses a zero
+    /// `parentBeaconBlockRoot`, as geth does; base leaves both roots zero and copies the parent's
+    /// beacon root. The block hash, which covers them, differs with them.
+    pub const KNOWN_NM_SIMULATE_HEADER: &str = "nethermind: simulated header roots";
+
     /// The known Nethermind difference, if any, that explains Nethermind's answer to `case`,
     /// with Nethermind's index: base and needlefish answer alike and Nethermind otherwise.
     /// Nethermind's case is then compared on the other nodes only.
@@ -697,6 +702,10 @@ impl RpcCampaign {
             && message.starts_with("gas required exceeds allowance (0)")
         {
             Self::KNOWN_NM_ESTIMATE_ALLOWANCE
+        } else if case.method == "eth_simulateV1"
+            && Self::with_reference_roots(theirs, reference) == *reference
+        {
+            Self::KNOWN_NM_SIMULATE_HEADER
         } else if case.body.contains("4byteTracer") && Self::counts_within(theirs, reference) {
             Self::KNOWN_NM_4BYTE_PRECOMPILES
         } else if case.body.contains("prestateTracer")
@@ -724,6 +733,41 @@ impl RpcCampaign {
                     && items.iter().zip(theirs).all(|(v, r)| Self::counts_within(v, r))
             }
             _ => value == reference,
+        }
+    }
+
+    /// `value`, an `eth_simulateV1` reply, with each block's header roots and hash taken from
+    /// the same block in `reference`, and every other mention of its hash (log `blockHash`)
+    /// replaced too.
+    fn with_reference_roots(value: &Value, reference: &Value) -> Value {
+        const ROOTS: [&str; 4] = ["stateRoot", "withdrawalsRoot", "parentBeaconBlockRoot", "hash"];
+        let mut value = value.clone();
+        let (Some(blocks), Some(theirs)) =
+            (value["result"].as_array_mut(), reference["result"].as_array())
+        else {
+            return value;
+        };
+        for (block, reference) in blocks.iter_mut().zip(theirs) {
+            let (old, new) = (block["hash"].clone(), reference["hash"].clone());
+            Self::replace_string(block, &old, &new);
+            for root in ROOTS {
+                if let (Some(object), Some(v)) = (block.as_object_mut(), reference.get(root)) {
+                    object.insert(root.to_owned(), v.clone());
+                }
+            }
+        }
+        value
+    }
+
+    /// Replaces every occurrence of the string `old` inside `value` by `new`.
+    fn replace_string(value: &mut Value, old: &Value, new: &Value) {
+        match value {
+            Value::String(_) if value == old => *value = new.clone(),
+            Value::Array(items) => items.iter_mut().for_each(|v| Self::replace_string(v, old, new)),
+            Value::Object(object) => {
+                object.values_mut().for_each(|v| Self::replace_string(v, old, new))
+            }
+            _ => {}
         }
     }
 
@@ -1121,6 +1165,20 @@ mod tests {
         assert_eq!(classify(&by_hash, invalid.clone(), ok.clone(), ok.clone()), None);
         let by_number = RpcCase::new("state", "eth_getBalance", json!(["0x01", "0x10"]));
         assert_eq!(classify(&by_number, invalid.clone(), invalid, ok), None);
+        // Simulated header roots and the hash that covers them are known; another field is not.
+        let simulate = RpcCase::new("call", "eth_simulateV1", json!([{"blockStateCalls": []}]));
+        let block = |root: &str, hash: &str, gas: &str| {
+            json!({"id":1,"result":[{"hash": hash, "stateRoot": root, "gasUsed": gas,
+                "calls":[{"logs":[{"blockHash": hash}]}]}]})
+        };
+        let (base_block, nm_block) =
+            (block("0x00", "0xb1", "0x5208"), block("0x83", "0xc2", "0x5208"));
+        assert_eq!(
+            classify(&simulate, base_block.clone(), base_block.clone(), nm_block),
+            Some(RpcCampaign::KNOWN_NM_SIMULATE_HEADER)
+        );
+        let other_gas = block("0x83", "0xc2", "0x5209");
+        assert_eq!(classify(&simulate, base_block.clone(), base_block, other_gas), None);
         // Prestate: extra accounts and codeHash only on Nethermind are known; another value is not.
         let trace = RpcCase::new(
             "trace",
