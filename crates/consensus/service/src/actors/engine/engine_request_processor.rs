@@ -183,6 +183,16 @@ where
         let existing = base_consensus_engine::L2ForkchoiceState::current_with_checkpoint_reader(
             &self.rollup, self.client.as_ref(), self.checkpoint_reader.as_ref(),
         ).await.map_err(base_consensus_engine::EngineResetError::SyncStart)?;
+        // Recovery may substitute metadata above a pruned label. It must not become
+        // an authoritative safe/finalized label merely because execution is valid.
+        for (tag, hydrated) in [(BlockNumberOrTag::Safe, existing.safe), (BlockNumberOrTag::Finalized, existing.finalized)] {
+            let labeled = self.client.get_l2_block(tag.into()).await
+                .map_err(|error| EngineError::BootstrapHeadQuery(error.to_string()))?;
+            if labeled.is_some_and(|block| block.header.inner.inner.hash_slow() != hydrated.block_info.hash
+                || block.header.number != hydrated.block_info.number) {
+                return Err(EngineError::BootstrapHeadQuery("EL-sync label recovery requires matching checkpoint metadata".into()));
+            }
+        }
         let start = base_consensus_engine::find_starting_forkchoice_with_checkpoint_reader(
             &self.rollup, self.client.as_ref(), self.checkpoint_reader.as_ref(),
         ).await.map_err(base_consensus_engine::EngineResetError::SyncStart)?;
@@ -250,7 +260,12 @@ where
                 return Err(EngineError::BootstrapHeadQuery("EL-sync label conflicts with synced chain".into()));
             }
         }
-        if safe == old.safe_head() && finalized == old.finalized_head() { return Ok(()); }
+        if safe == old.safe_head() && finalized == old.finalized_head() {
+            self.derivation_client.reset_el_sync_anchor(safe).await
+                .map_err(|error| EngineError::BootstrapHeadQuery(format!("EL-sync pipeline reset failed: {error}")))?;
+            self.last_safe_head_sent = safe;
+            return Ok(());
+        }
         let proposed = old.updated(update);
         let response = self.client.fork_choice_updated_v3(proposed.create_forkchoice_state(), None)
             .await.map_err(|e| EngineError::BootstrapHeadQuery(e.to_string()))?;
@@ -261,6 +276,7 @@ where
         self.checkpoint_forkchoice_state_if_updated().await;
         self.derivation_client.reset_el_sync_anchor(safe).await
             .map_err(|error| EngineError::BootstrapHeadQuery(format!("EL-sync pipeline reset failed: {error}")))?;
+        self.last_safe_head_sent = safe;
         info!(target: "engine", old_safe = %old.safe_head().block_info.hash,
             old_finalized = %old.finalized_head().block_info.hash,
             new_head = %safe.block_info.hash, "Promoted EL-sync derivation anchor");
@@ -425,8 +441,8 @@ where
             Err(err) => self.handle_engine_task_error(err).await?,
         };
 
-        let selecting_anchor = !self.el_sync_complete && self.engine.state().el_sync_started
-            && self.engine.state().el_sync_finished && self.el_sync_promotion_enabled && !self.skip_reset;
+        let selecting_anchor = !self.el_sync_complete && self.el_sync_promotion_enabled && !self.skip_reset
+            && (!self.engine.state().el_sync_finished || self.engine.state().el_sync_started);
         if !selecting_anchor {
             self.checkpoint_forkchoice_state_if_updated().await;
             self.send_derivation_actor_safe_head_if_updated().await?;
@@ -958,7 +974,7 @@ mod tests {
         derivation.expect_send_signal().returning(|_| Ok(()));
         derivation.expect_reset_el_sync_anchor()
             .withf(move |actual| *actual == expected_safe)
-            .times(usize::from(expected_safe_number > old_safe_number))
+            .times(usize::from(matches!(history, SyncHistory::CatchUp | SyncHistory::StoredSafe | SyncHistory::StoredOldSafe)))
             .returning(|_| Ok(()));
         derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
         derivation.expect_notify_sync_completed()
@@ -983,6 +999,24 @@ mod tests {
         assert_eq!(completion.is_err(), matches!(history, SyncHistory::PromotionSyncing | SyncHistory::StaleSafe), "unconfirmed promotion and stale SafeDB must fail closed: {completion:?}");
         assert_eq!(processor.engine_state().sync_state.safe_head(), expected_safe, "safe must respect the real-sync gate and preserve higher labels");
         assert_eq!(processor.engine_state().sync_state.finalized_head(), finalized, "existing genuine finalized head must not advance");
+        if matches!(history, SyncHistory::CatchUp | SyncHistory::StoredSafe | SyncHistory::StoredOldSafe) {
+            assert_eq!(processor.last_safe_head_sent, expected_safe, "completion must consume the anchor notification so the next drain cannot falsely confirm attributes");
+            processor.drain().await.expect("a repeated drain must not emit an anchor confirmation after completion");
+        }
+    }
+
+    /// Startup SYNCING must not publish a seeded safe head into persisted derivation history.
+    #[tokio::test]
+    async fn syncing_drain_defers_safe_head_notifications() {
+        let safe = test_block_info(90);
+        let (mut processor, _) = unsafe_payload_processor(false, test_block_info(100), Some(safe), RollupConfig::default());
+        processor.client.set_fork_choice_updated_v3_response(syncing_fcu()).await;
+        processor.engine.probe_el_sync(Arc::clone(&processor.client), Arc::clone(&processor.rollup), Default::default())
+            .await.expect("SYNCING probe succeeds");
+        // No mock notification expectations: a SafeDB-writing notification must fail the test.
+        processor.drain().await.expect("a pending EL sync drain succeeds without notifications");
+        assert_eq!(processor.last_safe_head_sent, L2BlockInfo::default(), "pending sync leaves safe notification tracking untouched");
+        assert_eq!(processor.engine_state().sync_state.safe_head(), safe, "deferring notification does not regress the safe label");
     }
 
     /// A mismatched persisted checkpoint must never become a usable EL-sync anchor.
