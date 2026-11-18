@@ -115,8 +115,8 @@ pub struct BasePooledTransaction<
     watch_manifest: OnceLock<crate::WatchManifest>,
     /// Optional `meter_bundle` result carried with the transaction.
     ///
-    /// Behind [`Arc`] so [`Clone`] stays a pointer bump. No node populates it
-    /// today, so it is `None` for locally validated transactions.
+    /// Behind [`Arc`] so [`Clone`] stays a pointer bump. Set from the wire `metering` field on
+    /// builder inserts; `None` for locally validated transactions.
     metering: Option<Arc<MeterBundleResponse>>,
 }
 
