@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn parses_shared_otlp_configuration() {
-        for flavor in ["rpc", "follow", "sequencer"] {
+        for flavor in ["rpc", "mempool", "follow", "sequencer"] {
             for before_subcommand in [false, true] {
                 let mut args = vec!["base"];
                 if !before_subcommand {
@@ -166,6 +166,8 @@ mod tests {
                     args.extend(["--source-l2-rpc", "http://localhost:9545"]);
                 } else if flavor == "sequencer" {
                     args.extend(["--p2p.sequencer.key.path", "/tmp/sequencer-key"]);
+                } else if flavor == "mempool" {
+                    args.extend(["--tx-forwarding.builder-urls", "http://localhost:8545"]);
                 }
                 let cli = BaseCli::try_parse_curated(args).unwrap();
                 assert_eq!(cli.traces.otlp.unwrap().as_str(), "http://localhost:4317/");

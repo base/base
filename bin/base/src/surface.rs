@@ -2,15 +2,17 @@
 
 use std::{ffi::OsString, iter::Peekable};
 
-use clap::{Arg, ArgAction, ArgMatches, Command, error::ErrorKind, parser::ValueSource};
+use clap::{
+    Arg, ArgAction, ArgMatches, Command, builder::Resettable, error::ErrorKind, parser::ValueSource,
+};
 use tracing::warn;
 
 use crate::config::ChainArg;
 
 /// Base-owned visibility, naming, and rejection rules layered over the derived `base` CLI.
 ///
-/// `base rpc` and `base sequencer` flatten the full execution, consensus, and builder argument
-/// sets. Only the curated and advanced flags below are supported: `-h`/`--help` lists the curated
+/// `base rpc`, `base mempool`, and `base sequencer` flatten the full execution, consensus, and
+/// builder argument sets. Only the curated and advanced flags below are supported: `-h`/`--help` lists the curated
 /// ones, `--help-all` adds the advanced ones, and every other flag is hidden and ignored with a
 /// startup warning, whether it comes from the command line or its environment variable.
 #[derive(Debug, Clone, Copy)]
@@ -18,16 +20,16 @@ pub(crate) struct CliSurface;
 
 impl CliSurface {
     /// Node subcommands that take `--chain` and accept the renamed flags.
-    pub(crate) const NODE_COMMANDS: [&str; 7] =
-        ["rpc", "sequencer", "follow", "bootnode", "dev", "execution", "consensus"];
+    pub(crate) const NODE_COMMANDS: [&str; 8] =
+        ["rpc", "mempool", "sequencer", "follow", "bootnode", "dev", "execution", "consensus"];
 
     /// Node subcommands that accept only curated and advanced flags.
-    pub(crate) const CURATED_COMMANDS: [&str; 2] = ["rpc", "sequencer"];
+    pub(crate) const CURATED_COMMANDS: [&str; 3] = ["rpc", "mempool", "sequencer"];
 
     /// Node subcommands that embed an execution node and take [`Self::EXECUTION_RENAMES`].
     /// `base consensus` uses `--port` for its RPC port and `base bootnode` has its own `--nat`.
-    pub(crate) const EXECUTION_COMMANDS: [&str; 5] =
-        ["rpc", "sequencer", "follow", "dev", "execution"];
+    pub(crate) const EXECUTION_COMMANDS: [&str; 6] =
+        ["rpc", "mempool", "sequencer", "follow", "dev", "execution"];
 
     /// Flag prefixes moved into a layer or feature namespace; the rest of the name is unchanged.
     /// The first matching prefix wins.
@@ -43,6 +45,7 @@ impl CliSurface {
         ("rollup.mempool-", "txpool."),
         ("rollup.validity-pool-", "txpool.validity-pool-"),
         ("validity-", "validity."),
+        ("tx-forwarding-", "tx-forwarding."),
         ("rpc.", "execution.rpc."),
     ];
 
@@ -63,6 +66,7 @@ impl CliSurface {
         ("enable-metering", "metering.enabled"),
         ("enable-shadow-indexer", "shadow-indexer.enabled"),
         ("enable-transaction-event-journal", "transaction-event-journal.enabled"),
+        ("transaction-event-journal-path", "transaction-event-journal.path"),
         ("builder.enable-resource-metering", "builder.resource-metering.enabled"),
         ("rpc.execution-forwarding-endpoint", "consensus.rpc.execution-forwarding-endpoint"),
         ("rpc.disabled", "consensus.rpc.disabled"),
@@ -134,6 +138,7 @@ impl CliSurface {
         "Execution P2P",
         "Consensus P2P",
         "Sequencer",
+        "Transaction forwarding",
         "Metrics",
     ];
 
@@ -186,7 +191,11 @@ impl CliSurface {
         ("sequencer.conductor.rpc", "Sequencer"),
     ];
 
-    /// Advanced flags supported on both curated commands, listed only by `--help-all`.
+    /// Curated flags only on `base mempool`.
+    pub(crate) const MEMPOOL_FLAGS: &[(&str, &str)] =
+        &[("tx-forwarding.builder-urls", "Transaction forwarding")];
+
+    /// Advanced flags supported on every curated command, listed only by `--help-all`.
     pub(crate) const ADVANCED_FLAGS: &[&str] = &[
         "execution.chain",
         "l1.trust-rpc",
@@ -196,25 +205,6 @@ impl CliSurface {
         "l1.verifier-confs",
         "l1.dangerously-override-da-batch-inbox",
         "l1.dangerously-override-da-batcher-sender",
-        "txpool.nolocals",
-        "txpool.max-account-slots",
-        "txpool.max-batch-size",
-        "txpool.pending-max-count",
-        "txpool.pending-max-size",
-        "txpool.basefee-max-count",
-        "txpool.basefee-max-size",
-        "txpool.queued-max-count",
-        "txpool.queued-max-size",
-        "txpool.ordering",
-        "txpool.max-inflight-delegated-slots",
-        "txpool.sender-limit",
-        "txpool.payer-limit",
-        "txpool.allowlisted-payers",
-        "txpool.allowlisted-payer-limit",
-        "txpool.trusted-delegation-targets",
-        "txpool.validity-pool-max-count",
-        "txpool.validity-pool-max-size",
-        "txpool.validity-pool-max-account-slots",
         "execution.rpc.gascap",
         "execution.rpc.txfeecap",
         "execution.rpc.eth-proof-window",
@@ -248,12 +238,35 @@ impl CliSurface {
         "shadow-indexer.retention-interval",
     ];
 
-    /// Advanced flags supported only on `base rpc`.
+    /// Transaction pool and validity pool limits, supported on `base mempool` and `base sequencer`.
+    /// A query node forwards each transaction before keeping a local copy, so the limits never
+    /// change what `base rpc` sends upstream.
+    pub(crate) const POOL_FLAGS: &[&str] = &[
+        "txpool.nolocals",
+        "txpool.max-account-slots",
+        "txpool.max-batch-size",
+        "txpool.pending-max-count",
+        "txpool.pending-max-size",
+        "txpool.basefee-max-count",
+        "txpool.basefee-max-size",
+        "txpool.queued-max-count",
+        "txpool.queued-max-size",
+        "txpool.ordering",
+        "txpool.max-inflight-delegated-slots",
+        "txpool.sender-limit",
+        "txpool.payer-limit",
+        "txpool.allowlisted-payers",
+        "txpool.allowlisted-payer-limit",
+        "txpool.trusted-delegation-targets",
+        "txpool.validity-pool-max-count",
+        "txpool.validity-pool-max-size",
+        "txpool.validity-pool-max-account-slots",
+    ];
+
+    /// Advanced flags supported on `base rpc` and `base mempool`.
     pub(crate) const RPC_ADVANCED_FLAGS: &[&str] = &[
         "execution.rpc.forwarding-endpoint",
         "min-suggested-priority-fee",
-        "tx-forwarding.enabled",
-        "tx-forwarding.builder-urls",
         "payer.enabled",
         "payer.url",
         "metering.enabled",
@@ -261,6 +274,19 @@ impl CliSurface {
         "validity.max-predicates",
         "validity.max-expiry-secs",
         "transaction-event-journal.enabled",
+        "transaction-event-journal.path",
+    ];
+
+    /// Advanced flags supported only on `base mempool`, which always forwards its pool to builders.
+    /// `tx-forwarding.enabled` stays accepted, and hidden, so existing configs keep parsing.
+    pub(crate) const MEMPOOL_ADVANCED_FLAGS: &[&str] = &[
+        "tx-forwarding.enabled",
+        "tx-forwarding.resend-after-ms",
+        "tx-forwarding.batch-size",
+        "tx-forwarding.max-rps",
+        "tx-forwarding.fifo-percent",
+        "tx-forwarding.queue-capacity",
+        "tx-forwarding.batched-insert",
     ];
 
     /// Advanced flags supported only on `base sequencer`, besides every
@@ -330,16 +356,20 @@ impl CliSurface {
     /// Returns the command-specific curated flags for a node command.
     pub(crate) fn command_flags(name: &str) -> &'static [(&'static str, &'static str)] {
         match name {
+            "mempool" => Self::MEMPOOL_FLAGS,
             "sequencer" => Self::SEQUENCER_FLAGS,
             _ => &[],
         }
     }
 
     /// Returns the command-specific advanced flags for a node command.
-    pub(crate) fn command_advanced_flags(name: &str) -> &'static [&'static str] {
+    pub(crate) fn command_advanced_flags(name: &str) -> &'static [&'static [&'static str]] {
         match name {
-            "rpc" => Self::RPC_ADVANCED_FLAGS,
-            "sequencer" => Self::SEQUENCER_ADVANCED_FLAGS,
+            "rpc" => &[Self::RPC_ADVANCED_FLAGS],
+            "mempool" => {
+                &[Self::RPC_ADVANCED_FLAGS, Self::POOL_FLAGS, Self::MEMPOOL_ADVANCED_FLAGS]
+            }
+            "sequencer" => &[Self::POOL_FLAGS, Self::SEQUENCER_ADVANCED_FLAGS],
             _ => &[],
         }
     }
@@ -354,7 +384,7 @@ impl CliSurface {
         Self::curated_index(name, long).is_some()
             || Self::ADVANCED_FLAGS
                 .iter()
-                .chain(Self::command_advanced_flags(name))
+                .chain(Self::command_advanced_flags(name).iter().copied().flatten())
                 .any(|flag| *flag == long)
             || (name == "sequencer" && long.starts_with(Self::SEQUENCER_ADVANCED_PREFIX))
     }
@@ -524,7 +554,18 @@ impl CliSurface {
         if !Self::supports(name, &long) {
             return arg.hide(true).env(None::<&str>);
         }
+        if name == "mempool" && long == "tx-forwarding.enabled" {
+            return arg.hide(true).env(None::<&str>).default_value("true");
+        }
         let mut arg = Self::tidy_value_name(arg);
+        if name == "mempool" && long.starts_with("tx-forwarding.") {
+            // clap's `requires` ignores default values, so the always-on forwarding switch
+            // cannot satisfy it.
+            arg = arg.requires(Resettable::Reset);
+        }
+        if name == "mempool" && long == "tx-forwarding.builder-urls" {
+            arg = arg.required(true);
+        }
         if arg.get_env().is_none() {
             arg = arg.env(Self::derived_env(&long));
         }
@@ -752,6 +793,7 @@ impl IgnoredFlag {
 mod tests {
     use std::{collections::HashSet, path::PathBuf, process::Command as Process};
 
+    use base_execution_chainspec::BaseChainSpec;
     use clap::CommandFactory;
 
     use super::*;
@@ -784,24 +826,19 @@ mod tests {
     #[test]
     fn surface_tables_name_existing_flags() {
         let command = curated();
+        for name in CliSurface::CURATED_COMMANDS {
+            let flags = longs(&command, name);
+            let curated = CliSurface::NODE_FLAGS.iter().chain(CliSurface::command_flags(name));
+            let advanced = CliSurface::UNSUPPORTED
+                .iter()
+                .chain(CliSurface::ADVANCED_FLAGS)
+                .chain(CliSurface::command_advanced_flags(name).iter().copied().flatten());
+            for flag in curated.map(|(flag, _)| flag).chain(advanced) {
+                assert!(flags.contains(*flag), "missing `base {name}` --{flag}");
+            }
+        }
         let rpc = longs(&command, "rpc");
         let sequencer = longs(&command, "sequencer");
-
-        for (flag, _) in CliSurface::NODE_FLAGS {
-            assert!(rpc.contains(*flag) && sequencer.contains(*flag), "missing --{flag}");
-        }
-        for (flag, _) in CliSurface::SEQUENCER_FLAGS {
-            assert!(sequencer.contains(*flag), "missing sequencer --{flag}");
-        }
-        for flag in CliSurface::UNSUPPORTED.iter().chain(CliSurface::ADVANCED_FLAGS) {
-            assert!(rpc.contains(*flag) && sequencer.contains(*flag), "missing --{flag}");
-        }
-        for flag in CliSurface::RPC_ADVANCED_FLAGS {
-            assert!(rpc.contains(*flag), "missing rpc --{flag}");
-        }
-        for flag in CliSurface::SEQUENCER_ADVANCED_FLAGS {
-            assert!(sequencer.contains(*flag), "missing sequencer --{flag}");
-        }
         let bootnode = longs(&command, "bootnode");
         for (_, new) in CliSurface::RENAMES.iter().chain(CliSurface::EXECUTION_RENAMES) {
             assert!(
@@ -816,6 +853,7 @@ mod tests {
         let curated: HashSet<_> = CliSurface::NODE_FLAGS
             .iter()
             .chain(CliSurface::SEQUENCER_FLAGS)
+            .chain(CliSurface::MEMPOOL_FLAGS)
             .map(|(flag, _)| *flag)
             .collect();
         for (flag, _) in CliSurface::HELP.iter().chain(CliSurface::VALUE_NAMES) {
@@ -849,15 +887,30 @@ mod tests {
         assert!(!help.contains("--authrpc.port"));
 
         let help_all = rpc.render_long_help().to_string();
-        assert!(help_all.contains("--txpool.max-account-slots"));
+        assert!(help_all.contains("--execution.rpc.gascap"));
+        assert!(!help_all.contains("--txpool.max-account-slots"));
         assert!(!help_all.contains("--engine.persistence-threshold"));
         assert!(!help_all.contains("--authrpc.port"));
+
+        let mempool = command.find_subcommand_mut("mempool").unwrap();
+        assert!(mempool.render_help().to_string().contains("--tx-forwarding.builder-urls <URL>"));
+        let help_all = mempool.render_long_help().to_string();
+        assert!(help_all.contains("--txpool.max-account-slots"));
+        assert!(!help_all.contains("--tx-forwarding.enabled"));
     }
 
     #[test]
     fn accepts_advanced_flags() {
-        assert!(parse(&["base", "rpc", "--txpool.max-account-slots", "32"]).is_ok());
+        assert!(parse(&["base", "sequencer", "--txpool.max-account-slots", "32"]).is_ok());
         assert!(parse(&["base", "rpc", "--enable-metering"]).is_ok());
+        let journal = [
+            "base",
+            "rpc",
+            "--transaction-event-journal.enabled",
+            "--transaction-event-journal.path",
+            "/data/events.jsonl",
+        ];
+        assert!(parse(&journal).unwrap().ignored.is_empty());
         assert!(parse(&["base", "sequencer", "--sequencer.l1-confs", "4"]).is_ok());
     }
 
@@ -969,24 +1022,97 @@ mod tests {
         assert_eq!(sequencer.builder.rollup_args.mempool_sender_limit, 7);
         assert_eq!(sequencer.builder.rollup_args.mempool_payer_limit, 8);
 
-        let cli = parse(&["base", "rpc", "--txpool.sender-limit", "7"]).unwrap();
+        let cli = parse(&[
+            "base",
+            "mempool",
+            "--txpool.sender-limit",
+            "7",
+            "--tx-forwarding.builder-urls",
+            "http://builder:8545",
+            "--tx-forwarding.batch-size",
+            "10",
+        ])
+        .unwrap();
         assert!(cli.ignored.is_empty(), "{:?}", cli.ignored);
+        let BaseCommand::Mempool(mempool) = cli.command else {
+            panic!("expected mempool command");
+        };
+        assert_eq!(mempool.execution.standard.rollup_args.mempool_sender_limit, 7);
+        let rpc = mempool.execution.into_launch_config(BaseChainSpec::devnet().into()).standard.rpc;
+        assert!(rpc.enable_tx_forwarding);
+        assert_eq!(rpc.builder_rpc_urls.len(), 1);
+        assert_eq!(rpc.tx_forwarding_batch_size, 10);
+    }
+
+    #[test]
+    fn rpc_ignores_pool_and_forwarding_flags() {
+        let cli = parse(&[
+            "base",
+            "rpc",
+            "--txpool.sender-limit",
+            "7",
+            "--rollup.validity-pool-max-count",
+            "5",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://builder:8545",
+        ])
+        .unwrap();
+        assert_eq!(
+            ignored(&cli),
+            [
+                "txpool.sender-limit",
+                "txpool.validity-pool-max-count",
+                "tx-forwarding.enabled",
+                "tx-forwarding.builder-urls"
+            ]
+        );
         let BaseCommand::Rpc(rpc) = cli.command else {
             panic!("expected rpc command");
         };
-        assert_eq!(rpc.execution.standard.rollup_args.mempool_sender_limit, 7);
+        assert!(
+            !rpc.execution
+                .into_launch_config(BaseChainSpec::devnet().into())
+                .standard
+                .rpc
+                .enable_tx_forwarding
+        );
+    }
+
+    #[test]
+    fn mempool_requires_builder_urls() {
+        let error = parse(&["base", "mempool"]).unwrap_err().to_string();
+        assert!(error.contains("--tx-forwarding.builder-urls"), "{error}");
+        assert!(
+            parse(&[
+                "base",
+                "mempool",
+                "--enable-tx-forwarding",
+                "--builder-rpc-urls",
+                "http://builder:8545"
+            ])
+            .is_ok()
+        );
     }
 
     #[test]
     fn short_help_lists_headings_in_curated_order() {
         let mut command = curated();
-        let help = command.find_subcommand_mut("sequencer").unwrap().render_help().to_string();
-        let positions: Vec<usize> = CliSurface::HEADINGS[1..]
-            .iter()
-            .map(|heading| help.find(&format!("{heading}:")).expect(heading))
-            .collect();
-        assert!(positions.is_sorted(), "{help}");
-        assert!(help.contains("--execution.rpc.http.port <PORT>"), "{help}");
+        for name in CliSurface::CURATED_COMMANDS {
+            let help = command.find_subcommand_mut(name).unwrap().render_help().to_string();
+            let curated: Vec<_> = CliSurface::NODE_FLAGS
+                .iter()
+                .chain(CliSurface::command_flags(name))
+                .map(|(_, heading)| *heading)
+                .collect();
+            let positions: Vec<usize> = CliSurface::HEADINGS[1..]
+                .iter()
+                .filter(|heading| curated.contains(heading))
+                .map(|heading| help.find(&format!("{heading}:")).expect(heading))
+                .collect();
+            assert!(positions.is_sorted(), "{help}");
+            assert!(help.contains("--execution.rpc.http.port <PORT>"), "{help}");
+        }
     }
 
     #[test]
