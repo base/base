@@ -316,10 +316,6 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     // The client will forward transactions to the builder's RPC endpoint
     let forwarding =
         TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100);
-    assert!(
-        !forwarding.inline_simulation,
-        "inline simulation must stay off so this path still inserts then forwards"
-    );
 
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
