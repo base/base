@@ -74,7 +74,8 @@ Variants, each also on its own database:
   merkle stage's `incremental_root_with_updates` advances the trie from the keys the changesets
   name, after every block or over two blocks at once. An unwind reverts the hashed state with
   `HashedPostStateSorted::from_reverts` and unwinds the trie incrementally, as the hashing and
-  merkle stages unwind, checking both roots against the primary's.
+  merkle stages unwind, checking both roots against the primary's. Every other unwind sets
+  `walk_all_changed_branch_children`, as the unwind that recovers a partial state trie does.
 - `ph-mdbx`, `ph-rocksdb`: Base's proofs-history store (`base-execution-trie`) on both backends,
   fed as its `ExEx` does (root and updates over the store at the parent, stored per block, and
   after a reorg the dropped blocks unwound with `unwind_history` first), with roots and proofs read

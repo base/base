@@ -358,7 +358,8 @@ impl TrieAdapter {
             // The pipeline's database: execution writes the hashed state and changesets, and the
             // merkle stage advances the trie incrementally, every block or two blocks at once.
             // An unwind reverts the hashed state from the changesets and unwinds the trie
-            // incrementally, so it is always native.
+            // incrementally, so it is always native; every other unwind walks all changed branch
+            // children, as the partial state trie recovery does.
             if let Some(preimages) = &op_preimages {
                 variants.entry("merkle-stage").or_default().push(|| {
                     if block.unwind > 0 {
@@ -367,7 +368,7 @@ impl TrieAdapter {
                             let root = merkle.merkle_incremental(merkle_trie + 1..=tip)?;
                             eyre::ensure!(root == roots[&tip], "catch-up to {tip} gave {root}");
                         }
-                        let root = merkle.unwind_changesets(number - 1, tip)?;
+                        let root = merkle.unwind_changesets(number - 1, tip, number % 2 == 0)?;
                         eyre::ensure!(root == roots[&(number - 1)], "unwind gave {root}");
                         merkle_trie = number - 1;
                     }

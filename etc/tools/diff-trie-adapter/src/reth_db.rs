@@ -230,7 +230,7 @@ impl RethDb {
     /// range's parent to the hashed state, recomputing the keys the range's changesets name.
     pub fn merkle_incremental(&self, range: RangeInclusive<u64>) -> eyre::Result<B256> {
         let provider = self.factory.provider_rw()?;
-        let (root, updates) = Self::incremental(&provider, range)?;
+        let (root, updates) = Self::incremental(&provider, range, false)?;
         provider.write_trie_updates(updates)?;
         provider.commit()?;
         Ok(root)
@@ -239,11 +239,12 @@ impl RethDb {
     /// Unwinds the hashed state and trie tables from block `tip` to `target` as the hashing and
     /// merkle stages unwind: the hashed state takes the values the dropped blocks' changesets
     /// recorded, the incremental root recomputes the keys they name, and the changesets go.
-    pub fn unwind_changesets(&self, target: u64, tip: u64) -> eyre::Result<B256> {
+    /// `walk_all` is as in [`Self::incremental`].
+    pub fn unwind_changesets(&self, target: u64, tip: u64, walk_all: bool) -> eyre::Result<B256> {
         let provider = self.factory.provider_rw()?;
         let reverts = HashedPostStateSorted::from_reverts(&*provider, target + 1..=tip)?;
         provider.write_hashed_state(&reverts)?;
-        let (root, updates) = Self::incremental(&provider, target + 1..=tip)?;
+        let (root, updates) = Self::incremental(&provider, target + 1..=tip, walk_all)?;
         provider.write_trie_updates(updates)?;
         let tx = provider.tx_ref();
         for number in target + 1..=tip {
@@ -262,16 +263,23 @@ impl RethDb {
         Ok(root)
     }
 
-    /// [`DatabaseStateRoot::incremental_root_with_updates`] over `provider`'s trie tables.
+    /// The merkle stage's incremental root over `provider`'s trie tables (its calculator from
+    /// the range's changesets, then `root_with_updates`). `walk_all` sets
+    /// `walk_all_changed_branch_children`, as the stage's unwind does when it recovers a partial
+    /// state trie (state masking on).
     fn incremental(
         provider: &reth_provider::DatabaseProviderRW<
             Arc<DatabaseEnv>,
             MockNodeTypesWithDB<Arc<DatabaseEnv>>,
         >,
         range: RangeInclusive<u64>,
+        walk_all: bool,
     ) -> eyre::Result<(B256, TrieUpdates)> {
         Ok(reth_trie_db::with_adapter!(provider, |A| {
-            <StateRoot<DatabaseTrieCursorFactory<_, A>, DatabaseHashedCursorFactory<_>> as DatabaseStateRoot<_>>::incremental_root_with_updates(&**provider, range)
+            <StateRoot<DatabaseTrieCursorFactory<_, A>, DatabaseHashedCursorFactory<_>> as DatabaseStateRoot<_>>::incremental_root_calculator(&**provider, range)
+                .and_then(|calculator| {
+                    calculator.with_walk_all_changed_branch_children(walk_all).root_with_updates()
+                })
         })?)
     }
 
