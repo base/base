@@ -6,7 +6,7 @@ use alloy_consensus::{SignableTransaction, error::ValueError};
 use alloy_evm::{
     EvmEnv,
     env::BlockEnvironment,
-    rpc::{EthTxEnvError, TryIntoTxEnv},
+    rpc::{CallFeesError, EthTxEnvError, TryIntoTxEnv},
 };
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, Bytes};
@@ -77,6 +77,14 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
         let request = self.as_ref();
         if request.transaction_type == Some(DEPOSIT_TX_TYPE_ID) {
             return Err(BaseTxEnvError::DepositUnsupported);
+        }
+        // A tip without a fee cap leaves the cap at zero, as geth does, instead of pricing the
+        // call at base fee + tip.
+        if request.gas_price.is_none()
+            && request.max_fee_per_gas.is_none()
+            && request.max_priority_fee_per_gas.is_some_and(|tip| tip > 0)
+        {
+            return Err(EthTxEnvError::CallFees(CallFeesError::TipAboveFeeCap).into());
         }
         Ok(BaseRevm {
             base: self.as_ref().clone().try_into_tx_env(evm_env)?,
@@ -192,6 +200,25 @@ mod tests {
             TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env),
             Err(BaseTxEnvError::DepositUnsupported)
         ));
+    }
+
+    /// A tip without a fee cap leaves the cap at zero (geth), so the tip is above it. A zero tip
+    /// or a tip with a cap or gas price still converts.
+    #[test]
+    fn standard_tx_env_rejects_tip_without_fee_cap() {
+        let env = EvmEnv::<revm::primitives::hardfork::SpecId>::default();
+        let convert = |request: serde_json::Value| {
+            let request: BaseTransactionRequest = serde_json::from_value(request).unwrap();
+            TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env)
+        };
+        assert!(matches!(
+            convert(json!({ "to": SENDER, "maxPriorityFeePerGas": "0x1" })),
+            Err(BaseTxEnvError::Eth(EthTxEnvError::CallFees(CallFeesError::TipAboveFeeCap)))
+        ));
+        assert!(convert(json!({ "to": SENDER, "maxPriorityFeePerGas": "0x0" })).is_ok());
+        let priced =
+            convert(json!({ "to": SENDER, "maxPriorityFeePerGas": "0x1", "maxFeePerGas": "0x2" }));
+        assert_eq!(priced.unwrap().base.gas_priority_fee, Some(1));
     }
 
     #[test]
