@@ -277,7 +277,17 @@ impl TrieGen {
                 ops.push(TrieOp::storage(key, slot, value));
                 ops.push(TrieOp::storage(key, slot, before));
             }
-            4 => ops.push(TrieOp::wipe(key)),
+            4 => {
+                // Wiped, often then refilled with more slots than clients write one by one
+                // (Nethermind batches more than 16 per account and block).
+                ops.push(TrieOp::wipe(key));
+                if self.rng.chance(40) {
+                    for _ in 0..self.rng.range(17, 48) {
+                        let (slot, value) = (self.slot(), self.value());
+                        ops.push(TrieOp::storage(key, slot, value));
+                    }
+                }
+            }
             5 => ops.push(TrieOp::delete(key)),
             6 => {
                 // Recreated: deleted and created again, with fresh storage.
