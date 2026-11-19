@@ -31,7 +31,8 @@ pub use base_tx::{BASE_TX_PRE_EVEREST_RPC_ERROR, TxBaseNonce, TxBaseSimulationRe
 
 mod transaction;
 pub use transaction::{
-    BaseTransactionFields, BaseTransactionRequest, Transaction, TxBaseRequestFields,
+    BaseTransactionFields, BaseTransactionRequest, CallRequestJson, Transaction,
+    TxBaseRequestFields,
 };
 
 #[cfg(feature = "reth")]
