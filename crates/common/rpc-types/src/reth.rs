@@ -86,8 +86,18 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
         {
             return Err(EthTxEnvError::CallFees(CallFeesError::TipAboveFeeCap).into());
         }
+        let max_fee_per_gas = request.max_fee_per_gas;
+        let mut base: TxEnv = request.clone().try_into_tx_env(evm_env)?;
+        // Keep the fee cap as the price, as an EIP-1559 transaction carries it: the EVM still
+        // charges base fee + tip, and the gas the sender can afford is bounded by the cap, as in
+        // geth and Nethermind. A missing tip is zero, as in geth: revm prices a call without one
+        // at the full cap.
+        if let Some(max_fee_per_gas) = max_fee_per_gas {
+            base.gas_price = max_fee_per_gas;
+            base.gas_priority_fee.get_or_insert(0);
+        }
         Ok(BaseRevm {
-            base: self.as_ref().clone().try_into_tx_env(evm_env)?,
+            base,
             enveloped_tx: Some(Bytes::new()),
             enveloped_tx_fastlz_size: None,
             deposit: Default::default(),
@@ -219,6 +229,28 @@ mod tests {
         let priced =
             convert(json!({ "to": SENDER, "maxPriorityFeePerGas": "0x1", "maxFeePerGas": "0x2" }));
         assert_eq!(priced.unwrap().base.gas_priority_fee, Some(1));
+    }
+
+    /// The fee cap stays the price, so the gas a sender affords is bounded by it, while the EVM
+    /// still charges base fee + tip.
+    #[test]
+    fn standard_tx_env_keeps_the_fee_cap_as_price() {
+        let mut env = EvmEnv::<revm::primitives::hardfork::SpecId>::default();
+        env.block_env.basefee = 7;
+        let request: BaseTransactionRequest = serde_json::from_value(
+            json!({ "to": SENDER, "maxFeePerGas": "0x100", "maxPriorityFeePerGas": "0x2" }),
+        )
+        .unwrap();
+        let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env).unwrap();
+        assert_eq!(tx.base.gas_price, 0x100);
+        assert_eq!(revm::context_interface::Transaction::effective_gas_price(&tx.base, 7), 9);
+
+        // Without a tip the call pays the base fee, not the cap.
+        let request: BaseTransactionRequest =
+            serde_json::from_value(json!({ "to": SENDER, "maxFeePerGas": "0x100" })).unwrap();
+        let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env).unwrap();
+        assert_eq!(tx.base.gas_price, 0x100);
+        assert_eq!(revm::context_interface::Transaction::effective_gas_price(&tx.base, 7), 7);
     }
 
     #[test]
