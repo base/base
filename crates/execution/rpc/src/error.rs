@@ -204,7 +204,7 @@ impl From<BaseTxEnvError> for BaseEthApiError {
     fn from(value: BaseTxEnvError) -> Self {
         match value {
             BaseTxEnvError::Eth(error) => error.into(),
-            BaseTxEnvError::TxBaseUnsupported => {
+            BaseTxEnvError::TxBaseUnsupported | BaseTxEnvError::DepositUnsupported => {
                 Self::Eth(EthApiError::InvalidParams(value.to_string()))
             }
         }
