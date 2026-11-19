@@ -137,6 +137,26 @@ impl TrieFuzzer {
     ///   reth path that keeps trie updates hits.
     pub const KNOWN: [&str; 1] = ["panicked: cannot convert a slice of length # to FixedBytes<#"];
 
+    /// Nethermind's flat state keys a block's snapshot by number and state root. When the
+    /// branch after an unwind reaches a (number, root) pair the abandoned branch already
+    /// stored, the new block keeps the old snapshot, which points back into the abandoned
+    /// branch; persistence then prunes that branch with the shared snapshot, and a later block's
+    /// state is unavailable. Only the kinds that keep abandoned branches in memory that long
+    /// fail. A Base block always changes `L1Block` storage, so no Base reorg repeats a root.
+    pub const KNOWN_NM_REPEATED_ROOT: &str = "nethermind: flat snapshot of a repeated root";
+
+    /// The known cause a finding's `signature` shows, beyond the substrings in
+    /// [`TrieFuzzConfig::known`].
+    pub fn known_cause(signature: &str) -> Option<&'static str> {
+        let (odd, message) = signature.strip_prefix("error:")?.split_once(':')?;
+        let repeated_root = message == "MissingTrieNodeException: State for block # is unavailable"
+            && odd.split(',').all(|name| {
+                name.starts_with("nethermind/flat-long-finality")
+                    || name.starts_with("nethermind/flat-trie-node-log")
+            });
+        repeated_root.then_some(Self::KNOWN_NM_REPEATED_ROOT)
+    }
+
     /// The client a feature name belongs to: its prefix before `:edge:`, or the reference.
     fn client<'a>(&'a self, feature: &'a str) -> &'a str {
         match feature.split_once(":edge:") {
@@ -352,10 +372,15 @@ impl TrieFuzzer {
                 }
                 let signature = verdict.signature();
                 let known = signature.as_ref().and_then(|signature| {
-                    self.config.known.iter().find(|known| signature.contains(known.as_str()))
+                    self.config
+                        .known
+                        .iter()
+                        .find(|known| signature.contains(known.as_str()))
+                        .cloned()
+                        .or_else(|| Self::known_cause(signature).map(str::to_owned))
                 });
                 if let Some(known) = known {
-                    *s.stats.known.entry(known.clone()).or_default() += 1;
+                    *s.stats.known.entry(known).or_default() += 1;
                 } else if let Some(signature) = signature {
                     let depth = case.depth();
                     let finding = s.stats.findings.entry(signature.clone()).or_default();
@@ -576,5 +601,23 @@ impl TrieFuzzer {
             }
         }
         best
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_root_is_known_only_for_the_long_lived_flat_kinds() {
+        let message = "MissingTrieNodeException: State for block # is unavailable";
+        let known = |odd: &str| TrieFuzzer::known_cause(&format!("error:{odd}:{message}"));
+        assert_eq!(
+            known("nethermind/flat-long-finality-page-cache,nethermind/flat-trie-node-log"),
+            Some(TrieFuzzer::KNOWN_NM_REPEATED_ROOT)
+        );
+        assert_eq!(known("nethermind/flat-long-finality-page-cache,nethermind/flat"), None);
+        assert_eq!(known("needlefish/disk-small"), None);
+        assert_eq!(TrieFuzzer::known_cause("stateRoot:nethermind/flat-trie-node-log"), None);
     }
 }
