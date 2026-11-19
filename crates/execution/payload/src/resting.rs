@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::{B256, TxHash, map::B256Set};
+use alloy_primitives::{B256, TxHash};
 use base_execution_txpool::{
     BasePooledTx, BestTransactionsHold, PredicateContext, ValidityConditions, ValidityPredicate,
 };
@@ -37,6 +37,9 @@ pub struct RestingMember {
     /// Block whose generation lists the member, so the sweep visits it once that block is
     /// [`RESTING_UNSEEN_RETAINED_BLOCKS`] old.
     filed_block: u64,
+    /// The [`RestingPredicates::hold_epoch`] of the pool iterator that last held the member
+    /// back, zero when none has since it rested.
+    held_epoch: u64,
 }
 
 /// What [`RestingPredicates::begin_block`] did to the set.
@@ -75,6 +78,9 @@ pub struct RestingPredicates {
     /// sweep only visits members old enough to drop. Entries for members that were removed or
     /// re-filed since are stale and skipped.
     generations: BTreeMap<u64, Vec<TxHash>>,
+    /// Counts the pool iterators that held members back; see [`Self::start_holding`]. A member
+    /// is parked in the current iterator when it carries this value.
+    hold_epoch: u64,
 }
 
 impl RestingPredicates {
@@ -86,6 +92,7 @@ impl RestingPredicates {
             block_number: 0,
             tip: None,
             generations: BTreeMap::new(),
+            hold_epoch: 0,
         }
     }
 
@@ -203,6 +210,7 @@ impl RestingPredicates {
             rested_block: self.block_number,
             seen_block: self.block_number,
             filed_block: self.block_number,
+            held_epoch: 0,
         };
         self.index.park(transaction_hash, member, predicate);
         if !filed {
@@ -212,7 +220,23 @@ impl RestingPredicates {
 
     /// Removes a member, returning whether it was present.
     pub fn remove(&mut self, transaction_hash: TxHash) -> bool {
-        !self.index.is_empty() && self.index.remove(transaction_hash).is_some()
+        self.remove_held(transaction_hash).is_some()
+    }
+
+    /// Removes a member, returning whether the current pool iterator held it back, or `None`
+    /// when it was not a member.
+    pub fn remove_held(&mut self, transaction_hash: TxHash) -> Option<bool> {
+        if self.index.is_empty() {
+            return None;
+        }
+        let member = self.index.remove(transaction_hash)?;
+        Some(self.hold_epoch != 0 && member.held_epoch == self.hold_epoch)
+    }
+
+    /// Starts holding members back for a new pool iterator. Members the previous iterator held
+    /// are no longer reported as held, because they were parked in that iterator.
+    pub const fn start_holding(&mut self) {
+        self.hold_epoch += 1;
     }
 
     /// Returns the member for a transaction with `conditions`.
@@ -244,10 +268,12 @@ impl RestingPredicates {
             return None;
         }
         let block_number = self.block_number;
+        let hold_epoch = self.hold_epoch;
         let (member, predicate) = self.index.entry_mut(transaction_hash)?;
         if !Self::applies(*member, predicate, conditions, block_number) {
             return None;
         }
+        member.held_epoch = hold_epoch;
         let carried = member.rested_block < block_number;
         // Members that rested in this block were already seen in it.
         if carried {
@@ -342,8 +368,8 @@ pub struct RestingStats {
     pub parked: u64,
     /// Of [`Self::parked`], transactions whose predicate was found unsatisfied in an earlier block.
     pub carried_parked: u64,
-    /// Time the pool iterators spent advancing past held transactions, from the first hold of
-    /// each `next` call until it found a candidate.
+    /// Time the pool snapshots and iterators spent holding transactions back; see
+    /// [`BestTransactionsHold::record_duration`].
     pub duration: Duration,
 }
 
@@ -354,8 +380,9 @@ pub type HoldInterrupt = Arc<dyn Fn() -> bool + Send + Sync>;
 ///
 /// The build loop populates the set through [`Self::rest`] and reports commits through
 /// [`Self::wake_by_state`]. Each pool iterator the build creates carries a [`Self::iterator_hold`]
-/// that parks members at the source, so the build loop never sees a transaction whose recorded
-/// predicate is still unsatisfied. The iterator and the build loop run on the build thread, so
+/// that parks members at the source, most of them while the pool is snapshotted, so the build
+/// loop never sees a transaction whose recorded predicate is still unsatisfied. The iterator and
+/// the build loop run on the build thread, so
 /// the lock is uncontended; it exists because the iterator is a boxed trait object the build loop
 /// does not own.
 #[derive(Clone)]
@@ -377,9 +404,6 @@ impl std::fmt::Debug for SharedRestingPredicates {
 #[derive(Debug)]
 struct SharedRestingState {
     predicates: RestingPredicates,
-    /// Members parked by the current iterator's hold. The build loop promotes these when a commit
-    /// wakes them; members the build loop parked itself are woken by its own predicate index.
-    held: B256Set,
     stats: RestingStats,
 }
 
@@ -389,7 +413,6 @@ impl SharedRestingPredicates {
         Self {
             inner: Arc::new(Mutex::new(SharedRestingState {
                 predicates,
-                held: B256Set::default(),
                 stats: RestingStats::default(),
             })),
             interrupt: None,
@@ -408,7 +431,7 @@ impl SharedRestingPredicates {
     /// Returns a hold for a new pool iterator. Members the previous iterator held are forgotten,
     /// because they were parked in that iterator.
     pub fn iterator_hold<T: BasePooledTx>(&self) -> Box<dyn BestTransactionsHold<T>> {
-        self.inner.lock().held.clear();
+        self.inner.lock().predicates.start_holding();
         Box::new(RestingHold { shared: self.clone() })
     }
 
@@ -431,13 +454,11 @@ impl SharedRestingPredicates {
         if inner.predicates.is_empty() {
             return Vec::new();
         }
-        let mut held = Vec::new();
-        for transaction_hash in inner.predicates.woken_by_state(state) {
-            inner.predicates.remove(transaction_hash);
-            if inner.held.remove(&transaction_hash) {
-                held.push(transaction_hash);
-            }
-        }
+        // Members the build loop parked itself are woken by its own predicate index.
+        let mut held = inner.predicates.woken_by_state(state);
+        held.retain(|transaction_hash| {
+            inner.predicates.remove_held(*transaction_hash) == Some(true)
+        });
         held
     }
 
@@ -479,7 +500,6 @@ impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
         else {
             return false;
         };
-        inner.held.insert(*transaction.hash());
         inner.stats.parked += 1;
         inner.stats.carried_parked += u64::from(carried);
         true
@@ -903,6 +923,30 @@ mod tests {
         account.info.balance = U256::from(3);
 
         assert_eq!(resting.woken_by_state(&EvmState::from_iter([(WATCHED, account)])), [hash(0)]);
+    }
+
+    #[test]
+    fn only_members_the_current_pool_iterator_held_are_reported_as_held() {
+        let first = balance_at_least(WATCHED, 1);
+        let second = balance_at_least(WATCHED, 2);
+        let third = balance_at_least(WATCHED, 3);
+        let mut resting = rested_in_parent(&[first.clone(), second.clone(), third.clone()]);
+        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+
+        // The first pool iterator of the build holds two members back.
+        resting.start_holding();
+        assert_eq!(resting.hold(hash(0), &conditions(&[first])), Some(true));
+        assert_eq!(resting.hold(hash(1), &conditions(std::slice::from_ref(&second))), Some(true));
+        // One of them rests again, so it is parked in the build loop instead.
+        resting.rest(hash(1), second);
+        // A second iterator holds the last member; what the first one held is forgotten.
+        resting.start_holding();
+        assert_eq!(resting.hold(hash(2), &conditions(&[third])), Some(true));
+
+        assert_eq!(resting.remove_held(hash(0)), Some(false));
+        assert_eq!(resting.remove_held(hash(1)), Some(false));
+        assert_eq!(resting.remove_held(hash(2)), Some(true));
+        assert_eq!(resting.remove_held(hash(2)), None, "a removed member is no longer a member");
     }
 
     #[test]
