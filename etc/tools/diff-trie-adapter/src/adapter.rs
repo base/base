@@ -427,7 +427,11 @@ impl TrieAdapter {
             });
             variants.entry("ph-rocksdb-pruned").or_default().push(|| {
                 let result = ph_rocksdb_pruned.block(number, block.unwind, state, &block.proofs)?;
-                ph_rocksdb_pruned.prune(retention, 1 + number % 2);
+                // The RocksDB store prunes every third block, one block per transaction, so one
+                // run prunes in several batches, as the prune task does after falling behind.
+                if number % 3 == 0 {
+                    ph_rocksdb_pruned.prune(retention, 1);
+                }
                 Ok(result)
             });
 

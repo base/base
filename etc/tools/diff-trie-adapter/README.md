@@ -62,9 +62,9 @@ Variants, each also on its own database:
 - `ph-mdbx`, `ph-rocksdb`: Base's proofs-history store (`base-execution-trie`) on both backends,
   fed as its `ExEx` does (root and updates over the store at the parent, stored per block, and
   after a reorg the dropped blocks unwound with `unwind_history` first), with roots and proofs read
-  back at the block. `ph-*-pruned` also run the node's pruner after every block, keeping as few
-  blocks below the highest tip as the request's unwinds allow and pruning one or two blocks per
-  transaction. `ph-*-history` re-reads every canonical, unpruned block's root and proofs after the
+  back at the block. `ph-*-pruned` also run the node's pruner, keeping as few blocks below the
+  highest tip as the request's unwinds allow: the `MDBX` store after every block, one or two blocks
+  per transaction, and the `RocksDB` store every third block, one block per transaction. `ph-*-history` re-reads every canonical, unpruned block's root and proofs after the
   last block, and `ph-batch` builds all blocks in one MDBX batch session (requests without
   unwinds).
 
