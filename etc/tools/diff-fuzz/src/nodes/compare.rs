@@ -19,8 +19,8 @@
 //! 7. Error texts inside a result are free text too: a string `error` field (call tracer
 //!    frames, struct logs, `eth_createAccessList`) becomes `"<error>"`, so only its presence is
 //!    compared, and an object `error` (an `eth_simulateV1` call) loses its `message`.
-//! 8. A struct log's `"refund": 0` is dropped: geth (and Nethermind) omit a zero refund, reth
-//!    writes it.
+//! 8. A struct log's `"refund": 0`, empty `"memory": []` and empty `"returnData": "0x"` are
+//!    dropped: geth (and Nethermind) omit these empty fields, reth writes them.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -192,8 +192,14 @@ impl RpcCompare {
                     }
                     _ => {}
                 }
-                if object.get("refund") == Some(&json!(0)) && object.contains_key("op") {
-                    object.remove("refund");
+                if object.contains_key("op") {
+                    for (key, empty) in
+                        [("refund", json!(0)), ("memory", json!([])), ("returnData", json!("0x"))]
+                    {
+                        if object.get(key) == Some(&empty) {
+                            object.remove(key);
+                        }
+                    }
                 }
                 object.values_mut().for_each(Self::error_texts);
             }
@@ -330,6 +336,16 @@ mod tests {
         assert!(
             !RpcVerdict::compare(&[("a".into(), log(Some(4800))), ("b".into(), log(None))]).agree
         );
+        // Empty memory and return data equal absent ones; nonempty ones do not.
+        let step = |extra: serde_json::Value| {
+            let mut step = json!({"op":"PUSH0","gas":10});
+            step.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            n(json!({"id":1,"result":{"structLogs":[step]}}))
+        };
+        let empty = step(json!({"memory": [], "returnData": "0x"}));
+        assert!(RpcVerdict::compare(&[("a".into(), empty), ("b".into(), step(json!({})))]).agree);
+        let full = step(json!({"returnData": "0x01"}));
+        assert!(!RpcVerdict::compare(&[("a".into(), full), ("b".into(), step(json!({})))]).agree);
     }
 
     #[test]
