@@ -50,14 +50,14 @@ pub type HistogramHandle = metrics::Histogram;
 #[cfg(not(feature = "metrics"))]
 pub type HistogramHandle = base_metrics::NoopMetric;
 
-/// Default state-root time at or above which a sealed block's observation logs at `warn`
-/// instead of `debug`.
+/// State-root time at or above which a sealed block's observation logs at `warn` instead of
+/// `debug`.
 ///
 /// On Mainnet the builder's p99 is about 140 ms, and about 2% of sampled follower blocks reach
 /// 100 ms. A 50 ms threshold therefore warns on more than 1% of blocks, covering the whole slow
 /// tail that resource metering should explain rather than only its worst blocks, while most
-/// blocks stay at `debug`. Raise it if the warn volume is too high.
-pub const DEFAULT_SLOW_BLOCK_STATE_ROOT: Duration = Duration::from_millis(50);
+/// blocks stay at `debug`.
+pub const SLOW_BLOCK_STATE_ROOT: Duration = Duration::from_millis(50);
 
 /// How a sealed block's state root was computed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,9 +107,9 @@ impl StateRootTiming {
         u64::try_from(self.wait.as_micros()).unwrap_or(u64::MAX)
     }
 
-    /// Returns whether [`Self::total`] meets or exceeds `threshold`.
-    pub fn is_slow(&self, threshold: Duration) -> bool {
-        self.total >= threshold
+    /// Returns whether [`Self::total`] meets or exceeds [`SLOW_BLOCK_STATE_ROOT`].
+    pub fn is_slow(&self) -> bool {
+        self.total >= SLOW_BLOCK_STATE_ROOT
     }
 }
 
@@ -334,14 +334,13 @@ impl SealedBlockRecorder {
     /// [`SealedBlockObservation::resource_usage`]; pass none when metering is inactive.
     ///
     /// The line logs at `debug`, or at `warn` with `slow=true` when the state-root time meets or
-    /// exceeds `slow_threshold`. Metrics are recorded for every block either way.
+    /// exceeds [`SLOW_BLOCK_STATE_ROOT`]. Metrics are recorded for every block either way.
     pub fn record(
         &self,
         observation: &SealedBlockObservation,
         dimensions: &[ResourceMeteringDimension],
-        slow_threshold: Duration,
     ) {
-        if observation.state_root.is_slow(slow_threshold) {
+        if observation.state_root.is_slow() {
             sealed_block_event!(Level::WARN, observation, dimensions, true);
         } else {
             sealed_block_event!(Level::DEBUG, observation, dimensions, false);
@@ -493,12 +492,8 @@ mod tests {
         }
     }
 
-    /// Records `observation` against `slow_threshold` and returns the observation lines logged at
-    /// any level.
-    fn observation_lines(
-        observation: &SealedBlockObservation,
-        slow_threshold: Duration,
-    ) -> Vec<String> {
+    /// Records `observation` and returns the observation lines logged at any level.
+    fn observation_lines(observation: &SealedBlockObservation) -> Vec<String> {
         let captured = Captured::default();
         let writer = captured.clone();
         let subscriber = tracing_subscriber::fmt()
@@ -508,11 +503,8 @@ mod tests {
             .finish();
 
         tracing::subscriber::with_default(subscriber, || {
-            SealedBlockRecorder::default().record(
-                observation,
-                &[dimension("cpu"), dimension("state_root")],
-                slow_threshold,
-            );
+            SealedBlockRecorder::default()
+                .record(observation, &[dimension("cpu"), dimension("state_root")]);
         });
 
         let output = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
@@ -525,7 +517,7 @@ mod tests {
 
     #[test]
     fn recorder_logs_one_structured_line_per_observation() {
-        let lines = observation_lines(&observation(Duration::from_micros(900)), Duration::MAX);
+        let lines = observation_lines(&observation(Duration::from_micros(900)));
 
         assert_eq!(lines.len(), 1, "expected one observation line, got: {lines:?}");
         let line = &lines[0];
@@ -553,10 +545,8 @@ mod tests {
 
     #[test]
     fn block_below_slow_threshold_logs_at_debug() {
-        let lines = observation_lines(
-            &observation(Duration::from_micros(49_999)),
-            Duration::from_millis(50),
-        );
+        let lines =
+            observation_lines(&observation(SLOW_BLOCK_STATE_ROOT - Duration::from_micros(1)));
 
         assert_eq!(lines.len(), 1, "expected one observation line, got: {lines:?}");
         assert!(lines[0].contains(" DEBUG "), "expected a debug line, got: {}", lines[0]);
@@ -565,9 +555,8 @@ mod tests {
 
     #[test]
     fn block_at_or_above_slow_threshold_logs_at_warn() {
-        for state_root_total in [Duration::from_millis(50), Duration::from_millis(140)] {
-            let lines =
-                observation_lines(&observation(state_root_total), Duration::from_millis(50));
+        for state_root_total in [SLOW_BLOCK_STATE_ROOT, Duration::from_millis(140)] {
+            let lines = observation_lines(&observation(state_root_total));
 
             assert_eq!(lines.len(), 1, "expected one observation line, got: {lines:?}");
             let line = &lines[0];

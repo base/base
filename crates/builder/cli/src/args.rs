@@ -202,11 +202,6 @@ pub struct Args {
     #[arg(long = "builder.max-uncompressed-block-size")]
     pub max_uncompressed_block_size: Option<u64>,
 
-    /// State-root time, in milliseconds, at or above which a composed block's sealed-block
-    /// observation logs at `warn` instead of `debug`.
-    #[arg(long = "builder.slow-block-state-root-ms", default_value = "50")]
-    pub slow_block_state_root_ms: u64,
-
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -287,7 +282,6 @@ impl Default for Args {
             predicate_eval_hard_cutoff_ms: 10,
             predicate_bucket_ordered_threshold: 32,
             max_uncompressed_block_size: None,
-            slow_block_state_root_ms: 50,
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
@@ -358,7 +352,6 @@ impl Args {
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
             manifest_precheck_enabled: self.manifest_precheck_enabled,
-            slow_block_state_root: Duration::from_millis(self.slow_block_state_root_ms),
         })
     }
 }
