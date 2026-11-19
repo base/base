@@ -730,6 +730,9 @@ impl RpcCampaign {
     /// base/base's eth\_createAccessList reports the gas of a run without the access list; geth
     /// and Nethermind report the final run with it.
     pub const KNOWN_BASE_ACCESS_LIST_GAS: &str = "base: access list gasUsed without the list";
+    /// base/base keeps running a precompile whose address has a state override; geth and
+    /// Nethermind turn it into an ordinary account (geth's `override.Apply`).
+    pub const KNOWN_BASE_PRECOMPILE_OVERRIDE: &str = "base: overridden precompile still runs";
     /// base/base keeps the block's fork rules under a block override of `time`, so an earlier
     /// time still applies the Prague calldata floor ("intrinsic gas too low"); geth and Nethermind
     /// take the rules from the overridden time (B12).
@@ -808,6 +811,10 @@ impl RpcCampaign {
             && Self::any_object(&body["params"], &|o| o.contains_key("time"))
         {
             Self::KNOWN_BASE_OVERRIDE_TIME_RULES
+        } else if Self::any_object(&body["params"], &|o| {
+            o.iter().any(|(key, value)| value.is_object() && Self::is_precompile(key))
+        }) {
+            Self::KNOWN_BASE_PRECOMPILE_OVERRIDE
         } else if ok(ours)
             && code(reference).is_some()
             && (body["params"].to_string().contains("\"type\":\"0x7e\"")
@@ -962,6 +969,16 @@ impl RpcCampaign {
     }
 
     /// Whether any object inside `value` satisfies `test`.
+    /// Whether `address` is a precompile on Base: 0x01 to 0x11, or P256VERIFY at 0x0100.
+    fn is_precompile(address: &str) -> bool {
+        let Some(hex) = address.strip_prefix("0x").filter(|h| h.len() == 40) else {
+            return false;
+        };
+        u64::from_str_radix(&hex[24..], 16).is_ok_and(|n| {
+            hex[..24].bytes().all(|b| b == b'0') && ((1..=0x11).contains(&n) || n == 0x100)
+        })
+    }
+
     fn any_object(value: &Value, test: &dyn Fn(&serde_json::Map<String, Value>) -> bool) -> bool {
         match value {
             Value::Object(object) => {
@@ -1459,6 +1476,26 @@ mod tests {
         );
         let late = RpcCase::new("call", "eth_call", json!([{"gas": "0x5e00"}, "latest"]));
         assert_eq!(classify(&late, floor, runs.clone(), runs), None);
+        // A state override on a precompile's address.
+        let precompile = RpcCase::new(
+            "trace",
+            "debug_traceCall",
+            json!([{"to": "0x0000000000000000000000000000000000000011"}, "latest",
+                {"stateOverrides": {"0x0000000000000000000000000000000000000011": {"code": "0x00"}}}]),
+        );
+        let failed = json!({"id":1,"result":{"gasUsed":"0x2faf080","error":"precompile failed"}});
+        let ran = json!({"id":1,"result":{"gasUsed":"0xa962"}});
+        assert_eq!(
+            classify(&precompile, failed.clone(), ran.clone(), ran.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_PRECOMPILE_OVERRIDE)
+        );
+        let ordinary = RpcCase::new(
+            "trace",
+            "debug_traceCall",
+            json!([{"to": "0x0000000000000000000000000000000000000012"}, "latest",
+                {"stateOverrides": {"0x0000000000000000000000000000000000000012": {"code": "0x00"}}}]),
+        );
+        assert_eq!(classify(&ordinary, failed, ran.clone(), ran), None);
         // Batch replies are JSON arrays: classified like any other difference, without panicking.
         let batch = |g: &str| json!([{"id":1,"result":{"gasUsed":g}}]);
         assert_eq!(classify(&list, batch("0x1"), batch("0x2"), batch("0x2")), None);
