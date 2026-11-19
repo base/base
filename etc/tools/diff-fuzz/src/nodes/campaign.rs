@@ -728,9 +728,10 @@ impl RpcCampaign {
     /// where geth and Nethermind leave the cap at 0 and fail with "max priority fee per gas higher
     /// than max fee per gas".
     pub const KNOWN_BASE_TIP_WITHOUT_CAP: &str = "base: tip without fee cap priced";
-    /// base/base's eth\_createAccessList reports the gas of a run without the access list; geth
-    /// and Nethermind report the final run with it.
-    pub const KNOWN_BASE_ACCESS_LIST_GAS: &str = "base: access list gasUsed without the list";
+    /// base/base's eth\_createAccessList reports a single run without the access list (its list,
+    /// gas and error); geth and Nethermind rerun with the list until it stops changing and report
+    /// the final run.
+    pub const KNOWN_BASE_ACCESS_LIST_GAS: &str = "base: access list from a single run";
     /// base/base keeps running a precompile whose address has a state override; geth and
     /// Nethermind turn it into an ordinary account (geth's `override.Apply`).
     pub const KNOWN_BASE_PRECOMPILE_OVERRIDE: &str = "base: overridden precompile still runs";
@@ -801,18 +802,9 @@ impl RpcCampaign {
                 .and_then(Value::as_str)
                 .is_some_and(|t| !Self::NATIVE_TRACERS.contains(&t))
         };
-        let without_gas = |v: &Value| {
-            let mut v = v.clone();
-            if let Some(result) = v.get_mut("result").and_then(Value::as_object_mut) {
-                result.remove("gasUsed");
-            }
-            v
-        };
         let cause = if message.contains("max priority fee per gas higher than max fee per gas") {
             Self::KNOWN_BASE_TIP_WITHOUT_CAP
-        } else if case.method == "eth_createAccessList"
-            && without_gas(ours) == without_gas(reference)
-        {
+        } else if case.method == "eth_createAccessList" && ok(ours) && ok(reference) {
             Self::KNOWN_BASE_ACCESS_LIST_GAS
         } else if base_message == "intrinsic gas too low"
             && Self::any_object(&body["params"], &|o| o.contains_key("time"))
@@ -1547,6 +1539,15 @@ mod tests {
             json!([{"to": "0x00000000000000000000000000000000000000aa"}, "latest"]),
         );
         assert_eq!(classify(&free, low.clone(), low, trace), None);
+        // The list itself differs too when a later run touches more (or the runs run out of gas).
+        let listed = json!({"id":1,"result":{"accessList":[{"address":"0x01","storageKeys":[]}],"gasUsed":"0x7e34"}});
+        assert_eq!(
+            classify(&list, gas("0x7e34"), listed.clone(), listed.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_ACCESS_LIST_GAS)
+        );
+        let converge =
+            json!({"id":1,"error":{"code":-32000,"message":"access list did not converge"}});
+        assert_eq!(classify(&list, converge, listed.clone(), listed), None);
         // Batch replies are JSON arrays: classified like any other difference, without panicking.
         let batch = |g: &str| json!([{"id":1,"result":{"gasUsed":g}}]);
         assert_eq!(classify(&list, batch("0x1"), batch("0x2"), batch("0x2")), None);
