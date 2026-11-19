@@ -47,9 +47,9 @@ calibrated against builder state-root cost:
 - trie update sizes: account nodes, storage tries, storage nodes, and removed nodes;
 - the block's usage of each resource-metering dimension, when metering is active.
 
-Replayed `no_tx_pool` blocks are not observed. `SealedBlockRecorder` resolves the metric handles
-on the first observation and reuses them for the builder's lifetime. The counts iterate the block's
-maps once and never run in the per-candidate loop.
+Replayed `no_tx_pool` blocks are not observed. The builder calls `SealedBlockObservation::log` and
+`BuilderMetrics::record_sealed_block` once per sealed block. The counts iterate the block's maps
+once and never run in the per-candidate loop.
 
 ```text
 WARN payload_builder: sealed block observation block_number=7 block_hash=0xabababababababababababababababababababababababababababababababab tx_count=2 gas_used=42000 slow=true state_root_source=task state_root_us=140000 state_root_wait_us=250 hashed_accounts=3 hashed_storages=2 hashed_storage_slots=4 largest_storage_slots=3 largest_storage_address=0x0101010101010101010101010101010101010101 trie_account_nodes=2 trie_storage_tries=2 trie_storage_nodes=3 trie_removed_nodes=3 resource_usage=cpu=5,state_root=11

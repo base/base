@@ -61,10 +61,10 @@ use crate::{
     HoldInterrupt, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
     PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SealedBlockObservation,
-    SealedBlockRecorder, SharedRestingPredicates, StateChangeEffects, StateDiffSizes,
-    StateRootSource, StateRootTiming, ValidityEvaluationCounters, ValidityEvaluationOutcome,
-    ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
-    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    SharedRestingPredicates, StateChangeEffects, StateDiffSizes, StateRootSource, StateRootTiming,
+    ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
+    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
+    payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -120,9 +120,6 @@ pub struct BasePayloadBuilder<
     pub resting_predicates: RestingPredicateStore,
     /// Optional, non-blocking notifications for frozen sequencer payloads.
     pub payload_ready: Option<broadcast::Sender<PayloadReady>>,
-    /// Logs and records one observation per composed sealed block, holding metric handles for
-    /// the builder's lifetime.
-    pub sealed_blocks: Arc<SealedBlockRecorder>,
     /// Marker for the payload attributes type.
     _pd: PhantomData<Attrs>,
 }
@@ -141,7 +138,6 @@ where
             config: self.config.clone(),
             resting_predicates: self.resting_predicates.clone(),
             payload_ready: self.payload_ready.clone(),
-            sealed_blocks: Arc::clone(&self.sealed_blocks),
             _pd: PhantomData,
         }
     }
@@ -177,7 +173,6 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
             config,
             resting_predicates: RestingPredicateStore::default(),
             payload_ready: None,
-            sealed_blocks: Arc::default(),
             _pd: PhantomData,
         }
     }
@@ -269,8 +264,7 @@ where
             .with_permanent_eviction(move |hashes| {
                 let _ = pool.remove_transactions(hashes);
             })
-            .with_resting_predicates(self.resting_predicates.clone())
-            .with_sealed_block_recorder(Arc::clone(&self.sealed_blocks));
+            .with_resting_predicates(self.resting_predicates.clone());
 
         let state_provider = crate::BuilderStateProvider::new(
             self.client.state_by_block_hash(ctx.parent().hash())?,
@@ -435,8 +429,6 @@ pub struct Builder<'a, Txs> {
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
     /// Carries resting validity transactions between builds; used from Denim on.
     resting_predicates: Option<RestingPredicateStore>,
-    /// Logs and records the observation of a composed sealed block.
-    sealed_blocks: Arc<SealedBlockRecorder>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
@@ -451,7 +443,6 @@ impl<'a, Txs> Builder<'a, Txs> {
             best: Box::new(best),
             evict_permanently_rejected: Box::new(|_| {}),
             resting_predicates: None,
-            sealed_blocks: Arc::default(),
         }
     }
 
@@ -466,13 +457,6 @@ impl<'a, Txs> Builder<'a, Txs> {
     /// next.
     pub fn with_resting_predicates(mut self, store: RestingPredicateStore) -> Self {
         self.resting_predicates = Some(store);
-        self
-    }
-
-    /// Sets the recorder that logs and records the observation of a composed sealed block, so its
-    /// metric handles outlive this build.
-    pub fn with_sealed_block_recorder(mut self, recorder: Arc<SealedBlockRecorder>) -> Self {
-        self.sealed_blocks = recorder;
         self
     }
 }
@@ -498,7 +482,7 @@ impl<Txs> Builder<'_, Txs> {
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
-        let Self { best, evict_permanently_rejected, resting_predicates, sealed_blocks } = self;
+        let Self { best, evict_permanently_rejected, resting_predicates } = self;
         // The pool iterator's hold watches the job's cancellation through a weak reference. A
         // dropped `CancelOnDrop` clone cancels the job, so only this owner, dropped with `ctx` when
         // the build returns, keeps one.
@@ -672,7 +656,8 @@ impl<Txs> Builder<'_, Txs> {
                 // Block usage is final once the block is sealed.
                 resource_usage: std::mem::take(&mut info.resource_metering_usage),
             };
-            sealed_blocks.record(&observation, dimensions);
+            observation.log(dimensions);
+            BuilderMetrics::record_sealed_block(&observation, dimensions);
         }
 
         // create the executed block data
