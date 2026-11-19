@@ -10,9 +10,12 @@ use base_diff_fuzz::{ProofResult, ProofTarget, TrieBlockResult};
 use base_execution_trie::{
     BaseProofStoragePruner, BaseProofsBatchSession, BaseProofsBatchStateProviderRef,
     BaseProofsBatchStore, BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore,
-    BlockStateDiff, provider::BaseProofsStateProviderRef,
+    BlockStateDiff, InitializationJob, RethTrieStorageLayout, provider::BaseProofsStateProviderRef,
 };
-use reth_provider::{BlockHashReader, ProviderResult, noop::NoopProvider};
+use reth_provider::{
+    BlockHashReader, DatabaseProviderFactory, ProviderResult, StorageSettingsCache,
+    noop::NoopProvider,
+};
 use reth_storage_api::{StateProofProvider, StateRootProvider};
 use reth_trie_common::{ExecutionWitnessMode, HashedPostState, MultiProofTargets, TrieInput};
 
@@ -42,6 +45,29 @@ where
         store.set_initial_state_anchor(BlockNumHash::new(0, B256::ZERO))?;
         store.commit_initial_state()?;
         Ok(Self { storage: Arc::clone(&store).into(), store, chain: vec![B256::ZERO], built: 0 })
+    }
+
+    /// A store backfilled from `db` at block `number`, as `base-proofs init` and the node's
+    /// initialization job do when proofs history is enabled on a synced node.
+    pub fn initialized(store: S, db: &RethDb, number: u64) -> eyre::Result<Self> {
+        let store = Arc::new(store);
+        let chain: Vec<B256> = (0..=number)
+            .map(|n| keccak256([b"anchor".as_slice(), &n.to_be_bytes()].concat()))
+            .collect();
+        let storage: BaseProofsStorage<Arc<S>> = Arc::clone(&store).into();
+        let layout = if db.factory.cached_storage_settings().is_v2() {
+            RethTrieStorageLayout::Packed
+        } else {
+            RethTrieStorageLayout::Legacy
+        };
+        let tx = db.factory.database_provider_ro()?.into_tx();
+        InitializationJob::new(storage.clone(), tx, layout).run(number, chain[number as usize])?;
+        Ok(Self { storage, store, chain, built: 0 })
+    }
+
+    /// Roots and proofs at block `number`, read back from the store.
+    pub fn read(&self, number: u64, targets: &[ProofTarget]) -> eyre::Result<TrieBlockResult> {
+        self.proofs(number, targets)
     }
 
     /// The block reference of block `number` on top of the current chain.

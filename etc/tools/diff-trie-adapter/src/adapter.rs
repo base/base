@@ -170,6 +170,13 @@ impl TrieAdapter {
         let preimages = blocks.iter().flat_map(|b| &b.proofs).all(|target| {
             target.address.is_some() && (target.slots.is_empty() || target.slot_keys.is_some())
         });
+        // Stores backfilled from the reth databases once no later block unwinds below them,
+        // then fed live.
+        let init_index = blocks.iter().rposition(|b| b.unwind > 0).unwrap_or(0);
+        let mut ph_init: Option<(
+            ProofsHistory<MdbxProofsStorage>,
+            ProofsHistory<RocksdbProofsStorage>,
+        )> = None;
         let mut ph_mdbx_pruned =
             ProofsHistory::new(MdbxProofsStorage::new(&dir.join("ph-mdbx-pruned"))?)?;
         let mut ph_rocksdb_pruned =
@@ -424,6 +431,39 @@ impl TrieAdapter {
                 Ok(result)
             });
 
+            let init_results = VariantResults::catch(|| {
+                if index < init_index {
+                    return Ok(None);
+                }
+                if let Some((mdbx, rocksdb)) = &mut ph_init {
+                    return Ok(Some((
+                        mdbx.block(number, 0, state, &block.proofs)?,
+                        rocksdb.block(number, 0, state, &block.proofs)?,
+                    )));
+                }
+                let mdbx = ProofsHistory::initialized(
+                    MdbxProofsStorage::new(&dir.join("ph-init-mdbx"))?,
+                    &serial,
+                    number,
+                )?;
+                let rocksdb = ProofsHistory::initialized(
+                    RocksdbProofsStorage::new(&dir.join("ph-init-rocksdb"))?,
+                    &engine,
+                    number,
+                )?;
+                let results =
+                    (mdbx.read(number, &block.proofs)?, rocksdb.read(number, &block.proofs)?);
+                ph_init = Some((mdbx, rocksdb));
+                Ok(Some(results))
+            });
+            for (name, pick) in [("ph-init-mdbx", 0), ("ph-init-rocksdb", 1)] {
+                let result = match &init_results {
+                    Ok(None) => Ok(TrieBlockResult::default()),
+                    Ok(Some(pair)) => Ok(if pick == 0 { pair.0.clone() } else { pair.1.clone() }),
+                    Err(err) => Err(eyre::eyre!("{err:#}")),
+                };
+                variants.entry(name).or_default().push(|| result);
+            }
             states.push((number, changes.state, block.proofs.clone()));
             parent_root = root;
         }
