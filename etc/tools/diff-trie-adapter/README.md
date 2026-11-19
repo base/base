@@ -41,10 +41,13 @@ Variants, each also on its own database:
 - `overlay`: the overlay state provider's root with the last two blocks in memory above the
   database (`overlay_root_from_nodes_with_updates`), unwinding in-memory blocks natively.
 - `ph-mdbx`, `ph-rocksdb`: Base's proofs-history store (`base-execution-trie`) on both backends,
-  fed as its live collector does (root and updates over the store at the parent, stored per
-  block, and replaced after an unwind with `replace_updates`), with roots and proofs read back at
-  the block. `ph-*-history` re-reads every canonical block's root and proofs after the last block,
-  and `ph-batch` builds all blocks in one MDBX batch session (requests without unwinds).
+  fed as its `ExEx` does (root and updates over the store at the parent, stored per block, and
+  after a reorg the dropped blocks unwound with `unwind_history` first), with roots and proofs read
+  back at the block. `ph-*-pruned` also run the node's pruner after every block, keeping as few
+  blocks below the highest tip as the request's unwinds allow and pruning one or two blocks per
+  transaction. `ph-*-history` re-reads every canonical, unpruned block's root and proofs after the
+  last block, and `ph-batch` builds all blocks in one MDBX batch session (requests without
+  unwinds).
 
 Other unwinds are applied as the request's `revert` ops followed by its ops.
 

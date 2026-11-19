@@ -7,7 +7,7 @@ mod block;
 pub use block::BlockChanges;
 
 mod history;
-pub use history::ProofsHistory;
+pub use history::{ChainHashes, ProofsHistory};
 
 mod reth_db;
 pub use reth_db::{RethDb, RethFactory};

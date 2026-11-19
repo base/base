@@ -7,11 +7,11 @@ use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, keccak256};
 use base_diff_fuzz::{ProofTarget, TrieBlockResult};
 use base_execution_trie::{
-    BaseProofsBatchSession, BaseProofsBatchStateProviderRef, BaseProofsBatchStore,
-    BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, BlockStateDiff,
-    provider::BaseProofsStateProviderRef,
+    BaseProofStoragePruner, BaseProofsBatchSession, BaseProofsBatchStateProviderRef,
+    BaseProofsBatchStore, BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore,
+    BlockStateDiff, provider::BaseProofsStateProviderRef,
 };
-use reth_provider::noop::NoopProvider;
+use reth_provider::{BlockHashReader, ProviderResult, noop::NoopProvider};
 use reth_storage_api::{StateProofProvider, StateRootProvider};
 use reth_trie_common::{HashedPostState, MultiProofTargets, TrieInput};
 
@@ -75,8 +75,9 @@ where
     }
 
     /// Builds block `number` (whose parent is `number - 1` after dropping `unwind` blocks) from
-    /// `state`: its root and trie updates over the store at the parent, then stored (replacing
-    /// the dropped blocks after an unwind), and the block's root and proofs read back.
+    /// `state` as the node's `ExEx` does: after a reorg, the dropped blocks unwound with
+    /// `unwind_history`, then the block's root and trie updates over the store at the parent,
+    /// stored, and the block's root and proofs read back.
     pub fn block(
         &mut self,
         number: u64,
@@ -84,8 +85,15 @@ where
         state: &HashedPostState,
         targets: &[ProofTarget],
     ) -> eyre::Result<TrieBlockResult> {
-        self.chain.truncate(number as usize);
         let parent = number - 1;
+        if unwind > 0 {
+            let first_dropped = BlockWithParent::new(
+                self.chain[parent as usize],
+                NumHash::new(number, self.chain[number as usize]),
+            );
+            self.storage.unwind_history(first_dropped)?;
+        }
+        self.chain.truncate(number as usize);
         let provider =
             BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &self.storage, parent);
         let (root, updates) = provider.state_root_with_updates(state.clone())?;
@@ -95,12 +103,7 @@ where
             sorted_trie_updates: updates.into_sorted(),
             sorted_post_state: state.clone().into_sorted(),
         };
-        if unwind > 0 {
-            self.storage
-                .replace_updates(BlockNumHash::new(parent, block.parent), vec![(block, diff)])?;
-        } else {
-            self.storage.store_trie_updates(block, diff)?;
-        }
+        self.storage.store_trie_updates(block, diff)?;
         self.chain.push(block.block.hash);
         let mut result = self.proofs(number, targets)?;
         eyre::ensure!(
@@ -111,18 +114,40 @@ where
         Ok(result)
     }
 
+    /// Runs the node's pruner over the store, keeping the last `retention` blocks and pruning at
+    /// most `batch` blocks per transaction.
+    pub fn prune(&self, retention: u64, batch: u64) {
+        BaseProofStoragePruner::new(
+            self.storage.clone(),
+            ChainHashes(self.chain.clone()),
+            retention,
+            batch,
+        )
+        .run();
+    }
+
     /// Roots and proofs read back after the last block at each of `blocks` (number and proof
-    /// targets) that is still canonical; the others stay empty.
+    /// targets) that is still canonical and not pruned; the others stay empty.
     pub fn history(
         &self,
         blocks: &[(u64, Vec<ProofTarget>)],
         canonical: &[bool],
     ) -> Vec<TrieBlockResult> {
+        let earliest = match self.storage.get_earliest_block_number() {
+            Ok(earliest) => earliest.map_or(0, |(number, _)| number),
+            Err(err) => {
+                let error = Some(format!("earliest block: {err:#}"));
+                return blocks
+                    .iter()
+                    .map(|_| TrieBlockResult { error: error.clone(), ..Default::default() })
+                    .collect();
+            }
+        };
         blocks
             .iter()
             .zip(canonical)
             .map(|((number, targets), canonical)| {
-                if !canonical {
+                if !canonical || *number < earliest {
                     return TrieBlockResult::default();
                 }
                 self.proofs(*number, targets).unwrap_or_else(|err| TrieBlockResult {
@@ -209,5 +234,19 @@ where
             proofs: Some(proofs),
             ..Default::default()
         })
+    }
+}
+
+/// Canonical block hashes by number, as the pruner's block hash reader.
+#[derive(Debug)]
+pub struct ChainHashes(pub Vec<B256>);
+
+impl BlockHashReader for ChainHashes {
+    fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
+        Ok(self.0.get(number as usize).copied())
+    }
+
+    fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
+        Ok((start..end).filter_map(|number| self.0.get(number as usize).copied()).collect())
     }
 }

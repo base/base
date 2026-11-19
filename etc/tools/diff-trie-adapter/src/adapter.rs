@@ -155,6 +155,20 @@ impl TrieAdapter {
         let mut ph_mdbx = ProofsHistory::new(MdbxProofsStorage::new(&dir.join("ph-mdbx"))?)?;
         let mut ph_rocksdb =
             ProofsHistory::new(RocksdbProofsStorage::new(&dir.join("ph-rocksdb"))?)?;
+        // The pruned stores keep enough blocks below the highest tip for every unwind, as a
+        // node's proofs window covers its reorg depth.
+        let mut retention = 1;
+        let (mut tip, mut highest) = (0, 0);
+        for block in blocks {
+            tip -= block.unwind;
+            retention = retention.max(highest - tip);
+            tip += 1;
+            highest = highest.max(tip);
+        }
+        let mut ph_mdbx_pruned =
+            ProofsHistory::new(MdbxProofsStorage::new(&dir.join("ph-mdbx-pruned"))?)?;
+        let mut ph_rocksdb_pruned =
+            ProofsHistory::new(RocksdbProofsStorage::new(&dir.join("ph-rocksdb-pruned"))?)?;
         let mut engine_sparse = EngineSparse::new(true, ArenaParallelismThresholds::default())
             .with_workers(self.runtime.clone());
         let mut eager_sparse = EngineSparse::new(true, EngineSparse::eager());
@@ -306,6 +320,16 @@ impl TrieAdapter {
                 .entry("ph-rocksdb")
                 .or_default()
                 .push(|| ph_rocksdb.block(number, block.unwind, state, &block.proofs));
+            variants.entry("ph-mdbx-pruned").or_default().push(|| {
+                let result = ph_mdbx_pruned.block(number, block.unwind, state, &block.proofs)?;
+                ph_mdbx_pruned.prune(retention, 1 + number % 2);
+                Ok(result)
+            });
+            variants.entry("ph-rocksdb-pruned").or_default().push(|| {
+                let result = ph_rocksdb_pruned.block(number, block.unwind, state, &block.proofs)?;
+                ph_rocksdb_pruned.prune(retention, 1 + number % 2);
+                Ok(result)
+            });
 
             states.push((number, changes.state, block.proofs.clone()));
             parent_root = root;
@@ -325,6 +349,8 @@ impl TrieAdapter {
         for (name, history) in [
             ("ph-mdbx-history", ph_mdbx.history(&reads, &is_canonical)),
             ("ph-rocksdb-history", ph_rocksdb.history(&reads, &is_canonical)),
+            ("ph-mdbx-pruned-history", ph_mdbx_pruned.history(&reads, &is_canonical)),
+            ("ph-rocksdb-pruned-history", ph_rocksdb_pruned.history(&reads, &is_canonical)),
         ] {
             let mut history = history;
             history.resize(blocks.len(), TrieBlockResult::default());
