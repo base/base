@@ -1,7 +1,7 @@
 //! Per-sealed-block builder observations that join state-root time to block contents and
 //! resource-metering usage.
 
-use std::{fmt, sync::OnceLock, time::Duration};
+use std::{fmt, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use reth_trie_common::{HashedPostState, updates::TrieUpdates};
@@ -9,46 +9,6 @@ use revm::database::BundleState;
 use tracing::Level;
 
 use crate::ResourceMeteringDimension;
-
-base_metrics::define_metrics! {
-    base_builder,
-    struct = SealedBlockMetrics,
-    #[describe(
-        "Time from the end of transaction execution until a composed block is sealed, including the state root, in seconds, by how the state root was computed"
-    )]
-    #[label(name = "source", default = ["task", "synchronous", "task_fallback"])]
-    sealed_block_state_root_duration: histogram,
-    #[describe("Transactions in each composed sealed block, including sequencer transactions")]
-    sealed_block_transactions: histogram,
-    #[describe("Gas used by each composed sealed block")]
-    sealed_block_gas_used: histogram,
-    #[describe("Accounts in each composed sealed block's hashed post-state")]
-    sealed_block_hashed_accounts: histogram,
-    #[describe("Accounts with storage changes in each composed sealed block's hashed post-state")]
-    sealed_block_hashed_storages: histogram,
-    #[describe("Storage slots in each composed sealed block's hashed post-state")]
-    sealed_block_hashed_storage_slots: histogram,
-    #[describe("Storage slots of the account with the most storage changes in each composed sealed block")]
-    sealed_block_largest_storage_slots: histogram,
-    #[describe("Account trie nodes updated by each composed sealed block's state root")]
-    sealed_block_trie_account_nodes: histogram,
-    #[describe("Storage trie nodes updated by each composed sealed block's state root")]
-    sealed_block_trie_storage_nodes: histogram,
-    #[describe("Account and storage trie nodes removed by each composed sealed block's state root")]
-    sealed_block_trie_removed_nodes: histogram,
-    #[describe("Resource-metering units used by each composed sealed block, by schedule dimension")]
-    #[label(dimension)]
-    sealed_block_resource_metering_usage: histogram,
-}
-
-/// Histogram handle held by [`SealedBlockMetricHandles`]: a `metrics::Histogram` with the
-/// `metrics` feature, and a no-op otherwise.
-#[cfg(feature = "metrics")]
-pub type HistogramHandle = metrics::Histogram;
-/// Histogram handle held by [`SealedBlockMetricHandles`]: a `metrics::Histogram` with the
-/// `metrics` feature, and a no-op otherwise.
-#[cfg(not(feature = "metrics"))]
-pub type HistogramHandle = base_metrics::NoopMetric;
 
 /// State-root time at or above which a sealed block's observation logs at `warn` instead of
 /// `debug`.
@@ -71,9 +31,6 @@ pub enum StateRootSource {
 }
 
 impl StateRootSource {
-    /// Every variant in declaration order; indexes the per-source duration handles.
-    const ALL: [Self; 3] = [Self::Task, Self::Synchronous, Self::TaskFallback];
-
     /// Returns the low-cardinality label and log value.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -220,69 +177,6 @@ impl fmt::Display for DimensionUsage<'_> {
     }
 }
 
-/// Metric handles for [`SealedBlockObservation`], resolved once.
-#[derive(Debug)]
-pub struct SealedBlockMetricHandles {
-    state_root_duration: [HistogramHandle; StateRootSource::ALL.len()],
-    transactions: HistogramHandle,
-    gas_used: HistogramHandle,
-    hashed_accounts: HistogramHandle,
-    hashed_storages: HistogramHandle,
-    hashed_storage_slots: HistogramHandle,
-    largest_storage_slots: HistogramHandle,
-    trie_account_nodes: HistogramHandle,
-    trie_storage_nodes: HistogramHandle,
-    trie_removed_nodes: HistogramHandle,
-    resource_usage: Vec<HistogramHandle>,
-}
-
-impl SealedBlockMetricHandles {
-    /// Resolves every handle against the active recorder, with one usage handle per dimension.
-    pub fn new(dimensions: &[ResourceMeteringDimension]) -> Self {
-        Self {
-            state_root_duration: StateRootSource::ALL.map(|source| {
-                SealedBlockMetrics::sealed_block_state_root_duration(source.as_str())
-            }),
-            transactions: SealedBlockMetrics::sealed_block_transactions(),
-            gas_used: SealedBlockMetrics::sealed_block_gas_used(),
-            hashed_accounts: SealedBlockMetrics::sealed_block_hashed_accounts(),
-            hashed_storages: SealedBlockMetrics::sealed_block_hashed_storages(),
-            hashed_storage_slots: SealedBlockMetrics::sealed_block_hashed_storage_slots(),
-            largest_storage_slots: SealedBlockMetrics::sealed_block_largest_storage_slots(),
-            trie_account_nodes: SealedBlockMetrics::sealed_block_trie_account_nodes(),
-            trie_storage_nodes: SealedBlockMetrics::sealed_block_trie_storage_nodes(),
-            trie_removed_nodes: SealedBlockMetrics::sealed_block_trie_removed_nodes(),
-            resource_usage: dimensions
-                .iter()
-                .map(|dimension| {
-                    SealedBlockMetrics::sealed_block_resource_metering_usage(dimension.name.clone())
-                })
-                .collect(),
-        }
-    }
-
-    /// Records one observation.
-    pub fn record(&self, observation: &SealedBlockObservation) {
-        let diff = &observation.state_diff;
-        self.state_root_duration[observation.state_root.source as usize]
-            .record(observation.state_root.total.as_secs_f64());
-        self.transactions.record(observation.tx_count as f64);
-        self.gas_used.record(observation.gas_used as f64);
-        self.hashed_accounts.record(diff.hashed_accounts as f64);
-        self.hashed_storages.record(diff.hashed_storages as f64);
-        self.hashed_storage_slots.record(diff.hashed_storage_slots as f64);
-        self.largest_storage_slots
-            .record(diff.largest_storage.map_or(0, |largest| largest.slots) as f64);
-        self.trie_account_nodes.record(diff.trie_account_nodes as f64);
-        self.trie_storage_nodes.record(diff.trie_storage_nodes as f64);
-        self.trie_removed_nodes.record(diff.trie_removed_nodes as f64);
-        for (index, handle) in self.resource_usage.iter().enumerate() {
-            handle
-                .record(observation.resource_usage.get(index).copied().unwrap_or_default() as f64);
-        }
-    }
-}
-
 /// Emits the observation line at `$level`, with the same static message and fields at every level.
 macro_rules! sealed_block_event {
     ($level:expr, $observation:expr, $dimensions:expr, $slow:expr) => {{
@@ -318,34 +212,18 @@ macro_rules! sealed_block_event {
     }};
 }
 
-/// Logs and records one [`SealedBlockObservation`] per composed block.
-///
-/// Metric handles are resolved on the first observation, after the process recorder is
-/// installed, and reused for every later block. A payload builder keeps one recorder for its
-/// lifetime; its resource-metering schedule is fixed at startup, so the per-dimension handles
-/// resolved on the first block stay aligned with later blocks.
-#[derive(Debug, Default)]
-pub struct SealedBlockRecorder {
-    handles: OnceLock<SealedBlockMetricHandles>,
-}
-
-impl SealedBlockRecorder {
-    /// Emits one structured log line and records the observation's metrics. `dimensions` names
-    /// [`SealedBlockObservation::resource_usage`]; pass none when metering is inactive.
+impl SealedBlockObservation {
+    /// Emits the observation's structured log line. `dimensions` names [`Self::resource_usage`];
+    /// pass none when metering is inactive.
     ///
     /// The line logs at `debug`, or at `warn` with `slow=true` when the state-root time meets or
-    /// exceeds [`SLOW_BLOCK_STATE_ROOT`]. Metrics are recorded for every block either way.
-    pub fn record(
-        &self,
-        observation: &SealedBlockObservation,
-        dimensions: &[ResourceMeteringDimension],
-    ) {
-        if observation.state_root.is_slow() {
-            sealed_block_event!(Level::WARN, observation, dimensions, true);
+    /// exceeds [`SLOW_BLOCK_STATE_ROOT`].
+    pub fn log(&self, dimensions: &[ResourceMeteringDimension]) {
+        if self.state_root.is_slow() {
+            sealed_block_event!(Level::WARN, self, dimensions, true);
         } else {
-            sealed_block_event!(Level::DEBUG, observation, dimensions, false);
+            sealed_block_event!(Level::DEBUG, self, dimensions, false);
         }
-        self.handles.get_or_init(|| SealedBlockMetricHandles::new(dimensions)).record(observation);
     }
 }
 
@@ -492,7 +370,7 @@ mod tests {
         }
     }
 
-    /// Records `observation` and returns the observation lines logged at any level.
+    /// Logs `observation` and returns the observation lines logged at any level.
     fn observation_lines(observation: &SealedBlockObservation) -> Vec<String> {
         let captured = Captured::default();
         let writer = captured.clone();
@@ -503,8 +381,7 @@ mod tests {
             .finish();
 
         tracing::subscriber::with_default(subscriber, || {
-            SealedBlockRecorder::default()
-                .record(observation, &[dimension("cpu"), dimension("state_root")]);
+            observation.log(&[dimension("cpu"), dimension("state_root")]);
         });
 
         let output = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
@@ -516,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn recorder_logs_one_structured_line_per_observation() {
+    fn observation_logs_one_structured_line() {
         let lines = observation_lines(&observation(Duration::from_micros(900)));
 
         assert_eq!(lines.len(), 1, "expected one observation line, got: {lines:?}");
