@@ -201,42 +201,46 @@ impl EngineSparse {
         Ok((root, updates))
     }
 
-    /// Reveals and updates until `updates` are all applied to one trie, fetching proofs for the
-    /// paths each round reports blinded.
+    /// Reveals and updates until the storage `slots` of each account and the account `leaves`
+    /// are all applied, fetching proofs for the paths each round reports blinded. As the
+    /// engine's sparse trie task pools pending targets, every round proves the blinded paths of
+    /// all tries at once.
     fn drain(
         trie: &mut SparseStateTrie,
         proofs: &mut impl ProofSource,
-        account: Option<B256>,
-        updates: &mut B256Map<LeafUpdate>,
+        slots: &mut B256Map<B256Map<LeafUpdate>>,
+        leaves: &mut B256Map<LeafUpdate>,
     ) -> eyre::Result<()> {
-        while !updates.is_empty() {
+        loop {
             let mut targets = MultiProofTargetsV2::default();
-            match account {
-                Some(address) => {
-                    trie.get_or_create_storage_trie_mut(address).update_leaves(
-                        updates,
-                        |key, parent| {
-                            targets
-                                .storage_targets
-                                .entry(address)
-                                .or_default()
-                                .push(ProofV2Target::new(key).with_parent(parent));
-                        },
-                    )?;
-                }
-                None => trie.trie_mut().update_leaves(updates, |key, parent| {
+            for (address, updates) in slots.iter_mut().filter(|(_, u)| !u.is_empty()) {
+                trie.get_or_create_storage_trie_mut(*address).update_leaves(
+                    updates,
+                    |key, parent| {
+                        targets
+                            .storage_targets
+                            .entry(*address)
+                            .or_default()
+                            .push(ProofV2Target::new(key).with_parent(parent));
+                    },
+                )?;
+            }
+            if !leaves.is_empty() {
+                trie.trie_mut().update_leaves(leaves, |key, parent| {
                     targets.account_targets.push(ProofV2Target::new(key).with_parent(parent));
-                })?,
+                })?;
             }
             if targets.is_empty() {
-                eyre::ensure!(updates.is_empty(), "sparse trie kept updates without targets");
-                break;
+                eyre::ensure!(
+                    leaves.is_empty() && slots.values().all(B256Map::is_empty),
+                    "sparse trie kept updates without targets"
+                );
+                return Ok(());
             }
             for multiproof in proofs.prove(targets)? {
                 trie.reveal_decoded_multiproof_v2(multiproof)?;
             }
         }
-        Ok(())
     }
 
     fn apply(
@@ -253,25 +257,31 @@ impl EngineSparse {
         // update, as in the engine.
         let changed =
             |address: &B256| chunk.storages.get(address).is_some_and(|s| !s.storage.is_empty());
-        for (address, storage) in chunk.storages.iter().filter(|(a, _)| changed(a)) {
-            let mut updates: B256Map<LeafUpdate> = storage
-                .storage
-                .iter()
-                .map(|(slot, value)| {
-                    let encoded = if value.is_zero() {
-                        Vec::new()
-                    } else {
-                        alloy_rlp::encode_fixed_size(value).to_vec()
-                    };
-                    (*slot, LeafUpdate::Changed(encoded))
-                })
-                .collect();
-            Self::drain(trie, proofs, Some(*address), &mut updates)?;
-        }
-        // Reveal every account first, then encode its leaf with its new storage root.
+        let mut slots: B256Map<B256Map<LeafUpdate>> = chunk
+            .storages
+            .iter()
+            .filter(|(a, _)| changed(a))
+            .map(|(address, storage)| {
+                let updates = storage
+                    .storage
+                    .iter()
+                    .map(|(slot, value)| {
+                        let encoded = if value.is_zero() {
+                            Vec::new()
+                        } else {
+                            alloy_rlp::encode_fixed_size(value).to_vec()
+                        };
+                        (*slot, LeafUpdate::Changed(encoded))
+                    })
+                    .collect();
+                (*address, updates)
+            })
+            .collect();
+        // Reveal every account along with the storage, then encode its leaf with its new
+        // storage root.
         let mut touched: B256Map<LeafUpdate> =
             addresses.iter().map(|a| (*a, LeafUpdate::Touched)).collect();
-        Self::drain(trie, proofs, None, &mut touched)?;
+        Self::drain(trie, proofs, &mut slots, &mut touched)?;
         let mut updates = B256Map::default();
         for address in addresses {
             let current = trie
@@ -296,6 +306,6 @@ impl EngineSparse {
             };
             updates.insert(address, LeafUpdate::Changed(encoded));
         }
-        Self::drain(trie, proofs, None, &mut updates)
+        Self::drain(trie, proofs, &mut B256Map::default(), &mut updates)
     }
 }
