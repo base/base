@@ -11,7 +11,7 @@ use alloy_evm::{
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, Bytes};
 use alloy_signer::Signature;
-use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
+use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope, DEPOSIT_TX_TYPE_ID};
 use base_common_evm::BaseTransaction as BaseRevm;
 use reth_rpc_convert::{FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx};
 use revm::context::TxEnv;
@@ -60,6 +60,9 @@ pub enum BaseTxEnvError {
     /// represent: converting it would silently drop them.
     #[error("Base transaction requests are supported only by eth_call and eth_estimateGas")]
     TxBaseUnsupported,
+    /// The request is typed as a deposit, which only the sequencer can include.
+    #[error("deposit transactions cannot be called")]
+    DepositUnsupported,
 }
 
 impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
@@ -70,6 +73,10 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
     fn try_into_tx_env(self, evm_env: &EvmEnv<Spec, Block>) -> Result<BaseRevm<TxEnv>, Self::Err> {
         if self.as_base_tx().is_some() {
             return Err(BaseTxEnvError::TxBaseUnsupported);
+        }
+        let request = self.as_ref();
+        if request.transaction_type == Some(DEPOSIT_TX_TYPE_ID) {
+            return Err(BaseTxEnvError::DepositUnsupported);
         }
         Ok(BaseRevm {
             base: self.as_ref().clone().try_into_tx_env(evm_env)?,
@@ -88,6 +95,9 @@ impl TryIntoSimTx<BaseTxEnvelope> for BaseTransactionRequest {
                 self,
                 "Base transaction requests are not supported by simulation",
             ));
+        }
+        if self.as_ref().transaction_type == Some(DEPOSIT_TX_TYPE_ID) {
+            return Err(ValueError::new(self, "deposit transactions cannot be simulated"));
         }
         let tx = self
             .build_typed_tx()
@@ -171,6 +181,27 @@ mod tests {
             serde_json::from_value(json!({ "from": FROM, "to": SENDER })).unwrap();
         let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(plain, &env).unwrap();
         assert!(tx.base_tx.is_none());
+    }
+
+    #[test]
+    fn standard_tx_env_rejects_deposit_type() {
+        let env = EvmEnv::<revm::primitives::hardfork::SpecId>::default();
+        let request: BaseTransactionRequest =
+            serde_json::from_value(json!({ "to": SENDER, "type": "0x7e" })).unwrap();
+        assert!(matches!(
+            TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env),
+            Err(BaseTxEnvError::DepositUnsupported)
+        ));
+    }
+
+    #[test]
+    fn simulation_rejects_deposit_type() {
+        let request: BaseTransactionRequest = serde_json::from_value(json!({
+            "from": FROM, "to": SENDER, "type": "0x7e", "nonce": "0x0", "gas": "0x5208",
+            "maxFeePerGas": "0x0", "maxPriorityFeePerGas": "0x0", "chainId": "0x2105",
+        }))
+        .unwrap();
+        assert!(request.try_into_sim_tx().is_err());
     }
 
     #[test]
