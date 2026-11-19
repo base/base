@@ -310,6 +310,7 @@ _up-devnet compose_profile mode:
     case "$devnet_mode" in
       default) ;;
       everest)
+        export L2_BUILDER_ENABLE_RESOURCE_METERING="${L2_BUILDER_ENABLE_RESOURCE_METERING:-false}"
         export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-25}"
         export L2_BASE_EVEREST_BLOCK="${L2_BASE_EVEREST_BLOCK:-100}"
         ;;
