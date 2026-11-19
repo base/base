@@ -633,6 +633,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "base-common-base-tx"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-common-consensus",
+]
+
+[[package]]
 name = "base-common-blobs"
 version = "0.0.0"
 dependencies = [
@@ -668,7 +676,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-eth",
  "alloy-serde",
- "alloy-sol-types",
  "ambassador",
  "base-common-genesis",
  "bytes",
@@ -676,15 +683,6 @@ dependencies = [
  "reth-primitives-traits",
  "revm",
  "serde",
- "thiserror",
-]
-
-[[package]]
-name = "base-common-eip8130"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-consensus",
  "thiserror",
 ]
 
@@ -744,8 +742,8 @@ dependencies = [
  "alloy-evm",
  "alloy-primitives",
  "alloy-sol-types",
+ "base-common-base-tx",
  "base-common-chains",
- "base-common-eip8130",
  "base-common-genesis",
  "base-precompile-macros",
  "base-precompile-storage",

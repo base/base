@@ -1,12 +1,12 @@
 //! Round trip through the flush path. Derivation reads back the batches of the blocks the
-//! encoder was given, in order, whatever the wire shape the encoder config produces, and an
-//! EIP-8130 transaction comes out byte-identical.
+//! encoder was given, in order, whatever the wire shape the encoder config produces, and a
+//! Base transaction comes out byte-identical.
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, Signature, U256};
 use base_batcher_encoder::{BatchPipeline, BatchSubmission, DaType, EncoderConfig};
 use base_common_consensus::{
-    AccountChange, BaseTxEnvelope, Call, Delegation, Eip8130Constants, Eip8130Signed, TxEip8130,
+    AccountChange, BaseTxEnvelope, Call, Delegation, TxBase, TxBaseConstants, TxBaseSigned,
 };
 use rstest::rstest;
 
@@ -71,13 +71,13 @@ fn derivation_reads_back_the_encoded_blocks(
     assert_eq!(derived.concat(), BlockFixture::batches(&blocks));
 }
 
-/// An EIP-8130 transaction reaches derivation byte-identical to its EIP-2718 encoding. The
+/// A Base transaction reaches derivation byte-identical to its EIP-2718 encoding. The
 /// expected bytes come from the transaction itself, not from the encoder's composer, so the test
 /// fails if the encoder drops or alters the transaction.
 #[test]
-fn derivation_reads_back_eip8130_transactions_unchanged() {
-    // A configured sender with a named payer, so every optional field of the encoding is set.
-    let tx = TxEip8130 {
+fn derivation_reads_back_base_txs_unchanged() {
+    // A named sender with a named payer, so every optional field of the encoding is set.
+    let tx = TxBase {
         chain_id: 8453,
         sender: Some(Address::repeat_byte(0x11)),
         nonce_key: U256::from(7),
@@ -105,16 +105,16 @@ fn derivation_reads_back_eip8130_transactions_unchanged() {
         metadata: Bytes::from_static(b"metadata"),
         payer: Some(Address::repeat_byte(0x55)),
     };
-    // Configured-actor auth is `authenticator(20) || authenticator_data`.
-    let authenticator = Eip8130Constants::K1_AUTHENTICATOR;
+    // A named account's auth is `K1_AUTHENTICATOR(20) || r || s || v`.
+    let authenticator = TxBaseConstants::K1_AUTHENTICATOR;
     let sender_auth = [authenticator.as_slice(), &Signature::test_signature().as_bytes()].concat();
     let payer_auth = [authenticator.as_slice(), &[0x66; 65]].concat();
-    let eip8130 =
-        BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth.into(), payer_auth.into()));
+    let base_tx =
+        BaseTxEnvelope::Base(TxBaseSigned::new(tx, sender_auth.into(), payer_auth.into()));
 
-    // The fixture block's user transaction becomes the EIP-8130 one, after the L1-info deposit.
+    // The fixture block's user transaction becomes the Base transaction, after the L1-info deposit.
     let mut block = BlockFixture::block(B256::ZERO, 1, 0);
-    block.body.transactions[1] = eip8130.clone();
+    block.body.transactions[1] = base_tx.clone();
 
     let fixture = EncoderFixture::new(EncoderConfig::default());
     let mut encoder = fixture.encoder();
@@ -123,5 +123,5 @@ fn derivation_reads_back_eip8130_transactions_unchanged() {
 
     let [batch] = <[_; 1]>::try_from(fixture.derive(&submissions).concat())
         .expect("derivation should read back one batch");
-    assert_eq!(batch.transactions, vec![Bytes::from(eip8130.encoded_2718())]);
+    assert_eq!(batch.transactions, vec![Bytes::from(base_tx.encoded_2718())]);
 }

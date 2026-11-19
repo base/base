@@ -97,7 +97,7 @@ base_metrics::define_metrics! {
     #[describe("Per-block EIP-1559 base-fee revenue in wei, segmented by flow")]
     #[label(flow)]
     base_fee_revenue_wei: histogram,
-    #[describe("Per-block EIP-8130 coinbase-tip revenue in wei, segmented by flow")]
+    #[describe("Per-block Base transaction coinbase-tip revenue in wei, segmented by flow")]
     #[label(flow)]
     coinbase_tip_revenue_wei: histogram,
     #[describe(
@@ -462,13 +462,13 @@ mod tests {
             // Standard EIP-1559: flow=standard, bid=priority_fee.
             BuilderMetrics::record_tip_per_gas(false, false, 10.0);
             BuilderMetrics::record_tip_per_gas(false, false, 30.0);
-            // Pre-8130 validity: flow=validity, bid=priority_fee.
+            // Validity without a static tip: flow=validity, bid=priority_fee.
             BuilderMetrics::record_tip_per_gas(true, false, 50.0);
-            // EIP-8130 with predicates and a static phase-0 tip.
+            // Base transaction with predicates and a static phase-0 tip.
             BuilderMetrics::record_tip_per_gas(true, true, 80.0);
-            // EIP-8130 without predicates, but with a static phase-0 tip.
+            // Base transaction without predicates, but with a static phase-0 tip.
             BuilderMetrics::record_tip_per_gas(false, true, 20.0);
-            // EIP-8130 without a statically-analyzable tip: bid=priority_fee.
+            // Base transaction without a statically-analyzable tip: bid=priority_fee.
             BuilderMetrics::record_tip_per_gas(false, false, 5.0);
             BuilderMetrics::record_tip_per_gas(true, false, 15.0);
         });

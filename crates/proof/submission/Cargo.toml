@@ -23,9 +23,6 @@ base-tx-manager.workspace = true
 base-proof-contracts.workspace = true
 base-proof-primitives = { workspace = true, optional = true }
 
-# SP1
-sp1-sdk = { workspace = true, optional = true }
-
 # Encoding
 bincode = { workspace = true, optional = true, features = ["serde"] }
 
@@ -33,9 +30,10 @@ bincode = { workspace = true, optional = true, features = ["serde"] }
 thiserror.workspace = true
 
 [dev-dependencies]
+sp1-sdk.workspace = true
 alloy-consensus.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]
-snark-receipt = [ "dep:base-proof-primitives", "dep:bincode", "dep:sp1-sdk" ]
+snark-receipt = [ "dep:base-proof-primitives", "dep:bincode" ]
 test-utils = [ "snark-receipt" ]

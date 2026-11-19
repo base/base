@@ -23,7 +23,7 @@ use revm::{
 };
 
 #[cfg(feature = "std")]
-use crate::Eip8130Executor;
+use crate::TxBaseExecutor;
 use crate::{
     BaseContext, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError, BaseTxTr,
     handler::BaseHandler,
@@ -210,13 +210,13 @@ where
     }
 
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
-        // EIP-8130 transactions must run through the enshrined pre-call pipeline
+        // Base transactions must run through the enshrined pre-call pipeline
         // (`Evm::transact_raw`); the standard single-frame handler would
         // mis-execute the placeholder `TxEnv`. Reject them here so the failure
         // is explicit rather than silent for any direct `ExecuteEvm` caller.
-        if tx.is_eip8130() {
-            return Err(EVMError::Transaction(BaseTransactionError::eip8130(
-                "EIP-8130 transactions must be executed via Evm::transact_raw",
+        if tx.is_base_tx() {
+            return Err(EVMError::Transaction(BaseTransactionError::base_tx(
+                "Base transactions must be executed via Evm::transact_raw",
             )));
         }
         self.inner.ctx.set_tx(tx);
@@ -268,11 +268,11 @@ where
     }
 
     fn inspect_one_tx(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
-        // See `transact_one`: EIP-8130 transactions are not handled by the
+        // See `transact_one`: Base transactions are not handled by the
         // single-frame (inspector) handler and must use `Evm::transact_raw`.
-        if tx.is_eip8130() {
-            return Err(EVMError::Transaction(BaseTransactionError::eip8130(
-                "EIP-8130 transactions must be executed via Evm::transact_raw",
+        if tx.is_base_tx() {
+            return Err(EVMError::Transaction(BaseTransactionError::base_tx(
+                "Base transactions must be executed via Evm::transact_raw",
             )));
         }
         self.inner.ctx.set_tx(tx);
@@ -351,8 +351,8 @@ where
     }
 }
 
-// The `Journal: core::fmt::Debug` bound is required by the EIP-8130 path:
-// `Eip8130Executor::execute` borrows the journal through
+// The `Journal: core::fmt::Debug` bound is required by the Base transaction path:
+// `TxBaseExecutor::execute` borrows the journal through
 // `EvmInternals::from_context`, whose bounds require `Debug`. This is a public
 // API surface addition over the prior `JournalExt`-only bound, but revm's
 // journal types derive `Debug`, so it is satisfied by every in-tree consumer.
@@ -398,18 +398,18 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        // EIP-8130 transactions are executed by the enshrined pre-call pipeline,
+        // Base transactions are executed by the enshrined pre-call pipeline,
         // around (not inside) an EVM call frame, so they bypass both the mainnet
         // single-frame handler and the inspector frame loop. The pipeline lives
-        // behind the `std` feature; `no_std` builds reject 8130 transactions
+        // behind the `std` feature; `no_std` builds reject Base transactions
         // rather than mis-executing the placeholder `TxEnv`.
         //
         // The inspector is intentionally not driven here: there is no call frame
         // to step through, and the `Inspector` trait has no transaction-level
-        // start/end hook to emit instead. Tracing integration for 8130 is
-        // deferred until the path is reachable via RPC; until then 8130 txns
+        // start/end hook to emit instead. Tracing integration for Base transactions is
+        // deferred until the path is reachable via RPC; until then Base transactions
         // produce no inspector output.
-        if tx.is_eip8130() {
+        if tx.is_base_tx() {
             #[cfg(feature = "std")]
             {
                 // Read-only RPC simulation (`eth_estimateGas` / `eth_call`):
@@ -417,21 +417,21 @@ where
                 // state internally, so report no committed state changes. This
                 // branch is reachable only when the parts were built on the RPC
                 // call path; the consensus/block path never sets the flag.
-                let simulate = tx.is_eip8130_simulate();
+                let simulate = tx.is_base_tx_simulate();
                 self.inner.ctx.set_tx(tx);
                 if simulate {
-                    let result = Eip8130Executor::simulate(self)?;
+                    let result = TxBaseExecutor::simulate(self)?;
                     return Ok(ResultAndState::new(result, EvmState::default()));
                 }
-                let result = Eip8130Executor::execute(self)?;
+                let result = TxBaseExecutor::execute(self)?;
                 let state = self.inner.ctx.journal_mut().finalize();
                 return Ok(ResultAndState::new(result, state));
             }
             #[cfg(not(feature = "std"))]
             {
                 let _ = tx;
-                return Err(EVMError::Transaction(BaseTransactionError::eip8130(
-                    "EIP-8130 execution is unavailable in no_std builds",
+                return Err(EVMError::Transaction(BaseTransactionError::base_tx(
+                    "Base transaction execution is unavailable in no_std builds",
                 )));
             }
         }

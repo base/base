@@ -222,11 +222,16 @@ pub trait ClusterSource: Send + Sync {
     /// Fetches the cluster view once, without logging in.
     fn fetch(&self) -> BoxFuture<'static, Result<ClusterResponse, GateError>>;
 
-    /// Logs in after a 401; resolves once a token is in use or login failed.
+    /// Logs in after a 401, or reads an explicit token source again;
+    /// resolves once a new token is in use or that failed.
     fn login(&self, token_url: Option<String>) -> BoxFuture<'static, Result<(), GateError>>;
 
     /// Picks up a token cached elsewhere; returns whether it changed.
     fn reload_token(&self) -> bool;
+
+    /// Whether the token comes from an explicit source, which [`Self::login`]
+    /// reads again instead of logging in.
+    fn explicit_source(&self) -> bool;
 }
 
 impl ClusterSource for GateClient {
@@ -243,6 +248,10 @@ impl ClusterSource for GateClient {
     fn reload_token(&self) -> bool {
         self.reload_cached_token()
     }
+
+    fn explicit_source(&self) -> bool {
+        self.has_explicit_source()
+    }
 }
 
 /// Polls the gateway's cluster view for the TUI.
@@ -250,12 +259,25 @@ impl ClusterSource for GateClient {
 pub struct GateClusterPoller;
 
 impl GateClusterPoller {
-    /// After a login attempt, wait this long before another one may start.
-    /// Until then a 401 pauses polling until a token is available.
+    /// After a login attempt (or a read of an explicit token source), wait
+    /// this long before another one may start. Until then a 401 pauses
+    /// polling until a token is available.
     pub const LOGIN_RETRY_AFTER: Duration = Duration::from_secs(300);
     /// Shown while a browser login started by the poller is pending.
     pub const LOGIN_PENDING: &str =
         "Approval gateway login: finish signing in in the browser; polling resumes after";
+    /// Shown while the poller reads an explicit token source again after a 401.
+    pub const TOKEN_SOURCE_PENDING: &str =
+        "Approval gateway rejected the token; reading the configured token source again";
+
+    /// Notice for a token problem while the token comes from an explicit
+    /// source: the poller reads the source again once the retry window ends.
+    fn explicit_source_notice(error: &GateError) -> String {
+        format!(
+            "{error}; the configured token source is read again within {} minutes",
+            Self::LOGIN_RETRY_AFTER.as_secs() / 60
+        )
+    }
 
     /// Builds the TUI client and polls until `tx` closes. A client that can't
     /// be built is reported once as a notice.
@@ -273,7 +295,12 @@ impl GateClusterPoller {
     /// A 401 starts one login and pauses polling. Polling resumes when the
     /// login succeeds or a cached token appears. A failed login is not
     /// retried for [`Self::LOGIN_RETRY_AFTER`], so the browser never opens on
-    /// every poll.
+    /// every poll. With an explicit token source the "login" reads that
+    /// source again under the same bound. A source that keeps returning the
+    /// rejected token is not retried with it within the window; when the
+    /// window ends, the poller sends one request with the current token
+    /// before reading the source again, so that token costs one request per
+    /// window.
     pub async fn run(source: Arc<dyn ClusterSource>, tx: mpsc::Sender<ConductorPollUpdate>) {
         let mut interval = tokio::time::interval(ConductorFeed::GATEWAY_POLL_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -281,6 +308,10 @@ impl GateClusterPoller {
         let mut login: JoinSet<Result<(), GateError>> = JoinSet::new();
         let mut last_login: Option<Instant> = None;
         let mut awaiting_token = false;
+        let explicit = source.explicit_source();
+        let token_notice = |error: &GateError| {
+            if explicit { Self::explicit_source_notice(error) } else { error.tui_message() }
+        };
 
         loop {
             interval.tick().await;
@@ -290,7 +321,7 @@ impl GateClusterPoller {
                     Some(Ok(Ok(()))) => awaiting_token = false,
                     Some(Ok(Err(error))) => {
                         if tx
-                            .send(ConductorPollUpdate::GateNotice(error.tui_message()))
+                            .send(ConductorPollUpdate::GateNotice(token_notice(&error)))
                             .await
                             .is_err()
                         {
@@ -328,10 +359,12 @@ impl GateClusterPoller {
                     if may_login {
                         last_login = Some(Instant::now());
                         login.spawn(source.login(token_url));
-                        ConductorPollUpdate::GateNotice(Self::LOGIN_PENDING.to_string())
+                        let pending =
+                            if explicit { Self::TOKEN_SOURCE_PENDING } else { Self::LOGIN_PENDING };
+                        ConductorPollUpdate::GateNotice(pending.to_string())
                     } else {
                         let error = GateError::Unauthenticated { message, token_url };
-                        ConductorPollUpdate::GateNotice(error.tui_message())
+                        ConductorPollUpdate::GateNotice(token_notice(&error))
                     }
                 }
                 Err(error) => ConductorPollUpdate::GateNotice(error.to_string()),
@@ -467,9 +500,10 @@ mod tests {
     use std::{
         str::FromStr,
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
         },
+        time::Duration,
     };
 
     use alloy_primitives::B256;
@@ -668,6 +702,7 @@ mod tests {
             Box::pin(async { Ok(snapshot()) })
         });
         source.expect_login().never();
+        source.expect_explicit_source().return_const(false);
         let (tx, mut rx) = mpsc::channel(8);
         let poller = tokio::spawn(GateClusterPoller::run(Arc::new(source), tx));
 
@@ -701,6 +736,7 @@ mod tests {
             Box::pin(async { Err(GateError::LoginRequired { url: None }) })
         });
         source.expect_reload_token().return_const(false);
+        source.expect_explicit_source().return_const(false);
         let (tx, mut rx) = mpsc::channel(64);
         let poller = tokio::spawn(GateClusterPoller::run(Arc::new(source), tx));
 
@@ -738,6 +774,7 @@ mod tests {
         });
         source.expect_login().times(1).returning(|_| Box::pin(async { Ok(()) }));
         source.expect_reload_token().return_const(false);
+        source.expect_explicit_source().return_const(false);
         let (tx, mut rx) = mpsc::channel(8);
         let poller = tokio::spawn(GateClusterPoller::run(Arc::new(source), tx));
 
@@ -765,6 +802,7 @@ mod tests {
         source
             .expect_reload_token()
             .returning(move || reload_count.fetch_add(1, Ordering::SeqCst) >= 4);
+        source.expect_explicit_source().return_const(false);
         let (tx, mut rx) = mpsc::channel(8);
         let poller = tokio::spawn(GateClusterPoller::run(Arc::new(source), tx));
 
@@ -836,7 +874,83 @@ mod tests {
 
         assert_eq!(error, unauthenticated());
         assert_eq!(hits.load(Ordering::SeqCst), 1);
-        // An explicit token source cannot log in, so the poller just backs off.
-        assert_eq!(ClusterSource::login(&client, None).await, Err(GateError::MissingToken));
+        // An explicit source is read again instead of logging in; the same
+        // rejected token is an error, so the poller backs off.
+        assert!(ClusterSource::explicit_source(&client));
+        assert!(matches!(ClusterSource::login(&client, None).await, Err(GateError::Token(_))));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// Polls a gateway that accepts only `tok-2`, with a token command that
+    /// counts its runs in `dir/runs` and prints `output` (`$n` is the run).
+    /// Returns the updates, the Authorization headers seen, and the runs.
+    async fn poll_with_command(
+        output: &str,
+        dir: &std::path::Path,
+    ) -> (mpsc::Receiver<ConductorPollUpdate>, Arc<Mutex<Vec<String>>>, std::path::PathBuf) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&seen);
+        let router = Router::new().route(
+            "/admin/conductor/cluster",
+            get(move |headers: HeaderMap| {
+                let auth = headers["authorization"].to_str().unwrap().to_string();
+                log.lock().unwrap().push(auth.clone());
+                async move {
+                    if auth == "Bearer tok-2" {
+                        (StatusCode::OK, CLUSTER_EXAMPLE.to_string())
+                    } else {
+                        (StatusCode::UNAUTHORIZED, json!({"error": "unauthenticated"}).to_string())
+                    }
+                }
+            }),
+        );
+        let runs = dir.join("runs");
+        let file = runs.display();
+        let settings = GateSettings {
+            env_token: None,
+            token_command: Some(format!(
+                "n=$(cat '{file}' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '{file}'; echo {output}"
+            )),
+            ..settings(serve(router).await, "unused")
+        };
+        let client = settings.client_for_tui_login().await.unwrap();
+        let (tx, mut rx) = mpsc::channel(8);
+        tokio::spawn(GateClusterPoller::run(Arc::new(client), tx));
+        let first = rx.recv().await.unwrap();
+        assert!(
+            matches!(&first, ConductorPollUpdate::GateNotice(n) if n == GateClusterPoller::TOKEN_SOURCE_PENDING),
+            "{first:?}"
+        );
+        (rx, seen, runs)
+    }
+
+    #[tokio::test]
+    async fn poller_recovers_when_the_token_command_returns_a_new_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut rx, seen, runs) = poll_with_command("tok-$n", dir.path()).await;
+
+        let next = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().unwrap();
+        assert!(matches!(next, ConductorPollUpdate::GateSnapshot(_)), "{next:?}");
+        assert_eq!(*seen.lock().unwrap(), vec!["Bearer tok-1", "Bearer tok-2"]);
+        assert_eq!(std::fs::read_to_string(runs).unwrap().trim(), "2");
+    }
+
+    #[tokio::test]
+    async fn unchanged_rejected_token_is_not_sent_again_within_the_retry_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut rx, seen, runs) = poll_with_command("tok-stale", dir.path()).await;
+
+        let next = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().unwrap();
+        assert!(
+            matches!(&next, ConductorPollUpdate::GateNotice(n)
+                if n.contains("returned the token the gateway rejected") && n.contains("read again within 5 minutes")),
+            "{next:?}"
+        );
+        // Another poll tick passes: the source was read again once, and the
+        // rejected token was not sent again.
+        tokio::time::sleep(ConductorFeed::GATEWAY_POLL_INTERVAL + Duration::from_millis(500)).await;
+        assert!(rx.try_recv().is_err());
+        assert_eq!(std::fs::read_to_string(runs).unwrap().trim(), "2");
+        assert_eq!(*seen.lock().unwrap(), vec!["Bearer tok-stale"]);
     }
 }

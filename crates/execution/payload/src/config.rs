@@ -34,8 +34,8 @@ pub struct BaseBuilderConfig {
     /// Sequencer transactions always count toward the total; pool transactions that would push
     /// the block over the limit are skipped for this block.
     pub max_uncompressed_block_size: Option<u64>,
-    /// Whether to drop positively stale EIP-8130 transactions using their
-    /// captured authorization manifest before execution.
+    /// Whether to drop positively stale Base transactions using their
+    /// captured payer and expiry predicates before execution.
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,

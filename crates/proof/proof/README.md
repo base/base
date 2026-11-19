@@ -21,11 +21,27 @@ base-proof = { workspace = true }
 ```
 
 ```rust,ignore
-use base_proof::{OraclePipeline, BaseExecutor, CachingOracle};
+use base_proof::{BaseExecutor, CachingOracle, OraclePipeline};
 
-let oracle = Arc::new(CachingOracle::new(raw_oracle));
-let pipeline = OraclePipeline::new(cfg, oracle.clone(), l1_provider, l2_provider);
-let executor = BaseExecutor::new(chain_spec);
+// `oracle_reader` and `hint_writer` speak the preimage protocol over the host channels.
+let oracle = Arc::new(CachingOracle::new(cache_size, oracle_reader, hint_writer));
+
+// `cursor` comes from `new_oracle_pipeline_cursor`; the providers are the oracle-backed
+// `OracleL1ChainProvider` / `OracleL2ChainProvider` and a data availability source.
+let pipeline = OraclePipeline::new(
+    rollup_config.clone(),
+    l1_config,
+    cursor.clone(),
+    oracle.clone(),
+    da_provider,
+    l1_provider,
+    l2_provider.clone(),
+)
+.await?;
+
+// The L2 provider serves both trie nodes and trie hints.
+let executor =
+    BaseExecutor::new(&rollup_config, l2_provider.clone(), l2_provider, evm_factory, None);
 ```
 
 ## License

@@ -107,8 +107,11 @@ Replacing it:
   once published: p        = max(p, max_priority_fee_per_gas / n)
 
 When it lands:
-  p = max(lower_bound, 0.9 × max_priority_fee_per_gas / n)
+  p = max(lower_bound, decay_percent / 100 × max_priority_fee_per_gas / n)
 ```
+
+`decay_percent` is `max_priority_fee_per_gas_per_blob_decay_percent`, 90 by default and at
+most 100. A lower value brings `p` back down faster after a fee spike.
 
 A blob transaction is replaced when it is not included after `resubmission_timeout`, or
 right away when the node refuses it for its fees. After an RPC error or no answer, such

@@ -1,6 +1,6 @@
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
-use base_common_consensus::{BaseReceipt, BaseTransactionSigned, Eip8130Receipt, OpTxType};
+use base_common_consensus::{BaseReceipt, BaseTransactionSigned, OpTxType, TxBaseReceipt};
 use base_common_evm::BaseReceiptBuilder;
 use reth_evm::Evm;
 
@@ -17,7 +17,7 @@ impl BaseReceiptBuilder for BaseRethReceiptBuilder {
     fn build_receipt<'a, E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'a, OpTxType, E>,
-        eip8130_committed_phases: u64,
+        base_tx_committed_phases: u64,
     ) -> Result<Self::Receipt, Box<ReceiptBuilderCtx<'a, OpTxType, E>>> {
         match ctx.tx_type {
             OpTxType::Deposit => Err(Box::new(ctx)),
@@ -36,8 +36,8 @@ impl BaseReceiptBuilder for BaseRethReceiptBuilder {
                     OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
                     OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
                     OpTxType::Deposit => unreachable!(),
-                    OpTxType::Eip8130 => {
-                        BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, eip8130_committed_phases))
+                    OpTxType::Base => {
+                        BaseReceipt::Base(TxBaseReceipt::new(receipt, base_tx_committed_phases))
                     }
                 })
             }

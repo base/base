@@ -10,8 +10,7 @@ use std::{
 use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
 use base_execution_txpool::{
-    DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT,
-    ValidityPoolLimits,
+    DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, ValidityPoolLimits,
 };
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
@@ -40,7 +39,7 @@ const DEFAULT_ROCKSDB_WRITE_BUFFER_SIZE_MIB: u64 = 64;
 pub enum TxpoolOrdering {
     /// Order by unified tip-per-gas (higher bid = higher priority).
     ///
-    /// Standard transactions use `priorityFeePerGas`. EIP-8130 transactions
+    /// Standard transactions use `priorityFeePerGas`. Base transactions
     /// with a static coinbase tip use `tip / gasLimit`. Equal bids prefer
     /// fewer validity predicates.
     #[default]
@@ -361,7 +360,8 @@ pub struct RollupArgs {
     /// Transaction ordering strategy for the mempool.
     ///
     /// Determines how transactions are prioritized when building blocks.
-    /// - `coinbase-tip`: Order by tip-per-gas (priority fee, or EIP-8130 coinbase tip / gas limit). Default.
+    /// - `coinbase-tip`: Order by tip-per-gas (priority fee, or Base transaction coinbase tip / gas
+    ///   limit). Default.
     /// - `timestamp`: Order by receive time (FIFO, earlier = higher priority).
     #[arg(long = "rollup.txpool-ordering", default_value = "coinbase-tip")]
     pub txpool_ordering: TxpoolOrdering,
@@ -370,7 +370,7 @@ pub struct RollupArgs {
     /// txpool. Reth defaults to 1, which prevents delegated accounts from submitting multiple
     /// transactions within a block (e.g. buy + approve in a single block).
     ///
-    /// We raise the default to 4 (matching the EIP-8130 sender cap). Delegated code can move the
+    /// We raise the default to 4. Delegated code can move the
     /// account's balance mid-block, so a queued tx can become insolvent before the next canonical
     /// update; but that case fails fast — revm rejects on the pre-execution balance check before
     /// running any delegated code — so the only cost of a small cap is bounded (linear in the cap)
@@ -378,23 +378,11 @@ pub struct RollupArgs {
     #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 4)]
     pub max_inflight_delegated_slots: usize,
 
-    /// Maximum inflight EIP-8130 transactions per non-locked sender account.
-    #[arg(long = "rollup.mempool-sender-limit", default_value_t = DEFAULT_SIGNATURE_LIMIT)]
-    pub mempool_sender_limit: u32,
-
-    /// Maximum inflight EIP-8130 transactions per count-limited payer account.
+    /// Maximum inflight Base transactions per count-limited payer account.
     #[arg(long = "rollup.mempool-payer-limit", default_value_t = DEFAULT_PAYMENT_LIMIT)]
     pub mempool_payer_limit: u32,
 
-    /// Additional operator-trusted delegation targets for balance-bounded locked payers.
-    ///
-    /// This is local, non-consensus mempool policy and may intentionally differ between nodes.
-    /// Only configure implementations whose locked mode prevents ETH outflows other than the gas
-    /// they sponsor; an unsafe target weakens this node's aggregate payer-balance admission bound.
-    #[arg(long = "rollup.mempool-trusted-delegation-targets", value_delimiter = ',')]
-    pub mempool_trusted_delegation_targets: Vec<Address>,
-
-    /// Payers allowed more inflight EIP-8130 sponsored transactions than the default payer
+    /// Payers allowed more inflight sponsored Base transactions than the default payer
     /// limit, up to `--rollup.mempool-allowlisted-payer-limit`.
     ///
     /// This is local, non-consensus mempool policy. An allowlisted payer is also balance-bounded:
@@ -402,7 +390,7 @@ pub struct RollupArgs {
     #[arg(long = "rollup.mempool-allowlisted-payers", value_delimiter = ',')]
     pub mempool_allowlisted_payers: Vec<Address>,
 
-    /// Maximum inflight EIP-8130 transactions per allowlisted payer account.
+    /// Maximum inflight Base transactions per allowlisted payer account.
     #[arg(
         long = "rollup.mempool-allowlisted-payer-limit",
         default_value_t = DEFAULT_ALLOWLISTED_PAYMENT_LIMIT
@@ -550,9 +538,7 @@ impl Default for RollupArgs {
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
             max_inflight_delegated_slots: 4,
-            mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
             mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,
-            mempool_trusted_delegation_targets: Vec::new(),
             mempool_allowlisted_payers: Vec::new(),
             mempool_allowlisted_payer_limit: DEFAULT_ALLOWLISTED_PAYMENT_LIMIT,
             validity_pool_max_count: None,
@@ -684,9 +670,7 @@ mod tests {
     #[test]
     fn test_parse_mempool_limits_default() {
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert_eq!(args.mempool_sender_limit, DEFAULT_SIGNATURE_LIMIT);
         assert_eq!(args.mempool_payer_limit, DEFAULT_PAYMENT_LIMIT);
-        assert!(args.mempool_trusted_delegation_targets.is_empty());
         assert!(args.mempool_allowlisted_payers.is_empty());
         assert_eq!(args.mempool_allowlisted_payer_limit, DEFAULT_ALLOWLISTED_PAYMENT_LIMIT);
     }
@@ -695,27 +679,15 @@ mod tests {
     fn test_parse_mempool_limits() {
         let args = CommandParser::<RollupArgs>::parse_from([
             "reth",
-            "--rollup.mempool-sender-limit",
-            "8",
             "--rollup.mempool-payer-limit",
             "16",
-            "--rollup.mempool-trusted-delegation-targets",
-            "0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002",
             "--rollup.mempool-allowlisted-payers",
             "0x0000000000000000000000000000000000000003",
             "--rollup.mempool-allowlisted-payer-limit",
             "128",
         ])
         .args;
-        assert_eq!(args.mempool_sender_limit, 8);
         assert_eq!(args.mempool_payer_limit, 16);
-        assert_eq!(
-            args.mempool_trusted_delegation_targets,
-            vec![
-                "0x0000000000000000000000000000000000000001".parse::<Address>().unwrap(),
-                "0x0000000000000000000000000000000000000002".parse::<Address>().unwrap(),
-            ]
-        );
         assert_eq!(
             args.mempool_allowlisted_payers,
             vec!["0x0000000000000000000000000000000000000003".parse::<Address>().unwrap()]

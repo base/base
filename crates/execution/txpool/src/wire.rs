@@ -93,11 +93,10 @@ pub struct ValidatedTransaction<E = NoExtensions> {
     pub sender: Address,
     /// EIP-2718 encoded transaction bytes.
     pub raw: Bytes,
-    /// In-process `meter_bundle` result. Nested so `u128` timing fields do not go
+    /// Optional `meter_bundle` result. Nested so `u128` timing fields do not go
     /// through `#[serde(flatten)]`, which `serde_json` cannot represent.
     ///
-    /// Omitted when `None`, so existing payloads stay byte-compatible until
-    /// inline simulation starts sending it.
+    /// Omitted when `None`, so payloads without metering stay byte-compatible.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub metering: Option<MeterBundleResponse>,
     /// Extension fields, inlined into the top-level JSON object.

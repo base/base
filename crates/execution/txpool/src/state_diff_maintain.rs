@@ -2,7 +2,7 @@
 //!
 //! Reth's stock pool maintenance forwards account nonce and balance updates but
 //! drops committed storage diffs. This task feeds complete canonical account
-//! deltas into the EIP-8130 invalidation index.
+//! deltas into the Base transaction invalidation index.
 
 use alloy_primitives::{B256, U256};
 use futures::StreamExt;
@@ -41,7 +41,7 @@ impl InvalidationCause {
     }
 }
 
-/// Applies canonical state diffs to a pool's EIP-8130 invalidation guard.
+/// Applies canonical state diffs to a pool's Base transaction invalidation guard.
 pub trait StateDiffInvalidation: Clone + Send + Sync + 'static {
     /// Invalidates guarded transactions affected by an executed state diff.
     fn invalidate_from_state_diff(&self, diffs: &[AccountStateDiff]) -> usize;
@@ -95,7 +95,7 @@ pub async fn maintain_state_diff_invalidation<P, N>(
             debug!(
                 removed = removed,
                 accounts = diffs.len(),
-                "invalidated EIP-8130 transactions from canonical state diff"
+                "invalidated Base transactions from canonical state diff"
             );
         }
     }

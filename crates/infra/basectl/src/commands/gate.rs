@@ -5,8 +5,8 @@ use chrono::Utc;
 use clap::{Args, Subcommand};
 
 use crate::{
-    CommandOutcome, ConductorCommandError, Confirm, GateOutcomeKind, GateSettings, JsonOutput,
-    ProposalStatusResponse,
+    CommandOutcome, ConductorCommandError, Confirm, GateClient, GateOutcomeKind, GateSettings,
+    JsonOutput, ProposalStatusResponse,
 };
 
 /// Leader transfer through the approval gateway: propose, have a different
@@ -67,6 +67,12 @@ impl TransferCommand {
     /// Runs the selected transfer step against the gateway.
     pub async fn run(self, gate: &GateSettings) -> Result<CommandOutcome> {
         let client = gate.client().await.map_err(ConductorCommandError::from)?;
+        let outcome = self.run_with(&client).await;
+        client.flush_cache().await;
+        outcome
+    }
+
+    async fn run_with(self, client: &GateClient) -> Result<CommandOutcome> {
         match self.command {
             TransferCommands::Propose(args) => {
                 let created = client

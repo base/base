@@ -9,11 +9,11 @@
 //! events, which record it next to the billed gas so the data team can measure
 //! how limits relate to consumption without re-simulating every transaction.
 //!
-//! The mechanism mirrors [`Eip8130CommittedPhases`]: [`Evm::transact`] can only
+//! The mechanism mirrors [`TxBaseCommittedPhases`]: [`Evm::transact`] can only
 //! return a [`ResultAndState`], and reth's executor machinery is generic over
 //! `E: Evm` with no channel for extra per-transaction metadata, so the value is
 //! published through a thread-local slot whose lifetime is a single synchronous
-//! `transact` call. The handler ([`BaseHandler::post_execution`]) or the EIP-8130
+//! `transact` call. The handler ([`BaseHandler::post_execution`]) or the Base transaction
 //! executor [`set`]s it as part of executing the transaction, and the caller of
 //! `transact` [`take`]s it on the same thread as soon as the call returns, before
 //! executing anything else. Nothing on the consensus path reads the slot: the
@@ -24,7 +24,7 @@
 //! A panic between [`set`] and [`take`] could leave one transaction's value
 //! behind for the next transaction on the same thread. Both execution paths call
 //! [`clear`] as their first step ([`BaseHandler::validate_env`] and
-//! [`Eip8130Executor::execute`]), so the slot only ever reflects the in-flight
+//! [`TxBaseExecutor::execute`]), so the slot only ever reflects the in-flight
 //! transaction, and [`take`] returns `None` for a transaction that never reached
 //! settlement, such as a deposit that failed and was included as a halt.
 //!
@@ -33,8 +33,8 @@
 //! [`BaseFeature::GasLimitBilling`]: base_common_genesis::BaseFeature::GasLimitBilling
 //! [`BaseHandler::post_execution`]: revm::handler::Handler::post_execution
 //! [`BaseHandler::validate_env`]: revm::handler::Handler::validate_env
-//! [`Eip8130CommittedPhases`]: crate::Eip8130CommittedPhases
-//! [`Eip8130Executor::execute`]: crate::Eip8130Executor::execute
+//! [`TxBaseCommittedPhases`]: crate::TxBaseCommittedPhases
+//! [`TxBaseExecutor::execute`]: crate::TxBaseExecutor::execute
 //! [`set`]: MeteredGas::set
 //! [`take`]: MeteredGas::take
 //! [`clear`]: MeteredGas::clear
@@ -53,10 +53,10 @@ std::thread_local! {
 pub struct MeteredGas {
     /// The gas the transaction would be charged, and its receipt would report,
     /// without gas-limit billing: gas spent less the EIP-3529-capped refund,
-    /// raised to the EIP-7623 floor. For an EIP-8130 transaction this includes
+    /// raised to the EIP-7623 floor. For a Base transaction this includes
     /// payer authentication. Equal to the billed gas before the feature activates.
     pub gas_used: u64,
-    /// For an EIP-8130 transaction, the payer-authentication gas reserved and
+    /// For a Base transaction, the payer-authentication gas reserved and
     /// billed on top of the sender's `gas_limit` (`IntrinsicGas::payer_auth_cost`),
     /// so that under gas-limit billing the
     /// billed gas is exactly `gas_limit + payer_auth_gas_reserved`. `None` for every other

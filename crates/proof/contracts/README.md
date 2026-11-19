@@ -30,10 +30,13 @@ base-proof-contracts = { workspace = true }
 Use the Alloy-backed clients to interact with onchain contracts:
 
 ```rust,ignore
-use base_proof_contracts::DisputeGameFactoryClient;
+use base_proof_contracts::{DisputeGameFactoryClient, DisputeGameFactoryContractClient};
 
-let factory = DisputeGameFactoryClient::new(provider, factory_address);
-let games = factory.get_all_games(game_type, 0, count).await?;
+let factory = DisputeGameFactoryContractClient::new(factory_address, provider);
+let count = factory.game_count().await?;
+if let Some(last) = count.checked_sub(1) {
+    let latest = factory.game_at_index(last).await?;
+}
 ```
 
 ## License

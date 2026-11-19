@@ -1,7 +1,5 @@
 use std::{
     any::Any,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    num::NonZeroUsize,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -14,21 +12,19 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
-    AccountChange, BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    Eip8130StructuralError, Eip8130Structure, Eip8130TimestampError,
+    AccountChange, BaseTimeUpdateTx, TxBaseConstants, TxBaseSigned, TxBaseStructuralError,
+    TxBaseStructure, TxBaseTimestampError,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
-use base_execution_eip8130::{
-    AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasError, LockStatus, NonceError, NonceMode, NonceValidator, ResolvedSender,
+use base_execution_base_tx::{
+    DelegationError, FeeCheck, IntrinsicGas, NonceError, NonceMode, NonceValidator, ResolvedSender,
     TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
 };
-use lru::LruCache;
 use parking_lot::RwLock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
@@ -51,7 +47,7 @@ use revm::{
 };
 
 use crate::{
-    BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, ValidatorMetrics, WatchManifest,
+    BasePooledTx, InvalidationKey, LimitClass, UnixMillis, ValidatorMetrics, WatchManifest,
     WatchSet,
 };
 
@@ -68,9 +64,9 @@ pub enum BaseTxPoolError {
         /// The current block gas limit.
         block_gas_limit: u64,
     },
-    /// The transaction failed EIP-8130-specific stateful validation.
-    #[error("EIP-8130 validation failed: {reason}")]
-    Eip8130Validation {
+    /// The transaction failed Base-transaction-specific stateful validation.
+    #[error("Base transaction validation failed: {reason}")]
+    TxBaseValidation {
         /// Static validation label for the failure.
         reason: &'static str,
     },
@@ -80,9 +76,9 @@ pub enum BaseTxPoolError {
     DelegatedValidityTransaction,
 }
 
-/// Resolved EIP-8130 actors and state data required to build the pool outcome.
+/// Resolved Base transaction sender, payer and state data required to build the pool outcome.
 #[derive(Debug, Clone)]
-struct Eip8130ValidationState {
+struct TxBaseValidationState {
     sender: Address,
     payer: Address,
     classification_generation: u64,
@@ -96,147 +92,18 @@ struct Eip8130ValidationState {
     /// sender code reth's delegation slot limit is meant for; `None` otherwise.
     sender_bytecode_hash: Option<B256>,
     watch_set: WatchSet,
-    sender_locked: bool,
-    payer_locked: bool,
-    payer_trusted: bool,
     payer_allowlisted: bool,
     payer_max_cost: U256,
-    /// The sender's policy gate target, when the sender actor is policy-gated.
-    sender_policy_target: Option<Address>,
-    /// Authorization reads and predicates used for build-time revalidation.
+    /// Predicates used for build-time revalidation.
     manifest: WatchManifest,
 }
-
-const LIMIT_CLASS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(100_000).unwrap();
 
 // The pool must never admit a nonce-free transaction whose `valid_before` the
 // consensus inclusion check would reject.
 const _: () = assert!(
-    Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW <= NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
+    TxBaseConstants::NONCE_FREE_MAX_EXPIRY_WINDOW <= NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
     "mempool nonce-free expiry window exceeds the consensus inclusion window",
 );
-
-/// Cached lock state and trusted-delegation classification by account.
-#[derive(Debug)]
-pub struct LimitClassCache {
-    entries: LruCache<Address, (Option<AccountState>, Option<bool>)>,
-    // A slot mapping exists exactly while its account's cached lock state is present.
-    slots: HashMap<B256, Address>,
-    // Allowlisted payers validated since their last balance change. Bounded by
-    // the operator allowlist, so it needs no eviction.
-    allowlisted_validations: AddressSet,
-}
-
-impl LimitClassCache {
-    /// Creates an empty cache with the supplied non-zero account capacity.
-    pub fn new(capacity: NonZeroUsize) -> Self {
-        Self {
-            entries: LruCache::new(capacity),
-            slots: HashMap::new(),
-            allowlisted_validations: AddressSet::default(),
-        }
-    }
-
-    /// Returns and marks as recently used the cached account state, if present.
-    pub fn account_state(&mut self, account: Address) -> Option<AccountState> {
-        self.entries.get(&account).and_then(|entry| entry.0)
-    }
-
-    /// Returns and marks as recently used the cached trusted-delegation class, if present.
-    pub fn trusted(&mut self, account: Address) -> Option<bool> {
-        self.entries.get(&account).and_then(|entry| entry.1)
-    }
-
-    /// Whether the account is cached as a trusted (high-rate) payer, without
-    /// promoting it. Non-promoting so balance-diff bookkeeping cannot bias LRU
-    /// eviction (see [`Self::invalidate_code`]).
-    pub fn is_trusted_cached(&self, account: Address) -> bool {
-        self.entries.peek(&account).is_some_and(|entry| entry.1 == Some(true))
-    }
-
-    /// Inserts an account-state classification and removes any reverse slot
-    /// belonging to the least-recently-used account evicted by the insertion.
-    pub fn insert_account_state(&mut self, account: Address, state: AccountState) {
-        if let Some(entry) = self.entries.get_mut(&account) {
-            entry.0 = Some(state);
-        } else if let Some((evicted, entry)) = self.entries.push(account, (Some(state), None))
-            && entry.0.is_some()
-        {
-            self.slots.remove(&AccountConfigurationStorage::account_state_slot(evicted));
-        }
-        self.slots.insert(AccountConfigurationStorage::account_state_slot(account), account);
-    }
-
-    /// Inserts a trusted-delegation classification and removes any reverse slot
-    /// belonging to the least-recently-used account evicted by the insertion.
-    pub fn insert_trusted(&mut self, account: Address, trusted: bool) {
-        if let Some(entry) = self.entries.get_mut(&account) {
-            entry.1 = Some(trusted);
-        } else if let Some((evicted, entry)) = self.entries.push(account, (None, Some(trusted)))
-            && entry.0.is_some()
-        {
-            self.slots.remove(&AccountConfigurationStorage::account_state_slot(evicted));
-        }
-    }
-
-    /// Invalidates an account's trusted-delegation classification.
-    ///
-    /// Uses the non-promoting `peek_mut`: invalidation is driven by every
-    /// canonical state diff, so an account with frequent code churn must not
-    /// promote itself to most-recently-used and displace fresher, fully-valid
-    /// entries. A surviving partially-invalidated entry keeps its recency.
-    pub fn invalidate_code(&mut self, account: Address) {
-        let remove = self.entries.peek_mut(&account).is_some_and(|entry| {
-            entry.1 = None;
-            entry.0.is_none()
-        });
-        if remove {
-            self.entries.pop(&account);
-        }
-    }
-
-    /// Invalidates the account-state classification associated with `slot`.
-    ///
-    /// Uses the non-promoting `peek_mut` for the same reason as
-    /// [`Self::invalidate_code`]: config-slot churn must not bias eviction by
-    /// pinning the affected account at most-recently-used.
-    pub fn invalidate_slot(&mut self, slot: &B256) {
-        if let Some(account) = self.slots.remove(slot) {
-            let remove = self.entries.peek_mut(&account).is_some_and(|entry| {
-                entry.0 = None;
-                entry.1.is_none()
-            });
-            if remove {
-                self.entries.pop(&account);
-            }
-        }
-    }
-
-    /// Clears all cached classifications and reverse slot mappings.
-    pub fn clear(&mut self) {
-        self.entries.clear();
-        self.slots.clear();
-        self.allowlisted_validations.clear();
-    }
-
-    /// Records that an allowlisted payer was just validated, so its next
-    /// balance change advances the classification generation.
-    pub fn mark_allowlisted_validation(&mut self, payer: Address) {
-        self.allowlisted_validations.insert(payer);
-    }
-
-    /// Whether an allowlisted payer was validated since its last balance
-    /// change, clearing the record.
-    pub fn take_allowlisted_validation(&mut self, payer: Address) -> bool {
-        self.allowlisted_validations.remove(&payer)
-    }
-}
-
-impl Default for LimitClassCache {
-    fn default() -> Self {
-        Self::new(LIMIT_CLASS_CACHE_CAPACITY)
-    }
-}
 
 /// Read-only precompile storage adapter backed by a reth state provider.
 struct StateProviderPrecompileStorage<'a> {
@@ -429,248 +296,6 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
     }
 }
 
-/// Writable in-memory overlay over a read-only [`StateProviderPrecompileStorage`].
-///
-/// EIP-8130 admission authorizes a transaction's account changes by *applying*
-/// them against the evolving state — a create installs its initial actors before
-/// the next change authenticates against them, a config change advances the
-/// channel sequence the next same-channel entry reads, and the sender is
-/// authenticated against the resulting post-apply state. This mirrors block
-/// execution exactly (both run [`TransactionAuthorizer::authorize_and_apply`]),
-/// so the pool accepts exactly what the builder will include.
-///
-/// The pool's state snapshot is read-only, so this overlay buffers `SSTORE`s in
-/// memory and serves them back on `SLOAD`, falling through to the snapshot for
-/// unbuffered slots. The buffered writes are scoped to a single validation and
-/// dropped with the overlay: admission never mutates canonical state. Deferred
-/// account-code effects validate the canonical code through `with_account_code`,
-/// while the subsequent `set_code` is accepted and discarded.
-// `BTreeMap` (not `HashMap`) for deterministic iteration order. The overlay
-// only performs point reads/writes today so ordering is not observed, but
-// precompile storage feeds consensus-relevant state — a `BTreeMap` keeps a
-// future iteration-sensitive change from silently depending on
-// `HashMap`'s non-deterministic order.
-struct OverlayPrecompileStorage<'a> {
-    inner: StateProviderPrecompileStorage<'a>,
-    storage: BTreeMap<(Address, U256), U256>,
-    transient: BTreeMap<(Address, U256), U256>,
-    /// First base-state value read from each slot during authorization.
-    reads: BTreeMap<(Address, U256), U256>,
-    code_reads: BTreeSet<Address>,
-}
-
-impl<'a> OverlayPrecompileStorage<'a> {
-    const fn new(inner: StateProviderPrecompileStorage<'a>) -> Self {
-        Self {
-            inner,
-            storage: BTreeMap::new(),
-            transient: BTreeMap::new(),
-            reads: BTreeMap::new(),
-            code_reads: BTreeSet::new(),
-        }
-    }
-
-    fn take_reads(&mut self) -> Vec<ConfigSlot> {
-        core::mem::take(&mut self.reads)
-            .into_iter()
-            .map(|((address, slot), expected)| ConfigSlot { address, slot, expected })
-            .collect()
-    }
-}
-
-impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
-    fn chain_id(&self) -> u64 {
-        self.inner.chain_id()
-    }
-
-    fn timestamp(&self) -> U256 {
-        self.inner.timestamp()
-    }
-
-    fn beneficiary(&self) -> Address {
-        self.inner.beneficiary()
-    }
-
-    fn block_number(&self) -> u64 {
-        self.inner.block_number()
-    }
-
-    fn origin(&self) -> Address {
-        self.inner.origin()
-    }
-
-    fn set_code(&mut self, _address: Address, _code: Bytecode) -> Result<(), BasePrecompileError> {
-        // Delegation installation validates canonical code before this deferred
-        // write, which admission intentionally discards.
-        Ok(())
-    }
-
-    // NOTE: account *info* (nonce, balance, code hash) is intentionally not
-    // overlaid — it delegates to the read-only inner provider, so a
-    // counterfactual-create account reads back as empty/default here. This is
-    // sound because account-configuration state uses `sload`/`sstore` (which
-    // the overlay buffers), while delegation code reads below intentionally use
-    // the canonical snapshot. If a future change needs created-account info in
-    // this flow, the overlay would need to buffer account info too.
-    fn with_account_info(
-        &mut self,
-        address: Address,
-        f: &mut dyn FnMut(&AccountInfo),
-    ) -> Result<(), BasePrecompileError> {
-        self.inner.with_account_info(address, f)
-    }
-
-    // Delegation installation validates the canonical code; deferred code
-    // writes are discarded by `set_code` above and cannot affect this read.
-    fn with_account_code(
-        &mut self,
-        address: Address,
-        f: &mut dyn FnMut(&Bytecode),
-    ) -> Result<(), BasePrecompileError> {
-        self.inner.with_account_code(address, f)?;
-        self.code_reads.insert(address);
-        Ok(())
-    }
-
-    fn sload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
-        // Overlay hits are this transaction's buffered writes, not canonical
-        // dependencies. Recording one would make later manifest validation
-        // compare a transaction's own effect against pre-state and reject it.
-        if let Some(value) = self.storage.get(&(address, key)) {
-            return Ok(*value);
-        }
-        let value = self.inner.sload(address, key)?;
-        self.reads.entry((address, key)).or_insert(value);
-        Ok(value)
-    }
-
-    fn tload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
-        Ok(self.transient.get(&(address, key)).copied().unwrap_or_default())
-    }
-
-    fn tload_unmetered(
-        &mut self,
-        address: Address,
-        key: U256,
-    ) -> Result<U256, BasePrecompileError> {
-        // Overlay backend: `tload` never deducts gas, so the raw read is unmetered.
-        Ok(self.transient.get(&(address, key)).copied().unwrap_or_default())
-    }
-
-    fn sstore(
-        &mut self,
-        address: Address,
-        key: U256,
-        value: U256,
-    ) -> Result<(), BasePrecompileError> {
-        self.storage.insert((address, key), value);
-        Ok(())
-    }
-
-    fn tstore(
-        &mut self,
-        address: Address,
-        key: U256,
-        value: U256,
-    ) -> Result<(), BasePrecompileError> {
-        self.transient.insert((address, key), value);
-        Ok(())
-    }
-
-    fn emit_event(
-        &mut self,
-        _address: Address,
-        _event: LogData,
-    ) -> Result<(), BasePrecompileError> {
-        Ok(())
-    }
-
-    fn deduct_gas(&mut self, _gas: u64) -> Result<(), BasePrecompileError> {
-        Ok(())
-    }
-
-    fn deduct_state_gas(&mut self, _gas: u64) -> Result<(), BasePrecompileError> {
-        Ok(())
-    }
-
-    fn refund_gas(&mut self, _gas: i64) {}
-
-    fn gas_limit(&self) -> u64 {
-        u64::MAX
-    }
-
-    fn gas_used(&self) -> u64 {
-        0
-    }
-
-    fn state_gas_used(&self) -> u64 {
-        0
-    }
-
-    fn gas_refunded(&self) -> i64 {
-        0
-    }
-
-    fn reservoir(&self) -> u64 {
-        0
-    }
-
-    fn is_static(&self) -> bool {
-        false
-    }
-
-    fn call_value(&self) -> U256 {
-        U256::ZERO
-    }
-
-    fn caller(&self) -> Address {
-        Address::ZERO
-    }
-
-    // Per the trait contract, returns the *previous* caller. The overlay does
-    // not track a mutable caller (`caller()` is always `Address::ZERO`), so the
-    // previous value is always `Address::ZERO` — not the `caller` argument.
-    fn replace_caller(&mut self, _caller: Address) -> Address {
-        Address::ZERO
-    }
-
-    // The overlay deliberately does not journal: `checkpoint`/`checkpoint_revert`
-    // are no-ops. This is sound only because the admission flow
-    // (`TransactionAuthorizer::authorize_and_apply`, and the
-    // `ConfigChangeAuthorizer` / `AccountChangeApplier` steps it drives) never
-    // performs an internal checkpoint/revert cycle: it either succeeds and the
-    // overlay's buffered writes are read back as the evolving state, or it
-    // returns an error and the entire overlay is dropped by the caller. If a
-    // future change introduces an internal checkpoint/revert within that flow,
-    // partial writes would leak within the overlay — this storage would then
-    // need real journalling (snapshot the `storage`/`transient` maps on
-    // `checkpoint` and restore them on `checkpoint_revert`).
-    fn checkpoint(&mut self) -> JournalCheckpoint {
-        JournalCheckpoint::default()
-    }
-
-    fn commit_latest_checkpoint(&mut self) {}
-
-    // A `checkpoint_revert` would silently leak partial writes (the overlay
-    // cannot roll back), so trip loudly in debug/test builds if the admission
-    // flow ever introduces an internal revert. In release this stays a no-op:
-    // the overlay relies on being dropped wholesale on error, never on
-    // fine-grained rollback.
-    fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {
-        debug_assert!(
-            false,
-            "OverlayPrecompileStorage does not support checkpoint_revert; the admission \
-             authorize-and-apply flow must abort wholesale (drop the overlay), not revert \
-             internally. A nested revert here would silently leak partial writes — the overlay \
-             needs real journalling before this path is used."
-        );
-    }
-
-    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256, BasePrecompileError> {
-        Ok(alloy_primitives::keccak256(data))
-    }
-}
-
 impl PoolTransactionError for BaseTxPoolError {
     fn is_bad_transaction(&self) -> bool {
         true
@@ -710,23 +335,19 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// derived from the tracked L1 block info that is extracted from the first transaction in the
     /// L2 block.
     require_l1_data_gas_fee: bool,
-    trusted_delegation_targets: Arc<AddressSet>,
-    /// Accepted account code hashes, derived from `trusted_delegation_targets`.
-    ///
-    /// A high-rate payer is trusted iff its on-chain code hash exactly equals the
-    /// canonical immutable ERC-1167 minimal-proxy runtime for one of the trusted
-    /// implementations. Precomputed so classification is an O(1) code-hash lookup
-    /// with no code fetch or bytecode parsing.
-    trusted_proxy_code_hashes: Arc<HashSet<B256>>,
     /// Operator-allowlisted payers: count-limited at their own cap and
     /// balance-bounded through a payer book.
     allowlisted_payers: Arc<AddressSet>,
     /// Operator per-transaction gas cap (`--txpool.max-tx-gas-limit`). The inner
-    /// validator holds the same value but does not expose it, and EIP-8130
+    /// validator holds the same value but does not expose it, and Base transaction
     /// admission does not run the inner validator.
     max_tx_gas_limit: Option<u64>,
-    limit_class_cache: Arc<RwLock<LimitClassCache>>,
-    limit_class_cache_generation: Arc<AtomicU64>,
+    /// Allowlisted payers validated since their last balance change. Bounded by
+    /// the operator allowlist, so it needs no eviction.
+    allowlisted_validations: Arc<RwLock<AddressSet>>,
+    /// Advanced whenever a canonical state change may invalidate a limit
+    /// classification captured by an in-flight validation.
+    limit_class_generation: Arc<AtomicU64>,
 }
 
 impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
@@ -748,7 +369,7 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         self.block_info.timestamp.load(Ordering::Relaxed)
     }
 
-    /// Returns the current block timestamp in milliseconds, the clock EIP-8130
+    /// Returns the current block timestamp in milliseconds, the clock Base transaction
     /// validity windows and the nonce-free replay ring are evaluated against.
     pub fn block_timestamp_ms(&self) -> u64 {
         self.block_info.timestamp_ms.load(Ordering::Relaxed)
@@ -766,50 +387,17 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         self.require_l1_data_gas_fee
     }
 
-    /// Returns the canonical trusted delegation target set.
-    pub fn default_trusted_delegation_targets() -> AddressSet {
-        let mut targets = AddressSet::default();
-        targets.insert(Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT);
-        targets
-    }
-
-    /// The accepted account code hashes for the given trusted implementation
-    /// addresses: the canonical ERC-1167 minimal-proxy runtime code hash of each.
-    fn trusted_proxy_code_hashes(targets: &AddressSet) -> HashSet<B256> {
-        targets
-            .iter()
-            .map(|implementation| Eip8130Contracts::erc1167_proxy_code_hash(*implementation))
-            .collect()
-    }
-
-    /// Adds trusted wallet implementations used for payer classification.
-    pub fn with_additional_trusted_delegation_targets(self, targets: AddressSet) -> Self {
-        if targets.is_empty() {
-            return self;
-        }
-        let mut merged = (*self.trusted_delegation_targets).clone();
-        merged.extend(targets);
-        let trusted_proxy_code_hashes = Self::trusted_proxy_code_hashes(&merged);
-        Self {
-            trusted_delegation_targets: Arc::new(merged),
-            trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
-            limit_class_cache: Arc::default(),
-            limit_class_cache_generation: Arc::default(),
-            ..self
-        }
-    }
-
-    /// Sets the operator-allowlisted payers. An allowlisted payer that is not
-    /// trusted is limited to [`crate::GuardLimits::allowlisted_payment_limit`]
-    /// inflight payments and also balance-bounded through a payer book: its
-    /// balance can still move, so the count caps the exposure while the book
-    /// tracks it against canonical balance updates.
+    /// Sets the operator-allowlisted payers. An allowlisted payer is limited to
+    /// [`crate::GuardLimits::allowlisted_payment_limit`] inflight payments and
+    /// also balance-bounded through a payer book: its balance can still move,
+    /// so the count caps the exposure while the book tracks it against
+    /// canonical balance updates.
     #[must_use]
     pub fn with_allowlisted_payers(self, payers: impl IntoIterator<Item = Address>) -> Self {
         Self { allowlisted_payers: Arc::new(payers.into_iter().collect()), ..self }
     }
 
-    /// Sets the operator per-transaction gas cap applied to EIP-8130 admission.
+    /// Sets the operator per-transaction gas cap applied to Base transaction admission.
     /// Must match the value given to the inner validator, which applies it to
     /// every other transaction type.
     #[must_use]
@@ -818,61 +406,43 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         self
     }
 
-    /// Returns the cache generation used to close validation/invalidation races.
-    pub fn limit_class_cache_generation(&self) -> u64 {
-        self.limit_class_cache_generation.load(Ordering::Acquire)
+    /// Returns the classification generation used to close
+    /// validation/invalidation races.
+    pub fn limit_class_generation(&self) -> u64 {
+        self.limit_class_generation.load(Ordering::Acquire)
     }
 
-    /// Invalidates classifications affected by canonical state changes.
-    pub fn invalidate_limit_class_cache(&self, diffs: &[crate::AccountStateDiff]) {
-        let mut cache = self.limit_class_cache.write();
-        // Advance the generation for every classification surface change, even
-        // on a cache miss: a validation may have read the old state but not yet
-        // inserted it. Its guarded insertion or later pool admission must see a
-        // changed generation rather than retain that stale classification.
+    /// Advances the classification generation when canonical state changes
+    /// affect a classification an in-flight validation may have captured.
+    ///
+    /// A balance change seeds a booked (allowlisted) payer's `PayerBook` on
+    /// first admission. `on_balance_changed` only corrects payers that already
+    /// have a book; a booked payer with no book yet would otherwise seed it
+    /// from the (now stale) validation snapshot. Advancing the generation makes
+    /// an admission whose validation predates this diff re-validate against the
+    /// fresh balance.
+    ///
+    /// Restricted to allowlisted payers validated since their last balance
+    /// change: ordinary balance churn, the vast majority, is unrelated to any
+    /// book and must not advance the generation and bounce unrelated
+    /// admissions, which fail as stale.
+    pub fn invalidate_limit_classes(&self, diffs: &[crate::AccountStateDiff]) {
+        let mut validations = self.allowlisted_validations.write();
         let mut changed = false;
         for diff in diffs {
-            if diff.code_changed {
-                changed = true;
-                cache.invalidate_code(diff.address);
-            }
-            if diff.address == AccountConfigurationStorage::ADDRESS {
-                for (slot, _) in &diff.changed_slots {
-                    changed = true;
-                    cache.invalidate_slot(slot);
-                }
-            }
-            // A balance change is not part of the cached classification, but it
-            // seeds a booked (trusted or allowlisted) payer's `PayerBook` on
-            // first admission. `on_balance_changed` only corrects payers that
-            // already have a book; a booked payer with no book yet would
-            // otherwise seed it from the (now stale) validation snapshot.
-            // Advance the generation so an admission whose validation predates
-            // this diff re-validates against the fresh balance.
-            //
-            // Restricted to payers that use a book and could have a validation
-            // in flight: known-trusted payers (a trusted payer with a pending
-            // transaction was just classified into the cache during that
-            // validation) and allowlisted payers validated since their last
-            // balance change. Ordinary balance churn — the vast majority, and
-            // unrelated to any book — must not advance the generation and
-            // bounce unrelated admissions, which fail as stale.
-            if diff.balance.is_some()
-                && (cache.is_trusted_cached(diff.address)
-                    || cache.take_allowlisted_validation(diff.address))
-            {
+            if diff.balance.is_some() && validations.remove(&diff.address) {
                 changed = true;
             }
         }
         if changed {
-            self.limit_class_cache_generation.fetch_add(1, Ordering::Release);
+            self.limit_class_generation.fetch_add(1, Ordering::Release);
         }
     }
 
-    /// Clears classifications after a state-diff feed gap.
-    pub fn clear_limit_class_cache(&self) {
-        self.limit_class_cache.write().clear();
-        self.limit_class_cache_generation.fetch_add(1, Ordering::Release);
+    /// Resets classification tracking after a state-diff feed gap.
+    pub fn clear_limit_classes(&self) {
+        self.allowlisted_validations.write().clear();
+        self.limit_class_generation.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -909,19 +479,14 @@ where
         inner: EthTransactionValidator<Client, Tx, Evm>,
         block_info: BaseL1BlockInfo,
     ) -> Self {
-        let trusted_delegation_targets = Self::default_trusted_delegation_targets();
-        let trusted_proxy_code_hashes =
-            Self::trusted_proxy_code_hashes(&trusted_delegation_targets);
         Self {
             inner: Arc::new(inner),
             block_info: Arc::new(block_info),
             require_l1_data_gas_fee: true,
-            trusted_delegation_targets: Arc::new(trusted_delegation_targets),
-            trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
             allowlisted_payers: Arc::default(),
             max_tx_gas_limit: None,
-            limit_class_cache: Arc::default(),
-            limit_class_cache_generation: Arc::default(),
+            allowlisted_validations: Arc::default(),
+            limit_class_generation: Arc::default(),
         }
     }
 
@@ -978,11 +543,11 @@ where
     /// This behaves the same as [`EthTransactionValidator::validate_one_with_state`], but in
     /// addition applies Base-specific validity checks:
     /// - ensures tx is not eip4844
-    /// - for eip8130 (account abstraction): rejects submissions before the Everest upgrade is
+    /// - for Base transactions: rejects submissions before the Everest upgrade is
     ///   active, runs structural checks, applies the operator pool policies the inner validator
-    ///   applies to every other type, then runs EIP-8130-specific stateful validation for
-    ///   actor authorization, nonce/replay state, intrinsic gas, create/delegation safety, and
-    ///   payer funding instead of using the inner Eth validator
+    ///   applies to every other type, then runs Base-transaction-specific stateful validation for
+    ///   sender and payer authorization, nonce/replay state, intrinsic gas, delegation safety,
+    ///   and payer funding instead of using the inner Eth validator
     /// - ensures that the account has enough balance to cover the L1 gas cost
     pub async fn validate_one_with_state(
         &self,
@@ -990,7 +555,7 @@ where
         transaction: Tx,
         state: &mut Option<Box<dyn AccountInfoReader + Send>>,
     ) -> TransactionValidationOutcome<Tx> {
-        let kind = if transaction.as_eip8130().is_some() { "eip8130" } else { "standard" };
+        let kind = if transaction.as_base_tx().is_some() { "base_tx" } else { "standard" };
         let start = Instant::now();
         let outcome = self.validate_one_with_state_inner(origin, transaction, state);
         ValidatorMetrics::validate_seconds(kind).record(start.elapsed().as_secs_f64());
@@ -1010,18 +575,18 @@ where
             );
         }
 
-        if let Some(signed) = transaction.as_eip8130() {
+        if let Some(signed) = transaction.as_base_tx() {
             let delegates = signed
                 .tx()
                 .account_changes
                 .iter()
                 .any(|change| matches!(change, AccountChange::Delegation(_)));
             let validation = {
-                self.validate_eip8130_structural(signed)
+                self.validate_base_tx_structural(signed)
                     .and_then(|()| {
-                        self.validate_eip8130_pool_policy(origin, transaction.sender(), signed)
+                        self.validate_base_tx_pool_policy(origin, transaction.sender(), signed)
                     })
-                    .and_then(|()| self.validate_eip8130_full(signed))
+                    .and_then(|()| self.validate_base_tx_full(signed))
             };
             let state = match validation {
                 Ok(state) => state,
@@ -1031,16 +596,10 @@ where
                 matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
             transaction.set_watch_set(state.watch_set.clone());
             transaction.set_watch_manifest(state.manifest.clone());
-            if let Some(target) = state.sender_policy_target {
-                transaction.set_sender_policy_target(target);
-            }
             transaction.set_limit_class(LimitClass {
                 sender: state.sender,
                 payer: state.payer,
                 classification_generation: state.classification_generation,
-                sender_locked: state.sender_locked,
-                payer_locked: state.payer_locked,
-                payer_trusted: state.payer_trusted,
                 payer_allowlisted: state.payer_allowlisted,
                 payer_balance: state.payer_balance,
                 max_cost: state.payer_max_cost,
@@ -1065,7 +624,7 @@ where
     }
 
     /// Rejects a transaction with validity predicates that delegates an account
-    /// (an EIP-7702 authorization list or an EIP-8130 delegation entry, both
+    /// (an EIP-7702 authorization list or a Base transaction delegation entry, both
     /// reported as `authorities`) or whose sender is EIP-7702 delegated.
     ///
     /// Validity transactions live in their own pool, which does not enforce
@@ -1095,133 +654,58 @@ where
         }
     }
 
-    /// Returns a low-cardinality sender authenticator label for metrics.
-    fn sender_sig_type(signed: &Eip8130Signed) -> &'static str {
-        if signed.explicit_sender().is_none() {
-            return "k1";
-        }
-        Self::classify_authenticator(signed.sender_auth())
-    }
-
-    fn classify_authenticator(auth: &[u8]) -> &'static str {
-        let Some(selector) = auth.get(..20).map(Address::from_slice) else {
-            return "other";
-        };
-        if selector == Eip8130Constants::K1_AUTHENTICATOR {
-            "k1"
-        } else if selector == Eip8130Contracts::P256_AUTHENTICATOR {
-            "p256"
-        } else if selector == Eip8130Contracts::WEBAUTHN_AUTHENTICATOR {
-            "passkey"
-        } else if selector == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
-            match auth.get(40..60).map(Address::from_slice) {
-                Some(nested) if nested == Eip8130Constants::K1_AUTHENTICATOR => "delegate-k1",
-                Some(nested) if nested == Eip8130Contracts::P256_AUTHENTICATOR => "delegate-p256",
-                Some(nested) if nested == Eip8130Contracts::WEBAUTHN_AUTHENTICATOR => {
-                    "delegate-passkey"
-                }
-                _ => "delegate",
-            }
-        } else {
-            "other"
-        }
-    }
-
-    /// Runs full EIP-8130 admission checks that require account/precompile state:
-    /// actor authorization, nonce/replay state, intrinsic gas, create-entry safety,
-    /// and payer balance. This deliberately bypasses the inner Eth validator for
-    /// EIP-8130 because configured senders may be smart contracts and sponsored
-    /// transactions charge a payer instead of the sender.
+    /// Runs full Base transaction admission checks that require account/precompile state:
+    /// sender and payer authorization, nonce/replay state, intrinsic gas,
+    /// delegation safety, and payer balance. This deliberately bypasses the inner
+    /// Eth validator for Base transactions because sponsored transactions charge a payer
+    /// instead of the sender.
     ///
-    /// The `validate_one_with_state` snapshot is only an `AccountInfoReader`; EIP-8130 needs
-    /// storage/code reads for account config, nonce channels, and delegation checks, so this path
-    /// takes its own full state snapshot.
-    fn validate_eip8130_full(
+    /// The `validate_one_with_state` snapshot is only an `AccountInfoReader`; Base transactions
+    /// need storage/code reads for nonce channels and delegation checks, so this path takes its own
+    /// full state snapshot.
+    fn validate_base_tx_full(
         &self,
-        signed: &Eip8130Signed,
-    ) -> Result<Eip8130ValidationState, InvalidPoolTransactionError> {
-        let classification_generation = self.limit_class_cache_generation();
+        signed: &TxBaseSigned,
+    ) -> Result<TxBaseValidationState, InvalidPoolTransactionError> {
+        let classification_generation = self.limit_class_generation();
         let local_chain_id = self.inner.chain_spec().chain().id();
         let now = self.block_timestamp();
         let now_ms = self.block_timestamp_ms();
-        // Before Zenith there is no Keystore: authorization, lock state, and the
-        // high-rate payer classification never read `AccountConfiguration`.
-        let keystore = BaseSpecId::from_timestamp(self.chain_spec(), now)
-            .is_feature_enabled(BaseFeature::Keystore);
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
 
-        // Authorize *and apply* the account changes against a writable overlay so
-        // the sender/payer and every config change are validated against the same
-        // evolving state the builder sees at inclusion — both run
-        // `TransactionAuthorizer::authorize_and_apply`. The overlay's buffered
-        // writes are discarded with it; admission never mutates canonical state.
-        let mut storage = OverlayPrecompileStorage::new(StateProviderPrecompileStorage::new(
-            &*state,
-            local_chain_id,
-            now,
-        ));
+        // Authorization is stateless, as in block execution: the sender and payer
+        // are recovered from their secp256k1 signatures.
         let auth_start = Instant::now();
-        let auth_result = StorageCtx::enter(&mut storage, |ctx| {
-            let resolved_sender = ResolvedSender::resolve(signed)?;
-            let applied = if keystore {
-                let mut account_config = AccountConfigurationStorage::new(ctx);
-                TransactionAuthorizer::authorize_and_apply(
-                    signed,
-                    resolved_sender,
-                    &mut account_config,
-                    local_chain_id,
-                    now,
-                )?
-            } else {
-                TransactionAuthorizer::authorize_without_keystore(signed, resolved_sender)?
-            };
-            if let Some(delegation) = applied.applied.delegation {
-                delegation.install(ctx).map_err(TxAuthError::from)?;
-            }
-
-            let sender = applied.actors.sender.account;
-            let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
-            // Thread authoritative applied/actor data through rather than
-            // re-scanning account changes or re-resolving actors below.
-            let is_create = applied.applied.created.is_some();
-            Ok::<_, TxAuthError>((
-                sender,
-                payer,
-                applied.actors.sender.resolved,
-                is_create,
-                applied.actors.payer.map(|actor| actor.resolved),
-            ))
-        });
-        ValidatorMetrics::auth_seconds(Self::sender_sig_type(signed))
-            .record(auth_start.elapsed().as_secs_f64());
-        let (sender, payer, sender_actor, is_create, payer_actor) =
-            auth_result.map_err(Self::map_tx_auth_error)?;
+        let auth_result = ResolvedSender::resolve(signed)
+            .and_then(|sender| TransactionAuthorizer::authorize(signed, sender));
+        ValidatorMetrics::auth_seconds().record(auth_start.elapsed().as_secs_f64());
+        let authorized = auth_result.map_err(Self::map_tx_auth_error)?;
+        let (sender, payer) = (authorized.sender, authorized.payer);
+        // As in execution, a delegation entry may replace only empty code or a
+        // delegation indicator.
+        if let Some(delegation) = &authorized.delegation {
+            let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
+            StorageCtx::enter(&mut storage, |sctx| delegation.check(sctx))
+                .map_err(Self::map_delegation_error)?;
+        }
         // Record the validation as soon as the payer is known, so a balance
         // change that lands before admission invalidates it (see
-        // `invalidate_limit_class_cache`).
+        // `invalidate_limit_classes`).
         let payer_allowlisted = self.allowlisted_payers.contains(&payer);
         if payer_allowlisted {
-            self.limit_class_cache.write().mark_allowlisted_validation(payer);
+            self.allowlisted_validations.write().insert(payer);
         }
-        let authorization_code_reads = storage.code_reads.clone();
-        let config_reads = storage.take_reads();
 
         let sender_account = state
             .basic_account(&sender)
             .map_err(|error| Self::state_read_error(error, "sender account read failed"))?
             .unwrap_or_default();
         let protocol_nonce = sender_account.nonce;
-        if is_create {
-            Self::validate_eip8130_create_freshness(&*state, sender, &sender_account)?;
-        }
 
-        // Nonce validity is intentionally checked against canonical state, not
-        // authorization's speculative overlay writes. Those writes are effects
-        // of this transaction and cannot satisfy its own admission nonce.
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
         // `NonceValidator::validate` compares the nonce-free replay ring's stored
-        // `valid_before` (Unix milliseconds) against `now_ms`; the storage overlay
-        // above keeps `now` in seconds for `block.timestamp`.
+        // `valid_before` (Unix milliseconds) against `now_ms`; the storage
+        // adapter keeps `now` in seconds for `block.timestamp`.
         StorageCtx::enter(&mut storage, |ctx| {
             let nonce_storage = NonceManagerStorage::new(ctx);
             NonceValidator::validate(
@@ -1236,7 +720,7 @@ where
             .map_err(Self::map_nonce_error)
         })?;
 
-        let sender_nonce = self.eip8130_sender_nonce(
+        let sender_nonce = self.base_tx_sender_nonce(
             &*state,
             local_chain_id,
             now,
@@ -1244,11 +728,10 @@ where
             sender,
             protocol_nonce,
         )?;
-        let encoded = self.eip8130_encoded(signed);
+        let encoded = self.base_tx_encoded(signed);
         // Intrinsic gas is a pure function of the transaction, so admission,
         // `eth_estimateGas` and execution all charge the same amount.
-        let intrinsic =
-            IntrinsicGas::compute(signed, sender).map_err(Self::map_intrinsic_gas_error)?;
+        let intrinsic = IntrinsicGas::compute(signed, sender);
         // EIP-7623 calldata floor: a `gas_limit` below the floor branch is
         // invalid. Sender-intrinsic gas is checked too, matching execution,
         // since the floor excludes the state-dependent costs.
@@ -1293,23 +776,18 @@ where
             ))
         })?;
 
-        let nonce_free = signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX;
-        let transaction_expiry =
-            Self::tx_valid_before_secs(signed.tx().valid_before_ms(), nonce_free);
-        let sender_expiry = Self::expiry_or_unbounded(sender_actor.expiry);
-        let payer_expiry = Self::expiry_or_unbounded(payer_actor.map_or(0, |actor| actor.expiry));
+        let nonce_free = signed.tx().nonce_key == TxBaseConstants::NONCE_KEY_MAX;
+        // Every expiry predicate as the last block millisecond at which it holds,
+        // so the guard and the builder precheck share one inclusive deadline.
         let effective_expiry =
-            [transaction_expiry, sender_expiry, payer_expiry].into_iter().min().unwrap_or(u64::MAX);
+            signed.tx().last_valid_ms().map_or(UnixMillis::MAX, UnixMillis::from_millis);
         let mut watch_set = WatchSet::new().watch(InvalidationKey::Balance(payer));
-        for read in &config_reads {
-            watch_set
-                .push(InvalidationKey::Slot { address: read.address, slot: B256::from(read.slot) });
+        // A delegation is admitted against the sender's current code.
+        if authorized.delegation.is_some() {
+            watch_set.push(InvalidationKey::CodeHash(sender));
         }
-        for address in authorization_code_reads {
-            watch_set.push(InvalidationKey::CodeHash(address));
-        }
-        if effective_expiry != u64::MAX {
-            watch_set.push(InvalidationKey::expiry_bucket(effective_expiry));
+        if effective_expiry != UnixMillis::MAX {
+            watch_set.push(InvalidationKey::Expiry(effective_expiry));
         }
         let nonce_key = signed.tx().nonce_key;
         if nonce_key.is_zero() {
@@ -1331,73 +809,6 @@ where
                 address: NonceManagerStorage::ADDRESS,
                 slot: B256::from(slot),
             });
-        }
-
-        let (sender_status, payer_status) = if keystore {
-            let sender_status = self.account_lock(
-                &*state,
-                local_chain_id,
-                now,
-                sender,
-                classification_generation,
-                Self::prefetched_account_state(&config_reads, sender),
-            );
-            let payer_status = if payer == sender {
-                sender_status
-            } else {
-                self.account_lock(
-                    &*state,
-                    local_chain_id,
-                    now,
-                    payer,
-                    classification_generation,
-                    Self::prefetched_account_state(&config_reads, payer),
-                )
-            };
-            (sender_status, payer_status)
-        } else {
-            (LockStatus::UNLOCKED, LockStatus::UNLOCKED)
-        };
-        // Only a pending unlock has a knowable timestamp; a hard lock reports
-        // `UNLOCKS_AT_MAX`, which must never surface as a timed expiry-bucket (it
-        // does not unlock on a schedule), so gate on `has_initiated_unlock`.
-        let sender_unlocks_at =
-            sender_status.has_initiated_unlock.then_some(sender_status.unlocks_at);
-        let payer_unlocks_at = payer_status.has_initiated_unlock.then_some(payer_status.unlocks_at);
-        let lock_horizon = now.saturating_add(2 * InvalidationKey::EXPIRY_BUCKET_SECS);
-        let sender_locked = sender_status.locked
-            && sender_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
-        let payer_locked = payer_status.locked
-            && payer_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
-        for (account, locked, unlocks_at) in [
-            (sender, sender_locked, sender_unlocks_at),
-            (payer, payer != sender && payer_locked, payer_unlocks_at),
-        ] {
-            if locked {
-                watch_set.push(InvalidationKey::Slot {
-                    address: AccountConfigurationStorage::ADDRESS,
-                    slot: Self::account_state_slot(account),
-                });
-                if let Some(unlocks_at) = unlocks_at {
-                    watch_set.push(InvalidationKey::expiry_bucket(unlocks_at));
-                }
-            }
-        }
-        // A high-rate (balance-bounded) payer must be *hard*-locked with an unlock
-        // delay of at least `MIN_HIGH_RATE_PAYER_LOCK_SECS`. A pending unlock or an
-        // unlocked account is never high-rate: once an unlock is initiated the
-        // payer could soon move ETH, so it must not sit in the balance book. The
-        // hard-lock → pending-unlock transition writes the account-state slot, so
-        // the slot watch above drains any already-admitted transactions naturally
-        // — no timed bucket is needed for the trusted dimension.
-        let payer_trusted = Self::qualifies_as_high_rate_lock(&payer_status)
-            && self.is_high_rate_account(
-                payer,
-                payer_account.bytecode_hash,
-                classification_generation,
-            );
-        if payer_trusted {
-            watch_set.push(InvalidationKey::CodeHash(payer));
         }
 
         let gas_charge = FeeCheck::max_fee_charge(
@@ -1429,19 +840,9 @@ where
             )
             .into());
         }
-        // All three predicates are now inclusive block-timestamp *second* bounds
-        // (`now <= bound`): the transaction's millisecond window is folded onto
-        // the seconds axis by `tx_valid_before_secs`, which is nonce-mode-aware
-        // (inclusive `floor(valid_before / 1000)` for nonce-bearing, exclusive
-        // `floor((valid_before - 1) / 1000)` for nonce-free to match the replay
-        // ring's admission window), matching the inclusive actor expiry.
-        // Store the last timestamp at which all three remain valid so
-        // `WatchManifest` can use one boundary.
-        let manifest_expiry =
-            [transaction_expiry, sender_expiry, payer_expiry].into_iter().min().unwrap_or(u64::MAX);
-        let manifest = WatchManifest::new(config_reads, payer, payer_max_cost, manifest_expiry);
+        let manifest = WatchManifest::new(payer, payer_max_cost, effective_expiry);
 
-        Ok(Eip8130ValidationState {
+        Ok(TxBaseValidationState {
             sender,
             payer,
             classification_generation,
@@ -1450,219 +851,23 @@ where
             sender_nonce,
             sender_bytecode_hash: Self::delegated_code_hash(&*state, &sender_account)?,
             watch_set,
-            // Without the Keystore an account's only key is its own secp256k1
-            // key, which can never change: its authorization is as stable as a
-            // locked account's, so it is exempt from the signature limit.
-            sender_locked: sender_locked || !keystore,
-            payer_locked: payer_locked || !keystore,
-            payer_trusted,
             payer_allowlisted,
             payer_max_cost,
-            sender_policy_target: sender_actor
-                .is_policy_gated()
-                .then_some(sender_actor.policy_target),
             manifest,
         })
     }
 
-    const fn expiry_or_unbounded(expiry: u64) -> u64 {
-        if expiry == 0 { u64::MAX } else { expiry }
-    }
-
-    /// Converts a transaction's `valid_before` (Unix **milliseconds**; `0` = no
-    /// expiry) to the last block-timestamp *second* at which it is still
-    /// includable, folding onto the inclusive-seconds axis (`now_secs <= bound`)
-    /// used by the invalidation buckets and the manifest boundary.
-    ///
-    /// The boundary depends on the nonce mode, matching `validate_timestamp`:
-    /// - **Nonce-bearing** (`nonce_free == false`): the upper bound is
-    ///   **inclusive** — valid while `now_ms <= valid_before` — so the last
-    ///   second containing an includable millisecond is `floor(valid_before / 1000)`.
-    /// - **Nonce-free** (`nonce_free == true`): the nonce-manager replay ring
-    ///   admits only a strictly-future `valid_before`, so the bound is
-    ///   **exclusive** — valid while `now_ms < valid_before` — and the last such
-    ///   second is `floor((valid_before - 1) / 1000)`. Without the `- 1` a
-    ///   `valid_before` that is an exact multiple of 1000 would linger one second
-    ///   past its on-chain expiry.
-    ///
-    /// Sub-second blocks later in that second may already reject the
-    /// transaction; execution enforces the exact millisecond bound, so eviction
-    /// at second granularity only lets an expired transaction linger for under a
-    /// second.
-    const fn tx_valid_before_secs(valid_before: u64, nonce_free: bool) -> u64 {
-        if valid_before == 0 {
-            u64::MAX
-        } else if nonce_free {
-            (valid_before - 1) / 1_000
-        } else {
-            valid_before / 1_000
-        }
-    }
-
-    /// Minimum configured unlock delay (seconds) for a hard-locked payer to
-    /// qualify as a high-rate (balance-bounded) payer. A shorter delay would let
-    /// a payer initiate an unlock and move ETH before admitted transactions can
-    /// be drained, breaking the eth-movement guarantee the balance book relies
-    /// on. One hour gives the pool ample time to react to the unlock-initiation
-    /// state write that demotes the payer.
-    const MIN_HIGH_RATE_PAYER_LOCK_SECS: u64 = 3600;
-
-    /// Whether an account's lock qualifies it as a high-rate (balance-bounded)
-    /// payer: a *hard* lock (`FLAG_LOCKED` set, no pending unlock) whose configured
-    /// unlock delay is at least [`Self::MIN_HIGH_RATE_PAYER_LOCK_SECS`]. A pending
-    /// unlock or an unlocked account never qualifies — see the classification site
-    /// for the eth-movement rationale.
-    fn qualifies_as_high_rate_lock(status: &LockStatus) -> bool {
-        status.locked
-            && !status.has_initiated_unlock
-            && u64::from(status.unlock_delay) >= Self::MIN_HIGH_RATE_PAYER_LOCK_SECS
-    }
-
-    fn account_state_slot(account: Address) -> B256 {
-        AccountConfigurationStorage::account_state_slot(account)
-    }
-
-    /// Recovers `account`'s account-state word from the authorization read-set
-    /// when it was already loaded during `authorize_and_apply` (the k1 default-EOA
-    /// path reads it to gate the inline self key). Lets the lock classification
-    /// reuse that read instead of issuing a second SLOAD for the same slot. Absent
-    /// for accounts authorized via a bound actor, whose authorization reads the
-    /// actor-config slot rather than the account-state word.
-    fn prefetched_account_state(
-        config_reads: &[ConfigSlot],
-        account: Address,
-    ) -> Option<AccountState> {
-        let slot = U256::from_be_bytes(Self::account_state_slot(account).0);
-        config_reads
-            .iter()
-            .find(|read| read.address == AccountConfigurationStorage::ADDRESS && read.slot == slot)
-            .map(|read| AccountState::from_word(read.expected))
-    }
-
-    fn account_lock(
+    fn base_tx_sender_nonce(
         &self,
         state: &dyn StateProvider,
         local_chain_id: u64,
         now: u64,
-        account: Address,
-        generation: u64,
-        prefetched: Option<AccountState>,
-    ) -> LockStatus {
-        // Invalidation may advance the generation immediately after this read.
-        // Pool admission rejects the captured classification if that happens.
-        let cached = self.limit_class_cache.write().account_state(account);
-        let account_state = if let Some(value) = cached {
-            ValidatorMetrics::classification_state_reads("cache").increment(1);
-            value
-        } else if let Some(value) = prefetched {
-            // Authorization already read this slot for this snapshot; reuse the
-            // recorded value and seed the cache (generation-gated exactly like a
-            // fresh read) rather than issuing a second SLOAD.
-            ValidatorMetrics::classification_state_reads("prefetch").increment(1);
-            let mut cache = self.limit_class_cache.write();
-            if generation == self.limit_class_cache_generation() {
-                cache.insert_account_state(account, value);
-            }
-            value
-        } else {
-            ValidatorMetrics::classification_state_reads("sload").increment(1);
-            let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
-            let value = match StorageCtx::enter(&mut storage, |ctx| {
-                AccountConfigurationStorage::new(ctx).get_account_state(account)
-            }) {
-                Ok(value) => value,
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        account = %account,
-                        "EIP-8130 account lock classification read failed"
-                    );
-                    // Fail closed: an unreadable account is treated as unlocked
-                    // (the all-zero state word), so it never earns locked or
-                    // high-rate admission privileges.
-                    return AccountState::from_word(U256::ZERO).lock_status(now);
-                }
-            };
-            let mut cache = self.limit_class_cache.write();
-            if generation == self.limit_class_cache_generation() {
-                cache.insert_account_state(account, value);
-            }
-            value
-        };
-        account_state.lock_status(now)
-    }
-
-    /// Whether `account` is a trusted high-rate (balance-bounded) payer: its
-    /// on-chain code hash must exactly equal the canonical immutable ERC-1167
-    /// minimal-proxy runtime of a trusted implementation
-    /// ([`Self::trusted_proxy_code_hashes`]).
-    ///
-    /// `bytecode_hash` is the account's code hash the caller already loaded (the
-    /// fee check reads the payer account), so classification is an O(1) code-hash
-    /// set lookup with no extra account read, code fetch, or bytecode parsing.
-    ///
-    /// High-rate payer trust is *balance-bounded*: the mempool reserves against
-    /// the payer's ETH balance and assumes that reservation cannot be pulled out
-    /// from under it. That guarantee only holds if the payer's code — and thus
-    /// the enshrined "block ETH transfers while locked" behavior of the
-    /// high-rate implementation — can never change. Membership of the code hash
-    /// in `trusted_proxy_code_hashes` is exactly that check: it matches only the
-    /// canonical immutable ERC-1167 minimal-proxy runtime (no upgrade slot) of a
-    /// trusted implementation.
-    ///
-    /// An **EIP-7702 delegation** deliberately never qualifies: its code is the
-    /// `0xef0100 ‖ impl` designator, whose hash differs from any proxy runtime,
-    /// and the delegating EOA can broadcast a fresh authorization to re-point or
-    /// clear that code at any time — escaping the lock and draining the balance
-    /// the mempool relied on. Only immutable contract deployments are trusted.
-    fn is_high_rate_account(
-        &self,
-        account: Address,
-        bytecode_hash: Option<B256>,
-        generation: u64,
-    ) -> bool {
-        // Invalidation may advance the generation immediately after this read.
-        // Pool admission rejects the captured classification if that happens.
-        let cached = self.limit_class_cache.write().trusted(account);
-        if let Some(value) = cached {
-            return value;
-        }
-        let trusted =
-            bytecode_hash.is_some_and(|hash| self.trusted_proxy_code_hashes.contains(&hash));
-        let mut cache = self.limit_class_cache.write();
-        if generation == self.limit_class_cache_generation() {
-            cache.insert_trusted(account, trusted);
-        }
-        trusted
-    }
-
-    fn validate_eip8130_create_freshness(
-        state: &dyn StateProvider,
-        sender: Address,
-        account: &reth_primitives_traits::Account,
-    ) -> Result<(), InvalidPoolTransactionError> {
-        if account.nonce != 0 {
-            return Err(Self::eip8130_error("create sender nonce is non-zero"));
-        }
-        if Self::account_has_code(state, sender)
-            .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
-        {
-            return Err(Self::eip8130_error("create sender already has code"));
-        }
-        Ok(())
-    }
-
-    fn eip8130_sender_nonce(
-        &self,
-        state: &dyn StateProvider,
-        local_chain_id: u64,
-        now: u64,
-        signed: &Eip8130Signed,
+        signed: &TxBaseSigned,
         sender: Address,
         protocol_nonce: u64,
     ) -> Result<u64, InvalidPoolTransactionError> {
         let nonce_key = signed.tx().nonce_key;
-        if nonce_key == Eip8130Constants::NONCE_KEY_MAX || nonce_key.is_zero() {
+        if nonce_key == TxBaseConstants::NONCE_KEY_MAX || nonce_key.is_zero() {
             return Ok(protocol_nonce);
         }
         let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
@@ -1690,104 +895,39 @@ where
         Ok(delegated.then_some(code_hash))
     }
 
-    fn account_has_code(
-        state: &dyn StateProvider,
-        address: Address,
-    ) -> Result<bool, reth_storage_api::errors::ProviderError> {
-        Ok(state
-            .basic_account(&address)?
-            .and_then(|account| account.bytecode_hash)
-            .is_some_and(|hash| hash != KECCAK_EMPTY))
-    }
-
-    fn eip8130_encoded(&self, signed: &Eip8130Signed) -> Vec<u8> {
+    fn base_tx_encoded(&self, signed: &TxBaseSigned) -> Vec<u8> {
         let mut encoded = Vec::with_capacity(signed.encode_2718_len());
         signed.encode_2718(&mut encoded);
         encoded
     }
 
     fn map_tx_auth_error(error: TxAuthError) -> InvalidPoolTransactionError {
-        tracing::debug!(error = ?error, "EIP-8130 actor authorization failed");
+        tracing::debug!(error = ?error, "Base transaction authorization failed");
         let reason = match error {
-            TxAuthError::UnsupportedAccountChange | TxAuthError::UnsupportedAuthenticator => {
+            TxAuthError::UnsupportedAuthenticator => {
                 return InvalidTransactionError::TxTypeNotSupported.into();
-            }
-            TxAuthError::Authorize(AuthorizeError::Authenticate(_)) => {
-                "actor authentication failed"
-            }
-            TxAuthError::Authorize(AuthorizeError::Storage(_)) => {
-                "account configuration read failed"
-            }
-            TxAuthError::Authorize(AuthorizeError::AuthenticationFailed) => "actor id is zero",
-            TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. }) => {
-                "actor is not bound"
-            }
-            TxAuthError::Authorize(AuthorizeError::DefaultEoaRevoked { .. }) => {
-                "default EOA actor is revoked"
-            }
-            TxAuthError::Authorize(AuthorizeError::ActorExpired { .. }) => {
-                "actor credential expired"
-            }
-            TxAuthError::Authorize(AuthorizeError::NestedSignatureScope { .. }) => {
-                "delegate nested actor lacks SIGNATURE scope"
             }
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::PayerRecovery => "open payer recovery failed",
             TxAuthError::ResolvedSenderMismatch => "sender resolved from a different transaction",
             TxAuthError::UnexpectedPayerAuth => "self-paid transaction carries a payer_auth",
-            TxAuthError::Scope { .. } => "actor scope insufficient",
-            TxAuthError::AccountIsLocked => "account is locked",
-            TxAuthError::DelegationUnauthorized => "delegation requires admin actor",
-            TxAuthError::BadSequence { .. } => "config change sequence mismatch",
-            TxAuthError::StaleEpoch { .. } => "config change local epoch is stale",
-            TxAuthError::SequenceSaturated => "config change channel sequence is saturated",
+            TxAuthError::SignatureRecovery => "secp256k1 signature recovery failed",
             TxAuthError::SignerMismatch => {
                 "secp256k1 signature does not recover to the named account"
             }
-            TxAuthError::Apply(apply) => Self::map_apply_error(apply),
+            TxAuthError::MultipleDelegations => "at most one delegation is allowed",
         };
-        Self::eip8130_error(reason)
+        Self::base_tx_error(reason)
     }
 
-    /// Maps an [`ApplyError`] (surfaced via [`TxAuthError::Apply`] when an
-    /// account change fails to apply against the admission overlay) to a named
-    /// pool-rejection reason, so the create/config/delegation apply failures
-    /// keep a specific user-visible reason rather than collapsing into one
-    /// generic string. The structured error is still logged in
-    /// [`Self::map_tx_auth_error`].
-    fn map_apply_error(error: ApplyError) -> &'static str {
+    fn map_delegation_error(error: DelegationError) -> InvalidPoolTransactionError {
         match error {
-            ApplyError::Storage(_) => "EIP-8130 state access failed",
-            ApplyError::MalformedAuthorizeData => "actor change authorize data is malformed",
-            ApplyError::MalformedRevokeData => "actor change revoke data is malformed",
-            ApplyError::InvalidChangePayload => "account-change op payload must be empty",
-            ApplyError::EpochSaturated => "local epoch is saturated",
-            ApplyError::UnknownChangeType => "unknown account-change op",
-            ApplyError::AccountIsLocked => "account is locked",
-            ApplyError::ExpiryDoesNotOutliveUnlock => {
-                "authorize expiry does not outlive the unlock floor"
+            DelegationError::Storage(error) => {
+                Self::precompile_storage_error(error, "Base transaction state access failed")
             }
-            ApplyError::InvalidActorId => "actor id bytes32(0) is reserved",
-            ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
-            ApplyError::InvalidPolicyData => "actor policy data is malformed",
-            ApplyError::NoInitialActors => "create entry has no initial actors",
-            ApplyError::ActorsNotSortedOrDuplicate => {
-                "create initial actors are not strictly ascending"
+            DelegationError::NonDelegatableCode { .. } => {
+                Self::base_tx_error("delegation sender has non-delegation code")
             }
-            ApplyError::EmptyBytecode => "create bytecode is empty",
-            ApplyError::BytecodeTooLarge => "create bytecode exceeds the size limit",
-            ApplyError::CreateCodeExceedsMaxSize => "create bytecode exceeds MAX_CODE_SIZE",
-            ApplyError::CreateCodeStartsWithEf => "create bytecode begins with 0xEF",
-            ApplyError::AlreadyInitialized { .. } => "create account already exists",
-            ApplyError::CreateAddressMismatch { .. } => "create address does not match the sender",
-            ApplyError::InvalidCreatePosition => "create entry must be the only one, at index 0",
-            ApplyError::MultipleDelegations => "at most one delegation is allowed",
-            ApplyError::CreateAndDelegation => "create and delegation may not coexist",
-            ApplyError::NonDelegatableCode { .. } => "delegation sender has non-delegation code",
-            ApplyError::SequenceSaturated => "config change sequence is saturated",
-            ApplyError::BadSequence { .. } => "config change sequence mismatch",
-            ApplyError::StaleEpoch { .. } => "config change local epoch is stale",
-            ApplyError::EmptyChangeSet => "signed account-change batch is empty",
         }
     }
 
@@ -1796,20 +936,20 @@ where
             NonceError::TooLow { channel, got } | NonceError::TooHigh { channel, got } => {
                 InvalidTransactionError::NonceNotConsistent { tx: got, state: channel }.into()
             }
-            NonceError::Replay => Self::eip8130_error("nonce-free replay detected"),
+            NonceError::Replay => Self::base_tx_error("nonce-free replay detected"),
             NonceError::NonceFreeSequence { .. } => {
-                Self::eip8130_error("nonce-free transaction has a non-zero nonce sequence")
+                Self::base_tx_error("nonce-free transaction has a non-zero nonce sequence")
             }
-            NonceError::SequenceSaturated => Self::eip8130_error("nonce sequence is saturated"),
+            NonceError::SequenceSaturated => Self::base_tx_error("nonce sequence is saturated"),
             NonceError::DelegationRequiresProtocolNonce => {
-                Self::eip8130_error("delegation requires the protocol nonce")
+                Self::base_tx_error("delegation requires the protocol nonce")
             }
-            NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
+            NonceError::Storage(_) => Self::base_tx_error("nonce state read failed"),
         }
     }
 
-    /// Maps an [`Eip8130TimestampError`] (from
-    /// [`Eip8130Signed::validate_timestamp`]) to a named pool-rejection reason
+    /// Maps an [`TxBaseTimestampError`] (from
+    /// [`TxBaseSigned::validate_timestamp`]) to a named pool-rejection reason
     /// and logs the mismatch. This deliberately does *not* collapse into
     /// `TxTypeNotSupported`: the transaction type is supported, its validity
     /// window is simply outside this node's admission window relative to `now`
@@ -1817,22 +957,22 @@ where
     /// `now`/window bounds here makes the otherwise-silent, node-local rejection
     /// greppable.
     fn map_timestamp_error(
-        error: Eip8130TimestampError,
-        signed: &Eip8130Signed,
+        error: TxBaseTimestampError,
+        signed: &TxBaseSigned,
         now: u64,
     ) -> InvalidPoolTransactionError {
         let reason = match error {
-            Eip8130TimestampError::NonceFreeMalformed => {
+            TxBaseTimestampError::NonceFreeMalformed => {
                 "nonce-free transaction must set a non-zero valid_before and a zero nonce sequence"
             }
-            Eip8130TimestampError::NonceFreeExpired => {
+            TxBaseTimestampError::NonceFreeExpired => {
                 "nonce-free transaction validity window has elapsed"
             }
-            Eip8130TimestampError::NonceFreeExpiryTooFar => {
+            TxBaseTimestampError::NonceFreeExpiryTooFar => {
                 "nonce-free transaction validity window exceeds the admission window"
             }
-            Eip8130TimestampError::NotYetValid => "transaction is not yet valid",
-            Eip8130TimestampError::Expired => "transaction validity window has elapsed",
+            TxBaseTimestampError::NotYetValid => "transaction is not yet valid",
+            TxBaseTimestampError::Expired => "transaction validity window has elapsed",
         };
         let tx = signed.tx();
         // The `window` bound only governs the nonce-free "too far in the future"
@@ -1843,7 +983,7 @@ where
         // be seconds-denominated, so logging them beside a millisecond `now` reads
         // as decades of skew. The raw values are kept under distinct names for
         // debugging the seconds/milliseconds auto-detection itself.
-        if matches!(error, Eip8130TimestampError::NonceFreeExpiryTooFar) {
+        if matches!(error, TxBaseTimestampError::NonceFreeExpiryTooFar) {
             tracing::debug!(
                 reason,
                 now,
@@ -1852,8 +992,8 @@ where
                 valid_after_raw = tx.valid_after,
                 valid_before_raw = tx.valid_before,
                 nonce_key = %tx.nonce_key,
-                window = Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
-                "EIP-8130 timestamp validation failed",
+                window = TxBaseConstants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+                "Base transaction timestamp validation failed",
             );
         } else {
             tracing::debug!(
@@ -1864,44 +1004,43 @@ where
                 valid_after_raw = tx.valid_after,
                 valid_before_raw = tx.valid_before,
                 nonce_key = %tx.nonce_key,
-                "EIP-8130 timestamp validation failed",
+                "Base transaction timestamp validation failed",
             );
         }
-        Self::eip8130_error(reason)
+        Self::base_tx_error(reason)
     }
 
-    fn eip8130_error(reason: &'static str) -> InvalidPoolTransactionError {
-        InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Validation { reason })
+    fn base_tx_error(reason: &'static str) -> InvalidPoolTransactionError {
+        InvalidPoolTransactionError::other(BaseTxPoolError::TxBaseValidation { reason })
     }
 
     fn provider_unavailable(error: impl core::fmt::Display) -> InvalidPoolTransactionError {
-        tracing::debug!(error = %error, "EIP-8130 state provider unavailable");
-        Self::eip8130_error("state provider unavailable")
+        tracing::debug!(error = %error, "Base transaction state provider unavailable");
+        Self::base_tx_error("state provider unavailable")
     }
 
     fn state_read_error(
         error: impl core::fmt::Display,
         reason: &'static str,
     ) -> InvalidPoolTransactionError {
-        tracing::debug!(error = %error, reason = reason, "EIP-8130 state read failed");
-        Self::eip8130_error(reason)
+        tracing::debug!(error = %error, reason = reason, "Base transaction state read failed");
+        Self::base_tx_error(reason)
     }
 
     fn precompile_storage_error(
         error: impl core::fmt::Display,
         reason: &'static str,
     ) -> InvalidPoolTransactionError {
-        tracing::debug!(error = %error, reason = reason, "EIP-8130 precompile storage read failed");
-        Self::eip8130_error(reason)
+        tracing::debug!(error = %error, reason = reason, "Base transaction precompile storage read failed");
+        Self::base_tx_error(reason)
     }
 
-    /// Runs the mempool admission checks that apply to EIP-8130 (account
-    /// abstraction) transactions without requiring authenticator dispatch or account
-    /// state lookups. Enforces the Everest fork gate and the structural
-    /// invariants listed in EIP-8130 § Validation and § Nonce-Free Mode.
-    fn validate_eip8130_structural(
+    /// Runs the mempool admission checks that apply to Base transactions without account state
+    /// lookups. Enforces the Everest fork gate and the structural invariants listed in EIP-8430 §
+    /// Validation and § Nonce-Free Mode.
+    fn validate_base_tx_structural(
         &self,
-        signed: &Eip8130Signed,
+        signed: &TxBaseSigned,
     ) -> Result<(), InvalidPoolTransactionError> {
         let size = signed.encode_2718_len();
         let limit = self.inner.max_tx_input_bytes();
@@ -1909,23 +1048,15 @@ where
             return Err(InvalidPoolTransactionError::OversizedData { size, limit });
         }
         // Cheap shape checks run before the fork gate and signature recovery.
-        Eip8130Structure::validate(signed).map_err(Self::map_structural_error)?;
+        TxBaseStructure::validate(signed).map_err(Self::map_structural_error)?;
 
         // Read the head-block clock up front so a concurrent `on_new_head_block`
         // cannot move it between the fork gate and the expiry check.
         let now = self.block_timestamp();
         let now_ms = self.block_timestamp_ms();
-        // Fork gate: EIP-8130 (account abstraction) transactions are only
+        // Fork gate: Base transactions are only
         // admissible to the pool once the Everest upgrade is active.
-        if !self.chain_spec().is_feature_active_at_timestamp(BaseFeature::Eip8130, now) {
-            return Err(InvalidTransactionError::TxTypeNotSupported.into());
-        }
-        // Without the Keystore an EIP-8130 transaction may use only delegation
-        // and native secp256k1 keys; anything else is an unsupported type.
-        if !BaseSpecId::from_timestamp(self.chain_spec(), now)
-            .is_feature_enabled(BaseFeature::Keystore)
-            && TransactionAuthorizer::check_without_keystore(signed).is_err()
-        {
+        if !self.chain_spec().is_feature_active_at_timestamp(BaseFeature::TxBase, now) {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
@@ -1939,33 +1070,32 @@ where
     }
 
     /// Checks the implicit EOA-path signature is recoverable before admitting it
-    /// to the pool. Configured-actor transactions are authenticated through their
-    /// explicit `authenticator || data` blob and are checked by selector policy.
+    /// to the pool. A named sender's `K1_AUTHENTICATOR || r || s || v` blob is
+    /// checked during authorization.
     fn validate_eoa_sender_signature(
-        signed: &Eip8130Signed,
+        signed: &TxBaseSigned,
     ) -> Result<(), InvalidPoolTransactionError> {
         if signed.explicit_sender().is_some() {
             return Ok(());
         }
         signed
             .recover_eoa_sender()
-            .map_err(|_| Self::eip8130_error("EOA sender signature recovery failed"))?
-            .ok_or_else(|| Self::eip8130_error("EOA sender signature recovery failed"))?;
+            .map_err(|_| Self::base_tx_error("EOA sender signature recovery failed"))?
+            .ok_or_else(|| Self::base_tx_error("EOA sender signature recovery failed"))?;
         Ok(())
     }
 
     /// Maps a structural rule failure to the pool's rejection: a named reason for
     /// the call phase cap, and an unsupported transaction type for every
     /// malformed shape (the pool's long-standing response to those).
-    fn map_structural_error(error: Eip8130StructuralError) -> InvalidPoolTransactionError {
+    fn map_structural_error(error: TxBaseStructuralError) -> InvalidPoolTransactionError {
         match error {
-            Eip8130StructuralError::TooManyCallPhases => {
-                Self::eip8130_error("call phase count exceeds maximum")
+            TxBaseStructuralError::TooManyCallPhases => {
+                Self::base_tx_error("call phase count exceeds maximum")
             }
-            Eip8130StructuralError::MalformedSenderAuth
-            | Eip8130StructuralError::MalformedPayerAuth
-            | Eip8130StructuralError::TooManyAccountChanges
-            | Eip8130StructuralError::MalformedAccountChange => {
+            TxBaseStructuralError::MalformedSenderAuth
+            | TxBaseStructuralError::MalformedPayerAuth
+            | TxBaseStructuralError::MalformedAccountChange => {
                 InvalidTransactionError::TxTypeNotSupported.into()
             }
         }
@@ -1979,15 +1109,14 @@ where
     /// Payer authentication is metered on top of `gas_limit`, so both gas limits bound
     /// `gas_limit + payer_auth`, the amount execution reserves against the block, and the fee
     /// cap bounds the payer's maximum gas charge.
-    fn validate_eip8130_pool_policy(
+    fn validate_base_tx_pool_policy(
         &self,
         origin: TransactionOrigin,
         sender: Address,
-        signed: &Eip8130Signed,
+        signed: &TxBaseSigned,
     ) -> Result<(), InvalidPoolTransactionError> {
         let tx = signed.tx();
-        let payer_auth =
-            IntrinsicGas::payer_auth_cost_of(signed).map_err(Self::map_intrinsic_gas_error)?;
+        let payer_auth = IntrinsicGas::payer_auth_cost_of(signed);
         let reserved_gas = FeeCheck::max_chargeable_gas(tx.gas_limit, payer_auth);
 
         let block_gas_limit = self.inner.block_gas_limit();
@@ -2026,21 +1155,12 @@ where
         Ok(())
     }
 
-    fn map_intrinsic_gas_error(error: IntrinsicGasError) -> InvalidPoolTransactionError {
-        Self::eip8130_error(match error {
-            IntrinsicGasError::PayerAuthGasExceeded(_) => {
-                "payer authentication gas exceeds MAX_AUTHENTICATION_GAS"
-            }
-            _ => "intrinsic gas computation failed",
-        })
-    }
-
     /// Performs the necessary Base-specific checks on top of the regular eth outcome: the DA
     /// footprint limit and, when `check_cost` is set, that `balance` covers the transaction's
     /// cost plus its L1 data and operator fees.
     ///
-    /// EIP-8130 admission already requires the payer to cover gas plus those fees (see
-    /// `validate_eip8130_full`), so it passes `check_cost = false`: its `cost()` is the
+    /// Base transaction admission already requires the payer to cover gas plus those fees (see
+    /// `validate_base_tx_full`), so it passes `check_cost = false`: its `cost()` is the
     /// sender's obligation, including a declared coinbase tip that admission deliberately does
     /// not require.
     fn apply_base_checks(
@@ -2183,12 +1303,10 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        AccountChange, AccountChangeChannel, BasePrimitives, BaseTransactionSigned, BaseTxEnvelope,
-        Call, ChangeType, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
-        SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
+        AccountChange, BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, Call, Delegation,
+        TxBase, TxBaseConstants, TxBaseSigned, TxDeposit,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::{Account, build_test_genesis_everest};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -2212,20 +1330,6 @@ mod tests {
         Arc::new(BaseChainSpec::from_genesis(genesis))
     }
 
-    /// An Everest chain spec with Zenith (and so the Keystore) also active at
-    /// genesis.
-    fn zenith_chain_spec() -> Arc<BaseChainSpec> {
-        let mut genesis = build_test_genesis_everest();
-        genesis.config.chain_id = test_chain_id();
-        genesis.config.extra_fields.insert(
-            "base".to_string(),
-            serde_json::json!({
-                "azul": 0, "beryl": 0, "cobalt": 0, "denim": 0, "everest": 0, "zenith": 0
-            }),
-        );
-        Arc::new(BaseChainSpec::from_genesis(genesis))
-    }
-
     /// Builds a [`BaseTransactionValidator`] configured against the given chain spec with
     /// no accounts seeded.
     fn build_test_validator_with_spec(chain_spec: Arc<BaseChainSpec>) -> TestValidator {
@@ -2240,8 +1344,8 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    /// Builds a [`BaseTransactionValidator`] against an Everest-activated test chain spec with
-    /// no accounts seeded. EIP-8130 admission is fork-gated on Everest, so the structural-gate
+    /// Builds a [`BaseTransactionValidator`] against an Everest-activated test chain spec with no
+    /// accounts seeded. Base transaction admission is fork-gated on Everest, so the structural-gate
     /// tests run with Everest active (at genesis) to exercise the checks past the fork gate.
     fn build_test_validator() -> TestValidator {
         build_test_validator_with_spec(everest_chain_spec())
@@ -2267,15 +1371,7 @@ mod tests {
         address: Address,
         account: ExtendedAccount,
     ) -> TestValidator {
-        build_test_validator_with_account_and_spec(address, account, everest_chain_spec())
-    }
-
-    /// [`build_test_validator_with_account`] against the given chain spec.
-    fn build_test_validator_with_account_and_spec(
-        address: Address,
-        account: ExtendedAccount,
-        chain_spec: Arc<BaseChainSpec>,
-    ) -> TestValidator {
+        let chain_spec = everest_chain_spec();
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -2286,47 +1382,6 @@ mod tests {
             .no_cancun()
             .build(InMemoryBlobStore::default());
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
-    }
-
-    #[test]
-    fn classify_authenticator_uses_bounded_labels() {
-        let with = |selector: Address, tail: &[u8]| {
-            let mut blob = selector.as_slice().to_vec();
-            blob.extend_from_slice(tail);
-            blob
-        };
-        assert_eq!(
-            TestValidator::classify_authenticator(&with(
-                Eip8130Constants::K1_AUTHENTICATOR,
-                &[0; 65]
-            )),
-            "k1"
-        );
-        assert_eq!(
-            TestValidator::classify_authenticator(&with(
-                Eip8130Contracts::P256_AUTHENTICATOR,
-                &[0; 129]
-            )),
-            "p256"
-        );
-        assert_eq!(
-            TestValidator::classify_authenticator(&with(
-                Eip8130Contracts::WEBAUTHN_AUTHENTICATOR,
-                &[0; 8]
-            )),
-            "passkey"
-        );
-
-        let mut delegate = Eip8130Contracts::DELEGATE_AUTHENTICATOR.as_slice().to_vec();
-        delegate.extend_from_slice(&[0xbb; 20]);
-        delegate.extend_from_slice(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR.as_slice());
-        assert_eq!(TestValidator::classify_authenticator(&delegate), "delegate-passkey");
-        assert_eq!(TestValidator::classify_authenticator(&[0; 10]), "other");
-    }
-
-    #[test]
-    fn sender_sig_type_identifies_eoa_path_as_k1() {
-        assert_eq!(TestValidator::sender_sig_type(&sign_eoa_eip8130(minimal_valid_eoa_tx())), "k1");
     }
 
     /// Returns the chain id the [`build_test_validator`] is configured against.
@@ -2344,28 +1399,31 @@ mod tests {
         }
     }
 
-    /// An allowlisted payer also seeds a balance book on first admission, so a
-    /// balance change after its validation advances the generation, as for a
-    /// trusted payer: an admission validated against the old balance
-    /// re-validates instead of seeding a stale book. An allowlisted payer with
-    /// no validation since its last balance change must not advance it, so its
-    /// balance churn does not bounce unrelated admissions.
+    /// An allowlisted payer seeds a balance book on first admission, so a
+    /// balance change after its validation advances the generation: an
+    /// admission validated against the old balance re-validates instead of
+    /// seeding a stale book. An allowlisted payer with no validation since its
+    /// last balance change must not advance it, and neither must any other
+    /// payer, so balance churn does not bounce unrelated admissions.
     #[test]
     fn allowlisted_payer_balance_diff_advances_generation_only_after_validation() {
         let allowlisted = Address::repeat_byte(7);
         let validator = build_test_validator().with_allowlisted_payers([allowlisted]);
-        let before = validator.limit_class_cache_generation();
-        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 1)]);
-        assert_eq!(validator.limit_class_cache_generation(), before, "idle payer");
+        let before = validator.limit_class_generation();
+        validator.invalidate_limit_classes(&[balance_diff(allowlisted, 1)]);
+        assert_eq!(validator.limit_class_generation(), before, "idle payer");
 
-        validator.limit_class_cache.write().mark_allowlisted_validation(allowlisted);
-        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 2)]);
-        let after = validator.limit_class_cache_generation();
+        validator.allowlisted_validations.write().insert(allowlisted);
+        validator.invalidate_limit_classes(&[balance_diff(Address::repeat_byte(8), 2)]);
+        assert_eq!(validator.limit_class_generation(), before, "another payer");
+
+        validator.invalidate_limit_classes(&[balance_diff(allowlisted, 2)]);
+        let after = validator.limit_class_generation();
         assert!(after > before, "a validated payer's balance change advances the generation");
 
-        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 3)]);
+        validator.invalidate_limit_classes(&[balance_diff(allowlisted, 3)]);
         assert_eq!(
-            validator.limit_class_cache_generation(),
+            validator.limit_class_generation(),
             after,
             "the record is consumed; churn without a new validation does not advance it"
         );
@@ -2377,178 +1435,39 @@ mod tests {
     fn validation_classifies_allowlisted_payers() {
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let tx = TxBase { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+            TxBaseSigned::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
         let funded = ExtendedAccount::new(0, U256::from(1_000_000_000_000u64));
 
         let ordinary = build_test_validator_with_account(sender, funded.clone())
-            .validate_eip8130_full(&signed)
+            .validate_base_tx_full(&signed)
             .unwrap();
         assert!(!ordinary.payer_allowlisted);
         let validator =
             build_test_validator_with_account(sender, funded).with_allowlisted_payers([sender]);
-        let allowlisted = validator.validate_eip8130_full(&signed).unwrap();
+        let allowlisted = validator.validate_base_tx_full(&signed).unwrap();
         assert!(allowlisted.payer_allowlisted, "the self-paying sender is its own payer");
         assert!(
-            validator.limit_class_cache.write().take_allowlisted_validation(sender),
+            validator.allowlisted_validations.write().remove(&sender),
             "validation records the allowlisted payer for balance-diff invalidation"
         );
     }
 
-    #[test]
-    fn only_trusted_payer_balance_diff_advances_classification_generation() {
-        let validator = build_test_validator();
-        let trusted = Address::repeat_byte(7);
-        let ordinary = Address::repeat_byte(8);
-        let unknown = Address::repeat_byte(9);
-        validator.limit_class_cache.write().insert_trusted(trusted, true);
-        validator.limit_class_cache.write().insert_trusted(ordinary, false);
-
-        // Ordinary (count-limited) and unclassified payers do not seed a balance
-        // book, so their balance churn must not advance the generation and
-        // bounce unrelated admissions.
-        let before = validator.limit_class_cache_generation();
-        validator
-            .invalidate_limit_class_cache(&[balance_diff(ordinary, 1), balance_diff(unknown, 2)]);
-        assert_eq!(
-            validator.limit_class_cache_generation(),
-            before,
-            "ordinary/unknown balance churn must not advance the generation"
-        );
-
-        // A trusted payer's balance change advances it so a pending admission
-        // re-validates against the fresh balance rather than seeding a stale one.
-        validator.invalidate_limit_class_cache(&[balance_diff(trusted, 5)]);
-        assert!(
-            validator.limit_class_cache_generation() > before,
-            "a trusted payer's balance change must advance the generation"
-        );
-
-        // A pure nonce change is neither a classification nor a balance surface.
-        let after_trusted = validator.limit_class_cache_generation();
-        let nonce_diff = crate::AccountStateDiff {
-            address: trusted,
-            balance: None,
-            nonce: Some(1),
-            code_changed: false,
-            changed_slots: Vec::new(),
-        };
-        validator.invalidate_limit_class_cache(&[nonce_diff]);
-        assert_eq!(
-            validator.limit_class_cache_generation(),
-            after_trusted,
-            "a nonce-only change must not advance the generation"
-        );
-    }
-
-    /// Packs an account-state word with the given flags and lock union, leaving
-    /// the sequence and default-EOA fields zero. Mirrors the canonical bit layout
-    /// (`flags` at bits 128..136, `lock_union` at bits 136..176).
-    fn locked_state_word(flags: u8, lock_union: u64) -> AccountState {
-        let word = (U256::from(flags) << 128) | (U256::from(lock_union) << 136);
-        AccountState::from_word(word)
-    }
-
-    #[test]
-    fn high_rate_lock_requires_hard_lock_of_at_least_one_hour() {
-        let now = 1_000u64;
-
-        // Hard lock (FLAG_LOCKED, no unlock initiated); lock_union holds the delay.
-        let one_hour = TestValidator::MIN_HIGH_RATE_PAYER_LOCK_SECS;
-        let hard_hour = locked_state_word(Eip8130Constants::FLAG_LOCKED, one_hour);
-        assert!(
-            TestValidator::qualifies_as_high_rate_lock(&hard_hour.lock_status(now)),
-            "a hard lock with a >=1h delay qualifies as high-rate"
-        );
-
-        // A shorter hard-lock delay does not qualify.
-        let hard_short = locked_state_word(Eip8130Constants::FLAG_LOCKED, one_hour - 1);
-        assert!(
-            !TestValidator::qualifies_as_high_rate_lock(&hard_short.lock_status(now)),
-            "a hard lock shorter than 1h must not qualify"
-        );
-
-        // Pending unlock (FLAG_UNLOCK_INITIATED): lock_union is a far-future
-        // timestamp, so it is still `locked`, but must not qualify as high-rate.
-        let pending = locked_state_word(
-            Eip8130Constants::FLAG_LOCKED | Eip8130Constants::FLAG_UNLOCK_INITIATED,
-            now + 10 * one_hour,
-        );
-        let pending_status = pending.lock_status(now);
-        assert!(pending_status.locked, "pending unlock far in the future is still locked");
-        assert!(
-            !TestValidator::qualifies_as_high_rate_lock(&pending_status),
-            "a pending unlock must never qualify as high-rate"
-        );
-
-        // Unlocked: no flags set.
-        let unlocked = locked_state_word(0, 0);
-        assert!(
-            !TestValidator::qualifies_as_high_rate_lock(&unlocked.lock_status(now)),
-            "an unlocked account must never qualify as high-rate"
-        );
-    }
-
-    #[test]
-    fn limit_class_cache_evicts_lru_account_and_reverse_slot() {
-        let mut cache = LimitClassCache::new(NonZeroUsize::new(2).expect("non-zero capacity"));
-        let (first, second, third) =
-            (Address::repeat_byte(1), Address::repeat_byte(2), Address::repeat_byte(3));
-        let state = AccountState::from_word(U256::ZERO);
-
-        cache.insert_account_state(first, state);
-        cache.insert_trusted(second, true);
-        assert_eq!(cache.trusted(second), Some(true), "second account becomes most recent");
-
-        cache.insert_trusted(third, false);
-
-        assert_eq!(cache.entries.len(), 2);
-        assert_eq!(cache.account_state(first), None, "least-recent account must be evicted");
-        assert!(!cache.slots.contains_key(&AccountConfigurationStorage::account_state_slot(first)));
-        assert_eq!(cache.trusted(second), Some(true));
-        assert_eq!(cache.trusted(third), Some(false));
-    }
-
-    #[test]
-    fn invalidate_does_not_promote_surviving_entry_to_mru() {
-        let mut cache = LimitClassCache::new(NonZeroUsize::new(2).expect("non-zero capacity"));
-        let (a, b, c) = (Address::repeat_byte(1), Address::repeat_byte(2), Address::repeat_byte(3));
-        let state = AccountState::from_word(U256::ZERO);
-
-        // `a` holds both classification halves and starts as least-recently-used;
-        // `b` is most-recently-used.
-        cache.insert_account_state(a, state);
-        cache.insert_trusted(a, true);
-        cache.insert_account_state(b, state);
-
-        // Partial invalidation keeps `a` alive but must not promote it. `peek`
-        // is non-promoting, so it does not perturb the recency under test.
-        cache.invalidate_code(a);
-        assert!(cache.entries.peek(&a).is_some(), "partially-invalidated entry survives");
-
-        // Inserting a third account evicts the true LRU (`a`), not the fresher
-        // `b`. A promoting invalidation would have wrongly evicted `b` here.
-        cache.insert_account_state(c, state);
-        assert!(cache.entries.peek(&a).is_none(), "non-promoted LRU entry is evicted");
-        assert!(cache.entries.peek(&b).is_some(), "fresher entry is retained");
-        assert!(cache.entries.peek(&c).is_some(), "newest entry is present");
-    }
-
-    /// Signs `tx` as an EOA-path EIP-8130 transaction and returns the resulting
-    /// [`Eip8130Signed`] with a valid 65-byte secp256k1 `sender_auth`.
-    fn sign_eoa_eip8130(tx: TxEip8130) -> Eip8130Signed {
+    /// Signs `tx` as an EOA-path Base transaction and returns the resulting
+    /// [`TxBaseSigned`] with a valid 65-byte secp256k1 `sender_auth`.
+    fn sign_eoa_base_tx(tx: TxBase) -> TxBaseSigned {
         let signer = PrivateKeySigner::random();
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let sig_bytes: Bytes = signature.as_bytes().to_vec().into();
-        Eip8130Signed::new(tx, sig_bytes, Bytes::new())
+        TxBaseSigned::new(tx, sig_bytes, Bytes::new())
     }
 
-    /// Returns a minimal, structurally valid EOA-path [`TxEip8130`] bound to the
+    /// Returns a minimal, structurally valid EOA-path [`TxBase`] bound to the
     /// test chain. `sender` is left as `None` so the EOA recovery path is exercised.
-    fn minimal_valid_eoa_tx() -> TxEip8130 {
-        TxEip8130 {
+    fn minimal_valid_eoa_tx() -> TxBase {
+        TxBase {
             chain_id: test_chain_id(),
             sender: None,
             nonce_key: U256::ZERO,
@@ -2567,7 +1486,7 @@ mod tests {
 
     /// Maps a shared structural check to the pool's rejection, as admission does.
     fn structural(
-        result: Result<(), Eip8130StructuralError>,
+        result: Result<(), TxBaseStructuralError>,
     ) -> Result<(), InvalidPoolTransactionError> {
         result.map_err(TestValidator::map_structural_error)
     }
@@ -2606,7 +1525,7 @@ mod tests {
     }
 
     /// Helper: assert a structural (`()`-returning) validation failed with a
-    /// named [`BaseTxPoolError::Eip8130Validation`] reason.
+    /// named [`BaseTxPoolError::TxBaseValidation`] reason.
     #[track_caller]
     fn assert_structural_reason(
         result: Result<(), InvalidPoolTransactionError>,
@@ -2615,58 +1534,58 @@ mod tests {
         match result {
             Err(InvalidPoolTransactionError::Other(error)) => {
                 match error.as_any().downcast_ref::<BaseTxPoolError>() {
-                    Some(BaseTxPoolError::Eip8130Validation { reason }) => {
+                    Some(BaseTxPoolError::TxBaseValidation { reason }) => {
                         assert_eq!(*reason, expected);
                     }
-                    other => panic!("expected Eip8130Validation, got {other:?}"),
+                    other => panic!("expected TxBaseValidation, got {other:?}"),
                 }
             }
-            other => panic!("expected Eip8130Validation, got {other:?}"),
+            other => panic!("expected TxBaseValidation, got {other:?}"),
         }
     }
 
     #[track_caller]
-    fn assert_eip8130_validation_reason(
-        result: Result<Eip8130ValidationState, InvalidPoolTransactionError>,
+    fn assert_base_tx_validation_reason(
+        result: Result<TxBaseValidationState, InvalidPoolTransactionError>,
         expected: &'static str,
     ) {
         match result {
             Err(InvalidPoolTransactionError::Other(error)) => {
                 match error.as_any().downcast_ref::<BaseTxPoolError>() {
-                    Some(BaseTxPoolError::Eip8130Validation { reason }) => {
+                    Some(BaseTxPoolError::TxBaseValidation { reason }) => {
                         assert_eq!(*reason, expected);
                     }
-                    other => panic!("expected Eip8130Validation, got {other:?}"),
+                    other => panic!("expected TxBaseValidation, got {other:?}"),
                 }
             }
-            other => panic!("expected Eip8130Validation, got {other:?}"),
+            other => panic!("expected TxBaseValidation, got {other:?}"),
         }
     }
 
     #[test]
-    fn accepts_eip8130_with_minimum_valid_eoa_shape() {
+    fn accepts_base_tx_with_minimum_valid_eoa_shape() {
         let validator = build_test_validator();
-        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
-        assert!(validator.validate_eip8130_structural(&signed).is_ok());
+        let signed = sign_eoa_base_tx(minimal_valid_eoa_tx());
+        assert!(validator.validate_base_tx_structural(&signed).is_ok());
     }
 
     #[test]
-    fn accepts_eip8130_at_encoded_size_limit() {
-        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
+    fn accepts_base_tx_at_encoded_size_limit() {
+        let signed = sign_eoa_base_tx(minimal_valid_eoa_tx());
         let validator = build_test_validator_with_max_tx_input_bytes(signed.encode_2718_len());
 
-        assert!(validator.validate_eip8130_structural(&signed).is_ok());
+        assert!(validator.validate_base_tx_structural(&signed).is_ok());
     }
 
     #[test]
-    fn rejects_eip8130_over_encoded_size_limit() {
-        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
+    fn rejects_base_tx_over_encoded_size_limit() {
+        let signed = sign_eoa_base_tx(minimal_valid_eoa_tx());
         let size = signed.encode_2718_len();
         let limit = size - 1;
         let validator = build_test_validator_with_max_tx_input_bytes(limit);
 
         assert!(matches!(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             Err(InvalidPoolTransactionError::OversizedData {
                 size: rejected_size,
                 limit: rejected_limit,
@@ -2675,16 +1594,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_constructed_eip8130_over_call_phase_limit() {
+    fn rejects_constructed_base_tx_over_call_phase_limit() {
         let validator = build_test_validator();
-        let tx = TxEip8130 {
-            calls: vec![Vec::new(); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1],
+        let tx = TxBase {
+            calls: vec![Vec::new(); TxBaseConstants::MAX_CALL_PHASES_PER_TX + 1],
             ..minimal_valid_eoa_tx()
         };
-        let signed = sign_eoa_eip8130(tx);
+        let signed = sign_eoa_base_tx(tx);
 
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             "call phase count exceeds maximum",
         );
     }
@@ -2694,114 +1613,114 @@ mod tests {
     #[test]
     fn call_phase_cap_rejects_before_fork_gate_and_signature_recovery() {
         let pre_everest = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
-        let tx = TxEip8130 {
-            calls: vec![Vec::new(); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1],
+        let tx = TxBase {
+            calls: vec![Vec::new(); TxBaseConstants::MAX_CALL_PHASES_PER_TX + 1],
             ..minimal_valid_eoa_tx()
         };
-        let unrecoverable = Eip8130Signed::new(tx, Bytes::from(vec![0xff; 65]), Bytes::new());
+        let unrecoverable = TxBaseSigned::new(tx, Bytes::from(vec![0xff; 65]), Bytes::new());
 
         for validator in
             [build_test_validator(), build_test_validator_with_spec(Arc::new(pre_everest))]
         {
             assert_structural_reason(
-                validator.validate_eip8130_structural(&unrecoverable),
+                validator.validate_base_tx_structural(&unrecoverable),
                 "call phase count exceeds maximum",
             );
         }
     }
 
     #[test]
-    fn rejects_eip8130_before_everest_activation() {
-        // Cobalt alone does not open the EIP-8130 gate.
+    fn rejects_base_tx_before_everest_activation() {
+        // Cobalt alone does not open the Base transaction gate.
         let chain_spec = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
         let validator = build_test_validator_with_spec(Arc::new(chain_spec));
-        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        let signed = sign_eoa_base_tx(minimal_valid_eoa_tx());
+        assert_unsupported(validator.validate_base_tx_structural(&signed));
     }
 
     #[test]
-    fn structural_eip8130_validation_is_origin_independent() {
+    fn structural_base_tx_validation_is_origin_independent() {
         let validator = build_test_validator();
-        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
-        assert!(validator.validate_eip8130_structural(&signed).is_ok());
+        let signed = sign_eoa_base_tx(minimal_valid_eoa_tx());
+        assert!(validator.validate_base_tx_structural(&signed).is_ok());
     }
 
     #[test]
-    fn rejects_eip8130_with_wrong_chain_id() {
+    fn rejects_base_tx_with_wrong_chain_id() {
         let validator = build_test_validator();
-        let tx = TxEip8130 { chain_id: test_chain_id() + 1, ..minimal_valid_eoa_tx() };
-        let signed = sign_eoa_eip8130(tx);
-        assert_chain_id_mismatch(validator.validate_eip8130_structural(&signed));
+        let tx = TxBase { chain_id: test_chain_id() + 1, ..minimal_valid_eoa_tx() };
+        let signed = sign_eoa_base_tx(tx);
+        assert_chain_id_mismatch(validator.validate_base_tx_structural(&signed));
     }
 
     #[test]
-    fn rejects_eip8130_with_tip_above_fee_cap() {
+    fn rejects_base_tx_with_tip_above_fee_cap() {
         let validator = build_test_validator();
-        let tx = TxEip8130 {
+        let tx = TxBase {
             max_fee_per_gas: 100,
             max_priority_fee_per_gas: 200,
             ..minimal_valid_eoa_tx()
         };
-        let signed = sign_eoa_eip8130(tx);
-        assert_tip_above_fee_cap(validator.validate_eip8130_structural(&signed));
+        let signed = sign_eoa_base_tx(tx);
+        assert_tip_above_fee_cap(validator.validate_base_tx_structural(&signed));
     }
 
     #[test]
-    fn rejects_eip8130_with_zero_gas_limit() {
+    fn rejects_base_tx_with_zero_gas_limit() {
         let validator = build_test_validator();
-        let tx = TxEip8130 { gas_limit: 0, ..minimal_valid_eoa_tx() };
-        let signed = sign_eoa_eip8130(tx);
+        let tx = TxBase { gas_limit: 0, ..minimal_valid_eoa_tx() };
+        let signed = sign_eoa_base_tx(tx);
         assert!(matches!(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             Err(InvalidPoolTransactionError::Consensus(InvalidTransactionError::GasTooLow))
         ));
     }
 
     #[test]
-    fn rejects_eip8130_with_zero_fee_cap() {
+    fn rejects_base_tx_with_zero_fee_cap() {
         let validator = build_test_validator();
-        let tx = TxEip8130 { max_fee_per_gas: 0, ..minimal_valid_eoa_tx() };
-        let signed = sign_eoa_eip8130(tx);
+        let tx = TxBase { max_fee_per_gas: 0, ..minimal_valid_eoa_tx() };
+        let signed = sign_eoa_base_tx(tx);
         assert!(matches!(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             Err(InvalidPoolTransactionError::Consensus(InvalidTransactionError::FeeCapTooLow))
         ));
     }
 
     #[test]
-    fn rejects_eip8130_nonce_free_without_expiry() {
+    fn rejects_base_tx_nonce_free_without_expiry() {
         let validator = build_test_validator();
-        let tx = TxEip8130 {
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+        let tx = TxBase {
+            nonce_key: TxBaseConstants::NONCE_KEY_MAX,
             nonce_sequence: 0,
             valid_before: 0,
             ..minimal_valid_eoa_tx()
         };
-        let signed = sign_eoa_eip8130(tx);
+        let signed = sign_eoa_base_tx(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             "nonce-free transaction must set a non-zero valid_before and a zero nonce sequence",
         );
     }
 
     #[test]
-    fn rejects_eip8130_nonce_free_with_nonzero_sequence() {
+    fn rejects_base_tx_nonce_free_with_nonzero_sequence() {
         let validator = build_test_validator();
-        let tx = TxEip8130 {
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+        let tx = TxBase {
+            nonce_key: TxBaseConstants::NONCE_KEY_MAX,
             nonce_sequence: 1,
             valid_before: 5,
             ..minimal_valid_eoa_tx()
         };
-        let signed = sign_eoa_eip8130(tx);
+        let signed = sign_eoa_base_tx(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             "nonce-free transaction must set a non-zero valid_before and a zero nonce sequence",
         );
     }
 
     #[test]
-    fn rejects_eip8130_nonce_free_already_expired() {
+    fn rejects_base_tx_nonce_free_already_expired() {
         // Advance the validator's tracked block timestamp to a realistic clock
         // (now_ms = 1_700_000_100_000) so `valid_before` (a millisecond value one
         // second in the past) is strictly elapsed. Both values are >=
@@ -2810,21 +1729,21 @@ mod tests {
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_100, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
-        let tx = TxEip8130 {
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+        let tx = TxBase {
+            nonce_key: TxBaseConstants::NONCE_KEY_MAX,
             nonce_sequence: 0,
             valid_before: 1_700_000_099_000,
             ..minimal_valid_eoa_tx()
         };
-        let signed = sign_eoa_eip8130(tx);
+        let signed = sign_eoa_base_tx(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             "nonce-free transaction validity window has elapsed",
         );
     }
 
     #[test]
-    fn eip8130_window_uses_the_head_block_millisecond_clock() {
+    fn base_tx_window_uses_the_head_block_millisecond_clock() {
         // The head block is 400 ms past its whole second, so a `valid_before`
         // 100 ms past that second has already elapsed.
         let timestamp = 1_700_000_000;
@@ -2833,19 +1752,19 @@ mod tests {
             TxDeposit::default().into(),
             BaseTimeUpdateTx::new(400).unwrap().into_deposit_tx(1).into_inner().into(),
         ];
-        let tx = TxEip8130 {
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+        let tx = TxBase {
+            nonce_key: TxBaseConstants::NONCE_KEY_MAX,
             nonce_sequence: 0,
             valid_before: timestamp * 1_000 + 100,
             ..minimal_valid_eoa_tx()
         };
-        let signed = sign_eoa_eip8130(tx);
+        let signed = sign_eoa_base_tx(tx);
 
         let validator = build_test_validator();
         validator.update_l1_block_info(&header, &block_transactions);
         assert_eq!(validator.block_timestamp_ms(), timestamp * 1_000 + 400);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             "nonce-free transaction validity window has elapsed",
         );
 
@@ -2858,7 +1777,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_nonce_free_not_yet_valid() {
+    fn rejects_base_tx_nonce_free_not_yet_valid() {
         // Realistic millisecond clock (both bounds >= TIMESTAMP_MS_THRESHOLD, so
         // normalization is a no-op). A future `valid_after` opens the window
         // later, so the nonce-free branch must reject with `NotYetValid` before
@@ -2867,22 +1786,22 @@ mod tests {
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
-        let tx = TxEip8130 {
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+        let tx = TxBase {
+            nonce_key: TxBaseConstants::NONCE_KEY_MAX,
             nonce_sequence: 0,
             valid_after: now_ms + 50_000,
             valid_before: now_ms + 60_000,
             ..minimal_valid_eoa_tx()
         };
-        let signed = sign_eoa_eip8130(tx);
+        let signed = sign_eoa_base_tx(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             "transaction is not yet valid",
         );
     }
 
     #[test]
-    fn rejects_eip8130_nonce_bearing_not_yet_valid() {
+    fn rejects_base_tx_nonce_bearing_not_yet_valid() {
         // Sequenced (nonce-bearing) transaction on a realistic millisecond clock
         // with a future `valid_after` (>= TIMESTAMP_MS_THRESHOLD, so normalization
         // is a no-op): the else-branch of `validate_timestamp` must reject with
@@ -2891,40 +1810,40 @@ mod tests {
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
-        let tx = TxEip8130 { valid_after: now_ms + 50_000, ..minimal_valid_eoa_tx() };
-        let signed = sign_eoa_eip8130(tx);
+        let tx = TxBase { valid_after: now_ms + 50_000, ..minimal_valid_eoa_tx() };
+        let signed = sign_eoa_base_tx(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             "transaction is not yet valid",
         );
     }
 
     #[test]
-    fn rejects_eip8130_nonce_free_expiry_too_far_in_future() {
+    fn rejects_base_tx_nonce_free_expiry_too_far_in_future() {
         // Seed a realistic millisecond clock and place `valid_before` exactly one
         // millisecond past the admission-window edge (`now_ms +
         // NONCE_FREE_MAX_EXPIRY_WINDOW`). Both bounds are >= TIMESTAMP_MS_THRESHOLD
         // so normalization is a no-op; this exercises the true edge+1 rejection,
-        // the mirror of `accepts_eip8130_nonce_free_at_expiry_window_edge`.
+        // the mirror of `accepts_base_tx_nonce_free_at_expiry_window_edge`.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
-        let tx = TxEip8130 {
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+        let tx = TxBase {
+            nonce_key: TxBaseConstants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            valid_before: now_ms + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW + 1,
+            valid_before: now_ms + TxBaseConstants::NONCE_FREE_MAX_EXPIRY_WINDOW + 1,
             ..minimal_valid_eoa_tx()
         };
-        let signed = sign_eoa_eip8130(tx);
+        let signed = sign_eoa_base_tx(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_base_tx_structural(&signed),
             "nonce-free transaction validity window exceeds the admission window",
         );
     }
 
     #[test]
-    fn accepts_eip8130_nonce_free_at_expiry_window_edge() {
+    fn accepts_base_tx_nonce_free_at_expiry_window_edge() {
         // Seed a realistic millisecond clock and place `valid_before` exactly at
         // the admission-window edge (`now_ms + NONCE_FREE_MAX_EXPIRY_WINDOW`).
         // Both bounds are >= TIMESTAMP_MS_THRESHOLD so normalization is a no-op;
@@ -2933,636 +1852,114 @@ mod tests {
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
-        let tx = TxEip8130 {
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+        let tx = TxBase {
+            nonce_key: TxBaseConstants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            valid_before: now_ms + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            valid_before: now_ms + TxBaseConstants::NONCE_FREE_MAX_EXPIRY_WINDOW,
             ..minimal_valid_eoa_tx()
         };
-        let signed = sign_eoa_eip8130(tx);
-        assert!(validator.validate_eip8130_structural(&signed).is_ok());
+        let signed = sign_eoa_base_tx(tx);
+        assert!(validator.validate_base_tx_structural(&signed).is_ok());
     }
 
     #[test]
-    fn rejects_eip8130_with_invalid_sender_auth_length_eoa_path() {
+    fn rejects_base_tx_with_invalid_sender_auth_length_eoa_path() {
         // EOA path requires exactly 65 bytes; anything else is rejected.
         let tx = minimal_valid_eoa_tx();
-        let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 32]), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        let signed = TxBaseSigned::new(tx, Bytes::from_static(&[0u8; 32]), Bytes::new());
+        assert_unsupported(structural(TxBaseStructure::validate_sender_auth(&signed)));
     }
 
     #[test]
-    fn rejects_eip8130_with_empty_sender_auth() {
+    fn rejects_base_tx_with_empty_sender_auth() {
         let tx = minimal_valid_eoa_tx();
-        let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        let signed = TxBaseSigned::new(tx, Bytes::new(), Bytes::new());
+        assert_unsupported(structural(TxBaseStructure::validate_sender_auth(&signed)));
     }
 
-    // Regression: configured-actor path must reject the reserved authenticator
-    // range below `K1_AUTHENTICATOR`, matching `validate_actor_changes`.
-    // `address(0)` is the only reserved value (the empty sentinel).
+    // A named sender must not select the reserved `address(0)` authenticator.
     #[test]
-    fn rejects_eip8130_configured_actor_with_reserved_authenticator() {
-        let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
+    fn rejects_base_tx_named_sender_with_reserved_authenticator() {
+        let tx = TxBase { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let auth = Bytes::from(Address::ZERO.to_vec());
-        let signed = Eip8130Signed::new(tx, auth, Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        let signed = TxBaseSigned::new(tx, auth, Bytes::new());
+        assert_unsupported(structural(TxBaseStructure::validate_sender_auth(&signed)));
     }
 
     #[test]
-    fn rejects_eip8130_configured_actor_with_short_auth() {
-        let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
-        let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 5]), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+    fn rejects_base_tx_named_sender_with_short_auth() {
+        let tx = TxBase { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
+        let signed = TxBaseSigned::new(tx, Bytes::from_static(&[0u8; 5]), Bytes::new());
+        assert_unsupported(structural(TxBaseStructure::validate_sender_auth(&signed)));
     }
 
     #[test]
-    fn rejects_eip8130_payer_present_without_auth() {
-        let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
-        let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
+    fn rejects_base_tx_payer_present_without_auth() {
+        let tx = TxBase { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
+        let signed = TxBaseSigned::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::new());
+        assert_unsupported(structural(TxBaseStructure::validate_payer_auth(&signed)));
     }
 
     #[test]
-    fn rejects_eip8130_payer_absent_with_auth() {
+    fn rejects_base_tx_payer_absent_with_auth() {
         let tx = minimal_valid_eoa_tx();
         let signed =
-            Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::from_static(&[0u8; 20]));
-        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
+            TxBaseSigned::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::from_static(&[0u8; 20]));
+        assert_unsupported(structural(TxBaseStructure::validate_payer_auth(&signed)));
     }
 
     #[test]
-    fn rejects_eip8130_payer_authenticator_reserved() {
-        let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
-        let signed = Eip8130Signed::new(
+    fn rejects_base_tx_payer_authenticator_reserved() {
+        let tx = TxBase { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
+        let signed = TxBaseSigned::new(
             tx,
             Bytes::from_static(&[0u8; 65]),
             Bytes::from(Address::ZERO.to_vec()),
         );
-        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
+        assert_unsupported(structural(TxBaseStructure::validate_payer_auth(&signed)));
     }
 
-    /// A configured sender naming a canonical non-k1 authenticator is an
-    /// unsupported transaction type before Zenith, and admissible from it.
+    /// A named sender or named payer selecting an authenticator other than the
+    /// native secp256k1 one is an unsupported transaction type.
     #[test]
-    fn non_k1_sender_authenticator_is_unsupported_before_zenith() {
-        let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
-        let mut auth = Eip8130Contracts::P256_AUTHENTICATOR.as_slice().to_vec();
-        auth.extend_from_slice(&[0u8; 64]);
-        let signed = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
+    fn non_k1_authenticator_is_unsupported() {
+        let mut other_auth = Address::repeat_byte(0x05).to_vec();
+        other_auth.extend_from_slice(&[0u8; 64]);
+        let sender = TxBase { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
+        let sender = TxBaseSigned::new(sender, Bytes::from(other_auth.clone()), Bytes::new());
+        let payer = TxBase { payer: Some(Address::repeat_byte(0xbb)), ..minimal_valid_eoa_tx() };
+        let payer =
+            TxBaseSigned::new(payer, Bytes::from_static(&[0u8; 65]), Bytes::from(other_auth));
 
-        assert_unsupported(build_test_validator().validate_eip8130_structural(&signed));
-        let zenith = build_test_validator_with_spec(zenith_chain_spec());
-        assert!(!matches!(
-            zenith.validate_eip8130_structural(&signed),
-            Err(InvalidPoolTransactionError::Consensus(
-                InvalidTransactionError::TxTypeNotSupported
-            ))
-        ));
-        assert!(structural(Eip8130Structure::validate_sender_auth(&signed)).is_ok());
-    }
-
-    /// Returns an authenticator address comfortably above the `K1_AUTHENTICATOR`
-    /// floor.
-    fn ok_authenticator() -> Address {
-        Address::repeat_byte(0x42)
-    }
-
-    fn make_initial_actor(actor_id_byte: u8) -> InitialActor {
-        InitialActor::owner(B256::repeat_byte(actor_id_byte), ok_authenticator())
-    }
-
-    /// Builds an `AuthorizeActor` op whose payload is a valid
-    /// `abi.encode(bytes32 actorId, ActorConfig{authenticator, expiry:0,
-    /// scope:0}, bytes policyData="")`. `actorId` is the first word and
-    /// `ActorConfig.authenticator` the second (`payload[44..64]`), matching both
-    /// the shallow validator read and a strict ABI decode in the apply path.
-    fn make_authorize_change(actor_id: B256, authenticator: Address) -> SignedChange {
-        let mut payload = vec![0u8; 192];
-        payload[..32].copy_from_slice(actor_id.as_slice());
-        payload[44..64].copy_from_slice(authenticator.as_slice());
-        // word4: offset to the `bytes policyData` tail (5 words = 160 = 0xA0).
-        payload[159] = 0xA0;
-        // word5: policyData length = 0 (already zero).
-        SignedChange { change_type: ChangeType::AuthorizeActor, payload: Bytes::from(payload) }
-    }
-
-    /// Builds a `RevokeActor` op whose payload is `abi.encode(actorId)` — exactly
-    /// the 32-byte target.
-    fn make_revoke_change(actor_id: B256) -> SignedChange {
-        SignedChange {
-            change_type: ChangeType::RevokeActor,
-            payload: Bytes::from(actor_id.as_slice().to_vec()),
-        }
-    }
-
-    fn make_valid_create_entry() -> CreateEntry {
-        CreateEntry {
-            user_salt: B256::ZERO,
-            code: Bytes::from_static(&[0x60, 0x00]),
-            initial_actors: vec![make_initial_actor(0x01)],
+        for signed in [sender, payer] {
+            assert_unsupported(build_test_validator().validate_base_tx_structural(&signed));
         }
     }
 
     #[test]
-    fn rejects_eip8130_create_not_at_index_zero() {
-        let tx = TxEip8130 {
-            account_changes: vec![
-                AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x33) }),
-                AccountChange::Create(make_valid_create_entry()),
-            ],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn rejects_eip8130_multiple_create_entries() {
-        let tx = TxEip8130 {
-            account_changes: vec![
-                AccountChange::Create(make_valid_create_entry()),
-                AccountChange::Create(make_valid_create_entry()),
-            ],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn rejects_eip8130_create_with_empty_code() {
-        let mut entry = make_valid_create_entry();
-        entry.code = Bytes::new();
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::Create(entry)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn rejects_eip8130_create_with_no_initial_actors() {
-        let mut entry = make_valid_create_entry();
-        entry.initial_actors.clear();
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::Create(entry)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn rejects_eip8130_create_with_duplicate_actor_ids() {
-        let mut entry = make_valid_create_entry();
-        entry.initial_actors.push(make_initial_actor(0x01));
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::Create(entry)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn rejects_eip8130_create_with_actor_authenticator_below_floor() {
-        let mut entry = make_valid_create_entry();
-        entry.initial_actors[0].authenticator = Address::ZERO;
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::Create(entry)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn accepts_eip8130_create_with_policy_data_on_ungated_actor() {
-        // Length decides what gets stored; POLICY is not required to attach.
-        let mut entry = make_valid_create_entry();
-        entry.initial_actors[0].scope = 0;
-        entry.initial_actors[0].policy_data = vec![0u8; Eip8130Constants::POLICY_DATA_LEN].into();
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::Create(entry)],
+    fn accepts_base_tx_with_one_delegation() {
+        let tx = TxBase {
+            account_changes: vec![AccountChange::Delegation(Delegation {
+                target: Address::repeat_byte(0x11),
+            })],
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(TxBaseStructure::validate_account_changes(&sign_eoa_base_tx(tx))).is_ok()
         );
     }
 
     #[test]
-    fn rejects_eip8130_create_with_wrong_length_policy_data() {
-        let mut entry = make_valid_create_entry();
-        entry.initial_actors[0].scope = Eip8130Constants::SCOPE_POLICY;
-        entry.initial_actors[0].policy_data =
-            vec![0u8; Eip8130Constants::POLICY_DATA_LEN - 1].into();
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::Create(entry)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn accepts_eip8130_create_with_well_formed_policy_data() {
-        let mut entry = make_valid_create_entry();
-        entry.initial_actors[0].scope = Eip8130Constants::SCOPE_POLICY;
-        entry.initial_actors[0].policy_data = vec![0u8; Eip8130Constants::POLICY_DATA_LEN].into();
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::Create(entry)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
-        );
-    }
-
-    #[test]
-    fn rejects_eip8130_create_with_too_many_initial_actors() {
-        let mut entry = make_valid_create_entry();
-        entry.initial_actors.clear();
-        for i in 0..(Eip8130Constants::MAX_ACTORS_PER_ENTRY + 1) {
-            entry.initial_actors.push(make_initial_actor(i as u8));
-        }
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::Create(entry)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn accepts_eip8130_create_with_exactly_max_initial_actors() {
-        let mut entry = make_valid_create_entry();
-        entry.initial_actors.clear();
-        for i in 0..Eip8130Constants::MAX_ACTORS_PER_ENTRY {
-            entry.initial_actors.push(make_initial_actor(i as u8));
-        }
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::Create(entry)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
-        );
-    }
-
-    fn make_valid_config_change() -> SignedAccountChanges {
-        let mut auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
-        auth.extend_from_slice(&[0u8; 65]);
-        SignedAccountChanges {
-            channel: AccountChangeChannel::Multichain,
-            sequence: 0,
-            // A batch must carry at least one op to be valid; a revoke is the
-            // simplest well-formed op.
-            changes: vec![make_revoke_change(B256::repeat_byte(0x01))],
-            signature: Bytes::from(auth),
-        }
-    }
-
-    #[test]
-    fn rejects_eip8130_config_change_with_empty_change_set() {
-        let cfg = SignedAccountChanges { changes: Vec::new(), ..make_valid_config_change() };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn accepts_eip8130_config_change_with_increment_local_epoch() {
-        // IncrementLocalEpoch carries an empty payload and names no actor; it
-        // passes the structural walk on either channel.
-        let cfg = SignedAccountChanges {
-            changes: vec![SignedChange {
-                change_type: ChangeType::IncrementLocalEpoch,
-                payload: Bytes::new(),
-            }],
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
-        );
-    }
-
-    #[test]
-    fn rejects_eip8130_config_change_with_nonempty_increment_local_epoch() {
-        // IncrementLocalEpoch must carry an empty payload.
-        let cfg = SignedAccountChanges {
-            changes: vec![SignedChange {
-                change_type: ChangeType::IncrementLocalEpoch,
-                payload: Bytes::from_static(&[0xaa]),
-            }],
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn rejects_eip8130_config_change_with_lock_op() {
-        // Lock / Unlock apply handlers are not yet enshrined, so a batch carrying
-        // one is rejected structurally.
-        let cfg = SignedAccountChanges {
-            changes: vec![SignedChange { change_type: ChangeType::Lock, payload: Bytes::new() }],
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn rejects_eip8130_config_change_with_short_auth() {
-        let cfg = SignedAccountChanges {
-            signature: Bytes::from_static(&[0u8; 5]),
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    // Repeated `actor_id` targets within one batch are admitted: Keystore and the
-    // enshrined apply path process a batch's ops in order (`AuthorizeActor` is an
-    // upsert, so the last write wins), so a duplicate is protocol-valid and the
-    // pool must not reject it.
-    #[test]
-    fn accepts_eip8130_config_change_with_duplicate_actor_ids() {
-        let dup_id = B256::repeat_byte(0x07);
-        let cfg = SignedAccountChanges {
-            changes: vec![
-                make_authorize_change(dup_id, ok_authenticator()),
-                make_authorize_change(dup_id, ok_authenticator()),
-            ],
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
-        );
-    }
-
-    // `bytes32(0)` is the reserved "no actor" sentinel; an `AuthorizeActor`
-    // targeting it is rejected at the gate, matching `_authorizeActor`'s
-    // `InvalidActorId` (and the enshrined apply path).
-    #[test]
-    fn rejects_eip8130_config_change_authorizing_zero_actor_id() {
-        let cfg = SignedAccountChanges {
-            changes: vec![make_authorize_change(B256::ZERO, ok_authenticator())],
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn accepts_eip8130_config_change_with_exactly_max_actor_changes() {
-        // Ids start at 1: `bytes32(0)` is the reserved sentinel and rejected.
-        let changes = (0..Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG)
-            .map(|i| make_authorize_change(B256::repeat_byte(i as u8 + 1), ok_authenticator()))
-            .collect();
-        let cfg = SignedAccountChanges { changes, ..make_valid_config_change() };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
-        );
-    }
-
-    #[test]
-    fn rejects_eip8130_config_change_with_too_many_actor_changes() {
-        let changes = (0..(Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG + 1))
-            .map(|i| make_authorize_change(B256::repeat_byte(i as u8 + 1), ok_authenticator()))
-            .collect();
-        let cfg = SignedAccountChanges { changes, ..make_valid_config_change() };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    // A `RevokeActor` op carries only its 32-byte target and names no
-    // authenticator, so it passes `validate_actor_changes` (no authenticator
-    // bound is applied).
-    #[test]
-    fn accepts_eip8130_config_change_with_valid_revoke() {
-        let cfg = SignedAccountChanges {
-            changes: vec![make_revoke_change(B256::repeat_byte(0x01))],
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
-        );
-    }
-
-    // A `RevokeActor` op whose payload is not exactly the 32-byte target is
-    // malformed and rejected at the gate.
-    #[test]
-    fn rejects_eip8130_config_change_with_nonempty_revoke_data() {
-        let mut payload = B256::repeat_byte(0x01).as_slice().to_vec();
-        payload.push(0xaa);
-        let cfg = SignedAccountChanges {
-            changes: vec![SignedChange {
-                change_type: ChangeType::RevokeActor,
-                payload: Bytes::from(payload),
-            }],
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    // The authenticator word (`payload[32..64]`) is an ABI-encoded `address`;
-    // non-zero padding in its leading 12 bytes (`payload[32..44]`) is malformed
-    // and rejected at the gate.
-    #[test]
-    fn rejects_eip8130_config_change_with_dirty_authenticator_padding() {
-        let mut change = make_authorize_change(B256::repeat_byte(0x01), ok_authenticator());
-        let mut payload = change.payload.to_vec();
-        payload[32] = 0x01;
-        change.payload = Bytes::from(payload);
-        let cfg = SignedAccountChanges { changes: vec![change], ..make_valid_config_change() };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    // A batch may target the same `actor_id` across mixed `Authorize`/`Revoke`
-    // ops (e.g. re-key in place); the contract applies them sequentially, so the
-    // pool admits the batch rather than rejecting the repeated target.
-    #[test]
-    fn accepts_eip8130_config_change_with_duplicate_actor_ids_mixed() {
-        let dup_id = B256::repeat_byte(0x07);
-        let cfg = SignedAccountChanges {
-            changes: vec![
-                make_authorize_change(dup_id, ok_authenticator()),
-                make_revoke_change(dup_id),
-            ],
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
-        );
-    }
-
-    #[test]
-    fn rejects_eip8130_too_many_config_changes() {
-        // The interim total-account-changes cap currently sits below
-        // `MAX_CONFIG_CHANGES_PER_TX`, so exercise the per-type config cap
-        // directly against the structural entry walk (bypassing the total gate)
-        // to keep that invariant covered independently.
-        let count = Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX + 1;
-        let account_changes =
-            (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
-        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_change_entries(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn accepts_eip8130_exactly_max_config_changes_in_structural_walk() {
-        // Exactly `MAX_CONFIG_CHANGES_PER_TX` config changes pass the per-type
-        // cap in the structural walk (the interim total cap is applied
-        // separately by `validate_account_changes`).
-        let count = Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX;
-        let account_changes =
-            (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
-        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert!(
-            structural(Eip8130Structure::validate_account_change_entries(&sign_eoa_eip8130(tx)))
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn accepts_eip8130_with_exactly_max_account_changes() {
-        let count = Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX;
-        let account_changes =
-            (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
-        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
-        );
-    }
-
-    #[test]
-    fn rejects_eip8130_too_many_account_changes() {
-        let count = Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX + 1;
-        let account_changes =
-            (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
-        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn rejects_eip8130_multiple_delegations() {
-        let tx = TxEip8130 {
+    fn rejects_base_tx_multiple_delegations() {
+        let tx = TxBase {
             account_changes: vec![
                 AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x11) }),
                 AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x22) }),
             ],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn rejects_eip8130_create_and_delegation_coexistence() {
-        // A transaction must not contain both a Create and a Delegation entry.
-        // These are mutually exclusive: create establishes a fresh account
-        // (code installed by the protocol) while delegation modifies an
-        // existing account's code pointer.
-        let account_changes = vec![
-            AccountChange::Create(make_valid_create_entry()),
-            AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
-        ];
-        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-        )));
-    }
-
-    #[test]
-    fn rejects_eip8130_create_config_and_delegation_coexistence() {
-        // Same invariant with a config change interleaved between the create and
-        // the delegation — the delegation is still rejected.
-        let account_changes = vec![
-            AccountChange::Create(make_valid_create_entry()),
-            AccountChange::ConfigChange(make_valid_config_change()),
-            AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
-        ];
-        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
-            &sign_eoa_eip8130(tx),
+        assert_unsupported(structural(TxBaseStructure::validate_account_changes(
+            &sign_eoa_base_tx(tx),
         )));
     }
 
@@ -3689,7 +2086,7 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_payer_max_cost_includes_l1_and_operator_fees() {
+    fn base_tx_payer_max_cost_includes_l1_and_operator_fees() {
         let chain_config = ChainConfig::mainnet();
         let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
@@ -3697,7 +2094,7 @@ mod tests {
         let tx = minimal_valid_eoa_tx();
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+            TxBaseSigned::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
 
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
@@ -3730,8 +2127,9 @@ mod tests {
         .into();
         validator.update_l1_block_info(&header, &[l1_info_tx]);
 
-        let state = validator.validate_eip8130_full(&signed).expect("valid funded EIP-8130 tx");
-        let encoded = validator.eip8130_encoded(&signed);
+        let state =
+            validator.validate_base_tx_full(&signed).expect("valid funded Base transaction tx");
+        let encoded = validator.base_tx_encoded(&signed);
         // Self-pay: no payer authentication gas.
         let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, 0);
         let gas_charge =
@@ -3745,71 +2143,32 @@ mod tests {
         assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
     }
 
-    /// Before Zenith, admitting an EOA transaction reads no Keystore state, so
-    /// no `AccountConfiguration` slot is captured or watched and the signer is
-    /// exempt from the signature limit; at Zenith the same transaction depends
-    /// on the account's Keystore state.
-    #[test]
-    fn eip8130_admission_reads_keystore_only_at_zenith() {
-        let signer = PrivateKeySigner::random();
-        let sender = signer.address();
-        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let funded = || ExtendedAccount::new(0, U256::from(1_000_000_000_000u64));
-        let watches_keystore = |state: &Eip8130ValidationState| {
-            state.watch_set.iter().any(|key| {
-                matches!(key, InvalidationKey::Slot { address, .. }
-                    if *address == AccountConfigurationStorage::ADDRESS)
-            })
-        };
-
-        let everest = build_test_validator_with_account(sender, funded())
-            .validate_eip8130_full(&signed)
-            .expect("EOA transaction is admitted before Zenith");
-        assert!(everest.manifest.has_no_config_slots());
-        assert!(!watches_keystore(&everest));
-        assert!(
-            everest.sender_locked && everest.payer_locked,
-            "without the Keystore a signer's key cannot change, so it is exempt from the signature limit"
-        );
-
-        let zenith =
-            build_test_validator_with_account_and_spec(sender, funded(), zenith_chain_spec())
-                .validate_eip8130_full(&signed)
-                .expect("EOA transaction is admitted at Zenith");
-        assert!(!zenith.manifest.has_no_config_slots());
-        assert!(watches_keystore(&zenith));
-        assert!(!zenith.sender_locked, "an unlocked Keystore account is signature-limited");
-    }
-
     /// Admission reserves only the transaction's fees: call value is not
     /// reserved, so a call worth more than the sender's balance is admitted as
     /// long as the payer can cover the fees.
     #[test]
-    fn eip8130_admission_ignores_call_value() {
+    fn base_tx_admission_ignores_call_value() {
         const BALANCE: u64 = 1_000_000_000_000;
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         let recipient = Address::repeat_byte(0xee);
         let signed_with_value = |value: U256| {
-            let tx = TxEip8130 {
+            let tx = TxBase {
                 gas_limit: 100_000,
                 calls: vec![vec![Call { to: recipient, value, data: Bytes::new() }]],
                 ..minimal_valid_eoa_tx()
             };
             let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new())
+            TxBaseSigned::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new())
         };
         let validator =
             build_test_validator_with_account(sender, ExtendedAccount::new(0, U256::from(BALANCE)));
 
         let without_value = validator
-            .validate_eip8130_full(&signed_with_value(U256::ZERO))
+            .validate_base_tx_full(&signed_with_value(U256::ZERO))
             .expect("fees are affordable");
         let with_value = validator
-            .validate_eip8130_full(&signed_with_value(U256::from(BALANCE) * U256::from(10)))
+            .validate_base_tx_full(&signed_with_value(U256::from(BALANCE) * U256::from(10)))
             .expect("call value beyond the balance does not block admission");
         assert_eq!(with_value.payer_max_cost, without_value.payer_max_cost);
         assert_eq!(with_value.manifest.payer_max_cost(), with_value.payer_max_cost);
@@ -3818,13 +2177,13 @@ mod tests {
     /// EIP-7825 bounds `gas_limit` plus payer authentication at admission, as
     /// at execution.
     #[test]
-    fn eip8130_gas_above_the_per_transaction_cap_is_rejected() {
+    fn base_tx_gas_above_the_per_transaction_cap_is_rejected() {
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         let signed_with_gas = |gas_limit: u64| {
-            let tx = TxEip8130 { gas_limit, ..minimal_valid_eoa_tx() };
+            let tx = TxBase { gas_limit, ..minimal_valid_eoa_tx() };
             let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new())
+            TxBaseSigned::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new())
         };
         let validator = build_test_validator_with_account(
             sender,
@@ -3832,10 +2191,10 @@ mod tests {
         );
 
         validator
-            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA))
+            .validate_base_tx_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA))
             .expect("gas at the cap is admitted");
         let err = validator
-            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA + 1))
+            .validate_base_tx_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA + 1))
             .expect_err("gas above the cap is rejected");
         assert!(
             matches!(
@@ -3847,27 +2206,13 @@ mod tests {
     }
 
     #[test]
-    fn nonce_free_manifest_uses_transaction_validity_window() {
+    fn expiry_deadline_is_the_last_valid_block_millisecond() {
         let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         // Realistic seconds clock; `now * 1000` stays >= TIMESTAMP_MS_THRESHOLD so
-        // the millisecond `valid_before` below is not re-scaled by normalization.
+        // the millisecond `valid_before` bounds below are not re-scaled by
+        // normalization.
         let now = 1_700_000_000;
-        // `valid_before` is in milliseconds; at the admission-window edge it is
-        // `now * 1000 + NONCE_FREE_MAX_EXPIRY_WINDOW`. The on-chain bound is
-        // exclusive, so the manifest boundary folds it onto the seconds axis as
-        // `floor((valid_before - 1) / 1000)`.
-        let valid_before = now * 1000 + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
-        let tx = TxEip8130 {
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            nonce_sequence: 0,
-            valid_before,
-            ..minimal_valid_eoa_tx()
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -3885,16 +2230,33 @@ mod tests {
         let header = alloy_consensus::Header { timestamp: now, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
 
-        let state = validator.validate_eip8130_full(&signed).expect("valid nonce-free tx");
-        assert_eq!(state.manifest.effective_expiry(), (valid_before - 1) / 1000);
+        // A sub-second nonce-bearing bound is inclusive. A nonce-free bound at the
+        // admission-window edge is exclusive, so the deadline is one millisecond
+        // earlier.
+        let nonce_free_valid_before = now * 1000 + TxBaseConstants::NONCE_FREE_MAX_EXPIRY_WINDOW;
+        for (nonce_key, valid_before, deadline) in [
+            (U256::ZERO, now * 1000 + 1_300, now * 1000 + 1_300),
+            (TxBaseConstants::NONCE_KEY_MAX, nonce_free_valid_before, nonce_free_valid_before - 1),
+        ] {
+            let tx =
+                TxBase { nonce_key, nonce_sequence: 0, valid_before, ..minimal_valid_eoa_tx() };
+            let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+            let signed =
+                TxBaseSigned::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+
+            let state = validator.validate_base_tx_full(&signed).expect("valid tx");
+            let deadline = UnixMillis::from_millis(deadline);
+            assert_eq!(state.manifest.effective_expiry(), deadline);
+            assert!(state.watch_set.contains(&InvalidationKey::Expiry(deadline)));
+        }
     }
 
     /// Builds a K1 authenticator-prefixed auth blob (`K1(20) || r || s || v`,
-    /// `v` in `{27, 28}`, low-s) over `hash` for the configured-actor wire form.
+    /// `v` in `{27, 28}`, low-s) over `hash` for the named-account wire form.
     fn k1_auth_blob(signer: &PrivateKeySigner, hash: B256) -> Bytes {
         let sig = signer.sign_hash_sync(&hash).unwrap();
         let mut out = Vec::with_capacity(20 + 65);
-        out.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+        out.extend_from_slice(TxBaseConstants::K1_AUTHENTICATOR.as_slice());
         out.extend_from_slice(&sig.r().to_be_bytes::<32>());
         out.extend_from_slice(&sig.s().to_be_bytes::<32>());
         out.push(27 + u8::from(sig.v()));
@@ -3902,8 +2264,8 @@ mod tests {
     }
 
     fn delegation_indicator(target: Address) -> Bytes {
-        let mut code = Vec::with_capacity(Eip8130Constants::DELEGATION_INDICATOR_SIZE);
-        code.extend_from_slice(&Eip8130Constants::DELEGATION_INDICATOR_PREFIX);
+        let mut code = Vec::with_capacity(TxBaseConstants::DELEGATION_INDICATOR_SIZE);
+        code.extend_from_slice(&TxBaseConstants::DELEGATION_INDICATOR_PREFIX);
         code.extend_from_slice(target.as_slice());
         Bytes::from(code)
     }
@@ -3911,9 +2273,9 @@ mod tests {
     fn delegation_validation_fixture(
         signer: &PrivateKeySigner,
         existing_code: Option<Bytes>,
-    ) -> (TestValidator, Eip8130Signed, Address) {
+    ) -> (TestValidator, TxBaseSigned, Address) {
         let sender = signer.address();
-        let tx = TxEip8130 {
+        let tx = TxBase {
             chain_id: test_chain_id(),
             sender: None,
             nonce_key: U256::ZERO,
@@ -3931,7 +2293,7 @@ mod tests {
             payer: None,
         };
         let sender_auth = k1_auth_blob(signer, tx.sender_signature_hash()).slice(20..);
-        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+        let signed = TxBaseSigned::new(tx, sender_auth, Bytes::new());
 
         let mut account = ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64));
         if let Some(code) = existing_code {
@@ -3941,127 +2303,27 @@ mod tests {
         (validator, signed, sender)
     }
 
-    /// Pool-side coverage for the [`OverlayPrecompileStorage`] admission path:
-    /// a counterfactual `Create` followed by a `ConfigChange` in the same
-    /// transaction must be admitted, which can only happen if the overlay
-    /// buffers the create's writes so the config change authorizes against the
-    /// freshly-created account's evolving state (the create installs an
-    /// unrestricted owner; the config change then advances the multichain
-    /// channel from sequence 0). If the overlay did not persist the create's
-    /// storage transitions, the config change would fail with `AuthenticatorMismatch`.
     #[test]
-    fn admits_eip8130_create_then_config_change_via_overlay() {
-        let signer = PrivateKeySigner::random();
-        let signer_addr = signer.address();
-        let actor_id = {
-            let mut id = [0u8; 32];
-            id[12..].copy_from_slice(signer_addr.as_slice());
-            B256::from_slice(&id)
-        };
-        let initial_actors =
-            vec![InitialActor::owner(actor_id, Eip8130Constants::K1_AUTHENTICATOR)];
-        let create = CreateEntry {
-            user_salt: B256::ZERO,
-            // Non-empty code: the structural gate rejects create.code.is_empty(),
-            // so empty code would never reach validate_eip8130_full in production.
-            // Using minimal valid bytecode (PUSH1 0x00) also affects the CREATE2
-            // address derivation, exercising a more realistic admitted scenario.
-            code: Bytes::from_static(&[0x60, 0x00]),
-            initial_actors: initial_actors.clone(),
-        };
-        let derived = AccountChangeApplier::compute_address(
-            create.user_salt,
-            create.code.as_ref(),
-            &initial_actors,
-        )
-        .expect("address derivation");
-
-        // Multichain (chain_id == 0) config change at the channel's first
-        // sequence, signed by the create's initial owner and bound to the
-        // counterfactual address.
-        let mut config = SignedAccountChanges {
-            channel: AccountChangeChannel::Multichain,
-            sequence: 0,
-            changes: vec![make_authorize_change(B256::repeat_byte(0x01), ok_authenticator())],
-            signature: Bytes::new(),
-        };
-        let config_digest =
-            ConfigChangeAuthorizer::changes_digest(derived, test_chain_id(), &config);
-        config.signature = k1_auth_blob(&signer, config_digest);
-
-        let tx = TxEip8130 {
-            chain_id: test_chain_id(),
-            sender: Some(derived),
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 100,
-            gas_limit: 1_000_000,
-            account_changes: vec![
-                AccountChange::Create(create),
-                AccountChange::ConfigChange(config),
-            ],
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let sender_auth = k1_auth_blob(&signer, tx.sender_signature_hash());
-        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
-
-        // Fund the counterfactual address so the self-paid fee check passes; it
-        // is still "fresh" (nonce 0, no code) for the create freshness gate.
-        let validator = build_test_validator_with_account_and_spec(
-            derived,
-            ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
-            zenith_chain_spec(),
-        );
-
-        let state = validator
-            .validate_eip8130_full(&signed)
-            .expect("create + config change must be admitted via the overlay");
-        assert_eq!(state.sender, derived);
-        assert_eq!(state.payer, derived, "self-paid create");
-        assert!(!state.manifest.has_no_config_slots(), "authorization reads must be captured");
-        assert_eq!(state.manifest.payer(), derived);
-        for read in state.manifest.config_slots() {
-            assert_eq!(
-                read.expected,
-                U256::ZERO,
-                "overlay-buffered writes must not become base-state dependencies"
-            );
-            assert!(
-                state.watch_set.contains(&InvalidationKey::Slot {
-                    address: read.address,
-                    slot: B256::from(read.slot),
-                }),
-                "captured read must also be indexed for invalidation: {read:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_delegation_over_ordinary_code_via_overlay_install() {
+    fn rejects_delegation_over_ordinary_code() {
         let signer = PrivateKeySigner::random();
         let (validator, signed, sender) =
             delegation_validation_fixture(&signer, Some(Bytes::from_static(&[0x60, 0x00])));
         assert_eq!(sender, signer.address());
 
-        assert_eip8130_validation_reason(
-            validator.validate_eip8130_full(&signed),
+        assert_base_tx_validation_reason(
+            validator.validate_base_tx_full(&signed),
             "delegation sender has non-delegation code",
         );
     }
 
     #[test]
-    fn admits_delegation_over_empty_code_via_overlay_install() {
+    fn admits_delegation_over_empty_code() {
         let signer = PrivateKeySigner::random();
         let (validator, signed, sender) = delegation_validation_fixture(&signer, None);
         assert_eq!(sender, signer.address());
 
         let state = validator
-            .validate_eip8130_full(&signed)
+            .validate_base_tx_full(&signed)
             .expect("empty sender code must accept delegation");
         assert_eq!(state.sender, sender);
         assert_eq!(state.payer, sender);
@@ -4076,26 +2338,26 @@ mod tests {
     fn rejects_delegation_off_protocol_nonce() {
         let now_ms = 1_700_000_000_000;
         for (nonce_key, valid_before) in
-            [(U256::from(7), 0), (Eip8130Constants::NONCE_KEY_MAX, now_ms + 10_000)]
+            [(U256::from(7), 0), (TxBaseConstants::NONCE_KEY_MAX, now_ms + 10_000)]
         {
             let signer = PrivateKeySigner::random();
             let (validator, signed, _) = delegation_validation_fixture(&signer, None);
             let header =
                 alloy_consensus::Header { timestamp: now_ms / 1_000, ..Default::default() };
             validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
-            let tx = TxEip8130 { nonce_key, valid_before, ..signed.tx().clone() };
+            let tx = TxBase { nonce_key, valid_before, ..signed.tx().clone() };
             let sender_auth = k1_auth_blob(&signer, tx.sender_signature_hash()).slice(20..);
-            let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+            let signed = TxBaseSigned::new(tx, sender_auth, Bytes::new());
 
-            assert_eip8130_validation_reason(
-                validator.validate_eip8130_full(&signed),
+            assert_base_tx_validation_reason(
+                validator.validate_base_tx_full(&signed),
                 "delegation requires the protocol nonce",
             );
         }
     }
 
     #[test]
-    fn admits_delegation_update_over_existing_indicator_via_overlay_install() {
+    fn admits_delegation_update_over_existing_indicator() {
         let signer = PrivateKeySigner::random();
         let existing_code = delegation_indicator(Address::repeat_byte(0x11));
         let expected_hash = alloy_primitives::keccak256(&existing_code);
@@ -4104,7 +2366,7 @@ mod tests {
         assert_eq!(sender, signer.address());
 
         let state = validator
-            .validate_eip8130_full(&signed)
+            .validate_base_tx_full(&signed)
             .expect("existing delegation indicator must accept a target update");
         assert_eq!(state.sender, sender);
         assert_eq!(state.payer, sender);
@@ -4119,7 +2381,7 @@ mod tests {
     fn sender_with_non_delegation_code_reports_no_code_hash() {
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        let tx = TxEip8130 {
+        let tx = TxBase {
             chain_id: test_chain_id(),
             nonce_key: U256::ZERO,
             max_fee_per_gas: 100,
@@ -4127,14 +2389,14 @@ mod tests {
             ..Default::default()
         };
         let sender_auth = k1_auth_blob(&signer, tx.sender_signature_hash()).slice(20..);
-        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+        let signed = TxBaseSigned::new(tx, sender_auth, Bytes::new());
         let account = ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64))
             .with_bytecode(Bytes::from_static(&[0x60, 0x00]));
         let validator = build_test_validator_with_account(sender, account);
 
         let state = validator
-            .validate_eip8130_full(&signed)
-            .expect("a sender with code may send an EIP-8130 transaction");
+            .validate_base_tx_full(&signed)
+            .expect("a sender with code may send a Base transaction");
         assert_eq!(state.sender_bytecode_hash, None);
     }
 }

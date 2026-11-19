@@ -5,9 +5,14 @@
 //! gateway returns, and only then does execute transfer leadership.
 
 use std::{
+    collections::BTreeMap,
     fmt,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
+    thread,
     time::Duration,
 };
 
@@ -15,7 +20,7 @@ use alloy_transport_http::reqwest::{self, Method, StatusCode};
 use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
-use tokio::process::Command;
+use tokio::{process::Command, sync::oneshot};
 use tracing::warn;
 use url::{Host, Url};
 
@@ -257,8 +262,8 @@ impl GateSettings {
         &self,
         prompter: Arc<dyn TokenPrompter>,
     ) -> Result<GateClient, GateError> {
-        let (token, cache) = match self.explicit_token().await? {
-            Some(token) => (Some(token), None),
+        let (token, cache, explicit) = match self.explicit_token().await? {
+            Some(token) => (Some(token), None, Some(Arc::new(self.clone()))),
             None => {
                 let cache = self
                     .cache_root
@@ -267,7 +272,7 @@ impl GateSettings {
                     .ok_or(GateError::MissingToken)?;
                 // With no usable cached token, the first request goes out
                 // unauthenticated so the gateway's 401 can say how to log in.
-                (cache.load(Utc::now()), Some(cache))
+                (cache.load(Utc::now()), Some(cache), None)
             }
         };
         // Never follow redirects: requests carry a bearer token, execute is a
@@ -280,6 +285,8 @@ impl GateSettings {
             base: self.url.clone(),
             token: Arc::new(Mutex::new(token)),
             cache,
+            explicit,
+            cache_writes: Arc::default(),
             prompter,
             http,
             retry_backoff: GateClient::RETRY_BACKOFF,
@@ -644,6 +651,11 @@ pub struct GateClient {
     token: Arc<Mutex<Option<String>>>,
     /// Where a cached or prompted token is stored; `None` for explicit sources.
     cache: Option<TokenCache>,
+    /// The explicit token source the token came from, read again by
+    /// [`Self::relogin`]; `None` when the token is cached or prompted.
+    explicit: Option<Arc<GateSettings>>,
+    /// Token cache writes running in the background, shared by clones.
+    cache_writes: Arc<CacheWrites>,
     prompter: Arc<dyn TokenPrompter>,
     http: reqwest::Client,
     retry_backoff: Duration,
@@ -651,6 +663,31 @@ pub struct GateClient {
     /// Whether a browser login prints its URL to stderr (off in the TUI).
     announce_login: bool,
 }
+
+/// Token cache writes for one client and its clones.
+#[derive(Default)]
+struct CacheWrites {
+    /// Completion of the newest write, until [`GateClient::flush_cache`] takes it.
+    pending: Mutex<Option<oneshot::Receiver<Result<(), GateError>>>>,
+    /// Runs before a write takes the lock, so tests can hold it there.
+    #[cfg(test)]
+    before_store: Option<StoreHook>,
+}
+
+/// Test hook run with the token before a cache write.
+#[cfg(test)]
+type StoreHook = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Held while a cache write runs, so no two writes in this process share
+/// the cache's temp file.
+static CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Generation of every cache write started in this process, from any client.
+static CACHE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Newest write generation started for each cache file. A write that a newer
+/// one for the same file superseded is skipped, whichever client started it.
+static NEWEST_CACHE_WRITE: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
 
 impl fmt::Debug for GateClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -680,6 +717,8 @@ impl GateClient {
     /// Timeout for the read-only cluster view, matching the gateway's own
     /// per-request budget for that route.
     pub const CLUSTER_TIMEOUT: Duration = Duration::from_secs(3);
+    /// How long [`Self::flush_cache`] waits for a pending cache write.
+    pub const CACHE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 
     /// Overrides the delay between 503 retries.
     pub const fn with_retry_backoff(mut self, backoff: Duration) -> Self {
@@ -780,17 +819,31 @@ impl GateClient {
         .await
     }
 
-    /// Logs in after a 401 (see [`Self::login`]) and uses the new token for
-    /// later requests.
+    /// Obtains a new token after a 401 and uses it for later requests. With
+    /// an explicit token source, reads that source again and fails if it
+    /// returns the rejected token; it never falls back to the browser, a
+    /// prompt or the cache. Otherwise logs in (see [`Self::login`]).
     pub async fn relogin(&self, token_url: Option<String>) -> Result<String, GateError> {
-        let fresh = self.login(token_url).await?;
+        let fresh = match &self.explicit {
+            Some(settings) => {
+                let fresh = settings.explicit_token().await?.ok_or(GateError::MissingToken)?;
+                if self.current_token().as_deref() == Some(fresh.as_str()) {
+                    return Err(GateError::Token(
+                        "the token source returned the token the gateway rejected".to_string(),
+                    ));
+                }
+                fresh
+            }
+            None => self.login(token_url).await?,
+        };
         *self.token.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(fresh.clone());
         Ok(fresh)
     }
 
     /// Picks up a usable cached token that differs from the current one, for
     /// example one cached by a CLI login while the TUI was waiting. Returns
-    /// whether the token changed. Explicit token sources never change.
+    /// whether the token changed. Explicit token sources are not read here;
+    /// see [`Self::relogin`].
     pub fn reload_cached_token(&self) -> bool {
         let Some(cached) = self.cache.as_ref().and_then(|cache| cache.load(Utc::now())) else {
             return false;
@@ -801,6 +854,12 @@ impl GateClient {
         }
         *token = Some(cached);
         true
+    }
+
+    /// Whether the token comes from an explicit source (token file,
+    /// `BASECTL_GATE_TOKEN` or `gate_token_command`) rather than the cache.
+    pub const fn has_explicit_source(&self) -> bool {
+        self.explicit.is_some()
     }
 
     /// Transfers leadership for an approved proposal. Never retried automatically.
@@ -933,7 +992,7 @@ impl GateClient {
                 },
             };
             if let Ok(received) = received {
-                Self::cache_or_warn(cache, &received.token, received.expires_at);
+                self.cache_in_background(cache, &received.token, received.expires_at);
                 return Ok(received.token);
             }
         }
@@ -944,16 +1003,66 @@ impl GateClient {
         if token.is_empty() {
             return Err(GateError::MissingToken);
         }
-        Self::cache_or_warn(cache, &token, None);
+        self.cache_in_background(cache, &token, None);
         Ok(token)
     }
 
-    /// Caches `token`. Caching only saves a later login, so a failed write is
-    /// logged and the token is still used.
-    fn cache_or_warn(cache: &TokenCache, token: &str, expires_at: Option<DateTime<Utc>>) {
-        if let Err(error) = cache.store(token, expires_at) {
-            warn!(error = %error, "could not cache the approval gateway token");
-        }
+    /// Caches `token` on a detached thread, so slow storage never delays the
+    /// request that uses it, and the process never waits for it at exit.
+    /// Caching only saves a later login; [`Self::flush_cache`] reports a
+    /// failed write.
+    fn cache_in_background(
+        &self,
+        cache: &TokenCache,
+        token: &str,
+        expires_at: Option<DateTime<Utc>>,
+    ) {
+        let writes = Arc::clone(&self.cache_writes);
+        let (done, pending) = oneshot::channel();
+        let generation = {
+            let mut slot = writes.pending.lock().unwrap_or_else(PoisonError::into_inner);
+            *slot = Some(pending);
+            let mut newest = NEWEST_CACHE_WRITE.lock().unwrap_or_else(PoisonError::into_inner);
+            let generation = CACHE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+            newest.insert(cache.path.clone(), generation);
+            generation
+        };
+        let (cache, token) = (cache.clone(), token.to_string());
+        // A thread that cannot start drops `done`; the flush reports that.
+        let _ = thread::Builder::new().name("gate-token-cache".to_string()).spawn(move || {
+            #[cfg(test)]
+            if let Some(hook) = &writes.before_store {
+                hook(&token);
+            }
+            let _serial = CACHE_WRITE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+            let newest = NEWEST_CACHE_WRITE.lock().unwrap_or_else(PoisonError::into_inner);
+            let current = newest.get(&cache.path) == Some(&generation);
+            drop(newest);
+            let result = if current { cache.store(&token, expires_at) } else { Ok(()) };
+            let _ = done.send(result);
+        });
+    }
+
+    /// Waits up to [`Self::CACHE_FLUSH_TIMEOUT`] for the newest token cache
+    /// write and warns if it failed or is still running. Returns at once
+    /// when no write is pending; never fails.
+    ///
+    /// Shutdown policy: a write still pending after the bound is abandoned.
+    /// The cache is replaced by rename, so the previous cache file stays
+    /// intact, and the cost is one more sign-in next run. The one-shot CLI
+    /// commands call this before they return; the TUI does not, because it
+    /// signs in long before it quits and a write takes milliseconds.
+    pub async fn flush_cache(&self) {
+        let pending =
+            self.cache_writes.pending.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let Some(pending) = pending else { return };
+        let error = match tokio::time::timeout(Self::CACHE_FLUSH_TIMEOUT, pending).await {
+            Ok(Ok(Ok(()))) => return,
+            Ok(Ok(Err(error))) => error.to_string(),
+            Ok(Err(_)) => "the cache write did not finish".to_string(),
+            Err(_) => format!("still writing after {:?}", Self::CACHE_FLUSH_TIMEOUT),
+        };
+        warn!(error = %error, "could not cache the approval gateway token");
     }
 
     fn current_token(&self) -> Option<String> {
@@ -1657,6 +1766,7 @@ mod tests {
             .unwrap();
 
         client.status(ID).await.unwrap();
+        client.flush_cache().await;
 
         // Request 1 has no token (to learn the login URL); request 2 is the
         // single retry with the token from the callback.
@@ -1704,6 +1814,7 @@ mod tests {
             .await
             .unwrap();
         client.status(ID).await.unwrap();
+        client.flush_cache().await;
         assert_eq!(*seen.lock().unwrap(), vec!["", "Bearer fresh"]);
         assert!(TokenCache::for_gate(&root, &url).load(Utc::now()).is_none());
 
@@ -1720,6 +1831,95 @@ mod tests {
             .unwrap();
         client.status(ID).await.unwrap();
         assert_eq!(*seen.lock().unwrap(), vec!["", "Bearer pasted"]);
+    }
+
+    /// Makes the client's cache writes of `token` wait, before taking the
+    /// write lock, for a message on the returned sender (at most `limit`).
+    fn hold_cache_writes(
+        client: &mut GateClient,
+        token: &'static str,
+        limit: Duration,
+    ) -> std::sync::mpsc::Sender<()> {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let held = Mutex::new(held);
+        let hook = move |written: &str| {
+            if written == token {
+                let _ = held.lock().unwrap().recv_timeout(limit);
+            }
+        };
+        client.cache_writes = Arc::new(super::CacheWrites {
+            before_store: Some(Arc::new(hook)),
+            ..Default::default()
+        });
+        release
+    }
+
+    #[tokio::test]
+    async fn slow_cache_write_never_delays_the_request_and_flush_is_bounded() {
+        let (url, seen) = auth_gateway("pasted", LoginUrl::None).await;
+        let root = tempfile::tempdir().unwrap();
+        let mut prompter = MockTokenPrompter::new();
+        prompter.expect_can_open_browser().return_const(false);
+        prompter.expect_is_interactive().return_const(true);
+        prompter.expect_prompt().times(1).returning(|_| Ok("pasted".to_string()));
+        let mut client = settings(url.clone(), None, Some(root.path()))
+            .client_with_prompter(Arc::new(prompter))
+            .await
+            .unwrap();
+        let _release = hold_cache_writes(&mut client, "pasted", Duration::from_secs(4));
+
+        let started = std::time::Instant::now();
+        client.status(ID).await.unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+        assert_eq!(*seen.lock().unwrap(), vec!["", "Bearer pasted"]);
+
+        let started = std::time::Instant::now();
+        client.flush_cache().await;
+        let waited = started.elapsed();
+        assert!(waited >= GateClient::CACHE_FLUSH_TIMEOUT, "{waited:?}");
+        assert!(waited < GateClient::CACHE_FLUSH_TIMEOUT + Duration::from_secs(1), "{waited:?}");
+        // The write is still held, so nothing is cached yet.
+        assert!(TokenCache::for_gate(root.path(), &url).load(Utc::now()).is_none());
+    }
+
+    #[tokio::test]
+    async fn an_older_cache_write_never_overwrites_a_newer_one() {
+        let url = Url::parse("http://127.0.0.1:1/").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let client = || async {
+            settings(url.clone(), None, Some(root.path()))
+                .client_with_prompter(never_prompts(false))
+                .await
+                .unwrap()
+        };
+        let (mut held, other) = (client().await, client().await);
+        let release = hold_cache_writes(&mut held, "older", Duration::from_secs(10));
+        let cache = TokenCache::for_gate(root.path(), &url);
+        let elsewhere =
+            TokenCache::for_gate(root.path(), &Url::parse("http://other.example").unwrap());
+        let run_held = |cache: &TokenCache| {
+            held.cache_in_background(cache, "older", None);
+            held.cache_writes.pending.lock().unwrap().take().unwrap()
+        };
+
+        // Another client caches a newer token for the same gateway while the
+        // older write is held: the older write is skipped when it runs.
+        let older = run_held(&cache);
+        other.cache_in_background(&cache, "newer", None);
+        other.flush_cache().await;
+        assert_eq!(cache.load(Utc::now()).as_deref(), Some("newer"));
+        release.send(()).unwrap();
+        older.await.unwrap().unwrap();
+        assert_eq!(cache.load(Utc::now()).as_deref(), Some("newer"));
+
+        // A later write to a different cache file does not supersede it.
+        let older = run_held(&elsewhere);
+        other.cache_in_background(&cache, "newest", None);
+        other.flush_cache().await;
+        release.send(()).unwrap();
+        older.await.unwrap().unwrap();
+        assert_eq!(elsewhere.load(Utc::now()).as_deref(), Some("older"));
+        assert_eq!(cache.load(Utc::now()).as_deref(), Some("newest"));
     }
 
     #[tokio::test]
@@ -1740,6 +1940,7 @@ mod tests {
             .with_login_timeout(Duration::from_millis(200));
 
         client.status(ID).await.unwrap();
+        client.flush_cache().await;
 
         assert_eq!(*seen.lock().unwrap(), vec!["Bearer stale", "Bearer fresh"]);
         assert_eq!(cache.load(Utc::now()).as_deref(), Some("fresh"));
@@ -1935,6 +2136,7 @@ mod tests {
             .unwrap();
 
         client.status(ID).await.unwrap();
+        client.flush_cache().await;
 
         assert_eq!(*seen.lock().unwrap(), vec!["", "Bearer fresh"]);
         assert_eq!(cache.load(Utc::now()).as_deref(), Some("fresh"));

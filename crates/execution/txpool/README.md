@@ -100,7 +100,7 @@ Flashblock-index predicates still decode but are rejected at ingress: Base no lo
 builds flashblocks.
 `operator` is `<` = 0, `<=` = 1, `=` = 2, `!=` = 3, `>` = 4, `>=` = 5.
 Balance and nonce predicates use `account`; storage uses `account`, `slot`, and `mask`.
-Nonce predicates read the account's protocol nonce, not an EIP-8130 channel nonce.
+Nonce predicates read the account's protocol nonce, not a Base transaction channel nonce.
 Unused fields are zero; omitted storage masks become `U256::MAX`.
 `ValidityPredicateKind` and `ValidityOperator` define these explicit wire IDs.
 All fields participate in each predicate's EIP-712 struct hash. Sort the typed
@@ -112,8 +112,8 @@ cheap-first ordering and does not affect the signing contract.
 
 Raw ingress reuses the recovered envelope sender to verify sidecar signatures
 and rejects high-s signatures. Only sender-address secp256k1
-authorization is supported; contract wallets or EIP-8130 actors without that
-key cannot use signed sidecars. Deposits and unprotected legacy transactions
+authorization is supported; contract wallets without that key cannot use
+signed sidecars. Deposits and unprotected legacy transactions
 have no chain-bound signing domain and cannot authorize signed predicates.
 Shadow-only predicate injection is incompatible with signature enforcement.
 Predicates remain builder-side metadata, not on-chain consensus rules: a holder
@@ -139,7 +139,7 @@ the same stable rejection reason in their `data` field.
 ### Validity pool
 
 `BaseTransactionPool` keeps three stores behind one `TransactionPool` surface:
-the reth `Pool` for standard transactions, the EIP-8130 sidecar for finite
+the reth `Pool` for standard transactions, the Base transaction sidecar for finite
 2D-nonce channels and nonce-free transactions, and a validity pool for every
 transaction that carries validity predicates (conditional transactions), whatever
 its envelope type. Validity transactions rest in the pool until a predicate on hot
@@ -150,11 +150,11 @@ user transactions out of reth's pending subpool, and reth's own eviction cannot
 drop resting validity transactions.
 
 Delegation and validity predicates do not mix. The validator rejects a
-transaction with validity predicates that is an EIP-7702 transaction, carries an
-EIP-8130 delegation entry, or comes from a delegated sender, and a state diff that
+transaction with validity predicates that is an EIP-7702 transaction, carries a
+Base transaction delegation entry, or comes from a delegated sender, and a state diff that
 changes an account's code drops that account's validity transactions. The
 validity pool therefore never needs reth's in-flight limits for delegated
-accounts and pending authorizations, which apply only inside reth. An EIP-8130
+accounts and pending authorizations, which apply only inside reth. A Base transaction
 delegation always uses the protocol nonce, so it lands in reth, which counts its
 sender as a pending authority, as for an EIP-7702 authorization.
 

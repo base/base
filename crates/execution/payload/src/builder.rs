@@ -15,11 +15,11 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm::{BaseSpecId, L1BlockInfo, MeteredGas};
+use base_common_evm::{BaseSpecId, BaseTime, L1BlockInfo, MeteredGas};
 use base_common_rpc_types_engine::PayloadReady;
-use base_execution_eip8130::IntrinsicGas;
+use base_execution_base_tx::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
+    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, UnixMillis,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
@@ -759,8 +759,8 @@ impl ExecutionInfo {
     /// Returns true if the transaction would exceed the block limits:
     /// - block gas limit: ensures the transaction still fits into the block. `tx_reserved_gas` is
     ///   the gas reserved against the block budget: `gas_limit` for ordinary transactions, and
-    ///   `gas_limit + payer_auth` for EIP-8130, since payer authentication is metered on top of the
-    ///   declared gas limit (see `IntrinsicGas::payer_auth_cost_of`).
+    ///   `gas_limit + payer_auth` for Base transactions, since payer authentication is metered on
+    ///   top of the declared gas limit (see `IntrinsicGas::payer_auth_cost_of`).
     /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
@@ -1101,6 +1101,24 @@ where
         let can_finalize_early = self.is_one_shot_building_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
+        // Only deposits write the `BaseTime` predeploy, so the millisecond part left in state by
+        // the sequencer transactions is this block's for every pool candidate, as in execution. A
+        // failed read falls back to the start of the header second, which can only let the
+        // manifest precheck pass a transaction that execution then rejects.
+        let timestamp_millis_part = BaseTime::fetch_timestamp_millis_part(
+            builder.evm_mut().db_mut(),
+        )
+        .unwrap_or_else(|error| {
+            warn!(
+                target: "payload_builder",
+                error = %error,
+                "failed to load BaseTime millisecond part for the manifest precheck"
+            );
+            0
+        });
+        let block_timestamp_ms = UnixMillis::from_millis(
+            BaseTime { timestamp_millis_part }.timestamp_ms(block_timestamp),
+        );
         // Only deposits can write the L1 block info predeploy, so the scalar left in state by the
         // sequencer transactions holds for every pool candidate in this scan.
         let da_footprint_gas_scalar = self
@@ -1124,7 +1142,7 @@ where
             }
 
             let tx_hash = *tx.hash();
-            let replay_independent = tx.is_eip8130_nonce_free();
+            let replay_independent = tx.is_base_tx_nonce_free();
             let has_validity_predicates = !tx.validity_conditions().is_empty();
             if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
                 RejectionCacheMetrics::hits().increment(1);
@@ -1271,13 +1289,14 @@ where
 
             if self.builder_config.manifest_precheck_enabled
                 && let Some(manifest) = tx.watch_manifest()
-                && let Err(stale) = manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
+                && let Err(stale) =
+                    manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp_ms)
             {
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx.hash(),
                     cause = stale.cause(),
-                    "skipping EIP-8130 transaction with stale authorization manifest"
+                    "skipping Base transaction with a stale admission manifest"
                 );
                 GuardMetrics::record_builder_precheck_drop(&stale);
                 if has_validity_predicates {
@@ -1296,39 +1315,10 @@ where
             let tx_da_size = tx.estimated_da_size();
             let tx_uncompressed_size = tx.encoded_length() as u64;
 
-            // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
-            // be reserved against the block gas budget in addition to `gas_limit` (`0` for
-            // non-8130 / self-pay); see `IntrinsicGas::payer_auth_cost_of`.
-            let tx_payer_auth = match tx.as_eip8130() {
-                Some(signed) => match IntrinsicGas::payer_auth_cost_of(signed) {
-                    Ok(payer_auth) => payer_auth,
-                    Err(err) => {
-                        trace!(
-                            target: "payload_builder",
-                            %err,
-                            tx_hash = ?tx.hash(),
-                            "skipping EIP-8130 transaction with unschedulable payer authenticator"
-                        );
-                        if has_validity_predicates {
-                            self.emit_validity_rejection(
-                                tx_hash,
-                                validity_consideration_index,
-                                "unschedulable_payer_authenticator",
-                                "EIP-8130 payer authenticator cannot be scheduled against the gas budget",
-                                false,
-                            );
-                        }
-                        Self::skip_current(
-                            &mut best_txs,
-                            tx.sender(),
-                            tx.nonce(),
-                            replay_independent,
-                        );
-                        continue;
-                    }
-                },
-                None => 0,
-            };
+            // Base transactions meter payer authentication gas on top of the declared gas limit, so
+            // it must be reserved against the block gas budget in addition to `gas_limit` (`0` for
+            // non-Base / self-pay); see `IntrinsicGas::payer_auth_cost_of`.
+            let tx_payer_auth = tx.as_base_tx().map_or(0, IntrinsicGas::payer_auth_cost_of);
 
             if coinbase_tip_affordability.unaffordable(
                 tx,
@@ -1643,13 +1633,13 @@ where
             let gas_used = gas_output.tx_gas_used();
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
             // The tip is a phase-0 transfer, so it is revenue only if that phase
-            // committed; a reverted or policy-blocked phase pays nothing.
+            // committed; a reverted phase pays nothing.
             let coinbase_tip = coinbase_tip.filter(|_| {
                 builder
                     .executor()
                     .receipts()
                     .last()
-                    .and_then(DepositReceiptExt::as_eip8130_receipt)
+                    .and_then(DepositReceiptExt::as_base_tx_receipt)
                     .is_some_and(|receipt| receipt.phase_committed(0))
             });
             info.inclusion.record(
@@ -1752,7 +1742,8 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        BasePooledTransaction, BestTransactionsHold, ValidityOperator, ValidityPredicate,
+        BasePooledTransaction, BasePooledTx, BestTransactionsHold, UnixMillis, ValidityOperator,
+        ValidityPredicate, WatchManifest,
     };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
@@ -1847,11 +1838,11 @@ mod tests {
         payload.block().state_root
     }
 
-    /// The block gas reservation must include EIP-8130 `payer_auth` on top of the
+    /// The block gas reservation must include Base transaction `payer_auth` on top of the
     /// declared `gas_limit`: a transaction that fits on `gas_limit` alone is still
     /// over the block limit once payer authentication is metered on top.
     #[test]
-    fn is_tx_over_limits_reserves_eip8130_payer_auth() {
+    fn is_tx_over_limits_reserves_base_tx_payer_auth() {
         let mut info = ExecutionInfo::new();
         info.cumulative_gas_used = 979_000;
         let block_gas_limit = 1_000_000;
@@ -2421,6 +2412,56 @@ mod tests {
         };
 
         assert!(payload.block().body().transactions.is_empty());
+    }
+
+    #[test]
+    fn manifest_precheck_applies_expiry_at_the_block_millisecond() {
+        // Blocks are 200 ms apart, so several share a header second: the precheck must compare
+        // the deadline against the block's exact millisecond time, as execution does.
+        const MILLIS_PART: u16 = 400;
+        let block_ms = DENIM_TIMESTAMP * 1_000 + u64::from(MILLIS_PART);
+        let included = |deadline: UnixMillis| {
+            let transaction = pool_transaction_to(0, Address::repeat_byte(0x8a), U256::ZERO);
+            transaction.set_watch_manifest(WatchManifest::new(Address::ZERO, U256::ZERO, deadline));
+            let mut provider = funded_provider(&[transaction.sender()]);
+            let mut base_time_storage = HashMap::default();
+            base_time_storage.insert(
+                StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+                U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+            );
+            base_time_storage.insert(
+                StorageKey::from(BaseTime::TIMESTAMP_MILLIS_PART_SLOT.to_be_bytes::<32>()),
+                U256::from(MILLIS_PART),
+            );
+            provider.insert_account(
+                Predeploys::BASE_TIME,
+                Account::default(),
+                Some(BaseTime::proxy_bytecode()),
+                base_time_storage,
+            );
+            let BuildOutcomeKind::Freeze(payload) =
+                Builder::new(|_, _| TestParkableTransactions::new(vec![transaction]))
+                    .build(
+                        StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                        &provider,
+                        Some(state_root_handle()),
+                        pool_payload_context(DENIM_TIMESTAMP),
+                    )
+                    .expect("payload must build")
+            else {
+                panic!("Denim payload must freeze")
+            };
+            payload.block().body().transactions.len() == 1
+        };
+
+        assert!(
+            !included(UnixMillis::from_millis(block_ms - 100)),
+            "a deadline earlier in the same second has passed"
+        );
+        assert!(
+            included(UnixMillis::from_millis(block_ms)),
+            "a transaction is valid through its deadline millisecond"
+        );
     }
 
     #[test]
