@@ -421,7 +421,13 @@ impl TrieGen {
                     }
                     _ => self.account_key(),
                 };
-                let slots = (0..self.rng.weighted(&[3, 3, 2, 1]))
+                // Sometimes many slots, as an eth_getProof call over a contract's storage
+                // layout asks for, which clients hash and look up in batches.
+                let count = match self.rng.weighted(&[3, 3, 2, 1, 1]) {
+                    4 => self.rng.range(4, 24) as usize,
+                    n => n,
+                };
+                let slots = (0..count)
                     .map(|_| match self.existing_slot(model, &key) {
                         Some(slot) if self.rng.chance(50) => slot,
                         Some(slot) => {
