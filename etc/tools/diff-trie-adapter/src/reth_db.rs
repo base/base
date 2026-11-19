@@ -7,7 +7,7 @@ use alloy_primitives::{B256, Bytes, U256};
 use alloy_rlp::Decodable;
 use alloy_trie::{Nibbles, TrieAccount, nodes::TrieNode};
 use base_diff_adapter::WitnessState;
-use base_diff_fuzz::{ProofAccount, ProofResult, ProofTarget, StorageProofResult};
+use base_diff_fuzz::{ProofAccount, ProofResult, ProofTarget, StorageProofResult, TrieBlockResult};
 use reth_chainspec::MAINNET;
 use reth_codecs::Compact;
 use reth_db::{
@@ -27,15 +27,15 @@ use reth_provider::{
     test_utils::MockNodeTypesWithDB,
 };
 use reth_stages_types::{MerkleCheckpoint, StorageRootMerkleCheckpoint};
-use reth_storage_api::{StateProofProvider, StateRootProvider};
+use reth_storage_api::{StateProofProvider, StateRootProvider, StorageRootProvider};
 use reth_trie::{
     IntermediateStateRootState, StateRoot, StateRootProgress, StorageRoot,
     trie_cursor::noop::NoopTrieCursorFactory,
     verify::{Output, Verifier},
 };
 use reth_trie_common::{
-    ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, MultiProof, MultiProofTargets,
-    TrieInput, TrieInputSorted,
+    EMPTY_ROOT_HASH, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
+    MultiProof, MultiProofTargets, TrieInput, TrieInputSorted,
     updates::{TrieUpdates, TrieUpdatesSorted},
 };
 use reth_trie_db::{
@@ -264,6 +264,45 @@ impl RethDb {
                 })
             })
             .collect()
+    }
+
+    /// [`Self::account_proofs`] with each slot's proof replaced by the storage API's
+    /// (`storage_proof`), as `eth_getProof` for a storage-only request and the proofs-history RPC
+    /// compute them. The result's error lists where `storage_multiproof` or `storage_root`
+    /// disagree with them.
+    pub fn storage_api_proofs(
+        provider: &(impl StateProofProvider + StorageRootProvider),
+        targets: &[ProofTarget],
+    ) -> eyre::Result<TrieBlockResult> {
+        let mut proofs = Self::account_proofs(provider, targets)?;
+        let mut mismatches = Vec::new();
+        for (target, result) in targets.iter().zip(&mut proofs) {
+            let address = target.address.ok_or_else(|| eyre::eyre!("target without address"))?;
+            let slot_keys = target.slot_keys.clone().unwrap_or_default();
+            let multiproof =
+                provider.storage_multiproof(address, &slot_keys, HashedStorage::default())?;
+            for (key, storage) in slot_keys.iter().zip(&mut result.storage) {
+                let proof = provider.storage_proof(address, *key, HashedStorage::default())?;
+                if multiproof.storage_proof(*key)? != proof {
+                    mismatches.push(format!("storage_multiproof of {address} slot {key}"));
+                }
+                storage.value = B256::from(proof.value.to_be_bytes::<32>());
+                storage.proof = proof.proof;
+            }
+            let root = provider.storage_root(address, HashedStorage::default())?;
+            let expected = result.account.as_ref().map_or(EMPTY_ROOT_HASH, |a| a.storage_root);
+            if root != expected {
+                mismatches.push(format!("storage_root of {address} is {root}, not {expected}"));
+            }
+            if multiproof.root != root {
+                mismatches.push(format!("storage_multiproof root of {address}"));
+            }
+        }
+        Ok(TrieBlockResult {
+            proofs: Some(proofs),
+            error: (!mismatches.is_empty()).then(|| mismatches.join("; ")),
+            ..Default::default()
+        })
     }
 
     /// The value of the leaf for `path` at the end of `proof`, if the proof shows it present.

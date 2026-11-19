@@ -6,6 +6,7 @@ use std::{
     fs,
     panic::{self, AssertUnwindSafe},
     path::Path,
+    sync::Arc,
 };
 
 use alloy_primitives::B256;
@@ -14,7 +15,7 @@ use base_diff_fuzz::{COVERAGE_ENV, TrieBlock, TrieBlockResult, TrieRequest, Trie
 use base_execution_trie::{MdbxProofsStorage, RocksdbProofsStorage};
 use reth_db_api::models::StorageSettings;
 use reth_trie_common::{
-    ExecutionWitnessMode, HashedPostState, HashedPostStateSorted,
+    ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, TrieInputSorted,
     updates::{TrieUpdates, TrieUpdatesSorted},
 };
 use reth_trie_sparse::ArenaParallelismThresholds;
@@ -233,10 +234,50 @@ impl TrieAdapter {
                 )?))
             });
             variants.entry("sparse-fresh").or_default().push(|| {
-                Ok(root_only(fresh_sparse.root(&serial, number, parent_root, &changes.chunks)?.0))
+                Ok(root_only(
+                    fresh_sparse
+                        .root(
+                            &serial,
+                            number,
+                            parent_root,
+                            &changes.chunks,
+                            &TrieInputSorted::default(),
+                        )?
+                        .0,
+                ))
+            });
+            // After a reorg below the persisted tip, the overlay reverts the database's newer
+            // state with the overlay's keys as prefix sets, since the stored nodes describe
+            // the tip.
+            variants.entry("sparse-reverts").or_default().push(|| {
+                if block.unwind == 0 {
+                    return Ok(TrieBlockResult::default());
+                }
+                let reverts = BlockChanges::new(
+                    block.revert.iter(),
+                    |key| serial.slots(key).unwrap_or_default(),
+                    |key| serial.account(key).ok().flatten(),
+                )
+                .state
+                .into_sorted();
+                let prefix_sets = reverts.construct_prefix_sets();
+                let overlay = TrieInputSorted::new(Arc::default(), Arc::new(reverts), prefix_sets);
+                let (root, _) = EngineSparse::new(false, ArenaParallelismThresholds::default())
+                    .root(&serial, number, parent_root, &changes.chunks, &overlay)?;
+                Ok(root_only(root))
             });
             variants.entry("sparse-eager").or_default().push(|| {
-                Ok(root_only(eager_sparse.root(&serial, number, parent_root, &changes.chunks)?.0))
+                Ok(root_only(
+                    eager_sparse
+                        .root(
+                            &serial,
+                            number,
+                            parent_root,
+                            &changes.chunks,
+                            &TrieInputSorted::default(),
+                        )?
+                        .0,
+                ))
             });
             if let Err(err) = VariantResults::catch(|| serial.commit(state, updates)) {
                 primary.push(failed(err));
@@ -252,6 +293,10 @@ impl TrieAdapter {
                 .or_default()
                 .push(|| Ok(TrieBlockResult { error: serial.verify()?, ..Default::default() }));
             if preimages {
+                variants
+                    .entry("storage-api")
+                    .or_default()
+                    .push(|| RethDb::storage_api_proofs(&serial.factory.latest()?, &block.proofs));
                 variants.entry("getproof").or_default().push(|| {
                     let proofs = RethDb::account_proofs(&serial.factory.latest()?, &block.proofs)?;
                     Ok(TrieBlockResult { proofs: Some(proofs), ..Default::default() })
@@ -286,8 +331,13 @@ impl TrieAdapter {
                 .or_default()
                 .push(|| Ok(root_only(engine.serial_root(state)?.0)));
             variants.entry("engine").or_default().push(|| {
-                let (root, updates) =
-                    engine_sparse.root(&engine, number, parent_root, &changes.chunks)?;
+                let (root, updates) = engine_sparse.root(
+                    &engine,
+                    number,
+                    parent_root,
+                    &changes.chunks,
+                    &TrieInputSorted::default(),
+                )?;
                 engine.commit(state, updates)?;
                 Ok(TrieBlockResult {
                     number: Some(number),
@@ -303,6 +353,19 @@ impl TrieAdapter {
                 .push(|| Ok(TrieBlockResult { error: engine.verify()?, ..Default::default() }));
 
             // The overlay database: recent blocks stay in memory above the persisted ones.
+            variants.entry("overlay-sparse").or_default().push(|| {
+                let mut nodes = TrieUpdatesSorted::default();
+                let mut hashed = HashedPostStateSorted::default();
+                for memory_block in &memory {
+                    nodes.extend_ref_and_sort(&memory_block.nodes);
+                    hashed.extend_ref_and_sort(&memory_block.sorted);
+                }
+                let overlay_input =
+                    TrieInputSorted::new(Arc::new(nodes), Arc::new(hashed), Default::default());
+                let (root, _) = EngineSparse::new(false, ArenaParallelismThresholds::default())
+                    .root(&overlay, number, parent_root, &changes.chunks, &overlay_input)?;
+                Ok(root_only(root))
+            });
             variants.entry("overlay").or_default().push(|| {
                 let sorted: Vec<_> =
                     memory.iter().map(|b| (b.nodes.clone(), b.sorted.clone())).collect();
@@ -330,7 +393,15 @@ impl TrieAdapter {
                 .entry("ph-rocksdb")
                 .or_default()
                 .push(|| ph_rocksdb.block(number, block.unwind, state, &block.proofs));
+            variants
+                .entry("ph-mdbx-witness")
+                .or_default()
+                .push(|| Ok(root_only(ph_mdbx.witness_root(number - 1, state)?)));
             if preimages {
+                variants
+                    .entry("ph-rocksdb-storage-api")
+                    .or_default()
+                    .push(|| ph_rocksdb.storage_api_proofs(number, &block.proofs));
                 variants.entry("ph-mdbx-getproof").or_default().push(|| {
                     Ok(TrieBlockResult {
                         proofs: Some(ph_mdbx.account_proofs(number, &block.proofs)?),

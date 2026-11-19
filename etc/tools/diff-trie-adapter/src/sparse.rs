@@ -12,9 +12,13 @@ use reth_provider::{
     DatabaseProviderFactory, ProviderResult, StateProviderBox, StorageSettingsCache,
 };
 use reth_storage_api::DatabaseProviderROFactory;
-use reth_trie::proof_v2::MultiProofCalculator;
+use reth_trie::{
+    hashed_cursor::HashedPostStateCursorFactory, proof_v2::MultiProofCalculator,
+    trie_cursor::InMemoryTrieCursorFactory,
+};
 use reth_trie_common::{
-    DecodedMultiProofV2, HashedPostState, MultiProofTargetsV2, ProofV2Target, updates::TrieUpdates,
+    DecodedMultiProofV2, HashedPostState, MultiProofTargetsV2, ProofV2Target, TrieInputSorted,
+    updates::TrieUpdates,
 };
 use reth_trie_db::{DatabaseHashedCursorFactory, DatabaseTrieCursorFactory};
 use reth_trie_parallel::proof_task::{
@@ -124,13 +128,16 @@ impl EngineSparse {
     }
 
     /// The state root and trie updates of block `number` (with parent root `parent_root`) over
-    /// `db`, which holds the parent state.
+    /// `db` with `overlay` on top, which together hold the parent state. Proofs come from the
+    /// calculator the overlay state provider builds: in-memory trie nodes and hashed state over
+    /// the database's, with the overlay's prefix sets marking stored nodes that are stale.
     pub fn root(
         &mut self,
         db: &RethDb,
         number: u64,
         parent_root: B256,
         chunks: &[HashedPostState],
+        overlay: &TrieInputSorted,
     ) -> eyre::Result<(B256, TrieUpdates)> {
         let epoch = TrieNodeEpoch::new(number);
         let (mut trie, known) = match self.kept.take() {
@@ -151,9 +158,15 @@ impl EngineSparse {
             let provider = DatabaseProviderFactory::database_provider_ro(&db.factory)?;
             reth_trie_db::with_adapter!(provider, |A| {
                 let mut calculator = MultiProofCalculator::new(
-                    DatabaseTrieCursorFactory::<_, A>::new(provider.tx_ref()),
-                    DatabaseHashedCursorFactory::new(provider.tx_ref()),
-                    Default::default(),
+                    InMemoryTrieCursorFactory::new(
+                        DatabaseTrieCursorFactory::<_, A>::new(provider.tx_ref()),
+                        overlay.nodes.as_ref(),
+                    ),
+                    HashedPostStateCursorFactory::new(
+                        DatabaseHashedCursorFactory::new(provider.tx_ref()),
+                        overlay.state.as_ref(),
+                    ),
+                    overlay.prefix_sets.clone().freeze(),
                     Arc::new(known),
                 );
                 for chunk in chunks {

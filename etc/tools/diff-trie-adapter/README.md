@@ -28,6 +28,14 @@ Variants, each also on its own database:
 - `sparse-fresh` (a new sparse trie each block) and `sparse-eager` (kept across blocks, with
   parallelism thresholds of one so tiny tries take the parallel code paths), over the serial
   database before each commit.
+- `overlay-sparse`: a fresh engine sparse trie over the overlay database, revealed from the
+  calculator the overlay state provider builds (in-memory blocks' trie nodes and hashed state
+  over the database's). `sparse-reverts`, on blocks after an unwind: the same over the serial
+  database at the old tip with the unwind's reverts as the overlay and their keys as prefix
+  sets, as after a reorg below the persisted tip.
+- `storage-api`, `ph-rocksdb-storage-api` (preimage requests): each slot proven with
+  `storage_proof`, checked against `storage_multiproof` and `storage_root`. `ph-mdbx-witness`:
+  the stateless root from the proofs-history store's execution witness at the parent.
 - `full-rebuild`: the root from the hashed tables alone, ignoring stored nodes; `serial-tables`:
   stored trie nodes of the serial database that differ from a rebuild.
 - `merkle-rebuild`: the pipeline merkle stage's rebuild mode in a transaction that is rolled

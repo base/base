@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, keccak256};
+use base_diff_adapter::WitnessState;
 use base_diff_fuzz::{ProofResult, ProofTarget, TrieBlockResult};
 use base_execution_trie::{
     BaseProofStoragePruner, BaseProofsBatchSession, BaseProofsBatchStateProviderRef,
@@ -13,7 +14,7 @@ use base_execution_trie::{
 };
 use reth_provider::{BlockHashReader, ProviderResult, noop::NoopProvider};
 use reth_storage_api::{StateProofProvider, StateRootProvider};
-use reth_trie_common::{HashedPostState, MultiProofTargets, TrieInput};
+use reth_trie_common::{ExecutionWitnessMode, HashedPostState, MultiProofTargets, TrieInput};
 
 use crate::RethDb;
 
@@ -84,6 +85,28 @@ where
         let provider =
             BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &self.storage, number);
         RethDb::account_proofs(&provider, targets)
+    }
+
+    /// [`RethDb::storage_api_proofs`] at block `number`.
+    pub fn storage_api_proofs(
+        &self,
+        number: u64,
+        targets: &[ProofTarget],
+    ) -> eyre::Result<TrieBlockResult> {
+        let provider =
+            BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &self.storage, number);
+        RethDb::storage_api_proofs(&provider, targets)
+    }
+
+    /// The state root of `state` on top of block `parent`, computed statelessly from the
+    /// store's root and execution witness for `state` at `parent`.
+    pub fn witness_root(&self, parent: u64, state: &HashedPostState) -> eyre::Result<B256> {
+        let provider =
+            BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &self.storage, parent);
+        let parent_root = provider.state_root(HashedPostState::default())?;
+        let nodes =
+            provider.witness(TrieInput::default(), state.clone(), ExecutionWitnessMode::Legacy)?;
+        Ok(WitnessState::new(parent_root, &nodes, &[], [], []).compute_state_root(state)?)
     }
 
     /// Builds block `number` (whose parent is `number - 1` after dropping `unwind` blocks) from
