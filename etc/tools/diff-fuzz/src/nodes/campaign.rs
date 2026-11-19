@@ -435,7 +435,8 @@ impl RpcCampaign {
         let mut replies = replies.to_vec();
         let mut serving = serving.to_vec();
         let known = Self::known_base_cause(case, &replies, &normalized)
-            .or_else(|| Self::known_base_difference(case, &replies, &normalized));
+            .or_else(|| Self::known_base_difference(case, &replies, &normalized))
+            .or_else(|| Self::settled_unfunded_fee(case, &replies, &normalized));
         if Self::simulate_encoding_only(case, &normalized) {
             *summary
                 .lock()
@@ -742,6 +743,12 @@ impl RpcCampaign {
     /// native tracer for, which Nethermind runs as JS tracers.
     pub const KNOWN_BASE_SETTLED: &str = "base: settled (feeHistory, null boolean, JS tracer)";
 
+    /// RPC fee handling for unfunded senders is non-geth in all three clients (coordinator's
+    /// call, settled): a priced debug\_traceCall from a sender that can't pay gives "intrinsic gas
+    /// too low" in base/base and needlefish (gas capped by the allowance) and runs in Nethermind
+    /// (no gas charge), where geth refuses it with insufficient funds.
+    pub const SETTLED_UNFUNDED_FEE: &str = "settled: RPC fees for unfunded senders";
+
     /// Simulated block encoding: Nethermind computes `stateRoot` and `withdrawalsRoot` and uses a
     /// zero `parentBeaconBlockRoot`, as geth does, where base/base (and needlefish, following it)
     /// leave both roots zero and copy the parent's beacon root (settled); and base/base gives a
@@ -881,6 +888,31 @@ impl RpcCampaign {
             return None;
         };
         Some((cause, base))
+    }
+
+    /// [`Self::SETTLED_UNFUNDED_FEE`] with Nethermind's index, when it explains `case`: a priced
+    /// debug\_traceCall that base/base and needlefish both refuse with "intrinsic gas too low"
+    /// and Nethermind runs.
+    pub fn settled_unfunded_fee(
+        case: &RpcCase,
+        replies: &[(String, Reply)],
+        normalized: &[(String, Value)],
+    ) -> Option<(&'static str, usize)> {
+        let get = |name: &str| normalized.iter().position(|(n, _)| n == name);
+        let (base, needlefish, nm) = (get("base")?, get("needlefish")?, get("nethermind")?);
+        let low = |index: usize| match &replies[index].1 {
+            Reply::Body(body) => body["error"]["message"] == "intrinsic gas too low",
+            Reply::Transport(_) => false,
+        };
+        let body: Value = serde_json::from_str(&case.body).ok()?;
+        let call = &body["params"][0];
+        (case.method == "debug_traceCall"
+            && (call.get("gasPrice").is_some() || call.get("maxFeePerGas").is_some())
+            && normalized[base].1 == normalized[needlefish].1
+            && low(base)
+            && low(needlefish)
+            && normalized[nm].1.get("result").is_some())
+        .then_some((Self::SETTLED_UNFUNDED_FEE, nm))
     }
 
     /// Whether `case`'s replies, eth\_simulateV1 blocks, differ only as
@@ -1409,6 +1441,7 @@ mod tests {
                 return Some((RpcCampaign::KNOWN_SIMULATE_HEADER, "all".to_owned()));
             }
             RpcCampaign::known_base_difference(case, &replies, &normalized)
+                .or_else(|| RpcCampaign::settled_unfunded_fee(case, &replies, &normalized))
                 .map(|(cause, index)| (cause, replies[index].0.clone()))
         };
         let base_cause = |cause| Some((cause, "base".to_owned()));
@@ -1496,6 +1529,24 @@ mod tests {
                 {"stateOverrides": {"0x0000000000000000000000000000000000000012": {"code": "0x00"}}}]),
         );
         assert_eq!(classify(&ordinary, failed, ran.clone(), ran), None);
+        // A priced traceCall from an unfunded sender: settled, Nethermind's side set aside.
+        let unfunded = RpcCase::new(
+            "trace",
+            "debug_traceCall",
+            json!([{"to": "0x00000000000000000000000000000000000000aa", "gasPrice": "0x1"}, "latest"]),
+        );
+        let low = json!({"id":1,"error":{"code":-32000,"message":"intrinsic gas too low"}});
+        let trace = json!({"id":1,"result":{"gas":21000,"failed":false}});
+        assert_eq!(
+            classify(&unfunded, low.clone(), low.clone(), trace.clone()),
+            Some((RpcCampaign::SETTLED_UNFUNDED_FEE, "nethermind".to_owned()))
+        );
+        let free = RpcCase::new(
+            "trace",
+            "debug_traceCall",
+            json!([{"to": "0x00000000000000000000000000000000000000aa"}, "latest"]),
+        );
+        assert_eq!(classify(&free, low.clone(), low, trace), None);
         // Batch replies are JSON arrays: classified like any other difference, without panicking.
         let batch = |g: &str| json!([{"id":1,"result":{"gasUsed":g}}]);
         assert_eq!(classify(&list, batch("0x1"), batch("0x2"), batch("0x2")), None);
