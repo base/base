@@ -38,9 +38,9 @@ use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, GuardLimits,
-    GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
-    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
-    StateDiffInvalidation, UnixMillis, ValidityPoolLimits, ValidityPoolMetrics,
+    GuardMetrics, HeldBestTransaction, InvalidationCause, InvalidationKey, LimitRejection,
+    MempoolGuard, ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions,
+    PoolStore, StateDiffInvalidation, UnixMillis, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
         Bid, InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
@@ -1561,14 +1561,14 @@ where
         self.merged_best_transactions_holding(attributes, None).0
     }
 
-    /// [`Self::merged_best_transactions`] without the validity transactions `hold` holds, whose
-    /// hashes are returned for the caller to park; see
+    /// [`Self::merged_best_transactions`] without the validity transactions `hold` holds, which
+    /// are returned for the caller to park; see
     /// [`TwoDNoncePool::best_transactions_holding`].
     fn merged_best_transactions_holding(
         &self,
         attributes: BestTransactionsAttributes,
         hold: Option<&mut dyn BestTransactionsHold<T>>,
-    ) -> (MergeBestTransactions<T, O>, Vec<TxHash>) {
+    ) -> (MergeBestTransactions<T, O>, Vec<HeldBestTransaction>) {
         let base_fee = attributes.basefee;
         // The lane bookkeeping the merge relies on (anchors, shared lanes) and
         // the lane stores' iterators are snapshotted under one pair of read
@@ -6801,6 +6801,34 @@ mod tests {
             Some(Box::new(hold)),
         );
         pool.remove_transactions(vec![held]);
+        assert!(!build.promote(held));
+        assert!(build.next().is_none());
+    }
+
+    /// A transaction admitted again under the hash of a set-aside one, here with another
+    /// sidecar, arrived after the snapshot and is not promoted into the build.
+    #[tokio::test]
+    async fn parking_iterator_does_not_promote_a_readmission_of_a_held_transaction() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let held = add(&pool, validity_1559(&signer, 0, 900)).await;
+        let hold = RecordingHold::holding([held]);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            Some(Box::new(hold)),
+        );
+        pool.remove_transactions(vec![held]);
+        let other_sidecar = vec![ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::ZERO,
+        }];
+        let readmitted = add(
+            &pool,
+            signed_1559_with_fees(&signer, 0, 900, 900).with_validity_predicates(other_sidecar),
+        )
+        .await;
+        assert_eq!(readmitted, held, "the sidecar is not part of the hash");
         assert!(!build.promote(held));
         assert!(build.next().is_none());
     }

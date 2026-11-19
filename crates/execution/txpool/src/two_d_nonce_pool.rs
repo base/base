@@ -26,7 +26,7 @@ use reth_transaction_pool::{
 
 use crate::{
     BasePooledTx, BestTransactionPriority, BestTransactionsHold, HOLD_INTERRUPT_INTERVAL,
-    UnifiedTipPriority, best::MergeSource,
+    HeldBestTransaction, UnifiedTipPriority, best::MergeSource,
 };
 
 /// A finite channel: `(sender, nonce_key)`.
@@ -1666,14 +1666,14 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns a best-transactions iterator snapshot without the candidates `hold` holds, and
-    /// the hashes of those candidates.
+    /// what identifies those candidates.
     ///
     /// Only a candidate the iterator would hand straight to the hold of the
     /// [`ParkedBestTransactions`] above it is offered to `hold` here: a nonce-free transaction
     /// or the only pending member of a lane no other store sequences, priced at or above
-    /// `base_fee`. A held one is left out of the iterator and its hash returned, so the caller
-    /// parks it without the iterator ranking and yielding it, or the snapshot taking a
-    /// reference to it. Every other candidate takes the iterator's
+    /// `base_fee`. A held one is left out of the iterator and returned by hash and admission
+    /// instant, so the caller parks it without the iterator ranking and yielding it, or the
+    /// snapshot taking a reference to it. Every other candidate takes the iterator's
     /// usual path: a lane with pending descendants, a lane that straddles stores, which the
     /// merge sequences against the other store, and an underpriced transaction, which the
     /// merge drops.
@@ -1684,7 +1684,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         ordering: O,
         base_fee: u64,
         hold: Option<&mut dyn BestTransactionsHold<T>>,
-    ) -> (BestTwoDTransactions<T, O>, Vec<TxHash>)
+    ) -> (BestTwoDTransactions<T, O>, Vec<HeldBestTransaction>)
     where
         O: TransactionOrdering<Transaction = T>,
     {
@@ -1859,7 +1859,7 @@ where
         ordering: O,
         base_fee: u64,
         mut hold: Option<SnapshotHold<'_, T>>,
-    ) -> (Self, Vec<TxHash>) {
+    ) -> (Self, Vec<HeldBestTransaction>) {
         // A snapshot with a hold sets most lanes aside, so only one without a hold reserves a
         // slot per lane.
         let mut snapshot = Vec::with_capacity(match hold {
@@ -1878,7 +1878,7 @@ where
                 // The clock starts at the first hold, so a snapshot that holds nothing pays no
                 // timer read.
                 hold_start.get_or_insert_with(Instant::now);
-                held.push(*head.hash());
+                held.push(HeldBestTransaction { hash: *head.hash(), admitted_at: head.timestamp });
                 // A build that stopped selecting takes nothing from the lanes left unvisited.
                 if held.len().is_multiple_of(HOLD_INTERRUPT_INTERVAL as usize)
                     && hold.hold.is_interrupted()

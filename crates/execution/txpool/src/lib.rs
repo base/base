@@ -70,7 +70,7 @@ pub use ordering::{
 mod parking;
 pub use parking::{
     BestTransactionLane, BestTransactionLaneState, BestTransactionsHold, HOLD_INTERRUPT_INTERVAL,
-    HeldTransactionLookup, ParkableBestTransactions, ParkableTransactionPool,
+    HeldBestTransaction, HeldTransactionLookup, ParkableBestTransactions, ParkableTransactionPool,
     ParkedBestTransactions,
 };
 

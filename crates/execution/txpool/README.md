@@ -181,9 +181,10 @@ unsatisfied. The validity snapshot asks the hold about every transaction that ha
 nothing sequenced around it (a nonce-free transaction, or the only pending member
 of a lane no other store shares) and is priced at or above the base fee, and sets
 a held one aside, so the build never ranks or yields it; the iterator returns it
-to priority competition if a commit wakes it. Every other transaction reaches the
-hold through the merge: a lane with pending descendants, and a lane that straddles
-stores, whose head waits for the transaction in front of it.
+to priority competition if a commit wakes it and the pool still holds that
+admission. Every other transaction takes the merge's usual path, where the hold
+sees a lane head once the merge yields it: a lane with pending descendants, and a
+lane that straddles stores, whose head waits for the transaction in front of it.
 `crates/execution/payload/benches/native_mainnet_shape.rs` measures a build on a
 pool shaped like mainnet's.
 
