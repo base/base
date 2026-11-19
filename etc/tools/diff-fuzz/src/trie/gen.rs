@@ -29,6 +29,8 @@ impl TrieGen {
     /// The deepest shared prefix of two keccak keys a real trie plausibly holds (a search of
     /// about 2^48 hashes); deeper prefixes only occur in chosen keys.
     pub const REALISTIC_DEPTH: usize = 12;
+    /// Percentage of fresh cases with an abandoned fork (see [`Self::case`]).
+    pub const FORK_PERCENT: u64 = 8;
     /// Percentage of fresh cases whose keys may share deeper prefixes.
     pub const DEEP_PERCENT: u64 = 20;
 
@@ -432,11 +434,18 @@ impl TrieGen {
 
     /// A fresh case.
     pub fn case(&mut self) -> TrieCase {
-        let blocks = match self.rng.weighted(&[3, 5, 2]) {
+        let mut blocks = match self.rng.weighted(&[3, 5, 2]) {
             0 => self.rng.range(1, 3),
             1 => self.rng.range(4, 10),
             _ => self.rng.range(11, 30),
         };
+        // An abandoned fork: about ten blocks, an unwind of three to five, then at least a dozen
+        // more, so a client keeps the dropped fork's snapshots and state until finality passes
+        // it (Nethermind removes them as unreachable).
+        let fork_at = self.rng.chance(Self::FORK_PERCENT).then(|| self.rng.range(8, 13));
+        if let Some(at) = fork_at {
+            blocks = blocks.max(at + 14);
+        }
         let mut case = TrieCase::default();
         self.max_shared =
             if self.rng.chance(Self::DEEP_PERCENT) { 64 } else { Self::REALISTIC_DEPTH };
@@ -446,7 +455,10 @@ impl TrieGen {
         let mut states = vec![TrieModel::default()];
         for _ in 0..blocks {
             let mut unwind = 0;
-            if states.len() > 2 && self.rng.chance(6) {
+            if fork_at == Some(case.blocks.len() as u64) {
+                unwind = self.rng.range(3, 5);
+                states.truncate(states.len() - unwind as usize);
+            } else if states.len() > 2 && self.rng.chance(6) {
                 unwind = self.rng.range(1, (states.len() as u64 - 1).min(3));
                 states.truncate(states.len() - unwind as usize);
             }
