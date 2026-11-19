@@ -216,12 +216,12 @@ transaction is decoded and before sequencer forwarding or pool insertion.
 `tx_hash` is the join key. They are distinct from `TXPOOL_PENDING` /
 `TXPOOL_QUEUED`, which record later subpool membership.
 `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` is the **only** event that records
-`data.validity_predicates` (the serialized `balance`, `storage`, and `block_number`
-list; `flashblock_index` predicates are rejected before this
-event). Downstream lifecycle events —
-including `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
-`BUILDER_INCLUDED` — must not repeat that list; join them back by `tx_hash`. A
-replacement is a fresh admission with its own `tx_hash` and/or predicate list;
+`data.validity_predicates`: either a flat predicate list (AND) or a normalized `anyOf`
+object containing lists of predicates. Nested submissions record the normalized expression,
+not the original tree. `flashblock_index` predicates are rejected before this event.
+Downstream lifecycle events — including `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
+`BUILDER_INCLUDED` — must not repeat the expression; join them back by `tx_hash`. A
+replacement is a fresh admission with its own `tx_hash` and/or validity conditions;
 `TXPOOL_REPLACED.replacement_hash` links the outgoing transaction to the
 incoming one. `base_insertValidatedTransaction` uses
 `TXPOOL_VALIDATED_INSERT_ACCEPTED` / `TXPOOL_VALIDATED_INSERT_REJECTED`.

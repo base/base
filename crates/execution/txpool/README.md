@@ -67,7 +67,10 @@ while continuing to accept unsigned predicates. Migrate wallets and load clients
 signing, observe signed/unsigned admission counters, then switch the fleet to `required`.
 At raw ingress, `required` rejects any non-empty predicate batch without valid sender
 authorization. Builder insertion checks signature presence only and trusts the forwarder
-to have verified it. Plain transactions need no extra signature.
+to have verified it. Public raw ingress requires a finite expiry on every possible alternative.
+Trusted insertion checks for an upper bound in each `anyOf` group; for a normalized flat AND
+list it retains legacy behavior and relies on the forwarder to have checked expiry.
+Plain transactions need no extra signature.
 Query nodes proxy sidecars unchanged and leave policy to the upstream sequencer.
 
 **Off and optional verification modes are compatibility stages, not sandwich protection.**

@@ -73,9 +73,9 @@ than one alternative still includes the transaction only once.
 Ingress flattens ORs and distributes ANDs before signing checks, forwarding, or evaluation.
 The first example becomes `{"anyOf": [[A, C, D], [A, E, F]]}` and counts as **six** predicate
 occurrences, not five. The second becomes `{"anyOf": [[A], [C, D], [E, F]]}` and counts as five.
-The configured predicate limit applies to this expanded count (wire ceiling: 64). Requests that
-would exceed it are rejected before constructing the expanded groups. Operators must have at
-least one operand and can be nested up to 16 levels deep.
+The decoder checks the fixed 64-occurrence ceiling before constructing each product. A node
+with a lower configured limit applies it to the normalized expression at admission. Operators
+must have at least one operand and can be nested up to 16 levels deep.
 
 Upgrade the nodes that receive the nested syntax before sending it. Builders receiving normalized
 groups must support `anyOf`; flat-array-only nodes cannot decode grouped requests.
