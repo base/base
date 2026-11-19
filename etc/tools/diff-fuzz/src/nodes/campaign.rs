@@ -730,6 +730,10 @@ impl RpcCampaign {
     /// base/base's eth\_createAccessList reports the gas of a run without the access list; geth
     /// and Nethermind report the final run with it.
     pub const KNOWN_BASE_ACCESS_LIST_GAS: &str = "base: access list gasUsed without the list";
+    /// base/base keeps the block's fork rules under a block override of `time`, so an earlier
+    /// time still applies the Prague calldata floor ("intrinsic gas too low"); geth and Nethermind
+    /// take the rules from the overridden time (B12).
+    pub const KNOWN_BASE_OVERRIDE_TIME_RULES: &str = "base: fork rules ignore a time override";
     /// Settled base/base differences from Nethermind: base accepts `eth_feeHistory` without
     /// rewardPercentiles, refuses a `null` boolean argument, and refuses tracer names it has no
     /// native tracer for, which Nethermind runs as JS tracers.
@@ -773,6 +777,10 @@ impl RpcCampaign {
             Reply::Body(body) => body["error"]["message"].as_str().unwrap_or_default().to_owned(),
             Reply::Transport(_) => return None,
         };
+        let base_message = match &replies[base].1 {
+            Reply::Body(body) => body["error"]["message"].as_str().unwrap_or_default().to_owned(),
+            Reply::Transport(_) => return None,
+        };
         let body: Value = serde_json::from_str(&case.body).ok()?;
         let params = body.get("params").and_then(Value::as_array);
         let strings = Self::strings(&body["params"]);
@@ -796,6 +804,10 @@ impl RpcCampaign {
             && without_gas(ours) == without_gas(reference)
         {
             Self::KNOWN_BASE_ACCESS_LIST_GAS
+        } else if base_message == "intrinsic gas too low"
+            && Self::any_object(&body["params"], &|o| o.contains_key("time"))
+        {
+            Self::KNOWN_BASE_OVERRIDE_TIME_RULES
         } else if ok(ours)
             && code(reference).is_some()
             && (body["params"].to_string().contains("\"type\":\"0x7e\"")
@@ -1433,6 +1445,20 @@ mod tests {
             classify(&list, gas("0x655c"), gas("0x6df4"), gas("0x6df4")),
             base_cause(RpcCampaign::KNOWN_BASE_ACCESS_LIST_GAS)
         );
+        // A time override that moves the call before Prague (B12).
+        let early = RpcCase::new(
+            "call",
+            "eth_call",
+            json!([{"gas": "0x5e00"}, "latest", {}, {"time": "0x0"}]),
+        );
+        let floor = json!({"id":1,"error":{"code":-32000,"message":"intrinsic gas too low"}});
+        let runs = json!({"id":1,"result":"0x"});
+        assert_eq!(
+            classify(&early, floor.clone(), runs.clone(), runs.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_OVERRIDE_TIME_RULES)
+        );
+        let late = RpcCase::new("call", "eth_call", json!([{"gas": "0x5e00"}, "latest"]));
+        assert_eq!(classify(&late, floor, runs.clone(), runs), None);
         // Batch replies are JSON arrays: classified like any other difference, without panicking.
         let batch = |g: &str| json!([{"id":1,"result":{"gasUsed":g}}]);
         assert_eq!(classify(&list, batch("0x1"), batch("0x2"), batch("0x2")), None);
