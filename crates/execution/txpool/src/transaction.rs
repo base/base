@@ -113,12 +113,10 @@ pub struct BasePooledTransaction<
     /// The build-time predicates captured during Base transaction validation. Unset for other
     /// transaction types; see [`crate::WatchManifest`].
     watch_manifest: OnceLock<crate::WatchManifest>,
-    /// In-process `meter_bundle` result, attached after sim and before pool insert.
+    /// Optional `meter_bundle` result carried with the transaction.
     ///
-    /// Behind [`Arc`] so [`Clone`] stays a pointer bump once later PRs populate
-    /// this. `None` on
-    /// sequencer/builder inserts and on mempool txs while inline simulation is
-    /// off. The later consumer only forwards `Some`.
+    /// Behind [`Arc`] so [`Clone`] stays a pointer bump. Set from the wire `metering` field on
+    /// builder inserts; `None` for locally validated transactions.
     metering: Option<Arc<MeterBundleResponse>>,
 }
 
