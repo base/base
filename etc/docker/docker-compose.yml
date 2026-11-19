@@ -266,6 +266,7 @@ services:
       - NODE_HEALTHCHECK_HTTP_PORT=${L2_BUILDER_HTTP_PORT}
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_BUILDER_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-builder
+      - BUILDER_ENABLE_RESOURCE_METERING=${L2_BUILDER_ENABLE_RESOURCE_METERING:-true}
       - BUILDER_TRANSACTION_EVENTS_ENABLED=true
       - BUILDER_TRANSACTION_EVENTS_PATH=/var/log/transaction-events/base-builder/events.jsonl
       - BUILDER_TRANSACTION_EVENTS_NETWORK=base-devnet
@@ -296,7 +297,6 @@ services:
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
-      - --builder.enable-resource-metering
       - --builder.predicate-eval-hard-cutoff-ms=${L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS:-10}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768

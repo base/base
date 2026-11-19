@@ -215,6 +215,9 @@ block 100:
 just devnet up everest
 ```
 
+Everest leaves builder resource metering off by default. To opt in, run
+`L2_BUILDER_ENABLE_RESOURCE_METERING=true just devnet up everest`.
+
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
 Zenith mode additionally activates Everest and Zenith at block 100:
 
