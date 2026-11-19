@@ -580,6 +580,9 @@ impl RpcCampaign {
     /// base/base answers eth\_getProof at "pending" with -32001, and its eth\_config lists Base
     /// precompiles (B5).
     pub const KNOWN_BASE_PROOF_CONFIG: &str = "base: pending proof and eth_config precompiles";
+    /// base/base's callTracer frame for a system deposit after Regolith, which fails before any
+    /// frame starts, has `to` 0x0 and no input; Nethermind builds it from the tx (B11).
+    pub const KNOWN_BASE_FAILED_DEPOSIT_FRAME: &str = "base: failed system deposit frame";
     /// base/base accepts a JSON number as a call's `type`.
     pub const KNOWN_BASE_INTEGER_TYPE: &str = "base: integer type accepted";
 
@@ -645,7 +648,20 @@ impl RpcCampaign {
                     && v.as_str().is_some_and(|s| s.len() > 34)
             })
         });
-        let cause = if case.method == "eth_getFilterChanges"
+        let raw = |name: &str| {
+            replies.iter().find(|(n, _)| n == name).and_then(|(_, reply)| match reply {
+                Reply::Body(body) => Some(body.to_string()),
+                Reply::Transport(_) => None,
+            })
+        };
+        let system_deposit = raw("nethermind")
+            .is_some_and(|b| b.contains("system deposit after Regolith"))
+            && raw("base").is_some_and(|b| {
+                b.contains("\"to\":\"0x0000000000000000000000000000000000000000\"")
+            });
+        let cause = if system_deposit {
+            Self::KNOWN_BASE_FAILED_DEPOSIT_FRAME
+        } else if case.method == "eth_getFilterChanges"
             && case.body.contains("eth_newBlockFilter")
             && ok(reference)
         {
@@ -1301,6 +1317,22 @@ mod tests {
             Some(RpcCampaign::KNOWN_BASE_EXTRA_PARAMS)
         );
         assert_eq!(classify(&extra, ok, invalid, "invalid argument 0"), None);
+        let trace = RpcCase::new(
+            "trace",
+            "debug_traceTransaction",
+            json!(["0x01", {"tracer": "callTracer"}]),
+        );
+        let zero = json!({"id":1,"result":{"type":"CALL","to":"0x0000000000000000000000000000000000000000","input":"0x"}});
+        let real = json!({"id":1,"result":{"type":"CALL","to":"0x00000000000000000000000000000000000000aa","input":"0x","error":"failed deposit: system deposit after Regolith"}});
+        let raw = vec![
+            ("nethermind".to_owned(), Reply::Body(real.clone())),
+            ("base".to_owned(), Reply::Body(zero.clone())),
+            ("needlefish".to_owned(), Reply::Body(real.clone())),
+        ];
+        assert_eq!(
+            RpcCampaign::known_base_cause(&trace, &raw, &replies(&zero, &real)).map(|(c, _)| c),
+            Some(RpcCampaign::KNOWN_BASE_FAILED_DEPOSIT_FRAME)
+        );
     }
 
     #[test]
