@@ -18,8 +18,9 @@ state does (the pinned reth has no storage wipe flag).
 Variants, each also on its own database:
 
 - `engine`: the engine's default state root task, rebuilt from public parts: an
-  `ArenaParallelSparseTrie` sparse state trie revealed from v2 multiproofs of the database, updated
-  one transaction-sized chunk at a time (a new chunk starts at every rewrite of a key or slot in
+  `ArenaParallelSparseTrie` sparse state trie revealed from v2 multiproofs that the engine's proof
+  workers (`reth_trie_parallel`'s `ProofWorkerHandle`) compute over the database, updated one
+  transaction-sized chunk at a time (a new chunk starts at every rewrite of a key or slot in
   the block), kept across blocks with its storage roots (and pruned), with its trie updates
   persisted to a database with the v2 (packed) trie table layout. It reports storage roots and
   proofs from that database too. `engine-serial` is the serial fallback over the same database,
@@ -29,6 +30,10 @@ Variants, each also on its own database:
   database before each commit.
 - `full-rebuild`: the root from the hashed tables alone, ignoring stored nodes; `serial-tables`:
   stored trie nodes of the serial database that differ from a rebuild.
+- `merkle-rebuild`: the pipeline merkle stage's rebuild mode in a transaction that is rolled
+  back: the trie tables cleared, then the root computed in steps of at most 1 to 7 trie updates,
+  each step's updates written and the next resumed from its checkpoint after a round trip
+  through the stage's compact checkpoint encoding.
 - `witness`: the stateless root the differential execution adapter computes
   (`base_diff_adapter::WitnessState`) from the node's execution witness of the block, in the
   legacy witness mode base/base serves. (The canonical mode leaves out nodes that only a consumer

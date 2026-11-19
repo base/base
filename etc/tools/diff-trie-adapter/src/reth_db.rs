@@ -9,20 +9,27 @@ use alloy_trie::{Nibbles, TrieAccount, nodes::TrieNode};
 use base_diff_adapter::WitnessState;
 use base_diff_fuzz::{ProofAccount, ProofResult, ProofTarget, StorageProofResult};
 use reth_chainspec::MAINNET;
+use reth_codecs::Compact;
 use reth_db::{
     DatabaseEnv,
     mdbx::{DatabaseArguments, MaxReadTransactionDuration},
 };
-use reth_db_api::{cursor::DbDupCursorRO, models::StorageSettings, tables, transaction::DbTx};
+use reth_db_api::{
+    cursor::DbDupCursorRO,
+    models::StorageSettings,
+    tables,
+    transaction::{DbTx, DbTxMut},
+};
 use reth_primitives_traits::Account;
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory, StateWriter, StorageSettingsCache, TrieWriter,
     providers::{RocksDBBuilder, StaticFileProviderBuilder},
     test_utils::MockNodeTypesWithDB,
 };
+use reth_stages_types::{MerkleCheckpoint, StorageRootMerkleCheckpoint};
 use reth_storage_api::{StateProofProvider, StateRootProvider};
 use reth_trie::{
-    StateRoot, StorageRoot,
+    IntermediateStateRootState, StateRoot, StateRootProgress, StorageRoot,
     trie_cursor::noop::NoopTrieCursorFactory,
     verify::{Output, Verifier},
 };
@@ -125,6 +132,50 @@ impl RethDb {
         provider.write_trie_updates(updates)?;
         provider.commit()?;
         Ok(())
+    }
+
+    /// The state root the pipeline's merkle stage computes in rebuild mode, in a transaction that
+    /// is rolled back: it clears the trie tables, then computes the root from the hashed tables in
+    /// steps of at most `threshold` trie updates, writing each step's updates and resuming from its
+    /// checkpoint after a round trip through the stage's compact checkpoint encoding.
+    pub fn rebuild_root_with_progress(&self, threshold: u64) -> eyre::Result<B256> {
+        let provider = self.factory.provider_rw()?;
+        provider.tx_ref().clear::<tables::AccountsTrie>()?;
+        provider.tx_ref().clear::<tables::StoragesTrie>()?;
+        let mut checkpoint: Option<MerkleCheckpoint> = None;
+        loop {
+            let progress = reth_trie_db::with_adapter!(provider, |A| {
+                StateRoot::<DatabaseTrieCursorFactory<_, A>, _>::from_tx(provider.tx_ref())
+                    .with_threshold(threshold)
+                    .with_intermediate_state(
+                        checkpoint.take().map(IntermediateStateRootState::from),
+                    )
+                    .root_with_progress()
+            })?;
+            match progress {
+                StateRootProgress::Progress(state, _, updates) => {
+                    provider.write_trie_updates(updates)?;
+                    let mut stored = MerkleCheckpoint::new(
+                        0,
+                        state.account_root_state.last_hashed_key,
+                        state.account_root_state.walker_stack.into_iter().map(Into::into).collect(),
+                        state.account_root_state.hash_builder.into(),
+                    );
+                    stored.storage_root_checkpoint = state.storage_root_state.map(|storage| {
+                        StorageRootMerkleCheckpoint::new(
+                            storage.state.last_hashed_key,
+                            storage.state.walker_stack.into_iter().map(Into::into).collect(),
+                            storage.state.hash_builder.into(),
+                            storage.account,
+                        )
+                    });
+                    let mut buf = Vec::new();
+                    let len = stored.to_compact(&mut buf);
+                    checkpoint = Some(MerkleCheckpoint::from_compact(&buf, len).0);
+                }
+                StateRootProgress::Complete(root, ..) => return Ok(root),
+            }
+        }
     }
 
     /// The state root recomputed from the hashed tables alone, ignoring stored trie nodes.

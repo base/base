@@ -155,7 +155,8 @@ impl TrieAdapter {
         let mut ph_mdbx = ProofsHistory::new(MdbxProofsStorage::new(&dir.join("ph-mdbx"))?)?;
         let mut ph_rocksdb =
             ProofsHistory::new(RocksdbProofsStorage::new(&dir.join("ph-rocksdb"))?)?;
-        let mut engine_sparse = EngineSparse::new(true, ArenaParallelismThresholds::default());
+        let mut engine_sparse = EngineSparse::new(true, ArenaParallelismThresholds::default())
+            .with_workers(self.runtime.clone());
         let mut eager_sparse = EngineSparse::new(true, EngineSparse::eager());
         let mut fresh_sparse = EngineSparse::new(false, ArenaParallelismThresholds::default());
         let mut memory: VecDeque<MemoryBlock> = VecDeque::new();
@@ -223,6 +224,10 @@ impl TrieAdapter {
                 primary.push(failed(err));
                 break;
             }
+            variants
+                .entry("merkle-rebuild")
+                .or_default()
+                .push(|| Ok(root_only(serial.rebuild_root_with_progress(1 + number % 7)?)));
             variants.entry("full-rebuild").or_default().push(|| Ok(root_only(serial.full_root()?)));
             variants
                 .entry("serial-tables")

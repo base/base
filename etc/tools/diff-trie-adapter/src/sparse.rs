@@ -1,6 +1,6 @@
 //! The engine's sparse trie state root: proofs revealed from the database through the v2
-//! multiproof calculator, transaction updates applied as leaf updates, and the trie kept across
-//! blocks.
+//! multiproof calculator or the engine's proof workers, transaction updates applied as leaf
+//! updates, and the trie kept across blocks.
 
 use std::sync::Arc;
 
@@ -8,16 +8,24 @@ use alloy_primitives::{B256, map::B256Map};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount};
 use reth_primitives_traits::Account;
-use reth_provider::{DatabaseProviderFactory, StorageSettingsCache};
+use reth_provider::{
+    DatabaseProviderFactory, ProviderResult, StateProviderBox, StorageSettingsCache,
+};
+use reth_storage_api::DatabaseProviderROFactory;
 use reth_trie::proof_v2::MultiProofCalculator;
-use reth_trie_common::{HashedPostState, MultiProofTargetsV2, ProofV2Target, updates::TrieUpdates};
+use reth_trie_common::{
+    DecodedMultiProofV2, HashedPostState, MultiProofTargetsV2, ProofV2Target, updates::TrieUpdates,
+};
 use reth_trie_db::{DatabaseHashedCursorFactory, DatabaseTrieCursorFactory};
+use reth_trie_parallel::proof_task::{
+    ProofTaskCtx, ProofWorkerCounts, ProofWorkerHandle, metrics::ProofWorkerIdleMetrics,
+};
 use reth_trie_sparse::{
     ArenaParallelSparseTrie, ArenaParallelismThresholds, LeafUpdate, RevealableSparseTrie,
     SparseStateTrie, TrieNodeEpoch,
 };
 
-use crate::RethDb;
+use crate::{RethDb, RethFactory};
 
 /// A sparse state trie driven as the engine's state root task drives it.
 ///
@@ -34,12 +42,59 @@ pub struct EngineSparse {
     pub thresholds: ArenaParallelismThresholds,
     /// The trie kept from the previous block, with its storage roots.
     pub kept: Option<(SparseStateTrie, B256Map<B256>)>,
+    /// Serve proofs through the engine's proof worker pools on this runtime, instead of one
+    /// calculator on the caller's thread.
+    pub workers: Option<reth_tasks::Runtime>,
+}
+
+/// Where a sparse trie gets the proofs of the paths it reports blinded.
+pub trait ProofSource {
+    /// The decoded multiproofs of `targets`.
+    fn prove(&mut self, targets: MultiProofTargetsV2) -> eyre::Result<Vec<DecodedMultiProofV2>>;
+}
+
+impl<T, H> ProofSource for MultiProofCalculator<'_, T, H>
+where
+    T: reth_trie::trie_cursor::TrieCursorFactory,
+    H: reth_trie::hashed_cursor::HashedCursorFactory,
+{
+    fn prove(&mut self, targets: MultiProofTargetsV2) -> eyre::Result<Vec<DecodedMultiProofV2>> {
+        Ok(vec![self.multiproof(targets)?])
+    }
+}
+
+impl ProofSource for ProofWorkerHandle {
+    /// Queues the targets as the engine does (one storage job per account, one account job)
+    /// and waits for every job's result.
+    fn prove(&mut self, targets: MultiProofTargetsV2) -> eyre::Result<Vec<DecodedMultiProofV2>> {
+        let jobs = self.dispatch(targets)?;
+        (0..jobs).map(|_| Ok(self.results().recv()??)).collect()
+    }
+}
+
+/// Proof providers over the latest database state, for the proof workers: each worker opens one
+/// per block, as the engine's workers open overlay providers.
+#[derive(Debug, Clone)]
+pub struct LatestProofs(pub RethFactory);
+
+impl DatabaseProviderROFactory for LatestProofs {
+    type Provider = StateProviderBox;
+
+    fn database_provider_ro(&self) -> ProviderResult<Self::Provider> {
+        self.0.latest()
+    }
 }
 
 impl EngineSparse {
     /// A sparse root computation; see the type docs.
     pub const fn new(reuse: bool, thresholds: ArenaParallelismThresholds) -> Self {
-        Self { reuse, thresholds, kept: None }
+        Self { reuse, thresholds, kept: None, workers: None }
+    }
+
+    /// Serves proofs through the engine's proof workers on `runtime`.
+    pub fn with_workers(mut self, runtime: reth_tasks::Runtime) -> Self {
+        self.workers = Some(runtime);
+        self
     }
 
     /// Thresholds of one, which send even tiny tries down the parallel code paths.
@@ -82,19 +137,31 @@ impl EngineSparse {
             Some(kept) if self.reuse => kept,
             _ => (self.fresh(), B256Map::default()),
         };
-        let provider = db.factory.database_provider_ro()?;
-        reth_trie_db::with_adapter!(provider, |A| {
-            let mut calculator = MultiProofCalculator::new(
-                DatabaseTrieCursorFactory::<_, A>::new(provider.tx_ref()),
-                DatabaseHashedCursorFactory::new(provider.tx_ref()),
-                Default::default(),
-                Arc::new(known),
+        if let Some(runtime) = &self.workers {
+            let mut workers = ProofWorkerHandle::new(
+                runtime,
+                ProofTaskCtx::new(LatestProofs(db.factory.clone())),
+                ProofWorkerCounts::new(2, 2),
+                ProofWorkerIdleMetrics::default(),
             );
             for chunk in chunks {
-                Self::apply(&mut trie, &mut calculator, chunk, epoch)?;
+                Self::apply(&mut trie, &mut workers, chunk, epoch)?;
             }
-            eyre::Ok(())
-        })?;
+        } else {
+            let provider = DatabaseProviderFactory::database_provider_ro(&db.factory)?;
+            reth_trie_db::with_adapter!(provider, |A| {
+                let mut calculator = MultiProofCalculator::new(
+                    DatabaseTrieCursorFactory::<_, A>::new(provider.tx_ref()),
+                    DatabaseHashedCursorFactory::new(provider.tx_ref()),
+                    Default::default(),
+                    Arc::new(known),
+                );
+                for chunk in chunks {
+                    Self::apply(&mut trie, &mut calculator, chunk, epoch)?;
+                }
+                eyre::Ok(())
+            })?;
+        }
         let (root, updates) = if trie.trie_mut().as_revealed_ref().is_none() {
             (parent_root, TrieUpdates::default())
         } else {
@@ -110,16 +177,12 @@ impl EngineSparse {
 
     /// Reveals and updates until `updates` are all applied to one trie, fetching proofs for the
     /// paths each round reports blinded.
-    fn drain<T, H>(
+    fn drain(
         trie: &mut SparseStateTrie,
-        calculator: &mut MultiProofCalculator<'_, T, H>,
+        proofs: &mut impl ProofSource,
         account: Option<B256>,
         updates: &mut B256Map<LeafUpdate>,
-    ) -> eyre::Result<()>
-    where
-        T: reth_trie::trie_cursor::TrieCursorFactory,
-        H: reth_trie::hashed_cursor::HashedCursorFactory,
-    {
+    ) -> eyre::Result<()> {
         while !updates.is_empty() {
             let mut targets = MultiProofTargetsV2::default();
             match account {
@@ -143,21 +206,19 @@ impl EngineSparse {
                 eyre::ensure!(updates.is_empty(), "sparse trie kept updates without targets");
                 break;
             }
-            trie.reveal_decoded_multiproof_v2(calculator.multiproof(targets)?)?;
+            for multiproof in proofs.prove(targets)? {
+                trie.reveal_decoded_multiproof_v2(multiproof)?;
+            }
         }
         Ok(())
     }
 
-    fn apply<T, H>(
+    fn apply(
         trie: &mut SparseStateTrie,
-        calculator: &mut MultiProofCalculator<'_, T, H>,
+        proofs: &mut impl ProofSource,
         chunk: &HashedPostState,
         epoch: TrieNodeEpoch,
-    ) -> eyre::Result<()>
-    where
-        T: reth_trie::trie_cursor::TrieCursorFactory,
-        H: reth_trie::hashed_cursor::HashedCursorFactory,
-    {
+    ) -> eyre::Result<()> {
         let mut addresses: Vec<B256> =
             chunk.accounts.keys().chain(chunk.storages.keys()).copied().collect();
         addresses.sort();
@@ -179,12 +240,12 @@ impl EngineSparse {
                     (*slot, LeafUpdate::Changed(encoded))
                 })
                 .collect();
-            Self::drain(trie, calculator, Some(*address), &mut updates)?;
+            Self::drain(trie, proofs, Some(*address), &mut updates)?;
         }
         // Reveal every account first, then encode its leaf with its new storage root.
         let mut touched: B256Map<LeafUpdate> =
             addresses.iter().map(|a| (*a, LeafUpdate::Touched)).collect();
-        Self::drain(trie, calculator, None, &mut touched)?;
+        Self::drain(trie, proofs, None, &mut touched)?;
         let mut updates = B256Map::default();
         for address in addresses {
             let current = trie
@@ -209,6 +270,6 @@ impl EngineSparse {
             };
             updates.insert(address, LeafUpdate::Changed(encoded));
         }
-        Self::drain(trie, calculator, None, &mut updates)
+        Self::drain(trie, proofs, None, &mut updates)
     }
 }

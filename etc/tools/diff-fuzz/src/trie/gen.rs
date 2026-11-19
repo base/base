@@ -254,7 +254,7 @@ impl TrieGen {
         let start = ops.len();
         let target = if self.rng.chance(70) { self.existing(model) } else { None };
         let key = target.unwrap_or_else(|| self.account_key());
-        match self.rng.weighted(&[24, 30, 12, 6, 3, 6, 4, 2, 1, 2]) {
+        match self.rng.weighted(&[24, 30, 12, 6, 3, 6, 4, 2, 1, 2, 3, 2]) {
             0 => ops.push(self.account(key)),
             1 => {
                 let slot = self.slot();
@@ -302,7 +302,7 @@ impl TrieGen {
                     ops.push(TrieOp::delete(*key));
                 }
             }
-            _ => {
+            9 => {
                 // Many writes under one storage trie, around one slot.
                 let base = self.slot();
                 for _ in 0..self.rng.range(16, 200) {
@@ -310,6 +310,39 @@ impl TrieGen {
                     let slot = self.near(&base, shared, true);
                     let value = if self.rng.chance(15) { B256::ZERO } else { self.value() };
                     ops.push(TrieOp::storage(key, slot, value));
+                }
+            }
+            10 => {
+                // A whole subtree removed: every account, or every slot of one account, under
+                // the first one to three nibbles of an existing key, so branches near the root
+                // collapse.
+                let nibbles = self.rng.weighted(&[5, 3, 1]) + 1;
+                let account = model.accounts.get(&key);
+                match account.zip(self.existing_slot(model, &key)) {
+                    Some((account, slot)) if self.rng.chance(50) => {
+                        for other in account.storage.keys().filter(|s| shares(s, &slot, nibbles)) {
+                            ops.push(TrieOp::storage(key, *other, B256::ZERO));
+                        }
+                    }
+                    _ => {
+                        for other in model.accounts.keys().filter(|k| shares(k, &key, nibbles)) {
+                            ops.push(TrieOp::delete(*other));
+                        }
+                    }
+                }
+            }
+            _ => {
+                // A wide fill: keys spread over every nibble, so the tries are populated well
+                // below the root (and the sparse trie splits into lower subtries).
+                let storage = self.rng.chance(50);
+                for _ in 0..self.rng.range(32, 256) {
+                    if storage {
+                        let (slot, value) = (self.slot(), self.value());
+                        ops.push(TrieOp::storage(key, slot, value));
+                    } else {
+                        let other = self.account_key();
+                        ops.push(self.account(other));
+                    }
                 }
             }
         }
@@ -390,6 +423,12 @@ impl TrieGen {
         case.preimages = self.preimages.clone();
         case
     }
+}
+
+/// Whether `a` and `b` share their first `nibbles` nibbles.
+fn shares(a: &B256, b: &B256, nibbles: usize) -> bool {
+    let bytes = nibbles / 2;
+    a[..bytes] == b[..bytes] && (nibbles.is_multiple_of(2) || a[bytes] >> 4 == b[bytes] >> 4)
 }
 
 #[cfg(test)]

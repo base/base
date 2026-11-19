@@ -13,4 +13,4 @@ mod reth_db;
 pub use reth_db::{RethDb, RethFactory};
 
 mod sparse;
-pub use sparse::EngineSparse;
+pub use sparse::{EngineSparse, LatestProofs, ProofSource};

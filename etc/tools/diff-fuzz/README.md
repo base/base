@@ -233,7 +233,8 @@ verify against their own roots.
 A case (`TrieCase`) is the block list itself. The generator picks keys in hashed-key space so
 cases aim at trie shapes: keys sharing prefixes of every length, branches collapsing to an
 extension or a leaf, extensions splitting, embedded nodes, deletes down to an empty trie, many
-writes under one storage trie, keys written and set back within a block or across blocks, and
+writes under one storage trie, wide fills of hundreds of spread keys, whole subtrees cleared at
+once, keys written and set back within a block or across blocks, and
 unwinds (with the `revert` ops an adapter without native unwinds applies). Proof reads target
 touched, untouched, and absent keys next to existing ones. Most cases keep every two keys to at
 most 12 shared nibbles, which keccak keys of a real trie reach (about 2^48 hashes); a fifth go

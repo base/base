@@ -25,14 +25,17 @@ base-execution-trie.workspace = true
 reth-trie.workspace = true
 reth-tasks.workspace = true
 reth-db-api.workspace = true
+reth-codecs.workspace = true
 reth-trie-db.workspace = true
 reth-chainspec.workspace = true
 reth-trie-common.workspace = true
 reth-trie-sparse.workspace = true
 reth-storage-api.workspace = true
+reth-trie-parallel.workspace = true
 reth-primitives-traits.workspace = true
 reth-db = { workspace = true, features = ["mdbx"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+reth-stages-types = { workspace = true, features = ["reth-codec"] }
 
 # alloy
 alloy-rlp.workspace = true
