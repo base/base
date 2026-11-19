@@ -689,7 +689,8 @@ impl RpcCampaign {
     /// base/base's prestate tracer lists another set of accounts than Nethermind's (which follows
     /// geth): it drops `codeHash` and the authorities of invalid EIP-7702 authorizations, lists
     /// the zero-credit fee vaults instead of the coinbase for a fee-free call, and keeps an
-    /// empty sender in a diffMode `pre`. Only the account sets differ; shared accounts agree.
+    /// empty sender in a diffMode `pre`, and lists a slot whose SLOAD or SSTORE ran out of gas.
+    /// Only the account and slot sets differ; shared entries agree.
     pub const KNOWN_BASE_PRESTATE: &str = "base: prestate account set";
     /// base/base's 4byteTracer (revm-inspectors) counts calls to precompiles, which Nethermind's
     /// (with geth's) skips.
@@ -915,8 +916,8 @@ impl RpcCampaign {
         }
     }
 
-    /// `value` without the `codeHash` fields and the account (address-keyed) entries that
-    /// `reference` lacks at the same place.
+    /// `value` without the `codeHash` fields, the account (address-keyed) entries and the storage
+    /// (slot-keyed) entries that `reference` lacks at the same place.
     fn without_extra_accounts(value: &Value, reference: &Value) -> Value {
         match (value, reference) {
             (Value::Object(object), Value::Object(theirs)) => Value::Object(
@@ -925,7 +926,7 @@ impl RpcCampaign {
                     .filter(|(key, _)| {
                         theirs.contains_key(*key)
                             || !(key.as_str() == "codeHash"
-                                || (key.len() == 42 && RpcCompare::is_hex(key)))
+                                || ([42, 66].contains(&key.len()) && RpcCompare::is_hex(key)))
                     })
                     .map(|(key, v)| {
                         let reference = theirs.get(key).unwrap_or(&Value::Null);
@@ -1396,6 +1397,14 @@ mod tests {
             base_cause(RpcCampaign::KNOWN_BASE_PRESTATE)
         );
         assert_eq!(classify(&trace, other, full.clone(), full.clone()), None);
+        // A slot only base lists (its SSTORE ran out of gas) is known too.
+        let slot = format!("0x{}", "00".repeat(31) + "bb");
+        let with_slot = json!({"id":1,"result":{a:{"balance":"0x1","storage":{&slot:"0x00"}}}});
+        let without = json!({"id":1,"result":{a:{"balance":"0x1","storage":{}}}});
+        assert_eq!(
+            classify(&trace, with_slot, without.clone(), without),
+            base_cause(RpcCampaign::KNOWN_BASE_PRESTATE)
+        );
         // Accounts only base lists (zero-credit fee vaults, an empty diffMode sender) are known too.
         let c = "0x00000000000000000000000000000000000000cc";
         let base_more = json!({"id":1,"result":{a:{"balance":"0x1"},c:{"balance":"0x0"}}});
