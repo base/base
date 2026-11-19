@@ -9,9 +9,10 @@ the builder in one process, but accept only a Base-chosen set of their flags. `-
 the curated flags needed to run a node; `--help-all` adds the advanced flags, such as metering and
 upgrade-signal settings. Transaction pool limits apply only on `base mempool` and
 `base sequencer`, and transaction forwarding flags only on `base mempool`. `base sequencer` also
-supports every `--builder.*` flag. Any other execution, consensus, or builder flag is ignored, whether it
-comes from the command line or its environment variable, and the node logs a warning naming it at
-startup. The full lists live in `src/surface.rs`.
+supports every `--builder.*` flag. Any other execution, consensus, or builder flag is rejected,
+whether it comes from the command line or its environment variable. The node refuses to start and
+prints one error that lists every unsupported flag, along with any command that supports it. The
+full lists live in `src/surface.rs`.
 
 Flag names start with the layer or feature they configure, such as `--execution.rpc.*`,
 `--consensus.rpc.*`, `--execution.p2p.*`, `--consensus.p2p.*`, `--sequencer.*`, and `--txpool.*`. On/off switches end
@@ -49,7 +50,7 @@ Kubernetes sets `<SERVICE>_PORT` to `tcp://<ip>:<port>` for every Service.
 
 Consensus calls the embedded execution node's Engine API in memory, so Engine API transport
 flags such as `--authrpc.port`, `--authrpc.jwtsecret`, `--l2-engine-jwt-secret`, and
-`--l2-engine-timeout` are among the ignored flags, with a warning that explains why.
+`--l2-engine-timeout` are rejected too, with an error that explains why.
 
 ## OTLP Tracing
 
@@ -95,7 +96,7 @@ handlers in memory, with no socket, IPC, or JWT in between. Engine API calls als
 encoding; L2 reads, such as block queries, are still dispatched as JSON-RPC into the auth module.
 
 The execution CLI surface is shared with the standalone execution binaries through
-`base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
+`base-execution-cli`. `base rpc` intentionally rejects flags for roles it does not run, including
 sequencer, builder, conductor, transaction pool, and transaction-forwarding options. A query node
 forwards each submitted transaction to the sequencer before it keeps a local copy, so pool limits
 do not change what it sends upstream.

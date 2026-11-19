@@ -341,7 +341,6 @@ mod tests {
         ]);
 
         assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "dev"));
-        assert!(cli.ignored.is_empty(), "{:?}", cli.ignored);
         let BaseCommand::Mempool(rpc) = cli.command else {
             panic!("expected mempool command");
         };

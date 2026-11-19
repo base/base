@@ -1,14 +1,14 @@
 use std::ffi::OsString;
 
 use base_cli_utils::{LogConfig, MetricsConfig};
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::{CommandFactory, FromArgMatches, Parser, error::ErrorKind};
 use eyre::WrapErr;
 use reth_node_core::args::TraceArgs;
 
 use crate::{
     commands::BaseCommand,
     config::{ChainArg, ChainResolver},
-    surface::{CliSurface, IgnoredFlag},
+    surface::CliSurface,
 };
 
 base_cli_utils::define_log_args!("BASE_NODE");
@@ -51,10 +51,6 @@ pub(crate) struct BaseCli {
     /// The command to run.
     #[command(subcommand)]
     pub(crate) command: BaseCommand,
-
-    /// Unsupported flags dropped by [`CliSurface::strip_unsupported`], logged once tracing starts.
-    #[arg(skip)]
-    pub(crate) ignored: Vec<IgnoredFlag>,
 }
 
 impl BaseCli {
@@ -65,17 +61,28 @@ impl BaseCli {
         T: Into<OsString> + Clone,
     {
         let derived = Self::command();
-        let (args, ignored) =
-            CliSurface::strip_unsupported(&derived, args.into_iter().map(Into::into).collect());
+        let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+        let unsupported = CliSurface::unsupported_flags(&derived, &args);
         let mut command = CliSurface::apply(derived);
-        let matches = command.try_get_matches_from_mut(args)?;
+        let matches = match command.try_get_matches_from_mut(args) {
+            Err(error)
+                if matches!(error.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) =>
+            {
+                return Err(error);
+            }
+            result => {
+                if let Some((name, flags)) = unsupported {
+                    return Err(CliSurface::unsupported_error(&mut command, name, &flags));
+                }
+                result?
+            }
+        };
         CliSurface::validate(&mut command, &matches)?;
         let mut cli =
             Self::from_arg_matches(&matches).map_err(|error| error.format(&mut command))?;
         if let Some(chain) = CliSurface::subcommand_cli_chain(&matches) {
             cli.chain = Some(chain);
         }
-        cli.ignored = ignored;
         Ok(cli)
     }
 
@@ -108,7 +115,6 @@ impl BaseCli {
                 .init_with_trace_args(&self.traces, &[])
                 .wrap_err("failed to initialize tracing")?;
         }
-        self.ignored.iter().for_each(IgnoredFlag::warn);
 
         let metrics_enabled = self.metrics.enabled;
         MetricsConfig::from(self.metrics)
