@@ -124,6 +124,13 @@ ascending byte order, also retaining duplicates. Moving a predicate between grou
 permutation within a conjunction: it changes what the user is authorizing. Flat submissions
 continue to use `ValidityAuthorization`, even when `anyOf` with one group would be equivalent.
 
+For nested operators, sign the **normalized groups**, not the submitted JSON tree. Concatenate
+alternatives for `anyOf` and take the Cartesian product of the child groups for `allOf`,
+concatenating their predicates. Do not deduplicate predicates or groups, even identical ones.
+A tree without `anyOf` uses the original flat signing type; a tree containing `anyOf` uses the
+grouped signing type, even if it normalizes to one group. Rust clients can deserialize the wire
+expression into `ValidityExpression` and pass it to `expression_signing_hash`.
+
 Raw ingress reuses the recovered envelope sender to verify sidecar signatures
 and rejects high-s signatures. Only sender-address secp256k1
 authorization is supported; contract wallets without that key cannot use

@@ -857,6 +857,47 @@ mod tests {
     }
 
     #[test]
+    fn nested_and_or_match_the_customer_truth_tables() {
+        let pred = |n| balance(Address::with_last_byte(n), ValidityOperator::Equal, 1);
+        let [a, c, d, e, f] = [0, 1, 2, 3, 4].map(pred);
+        let branches = serde_json::json!({"anyOf":[{"allOf":[c,d]},[e,f]]});
+        let decode = |value| ValidityConditions::compile(serde_json::from_value(value).unwrap());
+        let and = decode(serde_json::json!({"allOf":[a,branches]}));
+        let or = decode(serde_json::json!({"anyOf":[a,branches]}));
+        let product = decode(serde_json::json!({"allOf":[{"anyOf":[a,c]}, {"anyOf":[d,e]}, f]}));
+        for mask in 0u8..32 {
+            let mut db = InMemoryDB::default();
+            let [a, c, d, e, f] = [0u8, 1, 2, 3, 4].map(|n| {
+                let set = mask & (1 << n) != 0;
+                if set {
+                    db.insert_account_info(
+                        Address::with_last_byte(n),
+                        AccountInfo { balance: U256::ONE, ..Default::default() },
+                    );
+                }
+                set
+            });
+            for (expr, expected) in [
+                (&and, a && ((c && d) || (e && f))),
+                (&or, a || (c && d) || (e && f)),
+                (&product, (a || c) && (d || e) && f),
+            ] {
+                let result = ValidityPredicateEvaluation::evaluate(
+                    expr,
+                    &mut db,
+                    &PredicateContext { block_number: 1 },
+                )
+                .unwrap();
+                assert_eq!(
+                    result == ValidityPredicateEvaluation::Matched,
+                    expected,
+                    "mask {mask:05b}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn unreadable_group_cannot_authorize_or_veto_an_independent_match() {
         let first = balance(Address::with_last_byte(1), ValidityOperator::Equal, 0);
         for (expected_balance, expected) in

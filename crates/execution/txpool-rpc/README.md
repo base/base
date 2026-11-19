@@ -55,11 +55,30 @@ account `0x11…11` has a positive balance through block 100, **or** its nonce i
 }
 ```
 
-Use block bounds within the node's current validity window. Every group needs its own upper
-bound. Empty groups and nested expressions are rejected; the configured predicate limit applies
-to the sum across groups. Both groups refer to the same transaction hash, so if both hold,
-there is still only one transaction to include. Upgrade proxies, ingress nodes and builders
-before sending grouped requests; nodes that expect a flat array cannot decode them.
+### Nesting AND and OR
+
+An `allOf` or `anyOf` operand can be a predicate object, a non-empty flat list of predicates
+(implicit AND), or another `allOf` or `anyOf`. For example, with `A`, `C`, `D`, `E`, and `F`
+standing for predicate objects, these are two different requests:
+
+```text
+A AND ((C AND D) OR (E AND F))   {"allOf": [A, {"anyOf": [[C, D], [E, F]]}]}
+A OR  ((C AND D) OR (E AND F))   {"anyOf": [A, {"anyOf": [[C, D], [E, F]]}]}
+```
+
+Each possible alternative must include a block upper bound within the node's current validity
+window. To share an expiry across all alternatives, put it in an outer `allOf`. Matching more
+than one alternative still includes the transaction only once.
+
+Ingress flattens ORs and distributes ANDs before signing checks, forwarding, or evaluation.
+The first example becomes `{"anyOf": [[A, C, D], [A, E, F]]}` and counts as **six** predicate
+occurrences, not five. The second becomes `{"anyOf": [[A], [C, D], [E, F]]}` and counts as five.
+The configured predicate limit applies to this expanded count (wire ceiling: 64). Requests that
+would exceed it are rejected before constructing the expanded groups. Operators must have at
+least one operand and can be nested up to 16 levels deep.
+
+Upgrade the nodes that receive the nested syntax before sending it. Builders receiving normalized
+groups must support `anyOf`; flat-array-only nodes cannot decode grouped requests.
 
 ## Usage
 

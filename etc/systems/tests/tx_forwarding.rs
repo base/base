@@ -20,7 +20,7 @@ use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, ValidatedTransaction, ValidityAuthorization,
-    ValidityExpression, ValidityOperator, ValidityPredicate, ValiditySignatureMode,
+    ValidityOperator, ValidityPredicate, ValiditySignatureMode,
 };
 use base_system_tests::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, SystemTestProviderExt,
@@ -613,27 +613,13 @@ async fn test_validity_transaction_lands_after_second_group_becomes_true() -> Re
             "base_sendRawTransactionValidity",
             (
                 raw_validity_tx,
-                SendRawTransactionValidityOptions {
-                    validity: ValidityExpression::AnyOf(vec![
-                        vec![
-                            ValidityPredicate::Balance {
-                                address: watched,
-                                op: ValidityOperator::Equal,
-                                value: U256::MAX,
-                            },
-                            block_expiry_bound(current_block),
-                        ],
-                        vec![
-                            ValidityPredicate::Balance {
-                                address: watched,
-                                op: ValidityOperator::GreaterThanOrEqual,
-                                value: U256::from(1),
-                            },
-                            block_expiry_bound(current_block),
-                        ],
-                    ]),
-                    validity_signature: None,
-                },
+                serde_json::json!({"validity": {"allOf": [
+                    block_expiry_bound(current_block),
+                    {"anyOf": [
+                        ValidityPredicate::Balance {address: watched, op: ValidityOperator::Equal, value: U256::MAX},
+                        ValidityPredicate::Balance {address: watched, op: ValidityOperator::GreaterThanOrEqual, value: U256::ONE}
+                    ]}
+                ]}}),
             ),
         )
         .await?;

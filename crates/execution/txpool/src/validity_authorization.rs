@@ -300,6 +300,38 @@ mod tests {
     }
 
     #[test]
+    fn nested_wire_accepts_authorization_for_the_expanded_groups_only() {
+        let signer = PrivateKeySigner::random();
+        let tx = transaction(&signer, 8453, 0);
+        let mut leaves = predicates().into_iter();
+        let (b, c, a) = (leaves.next().unwrap(), leaves.next().unwrap(), leaves.next().unwrap());
+        let expanded =
+            ValidityExpression::AnyOf(vec![vec![a.clone(), b.clone()], vec![a.clone(), c.clone()]]);
+        let sig = signer
+            .sign_hash_sync(&ValidityAuthorization::expression_signing_hash(
+                8453,
+                *tx.hash(),
+                &expanded,
+            ))
+            .unwrap();
+        let verify = |expr| {
+            ValidityAuthorization::validate_recovered(
+                &tx,
+                TransactionValidity {
+                    validity: serde_json::from_value(expr).unwrap(),
+                    validity_signature: Some(sig),
+                },
+                ValiditySignatureMode::Required,
+            )
+        };
+        assert!(verify(serde_json::json!({"allOf":[a,{"anyOf":[b,c]}]})).is_ok());
+        assert_eq!(
+            verify(serde_json::json!({"anyOf":[a,{"anyOf":[b,c]}]})),
+            Err(ValidityAuthorizationError::InvalidSignature)
+        );
+    }
+
+    #[test]
     fn eip712_digest_matches_independently_encoded_vector() {
         // Independently encoded with Keccak-256 and the documented EIP-712 types:
         // chain 8453, hash 0x44...44, balance/storage/block/flashblock predicates in canonical order.
