@@ -989,6 +989,16 @@ impl BaseProofsStore for MdbxProofsStorage {
             .view(|tx| self.collect_history_ranged(tx, latest_common_block.number + 1..))??;
 
         self.env.update(|tx| {
+            // Like `unwind_history`, never rewrite history below the earliest stored block.
+            if let Some(proof_window) = self.inner_get_proof_window(tx)?
+                && latest_common_block.number < proof_window.earliest.number
+            {
+                return Err(BaseProofsStorageError::UnwindBeyondEarliest {
+                    unwind_block_number: latest_common_block.number + 1,
+                    earliest_block_number: proof_window.earliest.number,
+                });
+            }
+
             // Remove the old history
             self.delete_history_ranged(tx, latest_common_block.number + 1.., history_to_delete)?;
 

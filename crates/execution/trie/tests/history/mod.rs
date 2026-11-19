@@ -208,6 +208,45 @@ fn test_prune_earliest_state_no_entries_to_prune<
     Ok(())
 }
 
+/// Replacing history from below the earliest block is refused and leaves history untouched, while
+/// replacing it from the earliest block itself is allowed.
+#[rstest]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
+#[serial]
+fn test_replace_updates_beyond_earliest<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    #[case] storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let path = nibbles_from(vec![1]);
+    let block_10 = test_block(B256::ZERO, 10, 10);
+    let block_11 = test_block(block_10.block.hash, 11, 11);
+    storage.set_earliest_block_number(10, block_10.block.hash)?;
+    let mut trie_updates = TrieUpdates::default();
+    trie_updates.account_nodes.insert(path, BranchNodeCompact::default());
+    storage.store_trie_updates(
+        block_11,
+        BlockStateDiff {
+            sorted_trie_updates: trie_updates.into_sorted(),
+            sorted_post_state: HashedPostStateSorted::default(),
+        },
+    )?;
+
+    let result = storage.replace_updates(BlockNumHash::new(9, B256::repeat_byte(9)), vec![]);
+    assert!(matches!(
+        result,
+        Err(BaseProofsStorageError::UnwindBeyondEarliest {
+            unwind_block_number: 10,
+            earliest_block_number: 10
+        })
+    ));
+    assert_eq!(storage.get_latest_block_number()?, Some((11, block_11.block.hash)));
+    assert_account_branch_present(&storage, 11, path)?;
+
+    storage.replace_updates(BlockNumHash::new(10, block_10.block.hash), vec![])?;
+    assert_eq!(storage.get_latest_block_number()?, Some((10, block_10.block.hash)));
+    assert_account_branch_missing(&storage, 11, path)
+}
+
 #[rstest]
 #[case::mdbx(create_mdbx_proofs_storage())]
 #[case::rocksdb(create_rocksdb_proofs_storage())]
