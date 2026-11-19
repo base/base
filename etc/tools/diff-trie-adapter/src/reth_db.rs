@@ -229,6 +229,43 @@ impl RethDb {
         targets.iter().map(|target| Self::proof(&multiproof, target)).collect()
     }
 
+    /// The proofs of `targets`, which all carry preimages, as `eth_getProof` computes them: one
+    /// account proof per address from `provider`.
+    pub fn account_proofs(
+        provider: &impl StateProofProvider,
+        targets: &[ProofTarget],
+    ) -> eyre::Result<Vec<ProofResult>> {
+        targets
+            .iter()
+            .map(|target| {
+                let address =
+                    target.address.ok_or_else(|| eyre::eyre!("target without address"))?;
+                let slot_keys = target.slot_keys.clone().unwrap_or_default();
+                let proof = provider.proof(TrieInput::default(), address, &slot_keys)?;
+                Ok(ProofResult {
+                    key: target.key,
+                    account: proof.info.map(|info| ProofAccount {
+                        nonce: info.nonce,
+                        balance: info.balance,
+                        code_hash: info.get_bytecode_hash(),
+                        storage_root: proof.storage_root,
+                    }),
+                    account_proof: proof.proof,
+                    storage: target
+                        .slots
+                        .iter()
+                        .zip(proof.storage_proofs)
+                        .map(|(slot, storage)| StorageProofResult {
+                            slot: *slot,
+                            value: B256::from(storage.value.to_be_bytes::<32>()),
+                            proof: storage.proof,
+                        })
+                        .collect(),
+                })
+            })
+            .collect()
+    }
+
     /// The value of the leaf for `path` at the end of `proof`, if the proof shows it present.
     pub fn leaf_value(proof: &[Bytes], path: &Nibbles) -> eyre::Result<Option<Vec<u8>>> {
         let Some(last) = proof.last() else { return Ok(None) };

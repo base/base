@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, keccak256};
-use base_diff_fuzz::{ProofTarget, TrieBlockResult};
+use base_diff_fuzz::{ProofResult, ProofTarget, TrieBlockResult};
 use base_execution_trie::{
     BaseProofStoragePruner, BaseProofsBatchSession, BaseProofsBatchStateProviderRef,
     BaseProofsBatchStore, BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore,
@@ -72,6 +72,18 @@ where
             proofs: Some(proofs),
             ..Default::default()
         })
+    }
+
+    /// Proofs of `targets`, which all carry preimages, at block `number` as `eth_getProof` over
+    /// the store computes them.
+    pub fn account_proofs(
+        &self,
+        number: u64,
+        targets: &[ProofTarget],
+    ) -> eyre::Result<Vec<ProofResult>> {
+        let provider =
+            BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &self.storage, number);
+        RethDb::account_proofs(&provider, targets)
     }
 
     /// Builds block `number` (whose parent is `number - 1` after dropping `unwind` blocks) from

@@ -165,6 +165,10 @@ impl TrieAdapter {
             tip += 1;
             highest = highest.max(tip);
         }
+        // Proofs by address and slot key need every proof target's preimages.
+        let preimages = blocks.iter().flat_map(|b| &b.proofs).all(|target| {
+            target.address.is_some() && (target.slots.is_empty() || target.slot_keys.is_some())
+        });
         let mut ph_mdbx_pruned =
             ProofsHistory::new(MdbxProofsStorage::new(&dir.join("ph-mdbx-pruned"))?)?;
         let mut ph_rocksdb_pruned =
@@ -247,6 +251,12 @@ impl TrieAdapter {
                 .entry("serial-tables")
                 .or_default()
                 .push(|| Ok(TrieBlockResult { error: serial.verify()?, ..Default::default() }));
+            if preimages {
+                variants.entry("getproof").or_default().push(|| {
+                    let proofs = RethDb::account_proofs(&serial.factory.latest()?, &block.proofs)?;
+                    Ok(TrieBlockResult { proofs: Some(proofs), ..Default::default() })
+                });
+            }
             let exists: Vec<B256> = changes
                 .written
                 .iter()
@@ -320,6 +330,14 @@ impl TrieAdapter {
                 .entry("ph-rocksdb")
                 .or_default()
                 .push(|| ph_rocksdb.block(number, block.unwind, state, &block.proofs));
+            if preimages {
+                variants.entry("ph-mdbx-getproof").or_default().push(|| {
+                    Ok(TrieBlockResult {
+                        proofs: Some(ph_mdbx.account_proofs(number, &block.proofs)?),
+                        ..Default::default()
+                    })
+                });
+            }
             variants.entry("ph-mdbx-pruned").or_default().push(|| {
                 let result = ph_mdbx_pruned.block(number, block.unwind, state, &block.proofs)?;
                 ph_mdbx_pruned.prune(retention, 1 + number % 2);

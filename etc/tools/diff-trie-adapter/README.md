@@ -34,6 +34,9 @@ Variants, each also on its own database:
   back: the trie tables cleared, then the root computed in steps of at most 1 to 7 trie updates,
   each step's updates written and the next resumed from its checkpoint after a round trip
   through the stage's compact checkpoint encoding.
+- `getproof`, `ph-mdbx-getproof` (requests whose proof targets all carry preimages): proofs by
+  address and slot key as `eth_getProof` computes them, over the serial database and over the
+  proofs-history store at the block.
 - `witness`: the stateless root the differential execution adapter computes
   (`base_diff_adapter::WitnessState`) from the node's execution witness of the block, in the
   legacy witness mode base/base serves. (The canonical mode leaves out nodes that only a consumer
