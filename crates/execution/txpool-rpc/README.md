@@ -31,6 +31,36 @@ the complete sidecar and upstream error response instead of admitting it locally
 See the [wallet signing contract](../txpool/README.md#signed-validity-predicates) for
 EIP-712 types, signature encoding, rollout requirements, and security limitations.
 
+## Alternative validity conditions
+
+`base_sendRawTransactionValidity` takes one signed transaction and an options object. A flat
+`validity` array still requires **all** predicates. To accept **any complete group**, send
+`validity: {"anyOf": [[A, B], [C, D]]}`. For example, the following options accept a transfer if
+account `0x11…11` has a positive balance through block 100, **or** its nonce is 2 through block 105:
+
+```json
+{
+  "validity": {
+    "anyOf": [
+      [
+        {"type":"balance","params":{"address":"0x1111111111111111111111111111111111111111","op":">","value":"0x0"}},
+        {"type":"block_number","params":{"op":"<=","value":"0x64"}}
+      ],
+      [
+        {"type":"nonce","params":{"address":"0x1111111111111111111111111111111111111111","op":"=","value":"0x2"}},
+        {"type":"block_number","params":{"op":"<=","value":"0x69"}}
+      ]
+    ]
+  }
+}
+```
+
+Use block bounds within the node's current validity window. Every group needs its own upper
+bound. Empty groups and nested expressions are rejected; the configured predicate limit applies
+to the sum across groups. Both groups refer to the same transaction hash, so if both hold,
+there is still only one transaction to include. Upgrade proxies, ingress nodes and builders
+before sending grouped requests; nodes that expect a flat array cannot decode them.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

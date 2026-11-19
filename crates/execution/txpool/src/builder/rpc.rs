@@ -444,7 +444,10 @@ mod tests {
             sender: signer.address(),
             raw: signed.encoded_2718().into(),
             metering: None,
-            extensions: TransactionValidity { validity, validity_signature: Some(signature) },
+            extensions: TransactionValidity {
+                validity: validity.into(),
+                validity_signature: Some(signature),
+            },
         }
     }
 
@@ -511,11 +514,16 @@ mod tests {
         .with_validity_signature_mode(mode);
         let mut tx = signed_validity_transaction();
         match altered_field {
-            "predicates" => tx.extensions.validity.push(ValidityPredicate::Balance {
-                address: Address::repeat_byte(0x11),
-                op: ValidityOperator::Equal,
-                value: U256::ZERO,
-            }),
+            "predicates" => {
+                let crate::ValidityExpression::All(group) = &mut tx.extensions.validity else {
+                    unreachable!()
+                };
+                group.push(ValidityPredicate::Balance {
+                    address: Address::repeat_byte(0x11),
+                    op: ValidityOperator::Equal,
+                    value: U256::ZERO,
+                });
+            }
             "sender" => tx.sender = Address::ZERO,
             "transaction" => tx.raw = signed_validity_transaction().raw,
             "signature" => {
@@ -552,7 +560,7 @@ mod tests {
         let mut tx = signed_validity_transaction();
         match reason {
             "missing" => tx.extensions.validity_signature = None,
-            "unexpected" => tx.extensions.validity.clear(),
+            "unexpected" => tx.extensions.validity = Default::default(),
             _ => unreachable!(),
         }
         let error = handler.insert_validated_transaction(tx).await.unwrap_err();

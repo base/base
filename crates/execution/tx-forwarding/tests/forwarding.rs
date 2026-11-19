@@ -226,7 +226,7 @@ async fn forwards_validity_to_every_builder(
             (
                 raw.clone(),
                 SendRawTransactionValidityOptions {
-                    validity: expected.clone(),
+                    validity: expected.clone().into(),
                     validity_signature,
                 },
             ),
@@ -244,7 +244,7 @@ async fn forwards_validity_to_every_builder(
     for forwarded in [&first_forwarded, &second_forwarded] {
         assert_eq!(forwarded.sender, Account::Alice.address());
         assert_eq!(forwarded.raw, raw);
-        assert_eq!(forwarded.extensions.validity, expected);
+        assert_eq!(forwarded.extensions.validity.groups()[0], expected);
         assert_eq!(forwarded.extensions.validity_signature, validity_signature);
     }
     assert_eq!(first_forwarded.sender, second_forwarded.sender);

@@ -4,7 +4,7 @@ use std::{borrow::Cow, sync::OnceLock};
 
 use alloy_primitives::U256;
 
-use crate::{PredicateContext, ValidityOperator, ValidityPredicate};
+use crate::{PredicateContext, ValidityExpression, ValidityOperator, ValidityPredicate};
 
 /// Inclusive timing bounds compiled once from a conjunction of predicates.
 ///
@@ -125,7 +125,7 @@ impl ValidityBounds {
 /// always gates state reads. The submitted count is retained because transaction
 /// ordering uses it, even when redundant bounds collapse.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ValidityConditions {
+pub struct ValidityGroup {
     block: ValidityBounds,
     /// Block and flashblock predicates as submitted, in wire order.
     ///
@@ -137,7 +137,7 @@ pub struct ValidityConditions {
     storage: Vec<ValidityPredicate>,
 }
 
-impl ValidityConditions {
+impl ValidityGroup {
     /// Compiles submitted predicates, moving each into its partition without cloning.
     pub fn new(predicates: Vec<ValidityPredicate>) -> Self {
         // Count partitions first so each backing vector is allocated exactly once at its
@@ -185,12 +185,6 @@ impl ValidityConditions {
             }
         }
         conditions
-    }
-
-    /// Shared empty conditions for transaction types without validity metadata.
-    pub fn empty() -> &'static Self {
-        static EMPTY: OnceLock<ValidityConditions> = OnceLock::new();
-        EMPTY.get_or_init(Self::default)
     }
 
     /// Every submitted predicate, re-combined for builder forwarding; never used for
@@ -265,6 +259,105 @@ impl ValidityConditions {
     }
 }
 
+/// Compiled sidecar retaining the group boundaries that the sender authorized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidityConditions {
+    /// Original flat conjunction, with no additional group allocation.
+    All(ValidityGroup),
+    /// Compiled alternatives and their total predicate count used for pool ordering.
+    AnyOf {
+        /// Conjunctions in wire order.
+        groups: Box<[ValidityGroup]>,
+        /// Total predicate count before normalization.
+        count: usize,
+    },
+}
+
+impl ValidityConditions {
+    /// Compiles a legacy conjunction.
+    pub fn new(predicates: Vec<ValidityPredicate>) -> Self {
+        Self::All(ValidityGroup::new(predicates))
+    }
+
+    /// Compiles each alternative independently at ingress.
+    pub fn compile(expr: ValidityExpression) -> Self {
+        match expr {
+            ValidityExpression::All(p) => Self::new(p),
+            ValidityExpression::AnyOf(groups) => Self::AnyOf {
+                count: groups.iter().map(Vec::len).sum(),
+                groups: groups.into_iter().map(ValidityGroup::new).collect(),
+            },
+        }
+    }
+
+    /// Shared empty conditions for ordinary transactions.
+    pub fn empty() -> &'static Self {
+        static EMPTY: OnceLock<ValidityConditions> = OnceLock::new();
+        EMPTY.get_or_init(|| Self::new(Vec::new()))
+    }
+
+    /// Alternative conjunctions, without flattening them.
+    pub fn groups(&self) -> &[ValidityGroup] {
+        match self {
+            Self::All(group) => std::slice::from_ref(group),
+            Self::AnyOf { groups, .. } => groups,
+        }
+    }
+
+    /// Returns the original expression for forwarding, preserving group boundaries.
+    pub fn to_expression(&self) -> ValidityExpression {
+        match self {
+            Self::All(g) => ValidityExpression::All(g.submitted().cloned().collect()),
+            Self::AnyOf { groups, .. } => ValidityExpression::AnyOf(
+                groups.iter().map(|g| g.submitted().cloned().collect()).collect(),
+            ),
+        }
+    }
+
+    /// Pool ordering counts every predicate across all branches.
+    pub const fn len(&self) -> usize {
+        match self {
+            Self::All(g) => g.len(),
+            Self::AnyOf { count, .. } => *count,
+        }
+    }
+
+    /// Only an empty legacy list is an ordinary transaction.
+    pub const fn is_empty(&self) -> bool {
+        matches!(self, Self::All(g) if g.is_empty())
+    }
+
+    /// Last possible block for any branch, or unbounded if a branch has no expiry.
+    pub fn expiry_bound(&self) -> Option<u64> {
+        let mut max = 0;
+        for g in self.groups() {
+            max = max.max(g.block().expiry_bound()?);
+        }
+        Some(max)
+    }
+
+    /// Whether every alternative has permanently expired.
+    pub fn is_expired(&self, context: &PredicateContext) -> bool {
+        self.groups().iter().all(|g| g.is_expired(context))
+    }
+
+    /// A single blocker is proof of failure only if it blocks every alternative.
+    pub fn contains(&self, predicate: &ValidityPredicate) -> bool {
+        self.groups().iter().all(|g| g.contains(predicate))
+    }
+
+    /// Pool memory retained by all partitions and any group slice.
+    pub fn heap_size(&self) -> usize {
+        match self {
+            Self::All(g) => g.heap_size(),
+            Self::AnyOf { groups, .. } => {
+                std::mem::size_of_val(groups.as_ref())
+                    + groups.iter().map(ValidityGroup::heap_size).sum::<usize>()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
@@ -272,7 +365,7 @@ mod tests {
     use alloy_primitives::{Address, U256};
     use revm::database::InMemoryDB;
 
-    use super::{ValidityBounds, ValidityConditions};
+    use super::{ValidityBounds, ValidityGroup};
     use crate::{
         PredicateContext, ValidityOperator,
         ValidityOperator::{
@@ -280,6 +373,19 @@ mod tests {
         },
         ValidityPredicate,
     };
+
+    #[test]
+    fn grouped_expiry_uses_the_last_live_conjunction() {
+        let bound =
+            |n: u64| ValidityPredicate::BlockNumber { op: LessThanOrEqual, value: U256::from(n) };
+        let expression =
+            super::ValidityExpression::AnyOf(vec![vec![bound(10), bound(30)], vec![bound(20)]]);
+        let conditions = super::ValidityConditions::compile(expression.clone());
+        assert_eq!(conditions.to_expression(), expression);
+        assert_eq!(conditions.expiry_bound(), Some(20));
+        assert!(!conditions.is_expired(&PredicateContext { block_number: 20 }));
+        assert!(conditions.is_expired(&PredicateContext { block_number: 21 }));
+    }
 
     #[test]
     fn compiled_comparisons_cover_operators_and_full_width_boundaries() {
@@ -321,7 +427,7 @@ mod tests {
     #[test]
     fn normalized_membership_is_exact_not_logical_implication() {
         let predicate = |op, value| ValidityPredicate::BlockNumber { op, value };
-        let conditions = ValidityConditions::new(vec![
+        let conditions = ValidityGroup::new(vec![
             predicate(GreaterThan, U256::from(9)),
             predicate(LessThan, U256::from(21)),
             predicate(Equal, U256::from(15)),
@@ -379,7 +485,7 @@ mod tests {
 
     #[test]
     fn heap_size_counts_spare_capacity_in_every_backing_vector() {
-        let mut conditions = ValidityConditions {
+        let mut conditions = ValidityGroup {
             timing: Vec::with_capacity(11),
             balance: Vec::with_capacity(3),
             nonce: Vec::with_capacity(5),
@@ -405,7 +511,7 @@ mod tests {
         };
         let mut submitted = Vec::with_capacity(13);
         submitted.extend([balance.clone(), block.clone(), balance.clone()]);
-        let conditions = ValidityConditions::new(submitted);
+        let conditions = ValidityGroup::new(submitted);
         assert_eq!(conditions.len(), 3);
         assert_eq!(conditions.heap_size(), 3 * core::mem::size_of::<ValidityPredicate>());
         assert_eq!(
@@ -442,7 +548,7 @@ mod tests {
             value: U256::ZERO,
         };
         let raw = vec![storage.clone(), block.clone(), nonce.clone(), balance.clone()];
-        let conditions = ValidityConditions::new(raw.clone());
+        let conditions = ValidityGroup::new(raw.clone());
         let normalized = conditions.iter().collect::<Vec<_>>();
         assert_eq!(
             normalized,
@@ -503,7 +609,7 @@ mod tests {
                                 }
                             };
                             let raw = [predicate(first, left), predicate(second, right)];
-                            let conditions = ValidityConditions::new(raw.to_vec());
+                            let conditions = ValidityGroup::new(raw.to_vec());
                             assert_eq!(
                                 conditions.block().expiry_bound(),
                                 ValidityPredicate::block_expiry_bound(&raw)
@@ -558,7 +664,7 @@ mod tests {
                 value: U256::from(15),
             },
         ];
-        let conditions = ValidityConditions::new(raw.clone());
+        let conditions = ValidityGroup::new(raw.clone());
         assert_eq!(conditions.submitted().cloned().collect::<Vec<_>>(), raw);
         assert_eq!(conditions.block().min(), Some(U256::from(10)));
         assert_eq!(conditions.block().max(), Some(U256::from(20)));
@@ -584,7 +690,7 @@ mod tests {
                 ValidityPredicate::BlockNumber { op: LessThanOrEqual, value: U256::from(102) },
                 ValidityPredicate::FlashblockIndex { op, value: U256::ONE },
             ];
-            let conditions = ValidityConditions::new(raw.clone());
+            let conditions = ValidityGroup::new(raw.clone());
             assert_eq!(conditions.submitted().cloned().collect::<Vec<_>>(), raw);
             assert_eq!(conditions.block().expiry_bound(), Some(0));
             assert_eq!(ValidityPredicate::block_expiry_bound(&raw), Some(0));
@@ -620,8 +726,7 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::from(1),
         };
-        let conditions =
-            ValidityConditions::new(vec![storage.clone(), nonce.clone(), balance.clone()]);
+        let conditions = ValidityGroup::new(vec![storage.clone(), nonce.clone(), balance.clone()]);
         let context = PredicateContext { block_number: 100 };
         let mut db = InMemoryDB::default();
         assert!(conditions.contains(&balance));

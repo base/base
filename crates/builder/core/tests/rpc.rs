@@ -190,7 +190,8 @@ async fn test_validity_transactions_accepted() -> eyre::Result<()> {
                 address: Account::Alice.address(),
                 op: ValidityOperator::Equal,
                 value: U256::ZERO,
-            }],
+            }]
+            .into(),
             validity_signature: None,
         },
     };
@@ -213,7 +214,10 @@ async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<(
         sender,
         raw,
         metering: None,
-        extensions: TransactionValidity { validity: vec![predicate; 2], validity_signature: None },
+        extensions: TransactionValidity {
+            validity: vec![predicate; 2].into(),
+            validity_signature: None,
+        },
     };
 
     let result: Result<(), _> =
@@ -252,7 +256,8 @@ async fn test_send_raw_transaction_validity_accepted() -> eyre::Result<()> {
                             op: ValidityOperator::LessThanOrEqual,
                             value: U256::from(31),
                         },
-                    ],
+                    ]
+                    .into(),
                     validity_signature: None,
                 },
             ),
@@ -278,7 +283,7 @@ async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre:
             (
                 signed_eip1559_tx(harness.chain_id()),
                 SendRawTransactionValidityOptions {
-                    validity: vec![predicate; 2],
+                    validity: vec![predicate; 2].into(),
                     validity_signature: None,
                 },
             ),
@@ -361,11 +366,17 @@ async fn signed_predicates_at_both_builder_endpoints(
             sender: Account::Alice.address(),
             raw,
             metering: None,
-            extensions: TransactionValidity { validity, validity_signature: signature },
+            extensions: TransactionValidity {
+                validity: validity.into(),
+                validity_signature: signature,
+            },
         };
         client.request::<_, ()>("base_insertValidatedTransaction", (tx,)).await
     } else {
-        let options = SendRawTransactionValidityOptions { validity, validity_signature: signature };
+        let options = SendRawTransactionValidityOptions {
+            validity: validity.into(),
+            validity_signature: signature,
+        };
         client
             .request::<_, TxHash>("base_sendRawTransactionValidity", (raw, options))
             .await

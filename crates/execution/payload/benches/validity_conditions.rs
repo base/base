@@ -239,7 +239,7 @@ fn transfer(predicates: Vec<ValidityPredicate>) -> BasePooledTransaction {
 /// the decoder is part of what the pool ingests.
 fn json_decoded(predicates: Vec<ValidityPredicate>) -> TransactionValidity {
     let json = serde_json::to_string(&TransactionValidity {
-        validity: predicates,
+        validity: predicates.into(),
         validity_signature: None,
     })
     .expect("serializes");
@@ -286,7 +286,7 @@ fn report_memory() {
         let total = core::mem::size_of::<ValidityConditions>() + conditions.heap_size();
 
         let decoded = json_decoded(mix.predicates());
-        let json_capacity = decoded.validity.capacity();
+        let json_capacity = decoded.validity.groups()[0].capacity();
         let json_transaction = transfer(Vec::new()).with_validity(decoded);
         let json_total = core::mem::size_of::<ValidityConditions>()
             + json_transaction.validity_conditions().heap_size();
@@ -295,12 +295,12 @@ fn report_memory() {
 
         let mut db = database(mix.predicates());
         let (passed, eval_allocations, _) = allocations_during(|| {
-            ValidityPredicateKey::first_unsatisfied(&conditions, &mut db, &CONTEXT)
+            ValidityPredicateKey::first_unsatisfied(&conditions.groups()[0], &mut db, &CONTEXT)
                 .expect("in-memory reads cannot fail")
         });
         assert!(passed.is_none(), "{}: all predicates must pass", mix.name);
         assert_eq!(eval_allocations, 0, "{}: successful evaluation must not allocate", mix.name);
-        if let Some(last) = conditions.state_predicates().last() {
+        if let Some(last) = conditions.groups()[0].state_predicates().last() {
             let (hit, membership_allocations, _) = allocations_during(|| conditions.contains(last));
             assert!(hit);
             assert_eq!(membership_allocations, 0, "{}: membership must not allocate", mix.name);
@@ -336,7 +336,7 @@ fn ingest(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("json_decoded", mix.name), |b| {
             b.iter_batched(
                 || json_decoded(mix.predicates()).validity,
-                ValidityConditions::new,
+                ValidityConditions::compile,
                 BatchSize::SmallInput,
             );
         });
@@ -363,17 +363,23 @@ fn evaluate(c: &mut Criterion) {
         let mut db = database(mix.predicates());
         group.bench_function(BenchmarkId::new("pass", mix.name), |b| {
             b.iter(|| {
-                let result =
-                    ValidityPredicateKey::first_unsatisfied(&conditions, &mut db, &CONTEXT)
-                        .expect("in-memory reads cannot fail");
+                let result = ValidityPredicateKey::first_unsatisfied(
+                    &conditions.groups()[0],
+                    &mut db,
+                    &CONTEXT,
+                )
+                .expect("in-memory reads cannot fail");
                 assert!(result.is_none());
             });
         });
         group.bench_function(BenchmarkId::new("timing_reject", mix.name), |b| {
             b.iter(|| {
-                let result =
-                    ValidityPredicateKey::first_unsatisfied(&conditions, &mut db, &EXPIRED_CONTEXT)
-                        .expect("in-memory reads cannot fail");
+                let result = ValidityPredicateKey::first_unsatisfied(
+                    &conditions.groups()[0],
+                    &mut db,
+                    &EXPIRED_CONTEXT,
+                )
+                .expect("in-memory reads cannot fail");
                 assert!(result.is_some());
             });
         });
@@ -395,9 +401,12 @@ fn evaluate(c: &mut Criterion) {
             let failing = ValidityConditions::new(mixed(mix.timing, mix.state, 0, 0, true));
             group.bench_function(BenchmarkId::new("last_state_fails", mix.name), |b| {
                 b.iter(|| {
-                    let result =
-                        ValidityPredicateKey::first_unsatisfied(&failing, &mut db, &CONTEXT)
-                            .expect("in-memory reads cannot fail");
+                    let result = ValidityPredicateKey::first_unsatisfied(
+                        &failing.groups()[0],
+                        &mut db,
+                        &CONTEXT,
+                    )
+                    .expect("in-memory reads cannot fail");
                     assert!(result.is_some());
                 });
             });
@@ -423,9 +432,12 @@ fn evaluate_pool(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("pass", mix.name), |b| {
             b.iter(|| {
                 for conditions in &conditions {
-                    let result =
-                        ValidityPredicateKey::first_unsatisfied(conditions, &mut db, &CONTEXT)
-                            .expect("in-memory reads cannot fail");
+                    let result = ValidityPredicateKey::first_unsatisfied(
+                        &conditions.groups()[0],
+                        &mut db,
+                        &CONTEXT,
+                    )
+                    .expect("in-memory reads cannot fail");
                     black_box(result.is_none());
                 }
             });
@@ -443,7 +455,8 @@ fn membership(c: &mut Criterion) {
     };
     for mix in MIXES.iter().filter(|mix| mix.state > 0) {
         let conditions = ValidityConditions::new(mix.predicates());
-        let last = conditions.state_predicates().last().expect("state predicate").clone();
+        let last =
+            conditions.groups()[0].state_predicates().last().expect("state predicate").clone();
         group.bench_function(BenchmarkId::new("hit_last_state", mix.name), |b| {
             b.iter(|| assert!(conditions.contains(black_box(&last))));
         });

@@ -8,7 +8,7 @@ use alloy_primitives::{
     map::{B256Map, B256Set, HashMap, U256Map},
 };
 use base_execution_txpool::{
-    PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
+    PredicateContext, ValidityConditions, ValidityGroup, ValidityOperator, ValidityPredicate,
 };
 use revm::{Database, database::TransitionState, state::EvmState};
 
@@ -51,7 +51,7 @@ impl ValidityPredicateKey {
     ///
     /// State predicates are borrowed during evaluation and cloned only when unsatisfied.
     pub fn first_unsatisfied<DB: Database>(
-        predicates: &ValidityConditions,
+        predicates: &ValidityGroup,
         db: &mut DB,
         context: &PredicateContext,
     ) -> Result<Option<(ValidityPredicate, Self)>, DB::Error> {
@@ -72,14 +72,14 @@ impl ValidityPredicateKey {
 /// Result of evaluating a transaction's validity predicates at one build position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidityPredicateEvaluation {
-    /// Every predicate is satisfied.
+    /// At least one complete conjunction is satisfied.
     Matched,
-    /// The transaction is blocked by its first unsatisfied predicate.
+    /// Every conjunction has an unsatisfied predicate.
     Unsatisfied {
-        /// State or position key that currently blocks the transaction.
-        blocker: ValidityPredicateKey,
         /// Failed condition, returned directly so parking does not rescan the batch.
         predicate: ValidityPredicate,
+        /// First failed predicate of each remaining alternative, in group order.
+        alternatives: Vec<ValidityPredicate>,
         /// Whether the predicate batch can never be satisfied at a later build position.
         expired: bool,
     },
@@ -92,16 +92,34 @@ impl ValidityPredicateEvaluation {
         db: &mut DB,
         context: &PredicateContext,
     ) -> Result<Self, DB::Error> {
-        let Some((predicate, blocker)) =
-            ValidityPredicateKey::first_unsatisfied(predicates, db, context)?
-        else {
-            return Ok(Self::Matched);
-        };
-        Ok(Self::Unsatisfied { blocker, predicate, expired: predicates.is_expired(context) })
+        let mut first = None;
+        let mut alternatives = Vec::new();
+        let mut read_error = None;
+        for group in predicates.groups() {
+            let (predicate, _) = match ValidityPredicateKey::first_unsatisfied(group, db, context) {
+                Ok(None) => return Ok(Self::Matched),
+                Ok(Some(failed)) => failed,
+                Err(error) => {
+                    // An unreadable branch cannot authorize inclusion, but another branch still can.
+                    read_error = Some(error);
+                    continue;
+                }
+            };
+            if first.is_none() {
+                first = Some(predicate);
+            } else {
+                alternatives.push(predicate);
+            }
+        }
+        if let Some(error) = read_error {
+            return Err(error);
+        }
+        let predicate = first.expect("validated expressions contain at least one group");
+        Ok(Self::Unsatisfied { predicate, alternatives, expired: predicates.is_expired(context) })
     }
 }
 
-/// Predicate-parked transactions indexed by one currently unsatisfied state location.
+/// Parked transactions indexed by one currently unsatisfied location per alternative.
 ///
 /// Buckets start as compact hash sets. Once a state bucket reaches `ordered_threshold`, it is
 /// converted for the rest of the build into an ordered representation. The latter wakes only
@@ -111,6 +129,8 @@ pub struct ParkedPredicateIndex<T> {
     blockers: HashMap<ValidityPredicateKey, PredicateBucket>,
     transactions: B256Map<ParkedTransaction<T>>,
     ordered_threshold: usize,
+    // A state transition can wake more than one branch of the same transaction.
+    grouped_transactions: usize,
 }
 
 #[derive(Debug)]
@@ -118,6 +138,7 @@ struct ParkedTransaction<T> {
     transaction: T,
     blocker: ValidityPredicateKey,
     predicate: ValidityPredicate,
+    alternatives: Box<[ValidityPredicate]>,
 }
 
 #[derive(Debug)]
@@ -158,6 +179,7 @@ impl<T> ParkedPredicateIndex<T> {
             blockers: HashMap::default(),
             transactions: B256Map::default(),
             ordered_threshold: ordered_threshold.max(1),
+            grouped_transactions: 0,
         }
     }
 
@@ -168,10 +190,29 @@ impl<T> ParkedPredicateIndex<T> {
 
     /// Adds a parked transaction under its currently unsatisfied predicate.
     pub fn park(&mut self, transaction_hash: TxHash, transaction: T, predicate: ValidityPredicate) {
+        self.park_grouped(transaction_hash, transaction, predicate, Vec::new());
+    }
+
+    /// Indexes one unsatisfied predicate per conjunction, sharing the same ordered buckets.
+    pub fn park_grouped(
+        &mut self,
+        transaction_hash: TxHash,
+        transaction: T,
+        predicate: ValidityPredicate,
+        alternatives: Vec<ValidityPredicate>,
+    ) {
         self.remove(transaction_hash);
         let blocker = ValidityPredicateKey::for_predicate(&predicate);
-        self.transactions
-            .insert(transaction_hash, ParkedTransaction { transaction, blocker, predicate });
+        self.grouped_transactions += usize::from(!alternatives.is_empty());
+        self.transactions.insert(
+            transaction_hash,
+            ParkedTransaction {
+                transaction,
+                blocker,
+                predicate,
+                alternatives: alternatives.into_boxed_slice(),
+            },
+        );
         self.insert_into_bucket(transaction_hash);
     }
 
@@ -186,8 +227,13 @@ impl<T> ParkedPredicateIndex<T> {
     }
 
     /// Returns an indexed transaction and the predicate it is parked under, with one lookup.
-    pub fn entry(&self, transaction_hash: TxHash) -> Option<(&T, &ValidityPredicate)> {
-        self.transactions.get(&transaction_hash).map(|entry| (&entry.transaction, &entry.predicate))
+    pub fn entry(
+        &self,
+        transaction_hash: TxHash,
+    ) -> Option<(&T, &ValidityPredicate, &[ValidityPredicate])> {
+        self.transactions
+            .get(&transaction_hash)
+            .map(|entry| (&entry.transaction, &entry.predicate, entry.alternatives.as_ref()))
     }
 
     /// Returns a mutable indexed parked transaction.
@@ -196,31 +242,45 @@ impl<T> ParkedPredicateIndex<T> {
     }
 
     /// Returns a mutable indexed transaction and the predicate it is parked under, with one lookup.
-    pub fn entry_mut(&mut self, transaction_hash: TxHash) -> Option<(&mut T, &ValidityPredicate)> {
+    pub fn entry_mut(
+        &mut self,
+        transaction_hash: TxHash,
+    ) -> Option<(&mut T, &ValidityPredicate, &[ValidityPredicate])> {
         self.transactions
             .get_mut(&transaction_hash)
-            .map(|entry| (&mut entry.transaction, &entry.predicate))
+            .map(|entry| (&mut entry.transaction, &entry.predicate, entry.alternatives.as_ref()))
     }
 
     /// Replaces a parked transaction's currently unsatisfied predicate.
     pub fn reindex(&mut self, transaction_hash: TxHash, predicate: ValidityPredicate) -> bool {
-        let Some(previous) = self.transactions.get(&transaction_hash) else {
+        self.reindex_grouped(transaction_hash, predicate, Vec::new())
+    }
+
+    /// Replaces the failed predicates for every branch after a rescan.
+    pub fn reindex_grouped(
+        &mut self,
+        hash: TxHash,
+        predicate: ValidityPredicate,
+        alternatives: Vec<ValidityPredicate>,
+    ) -> bool {
+        let Some(transaction) = self.remove(hash) else {
             return false;
         };
-        let old_blocker = previous.blocker;
-        let old_predicate = previous.predicate.clone();
-        self.remove_from_bucket(transaction_hash, old_blocker, &old_predicate);
-        let blocker = ValidityPredicateKey::for_predicate(&predicate);
-        let entry = self.transactions.get_mut(&transaction_hash).expect("entry was checked above");
-        entry.blocker = blocker;
-        entry.predicate = predicate;
-        self.insert_into_bucket(transaction_hash);
+        self.park_grouped(hash, transaction, predicate, alternatives);
         true
     }
 
     /// Removes and returns an indexed parked transaction.
     pub fn remove(&mut self, transaction_hash: TxHash) -> Option<T> {
         let entry = self.transactions.remove(&transaction_hash)?;
+        self.grouped_transactions -= usize::from(!entry.alternatives.is_empty());
+        for other in &entry.alternatives {
+            self.remove_from_bucket(
+                transaction_hash,
+                ValidityPredicateKey::for_predicate(other),
+                other,
+            );
+        }
         self.remove_from_bucket(transaction_hash, entry.blocker, &entry.predicate);
         Some(entry.transaction)
     }
@@ -248,6 +308,10 @@ impl<T> ParkedPredicateIndex<T> {
                     .filter(|(_, value)| value.is_changed())
                     .map(|(slot, value)| (*slot, value.original_value(), value.present_value())),
             );
+        }
+        if self.grouped_transactions != 0 {
+            effects.affected_transactions.sort_unstable();
+            effects.affected_transactions.dedup();
         }
         effects
     }
@@ -280,6 +344,10 @@ impl<T> ParkedPredicateIndex<T> {
                     .map(|(key, slot)| (*key, slot.previous_or_original_value, slot.present_value)),
             );
         }
+        if self.grouped_transactions != 0 {
+            effects.affected_transactions.sort_unstable();
+            effects.affected_transactions.dedup();
+        }
         effects
     }
 
@@ -293,6 +361,10 @@ impl<T> ParkedPredicateIndex<T> {
         let mut hashes = Vec::new();
         if let Some(bucket) = self.blockers.get(&blocker) {
             bucket.extend_all(&mut hashes);
+        }
+        if self.grouped_transactions != 0 {
+            hashes.sort_unstable();
+            hashes.dedup();
         }
         hashes
     }
@@ -318,22 +390,26 @@ impl<T> ParkedPredicateIndex<T> {
 
     fn insert_into_bucket(&mut self, hash: TxHash) {
         let entry = self.transactions.get(&hash).expect("inserted transaction must exist");
-        let blocker = entry.blocker;
-        let predicate = &entry.predicate;
-        let bucket = self
-            .blockers
-            .entry(blocker)
-            .or_insert_with(|| PredicateBucket::Flat(B256Set::default()));
-        bucket.insert(hash, predicate);
-        if bucket.is_flat() && blocker.is_state() && bucket.len() >= self.ordered_threshold {
-            let hashes = bucket.take_flat().expect("bucket was checked as flat");
-            let mut ordered = OrderedPredicateBucket::default();
-            for hash in hashes {
-                let predicate =
-                    &self.transactions.get(&hash).expect("bucket entry must exist").predicate;
-                ordered.insert(hash, predicate);
+        for predicate in std::iter::once(&entry.predicate).chain(&entry.alternatives) {
+            let blocker = ValidityPredicateKey::for_predicate(predicate);
+            let bucket = self
+                .blockers
+                .entry(blocker)
+                .or_insert_with(|| PredicateBucket::Flat(B256Set::default()));
+            bucket.insert(hash, predicate);
+            if bucket.is_flat() && blocker.is_state() && bucket.len() >= self.ordered_threshold {
+                let hashes = bucket.take_flat().expect("bucket was checked as flat");
+                let mut ordered = OrderedPredicateBucket::default();
+                for hash in hashes {
+                    let entry = &self.transactions[&hash];
+                    for p in std::iter::once(&entry.predicate).chain(&entry.alternatives) {
+                        if ValidityPredicateKey::for_predicate(p) == blocker {
+                            ordered.insert(hash, p);
+                        }
+                    }
+                }
+                *bucket = PredicateBucket::Ordered(ordered);
             }
-            *bucket = PredicateBucket::Ordered(ordered);
         }
     }
 
@@ -710,7 +786,6 @@ mod tests {
 
     use super::{
         ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation,
-        ValidityPredicateKey,
         test_utils::{ReadError, RecordingDatabase},
     };
 
@@ -750,6 +825,62 @@ mod tests {
     }
 
     #[test]
+    fn any_complete_group_matches_but_partial_groups_do_not_combine() {
+        let p = |n| balance(Address::with_last_byte(n), ValidityOperator::Equal, 1);
+        let conditions =
+            ValidityConditions::compile(base_execution_txpool::ValidityExpression::AnyOf(vec![
+                vec![p(0), p(1)],
+                vec![p(2), p(3)],
+            ]));
+        for mask in 0u8..16 {
+            let mut db = InMemoryDB::default();
+            for n in 0..4 {
+                if mask & (1 << n) != 0 {
+                    db.insert_account_info(
+                        Address::with_last_byte(n),
+                        AccountInfo { balance: U256::ONE, ..Default::default() },
+                    );
+                }
+            }
+            let result = ValidityPredicateEvaluation::evaluate(
+                &conditions,
+                &mut db,
+                &PredicateContext { block_number: 10 },
+            )
+            .unwrap();
+            assert_eq!(
+                result == ValidityPredicateEvaluation::Matched,
+                matches!(mask, 3 | 7 | 11 | 12 | 13 | 14 | 15),
+                "mask {mask:04b}"
+            );
+        }
+    }
+
+    #[test]
+    fn unreadable_group_cannot_authorize_or_veto_an_independent_match() {
+        let first = balance(Address::with_last_byte(1), ValidityOperator::Equal, 0);
+        for (expected_balance, expected) in
+            [(0, Ok(ValidityPredicateEvaluation::Matched)), (1, Err(ReadError))]
+        {
+            let second =
+                balance(Address::with_last_byte(2), ValidityOperator::Equal, expected_balance);
+            let conditions =
+                ValidityConditions::compile(base_execution_txpool::ValidityExpression::AnyOf(
+                    vec![vec![first.clone()], vec![second]],
+                ));
+            let mut db = RecordingDatabase { fail_on: Some(1), ..Default::default() };
+            assert_eq!(
+                ValidityPredicateEvaluation::evaluate(
+                    &conditions,
+                    &mut db,
+                    &PredicateContext { block_number: 1 }
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn state_partition_order_short_circuits_failures_and_propagates_errors() {
         let first = Address::with_last_byte(1);
         let second = Address::with_last_byte(2);
@@ -781,17 +912,11 @@ mod tests {
         let mut db = RecordingDatabase::default();
         for (index, predicate) in ordered.iter().enumerate() {
             db.reads.clear();
-            let blocker = match index {
-                0 => ValidityPredicateKey::Balance(first),
-                1 => ValidityPredicateKey::Balance(second),
-                2 => ValidityPredicateKey::Nonce(nonce_address),
-                _ => ValidityPredicateKey::Storage(storage_address, U256::from(7)),
-            };
             assert_eq!(
                 ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context),
                 Ok(ValidityPredicateEvaluation::Unsatisfied {
-                    blocker,
                     predicate: predicate.clone(),
+                    alternatives: vec![],
                     expired: false
                 })
             );
@@ -861,14 +986,13 @@ mod tests {
             (21, ValidityOperator::LessThanOrEqual, 20, true),
         ] {
             let context = PredicateContext { block_number };
-            let blocker = ValidityPredicateKey::BlockNumber;
             let predicate = ValidityPredicate::BlockNumber { op, value: U256::from(value) };
             let mut db = RecordingDatabase { fail_on: Some(1), ..Default::default() };
             assert_eq!(
                 ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context),
                 Ok(ValidityPredicateEvaluation::Unsatisfied {
-                    blocker,
                     predicate: predicate.clone(),
+                    alternatives: vec![],
                     expired
                 })
             );
@@ -905,11 +1029,11 @@ mod tests {
         assert_eq!(
             ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context).unwrap(),
             ValidityPredicateEvaluation::Unsatisfied {
-                blocker: ValidityPredicateKey::BlockNumber,
                 predicate: ValidityPredicate::BlockNumber {
                     op: ValidityOperator::GreaterThanOrEqual,
                     value: U256::from(101)
                 },
+                alternatives: vec![],
                 expired: false,
             },
         );
@@ -918,7 +1042,7 @@ mod tests {
         let evaluation =
             ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &next).unwrap();
         assert!(
-            matches!(evaluation, ValidityPredicateEvaluation::Unsatisfied { blocker: ValidityPredicateKey::Balance(found), .. } if found == address)
+            matches!(evaluation, ValidityPredicateEvaluation::Unsatisfied { predicate: ValidityPredicate::Balance {address:found,..}, .. } if found == address)
         );
         assert!(db.cache.accounts.contains_key(&address));
     }
@@ -953,8 +1077,8 @@ mod tests {
             assert_eq!(
                 ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &context).unwrap(),
                 ValidityPredicateEvaluation::Unsatisfied {
-                    blocker: ValidityPredicateKey::Nonce(address),
                     predicate: ValidityPredicate::Nonce { address, op, value: U256::from(3) },
+                    alternatives: vec![],
                     expired: false,
                 },
             );
@@ -963,11 +1087,11 @@ mod tests {
                 ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &expired_context)
                     .unwrap(),
                 ValidityPredicateEvaluation::Unsatisfied {
-                    blocker: ValidityPredicateKey::BlockNumber,
                     predicate: ValidityPredicate::BlockNumber {
                         op: ValidityOperator::LessThanOrEqual,
                         value: U256::from(102)
                     },
+                    alternatives: vec![],
                     expired: true,
                 },
             );
@@ -1126,6 +1250,32 @@ mod tests {
         assert_eq!(
             index.affected_by_state(&changed_balance(address, 12, 25)).affected_transactions,
             vec![second]
+        );
+    }
+
+    #[test]
+    fn ordered_bucket_keeps_distinct_alternatives_on_the_same_key() {
+        let account = Address::with_last_byte(1);
+        let hash = B256::with_last_byte(2);
+        let mut index = ParkedPredicateIndex::new(1);
+        let eq = |n| balance(account, ValidityOperator::Equal, n);
+        index.park_grouped(hash, (), eq(3), vec![eq(7), eq(7)]);
+        for (new, expected) in [(3, vec![hash]), (7, vec![hash]), (5, vec![])] {
+            assert_eq!(
+                index.affected_by_state(&changed_balance(account, 0, new)).affected_transactions,
+                expected
+            );
+        }
+        index.reindex(hash, eq(11));
+        assert!(
+            index
+                .affected_by_state(&changed_balance(account, 0, 7))
+                .affected_transactions
+                .is_empty()
+        );
+        assert_eq!(
+            index.affected_by_state(&changed_balance(account, 0, 11)).affected_transactions,
+            [hash]
         );
     }
 

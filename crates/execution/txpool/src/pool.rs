@@ -796,7 +796,7 @@ where
     /// predicates, or `None` when they impose no finite block bound.
     fn validity_block_expiry_bound(validated: &TransactionValidationOutcome<T>) -> Option<u64> {
         let transaction = validated.as_valid_transaction()?;
-        transaction.transaction().validity_conditions().block().expiry_bound()
+        transaction.transaction().validity_conditions().expiry_bound()
     }
 
     /// Rechecks a Base transaction against the pool's block gas limit, which can
@@ -3542,7 +3542,7 @@ mod tests {
                 raw: recovered.inner().encoded_2718().into(),
                 metering: None,
                 extensions: TransactionValidity {
-                    validity: predicates.clone(),
+                    validity: predicates.clone().into(),
                     validity_signature: None,
                 },
             }

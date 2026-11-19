@@ -110,6 +110,20 @@ Retain duplicates. Conjunction permutations produce the same digest; adding,
 removing, or changing a predicate changes it. Evaluation uses its independent
 cheap-first ordering and does not affect the signing contract.
 
+For the [`validity.anyOf` wire format](../txpool-rpc/README.md#alternative-validity-conditions),
+use `ValidityAuthorization::expression_signing_hash`. The domain and predicate type are unchanged,
+but the primary type is `GroupedValidityAuthorization`:
+
+```text
+ValidityGroup(ValidityPredicate[] predicates)
+GroupedValidityAuthorization(bytes32 transactionHash,ValidityGroup[] anyOf)
+```
+
+Sort each group's predicates as above, then sort groups by their EIP-712 struct hashes in
+ascending byte order, also retaining duplicates. Moving a predicate between groups is not a
+permutation within a conjunction: it changes what the user is authorizing. Flat submissions
+continue to use `ValidityAuthorization`, even when `anyOf` with one group would be equivalent.
+
 Raw ingress reuses the recovered envelope sender to verify sidecar signatures
 and rejects high-s signatures. Only sender-address secp256k1
 authorization is supported; contract wallets without that key cannot use
