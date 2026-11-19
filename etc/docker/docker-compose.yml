@@ -18,10 +18,11 @@ x-node-healthcheck: &node-healthcheck
 
 services:
   setup-devnet:
-    image: devnet-setup:local-v2
+    image: ${DEVNET_SETUP_IMAGE:-devnet-setup:local-v2}
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet
+      target: ${DEVNET_SETUP_TARGET:-standard}
     container_name: setup-devnet
     env_file: devnet-env
     volumes:
