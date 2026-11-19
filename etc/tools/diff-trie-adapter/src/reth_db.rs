@@ -36,8 +36,9 @@ use reth_trie::{
     verify::{Output, Verifier},
 };
 use reth_trie_common::{
-    EMPTY_ROOT_HASH, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
-    MultiProof, MultiProofTargets, TrieInput, TrieInputSorted,
+    AccountProof, EMPTY_ROOT_HASH, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted,
+    HashedStorage, MultiProof, MultiProofTargets, MultiProofTargetsV2, ProofV2Target, TrieInput,
+    TrieInputSorted,
     updates::{TrieUpdates, TrieUpdatesSorted},
 };
 use reth_trie_db::{
@@ -382,28 +383,90 @@ impl RethDb {
                     target.address.ok_or_else(|| eyre::eyre!("target without address"))?;
                 let slot_keys = target.slot_keys.clone().unwrap_or_default();
                 let proof = provider.proof(TrieInput::default(), address, &slot_keys)?;
-                Ok(ProofResult {
-                    key: target.key,
-                    account: proof.info.map(|info| ProofAccount {
-                        nonce: info.nonce,
-                        balance: info.balance,
-                        code_hash: info.get_bytecode_hash(),
-                        storage_root: proof.storage_root,
-                    }),
-                    account_proof: proof.proof,
-                    storage: target
-                        .slots
-                        .iter()
-                        .zip(proof.storage_proofs)
-                        .map(|(slot, storage)| StorageProofResult {
-                            slot: *slot,
-                            value: B256::from(storage.value.to_be_bytes::<32>()),
-                            proof: storage.proof,
-                        })
-                        .collect(),
-                })
+                Ok(Self::account_proof_result(target, proof))
             })
             .collect()
+    }
+
+    /// The proofs of `targets`, which all carry preimages, as `eth_getMultiProof` computes them:
+    /// one v2 multiproof over every hashed address and slot, then each address's account proof
+    /// taken from it.
+    pub fn multi_proofs(
+        provider: &impl StateProofProvider,
+        targets: &[ProofTarget],
+    ) -> eyre::Result<Vec<ProofResult>> {
+        let mut request = MultiProofTargetsV2::default();
+        for target in targets {
+            request.account_targets.push(ProofV2Target::new(target.key));
+            if !target.slots.is_empty() {
+                request
+                    .storage_targets
+                    .entry(target.key)
+                    .or_default()
+                    .extend(target.slots.iter().map(|slot| ProofV2Target::new(*slot)));
+            }
+        }
+        let multiproof = provider.multiproof_v2(request, false)?;
+        targets
+            .iter()
+            .map(|target| {
+                let address =
+                    target.address.ok_or_else(|| eyre::eyre!("target without address"))?;
+                let slot_keys = target.slot_keys.clone().unwrap_or_default();
+                let mut proof = multiproof.account_proof(address, &slot_keys)?;
+                Self::trim_after_divergence(&mut proof.proof, &Nibbles::unpack(target.key))?;
+                for (storage, slot) in proof.storage_proofs.iter_mut().zip(&target.slots) {
+                    Self::trim_after_divergence(&mut storage.proof, &Nibbles::unpack(*slot))?;
+                }
+                Ok(Self::account_proof_result(target, proof))
+            })
+            .collect()
+    }
+
+    /// Drops the nodes after an extension whose key `path` leaves. The v2 multiproof's encoding
+    /// (`encode_v2_proof_nodes`) emits the hashed branch below every extension on the way, so an
+    /// absent key whose path leaves inside an extension gets that branch too, a node
+    /// `eth_getProof` does not return. It is dropped here so the variant shows other differences.
+    pub fn trim_after_divergence(proof: &mut Vec<Bytes>, path: &Nibbles) -> eyre::Result<()> {
+        let mut depth = 0;
+        for index in 0..proof.len() {
+            match TrieNode::decode(&mut proof[index].as_ref())? {
+                TrieNode::Branch(_) => depth += 1,
+                TrieNode::Extension(extension) => {
+                    if !path.slice(depth..).starts_with(&extension.key) {
+                        proof.truncate(index + 1);
+                        return Ok(());
+                    }
+                    depth += extension.key.len();
+                }
+                TrieNode::Leaf(_) | TrieNode::EmptyRoot => return Ok(()),
+            }
+        }
+        Ok(())
+    }
+
+    /// `target`'s result from an account proof of its address and slot keys.
+    pub fn account_proof_result(target: &ProofTarget, proof: AccountProof) -> ProofResult {
+        ProofResult {
+            key: target.key,
+            account: proof.info.map(|info| ProofAccount {
+                nonce: info.nonce,
+                balance: info.balance,
+                code_hash: info.get_bytecode_hash(),
+                storage_root: proof.storage_root,
+            }),
+            account_proof: proof.proof,
+            storage: target
+                .slots
+                .iter()
+                .zip(proof.storage_proofs)
+                .map(|(slot, storage)| StorageProofResult {
+                    slot: *slot,
+                    value: B256::from(storage.value.to_be_bytes::<32>()),
+                    proof: storage.proof,
+                })
+                .collect(),
+        }
     }
 
     /// [`Self::account_proofs`] with each slot's proof replaced by the storage API's

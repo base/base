@@ -38,8 +38,10 @@ Variants, each also on its own database:
   the stateless root from the proofs-history store's execution witness at the parent.
 - `ph-init-mdbx`, `ph-init-rocksdb`: proofs-history stores backfilled by the node's
   initialization job (`InitializationJob`, as `base-proofs init` runs it) from the serial (v1
-  trie layout, resuming a backfill stopped halfway through the hashed accounts) and engine (v2)
-  databases after the request's last unwind, then fed live.
+  trie layout) and engine (v2) databases after the request's last unwind, then fed live. Depending
+  on the block number, the job resumes a backfill stopped halfway through the hashed accounts,
+  hashed storages, storage tries or account trie (always for the serial database, four times in
+  five for the engine's).
 - `serial-root`: the serial root without trie updates (`StateRootProvider::state_root`). The
   overlay variant also checks `overlay_root_from_nodes` against its root with updates, and
   `ph-batch` checks each block's witness root and, with preimages, the session's storage proof
@@ -53,6 +55,10 @@ Variants, each also on its own database:
 - `getproof`, `ph-mdbx-getproof` (requests whose proof targets all carry preimages): proofs by
   address and slot key as `eth_getProof` computes them, over the serial database and over the
   proofs-history store at the block.
+- `multiproof`, `ph-rocksdb-multiproof` (the same requests): proofs as `eth_getMultiProof`
+  computes them, from one v2 multiproof over every target (`multiproof_v2`, then
+  `account_proof` per address), over the serial database and the proofs-history store; `ph-batch`
+  checks the same inside its session.
 - `witness`: the stateless root the differential execution adapter computes
   (`base_diff_adapter::WitnessState`) from the node's execution witness of the block, in the
   legacy witness mode base/base serves. (The canonical mode leaves out nodes that only a consumer

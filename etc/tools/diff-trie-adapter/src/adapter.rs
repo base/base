@@ -323,6 +323,10 @@ impl TrieAdapter {
                     .entry("storage-api")
                     .or_default()
                     .push(|| RethDb::storage_api_proofs(&serial.factory.latest()?, &block.proofs));
+                variants.entry("multiproof").or_default().push(|| {
+                    let proofs = RethDb::multi_proofs(&serial.factory.latest()?, &block.proofs)?;
+                    Ok(TrieBlockResult { proofs: Some(proofs), ..Default::default() })
+                });
                 variants.entry("getproof").or_default().push(|| {
                     let proofs = RethDb::account_proofs(&serial.factory.latest()?, &block.proofs)?;
                     Ok(TrieBlockResult { proofs: Some(proofs), ..Default::default() })
@@ -456,6 +460,12 @@ impl TrieAdapter {
                     .entry("ph-rocksdb-storage-api")
                     .or_default()
                     .push(|| ph_rocksdb.storage_api_proofs(number, &block.proofs));
+                variants.entry("ph-rocksdb-multiproof").or_default().push(|| {
+                    Ok(TrieBlockResult {
+                        proofs: Some(ph_rocksdb.multi_proofs(number, &block.proofs)?),
+                        ..Default::default()
+                    })
+                });
                 variants.entry("ph-mdbx-getproof").or_default().push(|| {
                     Ok(TrieBlockResult {
                         proofs: Some(ph_mdbx.account_proofs(number, &block.proofs)?),
@@ -492,13 +502,13 @@ impl TrieAdapter {
                     MdbxProofsStorage::new(&dir.join("ph-init-mdbx"))?,
                     &serial,
                     number,
-                    true,
+                    1 + (number % 4) as u8,
                 )?;
                 let rocksdb = ProofsHistory::initialized(
                     RocksdbProofsStorage::new(&dir.join("ph-init-rocksdb"))?,
                     &engine,
                     number,
-                    false,
+                    ((number + 2) % 5) as u8,
                 )?;
                 let results =
                     (mdbx.read(number, &block.proofs)?, rocksdb.read(number, &block.proofs)?);

@@ -4,13 +4,15 @@
 use std::sync::{Arc, Mutex};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
-use alloy_primitives::{B256, keccak256};
+use alloy_primitives::{B256, U256, keccak256};
+use alloy_trie::Nibbles;
 use base_diff_adapter::WitnessState;
 use base_diff_fuzz::{ProofResult, ProofTarget, TrieBlockResult};
 use base_execution_trie::{
     BaseProofStoragePruner, BaseProofsBatchSession, BaseProofsBatchStateProviderRef,
     BaseProofsBatchStore, BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore,
-    BlockStateDiff, InitializationJob, RethTrieStorageLayout, provider::BaseProofsStateProviderRef,
+    BlockStateDiff, InitializationJob, RethTrieStorageLayout, StorageBranchEntries,
+    provider::BaseProofsStateProviderRef,
 };
 use reth_db_api::{cursor::DbCursorRO, tables, transaction::DbTx};
 use reth_provider::{
@@ -18,7 +20,9 @@ use reth_provider::{
     noop::NoopProvider,
 };
 use reth_storage_api::{StateProofProvider, StateRootProvider};
+use reth_trie::trie_cursor::{TrieCursor, TrieCursorFactory};
 use reth_trie_common::{ExecutionWitnessMode, HashedPostState, MultiProofTargets, TrieInput};
+use reth_trie_db::DatabaseTrieCursorFactory;
 
 use crate::RethDb;
 
@@ -49,10 +53,12 @@ where
     }
 
     /// A store backfilled from `db` at block `number`, as `base-proofs init` and the node's
-    /// initialization job do when proofs history is enabled on a synced node. With `resume`, an
-    /// earlier run stopped after storing the first half of the hashed accounts, so the job
-    /// resumes after the last one stored, as after a restart during backfill.
-    pub fn initialized(store: S, db: &RethDb, number: u64, resume: bool) -> eyre::Result<Self> {
+    /// initialization job do when proofs history is enabled on a synced node. A nonzero
+    /// `resume` stage means an earlier run stopped partway, as after a restart during backfill,
+    /// so the job resumes after the last entry stored. The job fills the hashed accounts, the
+    /// hashed storages, the storage tries, then the account trie, and the earlier run stopped
+    /// after half of the first (stage 1), second (2), third (3) or fourth (4) of them.
+    pub fn initialized(store: S, db: &RethDb, number: u64, resume: u8) -> eyre::Result<Self> {
         let store = Arc::new(store);
         let chain: Vec<B256> = (0..=number)
             .map(|n| keccak256([b"anchor".as_slice(), &n.to_be_bytes()].concat()))
@@ -63,20 +69,86 @@ where
         } else {
             RethTrieStorageLayout::Legacy
         };
-        if resume {
+        if resume > 0 {
             storage.set_initial_state_anchor(BlockNumHash::new(number, chain[number as usize]))?;
-            let provider = db.factory.database_provider_ro()?;
-            let accounts = provider
-                .tx_ref()
-                .cursor_read::<tables::HashedAccounts>()?
-                .walk(None)?
-                .map(|entry| entry.map(|(key, account)| (key, Some(account))))
-                .collect::<Result<Vec<_>, _>>()?;
-            storage.store_hashed_accounts(accounts[..accounts.len() / 2].to_vec())?;
+            Self::store_prefix(&storage, db, resume)?;
         }
         let tx = db.factory.database_provider_ro()?.into_tx();
         InitializationJob::new(storage.clone(), tx, layout).run(number, chain[number as usize])?;
         Ok(Self { storage, store, chain, built: 0 })
+    }
+
+    /// Stores what an initialization run stopped at `stage` (see [`Self::initialized`]) had
+    /// stored: every earlier table in full and the first half of the stage's table.
+    fn store_prefix(
+        storage: &BaseProofsStorage<Arc<S>>,
+        db: &RethDb,
+        stage: u8,
+    ) -> eyre::Result<()> {
+        let half = |len: usize, full: bool| if full { len } else { len / 2 };
+        let provider = db.factory.database_provider_ro()?;
+        let tx = provider.tx_ref();
+        let accounts = tx
+            .cursor_read::<tables::HashedAccounts>()?
+            .walk(None)?
+            .map(|entry| entry.map(|(key, account)| (key, Some(account))))
+            .collect::<Result<Vec<_>, _>>()?;
+        storage.store_hashed_accounts(accounts[..half(accounts.len(), stage > 1)].to_vec())?;
+        if stage < 2 {
+            return Ok(());
+        }
+        let slots = tx
+            .cursor_dup_read::<tables::HashedStorages>()?
+            .walk(None)?
+            .map(|entry| entry.map(|(key, slot)| (key, slot.key, slot.value)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut by_account: Vec<(B256, Vec<(B256, U256)>)> = Vec::new();
+        for (key, slot, value) in &slots[..half(slots.len(), stage > 2)] {
+            match by_account.last_mut() {
+                Some((last, entries)) if last == key => entries.push((*slot, *value)),
+                _ => by_account.push((*key, vec![(*slot, *value)])),
+            }
+        }
+        for (key, entries) in by_account {
+            storage.store_hashed_storages(key, entries)?;
+        }
+        if stage < 3 {
+            return Ok(());
+        }
+        let mut owners: Vec<B256> = slots.iter().map(|(key, ..)| *key).collect();
+        owners.dedup();
+        let (storage_nodes, account_nodes) = reth_trie_db::with_adapter!(provider, |A| {
+            let factory = DatabaseTrieCursorFactory::<_, A>::new(tx);
+            let mut storage_nodes = Vec::new();
+            for owner in &owners {
+                let mut cursor = factory.storage_trie_cursor(*owner)?;
+                let mut entry = cursor.seek(Nibbles::default())?;
+                while let Some((path, node)) = entry {
+                    storage_nodes.push((*owner, path, node));
+                    entry = cursor.next()?;
+                }
+            }
+            let mut cursor = factory.account_trie_cursor()?;
+            let mut account_nodes = Vec::new();
+            let mut entry = cursor.seek(Nibbles::default())?;
+            while let Some((path, node)) = entry {
+                account_nodes.push((path, Some(node)));
+                entry = cursor.next()?;
+            }
+            Ok::<_, eyre::Report>((storage_nodes, account_nodes))
+        })?;
+        let mut by_owner: StorageBranchEntries = Vec::new();
+        for (owner, path, node) in &storage_nodes[..half(storage_nodes.len(), stage > 3)] {
+            match by_owner.last_mut() {
+                Some((last, nodes)) if last == owner => nodes.push((*path, Some(node.clone()))),
+                _ => by_owner.push((*owner, vec![(*path, Some(node.clone()))])),
+            }
+        }
+        storage.store_storage_branches_bulk(by_owner)?;
+        if stage > 3 {
+            storage.store_account_branches(account_nodes[..account_nodes.len() / 2].to_vec())?;
+        }
+        Ok(())
     }
 
     /// Roots and proofs at block `number`, read back from the store.
@@ -125,6 +197,17 @@ where
         let provider =
             BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &self.storage, number);
         RethDb::account_proofs(&provider, targets)
+    }
+
+    /// [`RethDb::multi_proofs`] (`eth_getMultiProof`) at block `number`.
+    pub fn multi_proofs(
+        &self,
+        number: u64,
+        targets: &[ProofTarget],
+    ) -> eyre::Result<Vec<ProofResult>> {
+        let provider =
+            BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &self.storage, number);
+        RethDb::multi_proofs(&provider, targets)
     }
 
     /// [`RethDb::storage_api_proofs`] at block `number`.
@@ -323,6 +406,9 @@ where
             mismatches.extend(api.error);
             if api.proofs.as_ref() != Some(&proofs) {
                 mismatches.push("storage API proofs differ from the multiproof's".to_owned());
+            }
+            if RethDb::multi_proofs(&provider, targets)? != proofs {
+                mismatches.push("eth_getMultiProof proofs differ from the multiproof's".to_owned());
             }
         }
         Ok(TrieBlockResult {
