@@ -12,6 +12,7 @@ use base_execution_trie::{
     BaseProofsBatchStore, BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore,
     BlockStateDiff, InitializationJob, RethTrieStorageLayout, provider::BaseProofsStateProviderRef,
 };
+use reth_db_api::{cursor::DbCursorRO, tables, transaction::DbTx};
 use reth_provider::{
     BlockHashReader, DatabaseProviderFactory, ProviderResult, StorageSettingsCache,
     noop::NoopProvider,
@@ -48,8 +49,10 @@ where
     }
 
     /// A store backfilled from `db` at block `number`, as `base-proofs init` and the node's
-    /// initialization job do when proofs history is enabled on a synced node.
-    pub fn initialized(store: S, db: &RethDb, number: u64) -> eyre::Result<Self> {
+    /// initialization job do when proofs history is enabled on a synced node. With `resume`, an
+    /// earlier run stopped after storing the first half of the hashed accounts, so the job
+    /// resumes after the last one stored, as after a restart during backfill.
+    pub fn initialized(store: S, db: &RethDb, number: u64, resume: bool) -> eyre::Result<Self> {
         let store = Arc::new(store);
         let chain: Vec<B256> = (0..=number)
             .map(|n| keccak256([b"anchor".as_slice(), &n.to_be_bytes()].concat()))
@@ -60,6 +63,17 @@ where
         } else {
             RethTrieStorageLayout::Legacy
         };
+        if resume {
+            storage.set_initial_state_anchor(BlockNumHash::new(number, chain[number as usize]))?;
+            let provider = db.factory.database_provider_ro()?;
+            let accounts = provider
+                .tx_ref()
+                .cursor_read::<tables::HashedAccounts>()?
+                .walk(None)?
+                .map(|entry| entry.map(|(key, account)| (key, Some(account))))
+                .collect::<Result<Vec<_>, _>>()?;
+            storage.store_hashed_accounts(accounts[..accounts.len() / 2].to_vec())?;
+        }
         let tx = db.factory.database_provider_ro()?.into_tx();
         InitializationJob::new(storage.clone(), tx, layout).run(number, chain[number as usize])?;
         Ok(Self { storage, store, chain, built: 0 })

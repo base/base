@@ -445,11 +445,13 @@ impl TrieAdapter {
                     MdbxProofsStorage::new(&dir.join("ph-init-mdbx"))?,
                     &serial,
                     number,
+                    true,
                 )?;
                 let rocksdb = ProofsHistory::initialized(
                     RocksdbProofsStorage::new(&dir.join("ph-init-rocksdb"))?,
                     &engine,
                     number,
+                    false,
                 )?;
                 let results =
                     (mdbx.read(number, &block.proofs)?, rocksdb.read(number, &block.proofs)?);

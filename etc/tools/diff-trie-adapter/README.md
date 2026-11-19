@@ -38,7 +38,8 @@ Variants, each also on its own database:
   the stateless root from the proofs-history store's execution witness at the parent.
 - `ph-init-mdbx`, `ph-init-rocksdb`: proofs-history stores backfilled by the node's
   initialization job (`InitializationJob`, as `base-proofs init` runs it) from the serial (v1
-  trie layout) and engine (v2) databases after the request's last unwind, then fed live.
+  trie layout, resuming a backfill stopped halfway through the hashed accounts) and engine (v2)
+  databases after the request's last unwind, then fed live.
 - `serial-root`: the serial root without trie updates (`StateRootProvider::state_root`). The
   overlay variant also checks `overlay_root_from_nodes` against its root with updates, and
   `ph-batch` checks each block's witness root and, with preimages, the session's storage proof
