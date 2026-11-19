@@ -17,7 +17,8 @@ use base_diff_fuzz::{
 use base_execution_trie::{MdbxProofsStorage, RocksdbProofsStorage};
 use reth_db_api::models::StorageSettings;
 use reth_trie_common::{
-    ExecutionWitnessMode, HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted,
+    ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, TrieInputSorted,
+    updates::TrieUpdatesSorted,
 };
 use reth_trie_sparse::ArenaParallelismThresholds;
 
@@ -78,6 +79,57 @@ impl MemoryBlock {
     }
 }
 
+/// An overlay database's blocks awaiting persistence, oldest first.
+#[derive(Debug, Default)]
+pub struct MemoryChain {
+    /// The in-memory blocks.
+    pub blocks: VecDeque<MemoryBlock>,
+    /// Whether the last unwind dropped in-memory blocks that each sat on their parent, so the
+    /// next block sits on the remaining ones.
+    pub native: bool,
+}
+
+impl MemoryChain {
+    /// Drops `unwind` blocks when they are all in memory and each sits on its parent.
+    pub fn unwind(&mut self, unwind: usize) {
+        self.native = unwind <= self.blocks.len()
+            && self.blocks.iter().rev().take(unwind).all(|b| !b.stacked);
+        if self.native {
+            self.blocks.truncate(self.blocks.len() - unwind);
+        }
+    }
+
+    /// The in-memory blocks' trie inputs, oldest first.
+    pub fn inputs(&self) -> Vec<(Arc<TrieUpdatesSorted>, Arc<HashedPostStateSorted>)> {
+        self.blocks.iter().map(MemoryBlock::input).collect()
+    }
+
+    /// The root of `state` over `db` and the in-memory blocks. Then keeps the block in memory
+    /// and, past `threshold` blocks, persists the oldest in one batch down to `target`, as the
+    /// engine's persistence threshold and memory block buffer target work.
+    pub fn root(
+        &mut self,
+        db: &RethDb,
+        state: &HashedPostState,
+        unwound: bool,
+        threshold: usize,
+        target: usize,
+    ) -> eyre::Result<B256> {
+        let (root, updates) = db.overlay_root(&self.inputs(), state)?;
+        self.blocks.push_back(MemoryBlock {
+            nodes: Arc::new(updates.into_sorted()),
+            sorted: Arc::new(state.clone().into_sorted()),
+            stacked: unwound && !self.native,
+        });
+        if self.blocks.len() > threshold {
+            let persist: Vec<_> =
+                self.blocks.drain(..self.blocks.len() - target).map(|b| b.input()).collect();
+            db.commit_batch(&persist)?;
+        }
+        Ok(root)
+    }
+}
+
 /// The base/base trie adapter.
 #[derive(Debug)]
 pub struct TrieAdapter {
@@ -94,6 +146,10 @@ impl TrieAdapter {
     pub const PERSISTENCE_THRESHOLD: usize = 3;
     /// Blocks the overlay database keeps in memory after persisting.
     pub const MEMORY_BUFFER_TARGET: usize = 1;
+    /// [`Self::PERSISTENCE_THRESHOLD`] of the lagging overlay, whose persistence falls behind
+    /// execution as during catch-up: past 30 in-memory blocks the overlay merges them by k-way
+    /// merge instead of extending one by one.
+    pub const LAGGING_PERSISTENCE_THRESHOLD: usize = 32;
 
     /// An adapter reporting coverage when `BASE_DIFF_COVERAGE` asks for it.
     pub fn new() -> Self {
@@ -161,6 +217,8 @@ impl TrieAdapter {
             RethDb::open(&dir.join("engine"), StorageSettings::v2(), self.runtime.clone())?;
         let overlay =
             RethDb::open(&dir.join("overlay"), StorageSettings::v2(), self.runtime.clone())?;
+        let lagging =
+            RethDb::open(&dir.join("lagging"), StorageSettings::v2(), self.runtime.clone())?;
         let mut ph_mdbx = ProofsHistory::new(MdbxProofsStorage::new(&dir.join("ph-mdbx"))?)?;
         let mut ph_rocksdb =
             ProofsHistory::new(RocksdbProofsStorage::new(&dir.join("ph-rocksdb"))?)?;
@@ -200,8 +258,8 @@ impl TrieAdapter {
             .with_workers(self.runtime.clone());
         let mut eager_sparse = EngineSparse::new(true, EngineSparse::eager());
         let mut fresh_sparse = EngineSparse::new(false, ArenaParallelismThresholds::default());
-        let mut memory: VecDeque<MemoryBlock> = VecDeque::new();
-        let mut native = true;
+        let mut memory = MemoryChain::default();
+        let mut lagging_memory = MemoryChain::default();
 
         let mut primary = Vec::with_capacity(blocks.len());
         let mut variants: BTreeMap<&str, VariantResults> = BTreeMap::new();
@@ -214,12 +272,8 @@ impl TrieAdapter {
                 eager_sparse.forget();
                 canonical.truncate(canonical.len().saturating_sub(block.unwind as usize));
                 // In-memory blocks unwind natively when each dropped block sits on its parent.
-                let unwind = block.unwind as usize;
-                native =
-                    unwind <= memory.len() && memory.iter().rev().take(unwind).all(|b| !b.stacked);
-                if native {
-                    memory.truncate(memory.len() - unwind);
-                }
+                memory.unwind(block.unwind as usize);
+                lagging_memory.unwind(block.unwind as usize);
             }
             canonical.push(index);
             let changes = BlockChanges::new(
@@ -417,8 +471,7 @@ impl TrieAdapter {
 
             // The overlay database: recent blocks stay in memory above the persisted ones.
             variants.entry("overlay-sparse").or_default().push(|| {
-                let inputs: Vec<_> = memory.iter().map(MemoryBlock::input).collect();
-                let (nodes, hashed) = RethDb::merge_memory(&inputs);
+                let (nodes, hashed) = RethDb::merge_memory(&memory.inputs());
                 let overlay_input =
                     TrieInputSorted::new(Arc::new(nodes), Arc::new(hashed), Default::default());
                 let (root, _) = EngineSparse::new(false, ArenaParallelismThresholds::default())
@@ -426,21 +479,22 @@ impl TrieAdapter {
                 Ok(root_only(root))
             });
             variants.entry("overlay").or_default().push(|| {
-                let inputs: Vec<_> = memory.iter().map(MemoryBlock::input).collect();
-                let (root, updates) = overlay.overlay_root(&inputs, state)?;
-                memory.push_back(MemoryBlock {
-                    nodes: Arc::new(updates.into_sorted()),
-                    sorted: Arc::new(state.clone().into_sorted()),
-                    stacked: block.unwind > 0 && !native,
-                });
-                if memory.len() > Self::PERSISTENCE_THRESHOLD {
-                    let persist: Vec<_> = memory
-                        .drain(..memory.len() - Self::MEMORY_BUFFER_TARGET)
-                        .map(|b| b.input())
-                        .collect();
-                    overlay.commit_batch(&persist)?;
-                }
-                Ok(root_only(root))
+                Ok(root_only(memory.root(
+                    &overlay,
+                    state,
+                    block.unwind > 0,
+                    Self::PERSISTENCE_THRESHOLD,
+                    Self::MEMORY_BUFFER_TARGET,
+                )?))
+            });
+            variants.entry("overlay-lagging").or_default().push(|| {
+                Ok(root_only(lagging_memory.root(
+                    &lagging,
+                    state,
+                    block.unwind > 0,
+                    Self::LAGGING_PERSISTENCE_THRESHOLD,
+                    Self::MEMORY_BUFFER_TARGET,
+                )?))
             });
 
             // Base's proofs-history stores.

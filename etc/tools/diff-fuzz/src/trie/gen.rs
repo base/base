@@ -453,10 +453,13 @@ impl TrieGen {
 
     /// A fresh case.
     pub fn case(&mut self) -> TrieCase {
-        let mut blocks = match self.rng.weighted(&[3, 5, 2]) {
+        // Over 30 blocks, a node whose persistence lags keeps more than 30 blocks in memory,
+        // which the overlay merges by k-way merge.
+        let mut blocks = match self.rng.weighted(&[3, 5, 2, 1]) {
             0 => self.rng.range(1, 3),
             1 => self.rng.range(4, 10),
-            _ => self.rng.range(11, 30),
+            2 => self.rng.range(11, 30),
+            _ => self.rng.range(32, 48),
         };
         // An abandoned fork: about ten blocks, an unwind of three to five, then at least a dozen
         // more, so a client keeps the dropped fork's snapshots and state until finality passes

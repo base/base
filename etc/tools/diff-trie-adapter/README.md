@@ -69,6 +69,8 @@ Variants, each also on its own database:
   them, and past three blocks all but the newest persist in one transaction, merged with
   `disjointed_merge_batch` as engine persistence saves them with state masking off (Base's
   default).
+- `overlay-lagging`: `overlay` with up to 32 blocks in memory, as when persistence falls behind
+  execution. Past 30 in-memory blocks `merge_batch` switches to a k-way merge.
 - `merkle-stage` (requests whose ops all carry preimages): the pipeline's incremental path.
   Each block writes its hashed state and plain-keyed account and storage changesets, and the
   merkle stage's `incremental_root_with_updates` advances the trie from the keys the changesets

@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod adapter;
-pub use adapter::{MemoryBlock, TrieAdapter, VariantResults};
+pub use adapter::{MemoryBlock, MemoryChain, TrieAdapter, VariantResults};
 
 mod block;
 pub use block::BlockChanges;
