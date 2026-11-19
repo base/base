@@ -11,12 +11,13 @@ use std::{
 
 use alloy_primitives::B256;
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_diff_fuzz::{COVERAGE_ENV, TrieBlock, TrieBlockResult, TrieRequest, TrieResponse};
+use base_diff_fuzz::{
+    COVERAGE_ENV, Preimages, TrieBlock, TrieBlockResult, TrieOp, TrieRequest, TrieResponse,
+};
 use base_execution_trie::{MdbxProofsStorage, RocksdbProofsStorage};
 use reth_db_api::models::StorageSettings;
 use reth_trie_common::{
-    ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, TrieInputSorted,
-    updates::{TrieUpdates, TrieUpdatesSorted},
+    ExecutionWitnessMode, HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted,
 };
 use reth_trie_sparse::ArenaParallelismThresholds;
 
@@ -62,16 +63,19 @@ impl VariantResults {
 #[derive(Debug)]
 pub struct MemoryBlock {
     /// Trie updates, sorted for the overlay.
-    pub nodes: TrieUpdatesSorted,
+    pub nodes: Arc<TrieUpdatesSorted>,
     /// Hashed state, sorted for the overlay.
-    pub sorted: HashedPostStateSorted,
-    /// Hashed state to persist.
-    pub state: HashedPostState,
-    /// Trie updates to persist.
-    pub updates: TrieUpdates,
+    pub sorted: Arc<HashedPostStateSorted>,
     /// Whether the block was applied with its unwind's revert ops on top of the blocks below it,
     /// so the block below it is not its parent.
     pub stacked: bool,
+}
+
+impl MemoryBlock {
+    /// The block's trie input, as the overlay merges it.
+    pub fn input(&self) -> (Arc<TrieUpdatesSorted>, Arc<HashedPostStateSorted>) {
+        (Arc::clone(&self.nodes), Arc::clone(&self.sorted))
+    }
 }
 
 /// The base/base trie adapter.
@@ -84,8 +88,12 @@ pub struct TrieAdapter {
 }
 
 impl TrieAdapter {
-    /// Blocks the overlay database keeps in memory before persisting the oldest.
-    pub const MEMORY_BLOCKS: usize = 2;
+    /// Blocks the overlay database keeps in memory before persisting: past this many, the
+    /// oldest blocks persist in one batch down to [`Self::MEMORY_BUFFER_TARGET`], as the
+    /// engine's persistence threshold and memory block buffer target work.
+    pub const PERSISTENCE_THRESHOLD: usize = 3;
+    /// Blocks the overlay database keeps in memory after persisting.
+    pub const MEMORY_BUFFER_TARGET: usize = 1;
 
     /// An adapter reporting coverage when `BASE_DIFF_COVERAGE` asks for it.
     pub fn new() -> Self {
@@ -170,6 +178,13 @@ impl TrieAdapter {
         let preimages = blocks.iter().flat_map(|b| &b.proofs).all(|target| {
             target.address.is_some() && (target.slots.is_empty() || target.slot_keys.is_some())
         });
+        // The merkle stage's database keeps plain-keyed changesets, which need every op's
+        // preimages.
+        let op_preimages = Self::op_preimages(blocks);
+        let merkle =
+            RethDb::open(&dir.join("merkle"), StorageSettings::v1(), self.runtime.clone())?;
+        let mut merkle_trie = 0;
+        let mut roots = BTreeMap::from([(0, EMPTY_ROOT_HASH)]);
         // Stores backfilled from the reth databases once no later block unwinds below them,
         // then fed live.
         let init_index = blocks.iter().rposition(|b| b.unwind > 0).unwrap_or(0);
@@ -336,6 +351,38 @@ impl TrieAdapter {
                 }
             }
 
+            // The pipeline's database: execution writes the hashed state and changesets, and the
+            // merkle stage advances the trie incrementally, every block or two blocks at once.
+            // An unwind reverts the hashed state from the changesets and unwinds the trie
+            // incrementally, so it is always native.
+            if let Some(preimages) = &op_preimages {
+                variants.entry("merkle-stage").or_default().push(|| {
+                    if block.unwind > 0 {
+                        let tip = number - 1 + block.unwind;
+                        if merkle_trie < tip {
+                            let root = merkle.merkle_incremental(merkle_trie + 1..=tip)?;
+                            eyre::ensure!(root == roots[&tip], "catch-up to {tip} gave {root}");
+                        }
+                        let root = merkle.unwind_changesets(number - 1, tip)?;
+                        eyre::ensure!(root == roots[&(number - 1)], "unwind gave {root}");
+                        merkle_trie = number - 1;
+                    }
+                    let own = BlockChanges::new(
+                        &block.ops,
+                        |key| merkle.slots(key).unwrap_or_default(),
+                        |key| merkle.account(key).ok().flatten(),
+                    );
+                    merkle.write_with_changesets(number, &own.state, preimages)?;
+                    if index % 3 == 1 {
+                        return Ok(TrieBlockResult::default());
+                    }
+                    let root = merkle.merkle_incremental(merkle_trie + 1..=number)?;
+                    merkle_trie = number;
+                    Ok(root_only(root))
+                });
+            }
+            roots.insert(number, root);
+
             // The engine database: the sparse trie's root and trie updates are persisted.
             variants
                 .entry("engine-serial")
@@ -365,12 +412,8 @@ impl TrieAdapter {
 
             // The overlay database: recent blocks stay in memory above the persisted ones.
             variants.entry("overlay-sparse").or_default().push(|| {
-                let mut nodes = TrieUpdatesSorted::default();
-                let mut hashed = HashedPostStateSorted::default();
-                for memory_block in &memory {
-                    nodes.extend_ref_and_sort(&memory_block.nodes);
-                    hashed.extend_ref_and_sort(&memory_block.sorted);
-                }
+                let inputs: Vec<_> = memory.iter().map(MemoryBlock::input).collect();
+                let (nodes, hashed) = RethDb::merge_memory(&inputs);
                 let overlay_input =
                     TrieInputSorted::new(Arc::new(nodes), Arc::new(hashed), Default::default());
                 let (root, _) = EngineSparse::new(false, ArenaParallelismThresholds::default())
@@ -378,19 +421,19 @@ impl TrieAdapter {
                 Ok(root_only(root))
             });
             variants.entry("overlay").or_default().push(|| {
-                let sorted: Vec<_> =
-                    memory.iter().map(|b| (b.nodes.clone(), b.sorted.clone())).collect();
-                let (root, updates) = overlay.overlay_root(&sorted, state)?;
+                let inputs: Vec<_> = memory.iter().map(MemoryBlock::input).collect();
+                let (root, updates) = overlay.overlay_root(&inputs, state)?;
                 memory.push_back(MemoryBlock {
-                    nodes: updates.clone().into_sorted(),
-                    sorted: state.clone().into_sorted(),
-                    state: state.clone(),
-                    updates,
+                    nodes: Arc::new(updates.into_sorted()),
+                    sorted: Arc::new(state.clone().into_sorted()),
                     stacked: block.unwind > 0 && !native,
                 });
-                while memory.len() > Self::MEMORY_BLOCKS {
-                    let oldest = memory.pop_front().expect("nonempty");
-                    overlay.commit(&oldest.state, oldest.updates)?;
+                if memory.len() > Self::PERSISTENCE_THRESHOLD {
+                    let persist: Vec<_> = memory
+                        .drain(..memory.len() - Self::MEMORY_BUFFER_TARGET)
+                        .map(|b| b.input())
+                        .collect();
+                    overlay.commit_batch(&persist)?;
                 }
                 Ok(root_only(root))
             });
@@ -502,6 +545,26 @@ impl TrieAdapter {
             variants.insert("ph-batch".to_owned(), batch);
         }
         Ok((primary, variants))
+    }
+}
+
+impl TrieAdapter {
+    /// The preimages of every op's address and slot, when all of them carry one.
+    pub fn op_preimages(blocks: &[TrieBlock]) -> Option<Preimages> {
+        let mut preimages = Preimages::default();
+        for op in blocks.iter().flat_map(|b| b.revert.iter().chain(&b.ops)) {
+            let address = match op {
+                TrieOp::Storage { slot, address, slot_key, .. } => {
+                    preimages.slots.insert(*slot, (*slot_key)?);
+                    address
+                }
+                TrieOp::Account { address, .. }
+                | TrieOp::Wipe { address, .. }
+                | TrieOp::Delete { address, .. } => address,
+            };
+            preimages.addresses.insert(op.key(), (*address)?);
+        }
+        Some(preimages)
     }
 }
 

@@ -1,13 +1,15 @@
 //! A reth node database (MDBX, with its static files and `RocksDB`) holding hashed state and trie
 //! tables, and the root, proof, and witness code paths the node runs over it.
 
-use std::{fs, path::Path, sync::Arc};
+use std::{fs, ops::RangeInclusive, path::Path, sync::Arc};
 
 use alloy_primitives::{B256, Bytes, U256};
 use alloy_rlp::Decodable;
 use alloy_trie::{Nibbles, TrieAccount, nodes::TrieNode};
 use base_diff_adapter::WitnessState;
-use base_diff_fuzz::{ProofAccount, ProofResult, ProofTarget, StorageProofResult, TrieBlockResult};
+use base_diff_fuzz::{
+    Preimages, ProofAccount, ProofResult, ProofTarget, StorageProofResult, TrieBlockResult,
+};
 use reth_chainspec::MAINNET;
 use reth_codecs::Compact;
 use reth_db::{
@@ -15,12 +17,12 @@ use reth_db::{
     mdbx::{DatabaseArguments, MaxReadTransactionDuration},
 };
 use reth_db_api::{
-    cursor::DbDupCursorRO,
-    models::StorageSettings,
+    cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
+    models::{AccountBeforeTx, BlockNumberAddress, StorageSettings},
     tables,
     transaction::{DbTx, DbTxMut},
 };
-use reth_primitives_traits::Account;
+use reth_primitives_traits::{Account, StorageEntry};
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory, StateWriter, StorageSettingsCache, TrieWriter,
     providers::{RocksDBBuilder, StaticFileProviderBuilder},
@@ -39,7 +41,8 @@ use reth_trie_common::{
     updates::{TrieUpdates, TrieUpdatesSorted},
 };
 use reth_trie_db::{
-    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot, DatabaseTrieCursorFactory,
+    DatabaseHashedCursorFactory, DatabaseHashedPostState, DatabaseStateRoot, DatabaseStorageRoot,
+    DatabaseTrieCursorFactory,
 };
 
 /// The provider factory of a [`RethDb`].
@@ -101,19 +104,25 @@ impl RethDb {
         Ok(self.factory.latest()?.state_root_with_updates(state.clone())?)
     }
 
+    /// The trie input of in-memory blocks given oldest first, merged newest to oldest as the
+    /// storage overlay manager merges the executed blocks above its anchor.
+    pub fn merge_memory(
+        memory: &[(Arc<TrieUpdatesSorted>, Arc<HashedPostStateSorted>)],
+    ) -> (TrieUpdatesSorted, HashedPostStateSorted) {
+        let nodes = TrieUpdatesSorted::merge_batch(memory.iter().rev().map(|(n, _)| Arc::clone(n)));
+        let state =
+            HashedPostStateSorted::merge_batch(memory.iter().rev().map(|(_, s)| Arc::clone(s)));
+        (Arc::unwrap_or_clone(nodes), Arc::unwrap_or_clone(state))
+    }
+
     /// The serial state root with in-memory blocks (oldest first) between the database and
     /// `state`, as the overlay state provider computes it while blocks await persistence.
     pub fn overlay_root(
         &self,
-        memory: &[(TrieUpdatesSorted, HashedPostStateSorted)],
+        memory: &[(Arc<TrieUpdatesSorted>, Arc<HashedPostStateSorted>)],
         state: &HashedPostState,
     ) -> eyre::Result<(B256, TrieUpdates)> {
-        let mut nodes = TrieUpdatesSorted::default();
-        let mut overlay = HashedPostStateSorted::default();
-        for (block_nodes, block_state) in memory {
-            nodes.extend_ref_and_sort(block_nodes);
-            overlay.extend_ref_and_sort(block_state);
-        }
+        let (nodes, mut overlay) = Self::merge_memory(memory);
         let current = state.clone().into_sorted();
         let prefix_sets = current.construct_prefix_sets();
         overlay.extend_ref_and_sort(&current);
@@ -148,6 +157,121 @@ impl RethDb {
         provider.write_trie_updates(updates)?;
         provider.commit()?;
         Ok(())
+    }
+
+    /// Writes several blocks' hashed state and trie updates (oldest first) in one transaction,
+    /// merged as engine persistence merges the blocks it saves when no state masking suffix
+    /// stays in memory.
+    pub fn commit_batch(
+        &self,
+        blocks: &[(Arc<TrieUpdatesSorted>, Arc<HashedPostStateSorted>)],
+    ) -> eyre::Result<()> {
+        let states: Vec<&HashedPostStateSorted> = blocks.iter().map(|(_, s)| &**s).collect();
+        let nodes: Vec<&TrieUpdatesSorted> = blocks.iter().map(|(n, _)| &**n).collect();
+        let provider = self.factory.provider_rw()?;
+        provider
+            .write_hashed_state(&HashedPostStateSorted::disjointed_merge_batch(&states, &[]))?;
+        provider
+            .write_trie_updates_sorted(&TrieUpdatesSorted::disjointed_merge_batch(&nodes, &[]))?;
+        provider.commit()?;
+        Ok(())
+    }
+
+    /// Writes a block's hashed state and the changesets execution leaves for the merkle stage:
+    /// each changed account and each written slot as it was before the block, keyed by address
+    /// and slot index. The trie tables stay as they were.
+    pub fn write_with_changesets(
+        &self,
+        number: u64,
+        state: &HashedPostState,
+        preimages: &Preimages,
+    ) -> eyre::Result<()> {
+        let address = |key: &B256| {
+            preimages.addresses.get(key).copied().ok_or_else(|| eyre::eyre!("no preimage of {key}"))
+        };
+        let provider = self.factory.provider_rw()?;
+        let tx = provider.tx_ref();
+        for (key, account) in &state.accounts {
+            let info = tx.get::<tables::HashedAccounts>(*key)?;
+            if info != *account {
+                tx.put::<tables::AccountChangeSets>(
+                    number,
+                    AccountBeforeTx { address: address(key)?, info },
+                )?;
+            }
+        }
+        let mut cursor = tx.cursor_dup_read::<tables::HashedStorages>()?;
+        for (key, storage) in &state.storages {
+            let block_address = BlockNumberAddress((number, address(key)?));
+            for slot in storage.storage.keys() {
+                let value = cursor
+                    .seek_by_key_subkey(*key, *slot)?
+                    .filter(|entry| entry.key == *slot)
+                    .map(|entry| entry.value)
+                    .unwrap_or_default();
+                let slot = preimages
+                    .slots
+                    .get(slot)
+                    .copied()
+                    .ok_or_else(|| eyre::eyre!("no preimage of slot {slot}"))?;
+                tx.put::<tables::StorageChangeSets>(
+                    block_address,
+                    StorageEntry { key: slot, value },
+                )?;
+            }
+        }
+        provider.write_hashed_state(&state.clone().into_sorted())?;
+        provider.commit()?;
+        Ok(())
+    }
+
+    /// The merkle stage's incremental root over `range`: the trie tables advance from the
+    /// range's parent to the hashed state, recomputing the keys the range's changesets name.
+    pub fn merkle_incremental(&self, range: RangeInclusive<u64>) -> eyre::Result<B256> {
+        let provider = self.factory.provider_rw()?;
+        let (root, updates) = Self::incremental(&provider, range)?;
+        provider.write_trie_updates(updates)?;
+        provider.commit()?;
+        Ok(root)
+    }
+
+    /// Unwinds the hashed state and trie tables from block `tip` to `target` as the hashing and
+    /// merkle stages unwind: the hashed state takes the values the dropped blocks' changesets
+    /// recorded, the incremental root recomputes the keys they name, and the changesets go.
+    pub fn unwind_changesets(&self, target: u64, tip: u64) -> eyre::Result<B256> {
+        let provider = self.factory.provider_rw()?;
+        let reverts = HashedPostStateSorted::from_reverts(&*provider, target + 1..=tip)?;
+        provider.write_hashed_state(&reverts)?;
+        let (root, updates) = Self::incremental(&provider, target + 1..=tip)?;
+        provider.write_trie_updates(updates)?;
+        let tx = provider.tx_ref();
+        for number in target + 1..=tip {
+            tx.delete::<tables::AccountChangeSets>(number, None)?;
+        }
+        let mut cursor = tx.cursor_write::<tables::StorageChangeSets>()?;
+        while let Some((key, _)) =
+            cursor.seek(BlockNumberAddress((target + 1, Default::default())))?
+        {
+            if key.block_number() > tip {
+                break;
+            }
+            cursor.delete_current()?;
+        }
+        provider.commit()?;
+        Ok(root)
+    }
+
+    /// [`DatabaseStateRoot::incremental_root_with_updates`] over `provider`'s trie tables.
+    fn incremental(
+        provider: &reth_provider::DatabaseProviderRW<
+            Arc<DatabaseEnv>,
+            MockNodeTypesWithDB<Arc<DatabaseEnv>>,
+        >,
+        range: RangeInclusive<u64>,
+    ) -> eyre::Result<(B256, TrieUpdates)> {
+        Ok(reth_trie_db::with_adapter!(provider, |A| {
+            <StateRoot<DatabaseTrieCursorFactory<_, A>, DatabaseHashedCursorFactory<_>> as DatabaseStateRoot<_>>::incremental_root_with_updates(&**provider, range)
+        })?)
     }
 
     /// The state root the pipeline's merkle stage computes in rebuild mode, in a transaction that

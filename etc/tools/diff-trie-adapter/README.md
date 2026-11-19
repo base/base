@@ -57,8 +57,18 @@ Variants, each also on its own database:
   (`base_diff_adapter::WitnessState`) from the node's execution witness of the block, in the
   legacy witness mode base/base serves. (The canonical mode leaves out nodes that only a consumer
   applying removals before insertions needs, so it does not pair with this consumer.)
-- `overlay`: the overlay state provider's root with the last two blocks in memory above the
-  database (`overlay_root_from_nodes_with_updates`), unwinding in-memory blocks natively.
+- `overlay`: the overlay state provider's root with up to three blocks in memory above the
+  database (`overlay_root_from_nodes_with_updates`), unwinding in-memory blocks natively. The
+  in-memory blocks merge newest to oldest (`merge_batch`) as the storage overlay manager merges
+  them, and past three blocks all but the newest persist in one transaction, merged with
+  `disjointed_merge_batch` as engine persistence saves them with state masking off (Base's
+  default).
+- `merkle-stage` (requests whose ops all carry preimages): the pipeline's incremental path.
+  Each block writes its hashed state and plain-keyed account and storage changesets, and the
+  merkle stage's `incremental_root_with_updates` advances the trie from the keys the changesets
+  name, after every block or over two blocks at once. An unwind reverts the hashed state with
+  `HashedPostStateSorted::from_reverts` and unwinds the trie incrementally, as the hashing and
+  merkle stages unwind, checking both roots against the primary's.
 - `ph-mdbx`, `ph-rocksdb`: Base's proofs-history store (`base-execution-trie`) on both backends,
   fed as its `ExEx` does (root and updates over the store at the parent, stored per block, and
   after a reorg the dropped blocks unwound with `unwind_history` first), with roots and proofs read
