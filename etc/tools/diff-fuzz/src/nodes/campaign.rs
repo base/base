@@ -795,8 +795,8 @@ impl RpcCampaign {
     }
 
     /// `value`, an `eth_simulateV1` reply, with each block's header roots and hash taken from
-    /// the same block in `reference`, and every other mention of its hash (log `blockHash`)
-    /// replaced too.
+    /// the same block in `reference`, and every other mention of its hash (log `blockHash`, a
+    /// later block's `parentHash`) replaced too.
     fn with_reference_roots(value: &Value, reference: &Value) -> Value {
         const ROOTS: [&str; 4] = ["stateRoot", "withdrawalsRoot", "parentBeaconBlockRoot", "hash"];
         let mut value = value.clone();
@@ -805,14 +805,21 @@ impl RpcCampaign {
         else {
             return value;
         };
+        let hashes: Vec<(Value, Value)> = blocks
+            .iter()
+            .zip(theirs)
+            .map(|(b, r)| (b["hash"].clone(), r["hash"].clone()))
+            .collect();
         for (block, reference) in blocks.iter_mut().zip(theirs) {
-            let (old, new) = (block["hash"].clone(), reference["hash"].clone());
-            Self::replace_string(block, &old, &new);
             for root in ROOTS {
                 if let (Some(object), Some(v)) = (block.as_object_mut(), reference.get(root)) {
                     object.insert(root.to_owned(), v.clone());
                 }
             }
+        }
+        // A later block's `parentHash` names an earlier simulated block.
+        for (old, new) in &hashes {
+            Self::replace_string(&mut value, old, new);
         }
         value
     }
@@ -1268,6 +1275,15 @@ mod tests {
             (block("0x00", "0xb1", "0x5208"), block("0x83", "0xc2", "0x5208"));
         assert_eq!(
             classify(&simulate, base_block.clone(), base_block.clone(), nm_block),
+            Some((RpcCampaign::KNOWN_SIMULATE_HEADER, "nethermind".to_owned()))
+        );
+        let chain = |root: &str, h1: &str, h2: &str| {
+            json!({"id":1,"result":[{"hash": h1, "stateRoot": root},
+                {"hash": h2, "parentHash": h1, "stateRoot": root}]})
+        };
+        let base_chain = chain("0x00", "0xb1", "0xb2");
+        assert_eq!(
+            classify(&simulate, base_chain.clone(), base_chain, chain("0x83", "0xc1", "0xc2")),
             Some((RpcCampaign::KNOWN_SIMULATE_HEADER, "nethermind".to_owned()))
         );
         let other_gas = block("0x83", "0xc2", "0x5209");
