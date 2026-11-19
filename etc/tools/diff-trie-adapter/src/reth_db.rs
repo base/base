@@ -119,10 +119,26 @@ impl RethDb {
         overlay.extend_ref_and_sort(&current);
         let input = TrieInputSorted::new(Arc::new(nodes), Arc::new(overlay), prefix_sets);
         let provider = self.factory.database_provider_ro()?;
-        let result = reth_trie_db::with_adapter!(provider, |A| {
-            <StateRoot<DatabaseTrieCursorFactory<_, A>, DatabaseHashedCursorFactory<_>> as DatabaseStateRoot<_>>::overlay_root_from_nodes_with_updates(provider.tx_ref(), input)
+        let (result, root_only) = reth_trie_db::with_adapter!(provider, |A| {
+            type Root<'a, TX> = StateRoot<
+                DatabaseTrieCursorFactory<&'a TX, A>,
+                DatabaseHashedCursorFactory<&'a TX>,
+            >;
+            (
+                <Root<'_, _> as DatabaseStateRoot<_>>::overlay_root_from_nodes_with_updates(
+                    provider.tx_ref(),
+                    input.clone(),
+                ),
+                <Root<'_, _> as DatabaseStateRoot<_>>::overlay_root_from_nodes(
+                    provider.tx_ref(),
+                    input,
+                ),
+            )
         });
-        Ok(result?)
+        let (root, updates) = result?;
+        let root_only = root_only?;
+        eyre::ensure!(root_only == root, "overlay_root_from_nodes gave {root_only}, not {root}");
+        Ok((root, updates))
     }
 
     /// Writes a block's hashed state and trie updates in one transaction, as persistence does.

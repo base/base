@@ -36,6 +36,10 @@ Variants, each also on its own database:
 - `storage-api`, `ph-rocksdb-storage-api` (preimage requests): each slot proven with
   `storage_proof`, checked against `storage_multiproof` and `storage_root`. `ph-mdbx-witness`:
   the stateless root from the proofs-history store's execution witness at the parent.
+- `serial-root`: the serial root without trie updates (`StateRootProvider::state_root`). The
+  overlay variant also checks `overlay_root_from_nodes` against its root with updates, and
+  `ph-batch` checks each block's witness root and, with preimages, the session's storage proof
+  API against its multiproof, reporting disagreements as the block's error.
 - `full-rebuild`: the root from the hashed tables alone, ignoring stored nodes; `serial-tables`:
   stored trie nodes of the serial database that differ from a rebuild.
 - `merkle-rebuild`: the pipeline merkle stage's rebuild mode in a transaction that is rolled

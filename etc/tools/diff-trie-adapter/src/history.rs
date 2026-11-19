@@ -246,6 +246,17 @@ where
             number - 1,
         );
         let (root, updates) = provider.state_root_with_updates(state.clone())?;
+        // The session's other root paths at the parent: the stateless root from its execution
+        // witness, which must agree.
+        let mut mismatches = Vec::new();
+        let parent_root = provider.state_root(HashedPostState::default())?;
+        let nodes =
+            provider.witness(TrieInput::default(), state.clone(), ExecutionWitnessMode::Legacy)?;
+        let witness_root =
+            WitnessState::new(parent_root, &nodes, &[], [], []).compute_state_root(state)?;
+        if witness_root != root {
+            mismatches.push(format!("witness root {witness_root}"));
+        }
         drop(provider);
         let diff = BlockStateDiff {
             sorted_trie_updates: updates.into_sorted(),
@@ -262,11 +273,23 @@ where
         let proofs = targets
             .iter()
             .map(|target| RethDb::proof(&multiproof, target))
-            .collect::<eyre::Result<_>>()?;
+            .collect::<eyre::Result<Vec<_>>>()?;
+        // With preimages, the session's storage proof API must agree with its multiproof.
+        if targets
+            .iter()
+            .all(|t| t.address.is_some() && (t.slots.is_empty() || t.slot_keys.is_some()))
+        {
+            let api = RethDb::storage_api_proofs(&provider, targets)?;
+            mismatches.extend(api.error);
+            if api.proofs.as_ref() != Some(&proofs) {
+                mismatches.push("storage API proofs differ from the multiproof's".to_owned());
+            }
+        }
         Ok(TrieBlockResult {
             number: Some(number),
             state_root: Some(root),
             proofs: Some(proofs),
+            error: (!mismatches.is_empty()).then(|| mismatches.join("; ")),
             ..Default::default()
         })
     }

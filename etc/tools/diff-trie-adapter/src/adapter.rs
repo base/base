@@ -226,6 +226,10 @@ impl TrieAdapter {
                     break;
                 }
             };
+            variants
+                .entry("serial-root")
+                .or_default()
+                .push(|| Ok(root_only(serial.factory.latest()?.state_root(state.clone())?)));
             variants.entry("witness").or_default().push(|| {
                 Ok(root_only(serial.witness_root(
                     parent_root,
