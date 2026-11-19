@@ -254,7 +254,7 @@ impl TrieGen {
         let start = ops.len();
         let target = if self.rng.chance(70) { self.existing(model) } else { None };
         let key = target.unwrap_or_else(|| self.account_key());
-        match self.rng.weighted(&[24, 30, 12, 6, 3, 6, 4, 2, 1, 2, 3, 2]) {
+        match self.rng.weighted(&[24, 30, 12, 6, 3, 6, 4, 2, 1, 2, 3, 2, 1]) {
             0 => ops.push(self.account(key)),
             1 => {
                 let slot = self.slot();
@@ -338,6 +338,32 @@ impl TrieGen {
                         for other in model.accounts.keys().filter(|k| shares(k, &key, nibbles)) {
                             ops.push(TrieOp::delete(*other));
                         }
+                    }
+                }
+            }
+            12 => {
+                // Full branches: a key for every pair of the two nibbles after a short prefix,
+                // so the prefix's branch has 16 children that each have 16 hashed children
+                // (Nethermind hashes such siblings in batches). In preimage mode the prefix is
+                // at most one nibble, as the search finds at most three.
+                let storage = self.rng.chance(50);
+                let base = if storage { self.slot() } else { key };
+                let most = if self.preimages.is_some() { 1 } else { 4 };
+                let prefix = self.rng.below(most + 1) as usize;
+                let mut nibbles: Vec<u8> = base.iter().flat_map(|b| [b >> 4, b & 0x0f]).collect();
+                for pair in 0..256u16 {
+                    nibbles[prefix] = (pair >> 4) as u8;
+                    nibbles[prefix + 1] = (pair & 0x0f) as u8;
+                    let mut aim = B256::ZERO;
+                    for (i, two) in nibbles.chunks(2).enumerate() {
+                        aim[i] = (two[0] << 4) | two[1];
+                    }
+                    let near = self.near(&aim, prefix + 2, storage);
+                    if storage {
+                        let value = self.value();
+                        ops.push(TrieOp::storage(key, near, value));
+                    } else {
+                        ops.push(self.account(near));
                     }
                 }
             }
