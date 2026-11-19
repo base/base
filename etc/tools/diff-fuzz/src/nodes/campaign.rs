@@ -435,9 +435,16 @@ impl RpcCampaign {
         let mut replies = replies.to_vec();
         let mut serving = serving.to_vec();
         let known = Self::known_base_cause(case, &replies, &normalized)
-            .or_else(|| Self::known_base_difference(case, &replies, &normalized))
-            .or_else(|| Self::settled_difference(case, &normalized));
-        if let Some((cause, index)) = known {
+            .or_else(|| Self::known_base_difference(case, &replies, &normalized));
+        if Self::simulate_encoding_only(case, &normalized) {
+            *summary
+                .lock()
+                .expect("lock")
+                .known
+                .entry(Self::KNOWN_SIMULATE_HEADER.into())
+                .or_default() += 1;
+            normalized.iter_mut().for_each(|(_, v)| *v = Self::without_block_encoding(v));
+        } else if let Some((cause, index)) = known {
             *summary.lock().expect("lock").known.entry(cause.into()).or_default() += 1;
             normalized.remove(index);
             replies.remove(index);
@@ -716,16 +723,25 @@ impl RpcCampaign {
     /// "pending", which Nethermind refuses.
     pub const KNOWN_BASE_DEPOSIT_CALL_PENDING_TRACE: &str =
         "base: deposit-typed calls and pending traces accepted";
+    /// base/base prices a call with a tip and no fee cap at base fee + tip (alloy's `CallFees`),
+    /// where geth and Nethermind leave the cap at 0 and fail with "max priority fee per gas higher
+    /// than max fee per gas".
+    pub const KNOWN_BASE_TIP_WITHOUT_CAP: &str = "base: tip without fee cap priced";
+    /// base/base's eth\_createAccessList reports the gas of a run without the access list; geth
+    /// and Nethermind report the final run with it.
+    pub const KNOWN_BASE_ACCESS_LIST_GAS: &str = "base: access list gasUsed without the list";
     /// Settled base/base differences from Nethermind: base accepts `eth_feeHistory` without
     /// rewardPercentiles, refuses a `null` boolean argument, and refuses tracer names it has no
     /// native tracer for, which Nethermind runs as JS tracers.
     pub const KNOWN_BASE_SETTLED: &str = "base: settled (feeHistory, null boolean, JS tracer)";
 
-    /// Simulated block headers: Nethermind computes `stateRoot` and `withdrawalsRoot` and uses a
-    /// zero `parentBeaconBlockRoot`, as geth does; base/base (and needlefish, following it) leave
-    /// both roots zero and copy the parent's beacon root. The block hash, which covers them,
-    /// differs with them. A settled difference: compared on base and needlefish only.
-    pub const KNOWN_SIMULATE_HEADER: &str = "settled: simulated header roots";
+    /// Simulated block encoding: Nethermind computes `stateRoot` and `withdrawalsRoot` and uses a
+    /// zero `parentBeaconBlockRoot`, as geth does, where base/base (and needlefish, following it)
+    /// leave both roots zero and copy the parent's beacon root (settled); and base/base gives a
+    /// simulated legacy tx the EIP-155 `v` where geth and Nethermind give 0 (a base difference,
+    /// counted once needlefish matches Nethermind's transactions). Block and tx hashes, roots and
+    /// sizes follow from these. Such cases are compared without those derived fields.
+    pub const KNOWN_SIMULATE_HEADER: &str = "settled: simulated header roots and tx encoding";
 
     /// Tracer names base/base implements natively.
     const NATIVE_TRACERS: [&str; 6] = [
@@ -767,7 +783,20 @@ impl RpcCampaign {
                 .and_then(Value::as_str)
                 .is_some_and(|t| !Self::NATIVE_TRACERS.contains(&t))
         };
-        let cause = if ok(ours)
+        let without_gas = |v: &Value| {
+            let mut v = v.clone();
+            if let Some(result) = v["result"].as_object_mut() {
+                result.remove("gasUsed");
+            }
+            v
+        };
+        let cause = if message.contains("max priority fee per gas higher than max fee per gas") {
+            Self::KNOWN_BASE_TIP_WITHOUT_CAP
+        } else if case.method == "eth_createAccessList"
+            && without_gas(ours) == without_gas(reference)
+        {
+            Self::KNOWN_BASE_ACCESS_LIST_GAS
+        } else if ok(ours)
             && code(reference).is_some()
             && (body["params"].to_string().contains("\"type\":\"0x7e\"")
                 || case.method == "debug_traceBlockByNumber" && strings.contains(&"pending"))
@@ -835,20 +864,60 @@ impl RpcCampaign {
         Some((cause, base))
     }
 
-    /// The settled difference, if any, that explains Nethermind's answer to `case`, with
-    /// Nethermind's index: base and needlefish answer alike and Nethermind otherwise.
-    pub fn settled_difference(
-        case: &RpcCase,
-        normalized: &[(String, Value)],
-    ) -> Option<(&'static str, usize)> {
-        let get = |name: &str| normalized.iter().position(|(n, _)| n == name);
-        let (base, needlefish, nm) = (get("base")?, get("needlefish")?, get("nethermind")?);
-        let (ours, theirs) = (&normalized[base].1, &normalized[nm].1);
-        (case.method == "eth_simulateV1"
-            && ours == &normalized[needlefish].1
-            && ours != theirs
-            && Self::with_reference_roots(theirs, ours) == *ours)
-            .then_some((Self::KNOWN_SIMULATE_HEADER, nm))
+    /// Whether `case`'s replies, eth\_simulateV1 blocks, differ only as
+    /// [`Self::KNOWN_SIMULATE_HEADER`] describes: they agree without the fields
+    /// [`Self::without_block_encoding`] drops, and needlefish's transactions match Nethermind's.
+    pub fn simulate_encoding_only(case: &RpcCase, normalized: &[(String, Value)]) -> bool {
+        let get = |name: &str| normalized.iter().find(|(n, _)| n == name).map(|(_, v)| v);
+        let (Some(base), Some(needlefish), Some(nm)) =
+            (get("base"), get("needlefish"), get("nethermind"))
+        else {
+            return false;
+        };
+        let transactions = |v: &Value| {
+            v["result"]
+                .as_array()
+                .map(|blocks| blocks.iter().map(|b| b["transactions"].clone()).collect::<Vec<_>>())
+        };
+        let stripped = Self::without_block_encoding(nm);
+        case.method == "eth_simulateV1"
+            && !(base == nm && needlefish == nm)
+            && transactions(needlefish) == transactions(nm)
+            && Self::without_block_encoding(base) == stripped
+            && Self::without_block_encoding(needlefish) == stripped
+    }
+
+    /// `value`, an eth\_simulateV1 reply, without each block's hash, parent hash, roots, size
+    /// and transactions, and without its logs' block and transaction hashes.
+    pub fn without_block_encoding(value: &Value) -> Value {
+        const DERIVED: [&str; 9] = [
+            "hash",
+            "parentHash",
+            "stateRoot",
+            "withdrawalsRoot",
+            "parentBeaconBlockRoot",
+            "transactionsRoot",
+            "receiptsRoot",
+            "size",
+            "transactions",
+        ];
+        let mut value = value.clone();
+        for block in value["result"].as_array_mut().into_iter().flatten() {
+            if let Some(object) = block.as_object_mut() {
+                DERIVED.iter().for_each(|key| {
+                    object.remove(*key);
+                });
+            }
+            for call in block["calls"].as_array_mut().into_iter().flatten() {
+                for log in call["logs"].as_array_mut().into_iter().flatten() {
+                    if let Some(log) = log.as_object_mut() {
+                        log.remove("blockHash");
+                        log.remove("transactionHash");
+                    }
+                }
+            }
+        }
+        value
     }
 
     /// Whether `value` matches `reference` except that its numeric counts may be lower or
@@ -866,48 +935,6 @@ impl RpcCampaign {
                     && items.iter().zip(theirs).all(|(v, r)| Self::counts_within(v, r))
             }
             _ => value == reference,
-        }
-    }
-
-    /// `value`, an `eth_simulateV1` reply, with each block's header roots and hash taken from
-    /// the same block in `reference`, and every other mention of its hash (log `blockHash`, a
-    /// later block's `parentHash`) replaced too.
-    fn with_reference_roots(value: &Value, reference: &Value) -> Value {
-        const ROOTS: [&str; 4] = ["stateRoot", "withdrawalsRoot", "parentBeaconBlockRoot", "hash"];
-        let mut value = value.clone();
-        let (Some(blocks), Some(theirs)) =
-            (value["result"].as_array_mut(), reference["result"].as_array())
-        else {
-            return value;
-        };
-        let hashes: Vec<(Value, Value)> = blocks
-            .iter()
-            .zip(theirs)
-            .map(|(b, r)| (b["hash"].clone(), r["hash"].clone()))
-            .collect();
-        for (block, reference) in blocks.iter_mut().zip(theirs) {
-            for root in ROOTS {
-                if let (Some(object), Some(v)) = (block.as_object_mut(), reference.get(root)) {
-                    object.insert(root.to_owned(), v.clone());
-                }
-            }
-        }
-        // A later block's `parentHash` names an earlier simulated block.
-        for (old, new) in &hashes {
-            Self::replace_string(&mut value, old, new);
-        }
-        value
-    }
-
-    /// Replaces every occurrence of the string `old` inside `value` by `new`.
-    fn replace_string(value: &mut Value, old: &Value, new: &Value) {
-        match value {
-            Value::String(_) if value == old => *value = new.clone(),
-            Value::Array(items) => items.iter_mut().for_each(|v| Self::replace_string(v, old, new)),
-            Value::Object(object) => {
-                object.values_mut().for_each(|v| Self::replace_string(v, old, new))
-            }
-            _ => {}
         }
     }
 
@@ -1348,8 +1375,10 @@ mod tests {
                 .iter()
                 .map(|(n, r)| (n.clone(), RpcCompare::normalize(&case.method, r)))
                 .collect();
+            if RpcCampaign::simulate_encoding_only(case, &normalized) {
+                return Some((RpcCampaign::KNOWN_SIMULATE_HEADER, "all".to_owned()));
+            }
             RpcCampaign::known_base_difference(case, &replies, &normalized)
-                .or_else(|| RpcCampaign::settled_difference(case, &normalized))
                 .map(|(cause, index)| (cause, replies[index].0.clone()))
         };
         let base_cause = |cause| Some((cause, "base".to_owned()));
@@ -1388,29 +1417,50 @@ mod tests {
             json!(["0x01", {"tracer": "callTracer"}]),
         );
         assert_eq!(classify(&named, internal, ok.clone(), ok), None);
-        // Simulated header roots (settled): Nethermind is set aside when only they differ.
+        // A tip without a fee cap and access-list gas: known when needlefish matches Nethermind.
+        let tip = RpcCase::new("call", "eth_estimateGas", json!([{"maxPriorityFeePerGas": "0x1"}]));
+        let funds = json!({"id":1,"error":{"code":-32003,"message":"insufficient funds"}});
+        let above = json!({"id":1,"error":{"code":-32000,"message":"failed with 50000000 gas: max priority fee per gas higher than max fee per gas"}});
+        assert_eq!(
+            classify(&tip, funds.clone(), above.clone(), above.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_TIP_WITHOUT_CAP)
+        );
+        assert_eq!(classify(&tip, funds.clone(), funds, above), None);
+        let list = RpcCase::new("call", "eth_createAccessList", json!([{}]));
+        let gas = |g: &str| json!({"id":1,"result":{"accessList":[],"gasUsed":g}});
+        assert_eq!(
+            classify(&list, gas("0x655c"), gas("0x6df4"), gas("0x6df4")),
+            base_cause(RpcCampaign::KNOWN_BASE_ACCESS_LIST_GAS)
+        );
+        // Simulated header roots, and base's legacy `v` once needlefish's transactions match
+        // Nethermind's, are compared without the derived fields; another field is not.
         let simulate = RpcCase::new("call", "eth_simulateV1", json!([{"blockStateCalls": []}]));
-        let block = |root: &str, hash: &str, gas: &str| {
+        let block = |root: &str, hash: &str, tx: &str, gas: &str| {
             json!({"id":1,"result":[{"hash": hash, "stateRoot": root, "gasUsed": gas,
-                "calls":[{"logs":[{"blockHash": hash}]}]}]})
+                "transactions": [tx], "calls":[{"logs":[{"blockHash": hash, "transactionHash": tx}]}]}]})
         };
-        let (base_block, nm_block) =
-            (block("0x00", "0xb1", "0x5208"), block("0x83", "0xc2", "0x5208"));
-        assert_eq!(
-            classify(&simulate, base_block.clone(), base_block.clone(), nm_block),
-            Some((RpcCampaign::KNOWN_SIMULATE_HEADER, "nethermind".to_owned()))
-        );
-        let chain = |root: &str, h1: &str, h2: &str| {
-            json!({"id":1,"result":[{"hash": h1, "stateRoot": root},
-                {"hash": h2, "parentHash": h1, "stateRoot": root}]})
-        };
-        let base_chain = chain("0x00", "0xb1", "0xb2");
-        assert_eq!(
-            classify(&simulate, base_chain.clone(), base_chain, chain("0x83", "0xc1", "0xc2")),
-            Some((RpcCampaign::KNOWN_SIMULATE_HEADER, "nethermind".to_owned()))
-        );
-        let other_gas = block("0x83", "0xc2", "0x5209");
-        assert_eq!(classify(&simulate, base_block.clone(), base_block, other_gas), None);
+        let header = |c, b, f, n| classify(&simulate, b, f, n).map(|(cause, _)| cause) == c;
+        let known = Some(RpcCampaign::KNOWN_SIMULATE_HEADER);
+        // Header roots only.
+        let base_block = block("0x00", "0xb1", "0x01", "0x5208");
+        assert!(header(
+            known,
+            base_block.clone(),
+            base_block.clone(),
+            block("0x83", "0xc2", "0x01", "0x5208")
+        ));
+        // base's legacy v after needlefish aligned: known; before it aligned: a finding.
+        let aligned = block("0x00", "0xf1", "0x02", "0x5208");
+        let nm = block("0x83", "0xc2", "0x02", "0x5208");
+        assert!(header(known, base_block.clone(), aligned, nm.clone()));
+        assert!(header(None, base_block.clone(), base_block.clone(), nm));
+        // Another field differs.
+        assert!(header(
+            None,
+            base_block.clone(),
+            base_block,
+            block("0x83", "0xc2", "0x01", "0x5209")
+        ));
         // Prestate: Nethermind's extra accounts and codeHash missing on base are known; another
         // value is not.
         let trace = RpcCase::new(
