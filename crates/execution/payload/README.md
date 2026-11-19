@@ -32,8 +32,7 @@ let payload = builder.build_payload(attrs, best_payload)?;
 Every block the builder composes from the transaction pool emits one `sealed block observation`
 log line (target `payload_builder`) and one sample on each `base_builder_sealed_block_*` histogram.
 The line logs at `debug`, or at `warn` with `slow=true` when the state-root time meets or exceeds
-`BaseBuilderConfig::slow_block_state_root` (`--builder.slow-block-state-root-ms`, default
-`DEFAULT_SLOW_BLOCK_STATE_ROOT`, 50 ms), so slow blocks are logged with their contents by default.
+`SLOW_BLOCK_STATE_ROOT` (50 ms), so slow blocks are logged with their contents by default.
 Metrics are recorded for every block regardless of level.
 
 The observation joins the block's state-root time to what drove it, so resource metering can be
