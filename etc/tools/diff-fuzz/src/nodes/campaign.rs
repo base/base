@@ -785,7 +785,7 @@ impl RpcCampaign {
         };
         let without_gas = |v: &Value| {
             let mut v = v.clone();
-            if let Some(result) = v["result"].as_object_mut() {
+            if let Some(result) = v.get_mut("result").and_then(Value::as_object_mut) {
                 result.remove("gasUsed");
             }
             v
@@ -902,14 +902,15 @@ impl RpcCampaign {
             "transactions",
         ];
         let mut value = value.clone();
-        for block in value["result"].as_array_mut().into_iter().flatten() {
+        for block in value.get_mut("result").and_then(Value::as_array_mut).into_iter().flatten() {
             if let Some(object) = block.as_object_mut() {
                 DERIVED.iter().for_each(|key| {
                     object.remove(*key);
                 });
             }
-            for call in block["calls"].as_array_mut().into_iter().flatten() {
-                for log in call["logs"].as_array_mut().into_iter().flatten() {
+            for call in block.get_mut("calls").and_then(Value::as_array_mut).into_iter().flatten() {
+                for log in call.get_mut("logs").and_then(Value::as_array_mut).into_iter().flatten()
+                {
                     if let Some(log) = log.as_object_mut() {
                         log.remove("blockHash");
                         log.remove("transactionHash");
@@ -1432,6 +1433,9 @@ mod tests {
             classify(&list, gas("0x655c"), gas("0x6df4"), gas("0x6df4")),
             base_cause(RpcCampaign::KNOWN_BASE_ACCESS_LIST_GAS)
         );
+        // Batch replies are JSON arrays: classified like any other difference, without panicking.
+        let batch = |g: &str| json!([{"id":1,"result":{"gasUsed":g}}]);
+        assert_eq!(classify(&list, batch("0x1"), batch("0x2"), batch("0x2")), None);
         // Simulated header roots, and base's legacy `v` once needlefish's transactions match
         // Nethermind's, are compared without the derived fields; another field is not.
         let simulate = RpcCase::new("call", "eth_simulateV1", json!([{"blockStateCalls": []}]));
@@ -1441,6 +1445,7 @@ mod tests {
         };
         let header = |c, b, f, n| classify(&simulate, b, f, n).map(|(cause, _)| cause) == c;
         let known = Some(RpcCampaign::KNOWN_SIMULATE_HEADER);
+        assert!(header(None, batch("0x1"), batch("0x2"), batch("0x2")));
         // Header roots only.
         let base_block = block("0x00", "0xb1", "0x01", "0x5208");
         assert!(header(
