@@ -927,26 +927,26 @@ mod tests {
 
     #[test]
     fn only_members_the_current_pool_iterator_held_are_reported_as_held() {
-        let first = balance_at_least(WATCHED, 1);
-        let second = balance_at_least(WATCHED, 2);
-        let third = balance_at_least(WATCHED, 3);
-        let mut resting = rested_in_parent(&[first.clone(), second.clone(), third.clone()]);
+        let predicates: Vec<_> = (1..=4).map(|value| balance_at_least(WATCHED, value)).collect();
+        let held = |index: usize| conditions(std::slice::from_ref(&predicates[index]));
+        let mut resting = rested_in_parent(&predicates);
         resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
 
-        // The first pool iterator of the build holds two members back.
+        // The build's pool iterator holds three of the four members back.
         resting.start_holding();
-        assert_eq!(resting.hold(hash(0), &conditions(&[first])), Some(true));
-        assert_eq!(resting.hold(hash(1), &conditions(std::slice::from_ref(&second))), Some(true));
-        // One of them rests again, so it is parked in the build loop instead.
-        resting.rest(hash(1), second);
-        // A second iterator holds the last member; what the first one held is forgotten.
-        resting.start_holding();
-        assert_eq!(resting.hold(hash(2), &conditions(&[third])), Some(true));
-
-        assert_eq!(resting.remove_held(hash(0)), Some(false));
+        for index in 0..3 {
+            assert_eq!(resting.hold(hash(index as u8), &held(index)), Some(true));
+        }
+        assert_eq!(resting.remove_held(hash(0)), Some(true));
+        assert_eq!(resting.remove_held(hash(0)), None, "a removed member is no longer a member");
+        assert_eq!(resting.remove_held(hash(3)), Some(false), "the iterator never held it");
+        // A member that rests again is parked in the build loop, not in the iterator.
+        resting.rest(hash(1), predicates[1].clone());
         assert_eq!(resting.remove_held(hash(1)), Some(false));
-        assert_eq!(resting.remove_held(hash(2)), Some(true));
-        assert_eq!(resting.remove_held(hash(2)), None, "a removed member is no longer a member");
+
+        // A second iterator forgets what the first one held.
+        resting.start_holding();
+        assert_eq!(resting.remove_held(hash(2)), Some(false));
     }
 
     #[test]

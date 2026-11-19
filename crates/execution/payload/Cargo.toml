@@ -124,6 +124,7 @@ harness = false
 [[bench]]
 name = "native_mainnet_shape"
 harness = false
+required-features = ["metrics"]
 
 [features]
 default = [ "metrics" ]

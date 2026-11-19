@@ -8,7 +8,7 @@ use std::{
 
 use alloy_primitives::{
     Address, TxHash, U256,
-    map::{B256Map, HashMap, hash_map::Entry},
+    map::{B256Set, HashMap, hash_map::Entry},
 };
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, EthPoolTransaction, PoolTransaction,
@@ -85,13 +85,18 @@ where
 /// loop had yielded and parked them, without the build loop seeing them: their lane stays
 /// occupied and [`ParkableBestTransactions::promote`] returns them to priority competition.
 ///
-/// A pool asks the hold about the head of every lane it can set aside whole while it snapshots
-/// its stores, so a held lane is never ranked or yielded; see [`HeldBestTransaction`]. The
-/// iterator asks it about the candidates that still reach it, such as lanes that straddle stores.
+/// A pool asks the hold while it snapshots its stores about the candidates no lane or store
+/// sequences behind another transaction, and leaves the held ones out of the iterator; see
+/// [`ParkedBestTransactions::with_held_at_source`]. The iterator asks it about the candidates
+/// that reach it.
+///
+/// The pool calls [`Self::hold`] and [`Self::is_interrupted`] with its store locks held, so an
+/// implementation must not call back into the pool.
 pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     /// Returns whether `transaction` is parked instead of yielded. Called for candidates that
-    /// carry validity predicates and are not blocked by their lane: once when the pool is
-    /// snapshotted, and again for a candidate that was not held then and reaches the iterator.
+    /// carry validity predicates and are not blocked by their lane: when the pool is
+    /// snapshotted or when the candidate reaches the iterator, and at both points for a
+    /// candidate the snapshot asked about and did not hold.
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
 
     /// Records the time spent holding transactions back: by a pool snapshot from its first hold
@@ -110,22 +115,9 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     }
 }
 
-/// A lane a pool snapshot held back whole instead of offering it to the iterator: the head a
-/// [`BestTransactionsHold`] holds, with the pending members of its lane behind it.
-///
-/// It stands for the state [`ParkedBestTransactions`] reaches by pulling that lane from its
-/// source: the head parked and its descendants buffered behind it.
-#[derive(Debug)]
-pub struct HeldBestTransaction<T: PoolTransaction> {
-    /// Hash of [`Self::transaction`], kept inline so finding a held transaction by hash does
-    /// not read every held transaction.
-    pub hash: TxHash,
-    /// The held lane head.
-    pub transaction: Arc<ValidPoolTransaction<T>>,
-    /// The lane's pending members after the head, in nonce order. Empty for a nonce-free
-    /// transaction.
-    pub descendants: Vec<Arc<ValidPoolTransaction<T>>>,
-}
+/// Returns a transaction a pool snapshot held back, by hash, if the pool still holds it.
+pub type HeldTransactionLookup<T> =
+    Box<dyn Fn(&TxHash) -> Option<Arc<ValidPoolTransaction<T>>> + Send + Sync>;
 
 /// Number of transactions a pool snapshot or a parking iterator holds between checks of
 /// [`BestTransactionsHold::is_interrupted`], so the check stays off the per-transaction path.
@@ -169,11 +161,14 @@ where
     ready: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
     hold: Option<Box<dyn BestTransactionsHold<T>>>,
-    /// Lanes the source's snapshot held back, parked without an entry in `parked` or `lanes`.
-    /// Few of them are promoted in a build, so they stay in the list the snapshot produced.
-    held_at_source: Vec<HeldBestTransaction<T>>,
-    /// Positions in `held_at_source` by hash, built when the first one is promoted.
-    held_at_source_index: Option<B256Map<usize>>,
+    /// Hashes of the transactions the source's snapshot held back, parked without an entry in
+    /// `parked`. Few are promoted in a build, so only their hashes are kept, in the list the
+    /// snapshot produced.
+    held_at_source: Vec<TxHash>,
+    /// The members of `held_at_source` still parked, built when the first one is promoted.
+    held_at_source_parked: Option<B256Set>,
+    /// Fetches a member of `held_at_source` when it is promoted.
+    held_at_source_lookup: Option<HeldTransactionLookup<T>>,
 }
 
 impl<T, I, O> std::fmt::Debug for ParkedBestTransactions<T, I, O>
@@ -212,7 +207,8 @@ where
             ready_heap: BinaryHeap::new(),
             hold: None,
             held_at_source: Vec::new(),
-            held_at_source_index: None,
+            held_at_source_parked: None,
+            held_at_source_lookup: None,
         }
     }
 
@@ -222,17 +218,23 @@ where
         self
     }
 
-    /// Parks the lanes the source's snapshot held back with the same hold, as if this iterator
-    /// had pulled and held them. [`ParkableBestTransactions::promote`] returns one to priority
-    /// competition.
-    pub fn with_held_at_source(mut self, held: Vec<HeldBestTransaction<T>>) -> Self {
+    /// Parks the transactions the source's snapshot held back with the same hold, given by
+    /// hash. No other pending transaction is sequenced behind one, so it is parked as a
+    /// transaction this iterator's own hold held, without its lane being occupied.
+    /// [`ParkableBestTransactions::promote`] fetches one with `lookup` and returns it to
+    /// priority competition; one the pool no longer holds stays out of the build.
+    pub fn with_held_at_source(
+        mut self,
+        held: Vec<TxHash>,
+        lookup: HeldTransactionLookup<T>,
+    ) -> Self {
         self.held_at_source = held;
-        self.held_at_source_index = None;
+        self.held_at_source_parked = None;
+        self.held_at_source_lookup = Some(lookup);
         self
     }
 
-    /// Takes the lane the source's snapshot held back under `transaction_hash`, occupying the
-    /// lane with its descendants as pulling them from the source would have.
+    /// Takes the transaction the source's snapshot held back under `transaction_hash`.
     pub fn take_held_at_source(
         &mut self,
         transaction_hash: TxHash,
@@ -240,18 +242,14 @@ where
         if self.held_at_source.is_empty() {
             return None;
         }
-        let index = self.held_at_source_index.get_or_insert_with(|| {
-            self.held_at_source.iter().enumerate().map(|(at, held)| (held.hash, at)).collect()
-        });
-        let held = &mut self.held_at_source[index.remove(&transaction_hash)?];
-        let transaction = Arc::clone(&held.transaction);
-        let descendants = std::mem::take(&mut held.descendants);
-        let lane = BestTransactionLane::for_transaction(&transaction);
-        if let Some(lane) = lane {
-            self.lanes
-                .entry(lane)
-                .or_insert_with(|| BestTransactionLaneState::Occupied(descendants.into()));
+        let parked = self
+            .held_at_source_parked
+            .get_or_insert_with(|| self.held_at_source.iter().copied().collect());
+        if !parked.remove(&transaction_hash) {
+            return None;
         }
+        let transaction = self.held_at_source_lookup.as_ref()?(&transaction_hash)?;
+        let lane = BestTransactionLane::for_transaction(&transaction);
         Some((transaction, lane))
     }
 
@@ -874,59 +872,78 @@ mod tests {
         assert!(best.next().is_none());
     }
 
+    /// A lookup over the transactions a pool still holds.
+    fn lookup_in(
+        pool: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+    ) -> HeldTransactionLookup<BasePooledTransaction> {
+        Box::new(move |hash| pool.iter().find(|transaction| transaction.hash() == hash).cloned())
+    }
+
     #[test]
-    fn lane_held_at_the_source_is_parked_until_promoted() {
+    fn transaction_held_at_the_source_is_parked_until_promoted() {
         let held_signer = PrivateKeySigner::random();
         let other_signer = PrivateKeySigner::random();
         let held =
             validity_transaction(&held_signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
-        let child = transaction(&held_signer, U256::ZERO, 1, 90);
         let other = transaction(&other_signer, U256::ZERO, 0, 50);
-        // The source's snapshot left the held lane out, so the source only yields the other.
-        let inner = StaticBestTransactions::new(vec![Arc::clone(&other)]);
+        let lowest = transaction(&PrivateKeySigner::random(), U256::ZERO, 0, 10);
+        // The source's snapshot left the held transaction out, so the source yields the rest.
+        let inner = StaticBestTransactions::new(vec![Arc::clone(&other), Arc::clone(&lowest)]);
         let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0)
-            .with_held_at_source(vec![HeldBestTransaction {
-                hash: *held.hash(),
-                transaction: Arc::clone(&held),
-                descendants: vec![Arc::clone(&child)],
-            }]);
+            .with_held_at_source(vec![*held.hash()], lookup_in(vec![Arc::clone(&held)]));
 
         assert_eq!(best.next().unwrap().hash(), other.hash());
         best.mark_committed(&other);
-        assert!(best.next().is_none());
 
-        // Promotion returns the held head, and committing it releases its descendant, as for
-        // a lane this iterator pulled and held itself.
-        assert!(!best.promote(*child.hash()), "only the head of a held lane is parked");
+        // Promotion returns it to priority competition, ahead of what the source still holds.
+        assert!(!best.promote(*lowest.hash()), "only held transactions are parked");
         assert!(best.promote(*held.hash()));
         assert!(!best.promote(*held.hash()), "a promoted transaction is no longer parked");
         assert_eq!(best.next().unwrap().hash(), held.hash());
-        assert!(best.next().is_none(), "the descendant waits for the head to commit");
         best.mark_committed(&held);
-        assert_eq!(best.next().unwrap().hash(), child.hash());
+        assert_eq!(best.next().unwrap().hash(), lowest.hash());
         assert!(best.next().is_none());
     }
 
     #[test]
-    fn discarding_a_lane_held_at_the_source_drops_its_descendants() {
-        let held_signer = PrivateKeySigner::random();
-        let held =
-            validity_transaction(&held_signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
-        let child = transaction(&held_signer, U256::ZERO, 1, 90);
+    fn discarded_transaction_held_at_the_source_is_not_promoted() {
+        let held = validity_transaction(
+            &PrivateKeySigner::random(),
+            U256::ZERO,
+            0,
+            100,
+            vec![balance_predicate()],
+        );
         let mut best = ParkedBestTransactions::new(
             StaticBestTransactions::new(Vec::new()),
             BaseOrdering::coinbase_tip(),
             0,
         )
-        .with_held_at_source(vec![HeldBestTransaction {
-            hash: *held.hash(),
-            transaction: Arc::clone(&held),
-            descendants: vec![Arc::clone(&child)],
-        }]);
+        .with_held_at_source(vec![*held.hash()], lookup_in(vec![Arc::clone(&held)]));
 
         assert!(best.discard_parked(*held.hash(), InvalidPoolTransactionError::Underpriced));
         assert!(!best.promote(*held.hash()));
-        assert!(best.next().is_none(), "nothing behind a discarded head is yielded");
+        assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn transaction_held_at_the_source_that_left_the_pool_is_not_promoted() {
+        let held = validity_transaction(
+            &PrivateKeySigner::random(),
+            U256::ZERO,
+            0,
+            100,
+            vec![balance_predicate()],
+        );
+        let mut best = ParkedBestTransactions::new(
+            StaticBestTransactions::new(Vec::new()),
+            BaseOrdering::coinbase_tip(),
+            0,
+        )
+        .with_held_at_source(vec![*held.hash()], lookup_in(Vec::new()));
+
+        assert!(!best.promote(*held.hash()));
+        assert!(best.next().is_none());
     }
 
     #[test]

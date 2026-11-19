@@ -177,11 +177,13 @@ the iterator costs those lanes plus each store's own snapshot, not the pool size
 
 A block build takes its iterator with `best_transactions_with_attributes_and_parking`
 and a hold that recognises the validity transactions the builder already found
-unsatisfied. The validity snapshot asks the hold about the head of each lane and
-sets a held lane aside whole, so the build never ranks, yields or buffers it; the
-iterator returns it to priority competition if a commit wakes it. A lane that
-straddles stores is not set aside: its head reaches the hold through the merge,
-after the transaction in front of it.
+unsatisfied. The validity snapshot asks the hold about every transaction that has
+nothing sequenced around it (a nonce-free transaction, or the only pending member
+of a lane no other store shares) and is priced at or above the base fee, and sets
+a held one aside, so the build never ranks or yields it; the iterator returns it
+to priority competition if a commit wakes it. Every other transaction reaches the
+hold through the merge: a lane with pending descendants, and a lane that straddles
+stores, whose head waits for the transaction in front of it.
 `crates/execution/payload/benches/native_mainnet_shape.rs` measures a build on a
 pool shaped like mainnet's.
 

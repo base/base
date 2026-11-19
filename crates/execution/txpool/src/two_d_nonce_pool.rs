@@ -26,7 +26,7 @@ use reth_transaction_pool::{
 
 use crate::{
     BasePooledTx, BestTransactionPriority, BestTransactionsHold, HOLD_INTERRUPT_INTERVAL,
-    HeldBestTransaction, UnifiedTipPriority, best::MergeSource,
+    UnifiedTipPriority, best::MergeSource,
 };
 
 /// A finite channel: `(sender, nonce_key)`.
@@ -181,6 +181,11 @@ impl<T: BasePooledTx> NonceLane<T> {
     /// another store's pending run.
     const fn is_ahead_of_state(&self) -> bool {
         self.next_nonce > self.state_nonce
+    }
+
+    /// Whether the consecutive pending run is [`Self::pending_head`] alone.
+    const fn has_single_pending(&self) -> bool {
+        self.pending_len == 1
     }
 
     fn queued_transactions(&self) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
@@ -1661,13 +1666,17 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns a best-transactions iterator snapshot without the candidates `hold` holds, and
-    /// those candidates.
+    /// the hashes of those candidates.
     ///
-    /// A lane whose head is held is left out of the iterator whole and returned as one
-    /// [`HeldBestTransaction`], so the caller parks it without the iterator ranking, yielding
-    /// and buffering its members one at a time. Lanes that straddle stores are never held here:
-    /// the merge sequences them against the other store, so they reach the hold of the
-    /// [`ParkedBestTransactions`] above it instead.
+    /// Only a candidate the iterator would hand straight to the hold of the
+    /// [`ParkedBestTransactions`] above it is offered to `hold` here: a nonce-free transaction
+    /// or the only pending member of a lane no other store sequences, priced at or above
+    /// `base_fee`. A held one is left out of the iterator and its hash returned, so the caller
+    /// parks it without the iterator ranking and yielding it, or the snapshot taking a
+    /// reference to it. Every other candidate takes the iterator's
+    /// usual path: a lane with pending descendants, a lane that straddles stores, which the
+    /// merge sequences against the other store, and an underpriced transaction, which the
+    /// merge drops.
     ///
     /// [`ParkedBestTransactions`]: crate::ParkedBestTransactions
     pub(crate) fn best_transactions_holding<O>(
@@ -1675,7 +1684,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         ordering: O,
         base_fee: u64,
         hold: Option<&mut dyn BestTransactionsHold<T>>,
-    ) -> (BestTwoDTransactions<T, O>, Vec<HeldBestTransaction<T>>)
+    ) -> (BestTwoDTransactions<T, O>, Vec<TxHash>)
     where
         O: TransactionOrdering<Transaction = T>,
     {
@@ -1685,7 +1694,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.protocol_nonce_lanes,
             ordering,
             base_fee,
-            hold.map(|hold| SnapshotHold { hold, shared_lanes: &self.shared_lanes }),
+            hold.map(|hold| SnapshotHold { hold, shared_lanes: &self.shared_lanes, base_fee }),
         )
     }
 
@@ -1752,27 +1761,32 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 }
 
-/// The hold a snapshot offers its lane heads to, with the lanes it must not hold.
+/// The hold a snapshot offers candidates to, with what decides which candidates it may hold.
 struct SnapshotHold<'a, T: BasePooledTx> {
     hold: &'a mut dyn BestTransactionsHold<T>,
     /// Lanes another store also holds transactions in.
     shared_lanes: &'a HashSet<LaneId>,
+    /// Base fee of the block being built.
+    base_fee: u64,
 }
 
 impl<T: BasePooledTx> SnapshotHold<'_, T> {
     /// Whether `head`, the head of `lane` or a nonce-free transaction when `lane` is `None`, is
-    /// held instead of offered. The head of a lane that straddles stores, by continuing another
-    /// store's pending run or by sharing its nonces with one, is not.
+    /// held instead of offered; see [`TwoDNoncePool::best_transactions_holding`].
     fn holds(
         &mut self,
         lane: Option<(&LaneId, &NonceLane<T>)>,
         head: &ValidPoolTransaction<T>,
     ) -> bool {
-        let straddles = lane.is_some_and(|(id, lane)| {
-            lane.is_ahead_of_state()
-                || (!self.shared_lanes.is_empty() && self.shared_lanes.contains(id))
+        let sequenced_alone = lane.is_none_or(|(id, lane)| {
+            lane.has_single_pending()
+                && !lane.is_ahead_of_state()
+                && (self.shared_lanes.is_empty() || !self.shared_lanes.contains(id))
         });
-        !straddles && !head.transaction.validity_conditions().is_empty() && self.hold.hold(head)
+        sequenced_alone
+            && !head.transaction.validity_conditions().is_empty()
+            && head.effective_tip_per_gas(self.base_fee).is_some()
+            && self.hold.hold(head)
     }
 }
 
@@ -1845,7 +1859,7 @@ where
         ordering: O,
         base_fee: u64,
         mut hold: Option<SnapshotHold<'_, T>>,
-    ) -> (Self, Vec<HeldBestTransaction<T>>) {
+    ) -> (Self, Vec<TxHash>) {
         // A snapshot with a hold sets most lanes aside, so only one without a hold reserves a
         // slot per lane.
         let mut snapshot = Vec::with_capacity(match hold {
@@ -1858,18 +1872,13 @@ where
             lanes.iter().filter_map(|(id, lane)| Some((Some((id, lane)), lane.pending_head()?)));
         let nonce_free = nonce_free.values().map(|transaction| (None, transaction));
         for (lane, head) in lane_heads.chain(nonce_free) {
-            let descendants = lane.map_or_else(Vec::new, |(_, lane)| lane.pending_descendants());
             if let Some(hold) = hold.as_mut()
                 && hold.holds(lane, head)
             {
                 // The clock starts at the first hold, so a snapshot that holds nothing pays no
                 // timer read.
                 hold_start.get_or_insert_with(Instant::now);
-                held.push(HeldBestTransaction {
-                    hash: *head.hash(),
-                    transaction: Arc::clone(head),
-                    descendants,
-                });
+                held.push(*head.hash());
                 // A build that stopped selecting takes nothing from the lanes left unvisited.
                 if held.len().is_multiple_of(HOLD_INTERRUPT_INTERVAL as usize)
                     && hold.hold.is_interrupted()
@@ -1878,9 +1887,11 @@ where
                 }
                 continue;
             }
-            let id =
-                lane.map_or_else(|| (head.sender(), TxBaseConstants::NONCE_KEY_MAX), |(id, _)| *id);
-            snapshot.push(LaneIterator::new(id, Arc::clone(head), descendants));
+            let (id, tail) = lane.map_or_else(
+                || ((head.sender(), TxBaseConstants::NONCE_KEY_MAX), Vec::new()),
+                |(id, lane)| (*id, lane.pending_descendants()),
+            );
+            snapshot.push(LaneIterator::new(id, Arc::clone(head), tail));
         }
         if let Some(start) = hold_start
             && let Some(hold) = hold.as_mut()
