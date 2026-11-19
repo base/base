@@ -572,6 +572,17 @@ impl RpcCampaign {
     /// nodes only.
     pub const KNOWN_BASE_ID: &str = "base: unreadable id gets no reply";
 
+    /// base/base's first poll of a new block filter includes the head at install time (B2).
+    pub const KNOWN_BASE_BLOCK_FILTER: &str = "base: block filter's first poll includes the head";
+    /// base/base answers -32001 or -32003 (EIP-1474) where the others give -32000, and refuses fee
+    /// fields above 2^128 as invalid params (B4).
+    pub const KNOWN_BASE_ERROR_CODES: &str = "base: EIP-1474 codes and 128-bit fee fields";
+    /// base/base answers eth\_getProof at "pending" with -32001, and its eth\_config lists Base
+    /// precompiles (B5).
+    pub const KNOWN_BASE_PROOF_CONFIG: &str = "base: pending proof and eth_config precompiles";
+    /// base/base accepts a JSON number as a call's `type`.
+    pub const KNOWN_BASE_INTEGER_TYPE: &str = "base: integer type accepted";
+
     /// The known base/base cause, if any, that explains how base answered `case`, with base's
     /// index. The cause's cases are compared on the other nodes only.
     pub fn known_base_cause(
@@ -611,7 +622,54 @@ impl RpcCampaign {
         {
             return Some((Self::KNOWN_BASE_ID, base));
         }
-        None
+        // The rest need the other nodes agreeing against base.
+        let theirs = &others[0].1;
+        if theirs == reference || others.iter().any(|(_, v)| v != theirs) {
+            return None;
+        }
+        let code = |v: &Value| v["error"]["code"].as_i64();
+        let ok = |v: &Value| v.get("result").is_some();
+        let body: Value = serde_json::from_str(&case.body).unwrap_or_default();
+        let params = &body["params"];
+        let nm_message = replies.iter().find_map(|(name, reply)| match reply {
+            Reply::Body(body) if name == "nethermind" => body["error"]["message"].as_str(),
+            _ => None,
+        });
+        // "invalid argument N" for the last parameter, beyond what the method takes.
+        let last_argument = params.as_array().is_some_and(|p| {
+            p.len() > 1 && nm_message == Some(format!("invalid argument {}", p.len() - 1).as_str())
+        });
+        let wide_fee = Self::any_object(params, &|o| {
+            o.iter().any(|(key, v)| {
+                (key.contains("Fee") || key == "gasPrice")
+                    && v.as_str().is_some_and(|s| s.len() > 34)
+            })
+        });
+        let cause = if case.method == "eth_getFilterChanges"
+            && case.body.contains("eth_newBlockFilter")
+            && ok(reference)
+        {
+            Self::KNOWN_BASE_BLOCK_FILTER
+        } else if matches!(code(reference), Some(-32001 | -32003)) && code(theirs) == Some(-32000)
+            || code(reference) == Some(-32602) && wide_fee
+        {
+            Self::KNOWN_BASE_ERROR_CODES
+        } else if case.method == "eth_config"
+            || case.method == "eth_getProof"
+                && Self::strings(params).contains(&"pending")
+                && code(reference) == Some(-32001)
+        {
+            Self::KNOWN_BASE_PROOF_CONFIG
+        } else if code(theirs) == Some(-32602)
+            && Self::any_object(params, &|o| o.get("type").is_some_and(Value::is_number))
+        {
+            Self::KNOWN_BASE_INTEGER_TYPE
+        } else if last_argument && code(reference) != Some(-32602) {
+            Self::KNOWN_BASE_EXTRA_PARAMS
+        } else {
+            return None;
+        };
+        Some((cause, base))
     }
 
     /// base/base refuses EIP-1898-style block parameters that Nethermind accepts (a block hash,
@@ -1210,6 +1268,38 @@ mod tests {
         let parse = json!({"id":null,"error":{"code":-32700}});
         assert_eq!(known(&with_id(json!(1.5)), &parse, ""), Some(RpcCampaign::KNOWN_BASE_ID));
         assert_eq!(known(&with_id(json!(1)), &empty, ""), None);
+
+        // Tracked base differences: needlefish and Nethermind agree against base.
+        let classify = |case: &RpcCase, base: Value, other: Value, message: &str| {
+            let mut nm = other.clone();
+            if let Some(error) = nm.get_mut("error") {
+                error["message"] = json!(message);
+            }
+            let raw = vec![
+                ("nethermind".to_owned(), Reply::Body(nm)),
+                ("base".to_owned(), Reply::Body(base.clone())),
+                ("needlefish".to_owned(), Reply::Body(other.clone())),
+            ];
+            RpcCampaign::known_base_cause(case, &raw, &replies(&base, &other)).map(|(c, _)| c)
+        };
+        let server = json!({"id":1,"error":{"code":-32000}});
+        let not_found = json!({"id":1,"error":{"code":-32001}});
+        assert_eq!(
+            classify(&latest, not_found.clone(), server, ""),
+            Some(RpcCampaign::KNOWN_BASE_ERROR_CODES)
+        );
+        assert_eq!(classify(&latest, not_found, invalid.clone(), ""), None);
+        let typed = RpcCase::new("call", "eth_call", json!([{"type": 0}, "latest"]));
+        assert_eq!(
+            classify(&typed, ok.clone(), invalid.clone(), "invalid argument 0"),
+            Some(RpcCampaign::KNOWN_BASE_INTEGER_TYPE)
+        );
+        let extra = RpcCase::new("call", "eth_createAccessList", json!([{}, "safe", {}, {}]));
+        assert_eq!(
+            classify(&extra, ok.clone(), invalid.clone(), "invalid argument 3"),
+            Some(RpcCampaign::KNOWN_BASE_EXTRA_PARAMS)
+        );
+        assert_eq!(classify(&extra, ok, invalid, "invalid argument 0"), None);
     }
 
     #[test]
