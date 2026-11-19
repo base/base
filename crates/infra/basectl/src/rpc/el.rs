@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    ops::{ControlFlow, RangeInclusive},
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use alloy_consensus::Transaction;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
@@ -8,17 +12,25 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
+use base_common_consensus::{HoloceneExtraData, JovianExtraData};
+use base_common_genesis::DenimTimestampSchedule;
 use base_common_network::Base;
 use futures::{StreamExt, stream};
-use tokio::sync::mpsc;
-use tracing::warn;
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Instant,
+};
+use tracing::{debug, warn};
 use url::Url;
 
-use super::fetch_safe_and_latest;
+use super::{ConnectionMode, fetch_safe_and_latest};
 use crate::tui::Toast;
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
-const LATEST_HEAD_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const STALLED_FETCH_TOAST_INTERVAL: Duration = Duration::from_secs(30);
+const BACKLOG_SETUP_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+/// Attempts to read the safe and latest heads before giving up on the backlog.
+const BACKLOG_SETUP_ATTEMPTS: u32 = 3;
 
 /// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
 ///
@@ -75,16 +87,37 @@ async fn connect_l2_provider(rpc: &Url) -> Result<impl Provider<Base>> {
 }
 
 /// DA and gas information for a single L2 block.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BlockDaInfo {
     /// L2 block number.
     pub block_number: u64,
-    /// Total DA bytes from all transactions.
+    /// EIP-2718 encoded bytes of the non-deposit transactions the batcher must post.
     pub da_bytes: u64,
     /// Unix timestamp of the block.
     pub timestamp: u64,
     /// Number of transactions in the block.
     pub tx_count: usize,
+    /// Gas used by the block.
+    pub gas_used: u64,
+    /// Block gas limit.
+    pub gas_limit: u64,
+    /// Base fee per gas in wei, if the block has one.
+    pub base_fee_per_gas: Option<u64>,
+    /// EIP-1559 elasticity multiplier from the header's Holocene or Jovian `extra_data`.
+    pub eip1559_elasticity: Option<u32>,
+    /// EIP-1559 base fee max change denominator from the header's `extra_data`.
+    pub eip1559_denominator: Option<u32>,
+}
+
+impl BlockDaInfo {
+    /// Returns the age of this block in seconds since its timestamp.
+    pub fn age_seconds(&self) -> u64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(self.timestamp)
+    }
 }
 
 /// Summary of the initial DA backlog between safe and latest blocks.
@@ -105,92 +138,324 @@ pub struct BacklogProgress {
     pub total_blocks: u64,
 }
 
-/// Individual block data from backlog fetch.
-#[derive(Debug, Clone)]
-pub struct BacklogBlock {
-    /// L2 block number.
-    pub block_number: u64,
-    /// DA bytes contributed by this block.
-    pub da_bytes: u64,
-    /// Unix timestamp of the block.
-    pub timestamp: u64,
-}
-
 /// Result of initial backlog fetch - either progress or complete.
 #[derive(Debug, Clone)]
 pub enum BacklogFetchResult {
     /// Incremental progress update.
     Progress(BacklogProgress),
     /// A single fetched block.
-    Block(BacklogBlock),
-    /// Backlog fetch completed successfully.
+    Block(BlockDaInfo),
+    /// Backlog fetch completed. Every block in the range is included except any
+    /// whose response could not be decoded, which are logged and skipped.
     Complete(InitialBacklog),
-    /// Backlog fetch failed.
-    Error,
+    /// The safe and latest heads could not be read after
+    /// [`BACKLOG_SETUP_ATTEMPTS`] tries (for example a node with no safe head), so
+    /// DA tracking starts from live blocks only.
+    Unavailable,
 }
 
-/// Fetches a single L2 block and returns its number, DA bytes, and timestamp.
+/// First delay before retrying an L2 block fetch; it doubles up to [`BLOCK_FETCH_MAX_DELAY`].
+/// Public RPCs rate limit bursts, and a load-balanced node can briefly lag the
+/// head that was announced.
+const BLOCK_FETCH_MIN_DELAY: Duration = Duration::from_millis(250);
+/// Longest delay between attempts to fetch one L2 block.
+const BLOCK_FETCH_MAX_DELAY: Duration = Duration::from_secs(4);
+/// Failed attempts after which a block fetch counts as stalled (about 8 seconds).
+const BLOCK_FETCH_STALL_ATTEMPTS: u32 = 5;
+
+/// Fetches a single L2 block and summarizes its DA and gas usage.
 ///
-/// Returns `None` if the RPC call fails or the block does not exist.
+/// DA totals are only correct when no block is skipped, so RPC errors and
+/// not-yet-visible blocks are retried with backoff until the fetch succeeds.
+/// `on_stall` runs once if the block is still failing after
+/// [`BLOCK_FETCH_STALL_ATTEMPTS`] attempts. Returns `None` only when the
+/// response cannot be decoded, which retrying would not fix.
 async fn fetch_raw_block_info<P: Provider<Base>>(
     provider: &P,
     block_num: u64,
+    on_stall: &(dyn Fn() + Sync),
 ) -> Option<BlockDaInfo> {
-    let block =
-        provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await.ok()??;
+    let mut delay = BLOCK_FETCH_MIN_DELAY;
+    let mut attempts = 0u32;
+    let block = loop {
+        match provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await {
+            Ok(Some(block)) => break block,
+            Ok(None) => debug!(block = block_num, "L2 block not found yet"),
+            Err(error) if error.is_deser_error() || error.is_ser_error() => {
+                warn!(error = %error, block = block_num, "Skipping L2 block that cannot be decoded");
+                return None;
+            }
+            Err(error) => debug!(error = %error, block = block_num, "L2 block fetch failed"),
+        }
+        attempts += 1;
+        if attempts == BLOCK_FETCH_STALL_ATTEMPTS {
+            warn!(block = block_num, "L2 block fetch still failing; retrying");
+            on_stall();
+        }
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(BLOCK_FETCH_MAX_DELAY);
+    };
 
-    let da_bytes: u64 =
-        block.transactions.txns().map(|tx| tx.inner.inner.encode_2718_len() as u64).sum();
+    // Deposits are derived from L1, so the batcher never posts them.
+    let da_bytes: u64 = block
+        .transactions
+        .txns()
+        .filter(|tx| !tx.inner.inner.is_deposit())
+        .map(|tx| tx.inner.inner.encode_2718_len() as u64)
+        .sum();
+
+    // The header holds the parameters the L2 actually applied, which can differ
+    // from the L1 `SystemConfig` values (Denim scaled them once at activation).
+    let extra_data = &block.header.extra_data;
+    let eip1559_params = JovianExtraData::decode(extra_data)
+        .map(|(elasticity, denominator, _)| (elasticity, denominator))
+        .or_else(|_| HoloceneExtraData::decode(extra_data))
+        .ok();
 
     Some(BlockDaInfo {
         block_number: block_num,
         da_bytes,
         timestamp: block.header.timestamp,
         tx_count: block.transactions.len(),
+        gas_used: block.header.gas_used,
+        gas_limit: block.header.gas_limit,
+        base_fee_per_gas: block.header.base_fee_per_gas,
+        eip1559_elasticity: eip1559_params.map(|(elasticity, _)| elasticity),
+        eip1559_denominator: eip1559_params.map(|(_, denominator)| denominator),
     })
 }
 
-/// Polls the latest L2 block number and requests every newly produced block.
-///
-/// Each block number from the previously seen head (exclusive) to the current
-/// head (inclusive) is sent on `request_tx`, so a consumer such as
-/// [`run_block_fetcher`] sees every block exactly once and in order. The first
-/// poll only requests the current head.
-pub async fn run_latest_head_poller(
-    l2_rpc: String,
-    request_tx: mpsc::Sender<u64>,
-    toast_tx: mpsc::Sender<Toast>,
-) {
-    let provider = match ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .network::<Base>()
-        .connect(&l2_rpc)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            warn!(error = %e, "Failed to connect to L2 RPC for latest head polling");
-            let _ = toast_tx.try_send(Toast::warning("Latest head poller connection failed"));
-            return;
-        }
-    };
+/// Tracks the newest L2 head seen so each block number is requested once, in order.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct HeadCursor {
+    last_seen: Option<u64>,
+}
 
-    let mut interval = tokio::time::interval(LATEST_HEAD_POLL_INTERVAL);
-    let mut last_seen: Option<u64> = None;
-    loop {
-        interval.tick().await;
-        let Ok(latest) = provider.get_block_number().await else { continue };
-        let first = last_seen.map_or(latest, |seen| seen + 1);
-        for block_num in first..=latest {
-            if request_tx.send(block_num).await.is_err() {
-                return;
-            }
+impl HeadCursor {
+    /// Treats `block` as already seen when no head has been, so the next head
+    /// requests everything after it. Does nothing once a head has been seen.
+    pub const fn start_after(&mut self, block: u64) {
+        if self.last_seen.is_none() {
+            self.last_seen = Some(block);
         }
-        last_seen = Some(last_seen.map_or(latest, |seen| seen.max(latest)));
+    }
+
+    /// Returns the block numbers to request for a newly observed head and advances past it.
+    ///
+    /// The first head requests only itself, a head that skips ahead also requests the
+    /// skipped blocks, and a head at or below the newest seen requests nothing.
+    pub fn advance(&mut self, head: u64) -> RangeInclusive<u64> {
+        let first = self.last_seen.map_or(head, |seen| seen + 1);
+        self.last_seen = Some(self.last_seen.map_or(head, |seen| seen.max(head)));
+        first..=head
     }
 }
 
-/// Fetches DA info for requested block numbers and sends results back.
+/// Follows new L2 heads and requests each new block number from [`run_block_fetcher`].
+///
+/// Prefers an `eth_subscribe("newHeads")` WebSocket subscription. When the
+/// WebSocket is unavailable or drops, it polls `eth_blockNumber` over HTTP at
+/// the block interval and retries the WebSocket every [`Self::WS_RETRY_INTERVAL`].
+/// A shared [`HeadCursor`] backfills any blocks missed across reconnects. The
+/// feed also requests every block between the initial backlog's latest block
+/// and its own first head, so none fall between the two.
+#[derive(Debug)]
+pub struct L2HeadFeed {
+    /// WebSocket endpoint to subscribe on, if any.
+    pub ws_url: Option<Url>,
+    /// HTTP endpoint polled while the WebSocket is unavailable.
+    pub http_url: Url,
+    /// Receives each new block number.
+    pub request_tx: mpsc::Sender<u64>,
+    /// Receives the connection mode whenever it changes.
+    pub mode_tx: mpsc::Sender<ConnectionMode>,
+    /// Receives user-facing connection notices.
+    pub toast_tx: mpsc::Sender<Toast>,
+    cursor: HeadCursor,
+    backlog_head_rx: Option<oneshot::Receiver<u64>>,
+    first_head: Option<u64>,
+    mode: Option<ConnectionMode>,
+}
+
+impl L2HeadFeed {
+    /// HTTP polling cadence, matching the Denim block interval.
+    pub const POLL_INTERVAL: Duration =
+        Duration::from_millis(DenimTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS);
+    /// Longest delay between HTTP polls after consecutive failures.
+    pub const MAX_POLL_BACKOFF: Duration = Duration::from_secs(5);
+    /// Longest wait for the next head on an open WebSocket (50 Denim block intervals)
+    /// before treating the connection as dead.
+    pub const WS_HEAD_TIMEOUT: Duration = Duration::from_secs(10);
+    /// Upper bound on establishing the WebSocket before falling back to polling.
+    pub const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+    /// How long to poll over HTTP before trying the WebSocket again.
+    pub const WS_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+
+    /// Creates a feed that has not seen any head yet. `backlog_head_rx` receives
+    /// the latest block the initial backlog covers.
+    pub fn new(
+        ws_url: Option<Url>,
+        http_url: Url,
+        request_tx: mpsc::Sender<u64>,
+        mode_tx: mpsc::Sender<ConnectionMode>,
+        toast_tx: mpsc::Sender<Toast>,
+        backlog_head_rx: oneshot::Receiver<u64>,
+    ) -> Self {
+        Self {
+            ws_url,
+            http_url,
+            request_tx,
+            mode_tx,
+            toast_tx,
+            cursor: HeadCursor::default(),
+            backlog_head_rx: Some(backlog_head_rx),
+            first_head: None,
+            mode: None,
+        }
+    }
+
+    /// Runs until the block request receiver is dropped.
+    pub async fn run(mut self) {
+        loop {
+            if let Some(ws_url) = self.ws_url.clone()
+                && self.follow_ws(&ws_url).await.is_break()
+            {
+                return;
+            }
+            let retry_ws_at =
+                self.ws_url.is_some().then(|| Instant::now() + Self::WS_RETRY_INTERVAL);
+            if self.poll_http(retry_ws_at).await.is_break() {
+                return;
+            }
+        }
+    }
+
+    async fn follow_ws(&mut self, ws_url: &Url) -> ControlFlow<()> {
+        let connect = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect(ws_url.as_str());
+        let provider = match tokio::time::timeout(Self::WS_CONNECT_TIMEOUT, connect).await {
+            Ok(Ok(provider)) => provider,
+            Ok(Err(error)) => {
+                debug!(error = %error, url = %ws_url, "L2 WebSocket connection failed");
+                return ControlFlow::Continue(());
+            }
+            Err(_) => {
+                debug!(url = %ws_url, "L2 WebSocket connection timed out");
+                return ControlFlow::Continue(());
+            }
+        };
+        let subscription = match provider.subscribe_blocks().await {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                warn!(error = %error, url = %ws_url, "L2 newHeads subscription failed");
+                return ControlFlow::Continue(());
+            }
+        };
+
+        self.set_mode(ConnectionMode::WebSocket).await;
+        let mut heads = subscription.into_stream();
+        loop {
+            match tokio::time::timeout(Self::WS_HEAD_TIMEOUT, heads.next()).await {
+                Ok(Some(header)) => self.request(header.number).await?,
+                Ok(None) => {
+                    warn!(url = %ws_url, "L2 WebSocket stream ended");
+                    break;
+                }
+                // A half-open socket or a proxy that stops forwarding never closes the stream.
+                Err(_) => {
+                    warn!(url = %ws_url, "No L2 head over WebSocket; falling back to polling");
+                    break;
+                }
+            }
+        }
+        let _ = self.toast_tx.try_send(Toast::warning("L2 WebSocket disconnected"));
+        ControlFlow::Continue(())
+    }
+
+    /// Polls until `until`, or forever when it is `None`.
+    async fn poll_http(&mut self, until: Option<Instant>) -> ControlFlow<()> {
+        let provider = match ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect(self.http_url.as_str())
+            .await
+        {
+            Ok(provider) => provider,
+            Err(error) => {
+                warn!(error = %error, url = %self.http_url, "L2 RPC connection failed");
+                let _ = self.toast_tx.try_send(Toast::warning("L2 head feed connection failed"));
+                tokio::time::sleep(Self::WS_RETRY_INTERVAL).await;
+                return ControlFlow::Continue(());
+            }
+        };
+
+        self.set_mode(ConnectionMode::Polling).await;
+        let mut delay = Self::POLL_INTERVAL;
+        while until.is_none_or(|until| Instant::now() < until) {
+            tokio::time::sleep(delay).await;
+            match provider.get_block_number().await {
+                Ok(head) => {
+                    delay = Self::POLL_INTERVAL;
+                    self.request(head).await?;
+                }
+                // Back off so a rate-limited endpoint can recover instead of being hammered.
+                Err(error) => {
+                    debug!(error = %error, "L2 head poll failed");
+                    delay = (delay * 2).min(Self::MAX_POLL_BACKOFF);
+                }
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    async fn request(&mut self, head: u64) -> ControlFlow<()> {
+        if let Some(backlog_head_rx) = self.backlog_head_rx.as_mut() {
+            match backlog_head_rx.try_recv() {
+                Ok(backlog_head) => {
+                    self.backlog_head_rx = None;
+                    match self.first_head {
+                        None => self.cursor.start_after(backlog_head),
+                        // The report came after live heads started; fetch any blocks between.
+                        Some(first_head) => {
+                            for block_number in backlog_head.saturating_add(1)..first_head {
+                                if self.request_tx.send(block_number).await.is_err() {
+                                    return ControlFlow::Break(());
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {}
+                Err(oneshot::error::TryRecvError::Closed) => self.backlog_head_rx = None,
+            }
+        }
+        self.first_head.get_or_insert(head);
+        for block_number in self.cursor.advance(head) {
+            if self.request_tx.send(block_number).await.is_err() {
+                return ControlFlow::Break(());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    async fn set_mode(&mut self, mode: ConnectionMode) {
+        if self.mode == Some(mode) {
+            return;
+        }
+        if mode == ConnectionMode::Polling && self.ws_url.is_some() {
+            let _ = self.toast_tx.try_send(Toast::info("L2 head feed fell back to HTTP polling"));
+        }
+        self.mode = Some(mode);
+        let _ = self.mode_tx.send(mode).await;
+    }
+}
+
+/// Fetches DA info for requested block numbers and sends results back in request order.
+///
+/// Up to [`CONCURRENT_BLOCK_FETCHES`] fetches run at once so a remote RPC keeps up
+/// with sub-second blocks.
 pub async fn run_block_fetcher(
     l2_rpc: String,
     mut request_rx: mpsc::Receiver<u64>,
@@ -211,91 +476,103 @@ pub async fn run_block_fetcher(
         }
     };
 
-    while let Some(block_num) = request_rx.recv().await {
-        if let Some(info) = fetch_raw_block_info(&provider, block_num).await
-            && result_tx.send(info).await.is_err()
-        {
+    let last_stall_toast: Mutex<Option<Instant>> = Mutex::new(None);
+    let on_stall = || {
+        let mut last = last_stall_toast.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if last.is_none_or(|at| at.elapsed() >= STALLED_FETCH_TOAST_INTERVAL) {
+            *last = Some(Instant::now());
+            let _ = toast_tx.try_send(Toast::warning("L2 RPC failing or rate limited"));
+        }
+    };
+    let mut fetched = stream::poll_fn(|cx| request_rx.poll_recv(cx))
+        .map(|block_num| fetch_raw_block_info(&provider, block_num, &on_stall))
+        .buffered(CONCURRENT_BLOCK_FETCHES);
+    while let Some(info) = fetched.next().await {
+        let Some(info) = info else {
+            let _ =
+                toast_tx.try_send(Toast::warning("Skipped an L2 block that could not be decoded"));
+            continue;
+        };
+        if result_tx.send(info).await.is_err() {
             break;
         }
     }
 }
 
-/// Fetches the initial DA backlog, sending progress updates and block data.
+/// Fetches every block between the safe and latest heads, sending progress updates
+/// and block data, then [`BacklogFetchResult::Complete`].
+///
+/// Block fetch failures are retried, so `Complete` means the backlog total
+/// includes every decodable block. If the heads cannot be read after
+/// [`BACKLOG_SETUP_ATTEMPTS`] tries, sends [`BacklogFetchResult::Unavailable`].
+/// The latest block it covers goes to `latest_tx` as soon as it is read, so
+/// [`L2HeadFeed`] can start right after it.
 pub async fn fetch_initial_backlog_with_progress(
     l2_rpc: String,
-    progress_tx: tokio::sync::mpsc::Sender<BacklogFetchResult>,
+    progress_tx: mpsc::Sender<BacklogFetchResult>,
+    latest_tx: oneshot::Sender<u64>,
 ) {
-    let result = async {
-        let (safe_block, unsafe_block) = fetch_safe_and_latest(&l2_rpc).await?;
-
-        if unsafe_block <= safe_block {
-            return Ok(InitialBacklog { safe_block, da_bytes: 0 });
-        }
-
-        let total_blocks = unsafe_block - safe_block;
-        let provider = Arc::new(
-            ProviderBuilder::new()
+    let mut attempts = 0u32;
+    let (provider, safe_block, unsafe_block) = loop {
+        let setup = async {
+            let (safe_block, unsafe_block) = fetch_safe_and_latest(&l2_rpc).await?;
+            let provider = ProviderBuilder::new()
                 .disable_recommended_fillers()
                 .network::<Base>()
                 .connect(&l2_rpc)
-                .await?,
-        );
-
-        let block_numbers: Vec<u64> = ((safe_block + 1)..=unsafe_block).collect();
-
-        let mut total_da_bytes: u64 = 0;
-        let mut blocks_fetched: u64 = 0;
-        let mut blocks: Vec<BacklogBlock> = Vec::with_capacity(block_numbers.len());
-
-        let mut fetch_stream = stream::iter(block_numbers)
-            .map(|block_num| {
-                let provider = Arc::clone(&provider);
-                async move {
-                    fetch_raw_block_info(&*provider, block_num).await.map_or(
-                        BacklogBlock { block_number: block_num, da_bytes: 0, timestamp: 0 },
-                        |info| BacklogBlock {
-                            block_number: info.block_number,
-                            da_bytes: info.da_bytes,
-                            timestamp: info.timestamp,
-                        },
-                    )
+                .await?;
+            Ok::<_, anyhow::Error>((provider, safe_block, unsafe_block))
+        };
+        match setup.await {
+            Ok(setup) => break setup,
+            Err(error) => {
+                attempts += 1;
+                if attempts == BACKLOG_SETUP_ATTEMPTS {
+                    warn!(error = %error, "Backlog fetch setup failed; tracking live blocks only");
+                    let _ = progress_tx.send(BacklogFetchResult::Unavailable).await;
+                    return;
                 }
-            })
-            .buffer_unordered(CONCURRENT_BLOCK_FETCHES);
-
-        while let Some(block) = fetch_stream.next().await {
-            total_da_bytes = total_da_bytes.saturating_add(block.da_bytes);
-            blocks.push(block);
-            blocks_fetched += 1;
-
-            if blocks_fetched.is_multiple_of(10) {
-                let _ = progress_tx
-                    .send(BacklogFetchResult::Progress(BacklogProgress {
-                        current_block: blocks_fetched,
-                        total_blocks,
-                    }))
-                    .await;
+                warn!(error = %error, "Backlog fetch setup failed; retrying");
+                tokio::time::sleep(BACKLOG_SETUP_RETRY_INTERVAL).await;
             }
         }
+    };
 
-        blocks.sort_by_key(|b| b.block_number);
-        for block in blocks {
-            let _ = progress_tx.send(BacklogFetchResult::Block(block)).await;
+    let _ = latest_tx.send(unsafe_block);
+
+    let total_blocks = unsafe_block.saturating_sub(safe_block);
+    let mut total_da_bytes: u64 = 0;
+    let mut blocks: Vec<BlockDaInfo> = Vec::with_capacity(total_blocks as usize);
+    let mut blocks_fetched: u64 = 0;
+
+    let mut fetch_stream = stream::iter((safe_block + 1)..=unsafe_block)
+        .map(|block_num| fetch_raw_block_info(&provider, block_num, &|| {}))
+        .buffer_unordered(CONCURRENT_BLOCK_FETCHES);
+
+    while let Some(block) = fetch_stream.next().await {
+        blocks_fetched += 1;
+        if let Some(block) = block {
+            total_da_bytes = total_da_bytes.saturating_add(block.da_bytes);
+            blocks.push(block);
         }
 
-        Ok::<_, anyhow::Error>(InitialBacklog { safe_block, da_bytes: total_da_bytes })
+        if blocks_fetched.is_multiple_of(10) {
+            let _ = progress_tx
+                .send(BacklogFetchResult::Progress(BacklogProgress {
+                    current_block: blocks_fetched,
+                    total_blocks,
+                }))
+                .await;
+        }
     }
-    .await;
 
-    match result {
-        Ok(backlog) => {
-            let _ = progress_tx.send(BacklogFetchResult::Complete(backlog)).await;
-        }
-        Err(e) => {
-            warn!(error = %e, "Backlog fetch failed");
-            let _ = progress_tx.send(BacklogFetchResult::Error).await;
-        }
+    blocks.sort_by_key(|b| b.block_number);
+    for block in blocks {
+        let _ = progress_tx.send(BacklogFetchResult::Block(block)).await;
     }
+    let _ = progress_tx
+        .send(BacklogFetchResult::Complete(InitialBacklog { safe_block, da_bytes: total_da_bytes }))
+        .await;
 }
 
 /// Summary of a single transaction within a block.
@@ -379,7 +656,140 @@ pub async fn fetch_block_transactions(
 
 #[cfg(test)]
 mod tests {
-    use super::effective_priority_fee_per_gas;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use alloy_provider::{Network, ProviderBuilder, mock::Asserter};
+    use base_common_network::Base;
+    use tokio::sync::{mpsc, oneshot};
+    use url::Url;
+
+    use super::{
+        BacklogFetchResult, HeadCursor, L2HeadFeed, effective_priority_fee_per_gas,
+        fetch_initial_backlog_with_progress, fetch_raw_block_info,
+    };
+
+    #[tokio::test]
+    async fn block_fetch_skips_a_block_that_cannot_be_decoded() {
+        let asserter = Asserter::new();
+        let provider =
+            ProviderBuilder::new().network::<Base>().connect_mocked_client(asserter.clone());
+        asserter.push_success(&"not a block");
+
+        assert!(fetch_raw_block_info(&provider, 42, &|| {}).await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn backlog_reports_unavailable_when_heads_cannot_be_read() {
+        let (progress_tx, mut progress_rx) = mpsc::channel(10);
+
+        // Nothing listens on port 1, so every setup attempt fails.
+        let (latest_tx, latest_rx) = tokio::sync::oneshot::channel();
+        fetch_initial_backlog_with_progress(
+            "http://127.0.0.1:1".to_string(),
+            progress_tx,
+            latest_tx,
+        )
+        .await;
+
+        assert!(matches!(progress_rx.recv().await, Some(BacklogFetchResult::Unavailable)));
+        assert!(latest_rx.await.is_err());
+    }
+
+    #[tokio::test]
+    async fn block_fetch_retries_errors_and_missing_blocks_until_it_succeeds() {
+        let asserter = Asserter::new();
+        let provider =
+            ProviderBuilder::new().network::<Base>().connect_mocked_client(asserter.clone());
+        let mut block = <Base as Network>::BlockResponse::default();
+        block.header.inner.inner.number = 42;
+        block.header.inner.inner.gas_used = 21_000;
+        // Jovian extra data: version 1, denominator 1000, elasticity 5, min base fee 5 mwei.
+        let mut extra_data = vec![1];
+        extra_data.extend_from_slice(&1_000u32.to_be_bytes());
+        extra_data.extend_from_slice(&5u32.to_be_bytes());
+        extra_data.extend_from_slice(&5_000_000u64.to_be_bytes());
+        block.header.inner.inner.extra_data = extra_data.into();
+        asserter.push_failure_msg("rate limited");
+        asserter.push_success(&Option::<<Base as Network>::BlockResponse>::None);
+        asserter.push_success(&block);
+
+        let stalls = AtomicU32::new(0);
+        let info = fetch_raw_block_info(&provider, 42, &|| {
+            stalls.fetch_add(1, Ordering::Relaxed);
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(info.block_number, 42);
+        assert_eq!(info.gas_used, 21_000);
+        assert_eq!(info.eip1559_elasticity, Some(5));
+        assert_eq!(info.eip1559_denominator, Some(1_000));
+        assert_eq!(stalls.load(Ordering::Relaxed), 0);
+    }
+
+    fn feed_with_backlog_report() -> (L2HeadFeed, mpsc::Receiver<u64>, oneshot::Sender<u64>) {
+        let (request_tx, request_rx) = mpsc::channel(100);
+        let (mode_tx, _mode_rx) = mpsc::channel(1);
+        let (toast_tx, _toast_rx) = mpsc::channel(1);
+        let (backlog_head_tx, backlog_head_rx) = oneshot::channel();
+        let feed = L2HeadFeed::new(
+            None,
+            Url::parse("http://127.0.0.1:1").unwrap(),
+            request_tx,
+            mode_tx,
+            toast_tx,
+            backlog_head_rx,
+        );
+        (feed, request_rx, backlog_head_tx)
+    }
+
+    fn drain(rx: &mut mpsc::Receiver<u64>) -> Vec<u64> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    #[tokio::test]
+    async fn feed_requests_blocks_between_backlog_and_first_head() {
+        let (mut feed, mut requests, backlog_head_tx) = feed_with_backlog_report();
+        backlog_head_tx.send(100).unwrap();
+
+        assert!(feed.request(103).await.is_continue());
+        assert_eq!(drain(&mut requests), [101, 102, 103]);
+    }
+
+    #[tokio::test]
+    async fn feed_backfills_when_backlog_reports_after_the_first_head() {
+        let (mut feed, mut requests, backlog_head_tx) = feed_with_backlog_report();
+
+        assert!(feed.request(104).await.is_continue());
+        backlog_head_tx.send(100).unwrap();
+        assert!(feed.request(105).await.is_continue());
+
+        assert_eq!(drain(&mut requests), [104, 101, 102, 103, 105]);
+    }
+
+    #[test]
+    fn head_cursor_started_after_the_backlog_fills_the_gap_to_the_first_head() {
+        let mut cursor = HeadCursor::default();
+        cursor.start_after(100);
+        assert_eq!(cursor.advance(104).collect::<Vec<_>>(), [101, 102, 103, 104]);
+
+        // Once a head has been seen, a late backlog report changes nothing.
+        cursor.start_after(50);
+        assert_eq!(cursor.advance(105).collect::<Vec<_>>(), [105]);
+    }
+
+    #[test]
+    fn head_cursor_requests_each_new_block_once_in_order() {
+        let mut cursor = HeadCursor::default();
+        assert_eq!(cursor.advance(100).collect::<Vec<_>>(), [100]);
+        assert_eq!(cursor.advance(101).collect::<Vec<_>>(), [101]);
+        // A skipped head backfills the gap.
+        assert_eq!(cursor.advance(104).collect::<Vec<_>>(), [102, 103, 104]);
+        // Repeated or older heads (reorgs, overlapping sources) request nothing.
+        assert_eq!(cursor.advance(104).count(), 0);
+        assert_eq!(cursor.advance(103).count(), 0);
+        assert_eq!(cursor.advance(105).collect::<Vec<_>>(), [105]);
+    }
 
     #[test]
     fn priority_fee_uses_effective_gas_price_when_base_fee_known() {
