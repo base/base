@@ -5,7 +5,6 @@ use std::{ffi::OsString, iter::Peekable};
 use clap::{
     Arg, ArgAction, ArgMatches, Command, builder::Resettable, error::ErrorKind, parser::ValueSource,
 };
-use tracing::warn;
 
 use crate::config::ChainArg;
 
@@ -13,8 +12,8 @@ use crate::config::ChainArg;
 ///
 /// `base rpc`, `base mempool`, and `base sequencer` flatten the full execution, consensus, and
 /// builder argument sets. Only the curated and advanced flags below are supported: `-h`/`--help` lists the curated
-/// ones, `--help-all` adds the advanced ones, and every other flag is hidden and ignored with a
-/// startup warning, whether it comes from the command line or its environment variable.
+/// ones, `--help-all` adds the advanced ones, and every other flag is hidden and rejected at
+/// startup, whether it comes from the command line or its environment variable.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CliSurface;
 
@@ -114,7 +113,7 @@ impl CliSurface {
     /// memory: the auth port and address are overwritten, no socket or JWT is used between the
     /// two layers, and disabling the auth server would remove the in-memory auth module.
     ///
-    /// These are ignored like any other unsupported flag, with an Engine API specific warning.
+    /// These are rejected like any other unsupported flag, with an Engine API specific reason.
     pub(crate) const UNSUPPORTED: &[&str] = &[
         "authrpc.addr",
         "authrpc.port",
@@ -630,18 +629,26 @@ impl CliSurface {
             })
     }
 
-    /// Removes unsupported flags of a curated node command from `args`, returning the remaining
-    /// arguments and every ignored flag, including unsupported flags whose environment variable is
-    /// set. `command` is the derived command before [`Self::apply`].
-    pub(crate) fn strip_unsupported(
+    /// Returns the name of the curated node command in `args` and every unsupported flag it
+    /// passes, including unsupported flags whose environment variable is set, or `None` when
+    /// there are none. `command` is the derived command before [`Self::apply`].
+    pub(crate) fn unsupported_flags(
         command: &Command,
-        args: Vec<OsString>,
-    ) -> (Vec<OsString>, Vec<IgnoredFlag>) {
+        args: &[OsString],
+    ) -> Option<(&'static str, Vec<UnsupportedFlag>)> {
+        let find_root_arg = |flag: &str| {
+            command.get_arguments().find(|arg| {
+                Self::names("base", arg, flag)
+                    || Self::ROOT_RENAMES.iter().any(|(old, new)| {
+                        arg.get_long() == Some(old) && flag.strip_prefix("--") == Some(new)
+                    })
+            })
+        };
         // ponytail: clustered or attached short flags (`-ab`, `-a1`) reach clap unchanged, so a
         // root flag spelled that way could hide the subcommand. Pre-parse with clap if it matters.
         let mut position = None;
         let mut index = 1;
-        let mut tokens = args[1..].iter().peekable();
+        let mut tokens = args.get(1..)?.iter().peekable();
         while let Some(token) = tokens.next() {
             let text = token.to_string_lossy();
             if text == "--" {
@@ -652,65 +659,86 @@ impl CliSurface {
                 break;
             }
             index += 1;
-            let root_arg = command.get_arguments().find(|arg| {
-                Self::names("base", arg, &text)
-                    || Self::ROOT_RENAMES.iter().any(|(old, new)| {
-                        arg.get_long() == Some(old) && text.strip_prefix("--") == Some(new)
-                    })
-            });
-            if let Some(arg) = root_arg {
+            let (flag, inline_value) =
+                text.split_once('=').map_or((&*text, false), |(f, _)| (f, true));
+            if let Some(arg) = find_root_arg(flag).filter(|_| !inline_value) {
                 index += Self::skip_values(arg, &mut tokens);
             }
         }
-        let Some((position, name)) = position
-            .and_then(|position| Some((position, args[position].to_str()?)))
-            .filter(|(_, name)| Self::CURATED_COMMANDS.contains(name))
-        else {
-            return (args, Vec::new());
-        };
-        let Some(sub) = command.find_subcommand(name) else {
-            return (args, Vec::new());
-        };
-        let unsupported: Vec<(&Arg, String)> = sub
+        let position = position?;
+        let token = args.get(position)?.to_str()?;
+        let name = Self::CURATED_COMMANDS.into_iter().find(|name| *name == token)?;
+        let sub_args: Vec<(&Arg, String, bool)> = command
+            .find_subcommand(name)?
             .get_arguments()
-            .filter_map(|arg| Some((arg, Self::canonical_long(name, arg)?)))
-            .filter(|(_, long)| !Self::supports(name, long))
+            .filter_map(|arg| {
+                let long = Self::canonical_long(name, arg)?;
+                let supported = Self::supports(name, &long);
+                Some((arg, long, supported))
+            })
             .collect();
 
-        let mut ignored: Vec<IgnoredFlag> = unsupported
+        let mut found: Vec<UnsupportedFlag> = sub_args
             .iter()
-            .filter_map(|(arg, long)| {
+            .filter(|(_, _, supported)| !*supported)
+            .filter_map(|(arg, long, _)| {
                 let env = arg.get_env()?;
                 std::env::var_os(env)?;
-                Some(IgnoredFlag {
+                Some(UnsupportedFlag {
                     long: long.clone(),
-                    env: Some(env.to_string_lossy().into_owned()),
+                    source: UnsupportedSource::Env(env.to_string_lossy().into_owned()),
                 })
             })
             .collect();
-        let mut kept = args[..=position].to_vec();
         let mut rest = args[position + 1..].iter().peekable();
         while let Some(token) = rest.next() {
             if token == "--" {
-                kept.push(token.clone());
-                kept.extend(rest.cloned());
                 break;
             }
             let text = token.to_string_lossy();
             let (flag, inline_value) =
                 text.split_once('=').map_or((&*text, false), |(f, _)| (f, true));
-            let Some((arg, long)) =
-                unsupported.iter().find(|(arg, _)| Self::names(name, arg, flag))
-            else {
-                kept.push(token.clone());
-                continue;
-            };
-            ignored.push(IgnoredFlag { long: long.clone(), env: None });
-            if !inline_value {
+            if let Some((arg, long, supported)) =
+                sub_args.iter().find(|(arg, _, _)| Self::names(name, arg, flag))
+            {
+                if !*supported {
+                    let entry = UnsupportedFlag {
+                        long: long.clone(),
+                        source: UnsupportedSource::Cli(flag.to_owned()),
+                    };
+                    if !found.contains(&entry) {
+                        found.push(entry);
+                    }
+                }
+                if !inline_value {
+                    Self::skip_values(arg, &mut rest);
+                }
+            } else if let Some(arg) =
+                find_root_arg(flag).filter(|arg| arg.is_global_set() && !inline_value)
+            {
                 Self::skip_values(arg, &mut rest);
             }
         }
-        (kept, ignored)
+        (!found.is_empty()).then_some((name, found))
+    }
+
+    /// Builds the error that lists every unsupported flag passed to `base <name>`.
+    pub(crate) fn unsupported_error(
+        command: &mut Command,
+        name: &str,
+        flags: &[UnsupportedFlag],
+    ) -> clap::Error {
+        let lines: String =
+            flags.iter().map(|flag| format!("\n  {}", flag.describe(name))).collect();
+        let message = format!(
+            "`base {name}` does not support these flags; remove them:{lines}\n\nRun `base {name} \
+             --help-all` to list supported flags."
+        );
+        command.build();
+        let Some(sub) = command.find_subcommand_mut(name) else {
+            return command.error(ErrorKind::UnknownArgument, message);
+        };
+        sub.error(ErrorKind::UnknownArgument, message)
     }
 
     /// Advances `rest` past the values that `arg` takes after its flag token, and returns how
@@ -726,7 +754,7 @@ impl CliSurface {
         let mut taken = 0;
         while taken < range.max_values()
             && rest.peek().is_some_and(|next| {
-                taken < range.min_values() || !next.to_string_lossy().starts_with('-')
+                arg.is_allow_hyphen_values_set() || !next.to_string_lossy().starts_with('-')
             })
         {
             rest.next();
@@ -759,31 +787,51 @@ impl CliSurface {
     }
 }
 
-/// A flag a curated node command ignored because it is outside the supported surface.
+/// How an unsupported flag was supplied to a curated node command.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IgnoredFlag {
-    /// Long name of the flag.
-    pub(crate) long: String,
-    /// Environment variable that set the flag, or `None` when it came from the command line.
-    pub(crate) env: Option<String>,
+pub(crate) enum UnsupportedSource {
+    /// Passed on the command line under this flag spelling (for example `--rpc.jwtsecret`).
+    Cli(String),
+    /// Set through this environment variable.
+    Env(String),
 }
 
-impl IgnoredFlag {
-    /// Logs that the flag was ignored and why.
-    pub(crate) fn warn(&self) {
-        if CliSurface::UNSUPPORTED.contains(&self.long.as_str()) {
-            warn!(
-                flag = %self.long,
-                env = ?self.env,
-                "ignoring Engine API flag: consensus calls the embedded execution node in memory"
-            );
+/// A flag a curated node command rejects because it is outside the supported surface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnsupportedFlag {
+    /// Canonical long name of the flag after Base renames.
+    pub(crate) long: String,
+    /// Where the flag was supplied.
+    pub(crate) source: UnsupportedSource,
+}
+
+impl UnsupportedFlag {
+    /// Describes the flag for `base <command>`, including where it was set and why it is
+    /// unsupported or which other curated commands support it.
+    pub(crate) fn describe(&self, command: &str) -> String {
+        let canonical = format!("--{}", self.long);
+        let others: Vec<String> = CliSurface::CURATED_COMMANDS
+            .into_iter()
+            .filter(|name| *name != command && CliSurface::supports(name, &self.long))
+            .map(|name| format!("`base {name}`"))
+            .collect();
+        let shown = match &self.source {
+            UnsupportedSource::Env(env) => format!("{canonical} (from env {env})"),
+            UnsupportedSource::Cli(passed)
+                if passed != &canonical && (!passed.starts_with("--") || !others.is_empty()) =>
+            {
+                format!("{passed} ({canonical})")
+            }
+            UnsupportedSource::Cli(passed) => passed.clone(),
+        };
+        let reason = if CliSurface::UNSUPPORTED.contains(&self.long.as_str()) {
+            ": consensus calls the embedded execution node's Engine API in memory".to_owned()
+        } else if others.is_empty() {
+            String::new()
         } else {
-            warn!(
-                flag = %self.long,
-                env = ?self.env,
-                "ignoring unsupported flag; run with --help-all to list supported flags"
-            );
-        }
+            format!(": supported on {}", others.join(" and "))
+        };
+        format!("{shown}{reason}")
     }
 }
 
@@ -799,7 +847,9 @@ mod tests {
 
     const L1_ARGS: [&str; 4] =
         ["--l1.rpc", "http://localhost:8545", "--l1.beacon", "http://localhost:5052"];
-    const ENV_CHILD_TEST: &str = "surface::tests::env_values_never_fail_or_override_cli_child";
+    const ENV_CHILD_TEST: &str = "surface::tests::env_values_set_defaults_but_not_cli_child";
+    const UNSUPPORTED_ENV_CHILD_TEST: &str =
+        "surface::tests::rejects_unsupported_flags_set_through_env_child";
 
     fn curated() -> Command {
         let mut command = CliSurface::apply(BaseCli::command());
@@ -819,6 +869,26 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<BaseCli, clap::Error> {
         BaseCli::try_parse_curated(args.iter().copied().chain(L1_ARGS))
+    }
+
+    fn rejection(args: &[&str]) -> String {
+        let error = parse(args).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument, "{error}");
+        error.to_string()
+    }
+
+    fn run_child(test: &str, env: &[(&str, &str)]) {
+        let output = Process::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--ignored"])
+            .envs(env.iter().copied())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "child env test failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -908,36 +978,37 @@ mod tests {
             "--transaction-event-journal.path",
             "/data/events.jsonl",
         ];
-        assert!(parse(&journal).unwrap().ignored.is_empty());
+        assert!(parse(&journal).is_ok());
         assert!(parse(&["base", "sequencer", "--sequencer.l1-confs", "4"]).is_ok());
     }
 
-    fn ignored(cli: &BaseCli) -> Vec<&str> {
-        cli.ignored.iter().map(|flag| flag.long.as_str()).collect()
-    }
-
     #[test]
-    fn ignores_flags_outside_the_supported_surface() {
-        let cli = parse(&[
+    fn rejects_every_flag_outside_the_supported_surface() {
+        let error = rejection(&[
             "base",
             "rpc",
             "--engine.persistence-threshold",
             "4",
             "--auth-ipc.path=/data/engine.ipc",
             "--disable-dns-discovery",
+            "--disable-dns-discovery",
+            "--rpc.jwtsecret",
+            "/data/jwt.hex",
             "--consensus.rpc.port",
             "9546",
-        ])
-        .unwrap();
-
-        assert_eq!(
-            ignored(&cli),
-            ["engine.persistence-threshold", "auth-ipc.path", "disable-dns-discovery"]
-        );
-        let BaseCommand::Rpc(rpc) = cli.command else {
-            panic!("expected rpc command");
-        };
-        assert_eq!(rpc.consensus.rpc_flags.listen_port, 9546);
+        ]);
+        for flag in [
+            "--engine.persistence-threshold",
+            "--auth-ipc.path",
+            "--disable-dns-discovery",
+            "--rpc.jwtsecret",
+        ] {
+            assert!(error.contains(flag), "{error}");
+        }
+        assert_eq!(error.matches("--disable-dns-discovery").count(), 1, "{error}");
+        assert!(!error.contains("execution.rpc.jwtsecret"), "{error}");
+        assert!(!error.contains("consensus.rpc.port"), "{error}");
+        assert!(error.contains("base rpc --help-all"), "{error}");
     }
 
     #[test]
@@ -954,26 +1025,28 @@ mod tests {
         ]
         .map(OsString::from)
         .into();
-        let (kept, dropped) = CliSurface::strip_unsupported(&BaseCli::command(), consensus.clone());
-        assert_eq!(kept, consensus);
-        assert!(dropped.is_empty());
+        assert!(CliSurface::unsupported_flags(&BaseCli::command(), &consensus).is_none());
 
-        let cli = parse(&[
-            "base",
-            "--logs.file.directory",
-            "rpc",
-            "rpc",
-            "--engine.persistence-threshold",
-            "4",
-        ])
-        .unwrap();
-        assert_eq!(ignored(&cli), ["engine.persistence-threshold"]);
+        let rpc: Vec<OsString> =
+            ["base", "--logs.file.directory", "rpc", "rpc", "--engine.persistence-threshold", "4"]
+                .map(OsString::from)
+                .into();
+        let unsupported = CliSurface::unsupported_flags(&BaseCli::command(), &rpc);
+        let flag = UnsupportedFlag {
+            long: "engine.persistence-threshold".to_owned(),
+            source: UnsupportedSource::Cli("--engine.persistence-threshold".to_owned()),
+        };
+        assert_eq!(unsupported, Some(("rpc", vec![flag])));
+
+        assert!(parse(&["base", "--logs.file.directory=rpc", "rpc"]).is_ok());
+        let error = rejection(&["base", "rpc", "--datadir", "--authrpc.port", "8551"]);
+        assert!(error.contains("--authrpc.port"), "{error}");
     }
 
     #[test]
     fn accepts_flags_operators_set_through_env() {
-        assert!(parse(&["base", "rpc", "--l1.trust-rpc"]).unwrap().ignored.is_empty());
-        let cli = parse(&[
+        parse(&["base", "rpc", "--l1.trust-rpc"]).unwrap();
+        parse(&[
             "base",
             "sequencer",
             "--p2p.signer.endpoint",
@@ -988,7 +1061,6 @@ mod tests {
             "500",
         ])
         .unwrap();
-        assert!(cli.ignored.is_empty(), "{:?}", cli.ignored);
     }
 
     #[test]
@@ -1009,7 +1081,6 @@ mod tests {
             "/data/checkpoint",
         ])
         .unwrap();
-        assert!(cli.ignored.is_empty(), "{:?}", cli.ignored);
         let BaseCommand::Sequencer(sequencer) = cli.command else {
             panic!("expected sequencer command");
         };
@@ -1031,7 +1102,6 @@ mod tests {
             "10",
         ])
         .unwrap();
-        assert!(cli.ignored.is_empty(), "{:?}", cli.ignored);
         let BaseCommand::Mempool(mempool) = cli.command else {
             panic!("expected mempool command");
         };
@@ -1043,8 +1113,8 @@ mod tests {
     }
 
     #[test]
-    fn rpc_ignores_pool_and_forwarding_flags() {
-        let cli = parse(&[
+    fn rpc_rejects_pool_and_forwarding_flags() {
+        let error = rejection(&[
             "base",
             "rpc",
             "--txpool.payer-limit",
@@ -1054,27 +1124,15 @@ mod tests {
             "--enable-tx-forwarding",
             "--builder-rpc-urls",
             "http://builder:8545",
-        ])
-        .unwrap();
-        assert_eq!(
-            ignored(&cli),
-            [
-                "txpool.payer-limit",
-                "txpool.validity-pool-max-count",
-                "tx-forwarding.enabled",
-                "tx-forwarding.builder-urls"
-            ]
-        );
-        let BaseCommand::Rpc(rpc) = cli.command else {
-            panic!("expected rpc command");
-        };
-        assert!(
-            !rpc.execution
-                .into_launch_config(BaseChainSpec::devnet().into())
-                .standard
-                .rpc
-                .enable_tx_forwarding
-        );
+        ]);
+        for line in [
+            "--txpool.payer-limit: supported on `base mempool` and `base sequencer`",
+            "--rollup.validity-pool-max-count (--txpool.validity-pool-max-count): supported on `base mempool` and `base sequencer`",
+            "--enable-tx-forwarding (--tx-forwarding.enabled): supported on `base mempool`",
+            "--builder-rpc-urls (--tx-forwarding.builder-urls): supported on `base mempool`",
+        ] {
+            assert!(error.contains(line), "{error}");
+        }
     }
 
     #[test]
@@ -1152,13 +1210,14 @@ mod tests {
     }
 
     #[test]
-    fn ignores_flags_that_do_not_apply_in_process() {
+    fn rejects_flags_that_do_not_apply_in_process() {
         for (args, flag) in [
-            (&["base", "rpc", "--authrpc.port", "8551"][..], "authrpc.port"),
-            (&["base", "rpc", "--l2-engine-jwt-secret", "/jwt.hex"], "l2-engine-jwt-secret"),
-            (&["base", "sequencer", "--disable-auth-server"], "disable-auth-server"),
+            (&["base", "rpc", "--authrpc.port", "8551"][..], "--authrpc.port"),
+            (&["base", "rpc", "--l2-engine-jwt-secret", "/jwt.hex"], "--l2-engine-jwt-secret"),
+            (&["base", "sequencer", "--disable-auth-server"], "--disable-auth-server"),
         ] {
-            assert_eq!(ignored(&parse(args).unwrap()), [flag]);
+            let error = rejection(args);
+            assert!(error.contains(&format!("{flag}: consensus calls")), "{error}");
         }
     }
 
@@ -1184,29 +1243,21 @@ mod tests {
     }
 
     #[test]
-    fn env_values_never_fail_or_override_cli() {
-        let output = Process::new(std::env::current_exe().unwrap())
-            .args(["--exact", ENV_CHILD_TEST, "--ignored"])
-            .env("BASE_CHAIN", "mainnet")
-            .env("BASE_NODE_L2_ENGINE_AUTH", "/tmp/jwt.hex")
-            .env("BASE_NODE_PORT", "tcp://10.0.0.1:30303")
-            .env("BASE_NODE_L1_RPC_TIMEOUT_MS", "not-a-number")
-            .env("BASE_EXECUTION_RPC_HTTP_PORT_NUMBER", "8600")
-            .env("BASE_EXECUTION_RPC_HTTP_PORT", "tcp://10.0.0.1:8545")
-            .output()
-            .unwrap();
-
-        assert!(
-            output.status.success(),
-            "child env test failed\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+    fn env_values_set_defaults_but_not_cli() {
+        run_child(
+            ENV_CHILD_TEST,
+            &[
+                ("BASE_CHAIN", "mainnet"),
+                ("BASE_NODE_PORT", "tcp://10.0.0.1:30303"),
+                ("BASE_EXECUTION_RPC_HTTP_PORT_NUMBER", "8600"),
+                ("BASE_EXECUTION_RPC_HTTP_PORT", "tcp://10.0.0.1:8545"),
+            ],
         );
     }
 
     #[test]
-    #[ignore = "spawned by env_values_never_fail_or_override_cli with isolated process env"]
-    fn env_values_never_fail_or_override_cli_child() {
+    #[ignore = "spawned by env_values_set_defaults_but_not_cli with isolated process env"]
+    fn env_values_set_defaults_but_not_cli_child() {
         let cli = parse(&["base", "--chain", "sepolia", "rpc"]).unwrap();
         assert_eq!(cli.chain, Some(ChainArg::BuiltIn("sepolia".to_owned())));
 
@@ -1215,13 +1266,36 @@ mod tests {
 
         let cli = parse(&["base", "rpc"]).unwrap();
         assert_eq!(cli.chain, Some(ChainArg::BuiltIn("mainnet".to_owned())));
-        assert!(cli.ignored.contains(&IgnoredFlag {
-            long: "l1.rpc-timeout-ms".to_owned(),
-            env: Some("BASE_NODE_L1_RPC_TIMEOUT_MS".to_owned()),
-        }));
         let BaseCommand::Rpc(rpc) = cli.command else {
             panic!("expected rpc command");
         };
         assert_eq!(rpc.execution.node.rpc.http_port, 8600);
+    }
+
+    #[test]
+    fn rejects_unsupported_flags_set_through_env() {
+        run_child(
+            UNSUPPORTED_ENV_CHILD_TEST,
+            &[
+                ("BASE_NODE_L2_ENGINE_AUTH", "/tmp/jwt.hex"),
+                ("BASE_NODE_L1_RPC_TIMEOUT_MS", "not-a-number"),
+            ],
+        );
+    }
+
+    #[test]
+    #[ignore = "spawned by rejects_unsupported_flags_set_through_env with isolated process env"]
+    fn rejects_unsupported_flags_set_through_env_child() {
+        for help in ["-h", "--help", "--help-all"] {
+            let error = BaseCli::try_parse_curated(["base", "rpc", help]).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::DisplayHelp, "{error}");
+        }
+        let error = rejection(&["base", "rpc"]);
+        for text in [
+            "--l1.rpc-timeout-ms (from env BASE_NODE_L1_RPC_TIMEOUT_MS)",
+            "BASE_NODE_L2_ENGINE_AUTH",
+        ] {
+            assert!(error.contains(text), "{error}");
+        }
     }
 }
