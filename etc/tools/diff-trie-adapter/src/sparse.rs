@@ -68,10 +68,23 @@ where
 }
 
 impl ProofSource for ProofWorkerHandle {
-    /// Queues the targets as the engine does (one storage job per account, one account job)
-    /// and waits for every job's result.
+    /// Queues the targets as the engine does (one storage job per account, one account job),
+    /// chunked as its sparse trie task chunks them (`dispatch_with_chunking`, with the default
+    /// chunk size of 5, and always above 300 targets), and waits for every job's result.
     fn prove(&mut self, targets: MultiProofTargetsV2) -> eyre::Result<Vec<DecodedMultiProofV2>> {
-        let jobs = self.dispatch(targets)?;
+        const CHUNK_SIZE: usize = 5;
+        const MAX_TARGETS_FOR_CHUNKING: usize = 300;
+        let len = targets.chunking_length();
+        let idle =
+            self.has_multiple_idle_account_workers() || self.has_multiple_idle_storage_workers();
+        let chunked =
+            (len > MAX_TARGETS_FOR_CHUNKING || (len >= 2 * CHUNK_SIZE && idle)) && len > CHUNK_SIZE;
+        let chunks: Vec<MultiProofTargetsV2> =
+            if chunked { targets.chunks(CHUNK_SIZE).collect() } else { vec![targets] };
+        let mut jobs = 0;
+        for chunk in chunks {
+            jobs += self.dispatch(chunk)?;
+        }
         (0..jobs).map(|_| Ok(self.results().recv()??)).collect()
     }
 }
