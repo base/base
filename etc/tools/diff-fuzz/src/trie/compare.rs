@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use alloy_primitives::{Bytes, hex};
-use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
+use alloy_primitives::{Bytes, hex, keccak256};
+use alloy_trie::{KECCAK_EMPTY, Nibbles, TrieAccount, proof::verify_proof};
 use serde::Serialize;
 
 use crate::{ProofResult, TrieBlockResult};
@@ -232,6 +232,18 @@ impl TrieCompare {
         for (name, result) in results {
             let Ok(list) = result else { continue };
             for (block, result) in list.iter().enumerate().take(blocks) {
+                if let Some(field) = Self::wrong_code(name, result) {
+                    differences.push(TrieDifference {
+                        field: format!("b{block}.{field}"),
+                        kind: "code".to_owned(),
+                        block,
+                        majority: String::new(),
+                        odd: BTreeMap::from([(
+                            name.clone(),
+                            "code does not match codeHash".to_owned(),
+                        )]),
+                    });
+                }
                 if let Some(field) = Self::invalid_proof(result) {
                     differences.push(TrieDifference {
                         field: format!("b{block}.{field}"),
@@ -245,6 +257,17 @@ impl TrieCompare {
         }
         differences.sort_by(|a, b| a.block.cmp(&b.block).then_with(|| a.field.cmp(&b.field)));
         TrieVerdict { differences }
+    }
+
+    /// The first proof of `result` whose reported code does not hash to its account's code
+    /// hash. needlefish's `disk-deep` stores no codes and reports every code as empty.
+    fn wrong_code(name: &str, result: &TrieBlockResult) -> Option<String> {
+        result.proofs.iter().flatten().enumerate().find_map(|(p, proof)| {
+            let code = proof.code.as_ref()?;
+            let hash = proof.account.as_ref().map_or(KECCAK_EMPTY, |a| a.code_hash);
+            let ok = keccak256(code) == hash || (code.is_empty() && name.ends_with("/disk-deep"));
+            (!ok).then(|| format!("proof{p}.code"))
+        })
     }
 
     /// The first account or storage proof of `result` that does not verify against its own
@@ -303,5 +326,38 @@ mod tests {
         assert_eq!(verdict.differences.len(), 1);
         assert_eq!(verdict.differences[0].block, 1);
         assert_eq!(verdict.signature().as_deref(), Some("stateRoot:nf"));
+    }
+
+    #[test]
+    fn reported_code_must_hash_to_the_code_hash() {
+        let code = Bytes::from_static(&[0x60, 0x00]);
+        let with_code = |code: Bytes| TrieBlockResult {
+            proofs: Some(vec![ProofResult {
+                key: B256::ZERO,
+                account: Some(crate::ProofAccount {
+                    nonce: 1,
+                    balance: Default::default(),
+                    code_hash: keccak256([0x60, 0x00]),
+                    storage_root: alloy_trie::EMPTY_ROOT_HASH,
+                }),
+                account_proof: Vec::new(),
+                storage: Vec::new(),
+                code: Some(code),
+            }]),
+            ..Default::default()
+        };
+        let results = vec![
+            ("nf".to_owned(), Ok(vec![with_code(code)])),
+            ("nf/disk-deep".to_owned(), Ok(vec![with_code(Bytes::new())])),
+            ("nf/disk-small".to_owned(), Ok(vec![with_code(Bytes::new())])),
+            ("nf/memory-history".to_owned(), Ok(vec![with_code(Bytes::from_static(&[0x60]))])),
+        ];
+        let odd: Vec<_> = TrieCompare::compare(1, &results)
+            .differences
+            .iter()
+            .filter(|d| d.kind == "code")
+            .flat_map(|d| d.odd.keys().cloned())
+            .collect();
+        assert_eq!(odd, ["nf/disk-small", "nf/memory-history"]);
     }
 }

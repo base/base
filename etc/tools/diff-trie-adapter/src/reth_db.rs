@@ -474,6 +474,7 @@ impl RethDb {
                     proof: storage.proof,
                 })
                 .collect(),
+            code: None,
         }
     }
 
@@ -569,6 +570,7 @@ impl RethDb {
             }),
             account_proof,
             storage,
+            code: None,
         })
     }
 

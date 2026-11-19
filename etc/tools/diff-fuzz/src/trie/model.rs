@@ -248,6 +248,7 @@ impl TrieModel {
                     }),
                     account_proof,
                     storage,
+                    code: None,
                 }
             })
             .collect();

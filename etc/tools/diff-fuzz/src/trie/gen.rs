@@ -2,7 +2,7 @@
 //! prefixes of every length, so writes and deletes split extensions, collapse branches, embed
 //! short nodes, and empty whole tries.
 
-use alloy_primitives::{Address, B256, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_trie::KECCAK_EMPTY;
 
 use crate::{CaseBlock, Preimages, ProofTarget, Rng, TrieCase, TrieModel, TrieOp};
@@ -237,8 +237,27 @@ impl TrieGen {
             2 => self.rng.u256(),
             _ => U256::from(self.rng.below(1 << 20)),
         };
-        let code_hash = if self.rng.chance(60) { KECCAK_EMPTY } else { self.rng.b256() };
-        TrieOp::account(key, nonce, balance, code_hash)
+        let (code_hash, code) =
+            if self.rng.chance(60) { (KECCAK_EMPTY, None) } else { self.code() };
+        TrieOp::Account { key, nonce, balance, code_hash, address: None, code }
+    }
+
+    /// The largest contract code EIP-170 allows, in bytes.
+    pub const CODE_SIZE_MAX: usize = 24_576;
+
+    /// A non-empty code hash, usually with its code. Codes come from a small fixed pool, so a
+    /// request stays within needlefish's limits of 1024 distinct codes and a mebibyte, and up to
+    /// the EIP-170 size of 24,576 bytes.
+    pub fn code(&mut self) -> (B256, Option<Bytes>) {
+        if self.rng.chance(15) {
+            return (self.rng.b256(), None);
+        }
+        let len = match self.rng.below(16) {
+            0 => [5000, Self::CODE_SIZE_MAX - 1, Self::CODE_SIZE_MAX][self.rng.index(3)],
+            n => n as usize * 3 - 2,
+        };
+        let code: Bytes = (0..len).map(|i| (i as u8).wrapping_mul(31) ^ (len as u8)).collect();
+        (keccak256(&code), Some(code))
     }
 
     fn existing(&mut self, model: &TrieModel) -> Option<B256> {

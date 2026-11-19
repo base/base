@@ -181,10 +181,10 @@ impl TrieMutator {
                             _ => generator.value(),
                         };
                     }
-                    TrieOp::Account { nonce, balance, code_hash, .. } => match rng.below(3) {
+                    TrieOp::Account { nonce, balance, code_hash, code, .. } => match rng.below(3) {
                         0 => *nonce = nonce.wrapping_add(1),
                         1 => *balance = generator.rng.u256() >> rng.below(256),
-                        _ => *code_hash = generator.rng.b256(),
+                        _ => (*code_hash, *code) = generator.code(),
                     },
                     op @ (TrieOp::Wipe { .. } | TrieOp::Delete { .. }) => {
                         *op = generator.account(op.key());

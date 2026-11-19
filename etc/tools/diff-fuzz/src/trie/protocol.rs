@@ -24,6 +24,9 @@ pub enum TrieOp {
         /// Preimage of `key`, when the harness knows it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         address: Option<Address>,
+        /// The code `code_hash` commits to, when the block supplies it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<Bytes>,
     },
     /// Sets storage `slot` of the existing account at `key`; zero clears it.
     Storage {
@@ -61,7 +64,7 @@ pub enum TrieOp {
 impl TrieOp {
     /// An account write without a preimage.
     pub const fn account(key: B256, nonce: u64, balance: U256, code_hash: B256) -> Self {
-        Self::Account { key, nonce, balance, code_hash, address: None }
+        Self::Account { key, nonce, balance, code_hash, address: None, code: None }
     }
 
     /// A storage write without a preimage.
@@ -193,6 +196,10 @@ pub struct ProofResult {
     /// Requested slots, in order.
     #[serde(default)]
     pub storage: Vec<StorageProofResult>,
+    /// The account's code, for implementations that report it: empty for the empty code hash,
+    /// absent when the implementation does not hold it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<Bytes>,
 }
 
 /// What an implementation computed after one block. Every field is optional for variants.
