@@ -3,7 +3,7 @@
 pub mod boot;
 
 mod oracle;
-pub use oracle::BlobStore;
+pub use oracle::{BlobStore, KzgVerifier};
 
 /// FPVM-accelerated precompile providers.
 pub mod precompiles;

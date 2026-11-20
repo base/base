@@ -1,7 +1,9 @@
 //! Custom crypto provider for KZG proof verification.
 
-use kzg_rs::{Bytes32, Bytes48, KzgProof, KzgSettings};
+use kzg_rs::{Bytes32, Bytes48, KzgError, KzgProof, KzgSettings};
 use revm::precompile::{Crypto, PrecompileHalt};
+
+use crate::{KzgVerifier, witness::BlobData};
 
 /// Custom cryptography provider using kzg-rs for KZG proof verification.
 #[derive(Debug)]
@@ -12,6 +14,19 @@ pub struct CustomCrypto {
 impl Default for CustomCrypto {
     fn default() -> Self {
         Self { kzg_settings: KzgSettings::load_trusted_setup_file().unwrap() }
+    }
+}
+
+impl KzgVerifier for CustomCrypto {
+    type Error = KzgError;
+
+    fn verify_blob_kzg_proof_batch(&self, blob_data: BlobData) -> Result<bool, Self::Error> {
+        KzgProof::verify_blob_kzg_proof_batch(
+            blob_data.blobs,
+            blob_data.commitments,
+            blob_data.proofs,
+            &self.kzg_settings,
+        )
     }
 }
 

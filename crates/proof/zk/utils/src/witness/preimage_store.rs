@@ -207,7 +207,10 @@ mod tests {
     use base_protocol::{BatchValidity, BlockInfo, L2BlockInfo, SpanBatch, SpanBatchElement};
 
     use super::*;
-    use crate::witness::{BlobData, DefaultWitnessData, WitnessData};
+    use crate::{
+        precompiles::CustomCrypto,
+        witness::{BlobData, DefaultWitnessData, WitnessData},
+    };
 
     struct OverlappingSpanBatch {
         witness: PreimageStore,
@@ -297,7 +300,7 @@ mod tests {
         fn check_prefix_through_guest_oracle(self) -> BatchValidity {
             block_on(async {
                 let (oracle, _) = DefaultWitnessData::from_parts(self.witness, BlobData::default())
-                    .get_oracle_and_blob_provider()
+                    .get_oracle_and_blob_provider::<CustomCrypto>()
                     .await
                     .unwrap();
                 let config = Arc::new(self.config);
