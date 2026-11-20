@@ -18,6 +18,5 @@ workspace = true
 [dependencies]
 eyre.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
-reth-node-core = { workspace = true, features = ["otlp"] }
 base-cli-utils = { workspace = true, features = ["otlp"] }
 base-challenger = { workspace = true, features = ["metrics"] }

@@ -7,8 +7,7 @@ mod cli;
 
 #[tokio::main]
 async fn main() {
-    let _ = reth_node_core::args::DefaultTraceValues::default()
-        .with_service_name("base-proposer")
-        .try_init();
+    let _ =
+        base_cli_utils::DefaultTraceValues::default().with_service_name("base-proposer").try_init();
     base_cli_utils::run_cli_main!(async cli::Cli);
 }

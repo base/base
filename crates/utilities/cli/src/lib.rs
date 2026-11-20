@@ -27,6 +27,9 @@ pub use logging::{
 mod tracing;
 pub use tracing::{LogfmtFormatter, init_test_tracing};
 
+mod trace_args;
+pub use trace_args::{DefaultTraceValues, OtlpProtocol, TraceArgs};
+
 mod version;
 pub use version::Version;
 

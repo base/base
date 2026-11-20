@@ -1,8 +1,8 @@
 //! CLI definition for the challenger binary.
 
+use base_cli_utils::TraceArgs;
 use clap::Parser;
 use eyre::WrapErr;
-use reth_node_core::args::TraceArgs;
 
 /// Base Challenger.
 #[derive(Parser)]

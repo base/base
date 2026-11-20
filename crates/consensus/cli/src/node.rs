@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::Address;
 use alloy_rpc_types_engine::JwtSecret;
-use base_cli_utils::{LogConfig, RuntimeManager};
+use base_cli_utils::{LogConfig, RuntimeManager, TraceArgs};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::PayloadReady;
@@ -19,7 +19,6 @@ use base_upgrade_signal::{
 };
 use clap::Args;
 use eyre::Context;
-use reth_node_core::args::TraceArgs;
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;

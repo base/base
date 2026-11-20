@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_primitives::{Address, B256};
-use base_cli_utils::{LogConfig, RuntimeManager};
+use base_cli_utils::{LogConfig, RuntimeManager, TraceArgs};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_common_chains::rollup_config;
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -35,7 +35,6 @@ use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::{Parser, Subcommand};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use eyre::eyre;
-use reth_node_core::args::TraceArgs;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tokio_util::sync::CancellationToken;
 #[cfg(any(target_os = "linux", feature = "local"))]
