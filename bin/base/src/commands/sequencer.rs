@@ -18,7 +18,6 @@ use base_execution_cli::{
 };
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventGate};
-use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
     TxPoolRpcExtension,
@@ -103,10 +102,9 @@ impl SequencerCommand {
             transaction_events.enabled.then(|| transaction_events.writer_config()),
             transaction_event_gate.clone(),
         )?;
-        // Build the shadow-indexer config before `into_builder_config` consumes `builder`. The
-        // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
-        // ExEx is installed unconditionally and no-ops for non-shadow sequencers.
-        let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder.shadow_indexer)?;
+        // Validate and clone shadow-indexer args before `into_builder_config` consumes `builder`.
+        builder.shadow_indexer.validate()?;
+        let shadow_indexer_args = builder.shadow_indexer.clone();
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -152,7 +150,10 @@ impl SequencerCommand {
                     ..Default::default()
                 },
             );
-            runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
+            StandardBaseRethNode::install_shadow_indexer_extension(
+                &mut runner,
+                &shadow_indexer_args,
+            )?;
             StandardBaseRethNode::install_upgrade_signal_runtime_extension(
                 &mut runner,
                 &rollup_args,
@@ -281,8 +282,6 @@ mod tests {
 
     #[test]
     fn parses_shadow_indexer_args_and_builds_config() {
-        use base_shadow_indexer::ShadowIndexerConfig;
-
         let cli = BaseCli::parse_from(sequencer_args(&[
             "base",
             "sequencer",
@@ -300,9 +299,16 @@ mod tests {
         };
 
         assert!(sequencer.builder.shadow_indexer.enable_shadow_indexer);
-        let config = ShadowIndexerConfig::try_from(&sequencer.builder.shadow_indexer)
-            .expect("shadow indexer config should build from valid args");
-        assert!(config.enabled);
+        let result = sequencer.builder.shadow_indexer.validate();
+        #[cfg(feature = "shadow-indexer")]
+        result.expect("shadow indexer config should build from valid args");
+        #[cfg(not(feature = "shadow-indexer"))]
+        assert!(
+            result
+                .expect_err("should require shadow-indexer feature")
+                .to_string()
+                .contains("--features shadow-indexer")
+        );
     }
 
     #[test]

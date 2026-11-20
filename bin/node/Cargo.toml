@@ -31,6 +31,7 @@ clap.workspace = true
 default = [ "asm-keccak", "jemalloc", "keccak-cache-global" ]
 asm-keccak = [ "base-execution-cli/asm-keccak" ]
 keccak-cache-global = [ "base-execution-cli/keccak-cache-global" ]
+shadow-indexer = [ "base-execution-cli/shadow-indexer" ]
 jemalloc = [ "base-execution-cli/jemalloc", "reth-cli-util/jemalloc" ]
 jemalloc-prof = [
 	"base-execution-cli/jemalloc-symbols",
