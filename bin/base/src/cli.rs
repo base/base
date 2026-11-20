@@ -1,7 +1,6 @@
-use base_cli_utils::{LogConfig, MetricsConfig};
+use base_cli_utils::{LogConfig, MetricsConfig, TraceArgs};
 use clap::Parser;
 use eyre::WrapErr;
-use reth_node_core::args::TraceArgs;
 
 use crate::{
     commands::BaseCommand,

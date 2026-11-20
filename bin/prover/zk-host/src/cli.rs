@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_cli_utils::{LogConfig, RuntimeManager};
+use base_cli_utils::{LogConfig, RuntimeManager, TraceArgs};
 use base_proof_worker::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
 };
@@ -15,7 +15,6 @@ use base_proof_zk_host::{
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::Parser;
 use eyre::WrapErr;
-use reth_node_core::args::TraceArgs;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use url::Url;

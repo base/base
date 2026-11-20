@@ -4,7 +4,7 @@ use std::{num::ParseIntError, sync::Arc, time::Duration};
 
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
-use base_cli_utils::{LogConfig, RuntimeManager};
+use base_cli_utils::{LogConfig, RuntimeManager, TraceArgs};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_engine::EngineEndpoint;
@@ -14,7 +14,6 @@ use base_consensus_node::{
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use clap::Args;
-use reth_node_core::args::TraceArgs;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use url::Url;
