@@ -16,7 +16,7 @@ anyhow = { workspace = true }
 sp1-sdk = { workspace = true }
 tracing = { workspace = true }
 base-l1-head = { workspace = true }
-alloy-provider = { workspace = true }
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-rpc-types = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-contracts = { workspace = true }

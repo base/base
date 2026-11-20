@@ -25,7 +25,9 @@ base-common-chains = { workspace = true, features = ["abi"] }
 base-common-network = { workspace = true }
 base-upgrade-signal = { workspace = true }
 base-proof-contracts = { workspace = true }
-alloy-transport-http = { workspace = true }
+alloy-transport-http = { workspace = true, features = ["reqwest", "traceparent"] }
+reqwest = { workspace = true, features = ["charset", "http2", "json", "rustls-no-provider", "system-proxy"] }
+rustls = { workspace = true, features = ["ring"] }
 alloy-rpc-types-txpool = { workspace = true }
 base-prover-service-client = { workspace = true }
 base-prover-service-protocol = { workspace = true }
@@ -51,7 +53,7 @@ alloy-consensus = { workspace = true, features = ["std", "k256"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 base-proof-submission = { workspace = true, features = ["snark-receipt"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
-alloy-provider = { workspace = true, features = ["admin-api", "net-api", "pubsub", "txpool-api", "ws"] }
+alloy-provider = { workspace = true, features = ["admin-api", "net-api", "pubsub", "reqwest", "txpool-api", "ws-ring"] }
 
 [dev-dependencies]
 rstest = { workspace = true }

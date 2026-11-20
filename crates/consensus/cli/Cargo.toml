@@ -17,7 +17,7 @@ base-cli-utils.workspace = true
 base-common-network.workspace = true
 base-common-rpc-types-engine.workspace = true
 base-jwt = { workspace = true, features = ["engine-validation"] }
-base-upgrade-signal = { workspace = true, features = ["metrics"] }
+base-upgrade-signal = { workspace = true, features = ["metrics", "reader"] }
 
 # consensus
 base-protocol.workspace = true
@@ -41,14 +41,14 @@ base-retry.workspace = true
 # alloy
 alloy-signer.workspace = true
 alloy-genesis.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-chains = { workspace = true, features = ["std"] }
 
 # networking
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["charset", "default-tls", "http2", "system-proxy"] }
 discv5 = { workspace = true, features = ["libp2p"] }
 libp2p = { workspace = true, features = ["secp256k1", "macros", "tokio", "tcp", "noise", "gossipsub", "ping", "yamux", "identify"] }
 

@@ -128,7 +128,7 @@ impl TelemetryClient {
 
     /// Creates a telemetry client with a timeout longer than the backend probe deadline.
     pub fn new(base_url: Url) -> Result<Self, TelemetryClientError> {
-        let http = reqwest::Client::builder().timeout(TELEMETRY_REQUEST_TIMEOUT).build()?;
+        let http = crate::http_client_builder().timeout(TELEMETRY_REQUEST_TIMEOUT).build()?;
         Ok(Self { base_url, http })
     }
 

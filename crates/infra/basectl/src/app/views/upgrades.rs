@@ -1870,7 +1870,7 @@ async fn run_admin_activity_streaming(
                     return;
                 }
             };
-            let http_client = match alloy_transport_http::reqwest::Client::builder()
+            let http_client = match crate::http_client_builder()
                 .timeout(Duration::from_secs(12))
                 .build()
             {

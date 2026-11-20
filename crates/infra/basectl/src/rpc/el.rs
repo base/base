@@ -75,7 +75,7 @@ pub async fn fetch_l2_block_number(rpc: &Url) -> Result<u64> {
 }
 
 async fn connect_l2_provider(rpc: &Url) -> Result<impl Provider<Base>> {
-    let http_client = alloy_transport_http::reqwest::Client::builder()
+    let http_client = crate::http_client_builder()
         .timeout(Duration::from_secs(10))
         .build()
         .with_context(|| format!("building L2 HTTP client for {rpc}"))?;

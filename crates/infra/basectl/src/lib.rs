@@ -27,6 +27,21 @@ pub use commands::{
 mod p2p_record;
 pub(crate) use p2p_record::{BootNode, NodeRecord};
 
+/// Installs the `ring` rustls crypto provider once per process.
+///
+/// `reqwest` is compiled with `rustls-no-provider` so `basectl` links only `ring` (never
+/// `aws-lc-sys`). Calling this before constructing an HTTP client guarantees both the CLI binary
+/// and library/test callers have an active default provider.
+pub(crate) fn ensure_rustls_ring() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+/// Returns a `reqwest::ClientBuilder` after ensuring the `ring` rustls provider is installed.
+pub(crate) fn http_client_builder() -> reqwest::ClientBuilder {
+    ensure_rustls_ring();
+    reqwest::Client::builder()
+}
+
 mod denim;
 pub use denim::{
     DenimCheck, DenimCheckCursor, DenimCheckStatus, DenimCheckTarget, DenimChecker,

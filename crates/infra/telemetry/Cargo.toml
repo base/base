@@ -36,4 +36,4 @@ tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "syn
 
 [dev-dependencies]
 mockall.workspace = true
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "charset", "default-tls", "http2", "system-proxy"] }

@@ -29,7 +29,7 @@ base-consensus-cli.workspace = true
 base-execution-cli.workspace = true
 base-execution-evm.workspace = true
 base-consensus-node.workspace = true
-base-upgrade-signal.workspace = true
+base-upgrade-signal = { workspace = true, features = ["reader"] }
 base-builder-metering.workspace = true
 base-consensus-engine.workspace = true
 base-execution-chainspec.workspace = true
@@ -63,7 +63,7 @@ figment = { workspace = true, features = ["env", "toml"] }
 [dev-dependencies]
 url.workspace = true
 rstest.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["charset", "default-tls", "http2", "system-proxy"] }
 tempfile.workspace = true
 serde_json.workspace = true
 base-common-genesis.workspace = true

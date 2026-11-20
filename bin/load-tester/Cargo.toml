@@ -20,7 +20,7 @@ workspace = true
 alloy-network.workspace = true
 alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
-alloy-provider = { workspace = true }
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-signer-local = { workspace = true }
 
 # base

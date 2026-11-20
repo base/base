@@ -18,7 +18,7 @@ humantime.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 alloy-network.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 base-cli-utils.workspace = true
 base-withdrawer.workspace = true
 base-tx-manager.workspace = true

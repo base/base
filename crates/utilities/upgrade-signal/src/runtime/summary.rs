@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "reader")]
 use crate::UpgradeSignalSchedule;
 
 /// Runtime action taken for one upgrade signal.
@@ -52,6 +53,7 @@ pub struct UpgradeSignalApplySummary {
 }
 
 impl UpgradeSignalApplySummary {
+    #[cfg(feature = "reader")]
     /// Creates an empty runtime application summary.
     pub const fn new(chain_id: u64, schedule: &UpgradeSignalSchedule) -> Self {
         Self {

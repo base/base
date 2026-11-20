@@ -37,7 +37,7 @@ base-execution-payload-builder.workspace = true
 base-execution-rpc = { workspace = true, features = ["client"] }
 
 # alloy
-alloy-provider = { workspace = true, optional = true }
+alloy-provider = { workspace = true, optional = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-rpc-types = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 alloy-rpc-client = { workspace = true, optional = true }

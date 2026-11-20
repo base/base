@@ -20,7 +20,7 @@ alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus = { workspace = true, features = ["std"] }
-alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
+alloy-provider = { workspace = true, features = ["pubsub", "ws", "reqwest", "reqwest-default-tls"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base
@@ -50,7 +50,7 @@ tokio-util.workspace = true
 serde_yaml.workspace = true
 parking_lot.workspace = true
 async-channel.workspace = true
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "charset", "default-tls", "http2", "system-proxy"] }
 tokio = { workspace = true, features = ["signal"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 

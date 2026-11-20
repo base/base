@@ -26,13 +26,13 @@ base-common-rpc-types-engine.workspace = true
 [dev-dependencies]
 # Alloy
 alloy-consensus.workspace = true
-alloy-transport-http.workspace = true
-alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-default-tls", "traceparent"] }
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-rpc-types = { workspace = true, features = ["eth", "debug"] }
 
 # General
 rand.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["charset", "default-tls", "http2", "system-proxy"] }
 proptest.workspace = true
 tokio = { workspace = true, features = ["full"] }
 criterion = { workspace = true, features = ["html_reports"] }

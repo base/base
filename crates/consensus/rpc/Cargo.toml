@@ -54,6 +54,7 @@ server = [
 	"dep:async-trait",
 	"dep:backon",
 	"dep:base-consensus-engine",
+	"base-upgrade-signal/reader",
 	"dep:base-consensus-gossip",
 	"dep:base-consensus-safedb",
 	"dep:libp2p",

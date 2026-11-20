@@ -15,9 +15,9 @@ workspace = true
 eyre.workspace = true
 url.workspace = true
 tracing.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["charset", "default-tls", "http2", "system-proxy"] }
 humantime.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-primitives.workspace = true

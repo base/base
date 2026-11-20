@@ -370,7 +370,7 @@ impl TxpoolClient {
     }
 
     fn connect_txpool_provider(rpc: &Url) -> Result<impl Provider<Base>, TxpoolCommandError> {
-        let http_client = alloy_transport_http::reqwest::Client::builder()
+        let http_client = crate::http_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
             .map_err(|source| TxpoolCommandError::BuildHttpClient {

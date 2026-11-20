@@ -32,7 +32,7 @@ alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-genesis.workspace = true
 alloy-network.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-transport.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-beacon.workspace = true

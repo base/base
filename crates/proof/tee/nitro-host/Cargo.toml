@@ -43,7 +43,7 @@ thiserror.workspace = true
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 [dev-dependencies]
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["charset", "default-tls", "http2", "system-proxy"] }
 alloy-genesis.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }

@@ -288,7 +288,7 @@ base-test-utils = { path = "crates/utilities/test-utils" }
 base-tx-manager = { path = "crates/utilities/tx-manager", default-features = false }
 base-optimism-rpc = { path = "crates/utilities/optimism-rpc" }
 base-trusted-proxy = { path = "crates/utilities/trusted-proxy" }
-base-upgrade-signal = { path = "crates/utilities/upgrade-signal" }
+base-upgrade-signal = { path = "crates/utilities/upgrade-signal", default-features = false }
 base-balance-monitor = { path = "crates/utilities/balance-monitor" }
 base-metrics = { path = "crates/utilities/metrics", default-features = false }
 base-runtime = { path = "crates/utilities/runtime", default-features = false }
@@ -306,7 +306,7 @@ evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "9b037449c846515624ff6a
 alloy-signer = "2.5.0"
 alloy-pubsub = "2.3.0"
 alloy-network = "2.5.0"
-alloy-provider = "2.5.0"
+alloy-provider = { version = "2.5.0", default-features = false }
 alloy-contract = "2.5.0"
 alloy-json-rpc = "2.5.0"
 alloy-transport = "2.5.0"
@@ -318,7 +318,7 @@ alloy-signer-local = "2.5.0"
 alloy-transport-ws = "2.3.0"
 alloy-signer-ledger = "2.5.0"
 alloy-node-bindings = "2.5.0"
-alloy-transport-http = "2.3.0"
+alloy-transport-http = { version = "2.3.0", default-features = false }
 alloy-rpc-types-beacon = "2.5.0"
 alloy-rlp = { version = "0.3.16", default-features = false }
 alloy-trie = { version = "0.9.8", default-features = false }
@@ -420,7 +420,7 @@ tokio-tungstenite = "0.29.0"
 
 # async
 futures = "0.3.31"
-reqwest = "0.13.1"
+reqwest = { version = "0.13.1", default-features = false }
 async-stream = "0.3"
 async-channel = "2.5"
 async-trait = "0.1.83"
@@ -480,7 +480,7 @@ p256 = "0.13"
 p384 = "0.13"
 blake3 = "1.8"
 getrandom = "0.4"
-rustls = "0.23.43"
+rustls = { version = "0.23.43", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 secp256k1 = "0.30"
 hex-literal = "1.1"
 x509-parser = "0.17"

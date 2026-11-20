@@ -15,7 +15,7 @@ workspace = true
 # network
 alloy-eips.workspace = true
 alloy-network.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-transport.workspace = true
 alloy-primitives.workspace = true
 

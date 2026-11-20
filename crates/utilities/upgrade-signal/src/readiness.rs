@@ -11,10 +11,13 @@
 //! [`UpgradeSignalConfig::signal_fails_closed`] — so it can never disagree with what the node
 //! actually does at activation.
 
+#[cfg(feature = "reader")]
 use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
 
-use crate::{PackedProtocolVersion, UpgradeSignal, UpgradeSignalConfig, UpgradeSignalMode};
+use crate::UpgradeSignalMode;
+#[cfg(feature = "reader")]
+use crate::{PackedProtocolVersion, UpgradeSignal, UpgradeSignalConfig};
 
 /// A node's readiness for the currently scheduled contract-backed upgrades.
 ///
@@ -83,6 +86,7 @@ pub struct UpgradeReadinessEntry {
     pub would_halt: bool,
 }
 
+#[cfg(feature = "reader")]
 impl UpgradeSignalConfig {
     /// Builds an [`UpgradeReadiness`] report for `signals` (as read from L1 at `l1_block_number`).
     ///
@@ -186,7 +190,7 @@ impl UpgradeSignalConfig {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "reader"))]
 mod tests {
     use alloy_primitives::Address;
     use base_common_genesis::BaseUpgrade;

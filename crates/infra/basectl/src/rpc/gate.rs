@@ -277,7 +277,7 @@ impl GateSettings {
         };
         // Never follow redirects: requests carry a bearer token, execute is a
         // non-idempotent POST, and only the configured base URL is trusted.
-        let http = reqwest::Client::builder()
+        let http = crate::http_client_builder()
             .timeout(self.timeout)
             .redirect(reqwest::redirect::Policy::none())
             .build()?;

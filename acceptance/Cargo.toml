@@ -16,7 +16,7 @@ eyre.workspace = true
 chrono.workspace = true
 humantime.workspace = true
 clap = { workspace = true, features = ["derive"] }
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "charset", "default-tls", "http2", "system-proxy"] }
 serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 toml = { workspace = true, features = ["parse", "serde", "display"] }

@@ -16,7 +16,7 @@ url.workspace = true
 eyre.workspace = true
 backon.workspace = true
 futures.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["charset", "default-tls", "http2", "system-proxy"] }
 tokio-util.workspace = true
 async-trait.workspace = true
 base-retry.workspace = true
@@ -38,7 +38,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
-alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
+alloy-provider = { workspace = true, features = ["pubsub", "ws", "reqwest", "reqwest-default-tls"] }
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 

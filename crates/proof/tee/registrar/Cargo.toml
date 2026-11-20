@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 # Alloy
 alloy-signer.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
@@ -34,7 +34,7 @@ x509-parser.workspace = true
 ciborium.workspace = true
 
 # HTTP (CRL fetching)
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["charset", "default-tls", "http2", "system-proxy"] }
 
 # Contracts
 base-proof-contracts.workspace = true

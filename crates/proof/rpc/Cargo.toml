@@ -15,12 +15,12 @@ workspace = true
 # Alloy
 alloy-eips.workspace = true
 alloy-network.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-transport.workspace = true
 alloy-rpc-client.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
-alloy-transport-http.workspace = true
+alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-default-tls", "traceparent"] }
 
 # Base Alloy
 base-optimism-rpc.workspace = true

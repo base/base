@@ -60,7 +60,7 @@ alloy-rpc-client.workspace = true
 base-common-chains.workspace = true
 alloy-rpc-types-eth.workspace = true
 base-common-network.workspace = true
-alloy-transport-http.workspace = true
+alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-default-tls", "traceparent"] }
 alloy-rpc-types-debug.workspace = true
 alloy-rpc-types-engine.workspace = true
 revm-inspectors.workspace = true

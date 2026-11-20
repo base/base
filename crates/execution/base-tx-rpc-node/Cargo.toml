@@ -39,7 +39,7 @@ alloy-eips.workspace = true
 alloy-signer.workspace = true
 alloy-genesis.workspace = true
 alloy-network.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
 

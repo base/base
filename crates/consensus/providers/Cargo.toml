@@ -29,8 +29,8 @@ alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map"] }
 alloy-eips = { workspace = true, features = ["kzg", "std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest"] }
-alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
+alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest", "reqwest-default-tls"] }
+alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth", "reqwest-default-tls", "traceparent"] }
 
 # Base Alloy
 base-common-network.workspace = true
@@ -40,7 +40,7 @@ base-common-consensus.workspace = true
 lru.workspace = true
 url.workspace = true
 tower.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["charset", "default-tls", "http2", "system-proxy"] }
 async-trait.workspace = true
 http-body-util.workspace = true
 serde = { workspace = true, features = ["std"] }

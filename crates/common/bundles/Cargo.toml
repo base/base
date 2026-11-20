@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 # alloy
 alloy-consensus = { workspace = true, features = ["std"] }
-alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 
 # base-alloy

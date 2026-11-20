@@ -29,9 +29,9 @@ tokio = { workspace = true, features = ["net"], optional = true }
 axum = { workspace = true, features = ["http1", "tokio"], optional = true }
 
 [dev-dependencies]
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["charset", "default-tls", "http2", "system-proxy"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
-alloy-transport-http = { workspace = true, features = ["reqwest"] }
+alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-default-tls", "traceparent"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [features]

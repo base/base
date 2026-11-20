@@ -15,7 +15,7 @@ workspace = true
 base-health.workspace = true
 base-metrics.workspace = true
 base-protocol.workspace = true
-base-upgrade-signal.workspace = true
+base-upgrade-signal = { workspace = true, features = ["reader"] }
 base-consensus-disc.workspace = true
 base-consensus-peers.workspace = true
 base-consensus-gossip.workspace = true
@@ -40,8 +40,8 @@ alloy-chains = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
-alloy-provider = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
-alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "reqwest-default-tls"] }
+alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth", "reqwest-default-tls", "traceparent"] }
 
 # base-common
 base-common-chains.workspace = true
@@ -78,7 +78,7 @@ jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 
 # Binary conductor commit endpoint
 ethereum_ssz.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["charset", "default-tls", "http2", "system-proxy"] }
 
 # metrics
 metrics = { workspace = true, optional = true }

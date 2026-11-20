@@ -14,12 +14,12 @@ workspace = true
 [dependencies]
 # alloy
 alloy-network.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-consensus.workspace = true
 alloy-transport.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
-alloy-transport-http.workspace = true
+alloy-transport-http = { workspace = true, features = ["reqwest"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std", "kzg-sidecar"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
@@ -51,6 +51,7 @@ async-trait.workspace = true
 alloy-signer.workspace = true
 alloy-json-rpc.workspace = true
 alloy-rpc-client.workspace = true
+alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-node-bindings.workspace = true
 tracing-subscriber.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }

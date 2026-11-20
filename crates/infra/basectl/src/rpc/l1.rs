@@ -95,7 +95,7 @@ pub async fn fetch_full_system_config(
 
 /// Fetches the latest L1 block number via `eth_blockNumber` with an explicit request timeout.
 pub async fn fetch_l1_block_number(l1_rpc: &Url) -> Result<u64> {
-    let http_client = alloy_transport_http::reqwest::Client::builder()
+    let http_client = crate::http_client_builder()
         .timeout(Duration::from_secs(10))
         .build()
         .with_context(|| format!("building L1 HTTP client for {l1_rpc}"))?;

@@ -585,7 +585,7 @@ async fn connect_layers(rpc: &Url, cl_rpc: &Url) -> Result<(ConsensusClient, imp
 }
 
 async fn connect_el(rpc: &Url) -> Result<impl Provider<Base>> {
-    let http_client = alloy_transport_http::reqwest::Client::builder()
+    let http_client = crate::http_client_builder()
         .timeout(Duration::from_secs(10))
         .build()
         .with_context(|| format!("building EL HTTP client for {rpc}"))?;

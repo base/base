@@ -196,7 +196,7 @@ impl DenimChecker {
         target: DenimCheckTarget,
         previous: Option<DenimCheckCursor>,
     ) -> Result<DenimReport> {
-        let http = alloy_transport_http::reqwest::Client::builder()
+        let http = crate::http_client_builder()
             .timeout(Duration::from_secs(10))
             .build()?;
         let provider = ProviderBuilder::new()
@@ -1981,6 +1981,7 @@ mod tests {
         let server = tokio::spawn(async move {
             axum::serve(listener, Router::new().route("/", post(raw_error_fixture))).await.unwrap()
         });
+        crate::ensure_rustls_ring();
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()
@@ -2000,6 +2001,7 @@ mod tests {
         let router =
             Router::new().route("/", post(denim_log_rpc_fixture)).with_state(Arc::clone(&requests));
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        crate::ensure_rustls_ring();
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()
@@ -2061,6 +2063,7 @@ mod tests {
         let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ws_address = ws_listener.local_addr().unwrap();
         let ws_server = tokio::spawn(denim_log_ws_fixture(ws_listener));
+        crate::ensure_rustls_ring();
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()
@@ -2085,6 +2088,7 @@ mod tests {
 
     #[tokio::test]
     async fn inactive_snapshot_skips_subscriptions() {
+        crate::ensure_rustls_ring();
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()
@@ -2154,6 +2158,7 @@ mod tests {
         let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ws_address = ws_listener.local_addr().unwrap();
         let ws_server = tokio::spawn(flooding_ws_fixture(ws_listener));
+        crate::ensure_rustls_ring();
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()

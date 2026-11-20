@@ -1,25 +1,37 @@
 //! Upgrade signal configuration and CLI arguments.
 
+#[cfg(feature = "reader")]
 use core::time::Duration;
+#[cfg(feature = "reader")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "reader")]
 use alloy_primitives::U256;
 
+#[cfg(feature = "reader")]
 use crate::PackedProtocolVersion;
 
+#[cfg(feature = "reader")]
 mod args;
+#[cfg(feature = "reader")]
 pub use args::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs, UpgradeSignalStartupConfig};
 
+#[cfg(feature = "reader")]
 mod schedule;
+#[cfg(feature = "reader")]
 pub use schedule::{StartupScheduleAction, UpgradeSignalConfig};
 
 mod types;
-pub use types::{UpgradeSignalBlockTag, UpgradeSignalMode, UpgradeSignalStartupMode};
+pub use types::UpgradeSignalMode;
+#[cfg(feature = "reader")]
+pub use types::{UpgradeSignalBlockTag, UpgradeSignalStartupMode};
 
+#[cfg(feature = "reader")]
 /// Default values used by the upgrade signal reader and runtime applier.
 #[derive(Debug)]
 pub struct UpgradeSignalDefaults;
 
+#[cfg(feature = "reader")]
 impl UpgradeSignalDefaults {
     /// Default total deadline for each upgrade signal JSON-RPC request.
     pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -105,7 +117,7 @@ impl UpgradeSignalDefaults {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "reader"))]
 mod tests {
     use super::*;
 

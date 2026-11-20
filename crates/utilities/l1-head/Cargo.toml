@@ -18,7 +18,7 @@ base-common-network.workspace = true
 
 # network
 url.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "reqwest-default-tls"] }
 alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
 

@@ -49,7 +49,7 @@ pub struct SyncStatusReport {
 /// short-circuits the call.
 pub async fn fetch_sync_status(rpc: &Url, cl_rpc: &Url) -> Result<SyncStatusReport> {
     let cl_client = ConsensusClient::connect(cl_rpc)?;
-    let http_client = alloy_transport_http::reqwest::Client::builder()
+    let http_client = crate::http_client_builder()
         .timeout(Duration::from_secs(10))
         .build()
         .with_context(|| format!("building L2 EL HTTP client for {rpc}"))?;

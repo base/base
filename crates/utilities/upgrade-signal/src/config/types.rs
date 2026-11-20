@@ -1,5 +1,7 @@
+#[cfg(feature = "reader")]
 use core::time::Duration;
 
+#[cfg(feature = "reader")]
 use alloy_rpc_types_eth::BlockNumberOrTag;
 
 /// Controls which local schedule mutation paths are enabled for the L1 upgrade signal.
@@ -10,10 +12,10 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
     Default,
     PartialEq,
     Eq,
-    clap::ValueEnum,
     serde::Serialize,
     serde::Deserialize,
 )]
+#[cfg_attr(feature = "reader", derive(clap::ValueEnum))]
 #[serde(rename_all = "kebab-case")]
 pub enum UpgradeSignalMode {
     /// Do not mutate local upgrade schedules; live L1 metrics are still observed.
@@ -44,6 +46,7 @@ impl UpgradeSignalMode {
     }
 }
 
+#[cfg(feature = "reader")]
 /// L1 block tag used when reading the upgrade signal contract.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum UpgradeSignalBlockTag {
@@ -56,6 +59,7 @@ pub enum UpgradeSignalBlockTag {
     Latest,
 }
 
+#[cfg(feature = "reader")]
 impl UpgradeSignalBlockTag {
     /// Converts to the alloy block tag used by the contract reader.
     pub const fn block_number_or_tag(self) -> BlockNumberOrTag {
@@ -78,6 +82,7 @@ impl UpgradeSignalBlockTag {
     }
 }
 
+#[cfg(feature = "reader")]
 /// Controls whether a service should perform its own startup signal read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum UpgradeSignalStartupMode {
@@ -88,6 +93,7 @@ pub enum UpgradeSignalStartupMode {
     AlreadyApplied,
 }
 
+#[cfg(feature = "reader")]
 impl UpgradeSignalStartupMode {
     /// Returns true if the service should perform its own startup signal read.
     pub const fn reads_and_applies(self) -> bool {
@@ -95,7 +101,7 @@ impl UpgradeSignalStartupMode {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "reader"))]
 mod tests {
     use super::*;
 

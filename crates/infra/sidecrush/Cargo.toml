@@ -18,7 +18,7 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 alloy-pubsub = { workspace = true }
-alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
+alloy-provider = { workspace = true, features = ["pubsub", "ws", "reqwest", "reqwest-default-tls"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-transport = { workspace = true }
 tokio = { workspace = true, features = ["rt", "time", "macros"] }
