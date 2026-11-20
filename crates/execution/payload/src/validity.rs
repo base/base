@@ -126,11 +126,11 @@ impl ValidityPredicateEvaluation {
 /// false predicates whose comparison can become true for the observed old/new state transition.
 #[derive(Debug)]
 pub struct ParkedPredicateIndex<T> {
-    blockers: HashMap<ValidityPredicateKey, PredicateBucket>,
+    // The count tracks group blockers in this bucket, including repeated keys. Hashes in
+    // buckets with no group blockers cannot occur in any other matching set.
+    blockers: HashMap<ValidityPredicateKey, (usize, PredicateBucket)>,
     transactions: B256Map<ParkedTransaction<T>>,
     ordered_threshold: usize,
-    // A state transition can wake more than one branch of the same transaction.
-    grouped_transactions: usize,
 }
 
 #[derive(Debug)]
@@ -179,7 +179,6 @@ impl<T> ParkedPredicateIndex<T> {
             blockers: HashMap::default(),
             transactions: B256Map::default(),
             ordered_threshold: ordered_threshold.max(1),
-            grouped_transactions: 0,
         }
     }
 
@@ -203,7 +202,6 @@ impl<T> ParkedPredicateIndex<T> {
     ) {
         self.remove(transaction_hash);
         let blocker = ValidityPredicateKey::for_predicate(&predicate);
-        self.grouped_transactions += usize::from(!alternatives.is_empty());
         self.transactions.insert(
             transaction_hash,
             ParkedTransaction {
@@ -273,47 +271,44 @@ impl<T> ParkedPredicateIndex<T> {
     /// Removes and returns an indexed parked transaction.
     pub fn remove(&mut self, transaction_hash: TxHash) -> Option<T> {
         let entry = self.transactions.remove(&transaction_hash)?;
-        self.grouped_transactions -= usize::from(!entry.alternatives.is_empty());
+        let grouped = !entry.alternatives.is_empty();
         for other in &entry.alternatives {
             self.remove_from_bucket(
                 transaction_hash,
                 ValidityPredicateKey::for_predicate(other),
                 other,
+                grouped,
             );
         }
-        self.remove_from_bucket(transaction_hash, entry.blocker, &entry.predicate);
+        self.remove_from_bucket(transaction_hash, entry.blocker, &entry.predicate, grouped);
         Some(entry.transaction)
     }
 
     /// Returns parked transactions and index-bucket wakeups triggered by `state`.
     pub fn affected_by_state(&self, state: &EvmState) -> StateChangeEffects {
-        let mut effects = StateChangeEffects::default();
-        for (address, account) in state {
-            let destroyed = account.is_selfdestructed();
-            // Deleted accounts read as nonce zero, regardless of the retained account info.
-            let new_nonce = if destroyed { 0 } else { account.info.nonce };
-            self.wake_account(
-                &mut effects,
-                *address,
-                AccountChange {
-                    old_nonce: account.original_info().nonce,
-                    new_nonce,
-                    old_balance: account.original_info().balance,
-                    new_balance: account.info.balance,
-                    storage_destroyed: destroyed,
-                },
-                account
-                    .storage
-                    .iter()
-                    .filter(|(_, value)| value.is_changed())
-                    .map(|(slot, value)| (*slot, value.original_value(), value.present_value())),
-            );
-        }
-        if self.grouped_transactions != 0 {
-            effects.affected_transactions.sort_unstable();
-            effects.affected_transactions.dedup();
-        }
-        effects
+        StateChangeEffects::collect(|emit| {
+            let mut woken = 0;
+            for (address, account) in state {
+                let destroyed = account.is_selfdestructed();
+                // Deleted accounts read as nonce zero, regardless of the retained account info.
+                let new_nonce = if destroyed { 0 } else { account.info.nonce };
+                woken += self.wake_account(
+                    emit,
+                    *address,
+                    AccountChange {
+                        old_nonce: account.original_info().nonce,
+                        new_nonce,
+                        old_balance: account.original_info().balance,
+                        new_balance: account.info.balance,
+                        storage_destroyed: destroyed,
+                    },
+                    account.storage.iter().filter(|(_, value)| value.is_changed()).map(
+                        |(slot, value)| (*slot, value.original_value(), value.present_value()),
+                    ),
+                );
+            }
+            woken
+        })
     }
 
     /// Returns parked transactions and index-bucket wakeups triggered by the net changes a
@@ -322,33 +317,29 @@ impl<T> ParkedPredicateIndex<T> {
     /// Builders use it for writes made outside the selection loop, such as pre-execution system
     /// calls and deposits, which never pass through [`Self::affected_by_state`].
     pub fn affected_by_transitions(&self, transitions: &TransitionState) -> StateChangeEffects {
-        let mut effects = StateChangeEffects::default();
-        for (address, transition) in &transitions.transitions {
-            let old = transition.previous_info.as_ref();
-            let new = transition.info.as_ref();
-            self.wake_account(
-                &mut effects,
-                *address,
-                AccountChange {
-                    old_nonce: old.map_or(0, |info| info.nonce),
-                    new_nonce: new.map_or(0, |info| info.nonce),
-                    old_balance: old.map_or(U256::ZERO, |info| info.balance),
-                    new_balance: new.map_or(U256::ZERO, |info| info.balance),
-                    storage_destroyed: transition.storage_was_destroyed
-                        || transition.status.was_destroyed(),
-                },
-                transition
-                    .storage
-                    .iter()
-                    .filter(|(_, slot)| slot.is_changed())
-                    .map(|(key, slot)| (*key, slot.previous_or_original_value, slot.present_value)),
-            );
-        }
-        if self.grouped_transactions != 0 {
-            effects.affected_transactions.sort_unstable();
-            effects.affected_transactions.dedup();
-        }
-        effects
+        StateChangeEffects::collect(|emit| {
+            let mut woken = 0;
+            for (address, transition) in &transitions.transitions {
+                let old = transition.previous_info.as_ref();
+                let new = transition.info.as_ref();
+                woken += self.wake_account(
+                    emit,
+                    *address,
+                    AccountChange {
+                        old_nonce: old.map_or(0, |info| info.nonce),
+                        new_nonce: new.map_or(0, |info| info.nonce),
+                        old_balance: old.map_or(U256::ZERO, |info| info.balance),
+                        new_balance: new.map_or(U256::ZERO, |info| info.balance),
+                        storage_destroyed: transition.storage_was_destroyed
+                            || transition.status.was_destroyed(),
+                    },
+                    transition.storage.iter().filter(|(_, slot)| slot.is_changed()).map(
+                        |(key, slot)| (*key, slot.previous_or_original_value, slot.present_value),
+                    ),
+                );
+            }
+            woken
+        })
     }
 
     /// Returns the number of indexed transactions.
@@ -358,15 +349,13 @@ impl<T> ParkedPredicateIndex<T> {
 
     /// Returns the transactions parked under `blocker`.
     pub fn transactions_blocked_by(&self, blocker: ValidityPredicateKey) -> Vec<TxHash> {
-        let mut hashes = Vec::new();
-        if let Some(bucket) = self.blockers.get(&blocker) {
-            bucket.extend_all(&mut hashes);
-        }
-        if self.grouped_transactions != 0 {
-            hashes.sort_unstable();
-            hashes.dedup();
-        }
-        hashes
+        StateChangeEffects::collect(|emit| {
+            if let Some((grouped, bucket)) = self.blockers.get(&blocker) {
+                bucket.visit_all(|set| emit(set, *grouped != 0));
+            }
+            0
+        })
+        .affected_transactions
     }
 
     /// Removes every entry for which `keep` returns `false` and returns how many were removed.
@@ -385,17 +374,18 @@ impl<T> ParkedPredicateIndex<T> {
 
     /// Returns the number of parked transactions blocked on each distinct index bucket.
     pub fn bucket_depths(&self) -> impl Iterator<Item = usize> + '_ {
-        self.blockers.values().map(PredicateBucket::len)
+        self.blockers.values().map(|(_, bucket)| bucket.len())
     }
 
     fn insert_into_bucket(&mut self, hash: TxHash) {
         let entry = self.transactions.get(&hash).expect("inserted transaction must exist");
         for predicate in std::iter::once(&entry.predicate).chain(&entry.alternatives) {
             let blocker = ValidityPredicateKey::for_predicate(predicate);
-            let bucket = self
+            let (grouped, bucket) = self
                 .blockers
                 .entry(blocker)
-                .or_insert_with(|| PredicateBucket::Flat(B256Set::default()));
+                .or_insert_with(|| (0, PredicateBucket::Flat(B256Set::default())));
+            *grouped += usize::from(!entry.alternatives.is_empty());
             bucket.insert(hash, predicate);
             if bucket.is_flat() && blocker.is_state() && bucket.len() >= self.ordered_threshold {
                 let hashes = bucket.take_flat().expect("bucket was checked as flat");
@@ -418,8 +408,10 @@ impl<T> ParkedPredicateIndex<T> {
         hash: TxHash,
         blocker: ValidityPredicateKey,
         predicate: &ValidityPredicate,
+        grouped: bool,
     ) {
-        let Some(bucket) = self.blockers.get_mut(&blocker) else { return };
+        let Some((grouped_count, bucket)) = self.blockers.get_mut(&blocker) else { return };
+        *grouped_count -= usize::from(grouped);
         bucket.remove(hash, predicate);
         if bucket.is_empty() {
             self.blockers.remove(&blocker);
@@ -428,52 +420,57 @@ impl<T> ParkedPredicateIndex<T> {
 
     fn wake_account(
         &self,
-        effects: &mut StateChangeEffects,
+        emit: &mut dyn FnMut(&B256Set, bool),
         address: Address,
         change: AccountChange,
         changed_slots: impl Iterator<Item = (U256, U256, U256)>,
-    ) {
+    ) -> usize {
+        let mut woken = 0;
         if change.new_nonce != change.old_nonce {
-            self.wake_bucket(
-                effects,
+            woken += self.wake_bucket(
+                emit,
                 ValidityPredicateKey::Nonce(address),
                 U256::from(change.old_nonce),
                 U256::from(change.new_nonce),
             );
         }
         if change.new_balance != change.old_balance {
-            self.wake_bucket(
-                effects,
+            woken += self.wake_bucket(
+                emit,
                 ValidityPredicateKey::Balance(address),
                 change.old_balance,
                 change.new_balance,
             );
         }
         if change.storage_destroyed {
-            for (key, bucket) in &self.blockers {
+            for (key, (grouped, bucket)) in &self.blockers {
                 if matches!(key, ValidityPredicateKey::Storage(key_address, _) if *key_address == address)
                 {
-                    bucket.extend_all(&mut effects.affected_transactions);
-                    effects.woken_buckets += 1;
+                    bucket.visit_all(|set| emit(set, *grouped != 0));
+                    woken += 1;
                 }
             }
         } else {
             for (slot, old, new) in changed_slots {
-                self.wake_bucket(effects, ValidityPredicateKey::Storage(address, slot), old, new);
+                woken +=
+                    self.wake_bucket(emit, ValidityPredicateKey::Storage(address, slot), old, new);
             }
         }
+        woken
     }
 
     fn wake_bucket(
         &self,
-        effects: &mut StateChangeEffects,
+        emit: &mut dyn FnMut(&B256Set, bool),
         key: ValidityPredicateKey,
         old: U256,
         new: U256,
-    ) {
-        let Some(bucket) = self.blockers.get(&key) else { return };
-        bucket.extend_affected(old, new, &mut effects.affected_transactions);
-        effects.woken_buckets += 1;
+    ) -> usize {
+        let Some((grouped, bucket)) = self.blockers.get(&key) else {
+            return 0;
+        };
+        bucket.visit_affected(old, new, |set| emit(set, *grouped != 0));
+        1
     }
 }
 
@@ -534,17 +531,17 @@ impl PredicateBucket {
         }
     }
 
-    fn extend_all(&self, target: &mut Vec<TxHash>) {
+    fn visit_all(&self, mut visit: impl FnMut(&B256Set)) {
         match self {
-            Self::Flat(hashes) => target.extend(hashes.iter().copied()),
-            Self::Ordered(bucket) => bucket.extend_all(target),
+            Self::Flat(hashes) => visit(hashes),
+            Self::Ordered(bucket) => bucket.visit_all(visit),
         }
     }
 
-    fn extend_affected(&self, old: U256, new: U256, target: &mut Vec<TxHash>) {
+    fn visit_affected(&self, old: U256, new: U256, mut visit: impl FnMut(&B256Set)) {
         match self {
-            Self::Flat(hashes) => target.extend(hashes.iter().copied()),
-            Self::Ordered(bucket) => bucket.extend_affected(old, new, target),
+            Self::Flat(hashes) => visit(hashes),
+            Self::Ordered(bucket) => bucket.visit_affected(old, new, visit),
         }
     }
 }
@@ -580,19 +577,20 @@ impl OrderedPredicateBucket {
         self.len -= usize::from(removed);
     }
 
-    fn extend_all(&self, target: &mut Vec<TxHash>) {
-        target.extend(
-            self.thresholds
-                .values()
-                .flat_map(BTreeMap::values)
-                .chain(self.equal.values().flat_map(U256Map::values))
-                .chain(self.not_equal.values())
-                .chain(core::iter::once(&self.never))
-                .flat_map(|hashes| hashes.iter().copied()),
-        );
+    fn visit_all(&self, mut visit: impl FnMut(&B256Set)) {
+        for hashes in self
+            .thresholds
+            .values()
+            .flat_map(BTreeMap::values)
+            .chain(self.equal.values().flat_map(U256Map::values))
+            .chain(self.not_equal.values())
+            .chain(core::iter::once(&self.never))
+        {
+            visit(hashes);
+        }
     }
 
-    fn extend_affected(&self, old: U256, new: U256, target: &mut Vec<TxHash>) {
+    fn visit_affected(&self, old: U256, new: U256, mut visit: impl FnMut(&B256Set)) {
         for (mask, thresholds) in &self.thresholds {
             let old = old & *mask;
             let new = new & *mask;
@@ -601,18 +599,18 @@ impl OrderedPredicateBucket {
                 for hashes in
                     thresholds.range((Excluded(lower), Included(upper))).map(|(_, hashes)| hashes)
                 {
-                    target.extend(hashes.iter().copied());
+                    visit(hashes);
                 }
             }
         }
         for (mask, equal) in &self.equal {
             if let Some(hashes) = equal.get(&(new & *mask)) {
-                target.extend(hashes.iter().copied());
+                visit(hashes);
             }
         }
         for (mask, hashes) in &self.not_equal {
             if (old & *mask) != (new & *mask) {
-                target.extend(hashes.iter().copied());
+                visit(hashes);
             }
         }
     }
@@ -710,6 +708,36 @@ pub struct StateChangeEffects {
     pub affected_transactions: Vec<TxHash>,
     /// Number of distinct index buckets that were woken.
     pub woken_buckets: usize,
+}
+
+impl StateChangeEffects {
+    /// Every individual set is already unique. Start tracking seen hashes only when a second
+    /// nonempty set from a bucket with multi-branch waiters matches the same change. In
+    /// particular, a shared slot waking one large set needs no sorting or deduplication.
+    fn collect(find: impl FnOnce(&mut dyn FnMut(&B256Set, bool)) -> usize) -> Self {
+        let mut affected_transactions = Vec::new();
+        let mut first = 0..0;
+        let mut seen = None;
+        let woken_buckets = find(&mut |hashes, may_overlap| {
+            if hashes.is_empty() {
+                return;
+            }
+            if !may_overlap {
+                affected_transactions.extend(hashes);
+            } else if first.is_empty() {
+                let start = affected_transactions.len();
+                affected_transactions.extend(hashes);
+                first = start..affected_transactions.len();
+            } else {
+                let seen = seen.get_or_insert_with(|| {
+                    B256Set::from_iter(affected_transactions[first.clone()].iter().copied())
+                });
+                affected_transactions
+                    .extend(hashes.iter().copied().filter(|hash| seen.insert(*hash)));
+            }
+        });
+        Self { affected_transactions, woken_buckets }
+    }
 }
 
 #[cfg(test)]
@@ -1292,6 +1320,31 @@ mod tests {
             index.affected_by_state(&changed_balance(address, 12, 25)).affected_transactions,
             vec![second]
         );
+    }
+
+    #[test]
+    fn simultaneous_key_changes_wake_each_waiter_once_in_a_mixed_pool() {
+        let [a, b, c] = [1, 2, 3].map(Address::with_last_byte);
+        let [multi, first, second, unrelated] = [1, 2, 3, 4].map(B256::with_last_byte);
+        let reaches_one = |addr| balance(addr, ValidityOperator::GreaterThanOrEqual, 1);
+        let mut changes = changed_balance(a, 0, 1);
+        changes.extend(changed_balance(b, 0, 1));
+        changes.extend(changed_balance(c, 0, 1));
+        // Exercise both representations of a shared-key bucket.
+        for threshold in [1, 32] {
+            let mut index = ParkedPredicateIndex::new(threshold);
+            index.park_grouped(multi, (), reaches_one(a), vec![reaches_one(b), reaches_one(a)]);
+            for (hash, addr) in [(first, a), (second, b), (unrelated, c)] {
+                index.park(hash, (), reaches_one(addr));
+            }
+            let mut woken = index.affected_by_state(&changes).affected_transactions;
+            woken.sort_unstable();
+            assert_eq!(woken, [multi, first, second, unrelated]);
+            assert!(index.reindex(multi, reaches_one(Address::ZERO)));
+            let mut woken = index.affected_by_state(&changes).affected_transactions;
+            woken.sort_unstable();
+            assert_eq!(woken, [first, second, unrelated]);
+        }
     }
 
     #[test]

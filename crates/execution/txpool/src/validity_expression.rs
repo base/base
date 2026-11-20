@@ -291,7 +291,7 @@ mod tests {
         let leaf = json!({"type":"block_number", "params":{"op":"=","value":"0x1"}});
         let choice = json!({"anyOf":[leaf, leaf]});
         // Four binary choices produce 16 groups of four.
-        let full = json!({"allOf":vec![choice.clone();4]});
+        let full = json!({"allOf":vec![choice;4]});
         let decoded: ValidityExpression = serde_json::from_value(full).unwrap();
         assert_eq!(decoded.len(), 64);
         assert!(decoded.validate(63).is_err());
