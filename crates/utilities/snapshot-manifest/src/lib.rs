@@ -6,6 +6,8 @@
 //!
 //! Modified to reuse archives whose uncompressed source files match a previous manifest.
 
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
 use std::{
     collections::{BTreeMap, HashMap},
     io::{Read, Write},
@@ -20,7 +22,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use humantime::{FormattedDuration, format_duration};
 use rayon::prelude::*;
-pub use reth_cli_commands::download::manifest::{
+mod manifest;
+pub use manifest::{
     ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive, SnapshotManifest,
 };
 use tracing::info;
@@ -195,6 +198,8 @@ pub struct ManifestGenerationParams<'a> {
     pub previous_manifest: Option<&'a SnapshotManifest>,
     /// Whether to package `{source_datadir}/proofs` into `proofs.tar.zst`.
     pub upload_proofs: bool,
+    /// Optional Reth version recorded in `manifest.reth_version`.
+    pub reth_version: Option<&'a str>,
 }
 
 /// Destination for generated snapshot archive streams.
@@ -514,9 +519,7 @@ impl SnapshotGenerator {
             storage_version: 2,
             timestamp,
             base_url: params.base_url.map(str::to_owned),
-            reth_version: Some(
-                reth_node_core::version::version_metadata().short_version.to_string(),
-            ),
+            reth_version: params.reth_version.map(str::to_owned),
             components,
             extensions: BTreeMap::new(),
         };
@@ -1005,6 +1008,7 @@ mod tests {
             remote_static_files,
             previous_manifest,
             upload_proofs,
+            reth_version: None,
         }
     }
 
@@ -1377,6 +1381,7 @@ mod tests {
             remote_static_files: &remote,
             previous_manifest: Some(&previous_manifest),
             upload_proofs: false,
+            reth_version: None,
         })
         .unwrap();
 

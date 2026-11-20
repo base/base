@@ -83,6 +83,7 @@ impl SnapshotManifestCommand {
             remote_static_files: &remote_static_files,
             previous_manifest: previous_manifest.as_ref(),
             upload_proofs: self.proofs,
+            reth_version: Some(reth_node_core::version::version_metadata().short_version.as_ref()),
         })
         .map_err(|error| eyre::eyre!("snapshot generation failed: {error:#}"))?;
         Ok(())

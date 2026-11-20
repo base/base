@@ -1,0 +1,26 @@
+[package]
+name = "base-snapshot-manifest"
+description = "Modular snapshot archive generation and manifest types for Base"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tar.workspace = true
+anyhow.workspace = true
+blake3.workspace = true
+rayon.workspace = true
+tracing.workspace = true
+humantime.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+zstd = { workspace = true, features = ["zstdmt"] }
+
+[dev-dependencies]
+tempfile.workspace = true
