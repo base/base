@@ -13,6 +13,10 @@ const PRUNE_INTERVAL: u64 = 1000;
 struct Entry {
     /// When the transaction was queued.
     sent: Instant,
+    /// When the pool admitted the copy that was queued, its [`ValidPoolTransaction::timestamp`].
+    ///
+    /// [`ValidPoolTransaction::timestamp`]: reth_transaction_pool::ValidPoolTransaction::timestamp
+    pooled_at: Instant,
     /// Whether the transaction waits out the validity hold instead of the resend window.
     held: bool,
 }
@@ -42,34 +46,36 @@ impl RecentlySent {
         Self { seen: HashMap::new(), resend_after, validity_hold, check_count: 0 }
     }
 
-    /// Returns `true` if the hash was sent and is not yet due for a resend.
+    /// Returns `true` if the copy of `hash` the pool admitted at `pooled_at` was sent and is not
+    /// yet due for a resend.
     ///
     /// Triggers a pruning sweep every [`PRUNE_INTERVAL`] calls.
-    pub(super) fn was_recently_sent(&mut self, hash: &B256) -> bool {
+    pub(super) fn was_recently_sent(&mut self, hash: &B256, pooled_at: Instant) -> bool {
         self.check_count += 1;
         if self.check_count.is_multiple_of(PRUNE_INTERVAL) {
             self.prune_expired();
         }
 
-        self.resend_due(hash).is_some_and(|due| Instant::now() < due)
+        self.resend_due(hash, pooled_at).is_some_and(|due| Instant::now() < due)
     }
 
-    /// Returns when a transaction sent earlier is or was due for a resend, or `None` if it has no
-    /// entry. An entry lasts at least `resend_after` past its due time; see [`RecentlySent`].
-    pub(super) fn resend_due(&self, hash: &B256) -> Option<Instant> {
-        self.seen.get(hash).map(|entry| self.due(entry))
+    /// Returns when the copy of `hash` the pool admitted at `pooled_at` is or was due for a
+    /// resend, or `None` if that copy has no entry. An entry lasts at least `resend_after` past its
+    /// due time; see [`RecentlySent`].
+    pub(super) fn resend_due(&self, hash: &B256, pooled_at: Instant) -> Option<Instant> {
+        self.entry(hash, pooled_at).map(|entry| self.due(entry))
     }
 
-    /// Returns `true` if the hash has an entry, which lasts at least `resend_after` past its due
-    /// time; see [`RecentlySent`].
-    pub(super) fn was_sent(&self, hash: &B256) -> bool {
-        self.seen.contains_key(hash)
+    /// Returns `true` if the copy of `hash` the pool admitted at `pooled_at` has an entry, which
+    /// lasts at least `resend_after` past its due time; see [`RecentlySent`].
+    pub(super) fn was_sent(&self, hash: &B256, pooled_at: Instant) -> bool {
+        self.entry(hash, pooled_at).is_some()
     }
 
-    /// Records a hash as sent now. A validity transaction is held for the validity hold rather
-    /// than resent after the standard window.
-    pub(super) fn mark_sent(&mut self, hash: B256, is_validity: bool) {
-        self.seen.insert(hash, Entry { sent: Instant::now(), held: is_validity });
+    /// Records the copy of `hash` the pool admitted at `pooled_at` as sent now. A validity
+    /// transaction is held for the validity hold rather than resent after the standard window.
+    pub(super) fn mark_sent(&mut self, hash: B256, pooled_at: Instant, is_validity: bool) {
+        self.seen.insert(hash, Entry { sent: Instant::now(), pooled_at, held: is_validity });
     }
 
     /// Puts a transaction whose forward failed back on the standard resend schedule. Has no
@@ -89,6 +95,10 @@ impl RecentlySent {
     #[cfg(test)]
     pub(super) fn is_empty(&self) -> bool {
         self.seen.is_empty()
+    }
+
+    fn entry(&self, hash: &B256, pooled_at: Instant) -> Option<&Entry> {
+        self.seen.get(hash).filter(|entry| entry.pooled_at == pooled_at)
     }
 
     fn due(&self, entry: &Entry) -> Instant {
@@ -117,15 +127,40 @@ impl std::fmt::Debug for RecentlySent {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::OnceLock;
+
     use super::*;
 
     const WINDOW: Duration = Duration::from_secs(5);
     const HOLD: Duration = Duration::from_secs(60);
 
+    /// One pool admission time shared by every copy the tests treat as the same pooled
+    /// transaction.
+    fn pooled() -> Instant {
+        static POOLED: OnceLock<Instant> = OnceLock::new();
+        *POOLED.get_or_init(Instant::now)
+    }
+
+    /// A held validity transaction that left the pool and was admitted again under the same hash
+    /// is due at once, since the destination may have dropped the first copy at its expiry.
+    #[test]
+    fn a_readmitted_copy_of_a_held_transaction_is_not_recent() {
+        let mut tracker = RecentlySent::new(WINDOW, HOLD);
+        let hash = B256::random();
+        tracker.mark_sent(hash, pooled(), true);
+
+        let readmitted = pooled() + Duration::from_secs(1);
+
+        assert!(tracker.was_recently_sent(&hash, pooled()), "the queued copy is still held");
+        assert!(!tracker.was_recently_sent(&hash, readmitted));
+        assert!(!tracker.was_sent(&hash, readmitted));
+        assert_eq!(tracker.resend_due(&hash, readmitted), None);
+    }
+
     #[test]
     fn unseen_hash_is_not_recent() {
         let mut tracker = RecentlySent::new(WINDOW, HOLD);
-        assert!(!tracker.was_recently_sent(&B256::random()));
+        assert!(!tracker.was_recently_sent(&B256::random(), pooled()));
     }
 
     #[test]
@@ -133,8 +168,8 @@ mod tests {
         let mut tracker = RecentlySent::new(WINDOW, HOLD);
         let hash = B256::random();
 
-        tracker.mark_sent(hash, false);
-        assert!(tracker.was_recently_sent(&hash));
+        tracker.mark_sent(hash, pooled(), false);
+        assert!(tracker.was_recently_sent(&hash, pooled()));
     }
 
     #[test]
@@ -143,10 +178,10 @@ mod tests {
         let mut second_destination = RecentlySent::new(WINDOW, HOLD);
         let hash = B256::random();
 
-        first_destination.mark_sent(hash, false);
+        first_destination.mark_sent(hash, pooled(), false);
 
-        assert!(first_destination.was_recently_sent(&hash));
-        assert!(!second_destination.was_recently_sent(&hash));
+        assert!(first_destination.was_recently_sent(&hash, pooled()));
+        assert!(!second_destination.was_recently_sent(&hash, pooled()));
     }
 
     #[test]
@@ -154,10 +189,10 @@ mod tests {
         let mut tracker = RecentlySent::new(Duration::from_millis(10), HOLD);
         let hash = B256::random();
 
-        tracker.mark_sent(hash, false);
+        tracker.mark_sent(hash, pooled(), false);
         std::thread::sleep(Duration::from_millis(15));
-        assert!(!tracker.was_recently_sent(&hash));
-        assert!(tracker.was_sent(&hash), "a due entry is kept to mark the resend");
+        assert!(!tracker.was_recently_sent(&hash, pooled()));
+        assert!(tracker.was_sent(&hash, pooled()), "a due entry is kept to mark the resend");
     }
 
     /// A validity transaction is held after a standard transaction sent at the same time has
@@ -167,12 +202,12 @@ mod tests {
         let mut tracker = RecentlySent::new(Duration::from_millis(10), HOLD);
         let (standard, validity) = (B256::random(), B256::random());
 
-        tracker.mark_sent(standard, false);
-        tracker.mark_sent(validity, true);
+        tracker.mark_sent(standard, pooled(), false);
+        tracker.mark_sent(validity, pooled(), true);
         std::thread::sleep(Duration::from_millis(15));
 
-        assert!(!tracker.was_recently_sent(&standard));
-        assert!(tracker.was_recently_sent(&validity));
+        assert!(!tracker.was_recently_sent(&standard, pooled()));
+        assert!(tracker.was_recently_sent(&validity, pooled()));
     }
 
     /// A failed forward releases a held validity transaction onto the standard schedule, counted
@@ -182,12 +217,12 @@ mod tests {
         let mut tracker = RecentlySent::new(Duration::from_millis(10), HOLD);
         let hash = B256::random();
 
-        tracker.mark_sent(hash, true);
+        tracker.mark_sent(hash, pooled(), true);
         tracker.mark_failed(&hash);
-        assert!(tracker.was_recently_sent(&hash), "still inside the standard window");
+        assert!(tracker.was_recently_sent(&hash, pooled()), "still inside the standard window");
 
         std::thread::sleep(Duration::from_millis(15));
-        assert!(!tracker.was_recently_sent(&hash));
+        assert!(!tracker.was_recently_sent(&hash, pooled()));
     }
 
     #[test]
@@ -205,13 +240,13 @@ mod tests {
         let (standard, validity) = (B256::random(), B256::random());
         let before = Instant::now();
 
-        tracker.mark_sent(standard, false);
-        tracker.mark_sent(validity, true);
+        tracker.mark_sent(standard, pooled(), false);
+        tracker.mark_sent(validity, pooled(), true);
 
         let after = Instant::now();
-        let due = tracker.resend_due(&standard).unwrap();
+        let due = tracker.resend_due(&standard, pooled()).unwrap();
         assert!(due >= before + WINDOW && due <= after + WINDOW);
-        let due = tracker.resend_due(&validity).unwrap();
+        let due = tracker.resend_due(&validity, pooled()).unwrap();
         assert!(due >= before + HOLD && due <= after + HOLD);
     }
 
@@ -220,9 +255,9 @@ mod tests {
         let mut tracker = RecentlySent::new(WINDOW, HOLD);
         assert!(tracker.is_empty());
 
-        tracker.mark_sent(B256::random(), false);
-        tracker.mark_sent(B256::random(), false);
-        tracker.mark_sent(B256::random(), true);
+        tracker.mark_sent(B256::random(), pooled(), false);
+        tracker.mark_sent(B256::random(), pooled(), false);
+        tracker.mark_sent(B256::random(), pooled(), true);
 
         assert_eq!(tracker.len(), 3);
     }
@@ -232,7 +267,7 @@ mod tests {
         let mut tracker = RecentlySent::new(Duration::from_millis(10), HOLD);
 
         for _ in 0..5 {
-            tracker.mark_sent(B256::random(), false);
+            tracker.mark_sent(B256::random(), pooled(), false);
         }
         assert_eq!(tracker.len(), 5);
 
@@ -245,7 +280,7 @@ mod tests {
     #[test]
     fn prune_keeps_held_entries() {
         let mut tracker = RecentlySent::new(Duration::from_millis(10), HOLD);
-        tracker.mark_sent(B256::random(), true);
+        tracker.mark_sent(B256::random(), pooled(), true);
 
         std::thread::sleep(Duration::from_millis(25));
         tracker.prune_expired();
