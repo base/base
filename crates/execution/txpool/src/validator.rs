@@ -776,7 +776,6 @@ where
             ))
         })?;
 
-        let nonce_free = signed.tx().nonce_key == TxBaseConstants::NONCE_KEY_MAX;
         // Every expiry predicate as the last block millisecond at which it holds,
         // so the guard and the builder precheck share one inclusive deadline.
         let effective_expiry =
@@ -792,7 +791,7 @@ where
         let nonce_key = signed.tx().nonce_key;
         if nonce_key.is_zero() {
             watch_set.push(InvalidationKey::ProtocolNonce(sender));
-        } else if nonce_free {
+        } else if nonce_key == TxBaseConstants::NONCE_KEY_MAX {
             // Mining any transaction with this `replay_id` (this one, or a twin
             // with other fees or another signature) records it here, after which
             // this transaction can never be included. A twin mined after this
