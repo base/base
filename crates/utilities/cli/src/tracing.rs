@@ -140,7 +140,7 @@ impl LogConfig {
                 let config = reth_tracing_otlp::OtlpConfig::new(
                     trace_args.service_name.clone(),
                     endpoint,
-                    trace_args.protocol.into_reth(),
+                    trace_args.protocol.into(),
                     trace_args.sample_ratio,
                 )?;
                 let layer = reth_tracing_otlp::span_layer(config)?

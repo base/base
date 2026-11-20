@@ -53,12 +53,14 @@ impl OtlpProtocol {
         }
         Ok(())
     }
+}
 
-    #[cfg(feature = "otlp")]
-    pub(crate) const fn into_reth(self) -> reth_tracing_otlp::OtlpProtocol {
-        match self {
-            Self::Http => reth_tracing_otlp::OtlpProtocol::Http,
-            Self::Grpc => reth_tracing_otlp::OtlpProtocol::Grpc,
+#[cfg(feature = "otlp")]
+impl From<OtlpProtocol> for reth_tracing_otlp::OtlpProtocol {
+    fn from(protocol: OtlpProtocol) -> Self {
+        match protocol {
+            OtlpProtocol::Http => Self::Http,
+            OtlpProtocol::Grpc => Self::Grpc,
         }
     }
 }
