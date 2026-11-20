@@ -70,8 +70,9 @@ estimated per-unit cost, and a cheaper alternative (move it out of the loop,
 aggregate per block, sample, or drop it). Ask for a benchmark of the
 enabled path when the cost is unclear:
 `crates/execution/payload/benches/resource_metering.rs` covers the per-transaction
-resource-metering checks, and `native_candidate_scan.rs` and `native_build_loop.rs`
-drive the native `execute_best_transactions` loop. Wall-clock
+resource-metering checks, `native_candidate_scan.rs` and `native_build_loop.rs`
+drive the native `execute_best_transactions` loop, and `native_mainnet_shape.rs`
+runs it over the production pool iterator on a pool shaped like mainnet's. Wall-clock
 numbers from these benches drift with machine load, so compare two commits with
 `etc/scripts/local/bench_abba.py`, which builds both and runs them interleaved
 (A B B A) and reports the per-arm medians of criterion's per-run estimates.
