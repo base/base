@@ -689,14 +689,6 @@ where
     ) -> TxManagerResult<PreparedTx> {
         let is_blob = candidate.is_blob();
 
-        #[cfg(not(feature = "kzg"))]
-        if is_blob {
-            let _ = cached_sidecar;
-            return Err(TxManagerError::Unsupported(
-                "blob transactions require the `kzg` feature on base-tx-manager".to_string(),
-            ));
-        }
-
         // Blob transactions must have a recipient address (no contract creation).
         if is_blob && candidate.to.is_none() {
             return Err(TxManagerError::Unsupported(
@@ -711,6 +703,14 @@ where
                 candidate.blobs.len(),
                 crate::MAX_BLOBS_PER_TX,
             )));
+        }
+
+        #[cfg(not(feature = "kzg"))]
+        if is_blob {
+            let _ = cached_sidecar;
+            return Err(TxManagerError::Unsupported(
+                "blob transactions require the `kzg` feature on base-tx-manager".to_string(),
+            ));
         }
 
         let (tip_cap, fee_cap, blob_fee_cap) = if is_blob {
