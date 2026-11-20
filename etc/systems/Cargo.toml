@@ -103,7 +103,7 @@ reth-rpc-layer.workspace = true
 tower.workspace = true
 
 # p2p
-k256.workspace = true
+enr = { workspace = true, features = ["k256"] }
 libp2p.workspace = true
 
 # misc

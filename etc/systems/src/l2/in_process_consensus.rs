@@ -400,14 +400,16 @@ impl InProcessConsensus {
     }
 }
 
-/// Extracts the `k256::ecdsa::SigningKey` from a libp2p [`Keypair`](libp2p::identity::Keypair).
-fn extract_signing_key(keypair: &libp2p::identity::Keypair) -> Result<k256::ecdsa::SigningKey> {
+/// Extracts the `enr::k256::ecdsa::SigningKey` from a libp2p [`Keypair`](libp2p::identity::Keypair).
+fn extract_signing_key(
+    keypair: &libp2p::identity::Keypair,
+) -> Result<enr::k256::ecdsa::SigningKey> {
     let secp_keypair = keypair
         .clone()
         .try_into_secp256k1()
         .map_err(|_| eyre::eyre!("Keypair is not secp256k1"))?;
     let secret_bytes = secp_keypair.secret().to_bytes();
-    k256::ecdsa::SigningKey::from_bytes((&secret_bytes).into())
+    enr::k256::ecdsa::SigningKey::from_bytes(&secret_bytes.into())
         .wrap_err("Failed to create signing key from keypair bytes")
 }
 
