@@ -3040,7 +3040,9 @@ dependencies = [
  "base-cli-utils",
  "clap",
  "eyre",
+ "reth-node-core",
  "serde",
+ "tokio",
 ]
 
 [[package]]

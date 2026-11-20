@@ -17,8 +17,10 @@ workspace = true
 
 [dependencies]
 base-batcher-cli.workspace = true
-base-cli-utils.workspace = true
+base-cli-utils = { workspace = true, features = ["otlp"] }
+reth-node-core.workspace = true
 
 clap = { workspace = true, features = ["derive", "env"] }
 eyre.workspace = true
 serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

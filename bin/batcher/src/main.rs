@@ -7,6 +7,7 @@ use base_batcher_cli::BatcherArgs;
 use base_cli_utils::{LogConfig, MetricsConfig, RuntimeManager};
 use clap::Parser;
 use eyre::WrapErr;
+use reth_node_core::args::TraceArgs;
 
 base_cli_utils::define_log_args!("BASE_NODE");
 base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
@@ -25,6 +26,10 @@ struct BatcherCli {
     #[command(flatten)]
     logging: LogArgs,
 
+    /// `OpenTelemetry` tracing export configuration.
+    #[command(flatten)]
+    traces: TraceArgs,
+
     /// Metrics configuration.
     #[command(flatten)]
     metrics: MetricsArgs,
@@ -36,9 +41,23 @@ struct BatcherCli {
 
 impl BatcherCli {
     fn run(self) -> eyre::Result<()> {
-        LogConfig::from(self.logging)
-            .init_tracing_subscriber()
-            .wrap_err("failed to initialize tracing")?;
+        // Tonic captures the runtime during OTLP initialization. Keep it alive while the
+        // command runs, but leave its context before the batcher enters its own runtime.
+        let tracing_runtime = self
+            .traces
+            .otlp
+            .as_ref()
+            .map(|_| {
+                tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build()
+            })
+            .transpose()
+            .wrap_err("failed to create tracing runtime")?;
+        {
+            let _guard = tracing_runtime.as_ref().map(tokio::runtime::Runtime::enter);
+            LogConfig::from(self.logging)
+                .init_with_trace_args(&self.traces, &[])
+                .wrap_err("failed to initialize tracing")?;
+        }
 
         let metrics_enabled = self.metrics.enabled;
         MetricsConfig::from(self.metrics)
@@ -79,9 +98,11 @@ mod tests {
             "9191",
             "--logs.stdout.format",
             "json",
+            "--tracing-otlp=http://127.0.0.1:4318",
         ]);
         assert!(cli.metrics.enabled);
         assert_eq!(cli.metrics.port, 9191);
         assert_eq!(cli.batcher.sequencer_urls.len(), 1);
+        assert!(cli.traces.otlp.is_some());
     }
 }
