@@ -7,7 +7,8 @@ use base_consensus_peers::{
     BootNode, BootNodes, BootStore, BootStoreFile, EnrValidation, PeerUtils,
 };
 use derive_more::Debug;
-use discv5::{Config, Discv5, Enr, IpMode, enr::NodeId};
+use discv5::{Config, Discv5, Enr, IpMode};
+use enr::NodeId;
 use tokio::{
     sync::mpsc::{Sender, channel, error::TrySendError},
     time::{Duration, sleep},
@@ -142,7 +143,8 @@ impl Discv5Driver {
         for bn in bootnodes.0.into_iter().chain(BootNodes::from_chain_id(chain_id).0) {
             let res = match bn {
                 BootNode::Enr(enr) => Ok(enr.clone()),
-                BootNode::Enode(enode) => disc.request_enr(enode.clone()).await,
+                // libp2p and discv5 use different multiaddr versions but share the wire format.
+                BootNode::Enode(enode) => disc.request_enr(enode.to_vec()).await,
             };
 
             let Ok(enr) = res else {
@@ -403,11 +405,8 @@ mod tests {
     };
 
     use base_common_chains::ChainConfig;
-    use discv5::{
-        ConfigBuilder,
-        enr::{CombinedKey, CombinedPublicKey},
-        handler::NodeContact,
-    };
+    use discv5::{ConfigBuilder, NodeContact};
+    use enr::{CombinedKey, CombinedPublicKey};
     use tempfile::tempdir;
     use tokio::{net::UdpSocket, sync::mpsc};
 
@@ -510,8 +509,8 @@ mod tests {
                     Some(enr.public_key())
                 }
                 BootNode::Enode(_) => {
-                    let node_contact =
-                        NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
+                    let addr = node.to_multiaddr().unwrap().to_vec().try_into().unwrap();
+                    let node_contact = NodeContact::try_from_multiaddr(addr).unwrap();
                     Some(node_contact.public_key())
                 }
             })
@@ -550,8 +549,8 @@ mod tests {
                     Some(enr.public_key())
                 }
                 BootNode::Enode(_) => {
-                    let node_contact =
-                        NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
+                    let addr = node.to_multiaddr().unwrap().to_vec().try_into().unwrap();
+                    let node_contact = NodeContact::try_from_multiaddr(addr).unwrap();
                     Some(node_contact.public_key())
                 }
             })

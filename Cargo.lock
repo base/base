@@ -3844,7 +3844,8 @@ dependencies = [
  "base-upgrade-signal",
  "clap",
  "dirs 6.0.0",
- "discv5 0.10.4",
+ "discv5",
+ "enr",
  "eyre",
  "httpmock",
  "libp2p",
@@ -3906,7 +3907,8 @@ dependencies = [
  "base-consensus-peers",
  "base-metrics",
  "derive_more 2.1.1",
- "discv5 0.10.4",
+ "discv5",
+ "enr",
  "libp2p",
  "metrics",
  "rand 0.9.5",
@@ -3983,7 +3985,8 @@ dependencies = [
  "base-metrics",
  "base-protocol",
  "derive_more 2.1.1",
- "discv5 0.10.4",
+ "discv5",
+ "enr",
  "futures",
  "ipnet",
  "libp2p",
@@ -4051,7 +4054,8 @@ dependencies = [
  "base-upgrade-signal",
  "bytes",
  "derive_more 2.1.1",
- "discv5 0.10.4",
+ "discv5",
+ "enr",
  "ethereum_ssz",
  "futures",
  "http 1.4.2",
@@ -4094,7 +4098,8 @@ dependencies = [
  "base-common-chains",
  "derive_more 2.1.1",
  "dirs 6.0.0",
- "discv5 0.10.4",
+ "discv5",
+ "enr",
  "libp2p",
  "libp2p-identity 0.2.14",
  "multihash",
@@ -6366,7 +6371,7 @@ dependencies = [
  "base-health",
  "base-trusted-proxy",
  "clap",
- "discv5 0.10.4",
+ "enr",
  "futures",
  "governor",
  "ipnet",
@@ -8959,37 +8964,6 @@ dependencies = [
 
 [[package]]
 name = "discv5"
-version = "0.10.4"
-source = "git+https://github.com/sigp/discv5?rev=7663c00#7663c00ee0837ea98547caaedede95d9d6736f4d"
-dependencies = [
- "aes 0.8.4",
- "aes-gcm 0.10.3",
- "alloy-rlp",
- "arrayvec",
- "ctr 0.9.2",
- "delay_map",
- "enr 0.13.0",
- "fnv",
- "futures",
- "hashlink 0.11.1",
- "hex",
- "hkdf 0.12.4",
- "lazy_static",
- "libp2p-identity 0.2.14",
- "more-asserts",
- "multiaddr 0.18.2",
- "parking_lot",
- "rand 0.8.7",
- "smallvec",
- "socket2 0.6.5",
- "tokio",
- "tracing",
- "uint 0.10.0",
- "zeroize",
-]
-
-[[package]]
-name = "discv5"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "907a0cd56341d2fa9bba3a3fce8296cfb5878d6ec314340751e79836cccdc9da"
@@ -9000,7 +8974,7 @@ dependencies = [
  "arrayvec",
  "ctr 0.10.1",
  "delay_map",
- "enr 0.14.0",
+ "enr",
  "fnv",
  "futures",
  "hashlink 0.12.2",
@@ -9328,25 +9302,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "enr"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "851bd664a3d3a3c175cff92b2f0df02df3c541b4895d0ae307611827aae46152"
-dependencies = [
- "alloy-rlp",
- "base64 0.22.1",
- "bytes",
- "ed25519-dalek 2.2.0",
- "hex",
- "k256 0.13.4",
- "log",
- "rand 0.8.7",
- "serde",
- "sha3 0.10.9",
- "zeroize",
 ]
 
 [[package]]
@@ -10565,15 +10520,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
  "hashbrown 0.15.5",
-]
-
-[[package]]
-name = "hashlink"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "824e001ac4f3012dd16a264bec811403a67ca9deb6c102fc5049b32c4574b35f"
-dependencies = [
- "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -16593,8 +16539,8 @@ source = "git+https://github.com/paradigmxyz/reth?tag=v2.11.0#b9abbcc1b982755baa
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
- "discv5 0.12.0",
- "enr 0.14.0",
+ "discv5",
+ "enr",
  "itertools 0.14.0",
  "parking_lot",
  "rand 0.9.5",
@@ -16619,8 +16565,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "derive_more 2.1.1",
- "discv5 0.12.0",
- "enr 0.14.0",
+ "discv5",
+ "enr",
  "futures",
  "itertools 0.14.0",
  "libp2p-identity 0.3.1",
@@ -16645,7 +16591,7 @@ dependencies = [
  "alloy-primitives",
  "dashmap",
  "data-encoding",
- "enr 0.14.0",
+ "enr",
  "hickory-resolver 0.26.1",
  "linked_hash_set",
  "reth-ethereum-forks",
@@ -17466,8 +17412,8 @@ dependencies = [
  "aquamarine",
  "auto_impl",
  "derive_more 2.1.1",
- "discv5 0.12.0",
- "enr 0.14.0",
+ "discv5",
+ "enr",
  "futures",
  "itertools 0.14.0",
  "metrics",
@@ -17524,7 +17470,7 @@ dependencies = [
  "alloy-rpc-types-eth 2.5.0",
  "auto_impl",
  "derive_more 2.1.1",
- "enr 0.14.0",
+ "enr",
  "futures",
  "reth-eth-wire-types",
  "reth-ethereum-forks",
@@ -17569,7 +17515,7 @@ source = "git+https://github.com/paradigmxyz/reth?tag=v2.11.0#b9abbcc1b982755baa
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
- "enr 0.14.0",
+ "enr",
  "secp256k1 0.33.1",
  "serde_with",
  "thiserror 2.0.21",

@@ -2,7 +2,8 @@
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use discv5::{Enr, enr::NodeId, kbucket::NodeStatus};
+use discv5::{Enr, kbucket::NodeStatus};
+use enr::NodeId;
 use libp2p::Multiaddr;
 use tokio::sync::mpsc::Sender;
 

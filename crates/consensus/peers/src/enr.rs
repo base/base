@@ -123,7 +123,7 @@ impl Decodable for BaseEnr {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, bytes};
-    use discv5::enr::CombinedKey;
+    use enr::CombinedKey;
 
     use super::*;
 

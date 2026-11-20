@@ -269,7 +269,7 @@ mod tests {
     use alloy_primitives::Address;
     use alloy_rpc_types_engine::JwtSecret;
     use base_consensus_disc::LocalNode;
-    use discv5::enr::k256::ecdsa::SigningKey;
+    use enr::k256::ecdsa::SigningKey;
     use libp2p::Multiaddr;
 
     use super::*;

@@ -49,6 +49,7 @@ alloy-chains = { workspace = true, features = ["std"] }
 
 # networking
 reqwest.workspace = true
+enr = { workspace = true, features = ["k256"] }
 discv5 = { workspace = true, features = ["libp2p"] }
 libp2p = { workspace = true, features = ["secp256k1", "macros", "tokio", "tcp", "noise", "gossipsub", "ping", "yamux", "identify"] }
 

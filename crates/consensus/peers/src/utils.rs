@@ -1,11 +1,8 @@
 //! Utilities to translate types.
 
-use discv5::{
-    Enr,
-    enr::{CombinedPublicKey, EnrPublicKey},
-    multiaddr::Protocol,
-};
-use libp2p::Multiaddr;
+use discv5::Enr;
+use enr::{CombinedPublicKey, EnrPublicKey};
+use libp2p::{Multiaddr, multiaddr::Protocol};
 
 use super::PeerId;
 
@@ -17,7 +14,7 @@ pub enum PeerIdConversionError {
     InvalidPeerId(secp256k1::Error),
     /// The secp256k1 public key cannot be converted to a libp2p peer id. This is a bug.
     #[error("Invalid conversion from secp256k1 public key to libp2p peer id: {0}. This is a bug.")]
-    InvalidPublicKey(#[from] discv5::libp2p_identity::DecodingError),
+    InvalidPublicKey(#[from] libp2p_identity::DecodingError),
 }
 
 /// Utility methods for converting between peer network identity and address types.
@@ -79,9 +76,8 @@ impl PeerUtils {
         let encoded_pk_bytes = Self::peer_id_to_secp256k1_pubkey(peer_id)
             .map_err(PeerIdConversionError::InvalidPeerId)?
             .serialize();
-        let pk: discv5::libp2p_identity::PublicKey =
-            discv5::libp2p_identity::secp256k1::PublicKey::try_from_bytes(&encoded_pk_bytes)?
-                .into();
+        let pk: libp2p_identity::PublicKey =
+            libp2p_identity::secp256k1::PublicKey::try_from_bytes(&encoded_pk_bytes)?.into();
 
         Ok(pk.to_peer_id())
     }
@@ -92,7 +88,7 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use alloy_primitives::hex::FromHex;
-    use discv5::enr::{CombinedKey, Enr, EnrKey};
+    use enr::{CombinedKey, Enr, EnrKey};
 
     use super::*;
     use crate::PeerId;
@@ -181,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_convert_local_peer_id_to_multi_peer_id() {
-        let p2p_keypair = discv5::libp2p_identity::secp256k1::Keypair::generate();
+        let p2p_keypair = libp2p_identity::secp256k1::Keypair::generate();
         let uncompressed = p2p_keypair.public().to_bytes_uncompressed();
         let local_peer_id = PeerId::from_slice(&uncompressed[1..]);
 
@@ -189,8 +185,7 @@ mod tests {
         // peer id (protocol buffer encoded public key).
         let peer_id = PeerUtils::local_id_to_p2p_id(local_peer_id).unwrap();
 
-        let p2p_public_key: discv5::libp2p_identity::PublicKey =
-            p2p_keypair.public().clone().into();
+        let p2p_public_key: libp2p_identity::PublicKey = p2p_keypair.public().clone().into();
 
         assert_eq!(peer_id, p2p_public_key.to_peer_id());
     }
@@ -206,8 +201,8 @@ mod tests {
 
         let uncompressed_pub_key = PeerUtils::peer_id_to_secp256k1_pubkey(pub_key).unwrap();
 
-        let p2p_public_key: discv5::libp2p_identity::PublicKey =
-            discv5::libp2p_identity::secp256k1::PublicKey::try_from_bytes(
+        let p2p_public_key: libp2p_identity::PublicKey =
+            libp2p_identity::secp256k1::PublicKey::try_from_bytes(
                 &uncompressed_pub_key.serialize(),
             )
             .unwrap()

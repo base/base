@@ -22,6 +22,7 @@ alloy-rlp = { workspace = true, features = ["std"] }
 
 # Networking
 libp2p.workspace = true
+enr = { workspace = true, features = ["k256"] }
 discv5 = { workspace = true, features = ["libp2p"] }
 
 # Misc
