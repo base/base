@@ -332,11 +332,12 @@ mod tests {
                         None,
                     )
                     .expect("u64::MAX gas limit should always pass");
+                    let initial_gas = expected.initial_total_gas();
                     let probes = [
                         0,
-                        expected.initial_gas.saturating_sub(1),
-                        expected.initial_gas,
-                        expected.initial_gas + 1,
+                        initial_gas.saturating_sub(1),
+                        initial_gas,
+                        initial_gas + 1,
                         expected.floor_gas.saturating_sub(1),
                         expected.floor_gas,
                         expected.floor_gas + 1,
