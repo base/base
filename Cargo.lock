@@ -2901,7 +2901,6 @@ dependencies = [
  "reth-cli-runner",
  "reth-cli-util",
  "reth-config",
- "reth-node-core",
  "rstest",
  "serde",
  "serde_json",
