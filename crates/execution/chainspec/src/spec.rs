@@ -581,7 +581,9 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
     type Error = BaseChainSpecError;
 
     fn try_from(cfg: &ChainConfig) -> Result<Self, Self::Error> {
-        let genesis = serde_json::from_str(cfg.genesis_json)?;
+        let genesis = serde_json::from_str(base_common_genesis_json::GenesisJson::for_chain_id(
+            cfg.chain_id,
+        ))?;
         let upgrades =
             base_common_chains::ChainUpgrades::new(BaseUpgrade::forks_for(cfg)).to_chain_upgrades();
         let activation_admin_address = cfg.beryl_activation_admin_address();
@@ -1321,7 +1323,10 @@ mod tests {
     #[test]
     fn embedded_genesis_matches_genesis_active_upgrade_conditions() {
         for config in [ChainConfig::mainnet(), ChainConfig::sepolia(), ChainConfig::zeronet()] {
-            let genesis: Genesis = serde_json::from_str(config.genesis_json).unwrap();
+            let genesis: Genesis = serde_json::from_str(
+                base_common_genesis_json::GenesisJson::for_chain_id(config.chain_id),
+            )
+            .unwrap();
             for (actual, expected) in [
                 (genesis.config.shanghai_time, config.canyon_timestamp),
                 (genesis.config.cancun_time, config.ecotone_timestamp),

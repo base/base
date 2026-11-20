@@ -111,10 +111,6 @@ pub struct ChainConfig {
     // Networking
     /// Bootnodes for peer discovery, split by stack layer.
     pub bootnodes: Bootnodes,
-
-    // Execution genesis
-    /// Embedded genesis JSON for reth alloc tables.
-    pub genesis_json: &'static str,
 }
 
 /// Raw bootnode strings split by the stack layer that should consume them.
@@ -521,8 +517,6 @@ const MAINNET: ChainConfig = ChainConfig {
             "enr:-J24QG3ypT4xSu0gjb5PABCmVxZqBjVw9ca7pvsI8jl4KATYAnxBmfkaIuEqy9sKvDHKuNCsy57WwK9wTt2aQgcaDDyGAYiOoGAXgmlkgnY0gmlwhDbGmZaHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQIeAK_--tcLEiu7HvoUlbV52MspE0uCocsx1f_rYvRenIN0Y3CCJAaDdWRwgiQG",
         ],
     },
-
-    genesis_json: include_str!("../res/genesis/base.json"),
 };
 
 const SEPOLIA: ChainConfig = ChainConfig {
@@ -586,8 +580,6 @@ const SEPOLIA: ChainConfig = ChainConfig {
             "enr:-J64QBwRIWAco7lv6jImSOjPU_W266lHXzpAS5YOh7WmgTyBZkgLgOwo_mxKJq3wz2XRbsoBItbv1dCyjIoNq67mFguGAYrTxM42gmlkgnY0gmlwhBLSsHKHb3BzdGFja4S0lAUAiXNlY3AyNTZrMaEDmoWSi8hcsRpQf2eJsNUx-sqv6fH4btmo2HsAzZFAKnKDdGNwgiQGg3VkcIIkBg",
         ],
     },
-
-    genesis_json: include_str!("../res/genesis/sepolia_base.json"),
 };
 
 const DEVNET: ChainConfig = ChainConfig {
@@ -640,8 +632,6 @@ const DEVNET: ChainConfig = ChainConfig {
     prune_delete_limit: 20_000,
 
     bootnodes: Bootnodes::EMPTY,
-
-    genesis_json: include_str!("../res/genesis/dev.json"),
 };
 
 const ZERONET: ChainConfig = ChainConfig {
@@ -702,8 +692,6 @@ const ZERONET: ChainConfig = ChainConfig {
             "enr:-Ji4QLr5n2VbXQohRywhyi2_efPpMcKzKL7DtllVNgkn_fDuGszrobGsTjM9WX7TxVqbW6YX8pxEx7lmvHprVc3HX8wBgmlkgnY0gmlwhDZaa-CHb3BzdGFja4Tgyy4AiXNlY3AyNTZrMaEDG1GmDUlW2vWzc7QQ_QOgPFG1Gfn-sCC8FQTef-GdCo2DdGNwgiQGg3VkcIIkBg",
         ],
     },
-
-    genesis_json: include_str!("../res/genesis/zeronet_base.json"),
 };
 
 #[cfg(test)]

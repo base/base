@@ -3633,6 +3633,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-genesis-json"
+version = "0.0.0"
+
+[[package]]
 name = "base-common-l1-fees"
 version = "0.0.0"
 dependencies = [
@@ -4264,6 +4268,7 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-genesis",
+ "base-common-genesis-json",
  "base-common-rpc-types",
  "base-protocol",
  "derive_more 2.1.1",
@@ -4399,6 +4404,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "base-common-genesis",
+ "base-common-genesis-json",
  "base-common-rpc-types-engine",
  "base-consensus-upgrades",
  "base-execution-chainspec",
