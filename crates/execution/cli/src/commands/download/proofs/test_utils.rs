@@ -62,6 +62,7 @@ pub(super) fn generate_proofs_snapshot(proofs: &[(&str, &[u8])]) -> (serde_json:
         remote_static_files: &remote_static_files,
         previous_manifest: None,
         upload_proofs: true,
+        reth_version: None,
     })
     .unwrap();
 

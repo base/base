@@ -3,7 +3,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use base_reth_cli::{
+use base_snapshot_manifest::{
     ChunkFilename, DEFAULT_BLOCKS_PER_FILE, ManifestGenerationParams, SnapshotGenerator,
 };
 use tracing::{error, info, warn};
@@ -214,6 +214,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 remote_static_files: &remote_for_gen,
                 previous_manifest: previous_manifest_for_gen.as_ref(),
                 upload_proofs,
+                reth_version: None,
             };
             SnapshotGenerator::generate_manifest_with_sink(&params, &sink)
         })

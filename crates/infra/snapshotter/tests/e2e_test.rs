@@ -743,6 +743,7 @@ async fn snapshot_generator_streams_archives_to_minio() -> Result<()> {
                 remote_static_files: &remote_static_files,
                 previous_manifest: None,
                 upload_proofs: false,
+                reth_version: None,
             },
             &sink,
         )
@@ -1138,6 +1139,7 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         remote_static_files: &HashMap::new(),
         previous_manifest: None,
         upload_proofs: false,
+        reth_version: None,
     })?;
     let previous_manifest = parse_local_manifest(baseline.path())?;
 
@@ -1166,6 +1168,7 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         remote_static_files: &remote,
         previous_manifest: Some(&previous_manifest),
         upload_proofs: false,
+        reth_version: None,
     })?;
 
     let filenames: Vec<String> = files
@@ -1242,6 +1245,7 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
         remote_static_files: &empty_remote,
         previous_manifest: None,
         upload_proofs: true,
+        reth_version: None,
     })?;
 
     assert!(
