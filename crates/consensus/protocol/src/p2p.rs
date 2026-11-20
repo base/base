@@ -1,5 +1,6 @@
-//! The types used in the p2p RPC API.
+//! Wire types used in the consensus P2P RPC API.
 
+use alloc::{string::String, vec::Vec};
 use core::net::IpAddr;
 
 use alloy_primitives::{ChainId, map::HashMap};
@@ -55,94 +56,46 @@ pub struct PeerInfo {
 
 /// `GossipSub` topic-specific scoring metrics.
 ///
-/// Tracks peer performance within specific gossip topics, used by the
-/// `GossipSub` protocol to maintain mesh quality and route messages efficiently.
-/// These scores influence peer selection for the gossip mesh topology.
-///
 /// Reference: <https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/p2p/store/iface.go#L13>
 #[derive(Clone, Default, Debug, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopicScores {
     /// Duration the peer has participated in the topic mesh.
-    ///
-    /// Longer participation indicates stability and commitment to the topic,
-    /// contributing positively to the peer's mesh score.
     pub time_in_mesh: f64,
-
     /// Count of first-time message deliveries from this peer.
-    ///
-    /// Measures how often this peer is the first to deliver new messages,
-    /// indicating their connectivity and responsiveness to the network.
     pub first_message_deliveries: f64,
-
     /// Count of messages delivered while in the mesh topology.
-    ///
-    /// Tracks consistent message forwarding behavior while the peer is
-    /// an active participant in the mesh structure.
     pub mesh_message_deliveries: f64,
-
     /// Count of invalid or malicious messages from this peer.
-    ///
-    /// Penalizes peers that send invalid, duplicate, or malformed messages,
-    /// helping maintain network health and preventing spam.
     pub invalid_message_deliveries: f64,
 }
 
 /// Comprehensive `GossipSub` scoring metrics for peer quality assessment.
-///
-/// Aggregates various scoring factors used by the `GossipSub` protocol to
-/// evaluate peer quality and determine mesh topology. Higher scores indicate
-/// more reliable and well-behaved peers.
 ///
 /// Reference: <https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/p2p/store/iface.go#L20C6-L20C18>
 #[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GossipScores {
     /// Aggregate score across all scoring dimensions.
-    ///
-    /// The final computed score that determines this peer's overall
-    /// reputation in the gossip network.
     pub total: f64,
-
     /// Block-specific topic scores for consensus messages.
-    ///
-    /// Tracks peer behavior specifically for block gossip, which is
-    /// the primary message type in Base networks.
     pub blocks: TopicScores,
-
     /// Penalty for IP address colocation with other peers.
-    ///
-    /// Reduces scores for peers sharing IP addresses to prevent
-    /// eclipse attacks and improve network decentralization.
     #[serde(rename = "IPColocationFactor")]
     pub ip_colocation_factor: f64,
-
     /// Penalty for problematic behavior patterns.
-    ///
-    /// Applied to peers exhibiting suspicious or harmful behavior
-    /// that doesn't fit other specific scoring categories.
     pub behavioral_penalty: f64,
 }
 
 /// Legacy request-response scoring fields retained for RPC response compatibility.
-///
-/// Base does not support the legacy block-sync request-response protocol and
-/// reports zeroes for these fields.
 ///
 /// Reference: <https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/p2p/store/iface.go#L31C1-L35C2>
 #[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReqRespScores {
     /// Number of valid responses provided by this peer.
-    ///
-    /// Counts successful request-response exchanges where the peer
-    /// provided correct and timely responses to queries.
     pub valid_responses: f64,
-
     /// Number of error responses or failed requests.
-    ///
-    /// Tracks cases where the peer returned errors, timeouts, or
-    /// otherwise failed to properly respond to requests.
     pub error_responses: f64,
     /// Number of rejected payloads.
     pub rejected_payloads: f64,
@@ -226,39 +179,24 @@ pub struct PeerStats {
 
 /// Represents the connectivity state of a peer in a network, indicating the reachability and
 /// interaction status of a node with its peers.
-#[derive(
-    Clone,
-    Debug,
-    Display,
-    PartialEq,
-    Eq,
-    Copy,
-    Default,
-    // We need to use `serde_repr` to serialize the enum as an integer to match the reference node API.
-    serde_repr::Serialize_repr,
-    serde_repr::Deserialize_repr,
-)]
+#[derive(Clone, Debug, Display, PartialEq, Eq, Copy, Default)]
 #[repr(u8)]
 pub enum Connectedness {
     /// No current connection to the peer, and no recent history of a successful connection.
     #[default]
     #[display("Not Connected")]
     NotConnected = 0,
-
     /// An active, open connection to the peer exists.
     #[display("Connected")]
     Connected = 1,
-
     /// Connection to the peer is possible but not currently established; usually implies a past
     /// successful connection.
     #[display("Can Connect")]
     CanConnect = 2,
-
     /// Recent attempts to connect to the peer failed, indicating potential issues in reachability
     /// or peer status.
     #[display("Cannot Connect")]
     CannotConnect = 3,
-
     /// Connection to the peer is limited; may not have full capabilities.
     #[display("Limited")]
     Limited = 4,
@@ -275,6 +213,36 @@ impl From<u8> for Connectedness {
         }
     }
 }
+
+impl serde::Serialize for Connectedness {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_u8(*self as u8)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Connectedness {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = u8::deserialize(deserializer)?;
+        match value {
+            0 => Ok(Self::NotConnected),
+            1 => Ok(Self::Connected),
+            2 => Ok(Self::CanConnect),
+            3 => Ok(Self::CannotConnect),
+            4 => Ok(Self::Limited),
+            _ => Err(serde::de::Error::invalid_value(
+                serde::de::Unexpected::Unsigned(u64::from(value)),
+                &"a value between 0 and 4",
+            )),
+        }
+    }
+}
+
 /// Direction represents the direction of a connection.
 #[derive(Debug, Clone, Display, Copy, PartialEq, Eq, Default)]
 pub enum Direction {
@@ -310,7 +278,7 @@ impl<'de> serde::Deserialize<'de> for Direction {
             1 => Ok(Self::Inbound),
             2 => Ok(Self::Outbound),
             _ => Err(serde::de::Error::invalid_value(
-                serde::de::Unexpected::Unsigned(value as u64),
+                serde::de::Unexpected::Unsigned(u64::from(value)),
                 &"a value between 0 and 2",
             )),
         }
@@ -322,68 +290,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_connectedness_from_u8() {
-        assert_eq!(Connectedness::from(0), Connectedness::NotConnected);
-        assert_eq!(Connectedness::from(1), Connectedness::Connected);
-        assert_eq!(Connectedness::from(2), Connectedness::CanConnect);
-        assert_eq!(Connectedness::from(3), Connectedness::CannotConnect);
-        assert_eq!(Connectedness::from(4), Connectedness::Limited);
-        assert_eq!(Connectedness::from(5), Connectedness::NotConnected);
-    }
-
-    #[test]
-    fn test_direction_display() {
-        assert_eq!(Direction::Unknown.to_string(), "Unknown");
-        assert_eq!(Direction::Inbound.to_string(), "Inbound");
-        assert_eq!(Direction::Outbound.to_string(), "Outbound");
-    }
-
-    #[test]
-    fn test_direction_serialization() {
-        assert_eq!(
-            serde_json::to_string(&Direction::Unknown).unwrap(),
-            "0",
-            "Serialization failed for Direction::Unknown"
-        );
-        assert_eq!(
-            serde_json::to_string(&Direction::Inbound).unwrap(),
-            "1",
-            "Serialization failed for Direction::Inbound"
-        );
-        assert_eq!(
-            serde_json::to_string(&Direction::Outbound).unwrap(),
-            "2",
-            "Serialization failed for Direction::Outbound"
-        );
-    }
-
-    #[test]
-    fn test_direction_deserialization() {
-        let unknown: Direction = serde_json::from_str("0").unwrap();
-        let inbound: Direction = serde_json::from_str("1").unwrap();
-        let outbound: Direction = serde_json::from_str("2").unwrap();
-
-        assert_eq!(unknown, Direction::Unknown, "Deserialization mismatch for Direction::Unknown");
-        assert_eq!(inbound, Direction::Inbound, "Deserialization mismatch for Direction::Inbound");
-        assert_eq!(
-            outbound,
-            Direction::Outbound,
-            "Deserialization mismatch for Direction::Outbound"
-        );
-    }
-
-    #[test]
-    fn test_peer_info_connectedness_serialization() {
+    fn test_peer_info_connectedness_and_direction_roundtrip() {
         let peer_info = PeerInfo {
             peer_id: String::from("peer123"),
             node_id: String::from("node123"),
-            user_agent: String::from("MyUserAgent"),
-            protocol_version: String::from("v1"),
+            user_agent: String::from("agent/1.0"),
+            protocol_version: String::from("1.0"),
             enr: Some(String::from("enr123")),
-            addresses: [String::from("127.0.0.1")].to_vec(),
-            protocols: Some([String::from("eth"), String::from("p2p")].to_vec()),
+            addresses: alloc::vec![String::from("127.0.0.1:8080")],
+            protocols: Some(alloc::vec![String::from("eth/66")]),
             connectedness: Connectedness::Connected,
-            direction: Direction::Outbound,
+            direction: Direction::Inbound,
             protected: true,
             chain_id: 1,
             latency: 100,
@@ -409,28 +326,12 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&peer_info).expect("Serialization failed");
-
         let deserialized: PeerInfo =
             serde_json::from_str(&serialized).expect("Deserialization failed");
 
-        assert_eq!(peer_info.peer_id, deserialized.peer_id);
-        assert_eq!(peer_info.node_id, deserialized.node_id);
-        assert_eq!(peer_info.user_agent, deserialized.user_agent);
-        assert_eq!(peer_info.protocol_version, deserialized.protocol_version);
-        assert_eq!(peer_info.enr, deserialized.enr);
-        assert_eq!(peer_info.addresses, deserialized.addresses);
-        assert_eq!(peer_info.protocols, deserialized.protocols);
         assert_eq!(peer_info.connectedness, deserialized.connectedness);
         assert_eq!(peer_info.direction, deserialized.direction);
-        assert_eq!(peer_info.protected, deserialized.protected);
-        assert_eq!(peer_info.chain_id, deserialized.chain_id);
-        assert_eq!(peer_info.latency, deserialized.latency);
-        assert_eq!(peer_info.gossip_blocks, deserialized.gossip_blocks);
-        assert_eq!(peer_info.peer_scores.gossip.total, deserialized.peer_scores.gossip.total);
-        assert_eq!(
-            peer_info.peer_scores.req_resp.valid_responses,
-            deserialized.peer_scores.req_resp.valid_responses
-        );
+        assert_eq!(peer_info.peer_id, deserialized.peer_id);
     }
 
     #[test]

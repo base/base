@@ -3,12 +3,11 @@
 use std::io::{self, Write};
 
 use anyhow::{Context, Result, anyhow};
-use base_consensus_peers::BootNode;
 use serde::Serialize;
 use url::Url;
 
 use crate::{
-    CommandOutcome, Confirm, ConsensusClient, JsonOutput, KeyValueTable, MonitoringConfig,
+    BootNode, CommandOutcome, Confirm, ConsensusClient, JsonOutput, KeyValueTable, MonitoringConfig,
     P2pCommandError, P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary,
     ReachabilityOutcome, ReachabilityResponse, TelemetryClient, add_peer, ban_el_peer,
     el_peer_is_trusted, fetch_connected_peers, fetch_info, fetch_l2_chain_id, fetch_raw_info,
@@ -509,10 +508,10 @@ impl AddTarget {
         match &bootnode {
             BootNode::Enode(_) => Ok(Self::Enode(target.to_string())),
             BootNode::Enr(_) => {
-                let multiaddr = bootnode.to_multiaddr().ok_or_else(|| {
+                let multiaddr = bootnode.to_multiaddr_string().ok_or_else(|| {
                     P2pTargetError::EnrMissingMultiaddr { target: target.to_string() }
                 })?;
-                Ok(Self::Multiaddr(multiaddr.to_string()))
+                Ok(Self::Multiaddr(multiaddr))
             }
         }
     }

@@ -43,6 +43,7 @@ alloc-no-stdlib.workspace = true
 # optional
 spin = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
+ipnet = { workspace = true, features = ["serde"], optional = true }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 tracing-subscriber = { workspace = true, features = ["fmt"], optional = true }
 
@@ -117,6 +118,7 @@ serde = [
 	"miniz_oxide/serde",
 	"tracing-subscriber?/serde",
 ]
+p2p-rpc = [ "dep:ipnet", "serde", "std" ]
 arbitrary = [
 	"alloy-consensus/arbitrary",
 	"alloy-eips/arbitrary",

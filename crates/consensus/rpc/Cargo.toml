@@ -13,11 +13,11 @@ workspace = true
 
 [dependencies]
 # Workspace
-base-consensus-gossip.workspace = true
-base-consensus-engine.workspace = true
-base-consensus-safedb.workspace = true
+base-consensus-gossip = { workspace = true, optional = true }
+base-consensus-engine = { workspace = true, optional = true }
+base-consensus-safedb = { workspace = true, optional = true }
 base-upgrade-signal.workspace = true
-base-protocol = { workspace = true, features = ["serde", "std"] }
+base-protocol = { workspace = true, features = ["p2p-rpc", "serde", "std"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 
 # Base Alloy
@@ -28,19 +28,19 @@ alloy-eips = { workspace = true, features = ["serde", "std"] }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"] }
 
 # Misc
-url.workspace = true
+url = { workspace = true, optional = true }
 ipnet.workspace = true
-backon.workspace = true
-libp2p.workspace = true
-async-trait.workspace = true
+backon = { workspace = true, optional = true }
+libp2p = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["time"] }
-tracing = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["time"], optional = true }
+tracing = { workspace = true, features = ["std"], optional = true }
 thiserror = { workspace = true, features = ["std"] }
 
 # RPC
 getrandom = { workspace = true, features = ["wasm_js"] }
-jsonrpsee = { workspace = true, features = ["macros", "server"] }
+jsonrpsee = { workspace = true, features = ["macros"] }
 
 [dev-dependencies]
 rstest.workspace = true
@@ -49,16 +49,28 @@ serde_json = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 
 [features]
-default = []
+default = [ "server" ]
+server = [
+	"dep:async-trait",
+	"dep:backon",
+	"dep:base-consensus-engine",
+	"dep:base-consensus-gossip",
+	"dep:base-consensus-safedb",
+	"dep:libp2p",
+	"dep:tokio",
+	"dep:tracing",
+	"dep:url",
+	"jsonrpsee/server",
+]
 reqwest = [ "client" ]
 client = [
 	"jsonrpsee/async-client",
-	"jsonrpsee/client",
+	"jsonrpsee/client-core",
 	"jsonrpsee/http-client",
 ]
 metrics = [
-	"base-consensus-engine/metrics",
-	"base-consensus-gossip/metrics",
+	"base-consensus-engine?/metrics",
+	"base-consensus-gossip?/metrics",
 	"base-upgrade-signal/metrics",
-	"libp2p/metrics",
+	"libp2p?/metrics",
 ]

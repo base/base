@@ -69,5 +69,16 @@ pub use output_root::OutputRoot;
 mod sync;
 pub use sync::SyncStatus;
 
+mod safe_head;
+pub use safe_head::SafeHeadResponse;
+
+#[cfg(feature = "p2p-rpc")]
+mod p2p;
+#[cfg(feature = "p2p-rpc")]
+pub use p2p::{
+    Connectedness, Direction, GossipScores, PeerCount, PeerDump, PeerInfo, PeerScores, PeerStats,
+    ReqRespScores, TopicScores,
+};
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

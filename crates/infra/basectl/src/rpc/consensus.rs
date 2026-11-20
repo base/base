@@ -4,9 +4,8 @@ use std::{fmt, future::Future, time::Duration};
 
 use alloy_primitives::B256;
 use base_common_genesis::RollupConfig;
-use base_consensus_gossip::{PeerDump, PeerInfo, PeerStats};
 use base_consensus_rpc::{AdminApiClient, BaseApiClient, BaseP2PApiClient, RollupNodeApiClient};
-use base_protocol::SyncStatus;
+use base_protocol::{PeerDump, PeerInfo, PeerStats, SyncStatus};
 use base_upgrade_signal::UpgradeReadiness;
 use jsonrpsee::{
     core::client::Error as JsonRpcClientError,

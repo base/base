@@ -46,8 +46,7 @@
 mod request;
 pub use request::P2pRpcRequest;
 
-mod types;
-pub use types::{
+pub use base_protocol::{
     Connectedness, Direction, GossipScores, PeerCount, PeerDump, PeerInfo, PeerScores, PeerStats,
     ReqRespScores, TopicScores,
 };

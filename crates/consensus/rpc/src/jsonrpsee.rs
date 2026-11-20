@@ -6,17 +6,14 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
-use base_consensus_safedb::SafeHeadResponse;
-use base_protocol::SyncStatus;
+use base_protocol::{PeerCount, PeerDump, PeerInfo, PeerStats, SafeHeadResponse, SyncStatus};
 use base_upgrade_signal::{UpgradeReadiness, UpgradeSignalApplySummary};
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
 use getrandom as _; // required for compiling wasm32-unknown-unknown
 use ipnet::IpNet;
-use jsonrpsee::{
-    core::{RpcResult, SubscriptionResult},
-    proc_macros::rpc,
-};
+#[cfg(feature = "server")]
+use jsonrpsee::core::{RpcResult, SubscriptionResult};
+use jsonrpsee::proc_macros::rpc;
 use serde::{Deserialize, Serialize};
 
 use crate::{OutputResponse, health::HealthzResponse};
@@ -95,8 +92,9 @@ pub struct UnknownServerSuffrage(pub u8);
 ///
 /// https://docs.optimism.io/builders/node-operators/json-rpc
 /// https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/node/api.go#L114
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "optimism"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "optimism"))]
+#[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server, namespace = "optimism"))]
+#[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client, namespace = "optimism"))]
+#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client, namespace = "optimism"))]
 pub trait RollupNodeApi {
     /// Get the output root at a specific block.
     #[method(name = "outputAtBlock")]
@@ -126,8 +124,9 @@ pub trait RollupNodeApi {
 ///
 /// Read-only, non-admin methods intended for node operators — including external operators — so they
 /// are exposed on the public RPC without requiring the (privileged) `admin` namespace to be enabled.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "base"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "base"))]
+#[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server, namespace = "base"))]
+#[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client, namespace = "base"))]
+#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client, namespace = "base"))]
 pub trait BaseApi {
     /// Reports whether this node is ready for the contract-backed upgrades scheduled on L1.
     ///
@@ -149,8 +148,9 @@ pub trait BaseApi {
 }
 
 /// The opp2p namespace handles peer interactions.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "opp2p"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "opp2p"))]
+#[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server, namespace = "opp2p"))]
+#[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client, namespace = "opp2p"))]
+#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client, namespace = "opp2p"))]
 pub trait BaseP2PApi {
     /// Returns information of node
     #[method(name = "self")]
@@ -226,8 +226,9 @@ pub trait BaseP2PApi {
 }
 
 /// Websockets API for the node.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "ws"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "ws"))]
+#[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server, namespace = "ws"))]
+#[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client, namespace = "ws"))]
+#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client, namespace = "ws"))]
 #[async_trait]
 pub trait Ws {
     /// Subscribes to the stream of finalized head updates.
@@ -244,8 +245,9 @@ pub trait Ws {
 }
 
 /// Development RPC API for engine state introspection.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "dev"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "dev"))]
+#[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server, namespace = "dev"))]
+#[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client, namespace = "dev"))]
+#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client, namespace = "dev"))]
 #[async_trait]
 pub trait DevEngineApi {
     /// Subscribe to engine queue length updates.
@@ -258,8 +260,9 @@ pub trait DevEngineApi {
 }
 
 /// The admin namespace for the consensus node.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "admin"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "admin"))]
+#[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server, namespace = "admin"))]
+#[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client, namespace = "admin"))]
+#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client, namespace = "admin"))]
 #[async_trait]
 pub trait AdminApi {
     /// Posts the unsafe payload.
@@ -311,8 +314,9 @@ pub trait AdminApi {
 }
 
 /// The healthcheck API for the consensus node.
-#[cfg_attr(not(feature = "client"), rpc(server))]
-#[cfg_attr(feature = "client", rpc(server, client))]
+#[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server))]
+#[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client))]
+#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client))]
 pub trait HealthzApi {
     /// Gets the health of the base-node.
     #[method(name = "healthz")]
@@ -323,8 +327,9 @@ pub trait HealthzApi {
 ///
 /// Implemented by op-conductor nodes. See:
 /// <https://github.com/ethereum-optimism/optimism/blob/develop/op-conductor/rpc/api.go>
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "conductor"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "conductor"))]
+#[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server, namespace = "conductor"))]
+#[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client, namespace = "conductor"))]
+#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client, namespace = "conductor"))]
 pub trait ConductorApi {
     /// Returns whether this node is the current Raft leader.
     #[method(name = "leader")]
@@ -382,7 +387,7 @@ pub trait ConductorApi {
     async fn conductor_cluster_membership(&self) -> RpcResult<ClusterMembership>;
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server"))]
 mod tests {
     use core::net::IpAddr;
 

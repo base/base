@@ -24,6 +24,9 @@ pub use commands::{
     UpgradeReadinessCommand, ZkBackendOption,
 };
 
+mod p2p_record;
+pub(crate) use p2p_record::{BootNode, NodeRecord};
+
 mod denim;
 pub use denim::{
     DenimCheck, DenimCheckCursor, DenimCheckStatus, DenimCheckTarget, DenimChecker,
