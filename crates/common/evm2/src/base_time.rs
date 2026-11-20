@@ -1,7 +1,7 @@
 //! Denim `BaseTime` predeploy install transition.
 
-use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, uint};
-use base_common_consensus::Predeploys;
+use alloy_primitives::{Address, B256, Bytes, U256};
+use base_common_consensus::{BaseTimePredeploy, Predeploys};
 use base_common_genesis::BaseFeature;
 use evm2::{
     AccountInfo, Evm,
@@ -51,26 +51,20 @@ pub struct BaseTime;
 
 impl BaseTime {
     /// The code-namespace address used by the canonical `BaseTime` proxy.
-    pub const IMPLEMENTATION_ADDRESS: Address =
-        address!("0xc0D3C0d3C0d3C0D3c0d3C0d3c0D3C0d3c0d30030");
+    pub const IMPLEMENTATION_ADDRESS: Address = BaseTimePredeploy::IMPLEMENTATION_ADDRESS;
 
     /// The expected hash of the canonical `BaseTime` runtime bytecode.
-    pub const IMPLEMENTATION_CODE_HASH: B256 =
-        b256!("0x9c4c8a497a69d0b8f2ba67be0bee7a1373186055978c3be6ec3068e0ec27f32a");
+    pub const IMPLEMENTATION_CODE_HASH: B256 = BaseTimePredeploy::IMPLEMENTATION_CODE_HASH;
 
     /// The EIP-1967 proxy implementation slot.
-    pub const IMPLEMENTATION_SLOT: U256 =
-        uint!(0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc_U256);
+    pub const IMPLEMENTATION_SLOT: U256 = BaseTimePredeploy::IMPLEMENTATION_SLOT;
 
     /// The EIP-1967 proxy admin slot.
-    pub const ADMIN_SLOT: U256 =
-        uint!(0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103_U256);
+    pub const ADMIN_SLOT: U256 = BaseTimePredeploy::ADMIN_SLOT;
 
     /// Returns the canonical `BaseTime` runtime bytecode from `base/contracts` commit `4848ec70`.
     pub fn implementation_bytecode() -> Bytes {
-        hex::decode(include_str!("bytecode/base-time.hex").trim())
-            .expect("BaseTime runtime artifact must be valid hex")
-            .into()
+        BaseTimePredeploy::implementation_bytecode()
     }
 
     /// Installs the `BaseTime` implementation and links its existing proxy before transactions.
