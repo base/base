@@ -381,7 +381,7 @@ impl MainnetBlock {
     ) -> InMemoryDB {
         let mut db = InMemoryDB::default();
 
-        let genesis: Genesis = serde_json::from_str(ChainConfig::mainnet().genesis_json)
+        let genesis: Genesis = serde_json::from_str(ChainConfig::mainnet().genesis_json())
             .expect("Base mainnet genesis parses");
         for address in GENESIS_ACCOUNTS {
             let account = &genesis.alloc[&address];

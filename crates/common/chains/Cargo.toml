@@ -65,3 +65,4 @@ serde = [
 ]
 test-utils = [ "base-common-genesis/test-utils" ]
 abi = [ "dep:alloy-sol-types" ]
+genesis-json = []
