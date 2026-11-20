@@ -18,7 +18,7 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, U256, address, bytes, hex};
 use alloy_rpc_client::RpcClient;
 use base_common_consensus::{Predeploys, TxBaseConstants};
-use base_common_evm::BaseTime;
+use base_common_evm2::BaseTime;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_base_tx_rpc_node::TxBaseRpcExtension;
 use base_execution_chainspec::BaseChainSpec;

@@ -23,13 +23,11 @@ base-common-precompiles.workspace = true
 base-common-base-tx = { workspace = true, default-features = false }
 base-common-consensus = { workspace = true, default-features = false, features = ["k256"] }
 
-# revm
-revm.workspace = true
-
 # misc
 thiserror.workspace = true
 
 [dev-dependencies]
+revm.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
 

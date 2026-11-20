@@ -44,7 +44,9 @@ pub use evm::BaseEvm;
 #[cfg(feature = "std")]
 mod base_tx;
 #[cfg(feature = "std")]
-pub use base_tx::{TxBaseExecutor, TxBaseOutcome};
+pub use base_execution_base_tx::TxBaseOutcome;
+#[cfg(feature = "std")]
+pub use base_tx::TxBaseExecutor;
 
 mod base_tx_committed_phases;
 pub use base_tx_committed_phases::TxBaseCommittedPhases;

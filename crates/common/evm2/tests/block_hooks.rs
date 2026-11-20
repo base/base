@@ -55,7 +55,7 @@ fn evm_with_stubs(
 }
 
 fn slot0(evm: &mut Evm<'static, BaseEvmTypes>, addr: Address) -> U256 {
-    evm.state_mut().storage_slot(&addr, U256::ZERO, false).unwrap().current()
+    evm.state_mut().storage_slot(&addr, U256::ZERO).unwrap().current()
 }
 
 #[test]
@@ -98,6 +98,7 @@ fn block_hashes_system_call_fires_at_isthmus() {
         BaseBlockExecutionCtx {
             parent_hash,
             parent_beacon_block_root: Some(B256::repeat_byte(0xbe)),
+            ..Default::default()
         },
     );
     executor.apply_pre_execution().expect("pre-execution succeeds");
@@ -122,7 +123,11 @@ fn both_system_calls_fire_at_isthmus() {
     );
     let mut executor = BaseBlockExecutor::new(
         evm,
-        BaseBlockExecutionCtx { parent_hash, parent_beacon_block_root: Some(beacon_root) },
+        BaseBlockExecutionCtx {
+            parent_hash,
+            parent_beacon_block_root: Some(beacon_root),
+            ..Default::default()
+        },
     );
     executor.apply_pre_execution().expect("pre-execution succeeds");
     let (mut evm, _, _) = executor.finish();
@@ -145,6 +150,7 @@ fn block_hashes_system_call_is_skipped_before_prague() {
         BaseBlockExecutionCtx {
             parent_hash,
             parent_beacon_block_root: Some(B256::repeat_byte(0xbe)),
+            ..Default::default()
         },
     );
     executor.apply_pre_execution().expect("pre-execution succeeds");
@@ -180,7 +186,11 @@ fn genesis_block_skips_system_calls() {
         evm_with_stubs(BaseUpgrade::Isthmus, 0, &[HISTORY_STORAGE_ADDRESS, BEACON_ROOTS_ADDRESS]);
     let mut executor = BaseBlockExecutor::new(
         evm,
-        BaseBlockExecutionCtx { parent_hash, parent_beacon_block_root: Some(B256::ZERO) },
+        BaseBlockExecutionCtx {
+            parent_hash,
+            parent_beacon_block_root: Some(B256::ZERO),
+            ..Default::default()
+        },
     );
     executor.apply_pre_execution().expect("genesis pre-execution succeeds");
     let (mut evm, _, _) = executor.finish();

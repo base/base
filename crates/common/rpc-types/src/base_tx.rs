@@ -2,15 +2,15 @@
 
 use alloc::{vec, vec::Vec};
 
-use alloy_evm::FromRecoveredTx;
+use alloy_consensus::transaction::Recovered;
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_consensus::{
     BaseTxEnvelope, Call, TxBase, TxBaseConstants, TxBaseSigned, TxBaseStructuralError,
     TxBaseStructure,
 };
-use base_common_evm::{BaseTransaction as BaseRevm, TxBaseExecutionMode};
-use revm::context::TxEnv;
+use base_common_evm2::{BaseTxEnvelope as BaseTxEnv, TxBaseSimulation, TxBaseSimulationMode};
 
 use crate::BaseTransactionRequest;
 
@@ -91,13 +91,14 @@ impl BaseTransactionRequest {
     /// `gas_limit_cap` when `gas` is omitted.
     ///
     /// Returns an [`TxBaseSimulationRequestError`] naming why the request cannot be simulated.
-    /// The returned transaction uses [`TxBaseExecutionMode::Simulate`] so callers can run
-    /// `eth_call` and `eth_estimateGas` without signature verification or committed state.
+    /// The returned transaction is a read-only [`TxBaseSimulation`] in `mode`, executed without
+    /// signature verification or committed state, from the request's account.
     pub fn to_base_tx_simulation_tx(
         &self,
         chain_id: u64,
         gas_limit_cap: u64,
-    ) -> Result<BaseRevm<TxEnv>, TxBaseSimulationRequestError> {
+        mode: TxBaseSimulationMode,
+    ) -> Result<Recovered<BaseTxEnv>, TxBaseSimulationRequestError> {
         let aa = self.as_base_tx().ok_or(TxBaseSimulationRequestError::NotTxBase)?;
         let req = self.as_ref();
 
@@ -167,12 +168,12 @@ impl BaseTransactionRequest {
         // Reject what pool admission rejects as malformed, so an estimate is
         // never returned for a transaction that could not be submitted.
         TxBaseStructure::validate(&signed)?;
-        let envelope = BaseTxEnvelope::Base(signed);
-        let mut simulation = BaseRevm::from_recovered_tx(&envelope, account);
-        if let Some(parts) = simulation.base_tx.as_mut() {
-            parts.mode = TxBaseExecutionMode::Simulate;
-        }
-        Ok(simulation)
+        let enveloped = BaseTxEnvelope::Base(signed.clone()).encoded_2718().into();
+        let simulation = TxBaseSimulation { mode };
+        Ok(Recovered::new_unchecked(
+            BaseTxEnv::base_tx_simulation(signed, enveloped, simulation),
+            account,
+        ))
     }
 
     /// The request's calls: `calls`, or a single call from the top-level `to` /
@@ -240,17 +241,13 @@ impl BaseTransactionRequest {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::Evm;
     use alloy_primitives::{address, hex};
     use alloy_rpc_types_eth::state::AccountOverride;
+    use base_common_chains::BaseUpgrade;
     use base_common_consensus::{TxBaseConstants, TxBaseSigned};
-    use base_common_evm::{BaseSpecId, BaseUpgrade, Builder, DefaultBase};
+    use base_common_evm2::{BaseEvmTypes, BaseSpecId};
+    use evm2::{Evm, ExecutionConfig, Version, env::BlockEnv, evm::InMemoryDB};
     use k256::ecdsa::SigningKey;
-    use revm::{
-        context::{BlockEnv, CfgEnv, Context},
-        database::InMemoryDB,
-        inspector::NoOpInspector,
-    };
     use serde_json::json;
 
     use super::*;
@@ -260,28 +257,31 @@ mod tests {
     const SENDER: Address = address!("00000000000000000000000000000000000000a1");
     const FROM: Address = address!("00000000000000000000000000000000000000c3");
 
-    fn simulation(request: serde_json::Value) -> BaseRevm<TxEnv> {
+    fn simulation(request: serde_json::Value) -> Recovered<BaseTxEnv> {
         let request = serde_json::from_value::<BaseTransactionRequest>(request).unwrap();
-        request.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).unwrap()
+        request.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Estimate).unwrap()
     }
 
-    fn signed(tx: &BaseRevm<TxEnv>) -> &TxBaseSigned {
-        &tx.base_tx.as_ref().unwrap().signed
+    fn signed(tx: &Recovered<BaseTxEnv>) -> &TxBaseSigned {
+        &tx.inner().as_base_tx().unwrap().signed
     }
 
     /// Gas the simulation of `request` uses, which `eth_estimateGas` searches for.
     fn estimated_gas(request: serde_json::Value) -> u64 {
-        let mut evm = Context::base()
-            .with_db(InMemoryDB::default())
-            .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
-                    .with_chain_id(CHAIN_ID),
-            )
-            .with_block(BlockEnv::default())
-            .build_with_inspector(NoOpInspector);
-        let outcome = evm.transact_raw(simulation(request)).expect("simulation runs");
-        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
-        outcome.result.tx_gas_used()
+        let spec = BaseSpecId::new(BaseUpgrade::Everest);
+        let mut version = Version::new(spec.into());
+        version.chain_id = CHAIN_ID;
+        let mut evm = Evm::new_with_execution_config(
+            ExecutionConfig::for_spec_and_version(spec, version),
+            spec,
+            BlockEnv::<BaseEvmTypes>::default(),
+            BaseEvmTypes::tx_registry(spec),
+            InMemoryDB::default(),
+            BaseEvmTypes::native_precompiles(spec, None),
+        );
+        let result = evm.transact(&simulation(request)).expect("simulation runs").discard();
+        assert!(result.is_success(), "expected success, got {result:?}");
+        result.tx_gas_used()
     }
 
     /// A real 65-byte `r || s || v` secp256k1 signature.
@@ -342,7 +342,9 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            request.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            request
+                .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Estimate)
+                .err(),
             Some(TxBaseSimulationRequestError::SenderFromMismatch)
         );
     }
@@ -361,9 +363,7 @@ mod tests {
             signed(&tx).tx().calls,
             vec![vec![Call { to, value: U256::from(5), data: Bytes::from_static(&[0xab, 0xcd]) }]]
         );
-        assert!(
-            simulation(json!({ "sender": SENDER })).base_tx.unwrap().signed.tx().calls.is_empty()
-        );
+        assert!(signed(&simulation(json!({ "sender": SENDER }))).tx().calls.is_empty());
     }
 
     /// `calls` and a top-level call are ambiguous together, and a top-level
@@ -374,7 +374,7 @@ mod tests {
         let reject = |request: serde_json::Value| {
             serde_json::from_value::<BaseTransactionRequest>(request)
                 .unwrap()
-                .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP)
+                .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Estimate)
                 .err()
         };
         assert_eq!(
@@ -404,7 +404,9 @@ mod tests {
             serde_json::from_value::<BaseTransactionRequest>(json!({ "sender": SENDER })).unwrap();
         create.as_mut().to = Some(TxKind::Create);
         assert_eq!(
-            create.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            create
+                .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Estimate)
+                .err(),
             Some(TxBaseSimulationRequestError::ContractCreation)
         );
     }
@@ -437,7 +439,9 @@ mod tests {
         let request =
             serde_json::from_value::<BaseTransactionRequest>(json!({ "calls": [] })).unwrap();
         assert_eq!(
-            request.to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            request
+                .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Estimate)
+                .err(),
             Some(TxBaseSimulationRequestError::MissingSender)
         );
     }
@@ -451,9 +455,18 @@ mod tests {
     }
 
     #[test]
-    fn simulation_mode_is_set() {
-        let tx = simulation(json!({ "sender": SENDER, "calls": [] }));
-        assert_eq!(tx.base_tx.unwrap().mode, TxBaseExecutionMode::Simulate);
+    fn simulation_mode_is_retained() {
+        let request = serde_json::from_value::<BaseTransactionRequest>(
+            json!({ "sender": SENDER, "calls": [] }),
+        )
+        .unwrap();
+        let tx = request
+            .to_base_tx_simulation_tx(CHAIN_ID, GAS_CAP, TxBaseSimulationMode::Call)
+            .unwrap();
+        assert_eq!(
+            tx.inner().as_base_tx().unwrap().simulation,
+            Some(TxBaseSimulation { mode: TxBaseSimulationMode::Call })
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ use std::{
 
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
-use base_common_evm::BaseUpgrade;
+use base_common_chains::BaseUpgrade;
 use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::BasePooledTransaction;

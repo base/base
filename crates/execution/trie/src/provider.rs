@@ -2,16 +2,13 @@
 
 use std::fmt::Debug;
 
-use alloy_primitives::keccak256;
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, StorageValue, keccak256};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
+use reth_evm::BundleState;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
     ProviderResult, StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
-};
-use reth_revm::{
-    db::BundleState,
-    primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
 use reth_trie::{
     StateRoot, StorageRoot,

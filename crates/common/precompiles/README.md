@@ -21,6 +21,29 @@ the native B-20 token system. Those exports cover the activation registry, polic
 factory, default B-20 token, stablecoin token, security token, and the reusable role, pause, policy,
 permit, and accounting helpers used by those precompiles.
 
+## Execution engines
+
+Each native precompile body (`B20Factory::run`, `PolicyRegistryPrecompile::run`,
+`ActivationRegistry::run`, `TxContext::run`, `NonceManager::run`, and the B-20 token `run`
+functions) is engine-neutral: it runs on a `base-precompile-storage` `StorageCtx`. Two cargo
+features wrap those bodies for an execution engine:
+
+| Feature | Entry point | Engine |
+| --- | --- | --- |
+| `revm` (default) | `BasePrecompiles::install*` builds an alloy-evm `PrecompilesMap` | revm |
+| `evm2` | `BaseEvm2Precompiles` is an evm2 `PrecompileProvider` | evm2 |
+
+Both install the same native precompiles at the same addresses for each upgrade, reject
+`DELEGATECALL`/`CALLCODE` with `DelegateCallNotAllowed` and zero gas, and price storage with the
+Osaka gas schedule whatever the active spec. B-20 token addresses are resolved on lookup on both
+engines, so they are neither listed among the precompile addresses nor pre-warmed.
+`BaseEvm2Precompiles` wraps a caller-supplied static evm2 `Precompiles` set for every other
+address. The fork-specific input-size limits (`GRANITE_MAX_INPUT_SIZE` and friends) are available
+without either feature.
+
+`tests/engine_parity.rs` runs B-20 transfers, a delegated call, and a policy creation through both
+dispatchers and asserts identical output, gas, refunds, state gas, logs, and storage.
+
 ## Behavior
 
 Bedrock, Regolith, Canyon, and Ecotone use the matching Ethereum precompile set for their execution

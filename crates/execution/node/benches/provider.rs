@@ -5,6 +5,7 @@ use std::{cell::Cell, hint::black_box, time::Duration};
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256, U256, map::HashMap};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use evm2::evm::AccountInfo;
 use reth_db_api::models::StorageSettings;
 use reth_db_common::init::init_genesis_with_settings;
 use reth_ethereum_primitives::Block;
@@ -16,7 +17,7 @@ use reth_provider::{
     test_utils::{MockNodeTypesWithDB, create_test_provider_factory},
 };
 use reth_trie::{HashedPostState, KeccakKeyHasher};
-use revm::{database::BundleState, state::AccountInfo};
+use reth_trie_common::bundle_state::BundleState;
 
 const HISTORY_BLOCKS: u64 = 128;
 const ACCOUNT_COUNT: usize = 256;
@@ -174,7 +175,7 @@ impl HistoricalReadFixture {
     }
 
     fn account_info(block: u64, position: usize) -> AccountInfo {
-        AccountInfo { nonce: block, balance: Self::balance(block, position), ..Default::default() }
+        AccountInfo::default().with_nonce(block).with_balance(Self::balance(block, position))
     }
 
     fn balance(block: u64, position: usize) -> U256 {

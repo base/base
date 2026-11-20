@@ -9,16 +9,14 @@ use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BlockStateDiff, MdbxProofsStorage,
     RocksdbProofsStorage, provider::BaseProofsStateProviderRef,
 };
+use evm2::evm::AccountInfo;
 use reth_primitives_traits::Account;
 use reth_provider::{
     HashedPostStateProvider, StateProvider, StateRootProvider, noop::NoopProvider,
 };
-use reth_revm::{
-    db::{AccountStatus, BundleAccount, BundleState, states::StorageSlot},
-    state::AccountInfo,
-};
 use reth_trie_common::{
     EMPTY_ROOT_HASH, TrieInput,
+    bundle_state::{AccountStatus, BundleAccount, BundleState, StorageSlot},
     root::{state_root_unhashed, storage_root_unhashed},
 };
 use tempfile::TempDir;

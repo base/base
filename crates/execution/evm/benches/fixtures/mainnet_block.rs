@@ -27,7 +27,6 @@ use alloy_eips::{
     eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE},
     eip4788::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_CODE},
 };
-use alloy_evm::{Evm, block::BlockExecutor};
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, b256, hex, keccak256};
 use base_common_chains::{ChainConfig, MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS};
@@ -35,15 +34,19 @@ use base_common_consensus::{
     BaseReceipt, BaseTransactionSigned, Deployers, L1BlockInfoJovian, Predeploys, SystemAddresses,
     TxDeposit,
 };
-use base_common_evm::{BaseBlockExecutionCtx, BaseSpecId, BaseTransaction};
+use base_common_evm2::{BaseBlockExecutionCtx, BaseTxEnvelope};
 use base_consensus_upgrades::Jovian;
 use base_execution_chainspec::BaseChainSpecBuilder;
-use base_execution_evm::BaseEvmConfig;
-use reth_evm::{ConfigureEvm, EvmEnv, execute::WithTxEnv};
-use reth_execution_types::BlockExecutionResult;
+use base_execution_evm::{BaseEvmConfig, BaseEvmEnv};
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, InMemoryDB},
+};
+use reth_evm::{
+    BlockExecutionOutput, BlockExecutor, BlockExecutorFactory, ConfigureEvm, FromRecoveredTx,
+    TxEnvFor, execute::WithTxEnv,
+};
 use reth_primitives_traits::Recovered;
-use reth_revm::State;
-use revm::{bytecode::Bytecode, context::TxEnv, database::InMemoryDB, state::AccountInfo};
 
 /// Base mainnet chain id.
 pub(crate) const CHAIN_ID: u64 = 8_453;
@@ -133,9 +136,9 @@ impl BlockMix {
 }
 
 /// A transaction as the engine hands it to the executor: decoded, sender recovered, and its
-/// [`BaseTransaction`] environment already built by the payload processor's conversion workers.
+/// EVM transaction environment already built by the payload processor's conversion workers.
 pub(crate) type BlockTx =
-    WithTxEnv<BaseTransaction<TxEnv>, WithEncoded<Recovered<BaseTransactionSigned>>>;
+    WithTxEnv<TxEnvFor<BaseEvmConfig>, WithEncoded<Recovered<BaseTransactionSigned>>>;
 
 /// Deterministic address in a numbered namespace.
 fn address(namespace: u64, index: usize) -> Address {
@@ -205,7 +208,7 @@ pub(crate) struct MainnetBlock {
     /// Production EVM configuration for Base mainnet rules at [`TIMESTAMP`].
     pub(crate) evm_config: BaseEvmConfig,
     /// EVM environment derived from the block header.
-    pub(crate) evm_env: EvmEnv<BaseSpecId>,
+    pub(crate) evm_env: BaseEvmEnv,
     /// Execution context derived from the block header.
     pub(crate) ctx: BaseBlockExecutionCtx,
     /// The block's transactions in order, with their encoded bytes and senders.
@@ -374,37 +377,31 @@ impl MainnetBlock {
 
     /// Mainnet genesis predeploys, the Jovian `L1Block` implementation, the system contracts, the
     /// token, and every account the block reads, funded.
-    fn pre_state(
-        evm_config: &BaseEvmConfig,
-        evm_env: &EvmEnv<BaseSpecId>,
-        mix: BlockMix,
-    ) -> InMemoryDB {
+    fn pre_state(evm_config: &BaseEvmConfig, evm_env: &BaseEvmEnv, mix: BlockMix) -> InMemoryDB {
         let mut db = InMemoryDB::default();
 
         let genesis: Genesis = serde_json::from_str(ChainConfig::mainnet().genesis_json)
             .expect("Base mainnet genesis parses");
         for address in GENESIS_ACCOUNTS {
             let account = &genesis.alloc[&address];
-            let mut info = AccountInfo::from_balance(account.balance);
+            let mut info = AccountInfo::default().with_balance(account.balance);
             if let Some(code) = &account.code {
                 info = info.with_code(Bytecode::new_raw(code.clone()));
             }
-            db.insert_account_info(address, info);
+            db.insert_account_info(&address, info);
             for (slot, value) in account.storage.iter().flatten() {
-                db.insert_account_storage(address, (*slot).into(), (*value).into())
-                    .expect("in-memory storage insert");
+                db.insert_account_storage(&address, &(*slot).into(), &(*value).into());
             }
         }
 
         // Point the L1Block proxy at the Jovian implementation the Jovian upgrade deploys.
         let jovian_l1_block = Self::deploy_jovian_l1_block(evm_config, evm_env);
-        db.insert_account_info(Jovian::l1_block_address(), jovian_l1_block);
+        db.insert_account_info(&Jovian::l1_block_address(), jovian_l1_block);
         db.insert_account_storage(
-            Predeploys::L1_BLOCK_INFO,
-            PROXY_IMPLEMENTATION_SLOT.into(),
-            Jovian::l1_block_address().into_word().into(),
-        )
-        .expect("in-memory storage insert");
+            &Predeploys::L1_BLOCK_INFO,
+            &PROXY_IMPLEMENTATION_SLOT.into(),
+            &Jovian::l1_block_address().into_word().into(),
+        );
 
         let token_code = token_code();
         let contracts = [
@@ -414,13 +411,12 @@ impl MainnetBlock {
         ];
         for (address, code) in contracts {
             db.insert_account_info(
-                address,
-                AccountInfo { nonce: 1, ..Default::default() }
-                    .with_code(Bytecode::new_raw(code.clone())),
+                &address,
+                AccountInfo::default().with_nonce(1).with_code(Bytecode::new_raw(code.clone())),
             );
         }
 
-        let funded = AccountInfo::from_balance(U256::from(FUNDED_BALANCE));
+        let funded = AccountInfo::default().with_balance(U256::from(FUNDED_BALANCE));
         let funded_addresses = (0..mix.transfers)
             .map(|i| address(NS_TRANSFER_SENDER, i))
             .chain((0..TRANSFER_RECIPIENTS).map(|i| address(NS_TRANSFER_RECIPIENT, i)))
@@ -428,7 +424,7 @@ impl MainnetBlock {
             .chain((0..mix.withdrawals).map(|i| address(NS_WITHDRAWAL_SENDER, i)))
             .chain((0..mix.user_deposits).map(|i| address(NS_DEPOSIT_RECIPIENT, i)));
         for address in funded_addresses {
-            db.insert_account_info(address, funded.clone());
+            db.insert_account_info(&address, funded.clone());
         }
 
         let token_holders = (0..mix.token_holders).map(|i| address(NS_TOKEN_HOLDER, i)).chain(
@@ -437,18 +433,18 @@ impl MainnetBlock {
                 .map(|i| address(NS_TOKEN_CALLER, i)),
         );
         for holder in token_holders {
-            db.insert_account_storage(TOKEN, holder.into_word().into(), U256::from(TOKEN_BALANCE))
-                .expect("in-memory storage insert");
+            db.insert_account_storage(
+                &TOKEN,
+                &holder.into_word().into(),
+                &U256::from(TOKEN_BALANCE),
+            );
         }
 
         db
     }
 
     /// Runs the Jovian upgrade's `L1Block` deployment and returns the deployed account.
-    fn deploy_jovian_l1_block(
-        evm_config: &BaseEvmConfig,
-        evm_env: &EvmEnv<BaseSpecId>,
-    ) -> AccountInfo {
+    fn deploy_jovian_l1_block(evm_config: &BaseEvmConfig, evm_env: &BaseEvmEnv) -> AccountInfo {
         let deployment: BaseTransactionSigned = TxDeposit {
             source_hash: Jovian::deploy_l1_block_source(),
             from: Deployers::JOVIAN_L1_BLOCK,
@@ -460,22 +456,30 @@ impl MainnetBlock {
             input: Jovian::l1_block_deployment_bytecode(),
         }
         .into();
-        let mut db = State::builder().with_database(InMemoryDB::default()).build();
-        let mut evm = evm_config.evm_with_env(&mut db, evm_env.clone());
-        let mut outcome = evm
-            .transact(Recovered::new_unchecked(deployment, Deployers::JOVIAN_L1_BLOCK))
-            .expect("Jovian L1Block deployment executes");
-        assert!(outcome.result.is_success(), "Jovian L1Block deployment: {:?}", outcome.result);
-        outcome
-            .state
-            .remove(&Jovian::l1_block_address())
-            .expect("Jovian L1Block is deployed at its documented address")
-            .info
+        let mut evm = evm_config.evm_with_env(InMemoryDB::default(), evm_env.clone());
+        let outcome = evm
+            .transact(&Recovered::new_unchecked(
+                BaseTxEnvelope::from_recovered_tx(Recovered::new_unchecked(
+                    deployment,
+                    Deployers::JOVIAN_L1_BLOCK,
+                )),
+                Deployers::JOVIAN_L1_BLOCK,
+            ))
+            .expect("Jovian L1Block deployment executes")
+            .detach();
+        assert!(outcome.result.status, "Jovian L1Block deployment: {:?}", outcome.result);
+        let deployed = outcome
+            .pending_state
+            .account_changes()
+            .find(|changes| changes.address == Jovian::l1_block_address())
+            .expect("Jovian L1Block is deployed at its documented address");
+        let (_, code) = deployed.code.expect("Jovian L1Block deployment stores code");
+        deployed.current.expect("Jovian L1Block exists").clone().with_code(code.clone())
     }
 
-    /// A fresh copy of the pre-state, configured as block import configures it.
-    pub(crate) fn fresh_state(&self) -> State<InMemoryDB> {
-        State::builder().with_database(self.pre_state.clone()).with_bundle_update().build()
+    /// A fresh copy of the pre-state, the database block import reads through.
+    pub(crate) fn fresh_state(&self) -> InMemoryDB {
+        self.pre_state.clone()
     }
 
     /// The block's transactions with their EVM environments built, as the engine's payload
@@ -489,15 +493,16 @@ impl MainnetBlock {
     /// and finish.
     pub(crate) fn execute(
         &self,
-        state: &mut State<InMemoryDB>,
+        state: &mut InMemoryDB,
         txs: Vec<BlockTx>,
-    ) -> BlockExecutionResult<BaseReceipt> {
+    ) -> BlockExecutionOutput<BaseReceipt> {
         let evm = self.evm_config.evm_with_env(state, self.evm_env.clone());
-        let mut executor = self.evm_config.create_executor(evm, self.ctx.clone());
+        let mut executor =
+            self.evm_config.block_executor_factory().create_executor(evm, self.ctx.clone());
         executor.apply_pre_execution_changes().expect("pre-execution changes apply");
         for tx in txs {
             executor.execute_transaction(tx).expect("every block transaction is valid");
         }
-        executor.finish().expect("block finishes").1
+        executor.finish().expect("block finishes")
     }
 }

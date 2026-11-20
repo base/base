@@ -35,13 +35,10 @@ mod fixture;
 
 use std::{any::Any, hint::black_box, rc::Rc};
 
-use base_common_consensus::Predeploys;
 use base_execution_payload_builder::builder::ExecutionInfo;
-use fixture::{Candidates, TRANSFER_GAS, TX_GAS_LIMIT, candidate, context, funded_provider};
+use fixture::{Candidates, TRANSFER_GAS, TX_GAS_LIMIT, candidate, context, funded_db};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use reth_evm::execute::BlockBuilder;
-use reth_revm::{database::StateProviderDatabase, db::State};
-use reth_storage_api::StateProvider;
 
 /// Estimated DA size of each candidate transfer, in bytes: the estimator's minimum transaction
 /// size, since a plain transfer compresses below it.
@@ -98,17 +95,10 @@ type Scan = Box<dyn FnOnce() -> (ScanTotals, Box<dyn Any>)>;
 /// Builds the candidates, state, and block builder outside the counted region.
 fn setup(regime: Regime) -> (Regime, Scan) {
     let candidates: Vec<_> = (0..regime.candidates()).map(|i| candidate(i, TX_GAS_LIMIT)).collect();
-    let provider = funded_provider(&candidates);
-    // The block builder borrows the context and the state, and the prepared scan must own the
-    // builder, so both are leaked for the life of the single-run bench process.
+    let db = funded_db(&candidates);
+    // The block builder borrows the context, and the prepared scan must own the builder, so the
+    // context is leaked for the life of the single-run bench process.
     let ctx: &'static _ = Box::leak(Box::new(context(regime.block_gas_limit())));
-    let db = Box::leak(Box::new(
-        State::builder()
-            .with_database(StateProviderDatabase::new(provider.into_evm_state_provider()))
-            .with_bundle_update()
-            .build(),
-    ));
-    db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
     let mut builder = ctx.block_builder(db).expect("block builder");
     builder.apply_pre_execution_changes().expect("pre-execution changes");
     let mut info: ExecutionInfo = ctx.execute_sequencer_transactions(&mut builder).expect("seq");

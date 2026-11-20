@@ -15,18 +15,24 @@ mod base_time;
 pub use base_time::{BaseTime, BaseTimeTransitionError};
 
 mod transaction;
-pub use transaction::BaseTxEnvelope;
+pub use transaction::{BaseTxEnvelope, TxBaseEnv, TxBaseSimulation, TxBaseSimulationMode};
 
 mod handler;
 pub use handler::BaseTxHandlerHooks;
 
 mod precompiles;
 
+mod l1_block;
+pub use l1_block::L1Block;
+
 mod executor;
 pub use executor::{
-    BaseBlockExecutionCtx, BaseBlockExecutor, BlockExecutionResult, BlockGasLimitExceeded,
-    CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError, TxBaseExecutionUnsupported,
+    BaseBlockExecutionCtx, BaseBlockExecutor, BaseExecutedTx, BlockExecutionResult,
+    BlockGasLimitExceeded, CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError,
 };
+
+mod base_tx;
+pub use base_tx::{TxBaseHandler, TxBasePrepared, TxBaseSettlement};
 
 mod registry;
 
@@ -36,7 +42,10 @@ mod nonce_manager;
 pub use nonce_manager::{NonceManager, NonceOverflow};
 
 mod transition;
-pub use transition::{BaseForkActivations, IrregularStateChange};
+pub use transition::{BaseBlockState, BaseForkActivations, IrregularStateChange};
 
 mod types;
-pub use types::{BaseEvmExt, BaseEvmTypes, BaseTxResultExt};
+pub use types::{BaseEvmExt, BaseEvmTypes, BaseTxResultExt, MeteredGasEvmTypes, MeteredGasReport};
+
+#[cfg(feature = "reth")]
+mod reth;

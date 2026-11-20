@@ -5,7 +5,7 @@
 //! dropped before execution without repeating signature recovery.
 
 use alloy_primitives::{Address, U256};
-use revm::Database;
+use reth_evm::Database;
 
 use crate::UnixMillis;
 
@@ -62,7 +62,7 @@ impl WatchManifest {
     /// otherwise-valid transaction. A successfully read absent payer is treated
     /// as an account with zero balance.
     ///
-    /// `revm::Database` requires mutable access for reads. These reads may warm
+    /// [`Database`] requires mutable access for reads. These reads may warm
     /// the EVM cache or add storage proofs in witness mode, but do not modify
     /// execution state.
     pub fn revalidate<DB: Database>(
@@ -75,7 +75,7 @@ impl WatchManifest {
         }
 
         if !self.payer_max_cost.is_zero()
-            && let Ok(info) = db.basic(self.payer)
+            && let Ok(info) = db.get_account(&self.payer)
         {
             let available = info.map_or(U256::ZERO, |info| info.balance);
             if available < self.payer_max_cost {
@@ -126,11 +126,9 @@ impl ManifestStale {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use revm::{
-        Database,
-        database::InMemoryDB,
-        database_interface::DBErrorMarker,
-        state::{AccountInfo, Bytecode},
+    use evm2::{
+        bytecode::Bytecode,
+        evm::{AccountInfo, InMemoryDB},
     };
 
     use super::*;
@@ -140,8 +138,8 @@ mod tests {
     fn db_with(payer_balance: u64) -> InMemoryDB {
         let mut db = InMemoryDB::default();
         db.insert_account_info(
-            PAYER,
-            AccountInfo { balance: U256::from(payer_balance), ..Default::default() },
+            &PAYER,
+            AccountInfo::default().with_balance(U256::from(payer_balance)),
         );
         db
     }
@@ -218,27 +216,25 @@ mod tests {
     #[error("test database read failed")]
     struct ReadError;
 
-    impl DBErrorMarker for ReadError {}
-
     #[derive(Debug, Default)]
     struct FailingDatabase;
 
     impl Database for FailingDatabase {
         type Error = ReadError;
 
-        fn basic(&mut self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        fn get_account(&mut self, _address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
             Err(ReadError)
         }
 
-        fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+        fn get_code_by_hash(&mut self, _code_hash: &B256) -> Result<Bytecode, Self::Error> {
             Err(ReadError)
         }
 
-        fn storage(&mut self, _address: Address, _index: U256) -> Result<U256, Self::Error> {
+        fn get_storage(&mut self, _address: &Address, _key: &U256) -> Result<U256, Self::Error> {
             Err(ReadError)
         }
 
-        fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
+        fn get_block_hash(&mut self, _number: &U256) -> Result<B256, Self::Error> {
             Err(ReadError)
         }
     }

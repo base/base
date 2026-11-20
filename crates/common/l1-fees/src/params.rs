@@ -84,10 +84,19 @@ impl L1FeeParams {
     /// DA-footprint gas scalar. Returns zero when no scalar is set (pre-Jovian or unconfigured).
     /// Mirrors the reference `jovian_da_footprint_estimation`.
     pub fn jovian_da_footprint(&self, input: &[u8]) -> u64 {
+        if self.da_footprint_gas_scalar.is_none() {
+            return 0;
+        }
+        self.jovian_da_footprint_from_fastlz_size(flz_compress_len(input))
+    }
+
+    /// [`Self::jovian_da_footprint`] for an input whose `FastLZ` compressed size
+    /// ([`flz_compress_len`]) is already known, so it is not recomputed.
+    pub fn jovian_da_footprint_from_fastlz_size(&self, fastlz_size: u32) -> u64 {
         let Some(scalar) = self.da_footprint_gas_scalar else {
             return 0;
         };
-        U256::from(tx_estimated_size_fjord(input))
+        U256::from(tx_estimated_size_fjord_from_fastlz_size(fastlz_size))
             .wrapping_div(U256::from(1_000_000u64))
             .saturating_mul(scalar)
             .saturating_to::<u64>()

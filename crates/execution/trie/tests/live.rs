@@ -14,7 +14,7 @@ use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN
 use reth_db::Database;
 use reth_db_common::init::init_genesis;
 use reth_ethereum_primitives::{Block, BlockBody, Receipt, Transaction, TransactionSigned};
-use reth_evm::{ConfigureEvm, execute::Executor};
+use reth_evm::{ConfigureEvm, database::StateProviderDatabase, execute::Executor};
 use reth_evm_ethereum::EthEvmConfig;
 use reth_node_api::{NodePrimitives, NodeTypesWithDB};
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
@@ -25,7 +25,6 @@ use reth_provider::{
     providers::{BlockchainProvider, ProviderNodeTypes},
     test_utils::create_test_provider_factory_with_chain_spec,
 };
-use reth_revm::database::StateProviderDatabase;
 use secp256k1::{Keypair, Secp256k1};
 use tempfile::TempDir;
 

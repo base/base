@@ -2,9 +2,9 @@
 
 use alloy_consensus::Transaction;
 use alloy_primitives::{U16, U256, hex};
-use base_common_chains::Upgrades;
-use base_common_evm::{BaseSpecId, L1BlockInfo};
-use reth_execution_errors::BlockExecutionError;
+use base_common_chains::{BaseUpgrade, BaseUpgradeExt, Upgrades};
+use base_common_l1_fees::L1FeeParams;
+use reth_evm::BlockExecutionError;
 use reth_primitives_traits::BlockBody;
 
 use crate::{BaseBlockExecutionError, error::L1BlockInfoError};
@@ -19,11 +19,11 @@ const L1_BLOCK_ISTHMUS_SELECTOR: [u8; 4] = hex!("098999be");
 /// This is the first 4 bytes of `keccak256("setL1BlockValuesJovian()")`.
 const L1_BLOCK_JOVIAN_SELECTOR: [u8; 4] = hex!("3db6be2b");
 
-/// Extracts the [`L1BlockInfo`] from the L2 block. The L1 info transaction is always the first
+/// Extracts the [`L1FeeParams`] from the L2 block. The L1 info transaction is always the first
 /// transaction in the L2 block.
 ///
 /// Returns an error if the L1 info transaction is not found, if the block is empty.
-pub fn extract_l1_info<B: BlockBody>(body: &B) -> Result<L1BlockInfo, BaseBlockExecutionError> {
+pub fn extract_l1_info<B: BlockBody>(body: &B) -> Result<L1FeeParams, BaseBlockExecutionError> {
     let l1_info_tx = body
         .transactions()
         .first()
@@ -31,13 +31,13 @@ pub fn extract_l1_info<B: BlockBody>(body: &B) -> Result<L1BlockInfo, BaseBlockE
     extract_l1_info_from_tx(l1_info_tx)
 }
 
-/// Extracts the [`L1BlockInfo`] from the L1 info transaction (first transaction) in the L2
+/// Extracts the [`L1FeeParams`] from the L1 info transaction (first transaction) in the L2
 /// block.
 ///
 /// Returns an error if the calldata is shorter than 4 bytes.
 pub fn extract_l1_info_from_tx<T: Transaction>(
     tx: &T,
-) -> Result<L1BlockInfo, BaseBlockExecutionError> {
+) -> Result<L1FeeParams, BaseBlockExecutionError> {
     let l1_info_tx_data = tx.input();
     if l1_info_tx_data.len() < 4 {
         return Err(BaseBlockExecutionError::L1BlockInfo(L1BlockInfoError::InvalidCalldata));
@@ -46,17 +46,17 @@ pub fn extract_l1_info_from_tx<T: Transaction>(
     parse_l1_info(l1_info_tx_data)
 }
 
-/// Parses the input of the first transaction in the L2 block, into [`L1BlockInfo`].
+/// Parses the input of the first transaction in the L2 block, into [`L1FeeParams`].
 ///
 /// Returns an error if data is incorrect length.
 ///
-/// Caution this expects that the input is the calldata of the [`L1BlockInfo`] transaction (first
+/// Caution this expects that the input is the calldata of the L1 info transaction (first
 /// transaction) in the L2 block.
 ///
 /// # Panics
 /// If the input is shorter than 4 bytes.
-pub fn parse_l1_info(input: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionError> {
-    // Parse the L1 info transaction into an L1BlockInfo struct, depending on the function selector.
+pub fn parse_l1_info(input: &[u8]) -> Result<L1FeeParams, BaseBlockExecutionError> {
+    // Parse the L1 info transaction into L1 fee parameters, depending on the function selector.
     // There are currently 4 variants:
     // - Jovian
     // - Isthmus
@@ -73,8 +73,8 @@ pub fn parse_l1_info(input: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionErro
     }
 }
 
-/// Parses the calldata of the [`L1BlockInfo`] transaction pre-Ecotone upgrade.
-pub fn parse_l1_info_tx_bedrock(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionError> {
+/// Parses the calldata of the L1 info transaction pre-Ecotone upgrade.
+pub fn parse_l1_info_tx_bedrock(data: &[u8]) -> Result<L1FeeParams, BaseBlockExecutionError> {
     // The setL1BlockValues tx calldata must be exactly 256 bytes long, considering that
     // we already removed the first 4 bytes (the function selector). Detailed breakdown:
     //   32 bytes for the block number
@@ -98,7 +98,7 @@ pub fn parse_l1_info_tx_bedrock(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExe
     let l1_fee_scalar = U256::try_from_be_slice(&data[224..256])
         .ok_or(BaseBlockExecutionError::L1BlockInfo(L1BlockInfoError::FeeScalarConversion))?;
 
-    Ok(L1BlockInfo {
+    Ok(L1FeeParams {
         l1_base_fee,
         l1_fee_overhead: Some(l1_fee_overhead),
         l1_base_fee_scalar: l1_fee_scalar,
@@ -120,7 +120,7 @@ pub fn parse_l1_info_tx_bedrock(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExe
 ///   9. _batcherHash        Versioned hash to authenticate batcher by.
 ///
 /// <https://github.com/ethereum-optimism/optimism/blob/957e13dd504fb336a4be40fb5dd0d8ba0276be34/packages/contracts-bedrock/src/L2/L1Block.sol#L136>
-pub fn parse_l1_info_tx_ecotone(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionError> {
+pub fn parse_l1_info_tx_ecotone(data: &[u8]) -> Result<L1FeeParams, BaseBlockExecutionError> {
     if data.len() != 160 {
         return Err(BaseBlockExecutionError::L1BlockInfo(
             L1BlockInfoError::UnexpectedCalldataLength,
@@ -152,7 +152,7 @@ pub fn parse_l1_info_tx_ecotone(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExe
     let l1_blob_base_fee = U256::try_from_be_slice(&data[64..96])
         .ok_or(BaseBlockExecutionError::L1BlockInfo(L1BlockInfoError::BlobBaseFeeConversion))?;
 
-    Ok(L1BlockInfo {
+    Ok(L1FeeParams {
         l1_base_fee,
         l1_base_fee_scalar,
         l1_blob_base_fee: Some(l1_blob_base_fee),
@@ -175,7 +175,7 @@ pub fn parse_l1_info_tx_ecotone(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExe
 ///   9. _batcherHash         Versioned hash to authenticate batcher by.
 ///  10. _operatorFeeScalar   Operator fee scalar
 ///  11. _operatorFeeConstant Operator fee constant
-pub fn parse_l1_info_tx_isthmus(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionError> {
+pub fn parse_l1_info_tx_isthmus(data: &[u8]) -> Result<L1FeeParams, BaseBlockExecutionError> {
     if data.len() != 172 {
         return Err(BaseBlockExecutionError::L1BlockInfo(
             L1BlockInfoError::UnexpectedCalldataLength,
@@ -215,7 +215,7 @@ pub fn parse_l1_info_tx_isthmus(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExe
         BaseBlockExecutionError::L1BlockInfo(L1BlockInfoError::OperatorFeeConstantConversion)
     })?;
 
-    Ok(L1BlockInfo {
+    Ok(L1FeeParams {
         l1_base_fee,
         l1_base_fee_scalar,
         l1_blob_base_fee: Some(l1_blob_base_fee),
@@ -241,7 +241,7 @@ pub fn parse_l1_info_tx_isthmus(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExe
 ///  10. _operatorFeeScalar   Operator fee scalar
 ///  11. _operatorFeeConstant Operator fee constant
 ///  12. _daFootprintGasScalar DA footprint gas scalar
-pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionError> {
+pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1FeeParams, BaseBlockExecutionError> {
     if data.len() != 174 {
         return Err(BaseBlockExecutionError::L1BlockInfo(
             L1BlockInfoError::UnexpectedCalldataLength,
@@ -287,28 +287,22 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExec
         })?
         .to();
 
-    Ok(L1BlockInfo {
+    Ok(L1FeeParams {
         l1_base_fee,
         l1_base_fee_scalar,
         l1_blob_base_fee: Some(l1_blob_base_fee),
         l1_blob_base_fee_scalar: Some(l1_blob_base_fee_scalar),
         operator_fee_scalar: Some(operator_fee_scalar),
         operator_fee_constant: Some(operator_fee_constant),
-        da_footprint_gas_scalar: Some(da_footprint_gas_scalar),
+        da_footprint_gas_scalar: Some(U256::from(da_footprint_gas_scalar)),
         ..Default::default()
     })
 }
 
-/// Returns the [`BaseSpecId`] at the given timestamp using the [`Upgrades`] trait from
-/// `base-common-chains`.
-fn base_spec_id(chain_spec: &impl Upgrades, timestamp: u64) -> BaseSpecId {
-    BaseSpecId::from_timestamp(chain_spec, timestamp)
-}
-
-/// An extension trait for [`L1BlockInfo`] that allows us to calculate the L1 cost of a transaction
+/// An extension trait for [`L1FeeParams`] that allows us to calculate the L1 cost of a transaction
 /// based off of the chain spec's activated upgrade.
 pub trait RethL1BlockInfo {
-    /// Forwards an L1 transaction calculation to revm and returns the gas cost.
+    /// Returns the L1 data fee of a transaction.
     ///
     /// ### Takes
     /// - `chain_spec`: The chain spec for the node.
@@ -337,7 +331,7 @@ pub trait RethL1BlockInfo {
     ) -> Result<U256, BlockExecutionError>;
 }
 
-impl RethL1BlockInfo for L1BlockInfo {
+impl RethL1BlockInfo for L1FeeParams {
     fn l1_tx_data_fee(
         &mut self,
         chain_spec: impl Upgrades,
@@ -349,8 +343,7 @@ impl RethL1BlockInfo for L1BlockInfo {
             return Ok(U256::ZERO);
         }
 
-        let spec_id = base_spec_id(&chain_spec, timestamp);
-        Ok(self.calculate_tx_l1_cost(input, spec_id))
+        Ok(self.calculate_tx_l1_cost(input, BaseUpgrade::from_timestamp(chain_spec, timestamp)))
     }
 
     fn l1_data_gas(
@@ -359,8 +352,7 @@ impl RethL1BlockInfo for L1BlockInfo {
         timestamp: u64,
         input: &[u8],
     ) -> Result<U256, BlockExecutionError> {
-        let spec_id = base_spec_id(&chain_spec, timestamp);
-        Ok(self.data_gas(input, spec_id))
+        Ok(Self::data_gas(input, BaseUpgrade::from_timestamp(chain_spec, timestamp)))
     }
 }
 
@@ -386,7 +378,7 @@ mod tests {
             body: BlockBody { transactions: vec![l1_info_tx], ..Default::default() },
         };
 
-        let l1_info: L1BlockInfo = extract_l1_info(&mock_block.body).unwrap();
+        let l1_info: L1FeeParams = extract_l1_info(&mock_block.body).unwrap();
         assert_eq!(l1_info.l1_base_fee, U256::from(652_114));
         assert_eq!(l1_info.l1_fee_overhead, Some(U256::from(2100)));
         assert_eq!(l1_info.l1_base_fee_scalar, U256::from(1_000_000));
@@ -434,7 +426,7 @@ mod tests {
 
         // test
 
-        let l1_block_info: L1BlockInfo = extract_l1_info(&block.body).unwrap();
+        let l1_block_info: L1FeeParams = extract_l1_info(&block.body).unwrap();
 
         assert_eq!(l1_block_info.l1_base_fee, expected_l1_base_fee);
         assert_eq!(l1_block_info.l1_base_fee_scalar, expected_l1_base_fee_scalar);
@@ -516,7 +508,7 @@ mod tests {
         let l1_blob_base_fee_scalar = Some(U256::from(810949));
         let operator_fee_scalar = Some(U256::from(20000));
         let operator_fee_constant = Some(U256::from(500));
-        let da_footprint_gas_scalar: Option<u16> = Some(U16::from(0xdead).to());
+        let da_footprint_gas_scalar = Some(U256::from(0xdead));
 
         // test
 

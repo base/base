@@ -763,7 +763,13 @@ mod tests {
         request.base_tx.sender = Some(SENDER);
         request.base_tx.calls = Some(vec![Vec::new(); TxBaseConstants::MAX_CALL_PHASES_PER_TX + 1]);
         assert_eq!(
-            request.to_base_tx_simulation_tx(8453, 30_000_000).err(),
+            request
+                .to_base_tx_simulation_tx(
+                    8453,
+                    30_000_000,
+                    base_common_evm2::TxBaseSimulationMode::Estimate,
+                )
+                .err(),
             Some(crate::TxBaseSimulationRequestError::Structural(
                 base_common_consensus::TxBaseStructuralError::TooManyCallPhases
             ))

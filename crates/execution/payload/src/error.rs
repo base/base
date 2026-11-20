@@ -22,7 +22,7 @@ pub enum BasePayloadBuilderError {
     BlobTransactionRejected,
     /// Thrown when `BlockBuilder` refuses to commit a sequencer transaction.
     ///
-    /// Resource metering always returns [`alloy_evm::block::CommitChanges::Yes`]
+    /// Resource metering always returns [`reth_evm::CommitChanges::Yes`]
     /// for sequencer transactions. This error is the `Ok(None)` contract of
     /// `execute_transaction_with_commit_condition` under `no_tx_pool`, where
     /// skipping a sequencer transaction would diverge the EL from the proof

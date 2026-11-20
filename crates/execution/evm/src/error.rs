@@ -1,6 +1,9 @@
 //! Error types for the Base EVM module.
 
-use reth_evm::execute::BlockExecutionError;
+use core::any::Any;
+
+use evm2::registry::HandlerError;
+use reth_evm::{InvalidTxError, execute::BlockExecutionError};
 
 /// L1 Block Info specific errors
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -54,5 +57,50 @@ pub enum BaseBlockExecutionError {
 impl From<BaseBlockExecutionError> for BlockExecutionError {
     fn from(err: BaseBlockExecutionError) -> Self {
         Self::other(err)
+    }
+}
+
+/// A transaction that is invalid for the block it was executed in.
+///
+/// Classifies the EVM2 handler error so callers such as the payload builder can tell a
+/// too-low nonce or an out-of-range gas limit apart from other invalid transactions.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(transparent)]
+pub struct BaseInvalidTxError(HandlerError);
+
+impl InvalidTxError for BaseInvalidTxError {
+    fn is_nonce_too_low(&self) -> bool {
+        matches!(self.0, HandlerError::InvalidNonce { expected, got } if got < expected)
+    }
+
+    fn is_gas_limit_too_high(&self) -> bool {
+        matches!(
+            self.0,
+            HandlerError::GasLimitMoreThanBlock { .. }
+                | HandlerError::TxGasLimitGreaterThanCap { .. }
+        )
+    }
+
+    fn is_gas_limit_too_low(&self) -> bool {
+        matches!(self.0, HandlerError::IntrinsicGasTooLow { .. })
+    }
+
+    fn as_any(&self) -> &(dyn Any + 'static) {
+        &self.0
+    }
+}
+
+impl TryFrom<HandlerError> for BaseInvalidTxError {
+    type Error = HandlerError;
+
+    /// Returns database, fatal, and registry-wiring errors back: they are not properties of the
+    /// transaction.
+    fn try_from(error: HandlerError) -> Result<Self, Self::Error> {
+        match error {
+            HandlerError::Database(_)
+            | HandlerError::Fatal(_)
+            | HandlerError::WrongTransactionType { .. } => Err(error),
+            error => Ok(Self(error)),
+        }
     }
 }

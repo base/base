@@ -10,9 +10,10 @@ use evm2::{
     handler::{GasSettlement, TxHandlerHooks},
     interpreter::Host,
     registry::{HandlerError, HandlerResult},
+    version::GasId,
 };
 
-use crate::{BaseEvmTypes, transaction::BaseTxEnvelope};
+use crate::{BaseEvmTypes, L1Block, transaction::BaseTxEnvelope};
 
 /// Base transaction handler hooks.
 ///
@@ -32,8 +33,7 @@ impl BaseTxHandlerHooks {
         let Some(enveloped) = envelope.enveloped() else {
             return U256::ZERO;
         };
-        let upgrade = host.config_spec_id().upgrade();
-        host.block_env().ext.calculate_tx_l1_cost(enveloped, upgrade)
+        L1Block::tx_l1_fee(host, enveloped)
     }
 
     /// Returns the Isthmus operator fee for `envelope` over `gas`. Zero for deposits and before
@@ -56,14 +56,13 @@ impl BaseTxHandlerHooks {
     /// Rejects the transaction when `caller` cannot cover the full upfront charge — the maximum
     /// gas cost, the transferred value, and the OP-stack L1 data and operator fees.
     ///
-    /// The framework's `validate_sender` already rejects a caller that cannot cover the gas cost
+    /// The framework's `validate_sender_and_bump_nonce` already rejects a caller that cannot cover the gas cost
     /// and value, but it is unaware of the L1 and operator fees charged here, and
-    /// [`charge_upfront`] deducts with wrapping arithmetic. Without this guard an underfunded
-    /// caller would silently wrap to a spurious balance instead of the transaction failing; this
-    /// mirrors the revm reference, which rejects such a caller with `LackOfFundForMaxFee`.
+    /// [`charge_upfront`] saturates at zero. Without this guard an underfunded caller would be
+    /// charged its whole balance instead of the transaction failing; this mirrors the revm reference, which rejects such a caller with `LackOfFundForMaxFee`.
     ///
     /// A no-op for deposits (funded on L1 and exempt) and when fee charging or balance checks are
-    /// disabled (e.g. `eth_call` simulation), matching the conditions under which `validate_sender`
+    /// disabled (e.g. `eth_call` simulation), matching the conditions under which the sender validation
     /// and `charge_upfront` themselves enforce balances.
     fn ensure_can_pay_fees(
         host: &mut Evm<'_, BaseEvmTypes>,
@@ -83,10 +82,9 @@ impl BaseTxHandlerHooks {
             .saturating_add(tx.value())
             .saturating_add(l1_fee)
             .saturating_add(operator_fee);
-        let balance =
-            host.state_mut().account(&caller, false).map_err(HandlerError::Fatal)?.balance();
+        let balance = host.state_mut().account(&caller)?.balance();
         if balance < required {
-            return Err(HandlerError::InsufficientFunds);
+            return Err(HandlerError::InsufficientFunds { fee: required, balance });
         }
         Ok(())
     }
@@ -97,10 +95,7 @@ impl BaseTxHandlerHooks {
         recipient: Address,
         amount: U256,
     ) -> HandlerResult<()> {
-        host.state_mut()
-            .account(&recipient, false)
-            .map_err(HandlerError::Fatal)?
-            .add_balance(amount);
+        host.state_mut().account(&recipient)?.add_balance(amount);
         Ok(())
     }
 }
@@ -115,14 +110,16 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         // Charge the upfront gas cost, the L1 data fee, and the operator fee (on the gas limit)
         // from the caller. Both fees are stashed for settlement so it charges/refunds against the
         // exact amounts collected here, without recomputing them.
+        host.ext_mut().tx_origin = caller;
+        L1Block::ensure_fee_params(host)?;
         let l1_fee = Self::l1_fee(host, envelope);
         let operator_fee = Self::operator_fee(host, envelope, envelope.gas_limit());
         let ext = host.ext_mut();
         ext.l1_fee = l1_fee;
         ext.operator_fee = operator_fee;
-        // `validate_sender` only checks the gas cost and value; the L1 and operator fees are
-        // charged on top here via `charge_upfront`'s wrapping subtraction, so reject an
-        // underfunded caller up front rather than let its balance wrap to a spurious value.
+        // `validate_sender_and_bump_nonce` only checks the gas cost and value; the L1 and operator
+        // fees are charged on top here via `charge_upfront`'s saturating subtraction, so reject an
+        // underfunded caller up front rather than silently drain its balance.
         Self::ensure_can_pay_fees(host, envelope, caller, l1_fee, operator_fee)?;
         charge_upfront(
             host,
@@ -134,8 +131,34 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
     fn settle_transaction(
         host: &mut Evm<'_, BaseEvmTypes>,
         envelope: &BaseTxEnvelope,
-        gas: GasSettlement<BaseEvmTypes>,
+        mut gas: GasSettlement<BaseEvmTypes>,
     ) -> HandlerResult<TxResult<BaseEvmTypes>> {
+        // The gas this transaction metered: what it is charged, and its receipt reports, without
+        // gas-limit billing (`max(spent - capped refund, floor)`, as `finalize_gas` computes it).
+        // Reported in the result for the builder's transaction events; nothing on the consensus
+        // path reads it.
+        let refund_quotient = host.version().gas_params.get(GasId::MaxRefundQuotient);
+        let spent = gas
+            .gas_limit
+            .saturating_sub(gas.result.gas.remaining())
+            .saturating_sub(gas.result.gas.reservoir());
+        let metered = spent
+            .saturating_sub(gas.result.final_refund(gas.gas_limit, refund_quotient))
+            .max(gas.floor_gas);
+
+        // Gas-limit billing: a non-deposit transaction is billed, and reported, for the whole
+        // `gas_limit` it reserved. Spending the remaining gas and dropping the refund counter
+        // before settlement makes every fee, refund and receipt path below observe
+        // `gas_used == gas_limit`, matching the revm reference's `BaseHandler::refund`.
+        // Fee-charge-disabled simulation (`eth_call`, `eth_estimateGas`) keeps metered gas so
+        // estimation still finds the gas a call needs.
+        let bill_gas_limit =
+            host.config_spec_id().upgrade().is_feature_enabled(BaseFeature::GasLimitBilling)
+                && host.feature(EvmFeatures::FEE_CHARGE);
+        if bill_gas_limit {
+            gas.result.gas.spend_all();
+            gas.result.gas.set_refunded(0);
+        }
         let caller = gas.caller;
         let basefee = host.block_env().basefee;
         let l1_fee = host.ext().l1_fee;
@@ -146,6 +169,7 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         // fee. The base fee is credited to its vault below (the OP-stack does not burn it).
         let mut result = default_settle_gas(host, gas)?;
         let gas_used = result.tx_gas_used();
+        debug_assert!(bill_gas_limit || gas_used == metered, "metered gas mirrors finalize_gas");
 
         // Refund the operator fee down from the amount charged (on the gas limit) to the gas
         // actually used; the net is credited to the operator-fee vault below.
@@ -163,6 +187,7 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         Self::credit(host, Predeploys::OPERATOR_FEE_VAULT, operator_fee_used)?;
 
         result.ext.l1_fee = l1_fee;
+        result.ext.metered_gas_used = Some(metered);
         Ok(result)
     }
 }

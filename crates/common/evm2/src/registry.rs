@@ -1,51 +1,61 @@
 //! Base transaction registry.
 
 use alloy_primitives::U256;
-use base_common_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+use base_common_consensus::{BASE_TX_TYPE_ID, DEPOSIT_TX_TYPE_ID, TxDeposit};
+use base_common_genesis::BaseUpgrade;
 use evm2::{
     Evm, SpecId, TxResult,
     env::TxEnvExt,
     ethereum::{
         TxEnvelope, eip1559, eip2930, eip7702, execute_initial_frame, finalize_gas,
-        initial_gas_and_reservoir, intrinsic_gas, legacy, prepare_initial_frame,
-        warm_base_accounts,
+        intrinsic_and_floor_gas, legacy, prepare_initial_frame, warm_base_accounts,
     },
     handler::GasSettlement,
     interpreter::{GasTracker, InstrStop},
-    registry::{HandlerError, HandlerResult, TxRegistry, TxRequest},
+    registry::{HandlerError, HandlerResult, TxRegistry, TxRequest, handler},
 };
 
-use crate::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope, BaseTxHandlerHooks};
+use crate::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope, BaseTxHandlerHooks, TxBaseHandler};
 
 impl BaseEvmTypes {
     /// Builds the Base transaction registry for `spec`.
     ///
-    /// Registers the deposit handler (type `0x7e`) and the standard Ethereum
+    /// Registers the deposit handler (type `0x7e`), the standard Ethereum
     /// transaction handlers (legacy/2930/1559, plus 7702 once `spec` enables
     /// Prague; EIP-4844 blob transactions are unsupported on Base and
     /// intentionally omitted), the latter wired with [`BaseTxHandlerHooks`] so
-    /// non-deposit transactions run the L1 fee settlement path. Unregistered
+    /// non-deposit transactions run the L1 fee settlement path, and the
+    /// enshrined Base transaction handler (type `0x79`, [`TxBaseHandler`]). Unregistered
     /// types are rejected with [`HandlerError::UnsupportedTransactionType`].
     pub fn tx_registry(spec: BaseSpecId) -> TxRegistry<Self, TxResult<Self>> {
         let mut registry = TxRegistry::new().with_handler(
             DEPOSIT_TX_TYPE_ID,
             BaseTxEnvelope::as_deposit,
-            Self::handle_deposit,
+            handler(|_| Ok(()), |req, ()| Self::handle_deposit(req)),
         );
         registry.register(
             0,
             |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_legacy),
-            legacy::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+            handler(
+                legacy::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
+                legacy::execute_prepared::<Self, BaseTxHandlerHooks>,
+            ),
         );
         registry.register(
             1,
             |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip2930),
-            eip2930::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+            handler(
+                eip2930::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
+                eip2930::execute_prepared::<Self, BaseTxHandlerHooks>,
+            ),
         );
         registry.register(
             2,
             |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip1559),
-            eip1559::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+            handler(
+                eip1559::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
+                eip1559::execute_prepared::<Self, BaseTxHandlerHooks>,
+            ),
         );
         // Type 3 (EIP-4844 blob transactions) is intentionally not registered:
         // Base rejects blob transactions, so no handler exists for them.
@@ -55,56 +65,67 @@ impl BaseEvmTypes {
             registry.register(
                 4,
                 |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip7702),
-                eip7702::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+                handler(
+                    eip7702::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
+                    eip7702::execute_prepared::<Self, BaseTxHandlerHooks>,
+                ),
             );
         }
+        registry.register(
+            BASE_TX_TYPE_ID,
+            BaseTxEnvelope::as_base_tx,
+            handler(TxBaseHandler::prepare, TxBaseHandler::execute),
+        );
         registry
     }
 
     /// Executes a deposit transaction, mirroring the OP-stack deposit rules of the revm
-    /// execution path (`base-common-evm`), for which Base is always Regolith-active.
+    /// execution path (`base-common-evm`).
     ///
     /// The minted value is credited to the sender before execution and kept regardless of the
-    /// outcome. System-transaction deposits are rejected (post-Regolith) and settled as failed
-    /// deposits. Deposits are exempt from the L1 data fee, the operator fee, and the
-    /// beneficiary reward, so gas is finalized without charging any fee. A halted deposit is
-    /// charged the full gas limit — there is no L2 fee payer to refund — while a reverted
-    /// deposit reports its actual gas, like any transaction.
+    /// outcome. From Regolith, system-transaction deposits are rejected and settled as failed
+    /// deposits; before Regolith they execute like any other deposit, as in the reference, which
+    /// dropped the historical pre-Regolith gas rules because Base launched with Regolith active.
+    /// Deposits are exempt from the L1 data fee, the operator fee, and the beneficiary reward,
+    /// so gas is finalized without charging any fee. A halted deposit is charged the full gas
+    /// limit — there is no L2 fee payer to refund — while a reverted deposit reports its actual
+    /// gas, like any transaction.
     pub fn handle_deposit(
         req: TxRequest<'_, '_, Self, TxDeposit>,
     ) -> HandlerResult<TxResult<Self>> {
         let host = req.host;
         let tx: &TxDeposit = *req.tx;
+        host.ext_mut().tx_origin = tx.from;
 
         // Credit the mint and bump the sender nonce, capturing the pre-bump nonce for a create
         // deposit's contract-address derivation.
         let nonce = Self::prepare_deposit_sender(host, tx)?;
 
-        // System-transaction deposits are rejected post-Regolith (always active on Base).
-        if tx.is_system_transaction {
+        let regolith = (host.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Regolith as u8);
+        if tx.is_system_transaction && regolith {
             return Ok(Self::failed_deposit(tx));
         }
 
-        // Pre-warm the sender, destination, coinbase, and precompiles, matching the standard
-        // transaction handlers so warm/cold (EIP-2929) access gas agrees with the reference.
-        warm_base_accounts(host, tx.from, tx.to);
+        // Pre-warm the destination, coinbase, and precompiles (the sender was warmed with the
+        // mint), matching the standard transaction handlers so warm/cold (EIP-2929) access gas
+        // agrees with the reference.
+        warm_base_accounts(host, tx.to);
 
-        // Meter the deposit like a standard transaction: charge intrinsic gas up front, then
-        // run the call/create frame with the remaining gas. A deposit that cannot afford its
-        // intrinsic cost is settled as a failed deposit.
-        let intrinsic = intrinsic_gas(host.version(), tx.from, tx.to, &tx.input, 0, 0, tx.value);
-        if tx.gas_limit < intrinsic {
+        // Deposits are exempt from the per-transaction gas cap. Charge intrinsic gas up
+        // front and bill at least the EIP-7623 calldata floor. A deposit that cannot
+        // afford its intrinsic cost or floor is settled as a failed deposit.
+        let version = host.version();
+        let (intrinsic, floor_gas) =
+            intrinsic_and_floor_gas(version, tx.from, tx.to, &tx.input, 0, 0, tx.value);
+        if tx.gas_limit < intrinsic.max(floor_gas) {
             return Ok(Self::failed_deposit(tx));
         }
-        let (execution_gas_limit, reservoir) =
-            initial_gas_and_reservoir(host.version(), tx.gas_limit, intrinsic, 0);
-        let mut tx_gas =
-            GasTracker::new_with_execution_gas_and_reservoir(execution_gas_limit, reservoir);
+        let execution_gas = tx.gas_limit - intrinsic;
+        let mut tx_gas = GasTracker::new_with_execution_gas_and_reservoir(execution_gas, 0);
         // Deposits cannot fail fatally per the OP-stack spec (the revm reference catches every
         // transaction-level error in `catch_error` and returns a failed deposit); only a database
-        // error is genuinely fatal. `prepare_initial_frame` only produces `Fatal` errors today,
-        // but matching on the variant future-proofs against evm2 introducing typed frame errors:
-        // a `Fatal` propagates, anything else settles as a failed deposit.
+        // or unrecoverable execution error is genuinely fatal and propagates; any other handler
+        // error settles as a failed deposit.
         let frame = match prepare_initial_frame(
             host,
             tx.from,
@@ -115,7 +136,7 @@ impl BaseEvmTypes {
             &mut tx_gas,
         ) {
             Ok(frame) => frame,
-            Err(err @ HandlerError::Fatal(_)) => return Err(err),
+            Err(err @ (HandlerError::Database(_) | HandlerError::Fatal(_))) => return Err(err),
             Err(_) => return Ok(Self::failed_deposit(tx)),
         };
         let tx_env = TxEnvExt {
@@ -124,14 +145,7 @@ impl BaseEvmTypes {
             chain_id: U256::from(host.version().chain_id),
             ..TxEnvExt::default()
         };
-        let result = execute_initial_frame(
-            host,
-            &tx_env,
-            frame,
-            &mut tx_gas,
-            execution_gas_limit,
-            reservoir,
-        );
+        let result = execute_initial_frame(host, &tx_env, frame, &mut tx_gas, execution_gas, 0)?;
 
         // A halt has no L2 fee payer to refund, so it is charged the full gas limit. evm2 has
         // already rolled back the execution state; the mint and nonce bump are retained. A
@@ -143,36 +157,36 @@ impl BaseEvmTypes {
         }
 
         // Success or revert: finalize gas like a standard transaction, but skip the fee charge
-        // and beneficiary reward (deposits are funded on L1). As with prepare_initial_frame, a
-        // database error propagates as fatal while any other error settles as a failed deposit —
-        // deposits never fail fatally per the OP-stack spec. finalize_gas only surfaces `Fatal`
-        // errors today; the match makes the invariant explicit and future-proofs it.
+        // and beneficiary reward (deposits are funded on L1). As with prepare_initial_frame, only
+        // database and unrecoverable execution errors propagate.
         match finalize_gas(
             host,
             GasSettlement {
                 caller: tx.from,
                 gas_price: U256::ZERO,
                 gas_limit: tx.gas_limit,
-                floor_gas: 0,
+                floor_gas,
                 initial_state_gas: 0,
                 state_refund: 0,
                 result,
             },
         ) {
             Ok(result) => Ok(result),
-            Err(err @ HandlerError::Fatal(_)) => Err(err),
+            Err(err @ (HandlerError::Database(_) | HandlerError::Fatal(_))) => Err(err),
             Err(_) => Ok(Self::failed_deposit(tx)),
         }
     }
 
-    /// Credits a deposit's minted value to the sender and bumps its nonce, returning the
-    /// sender's pre-bump nonce (used to derive a create deposit's contract address).
+    /// Warms the sender, credits the deposit's minted value to it, and bumps its nonce,
+    /// returning the sender's pre-bump nonce (used to derive a create deposit's contract
+    /// address).
     ///
     /// The mint is added before execution and retained regardless of the deposit's outcome.
     /// The nonce is bumped once here (mirroring the standard-transaction handlers; evm2 only
     /// bumps automatically for nested creates).
     pub fn prepare_deposit_sender(host: &mut Evm<'_, Self>, tx: &TxDeposit) -> HandlerResult<u64> {
-        let mut account = host.state_mut().account(&tx.from, false).map_err(HandlerError::Fatal)?;
+        let mut account = host.state_mut().account(&tx.from)?;
+        account.warm();
         account.add_balance(U256::from(tx.mint));
         let nonce = account.nonce();
         account.bump_nonce();
@@ -200,7 +214,6 @@ impl BaseEvmTypes {
 mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, Bytes, TxKind, U256};
-    use base_common_genesis::BaseUpgrade;
     use evm2::{Evm, Precompiles, env::BlockEnv, evm::InMemoryDB};
 
     use super::*;
@@ -270,6 +283,10 @@ mod tests {
             // Type 3 (EIP-4844 blob transactions) is intentionally unregistered — Base rejects
             // them.
             assert!(!registry.contains(3), "EIP-4844 blob handler must not be registered");
+            assert!(
+                registry.contains(BASE_TX_TYPE_ID),
+                "Base transaction handler must be registered"
+            );
             assert_eq!(
                 registry.contains(4),
                 (upgrade as u8) >= (BaseUpgrade::Isthmus as u8),

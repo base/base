@@ -9,17 +9,15 @@ use base_execution_trie::{
     BaseProofsBatchSession, BaseProofsBatchStateProviderRef, BaseProofsBatchStore, BaseProofsStore,
     BlockStateDiff, MdbxProofsStorage,
 };
+use evm2::evm::AccountInfo;
 use reth_provider::{HashedPostStateProvider, noop::NoopProvider};
-use reth_revm::{
-    db::{AccountStatus, BundleAccount, BundleState},
-    state::AccountInfo,
-};
 use reth_trie::{
     BranchNodeCompact, HashedPostState, HashedStorage, Nibbles,
     hashed_cursor::HashedCursor,
     trie_cursor::TrieCursor,
     updates::{StorageTrieUpdates, TrieUpdates, TrieUpdatesSorted},
 };
+use reth_trie_common::bundle_state::{AccountStatus, BundleAccount, BundleState};
 use tempfile::TempDir;
 
 const fn b256(byte: u8) -> B256 {

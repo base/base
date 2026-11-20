@@ -22,10 +22,11 @@ use base_execution_trie::{
     RocksdbProofsStorage, provider::BaseProofsStateProviderRef,
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use evm2::evm::{CacheDB, Db};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
+use reth_evm::{Database, database::StateProviderDatabase};
 use reth_primitives_traits::Account;
 use reth_provider::{AccountReader, StateProvider, noop::NoopProvider};
-use reth_revm::{Database, State, database::StateProviderDatabase};
 use reth_trie_common::{HashedPostState, updates::TrieUpdates};
 use tempfile::TempDir;
 
@@ -180,18 +181,18 @@ fn read_accounts_at_block(fixture: &DeepHistoryFixture, max_block: u64) -> usize
         &fixture.storage,
         max_block,
     );
-    let mut state = State::builder()
-        .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
-        .with_bundle_update()
-        .build();
+    let mut state =
+        CacheDB::new(Db::new(StateProviderDatabase::new((&provider).into_evm_state_provider())));
 
     let mut reads = 0;
     for target in &fixture.targets {
-        black_box(state.basic(target.address).expect("read account").expect("account exists"));
+        black_box(
+            state.get_account(&target.address).expect("read account").expect("account exists"),
+        );
         reads += 1;
     }
     for missing_address in &fixture.missing_addresses {
-        black_box(state.basic(*missing_address).expect("read missing account"));
+        black_box(state.get_account(missing_address).expect("read missing account"));
         reads += 1;
     }
     reads

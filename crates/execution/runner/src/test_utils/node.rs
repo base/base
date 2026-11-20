@@ -1,6 +1,13 @@
 //! Local node setup with Base Sepolia chainspec
 
-use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    fmt,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
@@ -41,9 +48,31 @@ pub struct LocalNode {
     _db_path: PathBuf,
 }
 
+impl LocalNode {
+    /// How long [`Drop`] waits for in-flight persistence before removing the datadir.
+    const PERSISTENCE_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
+    /// How often [`Drop`] checks whether persistence has caught up.
+    const PERSISTENCE_DRAIN_POLL: Duration = Duration::from_millis(10);
+
+    /// Whether every canonical block has been persisted to the datadir.
+    fn persistence_caught_up(&self) -> bool {
+        let state = self.provider.canonical_in_memory_state();
+        let canonical = state.get_canonical_block_number();
+        state
+            .get_persisted_num_hash()
+            .map_or(canonical == 0, |persisted| persisted.number >= canonical)
+    }
+}
+
 impl Drop for LocalNode {
     fn drop(&mut self) {
-        // Clean up the temporary database directory
+        // The engine persists canonical blocks on its own thread (the harness sets a zero
+        // persistence threshold). Removing the datadir under an in-flight write fails it, and
+        // RocksDB then aborts the process at exit, so wait for persistence to catch up first.
+        let deadline = Instant::now() + Self::PERSISTENCE_DRAIN_TIMEOUT;
+        while !self.persistence_caught_up() && Instant::now() < deadline {
+            std::thread::sleep(Self::PERSISTENCE_DRAIN_POLL);
+        }
         let _ = std::fs::remove_dir_all(&self._db_path);
     }
 }

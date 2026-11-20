@@ -10,7 +10,7 @@ use evm2::SpecId;
 /// as [`BaseEvmTypes::SpecId`](crate::BaseEvmTypes), it keeps the active upgrade recoverable at
 /// runtime (`Evm::config_spec_id`) for fork-dependent fee logic, even when several upgrades
 /// share one EVM2 spec (e.g. Ecotone and Fjord both map to [`SpecId::CANCUN`]).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BaseSpecId(BaseUpgrade);
 
 impl BaseSpecId {

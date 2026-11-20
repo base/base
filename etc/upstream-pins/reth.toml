@@ -6,18 +6,10 @@
 # `just reth-prepare-release` builds the fork tag and writes this file.
 # To return to an official Reth tag, edit this file and run `just pin-reth`.
 
-repository = "https://github.com/base/reth"
-reference = "2b20e42de9c42b51ea0fb56599fda3c2f22640ef"
-rev = "2b20e42de9c42b51ea0fb56599fda3c2f22640ef"
+repository = "https://github.com/paradigmxyz/reth"
+reference = "v2.10.1"
+rev = "58ebce14ae63dab040beae301e1578cd0dc55e8a"
 
 [upstream_base]
-tag = "v2.8.1"
-rev = "d763342fa185e4e90ee79dc65f6a5706168b0bcb"
-
-[[patches]]
-pr = "https://github.com/paradigmxyz/reth/pull/28264"
-head = "8572c88fe04fb2213d86f020ed9e72e612abb097"
-
-[[patches]]
-pr = "https://github.com/paradigmxyz/reth/pull/28148"
-head = "3c8b4e84357882802722f6adfdfde8f6167399d5"
+tag = "v2.10.1"
+rev = "58ebce14ae63dab040beae301e1578cd0dc55e8a"

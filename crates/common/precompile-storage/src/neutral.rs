@@ -1,32 +1,20 @@
 //! Engine-neutral precompile boundary types.
 //!
 //! Base-owned equivalents of the execution-engine types that surface at the
-//! precompile boundary: the precompile result/output/error/halt types and the
-//! `AccountInfo`/`Bytecode` state types read and written by native precompiles.
+//! precompile boundary: the precompile result/output/error/halt types, the
+//! `AccountInfo`/`Bytecode` state types read and written by native precompiles,
+//! and the checkpoint handle used for atomic state batches.
 //!
 //! The enshrined precompile logic (b20, policy, nonce, tx-context) is written
-//! against these types instead of naming `revm` directly, so the same logic can
-//! be reused across execution engines. This module is the single place that
-//! knows how to convert a base type into a concrete engine type: today only the
-//! `revm` conversions exist; an EVM2 backend adds the parallel conversions here
-//! without touching any enshrined logic.
-//!
-//! The conversions are exact, field-for-field mirrors of the corresponding
-//! `revm` constructors so that neutralizing the shared logic is behavior
-//! preserving.
+//! against these types instead of naming an engine directly, so the same logic
+//! serves every execution engine. The per-engine conversions live next to each
+//! engine's provider (`revm_compat`, `evm2_compat`) and are exact,
+//! field-for-field mirrors of the engine types.
 
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 use core::result;
 
-use alloy_primitives::{B256, Bytes, U256};
-use revm::{
-    precompile::{
-        PrecompileError as RevmPrecompileError, PrecompileHalt as RevmPrecompileHalt,
-        PrecompileOutput as RevmPrecompileOutput, PrecompileStatus as RevmPrecompileStatus,
-    },
-    primitives::KECCAK_EMPTY,
-    state::AccountInfo as RevmAccountInfo,
-};
+use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, keccak256};
 
 /// Engine-neutral account information.
 ///
@@ -39,28 +27,147 @@ pub struct AccountInfo {
     pub balance: U256,
     /// Account nonce.
     pub nonce: u64,
-    /// Hash of the account bytecode, or [`KECCAK_EMPTY`] for an empty account.
+    /// Hash of the account bytecode, or [`KECCAK256_EMPTY`] for an account without code.
     pub code_hash: B256,
 }
 
 impl Default for AccountInfo {
     fn default() -> Self {
-        Self { balance: U256::ZERO, nonce: 0, code_hash: KECCAK_EMPTY }
+        Self { balance: U256::ZERO, nonce: 0, code_hash: KECCAK256_EMPTY }
     }
 }
 
 impl AccountInfo {
     /// Returns true if the code hash is the Keccak256 hash of the empty string.
-    ///
-    /// Matches `revm`'s `AccountInfo::is_empty_code_hash`.
     pub fn is_empty_code_hash(&self) -> bool {
-        self.code_hash == KECCAK_EMPTY
+        self.code_hash == KECCAK256_EMPTY
     }
 }
 
-impl From<&RevmAccountInfo> for AccountInfo {
-    fn from(value: &RevmAccountInfo) -> Self {
-        Self { balance: value.balance, nonce: value.nonce, code_hash: value.code_hash }
+/// Engine-neutral account bytecode.
+///
+/// Holds exactly what native precompiles read and write: the original code bytes, or the delegate
+/// of an EIP-7702 delegation designator. Engines rebuild their own bytecode with the matching
+/// `new_legacy` / `new_eip7702` constructor, so the stored code and its hash are identical across
+/// engines.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Bytecode {
+    /// Legacy bytecode, kept as its original bytes. Empty bytes mean the account has no code.
+    Legacy(Bytes),
+    /// EIP-7702 delegation designator (`0xef0100 ‖ delegate`).
+    Eip7702(Address),
+}
+
+impl Default for Bytecode {
+    fn default() -> Self {
+        Self::Legacy(Bytes::new())
+    }
+}
+
+impl Bytecode {
+    /// EIP-7702 designator prefix: magic bytes followed by the version byte.
+    const EIP7702_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
+
+    /// Creates legacy bytecode from its original bytes.
+    pub const fn new_legacy(raw: Bytes) -> Self {
+        Self::Legacy(raw)
+    }
+
+    /// Creates an EIP-7702 delegation designator pointing at `delegate`.
+    pub const fn new_eip7702(delegate: Address) -> Self {
+        Self::Eip7702(delegate)
+    }
+
+    /// Returns the delegate address if this is an EIP-7702 designator.
+    pub const fn eip7702_address(&self) -> Option<Address> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Eip7702(delegate) => Some(*delegate),
+        }
+    }
+
+    /// Returns the original code bytes as stored in the account.
+    pub fn original_bytes(&self) -> Bytes {
+        match self {
+            Self::Legacy(raw) => raw.clone(),
+            Self::Eip7702(delegate) => {
+                [&Self::EIP7702_PREFIX[..], delegate.as_slice()].concat().into()
+            }
+        }
+    }
+
+    /// Returns the length of the original code bytes.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Legacy(raw) => raw.len(),
+            Self::Eip7702(_) => Self::EIP7702_PREFIX.len() + size_of::<Address>(),
+        }
+    }
+
+    /// Returns true if the account has no code.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Computes the code hash: the Keccak256 hash of the original bytes.
+    pub fn hash_slow(&self) -> B256 {
+        if self.is_empty() { KECCAK256_EMPTY } else { keccak256(self.original_bytes()) }
+    }
+}
+
+/// Handle to a provider checkpoint.
+///
+/// Checkpoints nest: they are committed or reverted most-recent first. A handle stays valid until
+/// its checkpoint, or an older one, is committed or reverted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StorageCheckpoint(usize);
+
+impl StorageCheckpoint {
+    /// Returns the handle for the checkpoint opened at nesting `depth` (zero for the outermost).
+    pub const fn new(depth: usize) -> Self {
+        Self(depth)
+    }
+
+    /// Returns the nesting depth of this checkpoint.
+    pub const fn depth(self) -> usize {
+        self.0
+    }
+}
+
+/// Stack of engine journal checkpoints addressed by [`StorageCheckpoint`] handles.
+///
+/// Lets engine-backed providers hand out neutral handles while keeping each engine's own
+/// checkpoint type internal.
+#[derive(Clone, Debug)]
+pub struct CheckpointStack<C> {
+    checkpoints: Vec<C>,
+}
+
+impl<C> Default for CheckpointStack<C> {
+    fn default() -> Self {
+        Self { checkpoints: Vec::new() }
+    }
+}
+
+impl<C> CheckpointStack<C> {
+    /// Records an engine checkpoint and returns its handle.
+    pub fn push(&mut self, checkpoint: C) -> StorageCheckpoint {
+        self.checkpoints.push(checkpoint);
+        StorageCheckpoint::new(self.checkpoints.len() - 1)
+    }
+
+    /// Forgets the most recent checkpoint, keeping its changes.
+    pub fn commit_latest(&mut self) {
+        self.checkpoints.pop();
+    }
+
+    /// Removes `checkpoint` and every newer checkpoint, returning the engine checkpoint to
+    /// revert to.
+    pub fn take(&mut self, checkpoint: StorageCheckpoint) -> Option<C> {
+        if checkpoint.depth() >= self.checkpoints.len() {
+            return None;
+        }
+        self.checkpoints.drain(checkpoint.depth()..).next()
     }
 }
 
@@ -75,14 +182,6 @@ pub enum PrecompileHalt {
     OutOfGas,
 }
 
-impl From<PrecompileHalt> for RevmPrecompileHalt {
-    fn from(value: PrecompileHalt) -> Self {
-        match value {
-            PrecompileHalt::OutOfGas => Self::OutOfGas,
-        }
-    }
-}
-
 /// Status of a precompile execution.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PrecompileStatus {
@@ -94,16 +193,6 @@ pub enum PrecompileStatus {
     Halt(PrecompileHalt),
 }
 
-impl From<PrecompileStatus> for RevmPrecompileStatus {
-    fn from(value: PrecompileStatus) -> Self {
-        match value {
-            PrecompileStatus::Success => Self::Success,
-            PrecompileStatus::Revert => Self::Revert,
-            PrecompileStatus::Halt(reason) => Self::Halt(reason.into()),
-        }
-    }
-}
-
 /// Fatal precompile error that halts EVM execution.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PrecompileError {
@@ -111,19 +200,11 @@ pub enum PrecompileError {
     Fatal(String),
 }
 
-impl From<PrecompileError> for RevmPrecompileError {
-    fn from(value: PrecompileError) -> Self {
-        match value {
-            PrecompileError::Fatal(msg) => Self::Fatal(msg),
-        }
-    }
-}
-
 /// Rich precompile execution output with gas accounting and status support.
 ///
-/// Field-for-field mirror of `revm`'s `PrecompileOutput` so the [`From`]
-/// conversion is a plain copy and neutralizing the shared logic preserves
-/// behavior exactly, including the EIP-8037 state-gas accounting fields.
+/// Field-for-field mirror of `revm`'s `PrecompileOutput`, including the
+/// EIP-8037 state-gas accounting fields, so every engine rebuilds the same
+/// frame gas from it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PrecompileOutput {
     /// Status of the precompile execution.
@@ -203,85 +284,43 @@ impl PrecompileOutput {
     }
 }
 
-impl From<PrecompileOutput> for RevmPrecompileOutput {
-    fn from(value: PrecompileOutput) -> Self {
-        Self {
-            status: value.status.into(),
-            gas_used: value.gas_used,
-            gas_refunded: value.gas_refunded,
-            state_gas_used: value.state_gas_used,
-            state_gas_spilled: value.state_gas_spilled,
-            reservoir: value.reservoir,
-            bytes: value.bytes,
-        }
-    }
-}
-
 /// Result of a native precompile execution.
 pub type PrecompileResult = result::Result<PrecompileOutput, PrecompileError>;
 
-/// Extension trait converting a base [`PrecompileResult`] into the engine result.
-///
-/// Applied at the single precompile-dispatch boundary (the `base_precompile!`
-/// macro) where a native precompile hands its result back to the engine.
-pub trait IntoEnginePrecompileResult {
-    /// Converts a base precompile result into the `revm` precompile result.
-    fn into_revm(self) -> revm::precompile::PrecompileResult;
-}
-
-impl IntoEnginePrecompileResult for PrecompileResult {
-    fn into_revm(self) -> revm::precompile::PrecompileResult {
-        self.map(Into::into).map_err(Into::into)
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::address;
+
     use super::*;
 
     #[test]
-    fn precompile_output_conversion_is_field_exact() {
-        let base = PrecompileOutput {
-            status: PrecompileStatus::Success,
-            gas_used: 500,
-            gas_refunded: 200,
-            state_gas_used: 30,
-            state_gas_spilled: 20,
-            reservoir: 10,
-            bytes: Bytes::from_static(&[1, 2, 3]),
-        };
-        let revm: RevmPrecompileOutput = base.clone().into();
-        assert_eq!(revm.gas_used, 500);
-        assert_eq!(revm.gas_refunded, 200);
-        assert_eq!(revm.state_gas_used, 30);
-        assert_eq!(revm.state_gas_spilled, 20);
-        assert_eq!(revm.reservoir, 10);
-        assert_eq!(revm.bytes, base.bytes);
-        assert!(revm.is_success());
+    fn eip7702_bytecode_round_trips_through_original_bytes() {
+        let delegate = address!("0x00000000000000000000000000000000000000dd");
+        let code = Bytecode::new_eip7702(delegate);
+
+        let original = code.original_bytes();
+        assert_eq!(original.len(), code.len());
+        assert_eq!(&original[..3], &[0xef, 0x01, 0x00]);
+        assert_eq!(&original[3..], delegate.as_slice());
+        assert_eq!(code.hash_slow(), keccak256(&original));
+        assert_eq!(code.eip7702_address(), Some(delegate));
     }
 
     #[test]
-    fn revert_and_halt_map_to_matching_status() {
-        let revert: RevmPrecompileOutput = PrecompileOutput::revert(7, Bytes::new(), 3).into();
-        assert!(revert.is_revert());
-        assert_eq!(revert.gas_used, 7);
-
-        let halt: RevmPrecompileOutput = PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0).into();
-        assert!(halt.is_halt());
+    fn empty_bytecode_hashes_to_empty_code_hash() {
+        assert!(Bytecode::default().is_empty());
+        assert_eq!(Bytecode::default().hash_slow(), KECCAK256_EMPTY);
+        assert_eq!(Bytecode::new_legacy(Bytes::from_static(&[0xef])).len(), 1);
     }
 
     #[test]
-    fn account_info_reads_match_revm() {
-        let revm = RevmAccountInfo {
-            balance: U256::from(42u64),
-            nonce: 7,
-            code_hash: KECCAK_EMPTY,
-            code: None,
-            ..RevmAccountInfo::default()
-        };
-        let base = AccountInfo::from(&revm);
-        assert_eq!(base.balance, U256::from(42u64));
-        assert_eq!(base.nonce, 7);
-        assert!(base.is_empty_code_hash());
+    fn checkpoint_stack_reverts_to_requested_depth() {
+        let mut stack = CheckpointStack::default();
+        let outer = stack.push("outer");
+        let inner = stack.push("inner");
+        assert_eq!(inner.depth(), 1);
+
+        assert_eq!(stack.take(outer), Some("outer"));
+        assert_eq!(stack.take(inner), None);
     }
 }

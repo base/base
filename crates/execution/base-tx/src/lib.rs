@@ -23,5 +23,13 @@ pub use transaction::{AuthorizedTransaction, ResolvedSender, TransactionAuthoriz
 mod fee;
 pub use fee::{FeeCheck, FeeError};
 
+mod pipeline;
+pub use pipeline::{
+    TxBaseBlockContext, TxBaseError, TxBaseFeeSplit, TxBaseOutcome, TxBasePipeline,
+};
+
+mod calls;
+pub use calls::{TxBaseCallFrame, TxBaseCallHost, TxBaseCalls, TxBaseCallsResult};
+
 #[cfg(test)]
 pub mod test_utils;

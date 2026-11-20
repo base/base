@@ -41,7 +41,6 @@ mod fixture;
 use std::{any::Any, cell::Cell, hint::black_box, rc::Rc, time::Duration};
 
 use alloy_primitives::{Address, B256, TxHash, U256};
-use base_common_consensus::Predeploys;
 use base_execution_payload_builder::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, RestingPredicates, SharedRestingPredicates,
@@ -57,8 +56,6 @@ use fixture::{
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use reth_evm::execute::{BlockBuilder, BlockExecutor};
 use reth_payload_util::PayloadTransactions;
-use reth_revm::db::State;
-use revm::database::TransitionState;
 
 /// Consecutive blocks built per run.
 const BLOCKS: u64 = 5;
@@ -149,8 +146,8 @@ fn setup() -> Blocks {
     .expect("event writer initializes");
 
     let (pool, db) = resting_pool(RESTING);
-    // Each block builder borrows the context and its state, and the prepared run must own the
-    // builders, so both are leaked for the life of the single-run bench process.
+    // Each block builder borrows the context, and the prepared run must own the builders, so the
+    // context is leaked for the life of the single-run bench process.
     let mut ctx = payload_context(populated_rejection_cache(0));
     // Callgrind runs tens of times slower than native code, so the wall-clock predicate
     // evaluation budget would stop evaluation at a timing-dependent candidate. Natively this
@@ -159,15 +156,7 @@ fn setup() -> Blocks {
     let ctx: &'static _ = Box::leak(Box::new(ctx));
     let lifecycle = Rc::new(Lifecycle::default());
     let blocks: Vec<_> = (0..BLOCKS)
-        .map(|_| {
-            let state = Box::leak(Box::new(
-                State::builder().with_database(db.clone()).with_bundle_update().build(),
-            ));
-            state
-                .load_cache_account(Predeploys::L1_BLOCK_INFO)
-                .expect("in-memory load cannot fail");
-            (ctx.block_builder(state).expect("block builder"), ExecutionInfo::default())
-        })
+        .map(|_| (ctx.block_builder(db.clone()).expect("block builder"), ExecutionInfo::default()))
         .collect();
     let mut resting = RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
 
@@ -178,8 +167,7 @@ fn setup() -> Blocks {
         let mut parent = B256::ZERO;
         for (block, (mut builder, mut info)) in (1..).zip(blocks) {
             // The production builder passes the pre-block writes; these blocks make none.
-            carried +=
-                resting.begin_block(parent, block, Some(&TransitionState::default())).carried;
+            carried += resting.begin_block(parent, block, Some(&[])).carried;
             let shared = SharedRestingPredicates::new(resting);
             let transactions =
                 Counted { inner: parkable(&pool, Some(&shared)), lifecycle: Rc::clone(&lifecycle) };

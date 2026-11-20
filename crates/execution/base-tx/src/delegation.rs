@@ -5,8 +5,7 @@
 
 use alloy_primitives::Address;
 use base_common_consensus::TxBaseConstants;
-use base_precompile_storage::{BasePrecompileError, StorageCtx};
-use revm::state::Bytecode;
+use base_precompile_storage::{BasePrecompileError, Bytecode, StorageCtx};
 
 /// Reason a delegation entry is rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -112,7 +111,7 @@ mod tests {
 
     #[test]
     fn install_rejects_ordinary_code_without_mutating_it() {
-        let ordinary = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
+        let ordinary = Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00]));
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_code(ACCOUNT, ordinary.clone()).unwrap();
 
@@ -120,10 +119,7 @@ mod tests {
         let error = StorageCtx::enter(&mut storage, |sctx| effect.install(sctx)).unwrap_err();
 
         assert_eq!(error, DelegationError::NonDelegatableCode { account: ACCOUNT });
-        assert_eq!(
-            storage.get_account_info(ACCOUNT).and_then(|info| info.code.as_ref()),
-            Some(&ordinary)
-        );
+        assert_eq!(storage.get_code(ACCOUNT), Some(&ordinary));
     }
 
     #[test]
@@ -142,13 +138,7 @@ mod tests {
             })
             .unwrap();
 
-            assert_eq!(
-                storage
-                    .get_account_info(ACCOUNT)
-                    .and_then(|info| info.code.as_ref())
-                    .and_then(Bytecode::eip7702_address),
-                Some(target)
-            );
+            assert_eq!(storage.get_code(ACCOUNT).and_then(Bytecode::eip7702_address), Some(target));
         }
     }
 
@@ -162,11 +152,6 @@ mod tests {
         })
         .unwrap();
 
-        assert!(
-            storage
-                .get_account_info(ACCOUNT)
-                .and_then(|info| info.code.as_ref())
-                .is_some_and(Bytecode::is_empty)
-        );
+        assert!(storage.get_code(ACCOUNT).is_some_and(Bytecode::is_empty));
     }
 }
