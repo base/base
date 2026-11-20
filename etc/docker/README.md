@@ -21,9 +21,12 @@ RC and final releases apply the same version tag to every image. Published image
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
 
-`Dockerfile.op-batcher` builds Go `op-batcher/v1.16.5` at commit
-[`abe047af`](https://github.com/ethereum-optimism/optimism/commit/abe047afc995e0e22abf5ea9b157e267e907d494),
-matching the Base mainnet infrastructure source pin. The `devnet` and `tx-observability`
+`Dockerfile.op-batcher` builds Go op-batcher from the `base/optimism` tag
+`op-batcher/v1.16.5-basetx.2` at commit
+[`9b04c800`](https://github.com/base/optimism/commit/9b04c8002b4b73dc33dbf5926065c83be7e4be62):
+`op-batcher/v1.16.5`, the Base mainnet infrastructure source pin, plus support for
+the Base transaction type `0x79`. It rejects span batch mode, so it only posts
+singular batches. The `devnet` and `tx-observability`
 Bake groups build it as `op-batcher:local`; it runs as the canonical batcher.
 The Rust `base batcher` (the `base batcher` subcommand of `base:local`) runs
 alongside it in shadow mode; no separate Rust batcher image is needed.
@@ -113,12 +116,9 @@ under the `batcher` job (`op-batcher:6060`, `base-batcher:6061`) and the shadow
 validator under `l2_shadow_validator`. The Anvil variant inherits all three
 services.
 
-**Validity transaction note:** the op-batcher pin embeds op-geth
-`v1.101609.2-rc.1`, whose typed block decoder does not support the Base
-transaction type `0x79`. A block containing one prevents the canonical op-batcher
-from advancing past that block (`transaction type not supported`). The shadow
-`base-batcher` supports `0x79`, so the shadow validator continues deriving past
-such blocks — useful for validity-transaction testing.
+**Base transaction note:** both batchers support the Base transaction type
+`0x79`, so the canonical chain and the shadow validator both derive past blocks
+containing one.
 
 `docker-compose.prover.yml` is a separate standalone stack that runs the prover
 trio (Postgres, `base-prover-service`, `base-prover-zk-host`) against
@@ -214,6 +214,18 @@ block 100:
 ```bash
 just devnet up everest
 ```
+
+Both `just devnet up everest` and `just devnet up-single everest` build the L1
+protocol contracts and L2 predeploys from [`base/contracts` v8.5.0-rc.1
+(`b9b76d97`)](https://github.com/base/contracts/tree/b9b76d97dca3c420098f597ebc65bee4f28001b7).
+The `everest` setup image runs that release's `SystemDeploy` and `L2Genesis`
+scripts offline. Local addresses are in `.devnet/l2/configs/l1-addresses.json`;
+they are not Sepolia addresses. The execution devnet still uses the local
+upgrade-signal mock and does not run a proposer, prover, or challenger. The
+separate Anvil/Nitro recipe and other devnet modes are unchanged.
+
+Everest leaves builder resource metering off by default. To opt in, run
+`L2_BUILDER_ENABLE_RESOURCE_METERING=true just devnet up everest`.
 
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
 Zenith mode additionally activates Everest and Zenith at block 100:

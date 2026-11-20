@@ -1,10 +1,13 @@
 //! `eth_estimateGas` gas estimation for Base transaction simulation requests.
 
+use std::fmt::Display;
+
 use alloy_eips::BlockId;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_types::state::EvmOverrides;
 use base_common_evm2::{BaseEvmTypes, BaseTxEnvelope as BaseTxEnv, TxBaseSimulationMode};
 use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
+use base_execution_base_tx::NonceValidator;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseNextBlockEnvAttributes, BasePendingForecast};
 use evm2::TxResult;
@@ -169,16 +172,14 @@ impl TxBaseGasEstimator {
             gas_cap = gas_cap.min(rpc_gas_cap);
         }
 
-        let sim_tx =
-            request.to_base_tx_simulation_tx(chain_id, gas_cap, mode).map_err(|error| {
-                ErrorObjectOwned::owned(
-                    INVALID_PARAMS_CODE,
-                    format!("invalid Base transaction estimate request: {error}"),
-                    None::<()>,
-                )
-            })?;
+        let sim_tx = request
+            .to_base_tx_simulation_tx(chain_id, gas_cap, mode)
+            .map_err(Self::invalid_request)?;
         // The validity window and nonce-free rules, as pool admission applies
-        // them at the simulated block's timestamp. A `time` block override is
+        // them at the simulated block's timestamp, and the rule that a
+        // delegation uses the protocol nonce. The simulation does not validate
+        // the nonce, so it would otherwise accept a delegation that pool
+        // admission and inclusion always reject. A `time` block override is
         // only applied to the env inside the state closure below, so it must be
         // honored here explicitly.
         let timestamp = overrides
@@ -188,13 +189,8 @@ impl TxBaseGasEstimator {
             .unwrap_or_else(|| evm_env.block_env().timestamp.saturating_to());
         let now_ms = timestamp.saturating_mul(1_000);
         if let BaseTxEnv::Base(tx) = sim_tx.inner() {
-            tx.signed.validate_timestamp(now_ms).map_err(|error| {
-                ErrorObjectOwned::owned(
-                    INVALID_PARAMS_CODE,
-                    format!("invalid Base transaction estimate request: {error}"),
-                    None::<()>,
-                )
-            })?;
+            tx.signed.validate_timestamp(now_ms).map_err(Self::invalid_request)?;
+            NonceValidator::validate_delegation(tx.signed.tx()).map_err(Self::invalid_request)?;
         }
 
         let result = eth_api
@@ -222,5 +218,14 @@ impl TxBaseGasEstimator {
             .await?;
 
         Ok(result.result)
+    }
+
+    /// The `INVALID_PARAMS` error for a request that cannot be simulated.
+    fn invalid_request(error: impl Display) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(
+            INVALID_PARAMS_CODE,
+            format!("invalid Base transaction estimate request: {error}"),
+            None::<()>,
+        )
     }
 }

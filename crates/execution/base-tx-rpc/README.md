@@ -48,7 +48,8 @@ There is no outer gas-limit search like reth's standard estimator. Plain
 
 The simulation applies the request's validity window at the simulated block's
 time (honoring a `time` block override on `eth_call`) and applies its
-delegation as inclusion would.
+delegation as inclusion would. Like pool admission and inclusion, it rejects a
+delegation on a non-zero `nonce_key`.
 
 Both helpers are fork-agnostic: callers gate on the Everest hard fork via
 [`TxBaseEverestGate`] before invoking them.

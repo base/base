@@ -494,9 +494,9 @@ fn parity_deposit_below_the_calldata_floor_fails() {
 }
 
 #[test]
-fn parity_deposit_above_eip7825_cap_caps_execution_gas() {
-    // From Azul (Osaka) a deposit's regular execution gas is capped at 2^24 even when its gas
-    // limit is higher. `GAS PUSH1 0 SSTORE` records the gas the top-level frame sees in slot 0.
+fn parity_deposit_above_eip7825_cap_uses_full_execution_gas() {
+    // Deposits are exempt from the EIP-7825 cap. `GAS PUSH1 0 SSTORE` records
+    // the gas the top-level frame sees in slot 0.
     let target = Address::repeat_byte(0x22);
     assert_parity(Fixture {
         seed: vec![Seed {

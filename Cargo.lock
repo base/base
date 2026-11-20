@@ -4217,6 +4217,7 @@ dependencies = [
  "base-common-evm2",
  "base-common-precompiles",
  "base-common-rpc-types",
+ "base-execution-base-tx",
  "base-execution-chainspec",
  "base-execution-evm",
  "evm2",

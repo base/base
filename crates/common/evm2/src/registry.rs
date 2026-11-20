@@ -111,11 +111,9 @@ impl BaseEvmTypes {
         // agrees with the reference.
         warm_base_accounts(host, tx.to);
 
-        // Meter the deposit like a standard transaction: charge intrinsic gas up front, run the
-        // call/create frame with the remaining gas (capped at the active EIP-7825 per-tx limit,
-        // with any excess parked in the reservoir to match the revm reference), and bill at least
-        // the EIP-7623 calldata floor. A deposit that cannot afford its intrinsic cost or floor
-        // is settled as a failed deposit.
+        // Deposits are exempt from the per-transaction gas cap. Charge intrinsic gas up
+        // front and bill at least the EIP-7623 calldata floor. A deposit that cannot
+        // afford its intrinsic cost or floor is settled as a failed deposit.
         let version = host.version();
         let (intrinsic, floor_gas) =
             intrinsic_and_floor_gas(version, tx.from, tx.to, &tx.input, 0, 0, tx.value);
@@ -123,11 +121,7 @@ impl BaseEvmTypes {
             return Ok(Self::failed_deposit(tx));
         }
         let execution_gas = tx.gas_limit - intrinsic;
-        let execution_gas_limit =
-            tx.gas_limit.min(version.tx_gas_limit_cap).saturating_sub(intrinsic);
-        let reservoir = execution_gas - execution_gas_limit;
-        let mut tx_gas =
-            GasTracker::new_with_execution_gas_and_reservoir(execution_gas_limit, reservoir);
+        let mut tx_gas = GasTracker::new_with_execution_gas_and_reservoir(execution_gas, 0);
         // Deposits cannot fail fatally per the OP-stack spec (the revm reference catches every
         // transaction-level error in `catch_error` and returns a failed deposit); only a database
         // or unrecoverable execution error is genuinely fatal and propagates; any other handler
@@ -151,14 +145,7 @@ impl BaseEvmTypes {
             chain_id: U256::from(host.version().chain_id),
             ..TxEnvExt::default()
         };
-        let result = execute_initial_frame(
-            host,
-            &tx_env,
-            frame,
-            &mut tx_gas,
-            execution_gas_limit,
-            reservoir,
-        )?;
+        let result = execute_initial_frame(host, &tx_env, frame, &mut tx_gas, execution_gas, 0)?;
 
         // A halt has no L2 fee payer to refund, so it is charged the full gas limit. evm2 has
         // already rolled back the execution state; the mint and nonce bump are retained. A

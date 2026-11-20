@@ -170,6 +170,12 @@ impl ToastState {
         showing
     }
 
+    /// Removes every toast, sticky or not, including those queued behind the
+    /// one showing.
+    pub fn clear(&mut self) {
+        self.toasts.clear();
+    }
+
     /// Returns the most recent active toast, if any.
     pub fn current(&self) -> Option<&Toast> {
         self.toasts.last()
@@ -285,5 +291,15 @@ mod tests {
         assert!(toasts.dismiss_sticky());
         assert_eq!(toasts.current().map(|toast| toast.message.as_str()), Some("plain"));
         assert!(!toasts.dismiss_sticky());
+    }
+
+    #[test]
+    fn clear_removes_sticky_and_queued_toasts() {
+        let mut toasts = ToastState::new();
+        toasts.push(Toast::warning("first"));
+        toasts.push(Toast::sticky_info("copy me"));
+        toasts.push(Toast::info("last"));
+        toasts.clear();
+        assert!(toasts.current().is_none());
     }
 }

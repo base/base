@@ -93,7 +93,7 @@ std = [
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"base-common-base-tx/std",
-	"base-common-chains/std",
+	"base-common-chains?/std",
 	"base-common-genesis/std",
 	"base-precompile-storage/std",
 	"evm2?/std",

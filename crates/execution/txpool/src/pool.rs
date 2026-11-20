@@ -1278,39 +1278,18 @@ where
         LaneCursor { state_nonce, next_nonce, run_bid }
     }
 
-    /// Undoes a lane insertion that a post-insert check rejected: removes the
-    /// newcomer, re-announces the lane, and restores the transaction it replaced
-    /// within the same store.
-    #[expect(clippy::too_many_arguments, reason = "borrows the locks the caller already holds")]
+    /// Undoes a lane insertion that a post-insert check rejected: the
+    /// transaction it replaced within the same store takes its slot back, and
+    /// listeners see the newcomer discarded and the lane re-announced.
     fn roll_back_lane_insert(
         pool: &mut TwoDNoncePool<T>,
         listeners: &mut SidecarListeners<T>,
-        guard: &mut MempoolGuard,
         outcome: &InsertOutcome<T>,
         cursor: LaneCursor,
-        sender: Address,
-        balance: U256,
-        balance_epoch: u64,
     ) {
-        let removed = pool.remove_transactions(&[outcome.outcome.hash]);
-        listeners.on_discarded(&removed);
+        let removed = pool.roll_back_insert(outcome, cursor);
+        listeners.on_discarded(removed.as_slice());
         listeners.on_lane_moved(&outcome.anchor);
-        let Some(replaced) = &outcome.replaced else {
-            return;
-        };
-        let restored = ValidPoolTransaction {
-            transaction_id: replaced.transaction_id,
-            transaction: replaced.transaction.clone(),
-            propagate: replaced.propagate,
-            timestamp: replaced.timestamp,
-            origin: replaced.origin,
-            authority_ids: replaced.authority_ids.clone(),
-        };
-        if pool.insert_validated_at(restored, cursor).is_err() {
-            guard.release(replaced.hash());
-            listeners.on_discarded(std::slice::from_ref(replaced));
-        }
-        pool.record_validated_balance(sender, balance, balance_epoch);
     }
 
     /// Inserts a validated transaction into the lane store `store`.
@@ -1400,16 +1379,7 @@ where
                     None
                 };
                 if let Some(error) = rejection {
-                    Self::roll_back_lane_insert(
-                        &mut pool,
-                        &mut listeners,
-                        &mut guard,
-                        &outcome,
-                        cursor,
-                        sender,
-                        balance,
-                        balance_epoch,
-                    );
+                    Self::roll_back_lane_insert(&mut pool, &mut listeners, &outcome, cursor);
                     return Err(error);
                 }
                 // An incumbent from another store stays pooled there until the
@@ -1434,12 +1404,8 @@ where
                             Self::roll_back_lane_insert(
                                 &mut pool,
                                 &mut listeners,
-                                &mut guard,
                                 &outcome,
                                 cursor,
-                                sender,
-                                balance,
-                                balance_epoch,
                             );
                             return Err(Self::limit_rejection_error(hash, rejection));
                         }
@@ -6435,16 +6401,25 @@ mod tests {
     #[tokio::test]
     async fn validity_pool_byte_limit_evicts_the_cheapest_transaction() {
         let (pool, client) = build_integration_pool();
-        let probe = validity_1559(&funded_signer(&client), 0, 1_000);
-        let one_transaction = probe.size();
-        let pool = pool.with_validity_pool_limits(
-            ValidityPoolLimits::inherit().with_max_size(one_transaction),
-        );
-        let cheap = add(&pool, probe).await;
-        let rich = add(&pool, validity_1559(&funded_signer(&client), 0, 2_000)).await;
+        let cheap_signer =
+            PrivateKeySigner::from_slice(&U256::from(27).to_be_bytes::<32>()).unwrap();
+        let rich_signer =
+            PrivateKeySigner::from_slice(&U256::from(4_123).to_be_bytes::<32>()).unwrap();
+        fund(&client, cheap_signer.address());
+        fund(&client, rich_signer.address());
+        let cheap_transaction = validity_1559(&cheap_signer, 0, 1_000);
+        let rich_transaction = validity_1559(&rich_signer, 0, 2_000);
+        let cheap_size = cheap_transaction.size();
+        let rich_size = rich_transaction.size();
+        let byte_limit = cheap_size.max(rich_size);
+        assert!(cheap_size + rich_size > byte_limit);
+        let pool =
+            pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_size(byte_limit));
+        let cheap = add(&pool, cheap_transaction).await;
+        let rich = add(&pool, rich_transaction).await;
         assert_gone(&pool, cheap);
         assert_store(&pool, rich, PoolStore::Validity);
-        assert_eq!(pool.validity_pool_occupancy(), (1, one_transaction));
+        assert_eq!(pool.validity_pool_occupancy(), (1, rich_size));
     }
 
     #[tokio::test]
