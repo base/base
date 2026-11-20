@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_primitives::{
-    Address, TxHash, U256,
+    Address, B256, TxHash, U256,
     map::{HashMap, hash_map::Entry},
 };
 use reth_transaction_pool::{
@@ -15,8 +15,9 @@ use reth_transaction_pool::{
     TransactionOrdering, TransactionPool, ValidPoolTransaction, error::InvalidPoolTransactionError,
     noop::NoopTransactionPool,
 };
+use revm::{database::TransitionState, state::EvmState};
 
-use crate::{BasePooledTx, BestTransactionPriority, UnifiedTipOrdering};
+use crate::{BasePooledTx, BestTransactionPriority, DormancyBuild, UnifiedTipOrdering};
 
 /// A sequential transaction lane whose members must execute in nonce order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -75,7 +76,17 @@ where
 
     /// Records that a yielded transaction committed and releases its lane successor.
     fn mark_committed(&mut self, transaction: &Arc<ValidPoolTransaction<T>>);
+
+    /// Offers the dormant transactions a committed transaction's `state` may satisfy, each
+    /// followed by the rest of its lane. The default keeps no dormancy index and wakes nothing.
+    fn wake_by_state(&mut self, _state: &EvmState) {}
 }
+
+/// A woken dormant transaction followed by the rest of its lane, in nonce order.
+pub type WokenLane<T> = (Arc<ValidPoolTransaction<T>>, Vec<Arc<ValidPoolTransaction<T>>>);
+
+/// Wakes the dormant transactions a commit that wrote the given state may satisfy.
+pub type DormancyWake<T> = Box<dyn Fn(&EvmState) -> Vec<WokenLane<T>> + Send + Sync>;
 
 /// Decides which validity candidates a parking iterator parks before yielding them.
 ///
@@ -113,24 +124,42 @@ pub trait ParkableTransactionPool: TransactionPool
 where
     Self::Transaction: BasePooledTx,
 {
-    /// Returns a parkable best iterator using the supplied fee attributes.
+    /// Returns a parkable best iterator using the supplied fee attributes. For the build that
+    /// owns the dormancy index, `dormancy`, it leaves dormant transactions out and offers them
+    /// again when a commit wakes them.
     ///
     /// The iterator is a snapshot of every store taken when it is created:
     /// transactions added afterwards are not yielded, so a block build only
-    /// sees transactions that arrived before it started.
+    /// sees transactions that arrived before it started. The exception is a
+    /// lane a commit wakes from dormancy, which rejoins with its current run.
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
         hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
+        dormancy: Option<&DormancyBuild>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>>;
+
+    /// Starts a build of block `block_number` on `parent` against the pool's dormancy index,
+    /// after the build applied `pre_selection` writes such as system calls and deposits, and
+    /// before it takes its snapshot. `None` when the pool keeps no index, which the default never
+    /// does, or while another build owns it.
+    fn begin_dormancy_build(
+        &self,
+        _parent: B256,
+        _block_number: u64,
+        _pre_selection: Option<&TransitionState>,
+    ) -> Option<DormancyBuild> {
+        None
+    }
 }
 
 /// Lane-aware parking over an existing best-transactions iterator.
 ///
 /// The inner iterator remains responsible for nonce contiguity and source ordering. This adapter
 /// buffers descendants that the inner iterator unlocks while an earlier member of their lane is
-/// parked or waiting for an execution outcome, and parks the candidates a
-/// [`BestTransactionsHold`] holds before they are yielded.
+/// parked or waiting for an execution outcome, parks the candidates a
+/// [`BestTransactionsHold`] holds before they are yielded, and offers the dormant transactions a
+/// commit wakes.
 pub struct ParkedBestTransactions<T, I, O>
 where
     T: BasePooledTx,
@@ -146,6 +175,7 @@ where
     ready: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
     hold: Option<Box<dyn BestTransactionsHold<T>>>,
+    wake: Option<DormancyWake<T>>,
 }
 
 impl<T, I, O> std::fmt::Debug for ParkedBestTransactions<T, I, O>
@@ -160,6 +190,7 @@ where
             .field("parked", &self.parked.len())
             .field("ready", &self.ready.len())
             .field("hold", &self.hold.is_some())
+            .field("wake", &self.wake.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -182,6 +213,7 @@ where
             ready: HashMap::default(),
             ready_heap: BinaryHeap::new(),
             hold: None,
+            wake: None,
         }
     }
 
@@ -189,6 +221,31 @@ where
     pub fn with_hold(mut self, hold: Option<Box<dyn BestTransactionsHold<T>>>) -> Self {
         self.hold = hold;
         self
+    }
+
+    /// Offers the dormant transactions `wake` returns for each commit.
+    pub fn with_dormancy_wake(mut self, wake: Option<DormancyWake<T>>) -> Self {
+        self.wake = wake;
+        self
+    }
+
+    /// Offers a transaction the source never yielded, followed in its lane by `run`, as if it had
+    /// been parked and promoted. Skipped when the iterator already holds a member of its lane.
+    pub fn inject(
+        &mut self,
+        transaction: Arc<ValidPoolTransaction<T>>,
+        run: Vec<Arc<ValidPoolTransaction<T>>>,
+    ) {
+        let lane = BestTransactionLane::for_transaction(&transaction);
+        if let Some(lane) = lane {
+            match self.lanes.entry(lane) {
+                Entry::Occupied(_) => return,
+                Entry::Vacant(vacant) => {
+                    vacant.insert(BestTransactionLaneState::Occupied(run.into()));
+                }
+            }
+        }
+        self.push_ready(transaction, lane);
     }
 
     /// Returns a complete priority key for a transaction.
@@ -458,6 +515,13 @@ where
             self.release_lane(lane);
         }
     }
+
+    fn wake_by_state(&mut self, state: &EvmState) {
+        let Some(wake) = &self.wake else { return };
+        for (transaction, run) in wake(state) {
+            self.inject(transaction, run);
+        }
+    }
 }
 
 /// A noop pool holds no transactions, so parking over its empty best iterator is vacuous.
@@ -469,6 +533,7 @@ where
         &self,
         attributes: BestTransactionsAttributes,
         _hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
+        _dormancy: Option<&DormancyBuild>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         Box::new(ParkedBestTransactions::new(
             std::iter::empty(),
