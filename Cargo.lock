@@ -3277,7 +3277,6 @@ dependencies = [
  "reth-chain-state",
  "reth-chainspec",
  "reth-cli",
- "reth-cli-commands",
  "reth-cli-util",
  "reth-db",
  "reth-engine-tree",
@@ -21647,6 +21646,7 @@ dependencies = [
  "native-tls",
  "once_cell",
  "percent-encoding",
+ "rustls 0.23.43",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -21657,6 +21657,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
