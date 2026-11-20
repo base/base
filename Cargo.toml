@@ -435,7 +435,7 @@ jsonrpsee-types = "0.26.0"
 # cli
 clap = "4.6.5"
 arboard = "3.6.1"
-ratatui = "0.30.0"
+ratatui = { version = "0.30.0", default-features = false }
 indicatif = "0.18"
 crossterm = "0.29"
 tracing-indicatif = "0.3"
