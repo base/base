@@ -37,11 +37,9 @@ mod metrics;
 pub use metrics::{UpgradeSignalMetricLayer, UpgradeSignalMetrics};
 
 mod runtime;
-pub use runtime::{
-    UpgradeSignalApplyAction, UpgradeSignalApplyChange, UpgradeSignalApplySummary,
-};
 #[cfg(feature = "reader")]
 pub use runtime::{RuntimeRegistrySink, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier};
+pub use runtime::{UpgradeSignalApplyAction, UpgradeSignalApplyChange, UpgradeSignalApplySummary};
 
 #[cfg(feature = "reader")]
 mod state;

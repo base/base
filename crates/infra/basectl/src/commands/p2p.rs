@@ -7,9 +7,9 @@ use serde::Serialize;
 use url::Url;
 
 use crate::{
-    BootNode, CommandOutcome, Confirm, ConsensusClient, JsonOutput, KeyValueTable, MonitoringConfig,
-    P2pCommandError, P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary,
-    ReachabilityOutcome, ReachabilityResponse, TelemetryClient, add_peer, ban_el_peer,
+    BootNode, CommandOutcome, Confirm, ConsensusClient, JsonOutput, KeyValueTable,
+    MonitoringConfig, P2pCommandError, P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport,
+    PeerSummary, ReachabilityOutcome, ReachabilityResponse, TelemetryClient, add_peer, ban_el_peer,
     el_peer_is_trusted, fetch_connected_peers, fetch_info, fetch_l2_chain_id, fetch_raw_info,
     fetch_raw_peers, remove_peer, unban_el_peer,
 };

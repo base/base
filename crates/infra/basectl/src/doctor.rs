@@ -18,10 +18,9 @@ use url::Url;
 
 use crate::{
     BootNode, ClInfoReport, ElInfoReport, MonitoringConfig, NodeEndpoint, NodeRecord,
-    ReachabilityOutcome,
-    ReachabilityResponse, SyncStatusReport, TelemetryClient, TelemetryClientError, TimestampJson,
-    fetch_cl_info, fetch_el_info, fetch_l1_block_number, fetch_l2_block_number, fetch_l2_chain_id,
-    fetch_sync_status,
+    ReachabilityOutcome, ReachabilityResponse, SyncStatusReport, TelemetryClient,
+    TelemetryClientError, TimestampJson, fetch_cl_info, fetch_el_info, fetch_l1_block_number,
+    fetch_l2_block_number, fetch_l2_chain_id, fetch_sync_status,
 };
 
 const RETH_LIMIT_HARDCAP: u64 = 1024;

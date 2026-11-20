@@ -94,7 +94,10 @@ pub struct UnknownServerSuffrage(pub u8);
 /// https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/node/api.go#L114
 #[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server, namespace = "optimism"))]
 #[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client, namespace = "optimism"))]
-#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client, namespace = "optimism"))]
+#[cfg_attr(
+    all(feature = "server", feature = "client"),
+    rpc(server, client, namespace = "optimism")
+)]
 pub trait RollupNodeApi {
     /// Get the output root at a specific block.
     #[method(name = "outputAtBlock")]
@@ -329,7 +332,10 @@ pub trait HealthzApi {
 /// <https://github.com/ethereum-optimism/optimism/blob/develop/op-conductor/rpc/api.go>
 #[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server, namespace = "conductor"))]
 #[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client, namespace = "conductor"))]
-#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client, namespace = "conductor"))]
+#[cfg_attr(
+    all(feature = "server", feature = "client"),
+    rpc(server, client, namespace = "conductor")
+)]
 pub trait ConductorApi {
     /// Returns whether this node is the current Raft leader.
     #[method(name = "leader")]

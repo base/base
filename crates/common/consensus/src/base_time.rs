@@ -3,7 +3,9 @@
 use alloc::vec::Vec;
 
 use alloy_consensus::Transaction;
-use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256, address, b256, hex, uint};
+use alloy_primitives::{
+    Address, B256, Bytes, Sealable, Sealed, TxKind, U256, address, b256, hex, uint,
+};
 use base_common_genesis::{DenimTimestampSchedule, RollupConfig};
 
 use crate::{

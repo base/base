@@ -196,9 +196,7 @@ impl DenimChecker {
         target: DenimCheckTarget,
         previous: Option<DenimCheckCursor>,
     ) -> Result<DenimReport> {
-        let http = crate::http_client_builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
+        let http = crate::http_client_builder().timeout(Duration::from_secs(10)).build()?;
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()
@@ -1467,7 +1465,9 @@ mod tests {
     use alloy_consensus::Sealable;
     use alloy_primitives::{B256, U256};
     use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
-    use base_common_consensus::{BaseTimePredeploy as BaseTime, BaseTxEnvelope, Predeploys, TxDeposit};
+    use base_common_consensus::{
+        BaseTimePredeploy as BaseTime, BaseTxEnvelope, Predeploys, TxDeposit,
+    };
     use base_common_genesis::RollupConfig;
     use serde_json::{Value, json};
     use tokio::net::TcpListener;

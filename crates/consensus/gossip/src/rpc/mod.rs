@@ -44,9 +44,8 @@
 //! appropriate authentication and access controls in production deployments.
 
 mod request;
-pub use request::P2pRpcRequest;
-
 pub use base_protocol::{
     Connectedness, Direction, GossipScores, PeerCount, PeerDump, PeerInfo, PeerScores, PeerStats,
     ReqRespScores, TopicScores,
 };
+pub use request::P2pRpcRequest;

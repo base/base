@@ -46,12 +46,12 @@ mod jsonrpsee;
 pub use jsonrpsee::{
     AdminApiClient, BaseApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient,
 };
-pub use jsonrpsee::{ClusterMembership, ServerInfo, ServerSuffrage, UnknownServerSuffrage};
 #[cfg(feature = "server")]
 pub use jsonrpsee::{
     AdminApiServer, BaseApiServer, BaseP2PApiServer, ConductorApiServer, DevEngineApiServer,
     HealthzApiServer, RollupNodeApiServer, WsServer,
 };
+pub use jsonrpsee::{ClusterMembership, ServerInfo, ServerSuffrage, UnknownServerSuffrage};
 
 #[cfg(feature = "server")]
 mod l1_watcher;

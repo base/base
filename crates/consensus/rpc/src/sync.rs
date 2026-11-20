@@ -6,7 +6,10 @@ use jsonrpsee::proc_macros::rpc;
 /// Base sync status RPC API.
 #[cfg_attr(all(feature = "server", not(feature = "client")), rpc(server, namespace = "optimism"))]
 #[cfg_attr(all(not(feature = "server"), feature = "client"), rpc(client, namespace = "optimism"))]
-#[cfg_attr(all(feature = "server", feature = "client"), rpc(server, client, namespace = "optimism"))]
+#[cfg_attr(
+    all(feature = "server", feature = "client"),
+    rpc(server, client, namespace = "optimism")
+)]
 pub trait SyncStatusApi {
     /// Returns the current [`SyncStatus`] of the node.
     #[method(name = "syncStatus")]

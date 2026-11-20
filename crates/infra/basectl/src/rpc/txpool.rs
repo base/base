@@ -370,13 +370,10 @@ impl TxpoolClient {
     }
 
     fn connect_txpool_provider(rpc: &Url) -> Result<impl Provider<Base>, TxpoolCommandError> {
-        let http_client = crate::http_client_builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|source| TxpoolCommandError::BuildHttpClient {
-                rpc: rpc.to_string(),
-                source,
-            })?;
+        let http_client =
+            crate::http_client_builder().timeout(Duration::from_secs(10)).build().map_err(
+                |source| TxpoolCommandError::BuildHttpClient { rpc: rpc.to_string(), source },
+            )?;
         let transport = Http::with_client(http_client, rpc.clone());
         Ok(ProviderBuilder::new()
             .disable_recommended_fillers()

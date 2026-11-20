@@ -5,16 +5,7 @@ use core::time::Duration;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 
 /// Controls which local schedule mutation paths are enabled for the L1 upgrade signal.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "reader", derive(clap::ValueEnum))]
 #[serde(rename_all = "kebab-case")]
 pub enum UpgradeSignalMode {

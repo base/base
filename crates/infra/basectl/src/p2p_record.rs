@@ -84,9 +84,8 @@ impl FromStr for NodeRecord {
             None => return Err(NodeRecordParseError::InvalidUrl(format!("invalid host: {url:?}"))),
         };
 
-        let udp_port = if let Some(discovery_port) = url
-            .query_pairs()
-            .find_map(|(key, value)| (key.as_ref() == "discport").then_some(value))
+        let udp_port = if let Some(discovery_port) =
+            url.query_pairs().find_map(|(key, value)| (key.as_ref() == "discport").then_some(value))
         {
             discovery_port.parse::<u16>().map_err(NodeRecordParseError::Discport)?
         } else {
@@ -115,38 +114,38 @@ pub(crate) struct EnrRecord {
 }
 
 impl EnrRecord {
-    /// Returns the IPv4 address if present.
+    /// Returns the `IPv4` address if present.
     pub(crate) const fn ip4(&self) -> Option<Ipv4Addr> {
         self.ip4
     }
 
-    /// Returns the IPv6 address if present.
+    /// Returns the `IPv6` address if present.
     pub(crate) const fn ip6(&self) -> Option<Ipv6Addr> {
         self.ip6
     }
 
-    /// Returns the IPv4 TCP port if present.
+    /// Returns the `IPv4` TCP port if present.
     pub(crate) const fn tcp4(&self) -> Option<u16> {
         self.tcp4
     }
 
-    /// Returns the IPv6 TCP port if present.
+    /// Returns the `IPv6` TCP port if present.
     pub(crate) const fn tcp6(&self) -> Option<u16> {
         self.tcp6
     }
 
-    /// Returns the IPv4 UDP port if present.
+    /// Returns the `IPv4` UDP port if present.
     pub(crate) const fn udp4(&self) -> Option<u16> {
         self.udp4
     }
 
-    /// Returns the IPv6 UDP port if present.
+    /// Returns the `IPv6` UDP port if present.
     pub(crate) const fn udp6(&self) -> Option<u16> {
         self.udp6
     }
 
     /// Formats the ENR as a libp2p `/ip4|ip6/.../tcp/.../p2p/<peer-id>` multiaddr.
-    pub(crate) fn to_multiaddr_string(&self) -> Option<String> {
+    pub(crate) fn to_multiaddr_string(self) -> Option<String> {
         let peer_id = secp256k1_libp2p_peer_id(&self.secp256k1);
         if let (Some(ip), Some(port)) = (self.ip4, self.tcp4) {
             Some(format!("/ip4/{ip}/tcp/{port}/p2p/{peer_id}"))
@@ -162,7 +161,8 @@ impl FromStr for EnrRecord {
     type Err = String;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        let encoded = raw.strip_prefix("enr:").ok_or_else(|| "missing `enr:` prefix".to_string())?;
+        let encoded =
+            raw.strip_prefix("enr:").ok_or_else(|| "missing `enr:` prefix".to_string())?;
         let rlp = URL_SAFE_NO_PAD
             .decode(encoded.as_bytes())
             .map_err(|e| format!("invalid base64url ENR payload: {e}"))?;
@@ -251,8 +251,8 @@ impl FromStr for EnrRecord {
         let secp256k1 = secp256k1.ok_or_else(|| "ENR missing secp256k1 public key".to_string())?;
         let verifying_key = VerifyingKey::from_sec1_bytes(&secp256k1)
             .map_err(|e| format!("invalid ENR secp256k1 public key: {e}"))?;
-        let signature = Signature::from_slice(sig_bytes)
-            .map_err(|e| format!("invalid ENR signature: {e}"))?;
+        let signature =
+            Signature::from_slice(sig_bytes).map_err(|e| format!("invalid ENR signature: {e}"))?;
 
         let mut signing_rlp = Vec::with_capacity(content_bytes.len() + 3);
         Header { list: true, payload_length: content_bytes.len() }.encode(&mut signing_rlp);
@@ -307,7 +307,7 @@ impl BootNode {
     }
 
     /// Converts an ENR bootnode into a libp2p multiaddr string.
-    pub(crate) fn to_multiaddr_string(&self) -> Option<String> {
+    pub(crate) fn to_multiaddr_string(self) -> Option<String> {
         match self {
             Self::Enode(_) => None,
             Self::Enr(enr) => enr.to_multiaddr_string(),
@@ -337,7 +337,7 @@ fn decode_be_u16(bytes: &[u8]) -> Result<u16, String> {
     }
 }
 
-/// Derives the base58btc libp2p PeerId string from a 33-byte compressed secp256k1 public key.
+/// Derives the base58btc libp2p `PeerId` string from a 33-byte compressed secp256k1 public key.
 ///
 /// Encoding per libp2p peer-ids spec:
 /// - Protobuf `PublicKey { Type: Secp256k1 (2), Data: <33 bytes> }` = `[0x08, 0x02, 0x12, 0x21, ..]` (37 bytes)

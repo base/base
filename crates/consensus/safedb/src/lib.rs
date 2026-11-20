@@ -8,9 +8,8 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod error;
-pub use error::SafeDBError;
-
 pub use base_protocol::SafeHeadResponse;
+pub use error::SafeDBError;
 
 mod traits;
 pub use traits::{SafeDBReader, SafeHeadListener};

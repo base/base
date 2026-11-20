@@ -1870,25 +1870,23 @@ async fn run_admin_activity_streaming(
                     return;
                 }
             };
-            let http_client = match crate::http_client_builder()
-                .timeout(Duration::from_secs(12))
-                .build()
-            {
-                Ok(c) => c,
-                Err(error) => {
-                    if tx
-                        .send(AdminActivityUpdate::Status(format!(
-                            "RPC connection failed: {error}"
-                        )))
-                        .await
-                        .is_err()
-                    {
-                        return;
+            let http_client =
+                match crate::http_client_builder().timeout(Duration::from_secs(12)).build() {
+                    Ok(c) => c,
+                    Err(error) => {
+                        if tx
+                            .send(AdminActivityUpdate::Status(format!(
+                                "RPC connection failed: {error}"
+                            )))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                        tokio::time::sleep(ADMIN_ACTIVITY_RETRY_DELAY).await;
+                        continue;
                     }
-                    tokio::time::sleep(ADMIN_ACTIVITY_RETRY_DELAY).await;
-                    continue;
-                }
-            };
+                };
             let transport = alloy_transport_http::Http::with_client(http_client, url);
             ProviderBuilder::new()
                 .disable_recommended_fillers()
