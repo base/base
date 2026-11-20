@@ -106,22 +106,30 @@ jobs:
 
       - name: Build binary
         run: |
+          PROFILE="maxperf"
+          if [ "${{ matrix.binary }}" = "basectl" ]; then
+            PROFILE="release"
+          fi
           if [ "${{ matrix.target.triple }}" = "aarch64-unknown-linux-gnu" ]; then
             case "${{ matrix.binary }}" in
               base|base-consensus|basectl)
-                cargo rustc --locked --profile maxperf -p "${{ matrix.binary }}" --bin "${{ matrix.binary }}" -- -C link-arg=-lblst
+                cargo rustc --locked --profile "$PROFILE" -p "${{ matrix.binary }}" --bin "${{ matrix.binary }}" -- -C link-arg=-lblst
                 exit
             esac
           fi
-          cargo build --locked --profile maxperf --bin "${{ matrix.binary }}"
+          cargo build --locked --profile "$PROFILE" --bin "${{ matrix.binary }}"
 
       - name: Package binary
         run: |
           TAG="${{ inputs.tag }}"
           TARGET="${{ matrix.target.triple }}"
           BIN="${{ matrix.binary }}"
+          PROFILE="maxperf"
+          if [ "$BIN" = "basectl" ]; then
+            PROFILE="release"
+          fi
           ARCHIVE="${BIN}-${TAG}-${TARGET}.tar.gz"
-          tar -czf "$ARCHIVE" -C target/maxperf "$BIN"
+          tar -czf "$ARCHIVE" -C "target/$PROFILE" "$BIN"
           if command -v sha256sum &>/dev/null; then
             sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
           else
