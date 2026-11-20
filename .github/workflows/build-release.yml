@@ -108,7 +108,7 @@ jobs:
         run: |
           if [ "${{ matrix.target.triple }}" = "aarch64-unknown-linux-gnu" ]; then
             case "${{ matrix.binary }}" in
-              base|base-consensus|basectl)
+              base|base-consensus)
                 cargo rustc --locked --profile maxperf -p "${{ matrix.binary }}" --bin "${{ matrix.binary }}" -- -C link-arg=-lblst
                 exit
             esac

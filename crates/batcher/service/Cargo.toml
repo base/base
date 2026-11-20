@@ -21,7 +21,7 @@ tokio-util.workspace = true
 async-trait.workspace = true
 base-retry.workspace = true
 base-metrics.workspace = true
-base-tx-manager.workspace = true
+base-tx-manager = { workspace = true, features = ["kzg"] }
 alloy-sol-types.workspace = true
 alloy-rpc-client.workspace = true
 base-batcher-core.workspace = true
