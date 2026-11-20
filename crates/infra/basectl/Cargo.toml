@@ -13,7 +13,6 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 base64 = { workspace = true }
 ratatui = { workspace = true, features = ["crossterm", "layout-cache", "underline-color"] }
-arboard = { workspace = true }
 futures = { workspace = true }
 crossterm = { workspace = true }
 serde_yaml = { workspace = true }
