@@ -77,6 +77,10 @@ The decoder checks the fixed 64-occurrence ceiling before constructing each prod
 with a lower configured limit applies it to the normalized expression at admission. Operators
 must have at least one operand and can be nested up to 16 levels deep.
 
+A transaction can carry at most **three** alternatives after normalization. The examples above
+have two and three. `{"allOf": [{"anyOf": [A, B]}, {"anyOf": [C, D]}]}` normalizes to four
+(`[A, C]`, `[A, D]`, `[B, C]`, `[B, D]`) and is rejected.
+
 Upgrade the nodes that receive the nested syntax before sending it. Builders receiving normalized
 groups must support `anyOf`; flat-array-only nodes cannot decode grouped requests.
 

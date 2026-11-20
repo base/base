@@ -12,6 +12,11 @@ use serde::{
 
 use crate::{DEFAULT_MAX_VALIDITY_PREDICATES, ValidityPredicate, ValidityPredicateError};
 
+/// Most alternatives one transaction may carry after normalization. A parked transaction is
+/// re-evaluated, all alternatives at once, whenever state watched by any alternative changes, so
+/// the cap bounds the builder work one transaction can cause.
+pub const MAX_VALIDITY_ALTERNATIVES: usize = 3;
+
 /// Normal form used for signing, forwarding and evaluation. At ingress, `allOf` and `anyOf`
 /// may nest; the decoder distributes AND over OR without exceeding the wire ceiling.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -84,7 +89,8 @@ impl ValidityExpression {
         matches!(self, Self::All(group) if group.is_empty())
     }
 
-    /// Validates every branch, applying the configured count limit to the whole expression.
+    /// Validates every branch, applying the configured count limit to the whole expression and
+    /// [`MAX_VALIDITY_ALTERNATIVES`] to its normalized alternatives.
     pub fn validate(&self, max: usize) -> Result<(), ValidityPredicateError> {
         let count = self.len();
         if count > max {
@@ -92,6 +98,13 @@ impl ValidityExpression {
         }
         if self.groups().is_empty() {
             return Err(ValidityPredicateError::Empty);
+        }
+        let alternatives = self.groups().len();
+        if alternatives > MAX_VALIDITY_ALTERNATIVES {
+            return Err(ValidityPredicateError::TooManyAlternatives {
+                count: alternatives,
+                max: MAX_VALIDITY_ALTERNATIVES,
+            });
         }
         for group in self.groups() {
             ValidityPredicate::validate_batch(group, max)?;
@@ -304,6 +317,30 @@ mod tests {
                 .to_string()
                 .contains("72")
         );
+    }
+
+    #[test]
+    fn caps_alternatives_after_normalization() {
+        let leaf =
+            |n: u64| json!({"type":"block_number","params":{"op":"=","value":format!("{n:#x}")}});
+        let validate = |value| {
+            serde_json::from_value::<ValidityExpression>(value)
+                .unwrap()
+                .validate(DEFAULT_MAX_VALIDITY_PREDICATES)
+        };
+        assert!(validate(json!({"anyOf":[leaf(1), leaf(2), leaf(3)]})).is_ok());
+        // (A or B) and C keeps two alternatives.
+        assert!(validate(json!({"allOf":[{"anyOf":[leaf(1), leaf(2)]}, leaf(3)]})).is_ok());
+        for four in [
+            json!({"anyOf":[leaf(1), leaf(2), leaf(3), leaf(4)]}),
+            // (A or B) and (C or D) normalizes to four alternatives.
+            json!({"allOf":[{"anyOf":[leaf(1), leaf(2)]}, {"anyOf":[leaf(3), leaf(4)]}]}),
+        ] {
+            assert!(matches!(
+                validate(four),
+                Err(ValidityPredicateError::TooManyAlternatives { count: 4, max: 3 })
+            ));
+        }
     }
 
     #[test]

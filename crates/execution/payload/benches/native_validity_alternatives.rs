@@ -10,14 +10,14 @@
 //! range on the last write. An opportunity filled by more than one of its flat transactions
 //! counts once, and a waiter included outside the eligible set fails the run.
 //!
-//! Two workloads are measured, both admissible under `--validity-max-predicates 16`:
+//! Two workloads are measured, both admissible under `--validity-max-predicates 16` and the
+//! three-alternative cap:
 //!
 //! - Customer routes: a shared trigger and two routes with two and three pool-price legs, each
 //!   leg bounded below and above (two flat transactions of 6 and 8 predicates, or one nested
 //!   transaction of 14). The wake block moves the trigger; route A, route B, or both are in range.
-//! - Wider alternatives: 2 or 5 routes of `expiry AND lo <= slot <= hi` (6 or 15 predicates), and
-//!   8 routes of `expiry AND slot >= lo` (16), each route on its own slot. The wake block writes
-//!   the last slot only, or every slot.
+//! - Wider alternatives: 2 or 3 routes of `expiry AND lo <= slot <= hi` (6 or 9 predicates), each
+//!   route on its own slot. The wake block writes the last slot only, or every slot.
 //!
 //! Predicate evaluation time, budget cutoffs, and evaluated or deferred candidates are read from
 //! the builder's own metrics. State is in memory and no state root is computed, so absolute times
@@ -52,8 +52,8 @@ use base_execution_payload_builder::{
     payload::EthPayloadBuilderAttributes,
 };
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, TransactionValidity,
-    ValidityExpression, ValidityOperator, ValidityPredicate,
+    BaseOrdering, BasePooledTransaction, MAX_VALIDITY_ALTERNATIVES, ParkedBestTransactions,
+    TransactionValidity, ValidityExpression, ValidityOperator, ValidityPredicate,
 };
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
@@ -101,8 +101,6 @@ const WRITTEN: u64 = 15;
 const LOWER: u64 = 10;
 const IN_RANGE_UPPER: u64 = 20;
 const OUT_OF_RANGE_UPPER: u64 = 12;
-/// Lower bound a written slot never reaches, for threshold routes that stay unsatisfied.
-const UNREACHED_LOWER: u64 = 100;
 const WAITER_TIP: u128 = 10;
 const FILLER_TIP: u128 = 1;
 /// Contract whose only code is `SSTORE(calldata[0..32], calldata[32..64])`.
@@ -250,23 +248,16 @@ impl Scenario {
         }
     }
 
-    /// `routes` alternatives on their own slots; only the last route of an eligible opportunity
-    /// comes into range.
-    fn wider(shape: Shape, routes: usize, opportunities: usize, nested: bool) -> Self {
+    /// `routes` range alternatives on their own slots; only the last route of an eligible
+    /// opportunity comes into range. A write can wake a waiter without satisfying it.
+    fn wider(routes: usize, opportunities: usize, nested: bool) -> Self {
         let opportunities = (0..opportunities)
             .map(|opportunity| {
                 let groups = (0..routes)
                     .map(|slot| {
                         let in_range = opportunity < ELIGIBLE && slot + 1 == routes;
                         let mut group = vec![expiry()];
-                        match shape {
-                            Shape::Range => group.extend(range(slot, in_range)),
-                            Shape::Threshold => group.push(storage(
-                                slot,
-                                ValidityOperator::GreaterThanOrEqual,
-                                if in_range { LOWER } else { UNREACHED_LOWER },
-                            )),
-                        }
+                        group.extend(range(slot, in_range));
                         group
                     })
                     .collect();
@@ -274,7 +265,7 @@ impl Scenario {
             })
             .collect();
         Self {
-            workload: format!("{routes} {} routes", shape.label()),
+            workload: format!("{routes} range routes"),
             arm: Self::arm(nested),
             opportunities,
             preset: Vec::new(),
@@ -299,23 +290,6 @@ impl Case {
             Self::AOnly => "A only",
             Self::BOnly => "B only",
             Self::Both => "both",
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Shape {
-    /// `expiry AND lo <= slot <= hi`: a write can wake a waiter without satisfying it.
-    Range,
-    /// `expiry AND slot >= lo`: the most alternatives the predicate limit admits.
-    Threshold,
-}
-
-impl Shape {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Range => "range",
-            Self::Threshold => "threshold",
         }
     }
 }
@@ -652,9 +626,9 @@ fn main() {
                     scenarios.push(Scenario::customer(case, opportunities, nested));
                 }
             }
-            for (shape, routes) in [(Shape::Range, 2), (Shape::Range, 5), (Shape::Threshold, 8)] {
+            for routes in [2, MAX_VALIDITY_ALTERNATIVES] {
                 for nested in [false, true] {
-                    scenarios.push(Scenario::wider(shape, routes, opportunities, nested));
+                    scenarios.push(Scenario::wider(routes, opportunities, nested));
                 }
             }
             for scenario in &scenarios {

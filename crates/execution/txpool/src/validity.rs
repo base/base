@@ -31,6 +31,15 @@ pub enum ValidityPredicateError {
         /// Maximum number of predicates permitted.
         max: usize,
     },
+    /// The submission carried more alternatives (`anyOf` groups after normalization) than the
+    /// fixed maximum.
+    #[error("too many validity alternatives: {count} (maximum {max})")]
+    TooManyAlternatives {
+        /// Number of alternatives after normalization.
+        count: usize,
+        /// Maximum number of alternatives permitted.
+        max: usize,
+    },
     /// A storage predicate's comparison value has bits set outside its mask.
     ///
     /// Because the loaded storage value is masked before comparison, bits set in
@@ -1132,6 +1141,41 @@ mod tests {
         let error = extension.apply(transaction).unwrap_err();
 
         assert!(error.to_string().contains("Base no longer builds flashblocks"));
+    }
+
+    #[test]
+    fn apply_rejects_more_than_three_alternatives() {
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Default::default(),
+        }
+        .into();
+        let encoded_length = signed.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(signed, Address::ZERO),
+            encoded_length,
+        );
+        let alternative = |n: u64| {
+            vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(n),
+            }]
+        };
+        let extension = |alternatives: u64| TransactionValidity {
+            validity: ValidityExpression::AnyOf((1..=alternatives).map(alternative).collect()),
+            validity_signature: None,
+        };
+
+        assert!(extension(3).apply(transaction.clone()).is_ok());
+        let error = extension(4).apply(transaction).unwrap_err();
+
+        assert!(error.to_string().contains("too many validity alternatives: 4 (maximum 3)"));
     }
 
     #[test]

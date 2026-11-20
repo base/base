@@ -47,7 +47,9 @@ mod validity_authorization;
 pub use validity_authorization::{ValidityAuthorization, ValidityAuthorizationError};
 
 mod validity_expression;
-pub use validity_expression::{ValidityExpression, deserialize_bounded_predicates};
+pub use validity_expression::{
+    MAX_VALIDITY_ALTERNATIVES, ValidityExpression, deserialize_bounded_predicates,
+};
 
 mod validity;
 pub use validity::{
