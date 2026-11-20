@@ -8,6 +8,10 @@ pub use app_frame::{AppFrame, AppLayout, ConsensusBadge};
 mod browser;
 pub use browser::Browser;
 
+/// Plain-text clipboard helper.
+mod clipboard;
+pub(crate) use clipboard::Clipboard;
+
 /// Keybinding display types.
 mod keybinding;
 pub use keybinding::Keybinding;

@@ -13,7 +13,6 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 base64 = { workspace = true }
 ratatui = { workspace = true }
-arboard = { workspace = true }
 futures = { workspace = true }
 crossterm = { workspace = true }
 serde_yaml = { workspace = true }
