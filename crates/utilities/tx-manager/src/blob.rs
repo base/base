@@ -29,21 +29,42 @@ impl BlobTxBuilder {
     pub fn build_sidecar(
         blobs: &[Box<Blob>],
     ) -> Result<BlobTransactionSidecarEip7594, TxManagerError> {
-        let unboxed: Vec<Blob> = blobs.iter().map(|b| *b.as_ref()).collect();
-
-        BlobTransactionSidecarEip7594::try_from_blobs(unboxed).map_err(|e| {
-            TxManagerError::Unsupported(format!("EIP-7594 cell proof computation failed: {e}"))
-        })
+        #[cfg(feature = "kzg")]
+        {
+            let unboxed: Vec<Blob> = blobs.iter().map(|b| *b.as_ref()).collect();
+            BlobTransactionSidecarEip7594::try_from_blobs(unboxed).map_err(|e| {
+                TxManagerError::Unsupported(format!("EIP-7594 cell proof computation failed: {e}"))
+            })
+        }
+        #[cfg(not(feature = "kzg"))]
+        {
+            let _ = blobs;
+            Err(TxManagerError::Unsupported(
+                "blob sidecar computation requires the `kzg` feature on base-tx-manager"
+                    .to_string(),
+            ))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
+    use alloy_eips::eip4844::Blob;
+    #[cfg(feature = "kzg")]
+    use alloy_eips::eip7594::CELLS_PER_EXT_BLOB;
+    #[cfg(feature = "kzg")]
     use rstest::rstest;
 
     use super::*;
 
+    #[cfg(not(feature = "kzg"))]
+    #[test]
+    fn build_sidecar_returns_unsupported_without_kzg_feature() {
+        let err = BlobTxBuilder::build_sidecar(&[Box::<Blob>::default()]).unwrap_err();
+        assert!(matches!(err, TxManagerError::Unsupported(_)));
+    }
+
+    #[cfg(feature = "kzg")]
     #[rstest]
     #[case::single_blob(1)]
     #[case::two_blobs(2)]

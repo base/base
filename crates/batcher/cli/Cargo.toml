@@ -16,7 +16,7 @@ url.workspace = true
 eyre.workspace = true
 humantime.workspace = true
 tokio-util.workspace = true
-base-tx-manager.workspace = true
+base-tx-manager = { workspace = true, features = ["kzg"] }
 alloy-signer-local.workspace = true
 metrics-exporter-prometheus.workspace = true
 tokio = { workspace = true, features = ["macros"] }

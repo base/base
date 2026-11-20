@@ -21,7 +21,7 @@ alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 alloy-transport-http.workspace = true
 alloy-sol-types = { workspace = true, features = ["std"] }
-alloy-eips = { workspace = true, features = ["std", "kzg"] }
+alloy-eips = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # base
@@ -58,4 +58,6 @@ base-runtime = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
 
 [features]
+default = [ "kzg" ]
+kzg = [ "alloy-eips/kzg" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]
