@@ -86,7 +86,7 @@ fn run_evm2(upgrade: BaseUpgrade) -> Result<Outcome, HandlerError> {
     let inner =
         TxEnvelope::Eip7702(evm2::ethereum::LazyTxEip7702::from_cached_recovered_authorizations(
             tx,
-            vec![recovered_auth()],
+            vec![Some(AUTHORITY)],
         ));
     let envelope = BaseTxEnvelope::standard(inner, enveloped());
     let result = evm.transact(&Recovered::new_unchecked(envelope, SENDER))?.commit();

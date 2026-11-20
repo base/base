@@ -348,7 +348,7 @@ mod tests {
             panic!("expected rpc command");
         };
 
-        assert_eq!(rpc.execution.node.rpc.auth_ipc_path, "/data/engine.ipc");
+        assert_eq!(rpc.execution.node.rpc.auth_ipc_path(), "/data/engine.ipc");
         assert_eq!(rpc.execution.node.network.port, 30303);
         assert!(rpc.execution_chain.is_some());
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 8549);

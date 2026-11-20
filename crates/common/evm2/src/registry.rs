@@ -139,13 +139,13 @@ impl BaseEvmTypes {
             Err(err @ (HandlerError::Database(_) | HandlerError::Fatal(_))) => return Err(err),
             Err(_) => return Ok(Self::failed_deposit(tx)),
         };
-        let tx_env = TxEnvExt {
+        *host.tx_env_mut() = TxEnvExt {
             origin: tx.from,
             gas_price: U256::ZERO,
             chain_id: U256::from(host.version().chain_id),
             ..TxEnvExt::default()
         };
-        let result = execute_initial_frame(host, &tx_env, frame, &mut tx_gas, execution_gas, 0)?;
+        let result = execute_initial_frame(host, frame, &mut tx_gas, execution_gas, 0)?;
 
         // A halt has no L2 fee payer to refund, so it is charged the full gas limit. evm2 has
         // already rolled back the execution state; the mint and nonce bump are retained. A

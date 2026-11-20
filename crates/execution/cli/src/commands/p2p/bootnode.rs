@@ -12,7 +12,7 @@ use reth_discv5::{
 };
 use reth_net_nat::{NatResolver, external_addr_with};
 use reth_network_peers::NodeRecord;
-use secp256k1::SecretKey;
+use secp256k1_reth::SecretKey;
 use tokio::select;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};

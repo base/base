@@ -11,7 +11,7 @@ use base_common_evm2::{
     BaseForkActivations, BlockGasLimitExceeded, PreExecutionError,
 };
 use evm2::{
-    Evm, PendingState,
+    AnyError, Evm, PendingState,
     evm::{Bal, BlockAccessIndex},
     registry::HandlerError,
 };
@@ -262,8 +262,8 @@ fn transaction_error(error: HandlerError, hash: B256) -> BlockExecutionError {
     if let HandlerError::Database(database_error) = &error
         && !database_error.is_fatal()
     {
-        BlockValidationError::EVM { hash, error: Box::new(error) }.into()
+        BlockValidationError::EVM { hash, error: AnyError::new(error) }.into()
     } else {
-        InternalBlockExecutionError::EVM { hash, error: Box::new(error) }.into()
+        InternalBlockExecutionError::EVM { hash, error: AnyError::new(error) }.into()
     }
 }

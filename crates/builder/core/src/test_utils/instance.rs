@@ -284,7 +284,7 @@ impl LocalInstance {
 
     /// Returns the IPC socket path for the authenticated Engine API server.
     pub fn auth_ipc(&self) -> &str {
-        &self.node_config.rpc.auth_ipc_path
+        self.node_config.rpc.auth_ipc_path()
     }
 
     /// Creates an IPC-based [`EngineApi`] client for this instance.
@@ -426,7 +426,7 @@ pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseC
     rpc.http = false;
     rpc.auth_port = 0;
     rpc.ipcpath = rpc_ipc_path.to_string_lossy().into();
-    rpc.auth_ipc_path = auth_ipc_path.to_string_lossy().into();
+    rpc.auth_ipc_path = Some(auth_ipc_path.to_string_lossy().into());
 
     let mut network = NetworkArgs::default().with_unused_ports();
     network.discovery.disable_discovery = true;

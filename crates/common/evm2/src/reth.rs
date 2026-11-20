@@ -53,6 +53,10 @@ impl TransactionEnvMut for BaseTxEnvelope {
 }
 
 impl BlockTransactionResult<BaseEvmTypes> for BaseExecutedTx {
+    fn into_result(self) -> TxResultWithState<BaseEvmTypes> {
+        self.result
+    }
+
     fn result(&self) -> &TxResultWithState<BaseEvmTypes> {
         &self.result
     }
