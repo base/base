@@ -20,12 +20,6 @@ pub const DEFAULT_FIFO_PERCENT: u8 = 20;
 /// Two batches keep one ready while another is in flight, and the order is decided roughly one
 /// round trip before the send.
 pub const DEFAULT_QUEUE_CAPACITY_BATCHES: usize = 2;
-/// Default number of in-process `meter_bundle` workers.
-pub const DEFAULT_INLINE_SIMULATION_WORKERS: usize = 16;
-/// Default capacity of the pre-sim queue.
-pub const DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY: usize = 10_000;
-/// Default per-transaction `meter_bundle` timeout in milliseconds.
-pub const DEFAULT_INLINE_SIMULATION_TIMEOUT_MS: u64 = 2_000;
 
 /// Full configuration for the transaction forwarding extension.
 #[derive(Debug, Clone)]
@@ -65,17 +59,6 @@ pub struct TxForwardingConfig {
     /// Per-destination queue capacity. [`None`] uses
     /// [`DEFAULT_QUEUE_CAPACITY_BATCHES`] batches.
     pub queue_capacity: Option<usize>,
-    /// When true, `meter_bundle` runs on the mempool node before pool insert.
-    ///
-    /// Stored only until the sim-worker path is wired; forwarding behavior is
-    /// unchanged while this flag is unused.
-    pub inline_simulation: bool,
-    /// Number of `meter_bundle` worker tasks.
-    pub inline_simulation_workers: usize,
-    /// Bounded pre-sim queue capacity.
-    pub inline_simulation_queue_capacity: usize,
-    /// Per-transaction `meter_bundle` timeout in milliseconds.
-    pub inline_simulation_timeout_ms: u64,
 }
 
 impl Default for TxForwardingConfig {
@@ -91,10 +74,6 @@ impl Default for TxForwardingConfig {
             fifo_percent: DEFAULT_FIFO_PERCENT,
             batched_insert: false,
             queue_capacity: None,
-            inline_simulation: false,
-            inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
-            inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
-            inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
         }
     }
 }
@@ -150,30 +129,6 @@ impl TxForwardingConfig {
     /// Sets the per-destination queue capacity.
     pub const fn with_queue_capacity(mut self, capacity: Option<usize>) -> Self {
         self.queue_capacity = capacity;
-        self
-    }
-
-    /// Enables or disables in-process `meter_bundle` before pool insert.
-    pub const fn with_inline_simulation(mut self, enabled: bool) -> Self {
-        self.inline_simulation = enabled;
-        self
-    }
-
-    /// Sets the number of `meter_bundle` worker tasks.
-    pub const fn with_inline_simulation_workers(mut self, workers: usize) -> Self {
-        self.inline_simulation_workers = workers;
-        self
-    }
-
-    /// Sets the pre-sim queue capacity.
-    pub const fn with_inline_simulation_queue_capacity(mut self, capacity: usize) -> Self {
-        self.inline_simulation_queue_capacity = capacity;
-        self
-    }
-
-    /// Sets the per-transaction `meter_bundle` timeout in milliseconds.
-    pub const fn with_inline_simulation_timeout_ms(mut self, ms: u64) -> Self {
-        self.inline_simulation_timeout_ms = ms;
         self
     }
 
@@ -245,41 +200,5 @@ mod tests {
 
         let reader = config.with_validity_lifetime_secs(0).reader_config();
         assert_eq!(reader.validity_hold, reader.resend_after, "never shorter than resend_after");
-    }
-
-    #[test]
-    fn inline_simulation_defaults_off() {
-        let config = TxForwardingConfig::default();
-
-        assert!(!config.inline_simulation);
-        assert_eq!(config.inline_simulation_workers, DEFAULT_INLINE_SIMULATION_WORKERS);
-        assert_eq!(
-            config.inline_simulation_queue_capacity,
-            DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY
-        );
-        assert_eq!(config.inline_simulation_timeout_ms, DEFAULT_INLINE_SIMULATION_TIMEOUT_MS);
-    }
-
-    #[test]
-    fn new_enables_forwarding_without_inline_simulation() {
-        let config = TxForwardingConfig::new(vec!["http://builder.test".parse().unwrap()]);
-
-        assert!(config.enabled);
-        assert!(!config.inline_simulation);
-        assert_eq!(config.inline_simulation_workers, DEFAULT_INLINE_SIMULATION_WORKERS);
-    }
-
-    #[test]
-    fn inline_simulation_builders_override_defaults() {
-        let config = TxForwardingConfig::new(vec!["http://builder.test".parse().unwrap()])
-            .with_inline_simulation(true)
-            .with_inline_simulation_workers(8)
-            .with_inline_simulation_queue_capacity(32)
-            .with_inline_simulation_timeout_ms(500);
-
-        assert!(config.inline_simulation);
-        assert_eq!(config.inline_simulation_workers, 8);
-        assert_eq!(config.inline_simulation_queue_capacity, 32);
-        assert_eq!(config.inline_simulation_timeout_ms, 500);
     }
 }

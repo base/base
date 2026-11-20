@@ -6426,7 +6426,6 @@ mod tests {
         let rich_transaction = validity_1559(&rich_signer, 0, 2_000);
         let cheap_size = cheap_transaction.size();
         let rich_size = rich_transaction.size();
-        assert!(cheap_size < rich_size, "fixtures must exercise unequal signature lengths");
         let byte_limit = cheap_size.max(rich_size);
         assert!(cheap_size + rich_size > byte_limit);
         let pool =

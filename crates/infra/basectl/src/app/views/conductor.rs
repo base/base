@@ -881,7 +881,7 @@ impl View for ConductorView {
                 render_hash_input(frame, area, node, input, *cursor, *prefilled);
             }
         }
-        self.gate.render(frame, area);
+        self.gate.render(frame, area, &resources.toasts);
     }
 }
 

@@ -35,10 +35,10 @@ pub use confirm::Confirm;
 
 mod app;
 pub use app::{
-    Action, ActionMenuItem, App, BLOB_SIZE, BlockContribution, CommandCenterView, ConductorState,
-    ConductorView, ConfigView, ConfirmButton, DaMonitorView, DaState, DaTracker,
-    EVENT_POLL_TIMEOUT, GateEvent, GateOverlay, GateProposals, GatewayClusterView, HomeView,
-    L1_BLOCK_WINDOW, L1Block, L1BlockFilter, LoadingState, MAX_HISTORY, MenuAvailability, MenuMode,
+    Action, ActionMenuItem, App, BLOB_SIZE, CommandCenterView, ConductorState, ConductorView,
+    ConfigView, ConfirmButton, DaMonitorView, DaState, DaTracker, EVENT_POLL_TIMEOUT, GateEvent,
+    GateOverlay, GateProposals, GatewayClusterView, HomeView, L1_BLOCK_WINDOW, L1Block,
+    L1BlockFilter, LoadingState, MAX_HISTORY, MAX_TRACKED_BLOCKS, MenuAvailability, MenuMode,
     Overlay, PendingAction, PodsState, PodsView, ProofsState, ProofsView, RATE_WINDOW_2M,
     RATE_WINDOW_5M, RATE_WINDOW_30S, RateTracker, Resources, Router, SourceLabel, TransactionPane,
     UpgradesView, ValidatorState, View, ViewId, create_view, run_app, start_background_services,
@@ -48,8 +48,8 @@ mod output;
 pub use output::{
     COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED,
     COLOR_ROW_SELECTED, Format, JsonOutput, KeyValueTable, L1BlocksTableParams, P2pClInfoJson,
-    P2pElInfoJson, P2pInfoJson, P2pInfoTable, TimestampJson, render_da_backlog_bar,
-    render_l1_blocks_table,
+    P2pElInfoJson, P2pInfoJson, P2pInfoTable, TimestampJson, build_gas_bar, render_da_backlog_bar,
+    render_l1_blocks_table, table_rows_to_build,
 };
 
 mod config;
@@ -76,34 +76,34 @@ mod rpc;
 #[cfg(test)]
 pub use rpc::MockTokenPrompter;
 pub use rpc::{
-    BacklogBlock, BacklogFetchResult, BacklogProgress, BaseTxpoolContent, BaseTxpoolContentFrom,
-    BatcherClient, BatcherStatus, BlockDaInfo, BrowserLogin, ClInfoReport, ClNodeIdentity,
-    ClusterConductorState, ClusterHeads, ClusterResponse, ClusterSequencerState, ClusterServer,
-    ClusterSource, ConductorClusterSnapshot, ConductorControl, ConductorFanoutAction,
-    ConductorFanoutReport, ConductorFeed, ConductorNodeFailure, ConductorNodeStatus,
-    ConductorPollUpdate, ConsensusClient, DiscoveryInfo, EXPECTED_RESOLUTION_NEVER, ElInfoReport,
-    ElNodeIdentity, ExecuteResponse, GameDetails, GameListFilter, GameStatus, GameSummary,
-    GamesClient, GateClient, GateClusterPoller, GateError, GateOutcomeKind, GateSettings,
-    InitialBacklog, L1BlockInfo, L1ConnectionMode, LatestProposal, Lenient, LoginListener,
-    NoPrompt, NodeEndpoint, NodeInfoReport, PausedPeers, PeerDirection, PeerListReport,
-    PeerStatsReport, PeerSummary, PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot,
-    ProofProposeRequest, ProofsClient, ProofsSnapshot, ProposalProofSubmitter,
-    ProposalStatusResponse, ProposeResponse, RawInfoReport, RawPeerCounts, RawPeersReport,
-    ReachabilityOutcome, ReachabilityResponse, ReceivedToken, ReviewApproval, SnarkPlonkProofBytes,
-    SubmittedProof, SubmitterKey, SyncStatusReport, TelemetryApiError, TelemetryClient,
-    TelemetryClientError, TelemetryErrorResponse, TerminalPrompter, TokenCache, TokenPrompter,
-    TransferAction, TransferOutcome, TxSummary, TxpoolClient, TxpoolCounts, TxpoolReport,
-    TxpoolScope, TxpoolSenderSummary, TxpoolTransactionPool, TxpoolTransactionRow,
-    ValidatorNodeStatus, add_peer, ban_el_peer, conductor_pause_all_nodes, conductor_pause_node,
+    BacklogFetchResult, BacklogProgress, BaseTxpoolContent, BaseTxpoolContentFrom, BatcherClient,
+    BatcherStatus, BlockDaInfo, BrowserLogin, ClInfoReport, ClNodeIdentity, ClusterConductorState,
+    ClusterHeads, ClusterResponse, ClusterSequencerState, ClusterServer, ClusterSource,
+    ConductorClusterSnapshot, ConductorControl, ConductorFanoutAction, ConductorFanoutReport,
+    ConductorFeed, ConductorNodeFailure, ConductorNodeStatus, ConductorPollUpdate, ConnectionMode,
+    ConsensusClient, DiscoveryInfo, EXPECTED_RESOLUTION_NEVER, ElInfoReport, ElNodeIdentity,
+    ExecuteResponse, GameDetails, GameListFilter, GameStatus, GameSummary, GamesClient, GateClient,
+    GateClusterPoller, GateError, GateOutcomeKind, GateSettings, HeadCursor, InitialBacklog,
+    L1BlobScanner, L1BlockInfo, L2HeadFeed, LatestProposal, Lenient, LoginListener, NoPrompt,
+    NodeEndpoint, NodeInfoReport, PausedPeers, PeerDirection, PeerListReport, PeerStatsReport,
+    PeerSummary, PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, ProofProposeRequest,
+    ProofsClient, ProofsSnapshot, ProposalProofSubmitter, ProposalStatusResponse, ProposeResponse,
+    RawInfoReport, RawPeerCounts, RawPeersReport, ReachabilityOutcome, ReachabilityResponse,
+    ReceivedToken, ReviewApproval, SnarkPlonkProofBytes, SubmittedProof, SubmitterKey,
+    SyncStatusReport, TelemetryApiError, TelemetryClient, TelemetryClientError,
+    TelemetryErrorResponse, TerminalPrompter, TokenCache, TokenPrompter, TransferAction,
+    TransferOutcome, TxSummary, TxpoolClient, TxpoolCounts, TxpoolReport, TxpoolScope,
+    TxpoolSenderSummary, TxpoolTransactionPool, TxpoolTransactionRow, ValidatorNodeStatus,
+    add_peer, ban_el_peer, conductor_pause_all_nodes, conductor_pause_node,
     conductor_resume_all_nodes, conductor_resume_node, el_peer_is_trusted, fetch_block,
     fetch_block_transactions, fetch_cl_info, fetch_connected_peers, fetch_el_info,
     fetch_full_system_config, fetch_info, fetch_initial_backlog_with_progress,
     fetch_l1_block_number, fetch_l2_block_number, fetch_l2_chain_id, fetch_raw_info,
     fetch_raw_peers, fetch_safe_and_latest, fetch_sync_status, pause_sequencer_node, remove_peer,
     restart_conductor_node, run_block_fetcher, run_conductor_poller, run_l1_blob_watcher,
-    run_latest_head_poller, run_pods_poller, run_proofs_poller, run_rollup_config_poller,
-    run_safe_head_poller, run_validator_poller, start_sequencer_node, stop_sequencer_node,
-    transfer_conductor_leader, unban_el_peer, unpause_sequencer_node,
+    run_pods_poller, run_proofs_poller, run_rollup_config_poller, run_safe_head_poller,
+    run_validator_poller, start_sequencer_node, stop_sequencer_node, transfer_conductor_leader,
+    unban_el_peer, unpause_sequencer_node,
 };
 #[cfg(test)]
 pub use rpc::{MockClusterSource, gate_cluster_fixtures};

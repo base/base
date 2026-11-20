@@ -4,28 +4,35 @@
 //! [`GateProposals`] owns the proposal list, its overlays and the background
 //! gateway requests; [`ConductorView`](super::ConductorView) delegates to it.
 
-use std::sync::Arc;
+use std::{
+    cell::Cell,
+    collections::HashMap,
+    sync::{Arc, PoisonError},
+};
 
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
+    buffer::CellWidth,
     layout::Rect,
     prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListState, Paragraph, Wrap},
 };
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, Semaphore, mpsc};
 
 use super::conductor::{CONFIRM_KEYS, render_confirm};
 use crate::{
     ConfirmButton, ExecuteResponse, GateClient, GateError, GateOutcomeKind, GateSettings,
-    ProposalStatusResponse, ProposeResponse, app::Resources, output::COLOR_BASE_BLUE, tui::Toast,
+    ProposalStatusResponse, ProposeResponse, ToastState, app::Resources, output::COLOR_BASE_BLUE,
+    tui::Toast,
 };
 
 /// Result of a background approval gateway request.
 #[derive(Debug)]
 pub enum GateEvent {
-    /// Fresh proposal status.
-    Status(Box<ProposalStatusResponse>),
+    /// Fresh proposal status, numbered in request order so an older reply
+    /// never replaces a newer one.
+    Status(u64, Box<ProposalStatusResponse>),
     /// A proposal was created.
     Proposed(ProposeResponse),
     /// Execute outcome (the transfer result) as reported by the gateway.
@@ -85,13 +92,58 @@ pub struct GateProposals {
     /// Proposal whose execute request is in flight. While set, `x` is
     /// ignored so a second execute isn't sent for the same transfer.
     executing: Option<String>,
+    /// First proposal row shown, kept between frames so moving within the
+    /// visible rows doesn't scroll.
+    list_offset: Cell<usize>,
+    /// Whether the last frame showed the selected proposal's details whole;
+    /// `x` asks for confirmation only then.
+    details_shown: Cell<bool>,
+    /// Whether a toast was drawn over the last frame, where it may cover the
+    /// details; `x` then only clears the toasts.
+    toast_shown: Cell<bool>,
     /// Gateway client shared by every request, built on first use (building
     /// it may run `gate_token_command`). Rebuilt when the resolved settings
     /// change or after a failed request, so an expired token is replaced.
     client: Arc<Mutex<Option<(GateSettings, GateClient)>>>,
+    /// Proposal IDs with a status request in flight, each with the number
+    /// of the newest one; a user refresh of one of them is dropped, since
+    /// the in-flight request will report.
+    refreshing: Arc<std::sync::Mutex<HashMap<String, u64>>>,
+    /// Shared cap on concurrent status requests, built on first use.
+    status_slots: Option<Arc<Semaphore>>,
+    /// Number of the last status request started.
+    status_seq: u64,
+    /// Per proposal ID, the number at or below which a status reply is
+    /// discarded: the newest one applied, or the last one started before
+    /// the proposal changed state.
+    status_floor: HashMap<String, u64>,
+}
+
+/// Clears a proposal's in-flight mark when its status request ends, whether
+/// it succeeds, fails, or is dropped before it runs, unless a newer request
+/// for the same proposal has taken the mark over.
+struct Refreshing {
+    ids: Arc<std::sync::Mutex<HashMap<String, u64>>>,
+    id: String,
+    seq: u64,
+}
+
+impl Drop for Refreshing {
+    fn drop(&mut self) {
+        let mut ids = self.ids.lock().unwrap_or_else(PoisonError::into_inner);
+        if ids.get(&self.id) == Some(&self.seq) {
+            ids.remove(&self.id);
+        }
+    }
 }
 
 impl GateProposals {
+    /// Most status requests in flight at once, across all proposal IDs. A
+    /// session tracks a handful of proposals, so this refreshes them all
+    /// promptly while a long list on a slow gateway can't open a connection
+    /// per row.
+    const MAX_STATUS_REQUESTS: usize = 4;
+
     /// Footer keys while the proposal form or the open-by-ID input is shown.
     const INPUT_KEYS: &[(&str, &str)] = &[("Enter", "submit"), ("Esc", "cancel")];
     /// Footer keys while the proposals list is shown.
@@ -220,7 +272,16 @@ impl GateProposals {
                     }
                     // One execute at a time: `x` does nothing while one runs.
                     KeyCode::Char('x') if self.executing.is_none() => {
-                        if let Some(status) = selected {
+                        if let Some(status) =
+                            selected.as_ref().filter(|_| !self.details_shown.get())
+                        {
+                            let id = status.id.escape_debug();
+                            resources.toasts.push(Toast::warning(format!(
+                                "Details for {id} do not fit on screen. Enlarge the terminal, or run: basectl conductor transfer execute {id}"
+                            )));
+                        } else if self.toast_shown.get() {
+                            resources.toasts.clear();
+                        } else if let Some(status) = selected {
                             self.overlay = GateOverlay::ConfirmExecute {
                                 target: status
                                     .action
@@ -259,7 +320,8 @@ impl GateProposals {
     }
 
     /// Draws the open gateway overlay, if any.
-    pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
+    /// `toasts` are the ones drawn over it afterwards.
+    pub fn render(&self, frame: &mut Frame<'_>, area: Rect, toasts: &ToastState) {
         match &self.overlay {
             GateOverlay::None => {}
             GateOverlay::ProposalForm { target, reason } => {
@@ -277,7 +339,10 @@ impl GateProposals {
                     Self::render_popup(frame, area, 60, 3, " Open proposal by ID ".to_string());
                 frame.render_widget(Paragraph::new(format!("ID: {input}")), inner);
             }
-            GateOverlay::Proposals { cursor } => self.render_proposals(frame, area, *cursor),
+            GateOverlay::Proposals { cursor } => {
+                self.toast_shown.set(toasts.current().is_some());
+                self.render_proposals(frame, area, *cursor);
+            }
             GateOverlay::ConfirmExecute { target, button, .. } => {
                 let description =
                     format!("Executing will transfer leadership to {} now.", target.escape_debug());
@@ -304,6 +369,16 @@ impl GateProposals {
         }
     }
 
+    /// Sender for background request results, creating the channel on first use.
+    fn sender(&mut self) -> mpsc::Sender<GateEvent> {
+        if let Some(tx) = &self.tx {
+            return tx.clone();
+        }
+        let (tx, rx) = mpsc::channel(16);
+        self.rx = Some(rx);
+        self.tx.insert(tx).clone()
+    }
+
     /// Runs one gateway request off the event loop on the shared client; the
     /// result arrives in `tick`, or `failed` if no client could be built.
     /// Returns `false` when no gateway is configured and nothing was started.
@@ -322,14 +397,7 @@ impl GateProposals {
             Ok(None) => return false,
             Err(error) => Err(error),
         };
-        let tx = match &self.tx {
-            Some(tx) => tx.clone(),
-            None => {
-                let (tx, rx) = mpsc::channel(16);
-                self.rx = Some(rx);
-                self.tx.insert(tx).clone()
-            }
-        };
+        let tx = self.sender();
         let shared = Arc::clone(&self.client);
         tokio::spawn(async move {
             let client = match gate {
@@ -366,12 +434,43 @@ impl GateProposals {
         Ok(client)
     }
 
-    /// Fetches fresh status for proposal `id`.
+    /// Fetches fresh status for proposal `id`, unless a status request for
+    /// it is already in flight.
     fn refresh(&mut self, resources: &Resources, id: String) {
+        if self.refreshing.lock().unwrap_or_else(PoisonError::into_inner).contains_key(&id) {
+            return;
+        }
+        self.fetch_status(resources, id);
+    }
+
+    /// Fetches fresh status for proposal `id` after this session changed its
+    /// state, discarding any reply to a request started before.
+    fn refresh_after_change(&mut self, resources: &Resources, id: String) {
+        self.status_floor.insert(id.clone(), self.status_seq);
+        self.fetch_status(resources, id);
+    }
+
+    /// Starts a status request for `id`, within the shared cap. A request
+    /// still waiting for a slot when this session is dropped is not sent.
+    fn fetch_status(&mut self, resources: &Resources, id: String) {
+        self.status_seq += 1;
+        let seq = self.status_seq;
+        self.refreshing.lock().unwrap_or_else(PoisonError::into_inner).insert(id.clone(), seq);
+        let mark = Refreshing { ids: Arc::clone(&self.refreshing), id: id.clone(), seq };
+        let slots = Arc::clone(
+            self.status_slots
+                .get_or_insert_with(|| Arc::new(Semaphore::new(Self::MAX_STATUS_REQUESTS))),
+        );
+        let tx = self.sender();
         self.spawn(resources, GateEvent::Failed, move |client| async move {
+            let _mark = mark;
+            let slot = slots.acquire_owned().await;
+            if slot.is_err() || tx.is_closed() {
+                return GateEvent::Failed("proposal view closed".to_string());
+            }
             client.status(&id).await.map_or_else(
                 |e| GateEvent::Failed(e.tui_message()),
-                |status| GateEvent::Status(Box::new(status)),
+                |status| GateEvent::Status(seq, Box::new(status)),
             )
         });
     }
@@ -379,7 +478,12 @@ impl GateProposals {
     /// Applies a finished gateway request to the session list and toasts.
     fn apply_event(&mut self, event: GateEvent, resources: &mut Resources) {
         match event {
-            GateEvent::Status(status) => {
+            GateEvent::Status(seq, status) => {
+                let floor = self.status_floor.entry(status.id.clone()).or_default();
+                if seq <= *floor {
+                    return;
+                }
+                *floor = seq;
                 match self.proposals.iter_mut().find(|known| known.id == status.id) {
                     Some(known) => *known = *status,
                     None => self.proposals.push(*status),
@@ -394,7 +498,7 @@ impl GateProposals {
                 resources.toasts.push(Toast::sticky_info(format!(
                     "Proposed {id}. Ask a different engineer to approve it {approve_at}\nthen: basectl conductor transfer execute {id}\n(any key closes)"
                 )));
-                self.refresh(resources, created.id);
+                self.refresh_after_change(resources, created.id);
             }
             GateEvent::Executed(result) => {
                 self.executing = None;
@@ -404,7 +508,7 @@ impl GateProposals {
                 } else {
                     Toast::warning(message)
                 });
-                self.refresh(resources, result.id);
+                self.refresh_after_change(resources, result.id);
             }
             GateEvent::Failed(message) => resources.toasts.push(Toast::warning(message)),
             GateEvent::ExecuteFailed(message) => {
@@ -431,32 +535,72 @@ impl GateProposals {
         inner
     }
 
+    /// Draws the proposal rows, scrolled so the selected one is visible,
+    /// above the selected proposal's details. When the details don't fit
+    /// whole, only the selected row is listed, followed by a notice and the
+    /// details that fit, and `x` won't open the confirm dialog.
     fn render_proposals(&self, f: &mut Frame<'_>, area: Rect, cursor: usize) {
+        const WIDTH: u16 = 100;
         let proposals = &self.proposals;
         let executing = self.executing.as_deref();
-        let title = " Leader transfer proposals (this session) ".to_string();
-        let inner = Self::render_popup(f, area, 100, proposals.len() as u16 + 14, title);
-        let now = Utc::now();
         let dim = Style::default().fg(Color::DarkGray);
-        let mut lines: Vec<Line<'_>> = Vec::new();
-        if proposals.is_empty() {
-            lines.push(Line::styled(
-                "No proposals yet. Press t to propose or o to open by ID.",
-                dim,
-            ));
-        }
-        for (i, status) in proposals.iter().enumerate() {
+        self.details_shown.set(false);
+        let title = " Leader transfer proposals (this session) ".to_string();
+        let rows = proposals.len() + 14;
+        let Some(status) = proposals.get(cursor) else {
+            let inner = Self::render_popup(f, area, WIDTH, rows as u16, title);
+            let empty = "No proposals yet. Press t to propose or o to open by ID.";
+            let empty = Paragraph::new(Line::styled(empty, dim)).wrap(Wrap { trim: true });
+            f.render_widget(empty, inner);
+            return;
+        };
+        let width = usize::from(WIDTH.min(area.width.saturating_sub(4)).saturating_sub(2));
+        let label = "[x] execute (transfers leadership now)";
+        let hint = if executing.is_some() {
+            Some("an execute is already running".to_string())
+        } else {
+            status.execute_hint()
+        };
+        let execute = hint.map_or_else(
+            || (label.to_string(), Style::default().fg(Color::Yellow)),
+            |reason| (format!("{label} — unavailable: {reason}"), dim),
+        );
+        let wrapped = |text: &str, style| {
+            Self::wrap(text, width).into_iter().map(move |row| Line::styled(row, style))
+        };
+        let mut details: Vec<Line<'_>> = std::iter::once(String::new())
+            .chain(status.lines(Utc::now()))
+            .flat_map(|line| wrapped(&line, Style::default()).collect::<Vec<_>>())
+            .chain(wrapped(&execute.0, execute.1))
+            .collect();
+        let need = details.len();
+        let rows = u16::try_from(rows.max(proposals.len() + need + 2)).unwrap_or(u16::MAX);
+        let inner = Self::render_popup(f, area, WIDTH, rows, title);
+        let height = usize::from(inner.height);
+        let fits = need < height
+            && details.iter().all(|line| {
+                line.spans.iter().map(|span| Self::cells(&span.content)).sum::<usize>()
+                    <= usize::from(inner.width)
+            });
+        self.details_shown.set(fits);
+        let list_rows = if fits {
+            height - need
+        } else {
+            let notice = format!(
+                "Details do not fit. Enlarge the terminal, or run: basectl conductor transfer status {}",
+                status.id.escape_debug()
+            );
+            details.splice(0..0, wrapped(&notice, dim));
+            height.min(1)
+        };
+        let [list_area, details_area] =
+            Layout::vertical([Constraint::Length(list_rows as u16), Constraint::Fill(1)])
+                .areas(inner);
+        let rows = proposals.iter().map(|status| {
             let state = if executing == Some(status.id.as_str()) {
                 "executing…"
             } else {
                 status.outcome.as_ref().map_or(status.status.as_str(), |o| o.label())
-            };
-            let style = if i == cursor {
-                Style::default()
-                    .fg(COLOR_BASE_BLUE)
-                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-            } else {
-                Style::default().fg(Color::White)
             };
             let target = status.action.as_ref().map_or("?", |a| a.target_id.as_str());
             let label = format!(
@@ -466,23 +610,48 @@ impl GateProposals {
                 target.escape_debug(),
                 status.author.escape_debug()
             );
-            lines.push(Line::styled(label, style));
+            Line::styled(label, Style::default().fg(Color::White))
+        });
+        let selected =
+            Style::default().fg(COLOR_BASE_BLUE).add_modifier(Modifier::BOLD | Modifier::REVERSED);
+        let list = List::new(rows).highlight_style(selected).highlight_symbol("> ");
+        // Clamped so a shorter list still fills the rows it has.
+        let offset = self.list_offset.get().min(proposals.len().saturating_sub(list_rows));
+        let mut state = ListState::default().with_offset(offset).with_selected(Some(cursor));
+        f.render_stateful_widget(list, list_area, &mut state);
+        self.list_offset.set(state.offset());
+        f.render_widget(Paragraph::new(details), details_area);
+    }
+
+    /// Width of `text` in terminal cells, measured as the renderer draws it:
+    /// grapheme by grapheme, control characters dropped.
+    fn cells(text: &str) -> usize {
+        let span = Span::raw(text);
+        span.styled_graphemes(Style::default()).map(|g| usize::from(g.symbol.cell_width())).sum()
+    }
+
+    /// `text` wrapped to `width` terminal cells: at spaces where it can,
+    /// between graphemes where a word is wider than a row.
+    fn wrap(text: &str, width: usize) -> Vec<String> {
+        let (mut rows, mut row) = (Vec::new(), String::new());
+        for word in text.split_inclusive(' ') {
+            if !row.is_empty() && Self::cells(&row) + Self::cells(word.trim_end()) > width {
+                rows.push(std::mem::take(&mut row).trim_end().to_string());
+            }
+            for grapheme in Span::raw(word).styled_graphemes(Style::default()) {
+                let g = grapheme.symbol;
+                if !row.is_empty() && Self::cells(&row) + Self::cells(g) > width {
+                    rows.push(std::mem::take(&mut row).trim_end().to_string());
+                }
+                if !(row.is_empty() && g == " ") {
+                    row.push_str(g);
+                }
+            }
         }
-        if let Some(status) = proposals.get(cursor) {
-            lines.push(Line::raw(""));
-            lines.extend(status.lines(now).into_iter().map(Line::raw));
-            let label = "[x] execute (transfers leadership now)";
-            let hint = if executing.is_some() {
-                Some("an execute is already running".to_string())
-            } else {
-                status.execute_hint()
-            };
-            lines.push(hint.map_or_else(
-                || Line::styled(label, Style::default().fg(Color::Yellow)),
-                |reason| Line::styled(format!("{label} — unavailable: {reason}"), dim),
-            ));
+        if !row.trim_end().is_empty() || rows.is_empty() {
+            rows.push(row.trim_end().to_string());
         }
-        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
+        rows
     }
 }
 
@@ -493,7 +662,7 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         },
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use crossterm::event::KeyCode;
@@ -510,6 +679,248 @@ mod tests {
         },
         gate_cluster_fixtures::CLUSTER_HEALTHY,
     };
+
+    /// The `i`th fake proposal ID, 40 characters long.
+    fn long_id(i: usize) -> String {
+        format!("rev_01234567-0123-0123-0123-0123456789{i:02}")
+    }
+
+    /// A 200-character reason made of 13-character words.
+    fn long_reason() -> String {
+        let mut reason =
+            (0..16).map(|i| format!("justify{i:02}word")).collect::<Vec<_>>().join(" ");
+        reason.truncate(GateClient::MAX_REASON_CHARS);
+        reason
+    }
+
+    /// A reason ending in "\u{FF76}\u{FF9E}" (halfwidth katakana KA and its
+    /// voiced sound mark): one grapheme the renderer draws two cells wide,
+    /// though its plain unicode width is one.
+    fn sound_mark_reason() -> String {
+        "a".repeat(72) + "\u{FF76}\u{FF9E}Z"
+    }
+
+    /// `count` approved proposals with long IDs, the list open at `cursor`.
+    fn listed(count: usize, cursor: usize, reason: &str) -> GateProposals {
+        let proposals = (1..=count)
+            .map(|i| {
+                let id = long_id(i);
+                serde_json::from_value(serde_json::json!({
+                    "id": id, "status": "approved", "author": "alice", "title": "move leader",
+                    "action": {"from_leader_id": "sequencer-0", "target_id": "sequencer-1",
+                               "network": "mainnet", "justification": reason},
+                    "approval": {"approvers": ["bob"]},
+                    "review_url": format!("https://example.org/review/{id}"),
+                }))
+                .unwrap()
+            })
+            .collect();
+        GateProposals {
+            overlay: GateOverlay::Proposals { cursor },
+            proposals,
+            ..Default::default()
+        }
+    }
+
+    /// The proposals list drawn on a `width`x`height` terminal, one string per row.
+    fn screen(gate: &GateProposals, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| gate.render(frame, frame.area(), &ToastState::new())).unwrap();
+        rows(terminal.backend().buffer())
+    }
+
+    /// The proposals list on an 80x24 terminal with the toasts drawn over it,
+    /// polled and drawn as the app's draw loop does, one string per row.
+    fn screen_with_toasts(gate: &GateProposals, resources: &mut Resources) -> Vec<String> {
+        resources.toasts.poll();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                gate.render(frame, area, &resources.toasts);
+                resources.toasts.render(frame, area);
+            })
+            .unwrap();
+        rows(terminal.backend().buffer())
+    }
+
+    /// `text` without spaces or side borders, so text wrapped over rows can
+    /// be found whole.
+    fn flat(text: &str) -> String {
+        text.chars().filter(|c| !matches!(c, ' ' | '│')).collect()
+    }
+
+    /// The selected proposal's details and execute line, flattened.
+    fn details(gate: &GateProposals) -> String {
+        let GateOverlay::Proposals { cursor } = gate.overlay else { panic!("list not open") };
+        let status = &gate.proposals[cursor];
+        let hint = status.execute_hint().map(|reason| format!(" — unavailable: {reason}"));
+        let execute = format!("[x] execute (transfers leadership now){}", hint.unwrap_or_default());
+        flat(&(status.lines(Utc::now()).concat() + &execute))
+    }
+
+    /// Presses `x`; returns whether the confirm dialog opened.
+    fn press_x(gate: &mut GateProposals, resources: &mut Resources) -> bool {
+        gate.handle_key(key(KeyCode::Char('x')), resources);
+        matches!(gate.overlay, GateOverlay::ConfirmExecute { .. })
+    }
+
+    #[test]
+    fn selected_details_are_complete_at_80x24() {
+        let reason = long_reason();
+        for (selected, reason) in [(1, "planned"), (11, "planned"), (22, "planned"), (22, &reason)]
+        {
+            let gate = listed(22, selected - 1, reason);
+            let rows = screen(&gate, 80, 24);
+            let shown = rows.join("\n");
+            assert!(shown.contains(&format!("> {}", long_id(selected))), "{shown}");
+            // ID, target, review URL, reason and the execute line, whole.
+            assert!(flat(&rows.concat()).contains(&details(&gate)), "{shown}");
+            assert!(!shown.contains("Details do not fit"), "{shown}");
+        }
+    }
+
+    #[test]
+    fn details_that_do_not_fit_block_execute() {
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let id = long_id(22);
+        let notice = format!(
+            "Details do not fit. Enlarge the terminal, or run: basectl conductor transfer status {id}"
+        );
+        // At 40x10 only the notice's end is cut.
+        for (width, height, whole) in [(60, 12, true), (40, 10, false)] {
+            let mut gate = listed(22, 21, "planned");
+            let rows = screen(&gate, width, height);
+            let shown = rows.join("\n");
+            assert!(shown.contains(&format!("> {}", &id[..24])), "{shown}");
+            let expected = if whole { &notice } else { "Details do not fit. Enlarge the terminal" };
+            assert!(flat(&rows.concat()).contains(&flat(expected)), "{shown}");
+            assert!(!press_x(&mut gate, &mut resources), "{width}x{height}");
+            assert!(matches!(gate.overlay, GateOverlay::Proposals { cursor: 21 }));
+            let toast = resources.toasts.current().map(|toast| toast.message.as_str());
+            let expected = format!(
+                "Details for {id} do not fit on screen. Enlarge the terminal, or run: basectl conductor transfer execute {id}"
+            );
+            assert_eq!(toast, Some(expected.as_str()));
+        }
+    }
+
+    #[test]
+    fn execute_needs_the_complete_details_on_screen() {
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let (reason, marked) = (long_reason(), sound_mark_reason());
+        for reason in ["planned", &reason, &marked] {
+            for (width, height) in (20..=80).flat_map(|w| (6..=24).map(move |h| (w, h))) {
+                let mut gate = listed(22, 21, reason);
+                let shown = screen(&gate, width, height).concat();
+                let complete = shown.contains("> rev_") && flat(&shown).contains(&details(&gate));
+                assert!(complete || !press_x(&mut gate, &mut resources), "{width}x{height}");
+            }
+        }
+        // A character wider than the popup can't be drawn.
+        let mut gate = listed(1, 0, "界");
+        assert!(!flat(&screen(&gate, 7, 1000).concat()).contains(&details(&gate)));
+        assert!(!press_x(&mut gate, &mut resources));
+        let mut gate = listed(22, 21, "planned");
+        screen(&gate, 80, 24);
+        assert!(press_x(&mut gate, &mut resources));
+        assert!(
+            matches!(&gate.overlay, GateOverlay::ConfirmExecute { id, .. } if *id == long_id(22))
+        );
+    }
+
+    #[test]
+    fn x_while_a_toast_shows_only_clears_the_toasts() {
+        let refresh = || Toast::warning("refresh failed: approval gateway returned HTTP 503");
+        let cases =
+            [vec![refresh()], vec![Toast::sticky_info("copy me")], vec![refresh(), refresh()]];
+        for toasts in cases {
+            let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+            let mut gate = listed(22, 21, "planned");
+            for toast in toasts {
+                resources.toasts.push(toast);
+            }
+            let shown = screen_with_toasts(&gate, &mut resources).join("\n");
+            assert!(shown.contains('⚠') || shown.contains('ℹ'), "{shown}");
+            assert!(!press_x(&mut gate, &mut resources), "{shown}");
+            assert!(matches!(gate.overlay, GateOverlay::Proposals { cursor: 21 }));
+            assert!(resources.toasts.current().is_none());
+            screen_with_toasts(&gate, &mut resources);
+            assert!(press_x(&mut gate, &mut resources));
+            assert!(
+                matches!(&gate.overlay, GateOverlay::ConfirmExecute { id, .. } if *id == long_id(22))
+            );
+        }
+    }
+
+    #[test]
+    fn a_toast_expired_by_draw_time_does_not_block_x() {
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let created_at = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
+        resources.toasts.push(Toast { created_at, ..Toast::warning("refresh failed") });
+        let mut gate = listed(22, 21, "planned");
+        screen_with_toasts(&gate, &mut resources);
+        assert!(press_x(&mut gate, &mut resources));
+    }
+
+    #[test]
+    fn a_halfwidth_sound_mark_is_drawn_whole_or_execute_is_refused() {
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let mut gate = listed(1, 0, &sound_mark_reason());
+        let rows = screen(&gate, 80, 24);
+        let complete = flat(&rows.concat()).contains(&flat(&sound_mark_reason()));
+        assert!(complete || !press_x(&mut gate, &mut resources), "{}", rows.join("\n"));
+    }
+
+    #[test]
+    fn wrap_keeps_graphemes_whole_within_the_width_in_cells() {
+        // "\u{FF76}\u{FF9E}": halfwidth KA and its sound mark, two cells.
+        let text = "aaa \u{FF76}\u{FF9E}b \u{FF76}\u{FF9E}\u{FF76}\u{FF9E}Z long-word-here";
+        for width in 2..=40 {
+            let rows = GateProposals::wrap(text, width);
+            assert!(rows.iter().all(|row| GateProposals::cells(row) <= width), "{width}: {rows:?}");
+            assert!(rows.iter().all(|row| !row.starts_with('\u{FF9E}')), "{width}: {rows:?}");
+            assert_eq!(rows.concat().replace(' ', ""), text.replace(' ', ""), "{width}");
+        }
+    }
+
+    #[test]
+    fn the_popup_grows_to_fit_long_details() {
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let mut gate = listed(1, 0, &long_reason());
+        gate.proposals[0].outcome = Some(
+            serde_json::from_value(serde_json::json!({"outcome": "SUCCEEDED", "detail": "moved"}))
+                .unwrap(),
+        );
+        let rows = screen(&gate, 200, 60);
+        assert!(flat(&rows.concat()).contains(&details(&gate)), "{}", rows.join("\n"));
+        assert!(!rows.concat().contains("Details do not fit"));
+        assert!(press_x(&mut gate, &mut resources));
+    }
+
+    #[test]
+    fn moving_up_within_the_visible_rows_does_not_scroll() {
+        let mut gate = listed(22, 21, "planned");
+        let first = |rows: Vec<String>| rows.into_iter().find(|row| row.contains("rev_"));
+        let before = first(screen(&gate, 80, 24));
+        gate.overlay = GateOverlay::Proposals { cursor: 20 };
+        let rows = screen(&gate, 80, 24);
+        assert!(rows.concat().contains(&format!("> {}", long_id(21))), "{}", rows.join("\n"));
+        assert_eq!(first(rows), before);
+
+        // A shorter list clamps the kept offset.
+        gate.proposals.truncate(3);
+        gate.overlay = GateOverlay::Proposals { cursor: 2 };
+        assert!(first(screen(&gate, 80, 24)).unwrap().contains(&long_id(1)));
+    }
+
+    #[test]
+    fn tiny_terminals_do_not_panic() {
+        for (width, height) in [(20, 6), (3, 3), (7, 7), (7, 30), (60, 7), (1, 1), (0, 0)] {
+            screen(&listed(22, 21, &long_reason()), width, height);
+            screen(&listed(0, 0, ""), width, height);
+        }
+    }
 
     #[tokio::test]
     async fn second_execute_is_ignored_while_one_is_in_flight() {
@@ -541,6 +952,7 @@ mod tests {
             .unwrap(),
         );
         view.gate.overlay = GateOverlay::Proposals { cursor: 0 };
+        draw(&mut view, &resources);
 
         view.handle_key(key(KeyCode::Char('x')), &mut resources);
         assert!(matches!(view.gate.overlay, GateOverlay::ConfirmExecute { .. }));
@@ -606,18 +1018,239 @@ mod tests {
                 .push(serde_json::from_value(serde_json::json!({"id": id})).unwrap());
         }
 
-        // `p` refreshes every tracked proposal, twice.
-        for _ in 0..2 {
-            view.handle_key(key(KeyCode::Char('p')), &mut resources);
-            view.close_overlay();
-        }
+        // `p` refreshes every tracked proposal, concurrently.
+        view.handle_key(key(KeyCode::Char('p')), &mut resources);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while hits.load(Ordering::SeqCst) < 6 {
+        while hits.load(Ordering::SeqCst) < 3 {
             assert!(tokio::time::Instant::now() < deadline, "refreshes didn't reach the gateway");
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
         assert_eq!(std::fs::read_to_string(&runs).unwrap().lines().count(), 1);
+    }
+
+    /// A gateway whose status replies take `delay`, counting requests.
+    async fn delayed_gateway(delay: Duration) -> (Resources, Arc<AtomicUsize>) {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&hits);
+        let router = axum::Router::new().route(
+            "/admin/conductor/proposals/{id}",
+            axum::routing::get(move |axum::extract::Path(id): axum::extract::Path<String>| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    tokio::time::sleep(delay).await;
+                    serde_json::json!({"id": id, "status": "pending"}).to_string()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let mut config = crate::MonitoringConfig::mainnet();
+        config.gate_url = Some(url::Url::parse(&format!("http://{address}/")).unwrap());
+        config.gate_token_command = Some("echo tok".to_string());
+        (Resources::new(config), hits)
+    }
+
+    async fn wait_for(what: &str, done: impl Fn() -> bool) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !done() {
+            assert!(tokio::time::Instant::now() < deadline, "{what} within 5 s");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn repeated_refreshes_of_one_proposal_send_one_request() {
+        let (mut resources, hits) = delayed_gateway(Duration::from_millis(500)).await;
+        let mut gate = GateProposals {
+            overlay: GateOverlay::Proposals { cursor: 0 },
+            proposals: vec![serde_json::from_value(serde_json::json!({"id": "rev_1"})).unwrap()],
+            ..Default::default()
+        };
+
+        for _ in 0..10 {
+            gate.handle_key(key(KeyCode::Char('r')), &mut resources);
+        }
+        wait_for("first refresh reaches the gateway", || hits.load(Ordering::SeqCst) > 0).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        // Once it answers, the next refresh goes out.
+        let refreshing = Arc::clone(&gate.refreshing);
+        wait_for("in-flight mark clears", || refreshing.lock().unwrap().is_empty()).await;
+        gate.handle_key(key(KeyCode::Char('r')), &mut resources);
+        wait_for("second refresh reaches the gateway", || hits.load(Ordering::SeqCst) == 2).await;
+    }
+
+    #[tokio::test]
+    async fn queued_status_requests_are_not_sent_after_the_session_is_dropped() {
+        let (mut resources, hits) = delayed_gateway(Duration::from_millis(300)).await;
+        let proposals = (0..12)
+            .map(|i| serde_json::from_value(serde_json::json!({"id": format!("rev_{i}")})).unwrap())
+            .collect();
+        let mut gate = GateProposals {
+            overlay: GateOverlay::Proposals { cursor: 0 },
+            proposals,
+            ..Default::default()
+        };
+
+        gate.handle_key(key(KeyCode::Char('r')), &mut resources);
+        let max = GateProposals::MAX_STATUS_REQUESTS;
+        wait_for("capped refreshes reach the gateway", || hits.load(Ordering::SeqCst) == max).await;
+        let refreshing = Arc::clone(&gate.refreshing);
+        drop(gate);
+        wait_for("in-flight marks clear", || refreshing.lock().unwrap().is_empty()).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(hits.load(Ordering::SeqCst), max);
+    }
+
+    #[tokio::test]
+    async fn status_requests_are_capped_across_proposals() {
+        let (mut resources, hits) = delayed_gateway(Duration::from_secs(60)).await;
+        let proposals = (0..12)
+            .map(|i| serde_json::from_value(serde_json::json!({"id": format!("rev_{i}")})).unwrap())
+            .collect();
+        let mut gate = GateProposals {
+            overlay: GateOverlay::Proposals { cursor: 0 },
+            proposals,
+            ..Default::default()
+        };
+
+        gate.handle_key(key(KeyCode::Char('r')), &mut resources);
+        let max = GateProposals::MAX_STATUS_REQUESTS;
+        wait_for("capped refreshes reach the gateway", || hits.load(Ordering::SeqCst) == max).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(hits.load(Ordering::SeqCst), max);
+        assert_eq!(gate.refreshing.lock().unwrap().len(), 12);
+    }
+
+    #[tokio::test]
+    async fn refresh_after_execute_supersedes_a_status_request_in_flight() {
+        // Status: the first request waits for `release` and reports the
+        // pre-execute state; later ones report the executed outcome.
+        let hits = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let late_sent = Arc::new(AtomicUsize::new(0));
+        let (counter, gate_open, sent) =
+            (Arc::clone(&hits), Arc::clone(&release), Arc::clone(&late_sent));
+        let approved = serde_json::json!({
+            "id": "rev_1", "status": "approved", "author": "alice",
+            "action": {"target_id": "sequencer-1"}, "approval": {"approvers": ["bob"]},
+        });
+        let mut executed = approved.clone();
+        executed["outcome"] = serde_json::json!({"caller": "alice", "outcome": "SUCCEEDED"});
+        let first = approved.to_string();
+        let router = axum::Router::new()
+            .route(
+                "/admin/conductor/proposals/{id}",
+                axum::routing::get(move || {
+                    let (n, gate_open) =
+                        (counter.fetch_add(1, Ordering::SeqCst), Arc::clone(&gate_open));
+                    let sent = Arc::clone(&sent);
+                    let (first, later) = (first.clone(), executed.to_string());
+                    async move {
+                        if n == 0 {
+                            gate_open.notified().await;
+                            sent.store(1, Ordering::SeqCst);
+                            return first;
+                        }
+                        later
+                    }
+                }),
+            )
+            .route(
+                "/admin/conductor/proposals/{id}/execute",
+                axum::routing::post(|| async {
+                    serde_json::json!({"id": "rev_1", "outcome": "SUCCEEDED"}).to_string()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let mut config = crate::MonitoringConfig::mainnet();
+        config.gate_url = Some(url::Url::parse(&format!("http://{address}/")).unwrap());
+        config.gate_token_command = Some("echo tok".to_string());
+        let mut resources = Resources::new(config);
+        let mut gate = GateProposals {
+            overlay: GateOverlay::Proposals { cursor: 0 },
+            proposals: vec![serde_json::from_value(approved).unwrap()],
+            ..Default::default()
+        };
+
+        gate.handle_key(key(KeyCode::Char('r')), &mut resources);
+        wait_for("the slow refresh starts", || hits.load(Ordering::SeqCst) == 1).await;
+        screen(&gate, 80, 24);
+        gate.handle_key(key(KeyCode::Char('x')), &mut resources);
+        gate.handle_key(key(KeyCode::Char('y')), &mut resources);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while gate.executing.is_some() || gate.proposals[0].outcome.is_none() {
+            assert!(tokio::time::Instant::now() < deadline, "no post-execute status applied");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            gate.tick(&mut resources);
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 2, "a post-execute status request was sent");
+        let after_execute = gate.proposals.clone();
+
+        // The pre-execute reply arrives last and changes nothing.
+        release.notify_one();
+        wait_for("the late reply is sent", || late_sent.load(Ordering::SeqCst) == 1).await;
+        let refreshing = Arc::clone(&gate.refreshing);
+        wait_for("its mark clears", || refreshing.lock().unwrap().is_empty()).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        gate.tick(&mut resources);
+        assert_eq!(gate.proposals, after_execute);
+        let hint = gate.proposals[0].execute_hint().unwrap_or_default();
+        assert!(hint.starts_with("Already executed"), "{hint}");
+    }
+
+    #[test]
+    fn a_state_change_discards_replies_to_earlier_requests() {
+        // Request 1 is in flight when the proposal changes state; its reply
+        // is discarded although nothing newer has been applied yet.
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let mut gate = GateProposals { status_seq: 1, ..Default::default() };
+        gate.refresh_after_change(&resources, "rev_1".to_string());
+        let reply = serde_json::from_value(serde_json::json!({"id": "rev_1"})).unwrap();
+        gate.apply_event(GateEvent::Status(1, Box::new(reply)), &mut resources);
+        assert!(gate.proposals.is_empty());
+    }
+
+    #[test]
+    fn an_older_request_ending_keeps_a_newer_ones_mark() {
+        let ids = Arc::new(std::sync::Mutex::new(HashMap::from([("rev_1".to_string(), 2)])));
+        let mark = |seq| Refreshing { ids: Arc::clone(&ids), id: "rev_1".to_string(), seq };
+        drop(mark(1));
+        assert_eq!(ids.lock().unwrap().get("rev_1"), Some(&2));
+        drop(mark(2));
+        assert!(ids.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn unstarted_refresh_clears_its_in_flight_mark() {
+        // No gateway configured: nothing starts, and the ID isn't left marked.
+        let resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let mut gate = GateProposals::default();
+        gate.refresh(&resources, "rev_1".to_string());
+        assert!(gate.refreshing.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn older_status_reply_does_not_replace_a_newer_one() {
+        let mut resources = Resources::new(crate::MonitoringConfig::mainnet());
+        let mut gate = GateProposals::default();
+        let status = |status: &str| {
+            Box::new(
+                serde_json::from_value(serde_json::json!({"id": "rev_1", "status": status}))
+                    .unwrap(),
+            )
+        };
+
+        gate.apply_event(GateEvent::Status(2, status("approved")), &mut resources);
+        gate.apply_event(GateEvent::Status(1, status("pending")), &mut resources);
+        assert_eq!(gate.proposals[0].status, "approved");
+        gate.apply_event(GateEvent::Status(3, status("executed")), &mut resources);
+        assert_eq!(gate.proposals[0].status, "executed");
     }
 
     #[test]

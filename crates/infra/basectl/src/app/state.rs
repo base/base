@@ -8,8 +8,11 @@ use crate::rpc::{BlockDaInfo, L1BlockInfo};
 
 /// Size of a single blob in bytes (128 `KiB`).
 pub const BLOB_SIZE: u64 = 128 * 1024;
-/// Maximum number of entries retained in history buffers.
+/// Maximum number of L1 blocks, and of already-safe L2 blocks, retained in history buffers.
 pub const MAX_HISTORY: usize = 1000;
+/// Most L2 blocks kept in DA history, safe or not: about 33 minutes at 200ms
+/// blocks. Bounds memory and per-block work when the safe head stalls or is unknown.
+pub const MAX_TRACKED_BLOCKS: usize = 10_000;
 
 /// Timeout for terminal event polling.
 pub const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(100);
@@ -21,30 +24,6 @@ pub const RATE_WINDOW_2M: Duration = Duration::from_secs(120);
 pub const RATE_WINDOW_5M: Duration = Duration::from_secs(300);
 /// Number of recent L1 blocks used for blob share and target usage calculations.
 pub const L1_BLOCK_WINDOW: usize = 10;
-
-/// An L2 block's data availability contribution.
-#[derive(Clone, Debug)]
-pub struct BlockContribution {
-    /// L2 block number.
-    pub block_number: u64,
-    /// DA bytes contributed by this block.
-    pub da_bytes: u64,
-    /// Unix timestamp of the block.
-    pub timestamp: u64,
-    /// Number of transactions in the block, or zero until the full block has been fetched.
-    pub tx_count: usize,
-}
-
-impl BlockContribution {
-    /// Returns the age of this block in seconds since its timestamp.
-    pub fn age_seconds(&self) -> u64 {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        now.saturating_sub(self.timestamp)
-    }
-}
 
 /// An L1 block with blob and attribution data.
 #[derive(Clone, Debug)]
@@ -226,7 +205,7 @@ pub struct DaTracker {
     /// Total DA bytes in the backlog (unsafe minus safe).
     pub da_backlog_bytes: u64,
     /// Per-block DA byte contributions, newest first.
-    pub block_contributions: VecDeque<BlockContribution>,
+    pub block_contributions: VecDeque<BlockDaInfo>,
     /// Recent L1 blocks with blob information, newest first.
     pub l1_blocks: VecDeque<L1Block>,
     /// Tracks DA growth rate (bytes added from new L2 blocks).
@@ -239,6 +218,11 @@ pub struct DaTracker {
     ///
     /// Used to compute the delta of L2 blocks to attribute to the next L1 blob block.
     last_attributed_safe_l2: u64,
+    /// DA bytes of unsafe blocks evicted past [`MAX_TRACKED_BLOCKS`], still counted
+    /// in `da_backlog_bytes` until the safe head passes them all.
+    evicted_unsafe_bytes: u64,
+    /// Newest block whose bytes are in `evicted_unsafe_bytes`.
+    evicted_unsafe_through: u64,
 }
 
 impl Default for DaTracker {
@@ -259,6 +243,8 @@ impl DaTracker {
             burn_tracker: RateTracker::new(),
             last_base_blob_time: None,
             last_attributed_safe_l2: 0,
+            evicted_unsafe_bytes: 0,
+            evicted_unsafe_through: 0,
         }
     }
 
@@ -269,13 +255,28 @@ impl DaTracker {
         self.last_attributed_safe_l2 = safe_block;
     }
 
-    /// Prepends a block contribution, evicting the oldest past `MAX_HISTORY`.
-    /// Does not update backlog totals or growth samples.
-    pub fn add_backlog_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
-        let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count: 0 };
-        self.block_contributions.push_front(contribution);
-        if self.block_contributions.len() > MAX_HISTORY {
+    /// Prepends a block contribution. Does not update backlog totals or growth samples.
+    pub fn add_backlog_block(&mut self, info: BlockDaInfo) {
+        self.block_contributions.push_front(info);
+        self.evict_history();
+    }
+
+    /// Drops the oldest safe blocks past `MAX_HISTORY`, keeping unsafe ones so the
+    /// backlog total can subtract each block's bytes when it becomes safe. Past
+    /// `MAX_TRACKED_BLOCKS`, unsafe blocks are dropped too and their bytes kept as
+    /// one sum that [`Self::update_safe_head`] releases once it passes them all.
+    fn evict_history(&mut self) {
+        while self.block_contributions.len() > MAX_HISTORY
+            && self.block_contributions.back().is_some_and(|b| b.block_number <= self.safe_l2_block)
+        {
             self.block_contributions.pop_back();
+        }
+        while self.block_contributions.len() > MAX_TRACKED_BLOCKS {
+            let Some(evicted) = self.block_contributions.pop_back() else { break };
+            if evicted.block_number > self.safe_l2_block {
+                self.evicted_unsafe_bytes += evicted.da_bytes;
+                self.evicted_unsafe_through = self.evicted_unsafe_through.max(evicted.block_number);
+            }
         }
     }
 
@@ -286,13 +287,12 @@ impl DaTracker {
     /// position and, when it is still unsafe, adds its bytes to the backlog and
     /// the growth rate.
     pub fn update_block_info(&mut self, info: BlockDaInfo) {
-        let BlockDaInfo { block_number, da_bytes, timestamp, tx_count } = info;
+        let block_number = info.block_number;
+        let da_bytes = info.da_bytes;
         for contrib in &mut self.block_contributions {
             if contrib.block_number == block_number {
                 let diff = da_bytes as i64 - contrib.da_bytes as i64;
-                contrib.da_bytes = da_bytes;
-                contrib.timestamp = timestamp;
-                contrib.tx_count = tx_count;
+                *contrib = info;
 
                 if block_number > self.safe_l2_block {
                     if diff > 0 {
@@ -306,8 +306,6 @@ impl DaTracker {
             }
         }
 
-        let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count };
-
         if block_number > self.safe_l2_block {
             self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(da_bytes);
             self.growth_tracker.add_sample(da_bytes);
@@ -318,11 +316,8 @@ impl DaTracker {
             .iter()
             .position(|c| c.block_number < block_number)
             .unwrap_or(self.block_contributions.len());
-        self.block_contributions.insert(insert_pos, contribution);
-
-        if self.block_contributions.len() > MAX_HISTORY {
-            self.block_contributions.pop_back();
-        }
+        self.block_contributions.insert(insert_pos, info);
+        self.evict_history();
     }
 
     /// Updates the safe head and subtracts newly safe block bytes from the backlog.
@@ -334,17 +329,23 @@ impl DaTracker {
         let old_safe = self.safe_l2_block;
         self.safe_l2_block = safe_block;
 
-        let submitted_bytes: u64 = self
+        let mut submitted_bytes: u64 = self
             .block_contributions
             .iter()
             .filter(|c| c.block_number > old_safe && c.block_number <= safe_block)
             .map(|c| c.da_bytes)
             .sum();
 
+        // Evicted unsafe bytes are only known as a sum, so release them all at once.
+        if self.evicted_unsafe_bytes > 0 && safe_block >= self.evicted_unsafe_through {
+            submitted_bytes += std::mem::take(&mut self.evicted_unsafe_bytes);
+        }
+
         self.da_backlog_bytes = self.da_backlog_bytes.saturating_sub(submitted_bytes);
         self.burn_tracker.add_sample(submitted_bytes);
 
         self.try_attribute_l2_to_l1();
+        self.evict_history();
     }
 
     /// Records a new L1 block and attempts to attribute L2 blocks to it.
@@ -480,5 +481,54 @@ impl DaTracker {
         let total_blobs: u64 = blocks.iter().map(|b| b.total_blobs).sum();
         let expected = blocks.len() as f64 * l1_blob_target as f64;
         Some(total_blobs as f64 / expected)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DaTracker, MAX_HISTORY, MAX_TRACKED_BLOCKS};
+    use crate::rpc::BlockDaInfo;
+
+    #[test]
+    fn backlog_drains_fully_when_more_than_max_history_blocks_become_safe() {
+        let mut tracker = DaTracker::new();
+        tracker.set_initial_backlog(100, 0);
+        let unsafe_blocks = MAX_HISTORY as u64 + 10;
+        for block_number in 101..=100 + unsafe_blocks {
+            tracker.update_block_info(BlockDaInfo {
+                block_number,
+                da_bytes: 10,
+                ..Default::default()
+            });
+        }
+        assert_eq!(tracker.block_contributions.len(), unsafe_blocks as usize);
+        assert_eq!(tracker.da_backlog_bytes, unsafe_blocks * 10);
+
+        tracker.update_safe_head(100 + unsafe_blocks);
+
+        assert_eq!(tracker.da_backlog_bytes, 0);
+        assert_eq!(tracker.block_contributions.len(), MAX_HISTORY);
+    }
+
+    #[test]
+    fn history_is_capped_without_a_safe_head_and_keeps_an_exact_backlog() {
+        let mut tracker = DaTracker::new();
+        let blocks = MAX_TRACKED_BLOCKS as u64 + 5;
+        for block_number in 1..=blocks {
+            tracker.update_block_info(BlockDaInfo {
+                block_number,
+                da_bytes: 10,
+                ..Default::default()
+            });
+        }
+        assert_eq!(tracker.block_contributions.len(), MAX_TRACKED_BLOCKS);
+        assert_eq!(tracker.da_backlog_bytes, blocks * 10);
+
+        // Inside the evicted range only the tracked bytes are known, so they alone drain.
+        tracker.update_safe_head(3);
+        assert_eq!(tracker.da_backlog_bytes, blocks * 10);
+
+        tracker.update_safe_head(blocks);
+        assert_eq!(tracker.da_backlog_bytes, 0);
     }
 }

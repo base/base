@@ -215,6 +215,18 @@ block 100:
 just devnet up everest
 ```
 
+Both `just devnet up everest` and `just devnet up-single everest` build the L1
+protocol contracts and L2 predeploys from [`base/contracts` v8.5.0-rc.1
+(`b9b76d97`)](https://github.com/base/contracts/tree/b9b76d97dca3c420098f597ebc65bee4f28001b7).
+The `everest` setup image runs that release's `SystemDeploy` and `L2Genesis`
+scripts offline. Local addresses are in `.devnet/l2/configs/l1-addresses.json`;
+they are not Sepolia addresses. The execution devnet still uses the local
+upgrade-signal mock and does not run a proposer, prover, or challenger. The
+separate Anvil/Nitro recipe and other devnet modes are unchanged.
+
+Everest leaves builder resource metering off by default. To opt in, run
+`L2_BUILDER_ENABLE_RESOURCE_METERING=true just devnet up everest`.
+
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
 Zenith mode additionally activates Everest and Zenith at block 100:
 

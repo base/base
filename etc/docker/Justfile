@@ -310,6 +310,7 @@ _up-devnet compose_profile mode:
     case "$devnet_mode" in
       default) ;;
       everest)
+        export L2_BUILDER_ENABLE_RESOURCE_METERING="${L2_BUILDER_ENABLE_RESOURCE_METERING:-false}"
         export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-25}"
         export L2_BASE_EVEREST_BLOCK="${L2_BASE_EVEREST_BLOCK:-100}"
         ;;
@@ -337,9 +338,12 @@ _up-devnet compose_profile mode:
         exit 1
         ;;
     esac
+    if [[ "$devnet_mode" == everest ]]; then
+      export DEVNET_SETUP_TARGET=everest DEVNET_SETUP_IMAGE=devnet-setup:everest-v1
+    fi
 
     just --justfile {{ source_file() }} down
-    just --justfile {{ source_file() }} _build-setup-image
+    docker compose {{ _env }} "${compose_files[@]}" build setup-devnet
     just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
     docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
 
