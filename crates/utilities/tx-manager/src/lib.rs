@@ -43,4 +43,6 @@ mod metrics;
 pub use metrics::{BaseTxMetrics, NoopTxMetrics, SendOutcome, TxManagerMetrics, TxMetrics};
 
 mod blob;
-pub use blob::{BlobTxBuilder, MAX_BLOBS_PER_TX};
+#[cfg(feature = "kzg")]
+pub use blob::BlobTxBuilder;
+pub use blob::MAX_BLOBS_PER_TX;
