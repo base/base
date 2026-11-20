@@ -115,9 +115,9 @@ serde = [
 	"base-common-genesis/serde",
 	"base-common-rpc-types-engine/serde",
 	"dep:serde",
+	"ipnet?/serde",
 	"miniz_oxide/serde",
 	"tracing-subscriber?/serde",
-	"ipnet?/serde"
 ]
 p2p-rpc = [ "dep:ipnet", "serde", "std" ]
 arbitrary = [
