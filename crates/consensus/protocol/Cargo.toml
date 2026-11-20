@@ -117,6 +117,7 @@ serde = [
 	"dep:serde",
 	"miniz_oxide/serde",
 	"tracing-subscriber?/serde",
+	"ipnet?/serde"
 ]
 p2p-rpc = [ "dep:ipnet", "serde", "std" ]
 arbitrary = [

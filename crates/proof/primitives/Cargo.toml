@@ -60,4 +60,6 @@ rpc-client = [
 	"serde",
 	"std",
 ]
-test-utils = []
+test-utils = [
+	"base-common-genesis/test-utils"
+]

@@ -658,9 +658,10 @@ dependencies = [
  "alloy-genesis",
  "alloy-hardforks",
  "alloy-primitives",
+ "alloy-sol-types",
  "auto_impl",
  "base-common-genesis",
- "revm",
+ "revm-primitives",
  "spin 0.10.0",
 ]
 

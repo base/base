@@ -36,4 +36,7 @@ tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]
 snark-receipt = [ "dep:base-proof-primitives", "dep:bincode" ]
-test-utils = [ "snark-receipt" ]
+test-utils = [
+	"snark-receipt", 
+	"base-proof-primitives?/test-utils"
+]
