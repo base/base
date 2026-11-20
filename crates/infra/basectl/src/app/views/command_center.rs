@@ -1,6 +1,5 @@
 use std::{collections::VecDeque, time::Duration};
 
-use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -19,7 +18,7 @@ use crate::{
         table_rows_to_build,
     },
     rpc::{BlockDaInfo, ConnectionMode},
-    tui::{Browser, Keybinding, Toast},
+    tui::{Browser, Clipboard, Keybinding, Toast},
 };
 
 const KEYBINDINGS: &[Keybinding] = &[
@@ -338,8 +337,7 @@ impl View for CommandCenterView {
             }
             KeyCode::Char('y') => {
                 if let Some(block_num) = self.get_copyable_block(resources)
-                    && let Ok(mut clipboard) = Clipboard::new()
-                    && clipboard.set_text(&block_num).is_ok()
+                    && Clipboard::copy(&block_num).is_ok()
                 {
                     resources.toasts.push(Toast::info(format!("Copied {block_num}")));
                 }

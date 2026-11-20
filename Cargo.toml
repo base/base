@@ -434,7 +434,6 @@ jsonrpsee-types = "0.26.0"
 
 # cli
 clap = "4.6.5"
-arboard = "3.6.1"
 ratatui = "0.30.0"
 indicatif = "0.18"
 crossterm = "0.29"
