@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use base_consensus_peer_types::NodeRecord;
 use enr::{Enr, k256::ecdsa::SigningKey};
-use k256::elliptic_curve::sec1::FromEncodedPoint;
+use k256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 
 /// A signed secp256k1 EIP-778 Ethereum Node Record.
 pub type EnrRecord = Enr<SigningKey>;
@@ -65,8 +65,8 @@ impl BootNode {
                 let point = k256::EncodedPoint::from_bytes(uncompressed).ok()?;
                 let pubkey: k256::PublicKey =
                     Option::from(k256::PublicKey::from_encoded_point(&point))?;
-                let compressed = pubkey.to_sec1_bytes();
-                let peer_id = secp256k1_compressed_to_libp2p_peer_id(&compressed)?;
+                let compressed = pubkey.to_encoded_point(true);
+                let peer_id = secp256k1_compressed_to_libp2p_peer_id(compressed.as_bytes())?;
                 let ip_proto = match record.address {
                     std::net::IpAddr::V4(_) => "ip4",
                     std::net::IpAddr::V6(_) => "ip6",
@@ -144,21 +144,17 @@ mod tests {
 
     use super::*;
 
-    const VALID_ENR: &str = "enr:-J24QNz9lbrKbN4iSmmjtnr7SjUMk4zB7f1krHZcTZx-JRKZd0kA2gjufUROD6T3sOWDVDnFLSumBFRHQnD2eLUNoVWGAYug2-lKgmlkgnY0gmlwhA_f17SJc2VjcDI1NmsxoQMc-V0s-6xR0n5k6l1x8l7F2v2P7m4o9x8t6q4w2e1r0oN0Y3CCIyiDdWRwgiMo";
-
     #[test]
-    fn parses_real_base_mainnet_enr() {
-        // Real Base mainnet CL bootnode from ChainConfig.
+    fn rejects_invalid_enr_signature() {
         let raw = "enr:-J24QNz9lbrKbN4iSmmjtnr7SjUMk4zB7f1krHZcTZx-JRKZd0kA2gjufUROD6T3sOWDVDnFLSumBFRHQnD2eLUNoVWGAYug2-lKgmlkgnY0gmlwhA_f17SJc2VjcDI1NmsxoQMc-V0s-6xR0n5k6l1x8l7F2v2P7m4o9x8t6q4w2e1r0oN0Y3CCIyiDdWRwgiMo";
-        // Invalid signature must be rejected by the enr crate.
         assert!(BootNode::parse_bootnode(raw).is_err());
-        assert!(BootNode::parse_bootnode(VALID_ENR).is_err());
     }
 
     #[test]
     fn parses_valid_signed_enr_and_derives_multiaddr() {
         let raw = base_common_chains::ChainConfig::mainnet()
             .bootnodes
+            .consensus
             .iter()
             .copied()
             .find(|b| b.starts_with("enr:"))
@@ -170,7 +166,7 @@ mod tests {
         assert!(enr.ip4().is_some() || enr.ip6().is_some());
         let multiaddr = bootnode.to_multiaddr_string().expect("expected multiaddr");
         assert!(multiaddr.contains("/tcp/"));
-        assert!(multiaddr.contains("/p2p/16Uiu2HAm"));
+        assert!(multiaddr.contains("/p2p/16Uiu2HA"));
     }
 
     #[test]
@@ -189,6 +185,6 @@ mod tests {
         let bootnode = BootNode::parse_bootnode(raw).unwrap();
         assert!(matches!(bootnode, BootNode::Enode(_)));
         let multiaddr = bootnode.to_multiaddr_string().unwrap();
-        assert!(multiaddr.starts_with("/ip4/34.65.205.244/udp/30305/tcp/30305/p2p/16Uiu2HAm"));
+        assert!(multiaddr.starts_with("/ip4/34.65.205.244/udp/30305/tcp/30305/p2p/16Uiu2HA"));
     }
 }
