@@ -1,16 +1,20 @@
 //! Top-level command dispatch for the unified Base binary.
 
+#[cfg(feature = "batcher")]
 use base_batcher_cli::BatcherArgs;
+#[cfg(feature = "batcher")]
 use base_cli_utils::RuntimeManager;
 use base_execution_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
 use base_node_core::BaseNode;
 use clap::Subcommand;
 use reth_cli_runner::CliRunner;
 
+#[cfg(feature = "reth-commands")]
+use crate::commands::reth::RethCommand;
 use crate::{
     commands::{
         bootnode::BootnodeCommand, consensus::ConsensusCommand, dev::DevCommand,
-        execution::ExecutionCommand, follow::FollowCommand, reth::RethCommand, rpc::RpcCommand,
+        execution::ExecutionCommand, follow::FollowCommand, rpc::RpcCommand,
         sequencer::SequencerCommand, snapshot::SnapshotCommand, update::UpdateCommand,
     },
     config::ChainResolver,
@@ -20,6 +24,7 @@ use crate::{
 #[derive(Subcommand, Debug)]
 #[non_exhaustive]
 pub(crate) enum BaseCommand {
+    #[cfg(feature = "batcher")]
     /// Submit L2 batch data to L1.
     #[command(name = "batcher", hide = true)]
     Batcher(Box<BatcherArgs>),
@@ -47,6 +52,7 @@ pub(crate) enum BaseCommand {
     /// Update the base binary to the latest release.
     #[command(name = "update")]
     Update(Box<UpdateCommand>),
+    #[cfg(feature = "reth-commands")]
     /// Execution-layer maintenance utilities (use this group's own --chain flag).
     #[command(name = "reth")]
     Reth(Box<RethCommand>),
@@ -65,6 +71,7 @@ impl BaseCommand {
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
         match self {
+            #[cfg(feature = "batcher")]
             Self::Batcher(batcher) => {
                 chain_resolver.reject_for_reth_command("base batcher")?;
                 RuntimeManager::new()
@@ -80,6 +87,7 @@ impl BaseCommand {
                 (*consensus).run(chain_resolver.resolve()?, metrics_enabled)
             }
             Self::Update(update) => (*update).run(),
+            #[cfg(feature = "reth-commands")]
             Self::Reth(reth) => {
                 chain_resolver.reject_for_reth_command("base reth")?;
                 reth.command.run()
@@ -104,7 +112,9 @@ mod tests {
 
     use clap::Parser;
 
-    use crate::{cli::BaseCli, config::ChainResolver};
+    use crate::cli::BaseCli;
+    #[cfg(feature = "reth-commands")]
+    use crate::config::ChainResolver;
 
     #[test]
     fn rejects_legacy_node_rpc_path() {
@@ -130,6 +140,7 @@ mod tests {
         assert!(rendered.contains("snapshot-manifest"));
     }
 
+    #[cfg(feature = "reth-commands")]
     #[test]
     fn accepts_reth_help() {
         let err = BaseCli::try_parse_from(["base", "reth", "--help"]).unwrap_err();
@@ -144,6 +155,19 @@ mod tests {
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
+    #[cfg(not(feature = "reth-commands"))]
+    #[test]
+    fn omits_reth_when_feature_disabled() {
+        assert!(BaseCli::try_parse_from(["base", "reth", "--help"]).is_err());
+    }
+
+    #[cfg(not(feature = "batcher"))]
+    #[test]
+    fn omits_batcher_when_feature_disabled() {
+        assert!(BaseCli::try_parse_from(["base", "batcher", "--help"]).is_err());
+    }
+
+    #[cfg(feature = "reth-commands")]
     #[test]
     fn rejects_top_level_chain_for_reth_subcommands() {
         let cli =
