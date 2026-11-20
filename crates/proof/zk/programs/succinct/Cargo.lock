@@ -660,7 +660,7 @@ dependencies = [
  "alloy-primitives",
  "auto_impl",
  "base-common-genesis",
- "revm",
+ "revm-primitives",
  "spin 0.10.0",
 ]
 
@@ -745,6 +745,7 @@ dependencies = [
  "base-common-base-tx",
  "base-common-chains",
  "base-common-genesis",
+ "base-precompile-abi",
  "base-precompile-macros",
  "base-precompile-storage",
  "revm",
@@ -800,6 +801,14 @@ dependencies = [
 [[package]]
 name = "base-metrics"
 version = "0.0.0"
+
+[[package]]
+name = "base-precompile-abi"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+]
 
 [[package]]
 name = "base-precompile-macros"

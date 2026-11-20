@@ -1,10 +1,9 @@
 //! Runtime activation registry native precompile.
 
-mod abi;
-pub use abi::IActivationRegistry;
+pub use base_precompile_abi::{ActivationFeature, IActivationRegistry};
 
 mod storage;
-pub use storage::{ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage};
+pub use storage::{ActivationAdminConfig, ActivationRegistryStorage};
 
 mod dispatch;
 
