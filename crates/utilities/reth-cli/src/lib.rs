@@ -62,7 +62,9 @@ mod tests {
                 }]],
             }),
         );
-        let local = SnapshotManifest {
+        let mut extensions = BTreeMap::new();
+        extensions.insert("custom".to_string(), serde_json::json!({ "enabled": true }));
+        let populated = SnapshotManifest {
             block: 100,
             chain_id: 8453,
             storage_version: 2,
@@ -70,16 +72,35 @@ mod tests {
             base_url: Some("https://example.com".to_string()),
             reth_version: Some("2.8.1".to_string()),
             components,
+            extensions,
+        };
+        let minimal = SnapshotManifest {
+            block: 0,
+            chain_id: 8453,
+            storage_version: 2,
+            timestamp: 0,
+            base_url: None,
+            reth_version: None,
+            components: BTreeMap::from([(
+                "state".to_string(),
+                ComponentManifest::Single(SingleArchive {
+                    file: "0/state.tar.zst".to_string(),
+                    size: 0,
+                    decompressed_size: 0,
+                    blake3: None,
+                    output_files: Vec::new(),
+                }),
+            )]),
             extensions: BTreeMap::new(),
         };
-        let json = serde_json::to_string(&local).unwrap();
-        let reth: reth_cli_commands::download::manifest::SnapshotManifest =
-            serde_json::from_str(&json).unwrap();
-        let roundtrip: SnapshotManifest =
-            serde_json::from_str(&serde_json::to_string(&reth).unwrap()).unwrap();
-        assert_eq!(roundtrip.block, local.block);
-        assert_eq!(roundtrip.chain_id, local.chain_id);
-        assert_eq!(roundtrip.reth_version, local.reth_version);
-        assert_eq!(roundtrip.components.len(), 2);
+        for local in [populated, minimal] {
+            let local_val = serde_json::to_value(&local).unwrap();
+            let reth: reth_cli_commands::download::manifest::SnapshotManifest =
+                serde_json::from_value(local_val.clone()).unwrap();
+            let reth_val = serde_json::to_value(&reth).unwrap();
+            assert_eq!(local_val, reth_val);
+            let roundtrip: SnapshotManifest = serde_json::from_value(reth_val).unwrap();
+            assert_eq!(serde_json::to_value(&roundtrip).unwrap(), local_val);
+        }
     }
 }
