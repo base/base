@@ -314,7 +314,6 @@ impl ReplayBenchmarkArgs {
             persistence_backpressure_threshold: Some(
                 block_interval.snapshot_persistence_backpressure_threshold(),
             ),
-            state_root_task_compare_updates: !self.no_compare_updates,
             tx_forwarding_config: None,
             validity_signature_mode: ValiditySignatureMode::Off,
             upgrade_signal: None,
@@ -434,7 +433,7 @@ impl ReplayBenchmarkArgs {
             };
         let result = ReplayResult {
             proofs,
-            compare_updates: !self.no_compare_updates,
+            compare_updates: false,
             ..Self::summarize(
                 manifest,
                 if self.paced { ReplayMode::Paced } else { ReplayMode::Unpaced },
