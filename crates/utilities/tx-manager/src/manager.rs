@@ -1920,9 +1920,7 @@ mod tests {
     };
     #[cfg(feature = "kzg")]
     use alloy_consensus::{TxEip4844, TxEip4844WithSidecar};
-    use alloy_eips::Encodable2718;
-    #[cfg(feature = "kzg")]
-    use alloy_eips::eip4844::Blob;
+    use alloy_eips::{Encodable2718, eip4844::Blob};
     use alloy_json_rpc::{RequestPacket, ResponsePacket};
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
@@ -2898,7 +2896,6 @@ mod tests {
 
     const BLOB_RESUBMISSION_TIMEOUT: Duration = Duration::from_secs(10);
 
-    #[cfg(feature = "kzg")]
     /// A one-blob candidate.
     fn blob_candidate() -> TxCandidate {
         TxCandidate {
@@ -2936,10 +2933,34 @@ mod tests {
         metrics
     }
 
-    #[cfg(feature = "kzg")]
     /// A mocked provider over `asserter`.
     fn mocked(asserter: &Asserter) -> RootProvider {
         ProviderBuilder::default().connect_mocked_client(asserter.clone())
+    }
+
+    #[cfg(not(feature = "kzg"))]
+    #[test]
+    fn craft_tx_rejects_blob_candidate_when_kzg_feature_disabled() {
+        Runner::start(Config::seeded(42), |ctx| async move {
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            let manager = blob_manager(
+                &ctx,
+                mocked(&asserter),
+                (1_000_000_000, 10_000_000_000),
+                blob_send_metrics(),
+            )
+            .await;
+            let err = manager
+                .craft_tx(&blob_candidate(), None)
+                .await
+                .expect_err("blob candidate should fail when kzg feature is disabled");
+            assert!(
+                matches!(&err, TxManagerError::Unsupported(msg) if msg.contains("kzg")),
+                "expected Unsupported mentioning kzg, got {err:?}",
+            );
+            assert!(asserter.read_q().is_empty(), "should reject before making fee/gas RPC calls");
+        });
     }
 
     /// A manager over `provider`, whose first response must be the chain ID, with one
