@@ -110,6 +110,6 @@ pub use rpc::{MockClusterSource, gate_cluster_fixtures};
 
 mod tui;
 pub use tui::{
-    AppFrame, AppLayout, Browser, ConsensusBadge, Keybinding, Toast, ToastLevel, ToastState,
-    restore_terminal, setup_terminal,
+    AppFrame, AppLayout, Browser, Clipboard, ConsensusBadge, Keybinding, Toast, ToastLevel,
+    ToastState, restore_terminal, setup_terminal,
 };
