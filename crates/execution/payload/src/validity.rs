@@ -201,6 +201,17 @@ impl<T> ParkedPredicateIndex<T> {
         alternatives: Vec<ValidityPredicate>,
     ) {
         self.remove(transaction_hash);
+        self.insert_unindexed(transaction_hash, transaction, predicate, alternatives);
+    }
+
+    /// Adds a transaction after all of its previous index memberships have been removed.
+    fn insert_unindexed(
+        &mut self,
+        transaction_hash: TxHash,
+        transaction: T,
+        predicate: ValidityPredicate,
+        alternatives: Vec<ValidityPredicate>,
+    ) {
         let blocker = ValidityPredicateKey::for_predicate(&predicate);
         self.transactions.insert(
             transaction_hash,
@@ -264,7 +275,7 @@ impl<T> ParkedPredicateIndex<T> {
         let Some(transaction) = self.remove(hash) else {
             return false;
         };
-        self.park_grouped(hash, transaction, predicate, alternatives);
+        self.insert_unindexed(hash, transaction, predicate, alternatives);
         true
     }
 
@@ -372,7 +383,8 @@ impl<T> ParkedPredicateIndex<T> {
         removed.len()
     }
 
-    /// Returns the number of parked transactions blocked on each distinct index bucket.
+    /// Memberships in each key bucket. In an ordered bucket a grouped transaction can
+    /// belong to more than one comparison set.
     pub fn bucket_depths(&self) -> impl Iterator<Item = usize> + '_ {
         self.blockers.values().map(|(_, bucket)| bucket.len())
     }
@@ -1325,7 +1337,7 @@ mod tests {
     #[test]
     fn simultaneous_key_changes_wake_each_waiter_once_in_a_mixed_pool() {
         let [a, b, c] = [1, 2, 3].map(Address::with_last_byte);
-        let [multi, first, second, unrelated] = [1, 2, 3, 4].map(B256::with_last_byte);
+        let [multi, first, second, unrelated, survivor] = [1, 2, 3, 4, 5].map(B256::with_last_byte);
         let reaches_one = |addr| balance(addr, ValidityOperator::GreaterThanOrEqual, 1);
         let mut changes = changed_balance(a, 0, 1);
         changes.extend(changed_balance(b, 0, 1));
@@ -1334,16 +1346,17 @@ mod tests {
         for threshold in [1, 32] {
             let mut index = ParkedPredicateIndex::new(threshold);
             index.park_grouped(multi, (), reaches_one(a), vec![reaches_one(b), reaches_one(a)]);
+            index.park_grouped(survivor, (), reaches_one(b), vec![reaches_one(a)]);
             for (hash, addr) in [(first, a), (second, b), (unrelated, c)] {
                 index.park(hash, (), reaches_one(addr));
             }
             let mut woken = index.affected_by_state(&changes).affected_transactions;
             woken.sort_unstable();
-            assert_eq!(woken, [multi, first, second, unrelated]);
+            assert_eq!(woken, [multi, first, second, unrelated, survivor]);
             assert!(index.reindex(multi, reaches_one(Address::ZERO)));
             let mut woken = index.affected_by_state(&changes).affected_transactions;
             woken.sort_unstable();
-            assert_eq!(woken, [first, second, unrelated]);
+            assert_eq!(woken, [first, second, unrelated, survivor]);
         }
     }
 

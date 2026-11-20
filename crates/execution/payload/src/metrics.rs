@@ -37,7 +37,7 @@ base_metrics::define_metrics! {
     )]
     predicate_bucket_wakeups: histogram,
     #[describe(
-        "Depth of validity-predicate index buckets, sampled once per build"
+        "Index memberships per predicate key (one per matching comparison set in ordered buckets), sampled once per build"
     )]
     predicate_bucket_depth: histogram,
     #[describe(
