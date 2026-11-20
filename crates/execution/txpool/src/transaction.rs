@@ -189,10 +189,10 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         self
     }
 
-    /// Returns every submitted predicate, regrouped by kind, for builder forwarding.
-    /// Pool and builder checks must use [`Self::validity_conditions`] instead.
+    /// Iterates all leaves for inspection, discarding group boundaries. Use the compiled
+    /// expression for evaluation, signing, and forwarding.
     pub fn validity_predicates(&self) -> impl Iterator<Item = &crate::ValidityPredicate> {
-        self.validity_conditions().submitted()
+        self.validity_conditions().groups().iter().flat_map(crate::ValidityGroup::submitted)
     }
 
     /// Returns compiled validity conditions for pool and builder checks.
@@ -205,7 +205,8 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Raw ingress must validate authorization first; builder insertion trusts its forwarder.
     #[must_use]
     pub fn with_validity(mut self, validity: crate::TransactionValidity) -> Self {
-        self = self.with_validity_predicates(validity.validity);
+        self.validity_conditions = (!validity.validity.is_empty())
+            .then(|| Arc::new(crate::ValidityConditions::compile(validity.validity)));
         self.validity_signature = validity.validity_signature;
         self
     }
@@ -1176,7 +1177,7 @@ mod tests {
         assert!(core::ptr::eq(transaction.validity_conditions(), cloned.validity_conditions()));
         assert_eq!(cloned.validity_predicates().cloned().collect::<Vec<_>>(), expected);
         assert_eq!(cloned.validity_conditions().len(), 4);
-        assert_eq!(cloned.validity_conditions().block().min(), Some(U256::from(10)));
+        assert_eq!(cloned.validity_conditions().groups()[0].block().min(), Some(U256::from(10)));
         assert_eq!(transaction.size(), cloned.size());
         assert_eq!(
             transaction.size(),

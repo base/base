@@ -31,6 +31,59 @@ the complete sidecar and upstream error response instead of admitting it locally
 See the [wallet signing contract](../txpool/README.md#signed-validity-predicates) for
 EIP-712 types, signature encoding, rollout requirements, and security limitations.
 
+## Alternative validity conditions
+
+`base_sendRawTransactionValidity` takes one signed transaction and an options object. A flat
+`validity` array still requires **all** predicates. To accept **any complete group**, send
+`validity: {"anyOf": [[A, B], [C, D]]}`. For example, the following options accept a transfer if
+account `0x11…11` has a positive balance through block 100, **or** its nonce is 2 through block 105:
+
+```json
+{
+  "validity": {
+    "anyOf": [
+      [
+        {"type":"balance","params":{"address":"0x1111111111111111111111111111111111111111","op":">","value":"0x0"}},
+        {"type":"block_number","params":{"op":"<=","value":"0x64"}}
+      ],
+      [
+        {"type":"nonce","params":{"address":"0x1111111111111111111111111111111111111111","op":"=","value":"0x2"}},
+        {"type":"block_number","params":{"op":"<=","value":"0x69"}}
+      ]
+    ]
+  }
+}
+```
+
+### Nesting AND and OR
+
+An `allOf` or `anyOf` operand can be a predicate object, a non-empty flat list of predicates
+(implicit AND), or another `allOf` or `anyOf`. For example, with `A`, `C`, `D`, `E`, and `F`
+standing for predicate objects, these are two different requests:
+
+```text
+A AND ((C AND D) OR (E AND F))   {"allOf": [A, {"anyOf": [[C, D], [E, F]]}]}
+A OR  ((C AND D) OR (E AND F))   {"anyOf": [A, {"anyOf": [[C, D], [E, F]]}]}
+```
+
+Each possible alternative must include a block upper bound within the node's current validity
+window. To share an expiry across all alternatives, put it in an outer `allOf`. Matching more
+than one alternative still includes the transaction only once.
+
+Ingress flattens ORs and distributes ANDs before signing checks, forwarding, or evaluation.
+The first example becomes `{"anyOf": [[A, C, D], [A, E, F]]}` and counts as **six** predicate
+occurrences, not five. The second becomes `{"anyOf": [[A], [C, D], [E, F]]}` and counts as five.
+The decoder checks the fixed 64-occurrence ceiling before constructing each product. A node
+with a lower configured limit applies it to the normalized expression at admission. Operators
+must have at least one operand and can be nested up to 16 levels deep.
+
+A transaction can carry at most **three** alternatives after normalization. The examples above
+have two and three. `{"allOf": [{"anyOf": [A, B]}, {"anyOf": [C, D]}]}` normalizes to four
+(`[A, C]`, `[A, D]`, `[B, C]`, `[B, D]`) and is rejected.
+
+Upgrade the nodes that receive the nested syntax before sending it. Builders receiving normalized
+groups must support `anyOf`; flat-array-only nodes cannot decode grouped requests.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

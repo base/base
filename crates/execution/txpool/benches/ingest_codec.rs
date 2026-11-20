@@ -85,7 +85,7 @@ fn validity() -> TransactionValidity {
                 "params": { "address": Address::repeat_byte(0x11), "slot": "0x1", "op": "=", "value": "0x2" }
             }))
             .expect("valid predicate"),
-        ],
+        ].into(),
         validity_signature: None,
     }
 }

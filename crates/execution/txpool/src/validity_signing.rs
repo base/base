@@ -28,4 +28,19 @@ sol! {
         /// Predicates sorted by their EIP-712 struct hashes, retaining duplicates.
         ValidityPredicate[] validity;
     }
+    /// One conjunction in a grouped authorization.
+    #[derive(Debug)]
+    struct ValidityGroup {
+        /// Canonically sorted predicates, including duplicates.
+        ValidityPredicate[] predicates;
+    }
+
+    /// Distinct message type so group boundaries cannot be dropped or moved.
+    #[derive(Debug)]
+    struct GroupedValidityAuthorization {
+        /// Hash of the signed EIP-2718 envelope.
+        bytes32 transactionHash;
+        /// Alternative conjunctions sorted by their struct hashes.
+        ValidityGroup[] anyOf;
+    }
 }

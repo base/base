@@ -188,8 +188,12 @@ mod tests {
         for _ in 0..2 {
             let mut recorder = PredicateReadRecorder::new(&mut state, &mut tracker);
             assert_eq!(
-                ValidityPredicateKey::first_unsatisfied(&predicates, &mut recorder, &context())
-                    .unwrap(),
+                ValidityPredicateKey::first_unsatisfied(
+                    &predicates.groups()[0],
+                    &mut recorder,
+                    &context()
+                )
+                .unwrap(),
                 None
             );
         }
@@ -225,8 +229,12 @@ mod tests {
         {
             let mut recorder = PredicateReadRecorder::new(&mut state, &mut tracker);
             assert_eq!(
-                ValidityPredicateKey::first_unsatisfied(&predicates, &mut recorder, &context())
-                    .unwrap(),
+                ValidityPredicateKey::first_unsatisfied(
+                    &predicates.groups()[0],
+                    &mut recorder,
+                    &context()
+                )
+                .unwrap(),
                 Some((failing_balance, ValidityPredicateKey::Balance(address)))
             );
         }

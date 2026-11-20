@@ -181,7 +181,7 @@ mod tests {
             raw: raw(),
             metering: None,
             extensions: TransactionValidity {
-                validity: vec![predicate.clone()],
+                validity: vec![predicate.clone()].into(),
                 validity_signature: None,
             },
         };
@@ -193,7 +193,7 @@ mod tests {
 
         let decoded: ValidatedTransaction<TransactionValidity> =
             serde_json::from_value(value).unwrap();
-        assert_eq!(decoded.extensions.validity, vec![predicate]);
+        assert_eq!(decoded.extensions.validity.groups()[0], vec![predicate]);
         assert!(decoded.metering.is_none());
     }
 

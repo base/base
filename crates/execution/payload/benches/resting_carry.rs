@@ -19,7 +19,10 @@ use base_execution_payload_builder::{
 };
 use base_execution_txpool::{ValidityOperator, ValidityPredicate};
 use criterion::{BatchSize, BenchmarkId, Criterion};
-use revm::database::TransitionState;
+use revm::{
+    database::TransitionState,
+    state::{Account, EvmState},
+};
 
 /// Members still yielded by the pool, kept by the sweep.
 const LIVE_MEMBERS: usize = 75_000;
@@ -149,8 +152,46 @@ fn bench_end_of_block_sweep(c: &mut Criterion) {
     group.finish();
 }
 
+/// One write wakes thousands of resting transactions. Compare the legacy single-set path,
+/// a grouped waiter elsewhere, and grouped waiters reached by multiple matching comparisons.
+fn bench_shared_key_wake(c: &mut Criterion) {
+    const WAITERS: u64 = 4096;
+    let watched = Address::with_last_byte(1);
+    let predicate = |address, op| ValidityPredicate::Balance { address, op, value: U256::ONE };
+    let mut account = Account::default();
+    account.info.balance = U256::ONE;
+    let change = EvmState::from_iter([(watched, account)]);
+    let mut group = c.benchmark_group("resting_carry/shared_key_wake");
+    for label in ["flat", "unrelated_group", "overlapping_groups"] {
+        let mut resting = RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+        for i in 0..WAITERS {
+            let first = predicate(watched, ValidityOperator::Equal);
+            if label == "overlapping_groups" && i.is_multiple_of(2) {
+                resting.rest_grouped(
+                    tx_hash(i),
+                    first,
+                    vec![predicate(watched, ValidityOperator::GreaterThanOrEqual)],
+                );
+            } else {
+                resting.rest(tx_hash(i), first);
+            }
+        }
+        if label == "unrelated_group" {
+            resting.rest_grouped(
+                tx_hash(WAITERS),
+                predicate(Address::with_last_byte(2), ValidityOperator::Equal),
+                vec![predicate(Address::with_last_byte(3), ValidityOperator::Equal)],
+            );
+        }
+        assert_eq!(resting.woken_by_state(&change).len(), WAITERS as usize);
+        group.bench_function(label, |b| b.iter(|| resting.woken_by_state(black_box(&change))));
+    }
+    group.finish();
+}
+
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
+    bench_shared_key_wake(&mut criterion);
     bench_begin_block(&mut criterion);
     bench_end_of_block_sweep(&mut criterion);
     criterion.final_summary();

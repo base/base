@@ -193,18 +193,28 @@ impl RestingPredicates {
     /// Records that `predicate` was unsatisfied for `transaction_hash` at the current build
     /// position.
     pub fn rest(&mut self, transaction_hash: TxHash, predicate: ValidityPredicate) {
+        self.rest_grouped(transaction_hash, predicate, Vec::new());
+    }
+
+    /// Carries the full proof of failure: one false predicate from each alternative.
+    pub fn rest_grouped(
+        &mut self,
+        transaction_hash: TxHash,
+        predicate: ValidityPredicate,
+        alternatives: Vec<ValidityPredicate>,
+    ) {
         // A member resting again in the block that filed it is already listed in that block's
         // generation; listing it twice would only give the sweep a stale entry to skip.
         let filed = self
             .index
             .entry(transaction_hash)
-            .is_some_and(|(member, _)| member.filed_block == self.block_number);
+            .is_some_and(|(member, ..)| member.filed_block == self.block_number);
         let member = RestingMember {
             rested_block: self.block_number,
             seen_block: self.block_number,
             filed_block: self.block_number,
         };
-        self.index.park(transaction_hash, member, predicate);
+        self.index.park_grouped(transaction_hash, member, predicate, alternatives);
         if !filed {
             self.generations.entry(self.block_number).or_default().push(transaction_hash);
         }
@@ -228,8 +238,9 @@ impl RestingPredicates {
         if self.index.is_empty() {
             return None;
         }
-        let (member, predicate) = self.index.entry(transaction_hash)?;
-        Self::applies(*member, predicate, conditions, self.block_number).then_some(*member)
+        let (member, predicate, alternatives) = self.index.entry(transaction_hash)?;
+        Self::applies(*member, predicate, alternatives, conditions, self.block_number)
+            .then_some(*member)
     }
 
     /// Holds back a member of the set: records that the current build yielded it and returns
@@ -244,8 +255,8 @@ impl RestingPredicates {
             return None;
         }
         let block_number = self.block_number;
-        let (member, predicate) = self.index.entry_mut(transaction_hash)?;
-        if !Self::applies(*member, predicate, conditions, block_number) {
+        let (member, predicate, alternatives) = self.index.entry_mut(transaction_hash)?;
+        if !Self::applies(*member, predicate, alternatives, conditions, block_number) {
             return None;
         }
         let carried = member.rested_block < block_number;
@@ -263,10 +274,18 @@ impl RestingPredicates {
     fn applies(
         member: RestingMember,
         predicate: &ValidityPredicate,
+        alternatives: &[ValidityPredicate],
         conditions: &ValidityConditions,
         block_number: u64,
     ) -> bool {
-        conditions.contains(predicate)
+        // A replacement can reuse the envelope hash with different group boundaries.
+        // A reordered sidecar may be re-evaluated, but never held without a proof per group.
+        let groups = conditions.groups();
+        groups.len() == alternatives.len() + 1
+            && groups
+                .iter()
+                .zip(std::iter::once(predicate).chain(alternatives))
+                .all(|(group, failed)| group.contains(failed))
             && (member.rested_block == block_number
                 || !conditions.is_expired(&PredicateContext { block_number }))
     }
@@ -416,6 +435,16 @@ impl SharedRestingPredicates {
     /// position.
     pub fn rest(&self, transaction_hash: TxHash, predicate: ValidityPredicate) {
         self.inner.lock().predicates.rest(transaction_hash, predicate);
+    }
+
+    /// Records a failed predicate from every alternative in the shared resting index.
+    pub fn rest_grouped(
+        &self,
+        hash: TxHash,
+        predicate: ValidityPredicate,
+        alternatives: Vec<ValidityPredicate>,
+    ) {
+        self.inner.lock().predicates.rest_grouped(hash, predicate, alternatives);
     }
 
     /// Removes a member, returning whether it was present.
@@ -666,6 +695,27 @@ mod tests {
 
         assert_eq!(carry_over, RestingCarryOver { carried: 1, ..Default::default() });
         assert_eq!(resting.hold(hash(0), &conditions(&[predicate])), Some(true));
+    }
+
+    #[test]
+    fn resting_disjunction_requires_a_false_predicate_in_each_group() {
+        let a = balance_at_least(WATCHED, 1);
+        let b = balance_at_least(UNRELATED, 2);
+        let mut resting = RestingPredicates::new(1);
+        resting.begin_block(B256::ZERO, 1, None);
+        resting.rest_grouped(hash(0), a.clone(), vec![b.clone()]);
+        resting.end_block(PARENT);
+        let grouped =
+            |g| ValidityConditions::compile(base_execution_txpool::ValidityExpression::AnyOf(g));
+        let original = grouped(vec![vec![a.clone()], vec![b.clone()]]);
+        let replacement = grouped(vec![vec![a, b], vec![balance_at_least(WATCHED, 3)]]);
+        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        assert_eq!(resting.hold(hash(0), &original), Some(true));
+        assert_eq!(resting.hold(hash(0), &replacement), None);
+        resting.end_block(BUILT);
+        let carried = resting.begin_block(BUILT, 3, Some(&balance_transition(UNRELATED, 0, 2)));
+        assert_eq!(carried.released_by_state, 1);
+        assert_eq!(resting.hold(hash(0), &original), None);
     }
 
     #[test]

@@ -31,25 +31,31 @@ pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError};
 mod best;
 
 mod conditions;
-pub use conditions::{ValidityBounds, ValidityConditions};
+pub use conditions::{ValidityBounds, ValidityConditions, ValidityGroup};
 
 mod validity_signature_mode;
 pub use validity_signature_mode::ValiditySignatureMode;
 
 mod validity_signing;
 pub use validity_signing::{
-    ValidityAuthorization as Eip712ValidityAuthorization,
+    GroupedValidityAuthorization as Eip712GroupedValidityAuthorization,
+    ValidityAuthorization as Eip712ValidityAuthorization, ValidityGroup as Eip712ValidityGroup,
     ValidityPredicate as Eip712ValidityPredicate,
 };
 
 mod validity_authorization;
 pub use validity_authorization::{ValidityAuthorization, ValidityAuthorizationError};
 
+mod validity_expression;
+pub use validity_expression::{
+    MAX_VALIDITY_ALTERNATIVES, ValidityExpression, deserialize_bounded_predicates,
+};
+
 mod validity;
 pub use validity::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, PredicateContext,
     TransactionValidity, ValidityOperator, ValidityPredicate, ValidityPredicateError,
-    ValidityPredicateKind, deserialize_bounded_predicates,
+    ValidityPredicateKind,
 };
 
 mod block_expiry;

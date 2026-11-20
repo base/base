@@ -2,12 +2,13 @@
 
 use alloy_consensus::Transaction;
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::{SolStruct, eip712_domain};
+use alloy_sol_types::{Eip712Domain, SolStruct, eip712_domain};
 use reth_transaction_pool::PoolTransaction;
 
 use crate::{
     BasePooledTransaction, Eip712ValidityAuthorization, Eip712ValidityPredicate,
-    TransactionValidity, ValidityPredicate, ValiditySignatureMode,
+    TransactionValidity, ValidityExpression, ValidityPredicate, ValiditySignatureMode,
+    validity_signing::{GroupedValidityAuthorization, ValidityGroup},
 };
 
 /// Failure to authorize a validity sidecar with the transaction sender's key.
@@ -59,7 +60,7 @@ impl ValidityAuthorization {
             if signature.normalize_s().is_some() {
                 return Err(ValidityAuthorizationError::InvalidSignature);
             }
-            let digest = Self::signing_hash(chain_id, *tx.hash(), &sidecar.validity);
+            let digest = Self::expression_signing_hash(chain_id, *tx.hash(), &sidecar.validity);
             let signer = signature
                 .recover_address_from_prehash(&digest)
                 .map_err(|_| ValidityAuthorizationError::InvalidSignature)?;
@@ -85,11 +86,37 @@ impl ValidityAuthorization {
             transactionHash: transaction_hash,
             validity: Self::canonical_predicates(predicates),
         };
-        message.eip712_signing_hash(&eip712_domain! {
+        message.eip712_signing_hash(&Self::domain(chain_id))
+    }
+
+    /// Wallet signing domain shared by legacy and grouped authorizations.
+    pub const fn domain(chain_id: u64) -> Eip712Domain {
+        eip712_domain! {
             name: "Base Transaction Validity",
             version: "1",
             chain_id: chain_id,
-        })
+        }
+    }
+
+    /// Binds a grouped request to its transaction and the membership of every branch.
+    /// Legacy flat lists retain their original EIP-712 type and digest.
+    pub fn expression_signing_hash(
+        chain_id: u64,
+        transaction_hash: B256,
+        expression: &ValidityExpression,
+    ) -> B256 {
+        match expression {
+            ValidityExpression::All(group) => Self::signing_hash(chain_id, transaction_hash, group),
+            ValidityExpression::AnyOf(groups) => {
+                let mut groups: Vec<_> = groups
+                    .iter()
+                    .map(|group| ValidityGroup { predicates: Self::canonical_predicates(group) })
+                    .collect();
+                groups.sort_by_cached_key(SolStruct::eip712_hash_struct);
+                GroupedValidityAuthorization { transactionHash: transaction_hash, anyOf: groups }
+                    .eip712_signing_hash(&Self::domain(chain_id))
+            }
+        }
     }
 
     /// Returns wallet-facing predicates sorted by their EIP-712 struct hashes.
@@ -152,7 +179,7 @@ mod tests {
         ValidityAuthorization::validate_recovered(
             tx,
             TransactionValidity {
-                validity: predicates.to_vec(),
+                validity: predicates.to_vec().into(),
                 validity_signature: signature.copied(),
             },
             ValiditySignatureMode::Required,
@@ -216,6 +243,95 @@ mod tests {
     }
 
     #[test]
+    fn signature_commits_to_group_membership_but_not_order() {
+        let signer = PrivateKeySigner::random();
+        let tx = transaction(&signer, 8453, 0);
+        let (a, b, c) = (1, 2, 3);
+        let grouped = |groups: Vec<Vec<u64>>| {
+            ValidityExpression::AnyOf(
+                groups
+                    .into_iter()
+                    .map(|g| {
+                        g.into_iter()
+                            .map(|n| ValidityPredicate::BlockNumber {
+                                op: ValidityOperator::Equal,
+                                value: U256::from(n),
+                            })
+                            .collect()
+                    })
+                    .collect(),
+            )
+        };
+        let original = grouped(vec![vec![a, b], vec![c]]);
+        // Independent ABI-word encoding with cast keccak and the documented group types.
+        let expected: B256 =
+            "0x3365c3f6c2f4ff35ad47c54207fbd6f0f1bc95023277392777f8434c03a4a090".parse().unwrap();
+        assert_eq!(
+            ValidityAuthorization::expression_signing_hash(
+                8453,
+                B256::repeat_byte(0x44),
+                &original
+            ),
+            expected
+        );
+        let signature = signer
+            .sign_hash_sync(&ValidityAuthorization::expression_signing_hash(
+                8453,
+                *tx.hash(),
+                &original,
+            ))
+            .unwrap();
+        let verify = |validity| {
+            ValidityAuthorization::validate_recovered(
+                &tx,
+                TransactionValidity { validity, validity_signature: Some(signature) },
+                ValiditySignatureMode::Required,
+            )
+        };
+        assert!(verify(grouped(vec![vec![c], vec![b, a]])).is_ok());
+        assert_eq!(
+            verify(grouped(vec![vec![a], vec![b, c]])),
+            Err(ValidityAuthorizationError::InvalidSignature)
+        );
+        assert_eq!(
+            verify(ValidityExpression::All(original.groups().concat())),
+            Err(ValidityAuthorizationError::InvalidSignature)
+        );
+    }
+
+    #[test]
+    fn nested_wire_accepts_authorization_for_the_expanded_groups_only() {
+        let signer = PrivateKeySigner::random();
+        let tx = transaction(&signer, 8453, 0);
+        let mut leaves = predicates().into_iter();
+        let (b, c, a) = (leaves.next().unwrap(), leaves.next().unwrap(), leaves.next().unwrap());
+        let expanded =
+            ValidityExpression::AnyOf(vec![vec![a.clone(), b.clone()], vec![a.clone(), c.clone()]]);
+        let sig = signer
+            .sign_hash_sync(&ValidityAuthorization::expression_signing_hash(
+                8453,
+                *tx.hash(),
+                &expanded,
+            ))
+            .unwrap();
+        let verify = |expr| {
+            ValidityAuthorization::validate_recovered(
+                &tx,
+                TransactionValidity {
+                    validity: serde_json::from_value(expr).unwrap(),
+                    validity_signature: Some(sig),
+                },
+                ValiditySignatureMode::Required,
+            )
+        };
+        assert!(verify(serde_json::json!({"allOf":[a,{"anyOf":[b,c]}]})).is_ok());
+        assert_eq!(
+            verify(serde_json::json!({"anyOf":[a,{"anyOf":[b,c]}]})),
+            Err(ValidityAuthorizationError::InvalidSignature)
+        );
+    }
+
+    #[test]
     fn eip712_digest_matches_independently_encoded_vector() {
         // Independently encoded with Keccak-256 and the documented EIP-712 types:
         // chain 8453, hash 0x44...44, balance/storage/block/flashblock predicates in canonical order.
@@ -276,7 +392,10 @@ mod tests {
         assert!(
             ValidityAuthorization::validate_recovered(
                 &tx,
-                TransactionValidity { validity: predicates(), validity_signature: Some(signature) },
+                TransactionValidity {
+                    validity: predicates().into(),
+                    validity_signature: Some(signature)
+                },
                 ValiditySignatureMode::Off,
             )
             .is_ok()
@@ -299,7 +418,7 @@ mod tests {
         assert_eq!(verify(&tx, &validity, Some(&signature)), Ok(()));
         let validity = ValidityAuthorization::validate_recovered(
             &tx,
-            TransactionValidity { validity, validity_signature: Some(signature) },
+            TransactionValidity { validity: validity.into(), validity_signature: Some(signature) },
             ValiditySignatureMode::Required,
         )
         .unwrap();
@@ -490,7 +609,7 @@ mod tests {
         let signature = signed.then(|| sign(&signer, &tx, &predicates));
         let result = ValidityAuthorization::validate_recovered(
             &tx,
-            TransactionValidity { validity: predicates, validity_signature: signature },
+            TransactionValidity { validity: predicates.into(), validity_signature: signature },
             mode,
         )
         .map(|_| ());
@@ -512,7 +631,7 @@ mod tests {
         ];
         for signature in signatures {
             let sidecar = TransactionValidity {
-                validity: predicates.clone(),
+                validity: predicates.clone().into(),
                 validity_signature: Some(signature),
             };
             let validity =
@@ -535,7 +654,10 @@ mod tests {
         assert_eq!(
             ValidityAuthorization::validate_recovered(
                 &tx,
-                TransactionValidity { validity: predicates, validity_signature: Some(signature) },
+                TransactionValidity {
+                    validity: predicates.into(),
+                    validity_signature: Some(signature)
+                },
                 mode
             )
             .map(|_| ()),

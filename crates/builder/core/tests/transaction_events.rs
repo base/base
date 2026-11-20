@@ -54,7 +54,8 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
                     validity: vec![ValidityPredicate::BlockNumber {
                         op: ValidityOperator::LessThanOrEqual,
                         value: U256::from(latest.header.number),
-                    }],
+                    }]
+                    .into(),
                     validity_signature: None,
                 },
             },),
@@ -126,7 +127,8 @@ async fn accepted_transfer_gas(
                         address: accounts[0].address(),
                         op: ValidityOperator::GreaterThanOrEqual,
                         value: U256::ZERO,
-                    }],
+                    }]
+                    .into(),
                     validity_signature: None,
                 },
             },),
@@ -217,7 +219,8 @@ async fn closed_gate_withholds_every_builder_event() -> eyre::Result<()> {
                     address: accounts[account].address(),
                     op: ValidityOperator::NotEqual,
                     value: U256::ZERO,
-                }],
+                }]
+                .into(),
                 validity_signature: None,
             },
         };

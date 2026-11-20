@@ -163,11 +163,16 @@ fn slot_value(location: usize) -> U256 {
 /// Decodes a batch from JSON the way `base_sendRawTransactionValidity` does.
 fn json_decoded(predicates: Vec<ValidityPredicate>) -> Vec<ValidityPredicate> {
     let json = serde_json::to_string(&TransactionValidity {
-        validity: predicates,
+        validity: predicates.into(),
         validity_signature: None,
     })
     .expect("serializes");
-    serde_json::from_str::<TransactionValidity>(&json).expect("deserializes").validity
+    let base_execution_txpool::ValidityExpression::All(group) =
+        serde_json::from_str::<TransactionValidity>(&json).expect("deserializes").validity
+    else {
+        unreachable!()
+    };
+    group
 }
 
 /// Evaluation outcomes and read footprint of one pass over the candidate set.
@@ -255,8 +260,9 @@ fn setup_ingest() -> Vec<Vec<ValidityPredicate>> {
 fn check_ingest(compiled: Vec<ValidityConditions>) {
     let submitted: usize = compiled.iter().map(ValidityConditions::len).sum();
     let state: usize =
-        compiled.iter().map(|conditions| conditions.state_predicates().count()).sum();
-    let expiring = compiled.iter().filter(|conditions| conditions.block().max().is_some()).count();
+        compiled.iter().map(|conditions| conditions.groups()[0].state_predicates().count()).sum();
+    let expiring =
+        compiled.iter().filter(|conditions| conditions.groups()[0].block().max().is_some()).count();
     assert_eq!(
         (compiled.len(), submitted, state, expiring),
         (CANDIDATES, 35_000, 25_000, CANDIDATES),

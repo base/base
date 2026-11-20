@@ -67,7 +67,10 @@ while continuing to accept unsigned predicates. Migrate wallets and load clients
 signing, observe signed/unsigned admission counters, then switch the fleet to `required`.
 At raw ingress, `required` rejects any non-empty predicate batch without valid sender
 authorization. Builder insertion checks signature presence only and trusts the forwarder
-to have verified it. Plain transactions need no extra signature.
+to have verified it. Public raw ingress requires a finite expiry on every possible alternative.
+Trusted insertion checks for an upper bound in each `anyOf` group; for a normalized flat AND
+list it retains legacy behavior and relies on the forwarder to have checked expiry.
+Plain transactions need no extra signature.
 Query nodes proxy sidecars unchanged and leave policy to the upstream sequencer.
 
 **Off and optional verification modes are compatibility stages, not sandwich protection.**
@@ -109,6 +112,27 @@ predicates by their struct hashes in ascending byte order before signing;
 Retain duplicates. Conjunction permutations produce the same digest; adding,
 removing, or changing a predicate changes it. Evaluation uses its independent
 cheap-first ordering and does not affect the signing contract.
+
+For the [`validity.anyOf` wire format](../txpool-rpc/README.md#alternative-validity-conditions),
+use `ValidityAuthorization::expression_signing_hash`. The domain and predicate type are unchanged,
+but the primary type is `GroupedValidityAuthorization`:
+
+```text
+ValidityGroup(ValidityPredicate[] predicates)
+GroupedValidityAuthorization(bytes32 transactionHash,ValidityGroup[] anyOf)
+```
+
+Sort each group's predicates as above, then sort groups by their EIP-712 struct hashes in
+ascending byte order, also retaining duplicates. Moving a predicate between groups is not a
+permutation within a conjunction: it changes what the user is authorizing. Flat submissions
+continue to use `ValidityAuthorization`, even when `anyOf` with one group would be equivalent.
+
+For nested operators, sign the **normalized groups**, not the submitted JSON tree. Concatenate
+alternatives for `anyOf` and take the Cartesian product of the child groups for `allOf`,
+concatenating their predicates. Do not deduplicate predicates or groups, even identical ones.
+A tree without `anyOf` uses the original flat signing type; a tree containing `anyOf` uses the
+grouped signing type, even if it normalizes to one group. Rust clients can deserialize the wire
+expression into `ValidityExpression` and pass it to `expression_signing_hash`.
 
 Raw ingress reuses the recovered envelope sender to verify sidecar signatures
 and rejects high-s signatures. Only sender-address secp256k1

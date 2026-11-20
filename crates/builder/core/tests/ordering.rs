@@ -12,7 +12,8 @@ use base_builder_core::{
 };
 use base_common_rpc_types::Transaction;
 use base_execution_txpool::{
-    TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
+    TransactionValidity, ValidatedTransaction, ValidityExpression, ValidityOperator,
+    ValidityPredicate,
 };
 use futures::{StreamExt, future::join_all, stream};
 
@@ -86,8 +87,11 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
 
 /// A high-priority lane may execute after the lower-priority transaction that satisfies its
 /// predicate, while retaining priority over lower-priority work once it becomes valid.
+#[rstest::rstest]
 #[tokio::test]
-async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre::Result<()> {
+async fn predicates_delay_priority_without_blocking_nonce_descendants(
+    #[values(false, true)] grouped: bool,
+) -> eyre::Result<()> {
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
         .install_ext::<BuilderApiExtension>(
             BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
@@ -109,18 +113,29 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
         .build()
         .await;
     let parent_hash = parent.tx_hash();
+    let balance = |amount| ValidityPredicate::Balance {
+        address: watched,
+        op: ValidityOperator::Equal,
+        value: U256::from(amount),
+    };
+    let validity = if grouped {
+        // The trigger sends 1 wei, so only the second conjunction will wake.
+        let expiry = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(driver.latest().await?.header.number + 10),
+        };
+        ValidityExpression::AnyOf(vec![
+            vec![balance(2u64), expiry.clone()],
+            vec![balance(1), expiry],
+        ])
+    } else {
+        vec![balance(1)].into()
+    };
     let validated_parent = ValidatedTransaction {
         sender: accounts[0].address(),
         raw: parent.encoded_2718().into(),
         metering: None,
-        extensions: TransactionValidity {
-            validity: vec![ValidityPredicate::Balance {
-                address: watched,
-                op: ValidityOperator::Equal,
-                value: U256::from_limbs([1, 0, 0, 0]),
-            }],
-            validity_signature: None,
-        },
+        extensions: TransactionValidity { validity, validity_signature: None },
     };
     driver
         .provider()
@@ -202,7 +217,8 @@ async fn nonce_predicate_promotes_after_watched_sender_executes() -> eyre::Resul
                 address: accounts[1].address(),
                 op: ValidityOperator::Equal,
                 value: U256::from(watched_nonce + 1),
-            }],
+            }]
+            .into(),
             validity_signature: None,
         },
     };
@@ -272,7 +288,7 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
                 raw: first.encoded_2718().into(),
                 metering: None,
                 extensions: TransactionValidity {
-                    validity: always_satisfied.clone(),
+                    validity: always_satisfied.clone().into(),
                     validity_signature: None,
                 },
             },),
@@ -296,7 +312,7 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
                 raw: deferred.encoded_2718().into(),
                 metering: None,
                 extensions: TransactionValidity {
-                    validity: always_satisfied,
+                    validity: always_satisfied.into(),
                     validity_signature: None,
                 },
             },),
@@ -371,7 +387,8 @@ async fn resting_transaction_is_included_once_its_blocking_state_changes() -> ey
                         address: watched,
                         op: ValidityOperator::Equal,
                         value: U256::from(1),
-                    }],
+                    }]
+                    .into(),
                     validity_signature: None,
                 },
             },),

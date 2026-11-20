@@ -1,13 +1,12 @@
 //! State predicates carried by pooled transactions.
 
-use std::fmt;
-
 use alloy_primitives::{Address, Signature, U256};
 use reth_transaction_pool::ValidPoolTransaction;
 use revm::Database;
-use serde::{Deserializer, de};
 
-use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
+use crate::{
+    BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions, ValidityExpression,
+};
 
 /// Default maximum number of experimental validity predicates carried by one transaction.
 pub const DEFAULT_MAX_VALIDITY_PREDICATES: usize = 64;
@@ -30,6 +29,15 @@ pub enum ValidityPredicateError {
         /// Number of predicates supplied.
         count: usize,
         /// Maximum number of predicates permitted.
+        max: usize,
+    },
+    /// The submission carried more alternatives (`anyOf` groups after normalization) than the
+    /// fixed maximum.
+    #[error("too many validity alternatives: {count} (maximum {max})")]
+    TooManyAlternatives {
+        /// Number of alternatives after normalization.
+        count: usize,
+        /// Maximum number of alternatives permitted.
         max: usize,
     },
     /// A storage predicate's comparison value has bits set outside its mask.
@@ -485,75 +493,13 @@ impl ValidityPredicate {
     }
 }
 
-/// Deserializes a sequence of [`ValidityPredicate`] while rejecting the batch as
-/// soon as it exceeds [`DEFAULT_MAX_VALIDITY_PREDICATES`].
-///
-/// The count limit is otherwise enforced only after the whole vector has been
-/// deserialized (see [`ValidityPredicate::validate_batch`] and
-/// [`TransactionValidity::validate`]). That late check still allocates one
-/// object per submitted item, so an unauthenticated caller can force the node to
-/// parse and allocate tens of thousands of predicates that are ultimately
-/// rejected. Aborting mid-stream at item 65 bounds the allocation to at most
-/// `DEFAULT_MAX_VALIDITY_PREDICATES + 1` predicates regardless of the request
-/// body size.
-///
-/// The bound is the fixed wire ceiling ([`DEFAULT_MAX_VALIDITY_PREDICATES`]), not
-/// a node's configured maximum: deserialization has no access to runtime
-/// configuration, and a node's configured maximum can never exceed this ceiling.
-/// The configured maximum is still enforced afterward by the count check.
-pub fn deserialize_bounded_predicates<'de, D>(
-    deserializer: D,
-) -> Result<Vec<ValidityPredicate>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct BoundedPredicatesVisitor;
-
-    impl<'de> de::Visitor<'de> for BoundedPredicatesVisitor {
-        type Value = Vec<ValidityPredicate>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(
-                formatter,
-                "a sequence of at most {DEFAULT_MAX_VALIDITY_PREDICATES} validity predicates"
-            )
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: de::SeqAccess<'de>,
-        {
-            // Cap the preallocation independently of the caller-reported length
-            // hint so a large hint cannot itself drive a large allocation.
-            let mut predicates = Vec::with_capacity(
-                seq.size_hint().unwrap_or(0).min(DEFAULT_MAX_VALIDITY_PREDICATES),
-            );
-            while let Some(predicate) = seq.next_element::<ValidityPredicate>()? {
-                if predicates.len() == DEFAULT_MAX_VALIDITY_PREDICATES {
-                    return Err(de::Error::custom(format!(
-                        "too many validity predicates: maximum {DEFAULT_MAX_VALIDITY_PREDICATES}"
-                    )));
-                }
-                predicates.push(predicate);
-            }
-            Ok(predicates)
-        }
-    }
-
-    deserializer.deserialize_seq(BoundedPredicatesVisitor)
-}
-
 /// Experimental validity predicates carried with a validated transaction.
 /// The builder evaluates these predicates against each candidate insertion point.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TransactionValidity {
     /// Predicates intended to control when the transaction is valid for inclusion.
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        deserialize_with = "deserialize_bounded_predicates"
-    )]
-    pub validity: Vec<ValidityPredicate>,
+    #[serde(default, skip_serializing_if = "ValidityExpression::is_empty")]
+    pub validity: ValidityExpression,
     /// EIP-712 authorization by the transaction sender, required when enforcement is enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validity_signature: Option<Signature>,
@@ -576,7 +522,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
 
     fn extract(tx: &ValidPoolTransaction<BasePooledTransaction>) -> Self {
         Self {
-            validity: tx.transaction.validity_predicates().cloned().collect(),
+            validity: tx.transaction.validity_conditions().to_expression(),
             validity_signature: tx.transaction.validity_signature(),
         }
     }
@@ -590,8 +536,16 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
     /// ingress, an empty predicate set is not rejected: the builder legitimately
     /// receives ordinary transactions that carry no predicates.
     fn apply(self, tx: BasePooledTransaction) -> Result<BasePooledTransaction, ExtensionError> {
-        for (index, predicate) in self.validity.iter().enumerate() {
-            predicate.validate_params(index).map_err(|e| ExtensionError(e.to_string()))?;
+        if !self.validity.is_empty() {
+            self.validity
+                .validate(DEFAULT_MAX_VALIDITY_PREDICATES)
+                .map_err(|e| ExtensionError(e.to_string()))?;
+            if matches!(self.validity, ValidityExpression::AnyOf(_)) {
+                for group in self.validity.groups() {
+                    ValidityPredicate::validate_has_block_expiry(group)
+                        .map_err(|e| ExtensionError(e.to_string()))?;
+                }
+            }
         }
         Ok(tx.with_validity(self))
     }
@@ -607,6 +561,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::deserialize_bounded_predicates;
 
     /// A predicate context at an arbitrary block.
     fn test_context() -> PredicateContext {
@@ -843,7 +798,7 @@ mod tests {
         let payload: TransactionValidity = serde_json::from_value(value.clone()).unwrap();
 
         assert_eq!(
-            payload.validity,
+            payload.validity.groups()[0],
             vec![ValidityPredicate::Balance {
                 address: Address::repeat_byte(0x11),
                 op: ValidityOperator::Equal,
@@ -943,7 +898,7 @@ mod tests {
             value: U256::from(2),
         }];
         let extension =
-            TransactionValidity { validity: expected.clone(), validity_signature: None };
+            TransactionValidity { validity: expected.clone().into(), validity_signature: None };
 
         let transaction = extension.apply(transaction).unwrap();
 
@@ -979,7 +934,7 @@ mod tests {
         };
         // Submitted state-first; stored and forwarded timing-first.
         let extension = TransactionValidity {
-            validity: vec![state_predicate.clone(), timing_predicate.clone()],
+            validity: vec![state_predicate.clone(), timing_predicate.clone()].into(),
             validity_signature: None,
         };
 
@@ -990,8 +945,7 @@ mod tests {
             [timing_predicate.clone(), state_predicate.clone()]
         );
         assert_eq!(
-            transaction
-                .validity_conditions()
+            transaction.validity_conditions().groups()[0]
                 .iter()
                 .map(|predicate| predicate.into_owned())
                 .collect::<Vec<_>>(),
@@ -1007,7 +961,7 @@ mod tests {
             value: U256::ZERO,
         };
         let extension =
-            TransactionValidity { validity: vec![predicate; 3], validity_signature: None };
+            TransactionValidity { validity: vec![predicate; 3].into(), validity_signature: None };
 
         let error = extension.validate(2).unwrap_err();
 
@@ -1147,7 +1101,8 @@ mod tests {
                 mask: U256::from(0xff),
                 op: ValidityOperator::Equal,
                 value: U256::from(0x100),
-            }],
+            }]
+            .into(),
             validity_signature: None,
         };
 
@@ -1178,13 +1133,49 @@ mod tests {
             validity: vec![ValidityPredicate::FlashblockIndex {
                 op: ValidityOperator::GreaterThanOrEqual,
                 value: U256::from(1),
-            }],
+            }]
+            .into(),
             validity_signature: None,
         };
 
         let error = extension.apply(transaction).unwrap_err();
 
         assert!(error.to_string().contains("Base no longer builds flashblocks"));
+    }
+
+    #[test]
+    fn apply_rejects_more_than_three_alternatives() {
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Default::default(),
+        }
+        .into();
+        let encoded_length = signed.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(signed, Address::ZERO),
+            encoded_length,
+        );
+        let alternative = |n: u64| {
+            vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(n),
+            }]
+        };
+        let extension = |alternatives: u64| TransactionValidity {
+            validity: ValidityExpression::AnyOf((1..=alternatives).map(alternative).collect()),
+            validity_signature: None,
+        };
+
+        assert!(extension(3).apply(transaction.clone()).is_ok());
+        let error = extension(4).apply(transaction).unwrap_err();
+
+        assert!(error.to_string().contains("too many validity alternatives: 4 (maximum 3)"));
     }
 
     #[test]

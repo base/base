@@ -1203,8 +1203,11 @@ where
                         Ok(ValidityPredicateEvaluation::Unsatisfied {
                             predicate,
                             expired: false,
+                            alternatives,
                             ..
-                        }) => resting.rest(tx_hash, predicate.clone()),
+                        }) => {
+                            resting.rest_grouped(tx_hash, predicate.clone(), alternatives.clone())
+                        }
                         _ => {
                             resting.remove(tx_hash);
                         }
@@ -1240,8 +1243,8 @@ where
                         continue;
                     }
                     Ok(ValidityPredicateEvaluation::Unsatisfied {
-                        blocker,
                         predicate,
+                        alternatives,
                         expired: false,
                     }) => {
                         evaluation_counters.increment(ValidityEvaluationOutcome::NotSatisfied, 1);
@@ -1250,11 +1253,11 @@ where
                         trace!(
                             target: "payload_builder",
                             tx_hash = ?tx_hash,
-                            ?blocker,
+                            blocker = ?crate::ValidityPredicateKey::for_predicate(&predicate),
                             "parking transaction with unsatisfied validity predicate"
                         );
                         best_txs.park_current();
-                        predicate_index.park(tx_hash, pooled, predicate);
+                        predicate_index.park_grouped(tx_hash, pooled, predicate, alternatives);
                         continue;
                     }
                     Err(error) => {
@@ -1597,13 +1600,21 @@ where
                         }
                         best_txs.promote(parked_hash);
                     }
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { predicate, .. }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied {
+                        predicate,
+                        alternatives,
+                        ..
+                    }) => {
                         evaluation_counters
                             .increment(ValidityEvaluationOutcome::RescanNotSatisfied, 1);
                         if let Some(resting) = resting {
-                            resting.rest(parked_hash, predicate.clone());
+                            resting.rest_grouped(
+                                parked_hash,
+                                predicate.clone(),
+                                alternatives.clone(),
+                            );
                         }
-                        predicate_index.reindex(parked_hash, predicate);
+                        predicate_index.reindex_grouped(parked_hash, predicate, alternatives);
                     }
                     Err(error) => {
                         evaluation_counters

@@ -8,8 +8,8 @@ use base_common_genesis::RollupConfig;
 use base_execution_rpc::SequencerClient;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
-    TransactionValidity, ValidityAuthorization, ValidityPredicate, ValiditySignatureMetrics,
-    ValiditySignatureMode, deserialize_bounded_predicates,
+    TransactionValidity, ValidityAuthorization, ValidityExpression, ValidityPredicate,
+    ValiditySignatureMetrics, ValiditySignatureMode,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -65,13 +65,12 @@ pub struct TransactionStatusResponse {
 /// irrelevant data, and `validity` is deserialized with a bounded visitor that
 /// aborts once the batch exceeds [`DEFAULT_MAX_VALIDITY_PREDICATES`], capping the
 /// allocation before the count is enforced by
-/// [`ValidityPredicate::validate_batch`].
+/// [`ValidityExpression::validate`].
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct SendRawTransactionValidityOptions {
     /// Experimental predicates transported to builders alongside the transaction.
-    #[serde(deserialize_with = "deserialize_bounded_predicates")]
-    pub validity: Vec<ValidityPredicate>,
+    pub validity: ValidityExpression,
     /// EIP-712 signature authorizing these predicates for the signed transaction hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validity_signature: Option<Signature>,
@@ -294,7 +293,9 @@ where
         // a hash for a transaction that will never be included.
         if options
             .validity
+            .groups()
             .iter()
+            .flatten()
             .any(|predicate| matches!(predicate, ValidityPredicate::FlashblockIndex { .. }))
         {
             return Err(ErrorObjectOwned::owned(
@@ -313,32 +314,28 @@ where
 
         let latest = self.latest_block_number_and_timestamp()?;
 
-        ValidityPredicate::validate_batch(&options.validity, self.max_validity_predicates)
-            .map_err(|error| {
-                ErrorObjectOwned::owned(
-                    ErrorCode::InvalidParams.code(),
-                    error.to_string(),
-                    None::<()>,
-                )
-            })?;
+        options.validity.validate(self.max_validity_predicates).map_err(|error| {
+            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
+        })?;
 
         // Every validity transaction must carry a finite `block_number` expiry. When a canonical
         // head exists, also reject bounds already in the past and bounds outside the configured
         // wall-clock window. This validates the submission without injecting or rewriting a
         // predicate.
-        let expiry_validation = match latest {
-            Some((latest_block, latest_timestamp)) => {
-                ValidityPredicate::validate_block_expiry_bounds(
-                    &options.validity,
-                    latest_block.saturating_add(1),
-                    self.max_validity_expiry_secs,
-                    self.block_interval_millis(latest_timestamp),
-                )
-            }
-            // Before genesis is committed there is no build target from which to measure the
-            // window, but a finite expiry is still mandatory.
-            None => ValidityPredicate::validate_has_block_expiry(&options.validity),
-        };
+        let expiry_validation =
+            options.validity.groups().iter().try_for_each(|group| match latest {
+                Some((latest_block, latest_timestamp)) => {
+                    ValidityPredicate::validate_block_expiry_bounds(
+                        group,
+                        latest_block.saturating_add(1),
+                        self.max_validity_expiry_secs,
+                        self.block_interval_millis(latest_timestamp),
+                    )
+                }
+                // Before genesis is committed there is no build target from which to measure the
+                // window, but a finite expiry is still mandatory.
+                None => ValidityPredicate::validate_has_block_expiry(group),
+            });
         expiry_validation.map_err(|error| {
             // The returned message omits the local head; keep it in the log for diagnosing
             // ingress latency.
@@ -490,7 +487,7 @@ mod tests {
         let (_, mut options) = validity_request(raw.clone());
         options.validity_signature = Some(
             signer
-                .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                .sign_hash_sync(&ValidityAuthorization::expression_signing_hash(
                     8453,
                     *tx.hash(),
                     &options.validity,
@@ -546,7 +543,7 @@ mod tests {
                 BasePooledTransaction::recover_raw_transaction(&raw).unwrap();
             options.validity_signature = Some(
                 PrivateKeySigner::random()
-                    .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                    .sign_hash_sync(&ValidityAuthorization::expression_signing_hash(
                         8453,
                         *tx.hash(),
                         &options.validity,
@@ -555,7 +552,8 @@ mod tests {
             );
         }
         if tamper {
-            options.validity.push(ValidityPredicate::Balance {
+            let ValidityExpression::All(group) = &mut options.validity else { unreachable!() };
+            group.push(ValidityPredicate::Balance {
                 address: Address::ZERO,
                 op: base_execution_txpool::ValidityOperator::Equal,
                 value: U256::ZERO,
@@ -615,7 +613,7 @@ mod tests {
         let (_, mut options) = validity_request(raw.clone());
         options.validity_signature = Some(
             signer
-                .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                .sign_hash_sync(&ValidityAuthorization::expression_signing_hash(
                     8453,
                     *tx.hash(),
                     &options.validity,
@@ -717,7 +715,8 @@ mod tests {
                         op: base_execution_txpool::ValidityOperator::LessThanOrEqual,
                         value: U256::from(31),
                     },
-                ],
+                ]
+                .into(),
                 validity_signature: None,
             },
         )
@@ -790,7 +789,8 @@ mod tests {
     fn flashblock_index_request() -> (Bytes, SendRawTransactionValidityOptions) {
         let signer = PrivateKeySigner::random();
         let (raw, mut options) = validity_request(signed_eip1559(&signer, 0, 1));
-        options.validity.push(ValidityPredicate::FlashblockIndex {
+        let ValidityExpression::All(group) = &mut options.validity else { unreachable!() };
+        group.push(ValidityPredicate::FlashblockIndex {
             op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
             value: U256::from(1),
         });
@@ -920,7 +920,7 @@ mod tests {
         let options: SendRawTransactionValidityOptions =
             serde_json::from_str(json).expect("known fields must deserialize");
         assert_eq!(
-            options.validity,
+            options.validity.groups()[0],
             vec![ValidityPredicate::Balance {
                 address: Address::repeat_byte(0x11),
                 op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
@@ -996,7 +996,7 @@ mod tests {
         let raw = signed_eip1559(&signer, 0, 1);
         let rpc = validity_rpc(pre_everest_provider());
         let options = SendRawTransactionValidityOptions {
-            validity: all_predicate_variants(),
+            validity: all_predicate_variants().into(),
             validity_signature: None,
         };
 
@@ -1027,7 +1027,7 @@ mod tests {
         let sequencer = MockServer::start();
         let raw = Bytes::from_static(&[0x02]);
         let options = SendRawTransactionValidityOptions {
-            validity: all_predicate_variants(),
+            validity: all_predicate_variants().into(),
             validity_signature: None,
         };
         let expected_hash = TxHash::repeat_byte(0x42);
@@ -1060,7 +1060,7 @@ mod tests {
         let sequencer = MockServer::start();
         let raw = Bytes::from_static(&[0x02]);
         let options =
-            SendRawTransactionValidityOptions { validity: vec![], validity_signature: None };
+            SendRawTransactionValidityOptions { validity: vec![].into(), validity_signature: None };
         let mock = sequencer.mock(|when, then| {
             when.method(POST).path("/").json_body(json!({
                 "jsonrpc": "2.0", "id": 0, "method": "base_sendRawTransactionValidity",
@@ -1102,7 +1102,7 @@ mod tests {
             test_transaction_sender(),
         );
         let options = SendRawTransactionValidityOptions {
-            validity: all_predicate_variants(),
+            validity: all_predicate_variants().into(),
             validity_signature: None,
         };
 
@@ -1125,7 +1125,7 @@ mod tests {
         let raw = signed_eip1559(&signer, 0, 1);
         let rpc = validity_rpc(pre_everest_provider());
         let options = SendRawTransactionValidityOptions {
-            validity: all_predicate_variants(),
+            validity: all_predicate_variants().into(),
             validity_signature: None,
         };
 
@@ -1168,7 +1168,7 @@ mod tests {
             test_transaction_sender(),
         );
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
-        options.validity = vec![options.validity[0].clone(); 3];
+        options.validity = vec![options.validity.groups()[0][0].clone(); 3].into();
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -1181,11 +1181,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expiry_in_one_alternative_cannot_bound_another() {
+        let rpc =
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
+        let group = &options.validity.groups()[0];
+        options.validity = ValidityExpression::AnyOf(vec![group.clone(), vec![group[0].clone()]]);
+        let error = rpc.send_raw_transaction_validity(raw, options).await.unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("require a block-number predicate"));
+    }
+
+    #[tokio::test]
     async fn send_raw_transaction_validity_rejects_empty_predicates() {
         let rpc =
             SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
-        options.validity.clear();
+        options.validity = Default::default();
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -1204,7 +1216,8 @@ mod tests {
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
             value: U256::ZERO,
-        }];
+        }]
+        .into();
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -1232,7 +1245,8 @@ mod tests {
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::LessThanOrEqual,
             value: U256::from(132),
-        }];
+        }]
+        .into();
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -1262,7 +1276,8 @@ mod tests {
             mask: U256::from(0xff),
             op: base_execution_txpool::ValidityOperator::Equal,
             value: U256::from(0x1ff),
-        }];
+        }]
+        .into();
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -1342,7 +1357,8 @@ mod tests {
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::LessThanOrEqual,
             value: U256::ZERO,
-        }];
+        }]
+        .into();
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -1370,7 +1386,8 @@ mod tests {
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::LessThan,
             value: U256::from(101),
-        }];
+        }]
+        .into();
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -1403,11 +1420,12 @@ mod tests {
         );
         let rpc = validity_rpc(provider);
         let mut options =
-            SendRawTransactionValidityOptions { validity: vec![], validity_signature: None };
+            SendRawTransactionValidityOptions { validity: vec![].into(), validity_signature: None };
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::Equal,
             value: U256::from(101),
-        }];
+        }]
+        .into();
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)

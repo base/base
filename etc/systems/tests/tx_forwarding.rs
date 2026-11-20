@@ -181,8 +181,10 @@ async fn signed_validity_forwarding_is_included_by_an_enforcing_builder() -> Res
         block_expiry_bound(ingress.get_block_number().await?),
     ];
     let client = RpcClient::builder().http(system.l2_client_rpc_url()?);
-    let unsigned =
-        SendRawTransactionValidityOptions { validity: validity.clone(), validity_signature: None };
+    let unsigned = SendRawTransactionValidityOptions {
+        validity: validity.clone().into(),
+        validity_signature: None,
+    };
     let error = client
         .request::<_, B256>("base_sendRawTransactionValidity", (raw.clone(), unsigned))
         .await
@@ -198,8 +200,10 @@ async fn signed_validity_forwarding_is_included_by_an_enforcing_builder() -> Res
     ))?;
     // Signing is independent of the evaluation order used during forwarding.
     validity.reverse();
-    let options =
-        SendRawTransactionValidityOptions { validity, validity_signature: Some(signature) };
+    let options = SendRawTransactionValidityOptions {
+        validity: validity.into(),
+        validity_signature: Some(signature),
+    };
     let submitted: B256 = client.request("base_sendRawTransactionValidity", (raw, options)).await?;
     assert_eq!(submitted, tx_hash);
     let receipt = builder.wait_for_receipt(tx_hash, TX_RECEIPT_TIMEOUT).await?;
@@ -451,7 +455,13 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
     let tx_hash: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (raw_tx, SendRawTransactionValidityOptions { validity, validity_signature: None }),
+            (
+                raw_tx,
+                SendRawTransactionValidityOptions {
+                    validity: validity.into(),
+                    validity_signature: None,
+                },
+            ),
         )
         .await?;
 
@@ -504,7 +514,8 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
                             value: U256::ZERO,
                         },
                         block_expiry_bound(current_block),
-                    ],
+                    ]
+                    .into(),
                     validity_signature: None,
                 },
             ),
@@ -557,7 +568,8 @@ async fn test_base_tx_validity_transaction_is_included_by_native_builder() -> Re
                             value: U256::ZERO,
                         },
                         block_expiry_bound(current_block),
-                    ],
+                    ]
+                    .into(),
                     validity_signature: None,
                 },
             ),
@@ -577,7 +589,7 @@ async fn test_base_tx_validity_transaction_is_included_by_native_builder() -> Re
 /// Verifies a false state predicate parks a forwarded transaction until another transaction
 /// changes the watched state and makes it eligible.
 #[tokio::test]
-async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() -> Result<()> {
+async fn test_validity_transaction_lands_after_second_group_becomes_true() -> Result<()> {
     let system = start_validity_system().await?;
     let builder_provider = system.l2_builder_provider()?;
     let client_provider = system.l2_client_provider()?;
@@ -601,17 +613,13 @@ async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() 
             "base_sendRawTransactionValidity",
             (
                 raw_validity_tx,
-                SendRawTransactionValidityOptions {
-                    validity: vec![
-                        ValidityPredicate::Balance {
-                            address: watched,
-                            op: ValidityOperator::GreaterThanOrEqual,
-                            value: U256::from(1),
-                        },
-                        block_expiry_bound(current_block),
-                    ],
-                    validity_signature: None,
-                },
+                serde_json::json!({"validity": {"allOf": [
+                    block_expiry_bound(current_block),
+                    {"anyOf": [
+                        ValidityPredicate::Balance {address: watched, op: ValidityOperator::Equal, value: U256::MAX},
+                        ValidityPredicate::Balance {address: watched, op: ValidityOperator::GreaterThanOrEqual, value: U256::ONE}
+                    ]}
+                ]}}),
             ),
         )
         .await?;
@@ -641,6 +649,18 @@ async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() 
     assert!(
         trigger_receipt.inner.block_number <= validity_receipt.inner.block_number,
         "validity transaction landed before the state change that satisfied it"
+    );
+    assert!(validity_receipt.inner.inner.status());
+    let inclusion = builder_provider
+        .get_block_by_hash(validity_receipt.inner.block_hash.unwrap())
+        .await?
+        .unwrap();
+    assert!(inclusion.transactions.hashes().any(|hash| hash == validity_tx_hash));
+    eprintln!(
+        "grouped validity tx {validity_tx_hash}, block {:?} {:?}, status {}",
+        validity_receipt.inner.block_number,
+        validity_receipt.inner.block_hash,
+        validity_receipt.inner.inner.status()
     );
     assert!(builder_provider.get_balance(watched).await? >= U256::from(1));
 
@@ -681,7 +701,8 @@ async fn test_validity_transaction_lands_after_nonce_predicate_becomes_true() ->
                             value: U256::from(trigger_nonce + 1),
                         },
                         block_expiry_bound(current_block),
-                    ],
+                    ]
+                    .into(),
                     validity_signature: None,
                 },
             ),
@@ -758,7 +779,8 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
                             value: U256::from(target_block),
                         },
                         block_expiry_bound(current_block),
-                    ],
+                    ]
+                    .into(),
                     validity_signature: None,
                 },
             ),
@@ -781,7 +803,8 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
                             op: ValidityOperator::LessThanOrEqual,
                             value: U256::from(target_block),
                         },
-                    ],
+                    ]
+                    .into(),
                     validity_signature: None,
                 },
             ),
@@ -804,7 +827,8 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
                             value: U256::from(2),
                         },
                         block_expiry_bound(current_block),
-                    ],
+                    ]
+                    .into(),
                     validity_signature: None,
                 },
             ),
@@ -894,7 +918,10 @@ async fn test_invalid_validity_batches_are_rejected_at_mempool_ingress() -> Resu
                 "base_sendRawTransactionValidity",
                 (
                     raw_tx.clone(),
-                    SendRawTransactionValidityOptions { validity, validity_signature: None },
+                    SendRawTransactionValidityOptions {
+                        validity: validity.into(),
+                        validity_signature: None,
+                    },
                 ),
             )
             .await
