@@ -20,11 +20,7 @@ use jsonrpsee::{
         error::{CALL_EXECUTION_FAILED_CODE, INVALID_PARAMS_CODE},
     },
 };
-use revm::{
-    context::{TxEnv, result::InvalidTransaction},
-    handler::validation::validate_initial_tx_gas,
-    primitives::{eip3860::MAX_INITCODE_SIZE, hardfork::SpecId},
-};
+use revm_primitives::{eip3860::MAX_INITCODE_SIZE, hardfork::SpecId};
 use serde::Deserialize;
 
 /// Parameters of `dev_impersonateTransaction`.
@@ -116,13 +112,7 @@ impl StandaloneImpersonationQueue {
             });
         }
         let to = request.to.map_or(TxKind::Create, TxKind::Call);
-        let tx = TxEnv {
-            kind: to,
-            data: request.input.clone(),
-            gas_limit: request.gas,
-            ..Default::default()
-        };
-        validate_initial_tx_gas(tx, spec, false, false, u64::MAX, None)?;
+        validate_impersonation_gas(request.input.as_ref(), to.is_create(), request.gas, spec)?;
         if state.pending.len() >= Self::MAX_PENDING {
             return Err(ImpersonationError::QueueFull);
         }
@@ -213,9 +203,65 @@ pub enum ImpersonationError {
         /// Largest accepted input length.
         limit: usize,
     },
-    /// The gas limit is below the intrinsic or calldata floor cost.
-    #[error("gas limit too low: {0}")]
-    Gas(#[from] InvalidTransaction),
+    /// The gas limit is below the intrinsic transaction gas cost.
+    #[error("gas limit {gas_limit} is less than initial gas {initial_gas}")]
+    InitialGasTooLow {
+        /// Requested gas limit.
+        gas_limit: u64,
+        /// Minimum intrinsic gas required.
+        initial_gas: u64,
+    },
+    /// The gas limit is below the EIP-7623 calldata floor gas cost.
+    #[error("gas limit {gas_limit} is less than calldata floor gas {gas_floor}")]
+    FloorGasTooLow {
+        /// Requested gas limit.
+        gas_limit: u64,
+        /// Minimum EIP-7623 calldata floor gas required.
+        gas_floor: u64,
+    },
+}
+
+/// Validates intrinsic and EIP-7623 floor gas for a deposit impersonation transaction.
+///
+/// Impersonation requests carry no access list or EIP-7702 authorization list, and all Base
+/// upgrades map to `SpecId::MERGE` or later (Istanbul calldata cost + EIP-3860 from Shanghai +
+/// EIP-7623 floor gas from Prague).
+fn validate_impersonation_gas(
+    input: &[u8],
+    is_create: bool,
+    gas_limit: u64,
+    spec: SpecId,
+) -> Result<(), ImpersonationError> {
+    const TX_BASE_GAS: u64 = 21_000;
+    const TX_CREATE_GAS: u64 = 32_000;
+    const CALLDATA_TOKEN_COST: u64 = 4;
+    const CALLDATA_FLOOR_TOKEN_COST: u64 = 10;
+    const INITCODE_WORD_COST: u64 = 2;
+
+    let zero_bytes = input.iter().filter(|&&b| b == 0).count() as u64;
+    let non_zero_bytes = (input.len() as u64).saturating_sub(zero_bytes);
+    let tokens = zero_bytes.saturating_add(non_zero_bytes.saturating_mul(4));
+
+    let mut initial_gas = TX_BASE_GAS.saturating_add(tokens.saturating_mul(CALLDATA_TOKEN_COST));
+    if is_create {
+        initial_gas = initial_gas.saturating_add(TX_CREATE_GAS);
+        if spec.is_enabled_in(SpecId::SHANGHAI) {
+            let initcode_words = (input.len() as u64).div_ceil(32);
+            initial_gas =
+                initial_gas.saturating_add(initcode_words.saturating_mul(INITCODE_WORD_COST));
+        }
+    }
+    if initial_gas > gas_limit {
+        return Err(ImpersonationError::InitialGasTooLow { gas_limit, initial_gas });
+    }
+    if spec.is_enabled_in(SpecId::PRAGUE) {
+        let gas_floor =
+            TX_BASE_GAS.saturating_add(tokens.saturating_mul(CALLDATA_FLOOR_TOKEN_COST));
+        if gas_floor > gas_limit {
+            return Err(ImpersonationError::FloorGasTooLow { gas_limit, gas_floor });
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -259,5 +305,49 @@ mod tests {
         assert_eq!(queue.submit(request.clone()), Err(ImpersonationError::QueueFull));
         queue.retire(&remaining[..1]);
         queue.submit(request).unwrap();
+    }
+
+    #[test]
+    fn impersonation_gas_matches_revm_across_specs() {
+        use alloy_primitives::TxKind;
+        use base_common_chains::BaseUpgradeExt;
+        use revm::{context::TxEnv, handler::validation::validate_initial_tx_gas};
+
+        for upgrade in [
+            BaseUpgrade::Bedrock,
+            BaseUpgrade::Canyon,
+            BaseUpgrade::Holocene,
+            BaseUpgrade::Isthmus,
+            BaseUpgrade::Denim,
+        ] {
+            let spec = upgrade.into_eth_spec();
+            for is_create in [false, true] {
+                for input in [&[][..], &[0u8; 64][..], &[1u8; 65][..], &[0, 1, 2, 0, 3][..]] {
+                    for gas_limit in [0, 20_999, 21_000, 21_500, 53_000, 54_000, 100_000] {
+                        let tx = TxEnv {
+                            kind: if is_create {
+                                TxKind::Create
+                            } else {
+                                TxKind::Call(Address::ZERO)
+                            },
+                            data: Bytes::copy_from_slice(input),
+                            gas_limit,
+                            ..Default::default()
+                        };
+                        let revm_ok =
+                            validate_initial_tx_gas(tx, spec, false, false, u64::MAX, None).is_ok();
+                        let local_ok =
+                            super::validate_impersonation_gas(input, is_create, gas_limit, spec)
+                                .is_ok();
+                        assert_eq!(
+                            local_ok,
+                            revm_ok,
+                            "mismatch for {upgrade:?} create={is_create} len={} gas={gas_limit}",
+                            input.len()
+                        );
+                    }
+                }
+            }
+        }
     }
 }
