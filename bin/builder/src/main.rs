@@ -13,7 +13,6 @@ use base_builder_metering::MeteringStoreExtension;
 use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventGate};
-use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
     TxPoolRpcExtension,
@@ -59,7 +58,8 @@ fn main() {
             .transpose()?;
 
         let builder_api_config = builder_args.builder_api_config();
-        let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
+        builder_args.shadow_indexer.validate()?;
+        let shadow_indexer_args = builder_args.shadow_indexer.clone();
         let builder_config = builder_args.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -82,7 +82,7 @@ fn main() {
                 ..Default::default()
             },
         );
-        runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
+        StandardBaseRethNode::install_shadow_indexer_extension(&mut runner, &shadow_indexer_args)?;
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {
             base_cli_utils::register_version_metrics!();
