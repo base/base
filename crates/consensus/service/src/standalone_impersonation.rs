@@ -317,19 +317,40 @@ mod tests {
             let spec = upgrade.into_eth_spec();
             for is_create in [false, true] {
                 for input in [&[][..], &[0u8; 64][..], &[1u8; 65][..], &[0, 1, 2, 0, 3][..]] {
-                    for gas_limit in [0, 20_999, 21_000, 21_500, 53_000, 54_000, 100_000] {
-                        let tx = TxEnv {
-                            kind: if is_create {
-                                TxKind::Create
-                            } else {
-                                TxKind::Call(Address::ZERO)
-                            },
-                            data: Bytes::copy_from_slice(input),
-                            gas_limit,
-                            ..Default::default()
-                        };
-                        let revm_ok =
-                            validate_initial_tx_gas(tx, spec, false, false, u64::MAX, None).is_ok();
+                    let make_tx = |gas_limit| TxEnv {
+                        kind: if is_create { TxKind::Create } else { TxKind::Call(Address::ZERO) },
+                        data: Bytes::copy_from_slice(input),
+                        gas_limit,
+                        ..Default::default()
+                    };
+                    let expected = validate_initial_tx_gas(
+                        make_tx(u64::MAX),
+                        spec,
+                        false,
+                        false,
+                        u64::MAX,
+                        None,
+                    )
+                    .expect("u64::MAX gas limit should always pass");
+                    let probes = [
+                        0,
+                        expected.initial_gas.saturating_sub(1),
+                        expected.initial_gas,
+                        expected.initial_gas + 1,
+                        expected.floor_gas.saturating_sub(1),
+                        expected.floor_gas,
+                        expected.floor_gas + 1,
+                    ];
+                    for gas_limit in probes {
+                        let revm_ok = validate_initial_tx_gas(
+                            make_tx(gas_limit),
+                            spec,
+                            false,
+                            false,
+                            u64::MAX,
+                            None,
+                        )
+                        .is_ok();
                         let local_ok =
                             super::validate_impersonation_gas(input, is_create, gas_limit, spec)
                                 .is_ok();
