@@ -1,0 +1,26 @@
+[package]
+name = "base-batcher-bin"
+description = "Standalone Base Batcher Binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-batcher"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+base-batcher-cli.workspace = true
+base-cli-utils = { workspace = true, features = ["otlp"] }
+reth-node-core.workspace = true
+
+clap = { workspace = true, features = ["derive", "env"] }
+eyre.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

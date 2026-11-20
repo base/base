@@ -3033,6 +3033,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-batcher-bin"
+version = "0.0.0"
+dependencies = [
+ "base-batcher-cli",
+ "base-cli-utils",
+ "clap",
+ "eyre",
+ "reth-node-core",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "base-batcher-cli"
 version = "0.0.0"
 dependencies = [
