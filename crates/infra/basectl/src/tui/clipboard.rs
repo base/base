@@ -14,11 +14,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 /// supporting terminals (including remote SSH and tmux sessions) update the
 /// clipboard directly.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Clipboard;
+pub struct Clipboard;
 
 impl Clipboard {
     /// Copies `text` to the system clipboard.
-    pub(crate) fn copy(text: &str) -> io::Result<()> {
+    pub fn copy(text: &str) -> io::Result<()> {
         if !Self::is_ssh() && Self::copy_via_command(text) {
             return Ok(());
         }

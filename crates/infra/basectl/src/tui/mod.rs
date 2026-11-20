@@ -10,7 +10,7 @@ pub use browser::Browser;
 
 /// Plain-text clipboard helper.
 mod clipboard;
-pub(crate) use clipboard::Clipboard;
+pub use clipboard::Clipboard;
 
 /// Keybinding display types.
 mod keybinding;
