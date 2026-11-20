@@ -60,10 +60,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    BlobFeePolicy, BlobTxBuilder, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps,
-    NonceManager, RpcErrorClassifier, SendHandle, SendOutcome, SendResponse, SendState,
-    SignerConfig, TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
-    TxMetrics,
+    BlobFeePolicy, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager,
+    RpcErrorClassifier, SendHandle, SendOutcome, SendResponse, SendState, SignerConfig,
+    TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
 };
 
 /// Number of wei in one gwei (10^9), as `f64` for fractional-precision
@@ -690,6 +689,14 @@ where
     ) -> TxManagerResult<PreparedTx> {
         let is_blob = candidate.is_blob();
 
+        #[cfg(not(feature = "kzg"))]
+        if is_blob {
+            let _ = cached_sidecar;
+            return Err(TxManagerError::Unsupported(
+                "blob transactions require the `kzg` feature on base-tx-manager".to_string(),
+            ));
+        }
+
         // Blob transactions must have a recipient address (no contract creation).
         if is_blob && candidate.to.is_none() {
             return Err(TxManagerError::Unsupported(
@@ -773,10 +780,11 @@ where
         //
         // Reuse a cached sidecar when available (fee bump iterations) to
         // avoid recomputing KZG proofs from the same blob data.
+        #[cfg(feature = "kzg")]
         let built_sidecar = if is_blob {
             let sidecar = match cached_sidecar {
                 Some(cached) => cached,
-                None => Arc::new(BlobTxBuilder::build_sidecar(&candidate.blobs)?),
+                None => Arc::new(crate::BlobTxBuilder::build_sidecar(&candidate.blobs)?),
             };
             tx_request.sidecar = Some((*sidecar).clone().into());
             tx_request.populate_blob_hashes();
@@ -785,6 +793,8 @@ where
         } else {
             None
         };
+        #[cfg(not(feature = "kzg"))]
+        let built_sidecar: Option<Arc<BlobTransactionSidecarEip7594>> = None;
 
         // Step 5: Gas estimation.
         //
