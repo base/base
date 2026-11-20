@@ -49,8 +49,8 @@ pub use source::{
 
 mod base_time;
 pub use base_time::{
-    BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateDecodeError, BaseTimeUpdateError,
-    BaseTimeUpdateTx,
+    BaseTimeMetadataError, BaseTimePredeploy, BaseTimeScheduleError, BaseTimeUpdateDecodeError,
+    BaseTimeUpdateError, BaseTimeUpdateTx,
 };
 
 mod info;

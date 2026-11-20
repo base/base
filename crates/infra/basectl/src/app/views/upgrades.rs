@@ -11,9 +11,10 @@ use alloy_rpc_types_eth::{
     BlockId, BlockNumberOrTag, Filter, TransactionInput, TransactionRequest,
 };
 use alloy_sol_types::SolCall;
-use base_common_chains::{BaseUpgrade, ChainConfig};
+use base_common_chains::{
+    ACTIVATION_REGISTRY_ADDRESS, ActivationFeature, BaseUpgrade, ChainConfig, IActivationRegistry,
+};
 use base_common_genesis::UpgradeConfig;
-use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
 use jsonrpsee::{
@@ -1804,7 +1805,7 @@ where
     P: Provider + ?Sized,
 {
     let filter = Filter::new()
-        .address(ActivationRegistryStorage::ADDRESS)
+        .address(ACTIVATION_REGISTRY_ADDRESS)
         .from_block(start_block)
         .to_block(end_block);
     let logs = provider.get_logs(&filter).await.map_err(|error| error.to_string())?;
@@ -2157,7 +2158,7 @@ async fn run_denim_checks_streaming(
 // ── Beryl activation checks ───────────────────────────────────────────────────
 
 fn activation_registry_address() -> String {
-    ActivationRegistryStorage::ADDRESS.to_string()
+    ACTIVATION_REGISTRY_ADDRESS.to_string()
 }
 
 fn calldata_hex(calldata: impl AsRef<[u8]>) -> String {
@@ -2189,7 +2190,7 @@ async fn fetch_safe_live_admin<P: Provider + ?Sized>(
     provider: &P,
 ) -> Result<Option<Address>, String> {
     let request = TransactionRequest::default()
-        .to(ActivationRegistryStorage::ADDRESS)
+        .to(ACTIVATION_REGISTRY_ADDRESS)
         .input(TransactionInput::new(Bytes::from(IActivationRegistry::adminCall {}.abi_encode())));
     provider
         .call(request)
@@ -3159,7 +3160,7 @@ mod tests {
         let tx_hash = B256::repeat_byte(0x44);
         let log = alloy_rpc_types_eth::Log {
             inner: PrimitiveLog {
-                address: ActivationRegistryStorage::ADDRESS,
+                address: ACTIVATION_REGISTRY_ADDRESS,
                 data: IActivationRegistry::AdminChanged {
                     previousAdmin: previous_admin,
                     newAdmin: new_admin,

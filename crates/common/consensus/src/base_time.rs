@@ -3,13 +3,77 @@
 use alloc::vec::Vec;
 
 use alloy_consensus::Transaction;
-use alloy_primitives::{Bytes, Sealable, Sealed, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256, address, b256, hex, uint};
 use base_common_genesis::{DenimTimestampSchedule, RollupConfig};
 
 use crate::{
     BaseTimeDepositSource, BaseTransaction, DepositSourceDomain, Predeploys,
     REGOLITH_SYSTEM_TX_GAS, SystemAddresses, TxDeposit,
 };
+
+/// `BaseTime` predeploy artifacts, storage layout, selectors, and decoder.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BaseTimePredeploy;
+
+impl BaseTimePredeploy {
+    /// The code-namespace address used by the canonical `BaseTime` proxy.
+    pub const IMPLEMENTATION_ADDRESS: Address =
+        address!("0xc0D3C0d3C0d3C0D3c0d3C0d3c0D3C0d3c0d30030");
+
+    /// The expected hash of the canonical `BaseTime` runtime bytecode.
+    pub const IMPLEMENTATION_CODE_HASH: B256 =
+        b256!("0x9c4c8a497a69d0b8f2ba67be0bee7a1373186055978c3be6ec3068e0ec27f32a");
+
+    /// The expected hash of the canonical predeploy proxy runtime bytecode.
+    pub const PROXY_CODE_HASH: B256 =
+        b256!("0xfa8c9db6c6cab7108dea276f4cd09d575674eb0852c0fa3187e59e98ef977998");
+
+    /// The EIP-1967 proxy implementation slot.
+    pub const IMPLEMENTATION_SLOT: U256 =
+        uint!(0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc_U256);
+
+    /// The EIP-1967 proxy admin slot.
+    pub const ADMIN_SLOT: U256 =
+        uint!(0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103_U256);
+
+    /// The selector of `setTimestampMillisPart(uint16)`.
+    pub const SET_TIMESTAMP_MILLIS_PART_SELECTOR: [u8; 4] = hex!("86bdf394");
+
+    /// The selector of `timestampMillisPart()`.
+    pub const TIMESTAMP_MILLIS_PART_SELECTOR: [u8; 4] = hex!("7b2fea99");
+
+    /// The selector of `timestampMs()`.
+    pub const TIMESTAMP_MS_SELECTOR: [u8; 4] = hex!("5745a677");
+
+    /// The slot that stores the `timestamp_millis_part` value.
+    pub const TIMESTAMP_MILLIS_PART_SLOT: U256 = uint!(0_U256);
+
+    /// Byte offset within the 32-byte storage slot of the packed `uint16` value.
+    pub const TIMESTAMP_MILLIS_PART_OFFSET: usize = 30;
+
+    /// Returns the canonical `BaseTime` runtime bytecode from `base/contracts` commit `4848ec70`.
+    pub fn implementation_bytecode() -> Bytes {
+        hex::decode(include_str!("bytecode/base-time.hex").trim())
+            .expect("BaseTime runtime artifact must be valid hex")
+            .into()
+    }
+
+    /// Returns the canonical predeploy proxy runtime from `base/contracts` commit `4848ec70`.
+    pub fn proxy_bytecode() -> Bytes {
+        hex::decode(include_str!("bytecode/proxy.hex").trim())
+            .expect("proxy runtime artifact must be valid hex")
+            .into()
+    }
+
+    /// Decodes the packed low `uint16` millisecond component from a storage word.
+    pub const fn decode_timestamp_millis_part(value: U256) -> u16 {
+        let slot = value.to_be_bytes::<32>();
+        u16::from_be_bytes([
+            slot[Self::TIMESTAMP_MILLIS_PART_OFFSET],
+            slot[Self::TIMESTAMP_MILLIS_PART_OFFSET + 1],
+        ])
+    }
+}
 
 /// Versioned calldata for the `BaseTime` metadata deposit.
 ///
