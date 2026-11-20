@@ -6837,6 +6837,7 @@ dependencies = [
  "base-tx-manager",
  "base-upgrade-signal",
  "base64 0.22.1",
+ "bs58",
  "chrono",
  "clap",
  "crossterm",

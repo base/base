@@ -42,6 +42,7 @@ tokio = { workspace = true, features = ["fs", "macros", "net", "process", "time"
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 enr = { workspace = true, features = ["k256"] }
+bs58 = { workspace = true }
 base-consensus-peer-types = { workspace = true }
 k256 = { workspace = true, features = ["ecdsa"] }
 alloy-sol-types = { workspace = true, features = ["std"] }

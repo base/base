@@ -109,33 +109,7 @@ fn secp256k1_compressed_to_libp2p_peer_id(compressed: &[u8]) -> Option<String> {
     multihash[4] = 0x12; // field 2 (Data), length-delimited
     multihash[5] = 0x21; // length: 33 bytes
     multihash[6..].copy_from_slice(compressed);
-    Some(base58_encode(&multihash))
-}
-
-fn base58_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    let leading_zeros = input.iter().take_while(|&&b| b == 0).count();
-    let mut digits = Vec::with_capacity(input.len() * 2);
-    for &byte in input {
-        let mut carry = u32::from(byte);
-        for digit in &mut digits {
-            carry += (*digit as u32) << 8;
-            *digit = (carry % 58) as u8;
-            carry /= 58;
-        }
-        while carry > 0 {
-            digits.push((carry % 58) as u8);
-            carry /= 58;
-        }
-    }
-    let mut out = String::with_capacity(leading_zeros + digits.len());
-    for _ in 0..leading_zeros {
-        out.push('1');
-    }
-    for &digit in digits.iter().rev() {
-        out.push(ALPHABET[digit as usize] as char);
-    }
-    out
+    Some(bs58::encode(multihash).into_string())
 }
 
 #[cfg(test)]
@@ -145,9 +119,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_invalid_enr_signature() {
-        let raw = "enr:-J24QNz9lbrKbN4iSmmjtnr7SjUMk4zB7f1krHZcTZx-JRKZd0kA2gjufUROD6T3sOWDVDnFLSumBFRHQnD2eLUNoVWGAYug2-lKgmlkgnY0gmlwhA_f17SJc2VjcDI1NmsxoQMc-V0s-6xR0n5k6l1x8l7F2v2P7m4o9x8t6q4w2e1r0oN0Y3CCIyiDdWRwgiMo";
-        assert!(BootNode::parse_bootnode(raw).is_err());
+    fn rejects_tampered_enr_signature_and_content() {
+        let raw = base_common_chains::ChainConfig::mainnet().bootnodes.consensus[0];
+        assert!(BootNode::parse_bootnode(raw).is_ok());
+        let mut chars: Vec<char> = raw.chars().collect();
+        // Flip a character in the signature region (near the start of the base64url payload).
+        let sig_idx = 10;
+        chars[sig_idx] = if chars[sig_idx] == 'A' { 'B' } else { 'A' };
+        let tampered_sig: String = chars.iter().collect();
+        assert!(BootNode::parse_bootnode(&tampered_sig).is_err());
+        // Flip a character in the content region (near the end of the payload).
+        let mut content_chars: Vec<char> = raw.chars().collect();
+        let content_idx = content_chars.len() - 4;
+        content_chars[content_idx] = if content_chars[content_idx] == 'A' { 'B' } else { 'A' };
+        let tampered_content: String = content_chars.iter().collect();
+        assert!(BootNode::parse_bootnode(&tampered_content).is_err());
     }
 
     #[test]
@@ -165,8 +151,10 @@ mod tests {
         };
         assert!(enr.ip4().is_some() || enr.ip6().is_some());
         let multiaddr = bootnode.to_multiaddr_string().expect("expected multiaddr");
-        assert!(multiaddr.contains("/tcp/"));
-        assert!(multiaddr.contains("/p2p/16Uiu2HA"));
+        assert_eq!(
+            multiaddr,
+            "/ip4/3.231.138.188/tcp/9222/p2p/16Uiu2HAm4wN4epAyuj82ix2QC1Uc2vQd833szwvsNpLqhubPz8xa"
+        );
     }
 
     #[test]
@@ -185,6 +173,9 @@ mod tests {
         let bootnode = BootNode::parse_bootnode(raw).unwrap();
         assert!(matches!(bootnode, BootNode::Enode(_)));
         let multiaddr = bootnode.to_multiaddr_string().unwrap();
-        assert!(multiaddr.starts_with("/ip4/34.65.205.244/udp/30305/tcp/30305/p2p/16Uiu2HA"));
+        assert_eq!(
+            multiaddr,
+            "/ip4/34.65.205.244/udp/30305/tcp/30305/p2p/16Uiu2HAkxNk2oMFzx5M1s95V4P7mtoRHcmGoVy1Ak8z16xnANyQF"
+        );
     }
 }

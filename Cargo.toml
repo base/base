@@ -509,6 +509,7 @@ tower-http = { version = "0.6", features = ["limit", "timeout"] }
 ipnet = "2.11"
 discv5 = { git = "https://github.com/sigp/discv5", rev = "7663c00" }
 enr = { version = "0.13", default-features = false }
+bs58 = "0.5.1"
 libp2p = "0.56.0"
 multihash = "0.19"
 libp2p-identity = "0.2.12"
