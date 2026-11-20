@@ -2,6 +2,11 @@
 
 use std::time::Duration;
 
+#[cfg(feature = "metrics")]
+use base_execution_evm::AssemblyTimings;
+#[cfg(feature = "metrics")]
+use reth_evm::execute::BlockFinalizationTimings;
+
 use crate::{
     FLOW_STANDARD, FLOW_VALIDITY, InclusionTracker, ParkedPredicateIndex, PredicateLoadTracker,
     RestingCarryOver,
@@ -118,6 +123,9 @@ base_metrics::define_metrics! {
         "Time from the end of transaction execution until the native payload is sealed, including the state root, in seconds"
     )]
     native_payload_state_root_duration: histogram,
+    #[describe("Wall-clock seconds per finalization operation in a composed native payload. Worker phases overlap execution and root wait.")]
+    #[label(stage)]
+    native_payload_finalization_stage_seconds: histogram,
     #[describe(
         "Frozen-payload hints published for the consensus layer, by whether a receiver was subscribed"
     )]
@@ -318,6 +326,33 @@ impl BuilderMetrics {
         Self::native_payload_execution_duration().record(execution.as_secs_f64());
         Self::native_payload_state_root_duration()
             .record(total.saturating_sub(execution).as_secs_f64());
+    }
+
+    /// Records only phases that actually ran. Failed workers can incur both a wait and a synchronous root.
+    #[cfg(feature = "metrics")]
+    pub fn record_finalization(
+        timings: BlockFinalizationTimings,
+        assembly: AssemblyTimings,
+        root_wait: Option<Duration>,
+        worker: Option<(Duration, Duration)>,
+    ) {
+        for (stage, elapsed) in [
+            ("merge_transitions", Some(timings.merge_transitions)),
+            ("hash_post_state", Some(timings.hash_post_state)),
+            ("synchronous_root", timings.synchronous_root),
+            ("root_wait", root_wait),
+            ("root_worker_active", worker.map(|(elapsed, idle)| elapsed.saturating_sub(idle))),
+            ("root_worker_idle", worker.map(|(_, idle)| idle)),
+            ("transactions_root", assembly.transactions_root),
+            ("receipts_root", assembly.receipts_root),
+            ("logs_bloom", assembly.logs_bloom),
+            ("message_root", assembly.message_root),
+        ] {
+            if let Some(elapsed) = elapsed {
+                Self::native_payload_finalization_stage_seconds(stage)
+                    .record(elapsed.as_secs_f64());
+            }
+        }
     }
 
     /// Records one frozen-payload hint published for the consensus layer. `delivered` is false

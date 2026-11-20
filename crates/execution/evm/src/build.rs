@@ -17,6 +17,20 @@ use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{Receipt, SignedTransaction};
 use revm::context::Block as _;
 
+// Keep the no_std, metrics-disabled assembly path free of clock reads and TLS.
+macro_rules! commitment {
+    ($field:ident, $expr:expr) => {{
+        #[cfg(feature = "metrics")]
+        {
+            crate::AssemblyTimings::measure(|timings| &mut timings.$field, || $expr)
+        }
+        #[cfg(not(feature = "metrics"))]
+        {
+            $expr
+        }
+    }};
+}
+
 /// Block builder for Base.
 #[derive(Debug)]
 pub struct BaseBlockAssembler<ChainSpec> {
@@ -57,9 +71,14 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
 
         let timestamp = evm_env.block_env.timestamp().saturating_to();
 
-        let transactions_root = proofs::calculate_transaction_root(&transactions);
-        let receipts_root = calculate_receipt_root_no_memo(receipts, &self.chain_spec, timestamp);
-        let logs_bloom = logs_bloom(receipts.iter().flat_map(|r| r.logs()));
+        let transactions_root =
+            commitment!(transactions_root, proofs::calculate_transaction_root(&transactions));
+        let receipts_root = commitment!(
+            receipts_root,
+            calculate_receipt_root_no_memo(receipts, &self.chain_spec, timestamp)
+        );
+        let logs_bloom =
+            commitment!(logs_bloom, logs_bloom(receipts.iter().flat_map(|r| r.logs())));
 
         let [empty_requests_hash, message_root] = BaseFeature::activation_states(
             [BaseFeature::EmptyRequestsHash, BaseFeature::L2ToL1MessageRoot],
@@ -71,7 +90,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             // withdrawals root field in block header is used for storage root of L2 predeploy
             // `l2tol1-message-passer`
             Some(
-                isthmus::withdrawals_root(bundle_state, state_provider)
+                commitment!(message_root, isthmus::withdrawals_root(bundle_state, state_provider))
                     .map_err(BlockExecutionError::other)?,
             )
         } else if self

@@ -10,6 +10,11 @@
 
 extern crate alloc;
 
+#[cfg(feature = "metrics")]
+mod assembly_timings;
+#[cfg(feature = "metrics")]
+pub use assembly_timings::AssemblyTimings;
+
 mod build;
 pub use build::BaseBlockAssembler;
 

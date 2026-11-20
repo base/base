@@ -2,7 +2,6 @@ use alloc::sync::Arc;
 use core::{fmt::Debug, marker::PhantomData};
 
 use alloy_consensus::{BlockHeader, Header};
-#[cfg(feature = "std")]
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;

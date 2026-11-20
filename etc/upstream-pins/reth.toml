@@ -7,8 +7,8 @@
 # To return to an official Reth tag, edit this file and run `just pin-reth`.
 
 repository = "https://github.com/base/reth"
-reference = "2b20e42de9c42b51ea0fb56599fda3c2f22640ef"
-rev = "2b20e42de9c42b51ea0fb56599fda3c2f22640ef"
+reference = "237fd6255f503e89eb7c545443149bcb3b2c96a3"
+rev = "237fd6255f503e89eb7c545443149bcb3b2c96a3"
 
 [upstream_base]
 tag = "v2.8.1"
@@ -21,3 +21,7 @@ head = "8572c88fe04fb2213d86f020ed9e72e612abb097"
 [[patches]]
 pr = "https://github.com/paradigmxyz/reth/pull/28148"
 head = "3c8b4e84357882802722f6adfdfde8f6167399d5"
+
+[[patches]]
+pr = "https://github.com/base/reth/pull/45"
+head = "237fd6255f503e89eb7c545443149bcb3b2c96a3"
