@@ -3209,7 +3209,6 @@ name = "base-builder-core"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.5.0",
- "alloy-contract",
  "alloy-eips 2.5.0",
  "alloy-evm",
  "alloy-json-rpc 2.5.0",
@@ -3289,7 +3288,6 @@ dependencies = [
  "reth-node-api",
  "reth-node-builder",
  "reth-node-core",
- "reth-node-ethereum",
  "reth-payload-builder",
  "reth-payload-builder-primitives",
  "reth-payload-primitives",
