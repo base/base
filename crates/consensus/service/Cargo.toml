@@ -52,7 +52,7 @@ base-common-rpc-types-engine = { workspace = true, features = ["std"] }
 # general
 url.workspace = true
 http.workspace = true
-revm.workspace = true
+revm-primitives.workspace = true
 redb.workspace = true
 serde.workspace = true
 tower = { workspace = true, features = ["limit", "load-shed"] }
@@ -85,6 +85,7 @@ metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand.workspace = true
+revm.workspace = true
 rstest.workspace = true
 anyhow.workspace = true
 mockall.workspace = true

@@ -297,6 +297,7 @@ base-runtime = { path = "crates/utilities/runtime", default-features = false }
 revm = { version = "43.0.3", default-features = false }
 revm-bytecode = { version = "43.0.0", default-features = false }
 revm-precompile = { version = "43.0.3", default-features = false }
+revm-primitives = { version = "43.0.0", default-features = false }
 
 # evm2
 evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "9b037449c846515624ff6afde739f2b764851446", default-features = false }
