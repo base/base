@@ -385,8 +385,6 @@ mod tests {
     use async_trait::async_trait;
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-    use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
-    use base_consensus_safedb::SafeHeadResponse;
     use base_protocol::SyncStatus;
     use base_upgrade_signal::UpgradeSignalApplySummary;
     use ipnet::IpNet;
