@@ -81,6 +81,8 @@ pub struct ChainConfig {
     pub genesis_scalar: U256,
     /// Genesis gas limit.
     pub genesis_gas_limit: u64,
+    /// Selects which embedded execution-layer genesis JSON matches this chain.
+    pub genesis_kind: GenesisKind,
 
     // Base fee params
     /// EIP-1559 elasticity multiplier.
@@ -111,6 +113,19 @@ pub struct ChainConfig {
     // Networking
     /// Bootnodes for peer discovery, split by stack layer.
     pub bootnodes: Bootnodes,
+}
+
+/// Selects which embedded execution-layer genesis JSON document corresponds to a [`ChainConfig`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GenesisKind {
+    /// Base Mainnet (`8453`).
+    Mainnet,
+    /// Base Sepolia (`84532`).
+    Sepolia,
+    /// Local Base devnet (`84538453`).
+    Devnet,
+    /// Base Zeronet (`763360`).
+    Zeronet,
 }
 
 /// Raw bootnode strings split by the stack layer that should consume them.
@@ -482,6 +497,7 @@ const MAINNET: ChainConfig = ChainConfig {
     genesis_overhead: uint!(0xbc_U256),
     genesis_scalar: uint!(0xa6fe0_U256),
     genesis_gas_limit: 30_000_000,
+    genesis_kind: GenesisKind::Mainnet,
 
     eip1559_elasticity: 6,
     eip1559_denominator: 50,
@@ -554,6 +570,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     genesis_overhead: uint!(0x834_U256),
     genesis_scalar: uint!(0xf4240_U256),
     genesis_gas_limit: 25_000_000,
+    genesis_kind: GenesisKind::Sepolia,
 
     eip1559_elasticity: 10,
     eip1559_denominator: 50,
@@ -617,6 +634,7 @@ const DEVNET: ChainConfig = ChainConfig {
     genesis_overhead: U256::ZERO,
     genesis_scalar: U256::ZERO,
     genesis_gas_limit: 30_000_000,
+    genesis_kind: GenesisKind::Devnet,
 
     eip1559_elasticity: 6,
     eip1559_denominator: 50,
@@ -669,6 +687,7 @@ const ZERONET: ChainConfig = ChainConfig {
     genesis_overhead: U256::ZERO,
     genesis_scalar: uint!(0x010000000000000000000000000000000000000000000000000c3c9d00000558_U256),
     genesis_gas_limit: 25_000_000,
+    genesis_kind: GenesisKind::Zeronet,
 
     eip1559_elasticity: 6,
     eip1559_denominator: 50,

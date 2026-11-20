@@ -3635,6 +3635,9 @@ dependencies = [
 [[package]]
 name = "base-common-genesis-json"
 version = "0.0.0"
+dependencies = [
+ "base-common-chains",
+]
 
 [[package]]
 name = "base-common-l1-fees"

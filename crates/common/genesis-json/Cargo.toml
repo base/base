@@ -11,3 +11,6 @@ exclude.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+base-common-chains = { workspace = true }
