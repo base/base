@@ -5,10 +5,10 @@
 //! success, gas used, the created contract address, and the post-state (balance, nonce,
 //! code hash, and storage) of every account the fixture cares about.
 //!
-//! Every fixture is swept across [`FORKS`] (Regolith/Ecotone/Isthmus → MERGE/CANCUN/PRAGUE) on
-//! both engines, exercising the Base fork schedule: evm2 selects the spec via
-//! [`BaseSpecId`] and revm via its own `BaseSpecId`, both from the same [`BaseUpgrade`]. Both
-//! take the same `base_common_consensus::TxDeposit` fields (shared thanks to the type dedup).
+//! Every fixture is swept across [`FORKS`] (Regolith/Ecotone/Isthmus/Azul →
+//! MERGE/CANCUN/PRAGUE/OSAKA) on both engines, exercising the Base fork schedule: evm2 selects the
+//! spec via [`BaseSpecId`] and revm via its own `BaseSpecId`, both from the same [`BaseUpgrade`].
+//! Both take the same `base_common_consensus::TxDeposit` fields (shared thanks to the type dedup).
 
 use std::collections::BTreeMap;
 
@@ -38,8 +38,9 @@ const SENDER: Address = Address::repeat_byte(0x11);
 const SOURCE_HASH: B256 = B256::repeat_byte(0xab);
 
 /// Base upgrades the parity fixtures are swept across, exercising the fork schedule end to end
-/// (MERGE, CANCUN, and PRAGUE gas schedules respectively).
-const FORKS: [BaseUpgrade; 3] = [BaseUpgrade::Regolith, BaseUpgrade::Ecotone, BaseUpgrade::Isthmus];
+/// (MERGE, CANCUN, PRAGUE, and OSAKA gas schedules respectively).
+const FORKS: [BaseUpgrade; 4] =
+    [BaseUpgrade::Regolith, BaseUpgrade::Ecotone, BaseUpgrade::Isthmus, BaseUpgrade::Azul];
 
 /// An account to seed into both engines before execution.
 #[derive(Clone)]
@@ -405,5 +406,61 @@ fn parity_warm_account_access() {
         input: vec![],
         is_system: false,
         compare: vec![(SENDER, vec![])],
+    });
+}
+
+/// Calldata of 1,000 non-zero bytes: 37,000 intrinsic gas but a 61,000 EIP-7623 calldata floor
+/// from Isthmus (Prague) onwards.
+fn calldata_heavy_input() -> Vec<u8> {
+    vec![0x01; 1_000]
+}
+
+#[test]
+fn parity_calldata_heavy_deposit_pays_the_calldata_floor() {
+    assert_parity(Fixture {
+        seed: vec![],
+        to: TxKind::Call(Address::repeat_byte(0x22)),
+        mint: 1_000,
+        value: U256::ZERO,
+        gas_limit: 100_000,
+        input: calldata_heavy_input(),
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (Address::repeat_byte(0x22), vec![])],
+    });
+}
+
+#[test]
+fn parity_deposit_below_the_calldata_floor_fails() {
+    assert_parity(Fixture {
+        seed: vec![],
+        to: TxKind::Call(Address::repeat_byte(0x22)),
+        mint: 1_000,
+        value: U256::ZERO,
+        gas_limit: 50_000,
+        input: calldata_heavy_input(),
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (Address::repeat_byte(0x22), vec![])],
+    });
+}
+
+#[test]
+fn parity_deposit_above_eip7825_cap_caps_execution_gas() {
+    // From Azul (Osaka) a deposit's regular execution gas is capped at 2^24 even when its gas
+    // limit is higher. `GAS PUSH1 0 SSTORE` records the gas the top-level frame sees in slot 0.
+    let target = Address::repeat_byte(0x22);
+    assert_parity(Fixture {
+        seed: vec![Seed {
+            address: target,
+            balance: U256::ZERO,
+            nonce: 1,
+            code: vec![0x5a, 0x60, 0x00, 0x55],
+        }],
+        to: TxKind::Call(target),
+        mint: 0,
+        value: U256::ZERO,
+        gas_limit: 20_000_000,
+        input: vec![],
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (target, vec![U256::ZERO])],
     });
 }
