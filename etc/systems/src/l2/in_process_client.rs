@@ -73,9 +73,6 @@ pub struct InProcessClientConfig {
     pub persistence_threshold: Option<u64>,
     /// Optional number of unpersisted blocks allowed before Engine API intake is stalled.
     pub persistence_backpressure_threshold: Option<u64>,
-    /// Check the state root task's trie updates against a serial computation on every block,
-    /// logging any difference.
-    pub state_root_task_compare_updates: bool,
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
@@ -194,7 +191,7 @@ impl InProcessClient {
             } else {
                 RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws()
             };
-        rpc_args.auth_ipc_path = unique_ipc_path;
+        rpc_args.auth_ipc_path = Some(unique_ipc_path);
         rpc_args.auth_jwtsecret = Some(jwt_path);
         rpc_args.rpc_eth_proof_window = 1_209_600;
         if let Some(port) = config.http_port {
@@ -245,7 +242,6 @@ impl InProcessClient {
             node_config.engine.persistence_backpressure_threshold =
                 Some(persistence_backpressure_threshold);
         }
-        node_config.engine.state_root_task_compare_updates = config.state_root_task_compare_updates;
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(data_dir.clone());
         node_config = node_config

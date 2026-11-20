@@ -27,7 +27,7 @@ use base_execution_base_tx::{
 use base_precompile_storage::{Evm2JournalStorageProvider, StorageCtx};
 use evm2::{
     AccountInfo, AnyError, Evm, EvmFeatures, HostError, TxResult,
-    env::{TxEnv, TxEnvExt},
+    env::TxEnvExt,
     evm::StateCheckpoint,
     interpreter::{Host, InstrStop, MessageExt, MessageKind},
     registry::{HandlerError, HandlerResult, TxRequest},
@@ -144,13 +144,13 @@ impl TxBaseHandler {
         let host = req.host;
         let outcome = prepared.outcome;
         Self::warm_pre_call_accounts(host, &outcome)?;
-        let tx_env = TxEnvExt {
+        *host.tx_env_mut() = TxEnvExt {
             origin: outcome.sender,
             gas_price: U256::from(outcome.effective),
             chain_id: U256::from(host.version().chain_id),
             ..TxEnvExt::default()
         };
-        let mut calls_host = Evm2CallHost { host: &mut *host, tx_env: &tx_env };
+        let mut calls_host = Evm2CallHost { host: &mut *host };
         match prepared.settlement {
             TxBaseSettlement::Verified { prepay, l1_fee } => {
                 let calls = TxBaseCalls::execute(
@@ -349,7 +349,6 @@ impl TxBaseHandler {
 /// The EVM2 state and frames as the [`TxBaseCallHost`] of [`TxBaseCalls::execute`].
 struct Evm2CallHost<'h, 'a> {
     host: &'h mut Evm<'a, BaseEvmTypes>,
-    tx_env: &'h TxEnv<BaseEvmTypes>,
 }
 
 impl Evm2CallHost<'_, '_> {
@@ -480,7 +479,7 @@ impl TxBaseCallHost for Evm2CallHost<'_, '_> {
         };
         let mut message = MessageExt {
             kind: MessageKind::Call,
-            depth: self.host.version().initial_call_depth,
+            depth: self.host.initial_call_depth(),
             gas_limit,
             destination: call.to,
             call_target: call.to,
@@ -493,7 +492,7 @@ impl TxBaseCallHost for Evm2CallHost<'_, '_> {
         };
         // The executed frame's gas is settled: a halt has consumed all of it, and a failed frame's
         // refund is dropped.
-        let result = Host::execute_message(self.host, self.tx_env, &mut message)?;
+        let result = Host::execute_message(self.host, &mut message)?;
         Ok(TxBaseCallFrame {
             success: result.stop.is_success(),
             gas_spent: gas_limit.saturating_sub(result.gas.remaining()),

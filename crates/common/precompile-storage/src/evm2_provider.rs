@@ -104,11 +104,7 @@ impl<T: EvmTypes> Evm2PrecompileStorageProvider<'_, '_, T> {
     /// evm2 reports a zero code hash for accounts absent from state, where revm reports the empty
     /// code hash.
     fn code_hash(account: &AccountLoad) -> B256 {
-        if !account.exists || account.code_hash.is_zero() {
-            KECCAK256_EMPTY
-        } else {
-            account.code_hash
-        }
+        if account.code_hash.is_zero() { KECCAK256_EMPTY } else { account.code_hash }
     }
 
     /// EIP-2929 account access: the warm read cost, plus the cold surcharge for a cold account.

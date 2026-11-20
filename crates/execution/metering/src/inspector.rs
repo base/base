@@ -149,7 +149,7 @@ impl Inspector<BaseEvmTypes> for MeteringInspector {
         result: &mut MessageResult<BaseEvmTypes>,
     ) {
         // The top-level call has no parent opcode to exclude its gas from.
-        if message.depth != interp.version().initial_call_depth {
+        if message.depth != interp.host().initial_call_depth() {
             let opcode = match message.kind {
                 MessageKind::Call => op::CALL,
                 MessageKind::CallCode => op::CALLCODE,
@@ -178,7 +178,7 @@ impl Inspector<BaseEvmTypes> for MeteringInspector {
         message: &Message<BaseEvmTypes>,
         result: &mut MessageResult<BaseEvmTypes>,
     ) {
-        if message.depth == interp.version().initial_call_depth {
+        if message.depth == interp.host().initial_call_depth() {
             return;
         }
 

@@ -38,11 +38,11 @@ macro_rules! capped_precompile {
     ($(#[$attr:meta])* $name:ident, $max:expr, $halt:ident, $inner:path) => {
         $(#[$attr])*
         pub fn $name(
-            _evm: &mut Evm<'_, BaseEvmTypes>,
+            evm: &mut Evm<'_, BaseEvmTypes>,
             message: &Message<BaseEvmTypes>,
             gas: &mut GasTracker,
         ) -> PrecompileResult {
-            let input = message.input.as_ref();
+            let input = evm.message_input(message);
             if input.len() > $max {
                 return Err(PrecompileHalt::$halt.into());
             }
@@ -249,7 +249,10 @@ mod tests {
 
     /// Builds a message carrying `input` bytes, for driving a precompile.
     fn message(input: Vec<u8>) -> Message<BaseEvmTypes> {
-        Message::<BaseEvmTypes> { input: input.into(), ..Default::default() }
+        Message::<BaseEvmTypes> {
+            input: alloy_primitives::Bytes::from(input).into(),
+            ..Default::default()
+        }
     }
 
     #[test]

@@ -70,11 +70,11 @@ backon.workspace = true
 futures.workspace = true
 tracing.workspace = true
 humantime.workspace = true
-secp256k1.workspace = true
 serde_json.workspace = true
 alloy-eips.workspace = true
 tokio-stream.workspace = true
 alloy-consensus.workspace = true
+secp256k1-reth.workspace = true
 jsonrpsee = { workspace = true, features = ["server"] }
 clap = { workspace = true, features = ["derive", "env"] }
 reqwest = { workspace = true, features = ["json", "stream"] }
@@ -137,6 +137,6 @@ serde = [
 	"reth-ethereum-forks/serde",
 	"reth-network/serde",
 	"reth-stages-types/serde",
-	"secp256k1/serde",
+	"secp256k1-reth/serde",
 	"url/serde",
 ]

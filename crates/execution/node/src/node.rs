@@ -35,7 +35,6 @@ use base_execution_txpool::{
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
-use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_evm::{BlockExecutorFactory, ConfigureEvm};
 use reth_network::{
     NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, NetworkPrimitives,
@@ -1251,8 +1250,8 @@ impl BaseDiscoveryConfig {
     /// Encodes the NAT-discovered external IP as an ENR key-value pair.
     pub fn enr_ip_kv_pair(external_addr: Option<IpAddr>) -> Option<(&'static [u8], Bytes)> {
         match external_addr {
-            Some(IpAddr::V4(addr)) => Some((IP_ENR_KEY, Bytes::from(encode(addr.octets())))),
-            Some(IpAddr::V6(addr)) => Some((IP6_ENR_KEY, Bytes::from(encode(addr.octets())))),
+            Some(IpAddr::V4(addr)) => Some((b"ip".as_slice(), Bytes::from(encode(addr.octets())))),
+            Some(IpAddr::V6(addr)) => Some((b"ip6".as_slice(), Bytes::from(encode(addr.octets())))),
             None => None,
         }
     }

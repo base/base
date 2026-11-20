@@ -89,6 +89,27 @@ skip = [
     "thiserror",
     "thiserror-impl",
 
+    # Reth 2.11 discovery uses the newer networking/crypto stack. Temporary until
+    # consensus upgrades its discv5 pin and libp2p dependencies.
+    "aead",
+    "aes",
+    "aes-gcm",
+    "cipher",
+    "ctr",
+    "curve25519-dalek",
+    "discv5",
+    "ed25519",
+    "ed25519-dalek",
+    "enr",
+    "fiat-crypto",
+    "ghash",
+    "hkdf",
+    "inout",
+    "libp2p-identity",
+    "multiaddr",
+    "polyval",
+    "universal-hash",
+
     # Crypto/random crates - version differences from different crypto stacks
     "chacha20",
     "rand",

@@ -10,7 +10,7 @@ use reth_eth_wire::{
     HelloMessage, UnauthedP2PStream,
     errors::{P2PHandshakeError, P2PStreamError},
 };
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1_reth::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::TcpStream,
@@ -155,9 +155,8 @@ impl fmt::Debug for RlpxProber {
 impl RlpxProber {
     /// Creates a prober with a fresh ephemeral node identity.
     pub fn ephemeral() -> Self {
-        let secret_key = SecretKey::new(&mut secp256k1::rand::thread_rng());
-        let secp = Secp256k1::signing_only();
-        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+        let secret_key = SecretKey::new(&mut secp256k1_reth::rand::rng());
+        let public_key = PublicKey::from_secret_key(&secret_key);
         let local_node_id = B512::from_slice(&public_key.serialize_uncompressed()[1..]);
 
         Self { secret_key, local_node_id, timeout: RLPX_PROBE_TIMEOUT }
@@ -252,7 +251,7 @@ mod tests {
     use alloy_primitives::B512;
     use reth_ecies::stream::ECIESStream;
     use reth_eth_wire::{DisconnectReason, HelloMessage, UnauthedP2PStream};
-    use secp256k1::{PublicKey, Secp256k1, SecretKey};
+    use secp256k1_reth::{PublicKey, SecretKey};
     use tokio::{net::TcpListener, sync::oneshot, time::Instant};
 
     use super::{
@@ -263,9 +262,8 @@ mod tests {
     const TEST_TIMEOUT: Duration = Duration::from_millis(100);
 
     fn node_identity() -> (SecretKey, B512) {
-        let secret = SecretKey::new(&mut secp256k1::rand::thread_rng());
-        let secp = Secp256k1::signing_only();
-        let public = PublicKey::from_secret_key(&secp, &secret);
+        let secret = SecretKey::new(&mut secp256k1_reth::rand::rng());
+        let public = PublicKey::from_secret_key(&secret);
         let id = B512::from_slice(&public.serialize_uncompressed()[1..]);
         (secret, id)
     }

@@ -360,7 +360,7 @@ mod tests {
         assert_eq!(args.network.port, 30333);
 
         let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
-        assert_eq!(runtime.node_config.rpc.auth_ipc_path, "/tmp/engine.ipc");
+        assert_eq!(runtime.node_config.rpc.auth_ipc_path(), "/tmp/engine.ipc");
         assert!(!runtime.node_config.rpc.auth_ipc);
     }
 
@@ -412,7 +412,7 @@ mod tests {
         let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet())).with_auth_ipc();
 
         assert!(runtime.node_config.rpc.auth_ipc);
-        assert_eq!(runtime.node_config.rpc.auth_ipc_path, "/tmp/engine.ipc");
+        assert_eq!(runtime.node_config.rpc.auth_ipc_path(), "/tmp/engine.ipc");
     }
 
     #[test]
@@ -471,10 +471,10 @@ mod tests {
         let launch = args.into_launch_config(Arc::new(BaseChainSpec::devnet())).with_auth_ipc();
 
         assert!(launch.node_config.rpc.auth_ipc);
-        assert_eq!(launch.node_config.rpc.auth_ipc_path, "/tmp/engine.ipc");
+        assert_eq!(launch.node_config.rpc.auth_ipc_path(), "/tmp/engine.ipc");
 
         let (runtime, _standard) = launch.into_runtime_config();
         assert!(runtime.node_config.rpc.auth_ipc);
-        assert_eq!(runtime.node_config.rpc.auth_ipc_path, "/tmp/engine.ipc");
+        assert_eq!(runtime.node_config.rpc.auth_ipc_path(), "/tmp/engine.ipc");
     }
 }

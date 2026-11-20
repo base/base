@@ -24,7 +24,7 @@ base-trusted-proxy.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-secp256k1 = { workspace = true, features = ["rand"] }
+secp256k1-reth = { workspace = true, features = ["rand"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["derive", "env", "std"] }

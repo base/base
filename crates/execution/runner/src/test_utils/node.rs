@@ -113,7 +113,7 @@ impl LocalNode {
 
         let mut rpc_args =
             RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
-        rpc_args.auth_ipc_path = unique_ipc_path;
+        rpc_args.auth_ipc_path = Some(unique_ipc_path);
         if let Some(rpc_gas_cap) = rpc_gas_cap {
             rpc_args.rpc_gas_cap = rpc_gas_cap;
         }
@@ -163,7 +163,7 @@ impl LocalNode {
             .ws_local_addr()
             .ok_or_else(|| eyre::eyre!("Failed to get websocket api address"))?;
 
-        let engine_ipc_path = node_config.rpc.auth_ipc_path;
+        let engine_ipc_path = node_config.rpc.auth_ipc_path().to_owned();
         let provider = node_handle.provider().clone();
 
         Ok(Self {

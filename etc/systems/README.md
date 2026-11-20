@@ -318,12 +318,6 @@ the first block's timestamp, where 200ms runs activate Denim), starts one execut
 return `VALID`. By default blocks are sent as fast as the node accepts them; `--paced` sends each
 block at its recorded offset from the first block and records how late it was.
 
-The node runs with `--engine.state-root-task-compare-updates`: each block's sparse-trie updates
-are checked against a serial state root computation, and differences are logged even when the
-state root matches. `--no-compare-updates` turns the check off; `compareUpdates` in the result
-records which ran. The serial computation runs inside every `newPayload`, so latency and blocks
-per second with the check on are not comparable with runs that have it off.
-
 `<output-dir>/replay-result.json` holds the manifest, mode, block count, wall time, blocks per
 second, `newPayload` and forkchoice latency (mean, p50, p99, max), paced lag, the node's final
 hash and state root, `match`, and per-block timings. A complete replay also writes

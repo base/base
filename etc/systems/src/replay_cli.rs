@@ -101,10 +101,6 @@ pub struct ReplayBenchmarkArgs {
     /// writes `recorded-replay-result.json`. The export supplies only the chain spec.
     #[arg(long, conflicts_with_all = ["paced", "proofs_dir"])]
     pub engine_store_dir: Option<PathBuf>,
-    /// Skip checking each block's state root task trie updates against a serial computation.
-    /// The check logs differences even when the state root matches; it does not fail the replay.
-    #[arg(long)]
-    pub no_compare_updates: bool,
 }
 
 /// How blocks were scheduled.
@@ -181,9 +177,6 @@ pub struct ReplayBlockTiming {
 pub struct ReplayResult {
     /// The export manifest the replay verified against.
     pub manifest: ReplayManifest,
-    /// Whether trie updates were checked against a serial computation on every block. The check
-    /// runs inside `newPayload`, so it adds to `newPayload` latency.
-    pub compare_updates: bool,
     /// Paced or unpaced scheduling.
     pub mode: ReplayMode,
     /// Blocks inserted and made canonical.
@@ -314,7 +307,6 @@ impl ReplayBenchmarkArgs {
             persistence_backpressure_threshold: Some(
                 block_interval.snapshot_persistence_backpressure_threshold(),
             ),
-            state_root_task_compare_updates: !self.no_compare_updates,
             tx_forwarding_config: None,
             validity_signature_mode: ValiditySignatureMode::Off,
             upgrade_signal: None,
@@ -434,7 +426,6 @@ impl ReplayBenchmarkArgs {
             };
         let result = ReplayResult {
             proofs,
-            compare_updates: !self.no_compare_updates,
             ..Self::summarize(
                 manifest,
                 if self.paced { ReplayMode::Paced } else { ReplayMode::Unpaced },
@@ -655,7 +646,6 @@ impl ReplayBenchmarkArgs {
         let blocks_replayed = run.blocks.len() as u64;
         ReplayResult {
             mode,
-            compare_updates: false,
             blocks_replayed,
             wall_time_ms: Self::millis(run.wall_time),
             blocks_per_second: if wall_seconds > 0.0 {
@@ -870,7 +860,6 @@ mod tests {
         assert!(!args.paced);
         assert_eq!(args.shutdown_timeout_seconds, 0);
         assert!(args.proofs_dir.is_none());
-        assert!(!args.no_compare_updates);
     }
 
     #[test]

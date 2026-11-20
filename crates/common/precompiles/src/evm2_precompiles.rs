@@ -170,7 +170,11 @@ impl<T: EvmTypes, O: PrecompileCallObserver> BaseEvm2Precompiles<T, O> {
     {
         let upgrade = self.upgrade;
         let observer = self.observer.clone();
-        let calldata = message.input.as_ref();
+        let calldata = message.input.as_owned().map_or_else(
+            || Cow::Owned(evm.message_input(message).to_vec()),
+            |bytes| Cow::Borrowed(bytes.as_ref()),
+        );
+        let calldata = calldata.as_ref();
         let mut provider = Evm2PrecompileStorageProvider::new(
             evm,
             message,
