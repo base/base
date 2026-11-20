@@ -313,13 +313,7 @@ mod tests {
         use base_common_chains::BaseUpgradeExt;
         use revm::{context::TxEnv, handler::validation::validate_initial_tx_gas};
 
-        for upgrade in [
-            BaseUpgrade::Bedrock,
-            BaseUpgrade::Canyon,
-            BaseUpgrade::Holocene,
-            BaseUpgrade::Isthmus,
-            BaseUpgrade::Denim,
-        ] {
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
             let spec = upgrade.into_eth_spec();
             for is_create in [false, true] {
                 for input in [&[][..], &[0u8; 64][..], &[1u8; 65][..], &[0, 1, 2, 0, 3][..]] {
