@@ -13,10 +13,7 @@ use ipnet::IpNet;
 use libp2p::{Multiaddr, PeerId, gossipsub::TopicHash};
 use tokio::sync::oneshot::Sender;
 
-use super::{
-    PeerDump, PeerStats,
-    types::{Connectedness, Direction, PeerInfo, PeerScores},
-};
+use super::{Connectedness, Direction, PeerDump, PeerInfo, PeerScores, PeerStats};
 use crate::{ConnectionGate, GossipDriver, GossipScores, Metrics};
 
 /// A p2p RPC Request.

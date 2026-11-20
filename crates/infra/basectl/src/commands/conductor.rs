@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use base_consensus_rpc::ServerSuffrage;
+use base_consensus_rpc_types::ServerSuffrage;
 use clap::{Args, Subcommand};
 use serde::Serialize;
 use tracing::warn;

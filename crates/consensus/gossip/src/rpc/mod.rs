@@ -44,10 +44,8 @@
 //! appropriate authentication and access controls in production deployments.
 
 mod request;
-pub use request::P2pRpcRequest;
-
-mod types;
-pub use types::{
+pub use base_consensus_rpc_types::{
     Connectedness, Direction, GossipScores, PeerCount, PeerDump, PeerInfo, PeerScores, PeerStats,
     ReqRespScores, TopicScores,
 };
+pub use request::P2pRpcRequest;

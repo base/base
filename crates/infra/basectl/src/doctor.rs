@@ -12,16 +12,15 @@ use std::{
 use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
 use anyhow::{Context, Result, anyhow};
 use base_common_chains::ChainConfig;
-use base_consensus_peers::{BootNode, NodeRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
 use crate::{
-    ClInfoReport, ElInfoReport, MonitoringConfig, NodeEndpoint, ReachabilityOutcome,
-    ReachabilityResponse, SyncStatusReport, TelemetryClient, TelemetryClientError, TimestampJson,
-    fetch_cl_info, fetch_el_info, fetch_l1_block_number, fetch_l2_block_number, fetch_l2_chain_id,
-    fetch_sync_status,
+    BootNode, ClInfoReport, ElInfoReport, MonitoringConfig, NodeEndpoint, NodeRecord,
+    ReachabilityOutcome, ReachabilityResponse, SyncStatusReport, TelemetryClient,
+    TelemetryClientError, TimestampJson, fetch_cl_info, fetch_el_info, fetch_l1_block_number,
+    fetch_l2_block_number, fetch_l2_chain_id, fetch_sync_status,
 };
 
 const RETH_LIMIT_HARDCAP: u64 = 1024;

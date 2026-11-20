@@ -18,6 +18,7 @@ development = ["arbtest"]
 [dependencies]
 # consensus
 base-common-chains.workspace = true
+base-consensus-peer-types.workspace = true
 
 # Alloy
 alloy-rlp = { workspace = true, features = ["std"] }
@@ -32,7 +33,6 @@ libp2p = { workspace = true, features = ["macros", "tokio", "tcp", "noise", "gos
 secp256k1.workspace = true
 
 # Misc
-url.workspace = true
 dirs.workspace = true
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }

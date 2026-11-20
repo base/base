@@ -4,7 +4,7 @@
 use std::{str::FromStr, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
-use base_consensus_rpc::ServerSuffrage;
+use base_consensus_rpc_types::ServerSuffrage;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use serde::Deserialize;
@@ -512,7 +512,7 @@ mod tests {
         http::{HeaderMap, StatusCode},
         routing::get,
     };
-    use base_consensus_rpc::ServerSuffrage;
+    use base_consensus_rpc_types::ServerSuffrage;
     use chrono::{TimeZone, Utc};
     use rstest::rstest;
     use serde_json::{Value, json};

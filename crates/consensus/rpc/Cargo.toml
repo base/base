@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 # Workspace
 base-consensus-gossip.workspace = true
+base-consensus-rpc-types = { workspace = true, features = ["rpc-server"] }
 base-consensus-engine.workspace = true
 base-consensus-safedb.workspace = true
 base-upgrade-signal.workspace = true
@@ -33,13 +34,11 @@ ipnet.workspace = true
 backon.workspace = true
 libp2p.workspace = true
 async-trait.workspace = true
-serde = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 
 # RPC
-getrandom = { workspace = true, features = ["wasm_js"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 
 [dev-dependencies]
@@ -52,8 +51,9 @@ tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 default = []
 reqwest = [ "client" ]
 client = [
+	"base-consensus-rpc-types/rpc-client",
 	"jsonrpsee/async-client",
-	"jsonrpsee/client",
+	"jsonrpsee/client-core",
 	"jsonrpsee/http-client",
 ]
 metrics = [

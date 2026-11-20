@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_batcher_core::DerivationStatus;
-use base_consensus_rpc::RollupNodeApiClient;
+use base_consensus_rpc_types::RollupNodeApiClient;
 use jsonrpsee::http_client::HttpClient;
 
 use crate::{DerivationStatusProvider, RpcClientBuilder, Sequencers, ShadowConfig};
