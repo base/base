@@ -6,12 +6,12 @@ use alloy_consensus::{SignableTransaction, error::ValueError};
 use alloy_evm::{
     EvmEnv,
     env::BlockEnvironment,
-    rpc::{EthTxEnvError, TryIntoTxEnv},
+    rpc::{CallFeesError, EthTxEnvError, TryIntoTxEnv},
 };
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, Bytes};
 use alloy_signer::Signature;
-use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
+use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope, DEPOSIT_TX_TYPE_ID};
 use base_common_evm::BaseTransaction as BaseRevm;
 use reth_rpc_convert::{FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx};
 use revm::context::TxEnv;
@@ -60,6 +60,9 @@ pub enum BaseTxEnvError {
     /// represent: converting it would silently drop them.
     #[error("Base transaction requests are supported only by eth_call and eth_estimateGas")]
     TxBaseUnsupported,
+    /// The request is typed as a deposit, which only the sequencer can include.
+    #[error("deposit transactions cannot be called")]
+    DepositUnsupported,
 }
 
 impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
@@ -71,8 +74,30 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
         if self.as_base_tx().is_some() {
             return Err(BaseTxEnvError::TxBaseUnsupported);
         }
+        let request = self.as_ref();
+        if request.transaction_type == Some(DEPOSIT_TX_TYPE_ID) {
+            return Err(BaseTxEnvError::DepositUnsupported);
+        }
+        // A tip without a fee cap leaves the cap at zero, as geth does, instead of pricing the
+        // call at base fee + tip.
+        if request.gas_price.is_none()
+            && request.max_fee_per_gas.is_none()
+            && request.max_priority_fee_per_gas.is_some_and(|tip| tip > 0)
+        {
+            return Err(EthTxEnvError::CallFees(CallFeesError::TipAboveFeeCap).into());
+        }
+        let max_fee_per_gas = request.max_fee_per_gas;
+        let mut base: TxEnv = request.clone().try_into_tx_env(evm_env)?;
+        // Keep the fee cap as the price, as an EIP-1559 transaction carries it: the EVM still
+        // charges base fee + tip, and the gas the sender can afford is bounded by the cap, as in
+        // geth and Nethermind. A missing tip is zero, as in geth: revm prices a call without one
+        // at the full cap.
+        if let Some(max_fee_per_gas) = max_fee_per_gas {
+            base.gas_price = max_fee_per_gas;
+            base.gas_priority_fee.get_or_insert(0);
+        }
         Ok(BaseRevm {
-            base: self.as_ref().clone().try_into_tx_env(evm_env)?,
+            base,
             enveloped_tx: Some(Bytes::new()),
             enveloped_tx_fastlz_size: None,
             deposit: Default::default(),
@@ -88,6 +113,9 @@ impl TryIntoSimTx<BaseTxEnvelope> for BaseTransactionRequest {
                 self,
                 "Base transaction requests are not supported by simulation",
             ));
+        }
+        if self.as_ref().transaction_type == Some(DEPOSIT_TX_TYPE_ID) {
+            return Err(ValueError::new(self, "deposit transactions cannot be simulated"));
         }
         let tx = self
             .build_typed_tx()
@@ -171,6 +199,68 @@ mod tests {
             serde_json::from_value(json!({ "from": FROM, "to": SENDER })).unwrap();
         let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(plain, &env).unwrap();
         assert!(tx.base_tx.is_none());
+    }
+
+    #[test]
+    fn standard_tx_env_rejects_deposit_type() {
+        let env = EvmEnv::<revm::primitives::hardfork::SpecId>::default();
+        let request: BaseTransactionRequest =
+            serde_json::from_value(json!({ "to": SENDER, "type": "0x7e" })).unwrap();
+        assert!(matches!(
+            TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env),
+            Err(BaseTxEnvError::DepositUnsupported)
+        ));
+    }
+
+    /// A tip without a fee cap leaves the cap at zero (geth), so the tip is above it. A zero tip
+    /// or a tip with a cap or gas price still converts.
+    #[test]
+    fn standard_tx_env_rejects_tip_without_fee_cap() {
+        let env = EvmEnv::<revm::primitives::hardfork::SpecId>::default();
+        let convert = |request: serde_json::Value| {
+            let request: BaseTransactionRequest = serde_json::from_value(request).unwrap();
+            TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env)
+        };
+        assert!(matches!(
+            convert(json!({ "to": SENDER, "maxPriorityFeePerGas": "0x1" })),
+            Err(BaseTxEnvError::Eth(EthTxEnvError::CallFees(CallFeesError::TipAboveFeeCap)))
+        ));
+        assert!(convert(json!({ "to": SENDER, "maxPriorityFeePerGas": "0x0" })).is_ok());
+        let priced =
+            convert(json!({ "to": SENDER, "maxPriorityFeePerGas": "0x1", "maxFeePerGas": "0x2" }));
+        assert_eq!(priced.unwrap().base.gas_priority_fee, Some(1));
+    }
+
+    /// The fee cap stays the price, so the gas a sender affords is bounded by it, while the EVM
+    /// still charges base fee + tip.
+    #[test]
+    fn standard_tx_env_keeps_the_fee_cap_as_price() {
+        let mut env = EvmEnv::<revm::primitives::hardfork::SpecId>::default();
+        env.block_env.basefee = 7;
+        let request: BaseTransactionRequest = serde_json::from_value(
+            json!({ "to": SENDER, "maxFeePerGas": "0x100", "maxPriorityFeePerGas": "0x2" }),
+        )
+        .unwrap();
+        let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env).unwrap();
+        assert_eq!(tx.base.gas_price, 0x100);
+        assert_eq!(revm::context_interface::Transaction::effective_gas_price(&tx.base, 7), 9);
+
+        // Without a tip the call pays the base fee, not the cap.
+        let request: BaseTransactionRequest =
+            serde_json::from_value(json!({ "to": SENDER, "maxFeePerGas": "0x100" })).unwrap();
+        let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env).unwrap();
+        assert_eq!(tx.base.gas_price, 0x100);
+        assert_eq!(revm::context_interface::Transaction::effective_gas_price(&tx.base, 7), 7);
+    }
+
+    #[test]
+    fn simulation_rejects_deposit_type() {
+        let request: BaseTransactionRequest = serde_json::from_value(json!({
+            "from": FROM, "to": SENDER, "type": "0x7e", "nonce": "0x0", "gas": "0x5208",
+            "maxFeePerGas": "0x0", "maxPriorityFeePerGas": "0x0", "chainId": "0x2105",
+        }))
+        .unwrap();
+        assert!(request.try_into_sim_tx().is_err());
     }
 
     #[test]

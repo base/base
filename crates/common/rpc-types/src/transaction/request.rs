@@ -211,6 +211,123 @@ impl TxBaseRequestFields {
     }
 }
 
+/// Reads the JSON of a call request's standard fields as Nethermind, the JSON-RPC reference,
+/// does, before [`TransactionRequest`] decodes them.
+///
+/// Quantities must be canonical hex (`0x`, no leading zeros, not empty), as in geth and
+/// Nethermind; `0X` prefixes are refused. Nethermind also accepts odd-length data (read with a
+/// leading zero nibble), access-list entries without `storageKeys` and authorizations without
+/// `r` or `s` (read as zero), and fee fields up to 2^256, which saturate to `u128::MAX` here as
+/// they do in the EVM environment.
+#[derive(Clone, Copy, Debug)]
+pub struct CallRequestJson;
+
+impl CallRequestJson {
+    /// Fee fields, which take any 256-bit value.
+    pub const FEES: [&str; 4] =
+        ["gasPrice", "maxFeePerGas", "maxPriorityFeePerGas", "maxFeePerBlobGas"];
+
+    /// Other quantity fields of a call request.
+    pub const QUANTITIES: [&str; 5] = ["gas", "value", "nonce", "chainId", "type"];
+
+    /// Quantity fields of an EIP-7702 authorization.
+    pub const AUTHORIZATION_QUANTITIES: [&str; 5] = ["chainId", "nonce", "yParity", "r", "s"];
+
+    /// Checks and normalizes `request`, the JSON object of a call request's standard fields.
+    pub fn canonicalize(request: &mut Value) -> Result<(), String> {
+        Self::refuse_upper_prefix(request)?;
+        let Some(fields) = request.as_object_mut() else { return Ok(()) };
+        for key in Self::FEES {
+            if let Some(value) = fields.get_mut(key) {
+                Self::check_quantity(key, value)?;
+                // Above 2^128: the EVM environment saturates the price to `u128::MAX` anyway.
+                if value.as_str().is_some_and(|hex| hex.len() > 2 + 32) {
+                    *value = Value::String(alloc::format!("{:#x}", u128::MAX));
+                }
+            }
+        }
+        for key in Self::QUANTITIES {
+            if let Some(value) = fields.get_mut(key) {
+                Self::check_quantity(key, value)?;
+            }
+        }
+        for key in ["input", "data"] {
+            if let Some(value) = fields.get_mut(key) {
+                Self::pad_data(key, value)?;
+            }
+        }
+        if let Some(Value::Array(entries)) = fields.get_mut("accessList") {
+            for entry in entries.iter_mut().filter_map(Value::as_object_mut) {
+                entry.entry("storageKeys").or_insert_with(|| Value::Array(Vec::new()));
+            }
+        }
+        if let Some(Value::Array(entries)) = fields.get_mut("authorizationList") {
+            for entry in entries.iter_mut().filter_map(Value::as_object_mut) {
+                for key in ["r", "s"] {
+                    entry.entry(key).or_insert_with(|| Value::String(String::from("0x0")));
+                }
+                for key in Self::AUTHORIZATION_QUANTITIES {
+                    if let Some(value) = entry.get_mut(key) {
+                        Self::check_quantity(key, value)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuses any `0X`-prefixed string inside `value`.
+    pub fn refuse_upper_prefix(value: &Value) -> Result<(), String> {
+        match value {
+            Value::String(text) if text.starts_with("0X") => {
+                Err(alloc::format!("hex string with 0X prefix: {text}"))
+            }
+            Value::Array(items) => items.iter().try_for_each(Self::refuse_upper_prefix),
+            Value::Object(fields) => fields.values().try_for_each(Self::refuse_upper_prefix),
+            _ => Ok(()),
+        }
+    }
+
+    /// Checks that `value`, the `key` field, is null or a canonical hex quantity of at most 256
+    /// bits.
+    pub fn check_quantity(key: &str, value: &Value) -> Result<(), String> {
+        let digits = match value {
+            Value::Null => return Ok(()),
+            Value::String(text) => text.strip_prefix("0x"),
+            _ => None,
+        };
+        let canonical = digits.is_some_and(|digits| {
+            !digits.is_empty()
+                && digits.len() <= 64
+                && digits.bytes().all(|b| b.is_ascii_hexdigit())
+                && (digits == "0" || !digits.starts_with('0'))
+        });
+        if canonical {
+            Ok(())
+        } else {
+            Err(alloc::format!("invalid hex quantity for `{key}`: {value}"))
+        }
+    }
+
+    /// Checks that `value`, the `key` field, is null or `0x`-prefixed hex data, and pads
+    /// odd-length data with a leading zero nibble.
+    pub fn pad_data(key: &str, value: &mut Value) -> Result<(), String> {
+        let digits = match &*value {
+            Value::Null => return Ok(()),
+            Value::String(text) => text.strip_prefix("0x"),
+            _ => None,
+        };
+        let Some(digits) = digits.filter(|digits| digits.bytes().all(|b| b.is_ascii_hexdigit()))
+        else {
+            return Err(alloc::format!("invalid hex data for `{key}`: {value}"));
+        };
+        if digits.len() % 2 == 1 {
+            *value = Value::String(alloc::format!("0x0{digits}"));
+        }
+        Ok(())
+    }
+}
+
 /// Builder for [`BaseTypedTransaction`], with optional Base transaction simulation
 /// fields ([`TxBaseRequestFields`]) layered onto a standard
 /// [`TransactionRequest`]. A request with no Base transaction fields serializes and behaves
@@ -310,8 +427,9 @@ impl<'de> Deserialize<'de> for BaseTransactionRequest {
         .into_iter()
         .filter_map(|(key, value)| value.map(|value| (String::from(key), value)))
         .collect();
-        let inner =
-            TransactionRequest::deserialize(Value::Object(inner)).map_err(de::Error::custom)?;
+        let mut inner = Value::Object(inner);
+        CallRequestJson::canonicalize(&mut inner).map_err(de::Error::custom)?;
+        let inner = TransactionRequest::deserialize(inner).map_err(de::Error::custom)?;
         let base_tx = TxBaseRequestFields {
             nonce_key: wire.nonce_key,
             account_changes: wire.account_changes,
@@ -808,6 +926,85 @@ mod tests {
         assert!(error.contains("`calls` with at most 1024 entries"), "{error}");
         let error = decode(max_calls, max_changes + 1).unwrap_err().to_string();
         assert!(error.contains("`accountChanges` with at most 1 entries"), "{error}");
+    }
+
+    /// Quantities must be canonical hex, as Nethermind and geth require.
+    #[test]
+    fn non_canonical_quantities_are_refused() {
+        for (key, value) in [
+            ("gas", json!("")),
+            ("gas", json!("0x")),
+            ("gas", json!("0x00")),
+            ("gas", json!("0x0100")),
+            ("gas", json!(229381)),
+            ("maxFeePerGas", json!("065745")),
+            ("chainId", json!(4226)),
+            ("type", json!(0)),
+            ("value", json!("0X1")),
+        ] {
+            let error = serde_json::from_value::<BaseTransactionRequest>(json!({ key: value }));
+            assert!(error.is_err(), "{key}: {value} must be refused");
+        }
+        let request: BaseTransactionRequest =
+            serde_json::from_value(json!({ "gas": "0x0", "value": "0xAb", "nonce": null }))
+                .unwrap();
+        assert_eq!(request.as_ref().gas, Some(0));
+        assert_eq!(request.as_ref().value, Some(U256::from(0xab)));
+    }
+
+    #[test]
+    fn data_must_be_hex_and_odd_length_gets_a_leading_nibble() {
+        let request: BaseTransactionRequest =
+            serde_json::from_value(json!({ "input": "0x123" })).unwrap();
+        assert_eq!(request.as_ref().input.input(), Some(&Bytes::from_static(&[0x01, 0x23])));
+        for input in [json!([]), json!("123"), json!("0xzz"), json!("0X12")] {
+            let error = serde_json::from_value::<BaseTransactionRequest>(json!({ "input": input }));
+            assert!(error.is_err(), "input {input} must be refused");
+        }
+    }
+
+    #[test]
+    fn upper_case_hex_prefix_is_refused() {
+        let to = "0X00000000000000000000000000000000000000aa";
+        assert!(serde_json::from_value::<BaseTransactionRequest>(json!({ "to": to })).is_err());
+        let list =
+            json!([{ "address": SENDER, "storageKeys": [format!("0X{}", "00".repeat(32))] }]);
+        assert!(
+            serde_json::from_value::<BaseTransactionRequest>(json!({ "accessList": list }))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn fees_above_128_bits_saturate() {
+        let request: BaseTransactionRequest = serde_json::from_value(json!({
+            "gasPrice": format!("0x1{}", "0".repeat(32)),
+            "maxFeePerBlobGas": format!("0x{}", "f".repeat(64)),
+        }))
+        .unwrap();
+        assert_eq!(request.as_ref().gas_price, Some(u128::MAX));
+        assert_eq!(request.as_ref().max_fee_per_blob_gas, Some(u128::MAX));
+        let too_wide = format!("0x1{}", "0".repeat(64));
+        assert!(
+            serde_json::from_value::<BaseTransactionRequest>(json!({ "gasPrice": too_wide }))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn missing_storage_keys_and_signature_parts_read_as_empty() {
+        let request: BaseTransactionRequest = serde_json::from_value(json!({
+            "accessList": [{ "address": SENDER }],
+            "authorizationList": [{ "chainId": "0x1", "address": SENDER, "nonce": "0x0", "yParity": "0x0" }],
+        }))
+        .unwrap();
+        let list = request.as_ref().access_list.as_ref().unwrap();
+        assert_eq!(list.0[0].address, SENDER);
+        assert!(list.0[0].storage_keys.is_empty());
+        let authorization = &request.as_ref().authorization_list.as_ref().unwrap()[0];
+        assert_eq!((authorization.r(), authorization.s()), (U256::ZERO, U256::ZERO));
+        let empty_r = json!({ "authorizationList": [{ "chainId": "0x1", "address": SENDER, "nonce": "0x0", "yParity": "0x0", "r": "0x", "s": "0x0" }] });
+        assert!(serde_json::from_value::<BaseTransactionRequest>(empty_r).is_err());
     }
 
     #[test]
