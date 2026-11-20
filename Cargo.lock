@@ -4040,6 +4040,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-consensus-peer-types"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "thiserror 2.0.21",
+ "url",
+]
+
+[[package]]
 name = "base-consensus-peers"
 version = "0.0.0"
 dependencies = [
@@ -4048,6 +4057,7 @@ dependencies = [
  "arbitrary",
  "arbtest",
  "base-common-chains",
+ "base-consensus-peer-types",
  "derive_more 2.1.1",
  "dirs 6.0.0",
  "discv5",
@@ -4061,7 +4071,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "unsigned-varint 0.8.0",
- "url",
 ]
 
 [[package]]
@@ -6802,7 +6811,6 @@ dependencies = [
  "alloy-eips 2.5.0",
  "alloy-primitives",
  "alloy-provider",
- "alloy-rlp",
  "alloy-rpc-client",
  "alloy-rpc-types-eth 2.5.0",
  "alloy-rpc-types-txpool",
@@ -6819,6 +6827,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-network",
  "base-common-precompiles",
+ "base-consensus-peer-types",
  "base-consensus-rpc-types",
  "base-proof-contracts",
  "base-proof-submission",
@@ -6832,6 +6841,7 @@ dependencies = [
  "clap",
  "crossterm",
  "dirs 6.0.0",
+ "enr",
  "futures",
  "jsonrpsee",
  "k256 0.13.4",

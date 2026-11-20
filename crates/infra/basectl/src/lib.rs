@@ -25,7 +25,8 @@ pub use commands::{
 };
 
 mod p2p_record;
-pub use p2p_record::{BootNode, BootNodeParseError, EnrRecord, NodeRecord, NodeRecordParseError};
+pub use base_consensus_peer_types::{NodeRecord, NodeRecordParseError};
+pub use p2p_record::{BootNode, BootNodeParseError, EnrRecord};
 
 mod denim;
 pub use denim::{

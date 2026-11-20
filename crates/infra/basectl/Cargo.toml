@@ -41,7 +41,8 @@ base-common-evm = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["fs", "macros", "net", "process", "time"] }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-alloy-rlp = { workspace = true, features = ["std"] }
+enr = { workspace = true, features = ["k256"] }
+base-consensus-peer-types = { workspace = true }
 k256 = { workspace = true, features = ["ecdsa"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }

@@ -10,8 +10,7 @@
 #[macro_use]
 extern crate tracing;
 
-mod id;
-pub use id::PeerId;
+pub use base_consensus_peer_types::{NodeRecord, NodeRecordParseError, PeerId};
 
 mod nodes;
 pub use nodes::BootNodes;
@@ -27,9 +26,6 @@ pub use enr::{BaseEnr, BaseEnrError, EnrValidation};
 
 mod boot;
 pub use boot::{BootNode, BootNodeParseError};
-
-mod record;
-pub use record::{NodeRecord, NodeRecordParseError};
 
 mod utils;
 pub use utils::{PeerIdConversionError, PeerUtils};
