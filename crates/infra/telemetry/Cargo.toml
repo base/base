@@ -20,7 +20,7 @@ reth-ecies.workspace = true
 reth-eth-wire.workspace = true
 alloy-primitives.workspace = true
 base-trusted-proxy.workspace = true
-enr = { workspace = true, features = ["k256"] }
+enr = { workspace = true, features = ["k256", "ed25519"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
