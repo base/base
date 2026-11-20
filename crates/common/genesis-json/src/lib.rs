@@ -10,7 +10,7 @@ static ZERONET_GENESIS_JSON: &str = include_str!("../res/zeronet_base.json");
 
 /// Accessors for embedded Base execution-layer genesis JSON documents.
 ///
-/// Backed by `static`s (rather than `const` struct fields) so each ~9 MiB JSON document is emitted
+/// Backed by `static`s (rather than `const` struct fields) so each ~9 MB JSON document is emitted
 /// once in this crate instead of duplicated across downstream codegen units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GenesisJson;
