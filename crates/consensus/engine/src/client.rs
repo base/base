@@ -13,7 +13,6 @@ use alloy_rpc_types_engine::{
 };
 use alloy_rpc_types_eth::{EIP1186AccountProofResponse, SyncStatus as EthSyncStatus};
 use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
-use alloy_transport_http::Http;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi, SharedEngineApi};
@@ -139,10 +138,11 @@ where
                 Ok(RootProvider::<N>::new(client))
             }
             "http" | "https" => {
+                let transport = JwtAuthLayer::build_http_transport(addr)?;
                 let rpc_client = ClientBuilder::default()
                     .layer(TraceContextLayer)
                     .layer(JwtAuthLayer::new(jwt))
-                    .transport(Http::new(addr), false);
+                    .transport(transport, false);
                 Ok(RootProvider::<N>::new(rpc_client))
             }
             scheme => Err(TransportErrorKind::custom(io::Error::new(

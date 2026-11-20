@@ -8,7 +8,6 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_transport::{RpcError, TransportErrorKind};
-use alloy_transport_http::Http;
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
@@ -166,8 +165,10 @@ impl AlloyL2ChainProvider {
         cache_size: usize,
         jwt: JwtSecret,
     ) -> Self {
+        let transport =
+            JwtAuthLayer::build_http_transport(url).expect("failed to build direct HTTP transport");
         let rpc_client =
-            ClientBuilder::default().layer(JwtAuthLayer::new(jwt)).transport(Http::new(url), false);
+            ClientBuilder::default().layer(JwtAuthLayer::new(jwt)).transport(transport, false);
 
         let rpc = RootProvider::<Base>::new(rpc_client);
         Self::new(rpc, rollup_config, cache_size)
