@@ -1,0 +1,61 @@
+[package]
+name = "base-consensus-rpc-types"
+description = "JSON-RPC wire types and trait definitions for Base consensus nodes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace
+base-protocol = { workspace = true, features = ["serde", "std"] }
+base-common-genesis = { workspace = true, features = ["serde", "std"], optional = true }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"], optional = true }
+base-upgrade-signal = { workspace = true, optional = true }
+
+# Alloy
+alloy-eips = { workspace = true, features = ["serde", "std"] }
+alloy-primitives = { workspace = true, features = ["map", "serde", "std"] }
+
+# Misc
+ipnet = { workspace = true, features = ["serde"] }
+derive_more = { workspace = true, features = ["display"] }
+serde = { workspace = true, features = ["derive", "std"] }
+thiserror = { workspace = true, features = ["std"] }
+
+# RPC (optional; enabled by `rpc-client` / `rpc-server`)
+getrandom = { workspace = true, features = ["wasm_js"], optional = true }
+jsonrpsee = { workspace = true, optional = true }
+
+[dev-dependencies]
+async-trait.workspace = true
+rstest.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+
+[features]
+default = []
+rpc-client = [
+	"dep:base-common-genesis",
+	"dep:base-common-rpc-types-engine",
+	"dep:base-upgrade-signal",
+	"dep:getrandom",
+	"dep:jsonrpsee",
+	"jsonrpsee/async-client",
+	"jsonrpsee/client-core",
+	"jsonrpsee/http-client",
+	"jsonrpsee/macros",
+]
+rpc-server = [
+	"dep:base-common-genesis",
+	"dep:base-common-rpc-types-engine",
+	"dep:base-upgrade-signal",
+	"dep:getrandom",
+	"dep:jsonrpsee",
+	"jsonrpsee/macros",
+	"jsonrpsee/server",
+]

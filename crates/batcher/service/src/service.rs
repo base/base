@@ -10,7 +10,7 @@ use base_batcher_core::{AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle}
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
 use base_common_network::Base;
-use base_consensus_rpc::RollupNodeApiClient;
+use base_consensus_rpc_types::RollupNodeApiClient;
 use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};

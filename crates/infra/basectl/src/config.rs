@@ -290,7 +290,7 @@ impl ConductorSource {
     /// discovered peers.
     pub fn synthesize_nodes(
         &self,
-        membership: &base_consensus_rpc::ClusterMembership,
+        membership: &base_consensus_rpc_types::ClusterMembership,
     ) -> Option<Vec<ConductorNodeConfig>> {
         let Self::Discover { bootstrap, ports } = self else { return None };
         let mut nodes = membership
@@ -879,7 +879,7 @@ impl MonitoringConfig {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_rpc::{ClusterMembership, ServerInfo, ServerSuffrage};
+    use base_consensus_rpc_types::{ClusterMembership, ServerInfo, ServerSuffrage};
 
     use super::*;
 

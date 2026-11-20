@@ -8,7 +8,7 @@ use jsonrpsee::{
     tracing::warn,
 };
 
-use crate::{EngineRpcClient, jsonrpsee::WsServer};
+use crate::{EngineRpcClient, WsServer};
 
 /// An RPC server that handles subscriptions to the node's state.
 #[derive(Debug)]

@@ -10,7 +10,7 @@ use std::{
 
 use alloy_provider::{Provider, RootProvider};
 use base_common_network::Base;
-use base_consensus_rpc::AdminApiClient;
+use base_consensus_rpc_types::AdminApiClient;
 use base_runtime::Runtime;
 use futures::future;
 use jsonrpsee::{core::ClientError, http_client::HttpClient};

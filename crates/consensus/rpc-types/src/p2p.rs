@@ -226,18 +226,7 @@ pub struct PeerStats {
 
 /// Represents the connectivity state of a peer in a network, indicating the reachability and
 /// interaction status of a node with its peers.
-#[derive(
-    Clone,
-    Debug,
-    Display,
-    PartialEq,
-    Eq,
-    Copy,
-    Default,
-    // We need to use `serde_repr` to serialize the enum as an integer to match the reference node API.
-    serde_repr::Serialize_repr,
-    serde_repr::Deserialize_repr,
-)]
+#[derive(Clone, Debug, Display, PartialEq, Eq, Copy, Default)]
 #[repr(u8)]
 pub enum Connectedness {
     /// No current connection to the peer, and no recent history of a successful connection.
@@ -275,6 +264,36 @@ impl From<u8> for Connectedness {
         }
     }
 }
+
+impl serde::Serialize for Connectedness {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_u8(*self as u8)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Connectedness {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = u8::deserialize(deserializer)?;
+        match value {
+            0 => Ok(Self::NotConnected),
+            1 => Ok(Self::Connected),
+            2 => Ok(Self::CanConnect),
+            3 => Ok(Self::CannotConnect),
+            4 => Ok(Self::Limited),
+            _ => Err(serde::de::Error::invalid_value(
+                serde::de::Unexpected::Unsigned(u64::from(value)),
+                &"a value between 0 and 4",
+            )),
+        }
+    }
+}
+
 /// Direction represents the direction of a connection.
 #[derive(Debug, Clone, Display, Copy, PartialEq, Eq, Default)]
 pub enum Direction {

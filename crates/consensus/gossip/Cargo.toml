@@ -16,6 +16,7 @@ workspace = true
 # consensus
 base-metrics.workspace = true
 base-protocol.workspace = true
+base-consensus-rpc-types.workspace = true
 base-consensus-disc.workspace = true
 base-consensus-peers.workspace = true
 base-common-genesis.workspace = true
@@ -42,8 +43,6 @@ libp2p = { workspace = true, features = ["macros", "tokio", "tcp", "dns", "noise
 lru.workspace = true
 sha2.workspace = true
 tokio.workspace = true
-serde_repr.workspace = true
-serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["display", "deref", "debug"] }

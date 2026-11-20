@@ -184,6 +184,7 @@ base-builder-metering = { path = "crates/builder/metering" }
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli" }
 base-consensus-rpc = { path = "crates/consensus/rpc" }
+base-consensus-rpc-types = { path = "crates/consensus/rpc-types", default-features = false }
 base-consensus-safedb = { path = "crates/consensus/safedb" }
 base-protocol = { path = "crates/consensus/protocol", default-features = false }
 base-consensus-disc = { path = "crates/consensus/disc", default-features = false }

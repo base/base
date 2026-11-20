@@ -24,6 +24,9 @@ pub use commands::{
     UpgradeReadinessCommand, ZkBackendOption,
 };
 
+mod p2p_record;
+pub use p2p_record::{BootNode, BootNodeParseError, EnrRecord, NodeRecord, NodeRecordParseError};
+
 mod denim;
 pub use denim::{
     DenimCheck, DenimCheckCursor, DenimCheckStatus, DenimCheckTarget, DenimChecker,

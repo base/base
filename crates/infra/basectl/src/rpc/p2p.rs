@@ -11,14 +11,13 @@ use alloy_transport::TransportError;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
 use base_common_network::Base;
-use base_consensus_gossip::{Direction, PeerInfo, PeerStats};
-use base_consensus_peers::{BootNode, NodeRecord};
+use base_consensus_rpc_types::{Direction, PeerInfo, PeerStats};
 use serde::Serialize;
 use tracing::{debug, warn};
 use url::Url;
 
 use super::ConsensusClient;
-use crate::ConsensusRpcError;
+use crate::{BootNode, ConsensusRpcError, NodeRecord};
 
 /// Advertised discovery endpoint information for a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -650,7 +649,7 @@ fn parse_el_node_endpoint(
     })
 }
 
-fn parse_cl_node_endpoint(peer: &base_consensus_gossip::PeerInfo) -> Result<NodeEndpoint> {
+fn parse_cl_node_endpoint(peer: &base_consensus_rpc_types::PeerInfo) -> Result<NodeEndpoint> {
     let enr = peer.enr.as_deref().ok_or_else(|| {
         anyhow!("`opp2p_self` did not return an ENR; cannot determine advertised CL endpoint")
     })?;
@@ -704,7 +703,7 @@ fn parse_enr_fields(raw: &str) -> Result<EnrFields> {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
-    use base_consensus_gossip::{
+    use base_consensus_rpc_types::{
         Connectedness, Direction, GossipScores, PeerInfo, PeerScores, ReqRespScores,
     };
 
