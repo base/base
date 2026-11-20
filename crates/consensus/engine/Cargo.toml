@@ -28,7 +28,7 @@ alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
-alloy-transport-http = { workspace = true, features = ["reqwest", "hyper", "jwt-auth"] }
+alloy-transport-http = { workspace = true, features = ["reqwest"] }
 alloy-transport-ws.workspace = true
 alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest", "reqwest-rustls-tls", "engine-api"] }
 
@@ -44,7 +44,6 @@ tokio.workspace = true
 tower.workspace = true
 http.workspace = true
 async-trait.workspace = true
-http-body-util.workspace = true
 opentelemetry.workspace = true
 opentelemetry-http.workspace = true
 serde = { workspace = true, features = ["std"] }
