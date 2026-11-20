@@ -1,3 +1,6 @@
+# The release uses solc 0.8.15, which has no native Linux arm64 binary.
+# Only the Solidity compiler stage needs amd64; the output is EVM bytecode.
+ARG SOLC_PLATFORM=linux/amd64
 FROM public.ecr.aws/docker/library/golang:1.26-alpine AS builder
 
 # Install build dependencies for CGO (required for BLS library)
@@ -23,10 +26,12 @@ RUN go build -o /go/bin/eth2-val-tools .
 
 # Build the integrated offline setup from the Base-specific Optimism branch.
 # Pin the source revision so setup image builds are reproducible.
-FROM public.ecr.aws/docker/library/golang:1.26-alpine AS base-devnet-builder
+FROM public.ecr.aws/docker/library/golang:1.26-alpine AS base-devnet-source
 RUN apk add --no-cache git ca-certificates
 ADD https://github.com/base/optimism.git#896142b334ea20220aa552e9478e5ec406716911 /op-deployer
 WORKDIR /op-deployer
+
+FROM base-devnet-source AS base-devnet-builder
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -o /out/op-deployer ./op-deployer/cmd/op-deployer && \
@@ -35,13 +40,34 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN /out/extract-artifacts /contract-artifacts && \
     mv /contract-artifacts/bundle-*/forge-artifacts /artifacts
 
-FROM public.ecr.aws/docker/library/alpine:3.21.3
+FROM --platform=$SOLC_PLATFORM ghcr.io/casey/just:1.51.0@sha256:b8b0b84f90cfcd8bfba89126e74b20517514a9d69f271e4d0d444d837b59df76 AS just
+FROM --platform=$SOLC_PLATFORM ghcr.io/foundry-rs/foundry:v1.5.1@sha256:3a70bfa9bd2c732a767bb60d12c8770b40e8f9b6cca28efc4b12b1be81c7f28e AS everest-contracts
+USER root
+COPY --from=just /just /usr/local/bin/just
+# base/contracts v8.5.0-rc.1. Fetch the peeled commit, not a moving branch.
+ADD https://github.com/base/contracts.git#b9b76d97dca3c420098f597ebc65bee4f28001b7 /contracts
+WORKDIR /contracts
+# Keep nested submodules intact until Forge has checked out each pinned commit.
+RUN git init -q && sed -i 's/forge install --no-git/forge install/' justfile && just deps
+COPY etc/docker/everest-contracts/DevnetGenesis.s.sol scripts/
+# op-deployer looks up fully qualified artifact names literally.
+RUN forge build src scripts/DevnetGenesis.s.sol scripts/SetPreinstalls.s.sol && \
+    mkdir -p forge-artifacts/src/universal forge-artifacts/scripts/deploy && \
+    ln -s ../../Proxy.sol forge-artifacts/src/universal/Proxy.sol && \
+    ln -s ../../SystemDeploy.s.sol forge-artifacts/scripts/deploy/SystemDeploy.s.sol
+
+FROM base-devnet-source AS everest-builder
+COPY etc/docker/everest-contracts/*.go op-deployer/cmd/op-deployer/
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    --mount=from=everest-contracts,source=/contracts/forge-artifacts,target=/artifacts \
+    BASE_DEVNET_ARTIFACTS=/artifacts CGO_ENABLED=0 go test ./op-deployer/cmd/op-deployer -run '^TestEverestContractGenesis$' && \
+    CGO_ENABLED=0 go build -o /out/op-deployer ./op-deployer/cmd/op-deployer
+
+FROM public.ecr.aws/docker/library/alpine:3.21.3 AS devnet-tools
 
 RUN apk add --no-cache bash jq curl
 
-# Compose devnets and system tests share the integrated offline generator.
-COPY --from=base-devnet-builder /out/op-deployer /usr/local/bin/
-COPY --from=base-devnet-builder /artifacts /opt/base-devnet-artifacts
 ENV BASE_DEVNET_ARTIFACTS=/opt/base-devnet-artifacts
 
 # Copy the built binaries
@@ -54,3 +80,12 @@ RUN mkdir -p /config /output /shared
 # Copy setup scripts
 COPY etc/scripts/devnet/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/*.sh
+
+FROM devnet-tools AS everest
+COPY --from=everest-builder /out/op-deployer /usr/local/bin/
+COPY --from=everest-contracts /contracts/forge-artifacts /opt/base-devnet-artifacts
+
+# Default target for all other devnets and system tests.
+FROM devnet-tools AS standard
+COPY --from=base-devnet-builder /out/op-deployer /usr/local/bin/
+COPY --from=base-devnet-builder /artifacts /opt/base-devnet-artifacts
