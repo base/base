@@ -24,6 +24,7 @@ base-common-genesis.workspace = true
 base-common-base-tx.workspace = true
 base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
+base-precompile-abi.workspace = true
 
 # revm
 revm.workspace = true
@@ -84,6 +85,7 @@ std = [
 	"base-common-base-tx/std",
 	"base-common-chains/std",
 	"base-common-genesis/std",
+	"base-precompile-abi/std",
 	"base-precompile-storage/std",
 	"revm/std",
 ]

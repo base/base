@@ -3510,7 +3510,7 @@ dependencies = [
  "alloy-primitives",
  "auto_impl",
  "base-common-genesis",
- "revm",
+ "revm-primitives",
  "rstest",
  "spin 0.10.1",
 ]
@@ -3670,6 +3670,7 @@ dependencies = [
  "base-common-base-tx",
  "base-common-chains",
  "base-common-genesis",
+ "base-precompile-abi",
  "base-precompile-macros",
  "base-precompile-storage",
  "criterion",
@@ -5097,6 +5098,14 @@ dependencies = [
  "alloy-transport",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "base-precompile-abi"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
 ]
 
 [[package]]
@@ -6795,13 +6804,12 @@ dependencies = [
  "axum 0.8.9",
  "base-common-chains",
  "base-common-consensus",
- "base-common-evm",
  "base-common-genesis",
  "base-common-network",
- "base-common-precompiles",
  "base-consensus-gossip",
  "base-consensus-peers",
  "base-consensus-rpc",
+ "base-precompile-abi",
  "base-proof-contracts",
  "base-proof-submission",
  "base-protocol",

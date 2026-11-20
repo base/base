@@ -28,7 +28,7 @@ alloy-primitives = { workspace = true, features = ["map"] }
 base-common-genesis.workspace = true
 
 # revm
-revm.workspace = true
+revm-primitives.workspace = true
 
 # misc
 spin.workspace = true
@@ -50,7 +50,7 @@ std = [
 	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"base-common-genesis/std",
-	"revm/std",
+	"revm-primitives/std",
 	"spin/std",
 ]
 serde = [
@@ -59,6 +59,6 @@ serde = [
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
 	"base-common-genesis/serde",
-	"revm/serde",
+	"revm-primitives/serde",
 ]
 test-utils = [ "base-common-genesis/test-utils" ]
