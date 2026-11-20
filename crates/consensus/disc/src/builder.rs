@@ -4,7 +4,8 @@ use std::net::IpAddr;
 
 use alloy_rlp::Encodable;
 use base_consensus_peers::{BaseEnr, BootNodes, BootStoreFile};
-use discv5::{Config, Discv5, Enr, enr::k256};
+use discv5::{Config, Discv5, Enr};
+use enr::k256;
 use tokio::time::Duration;
 
 use crate::{Discv5BuilderError, Discv5Driver};
@@ -51,7 +52,7 @@ impl LocalNode {
     /// broadcast to the other nodes in the network. See
     /// [the op-node implementation](https://github.com/ethereum-optimism/optimism/blob/174e55f0a1e73b49b80a561fd3fedd4fea5770c6/op-node/p2p/discovery.go#L61-L97)
     /// for the go equivalent.
-    pub fn build_enr(self, chain_id: u64) -> Result<Enr, discv5::enr::Error> {
+    pub fn build_enr(self, chain_id: u64) -> Result<Enr, enr::Error> {
         let base_enr = BaseEnr::from_chain_id(chain_id);
         let mut base_enr_data = Vec::new();
         base_enr.encode(&mut base_enr_data);
@@ -177,7 +178,8 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
     use base_consensus_peers::EnrValidation;
-    use discv5::{ConfigBuilder, ListenConfig, enr::CombinedKey};
+    use discv5::{ConfigBuilder, ListenConfig};
+    use enr::CombinedKey;
 
     use super::*;
 

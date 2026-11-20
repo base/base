@@ -7,9 +7,8 @@ use base_consensus_gossip::{
     PENDING_DIAL_PRUNE_INTERVAL, TRUSTED_PEER_REDIAL_INTERVAL,
 };
 use base_consensus_sources::{BlockSigner, BlockSignerStartError};
-use discv5::multiaddr::Protocol;
 use futures::future::OptionFuture;
-use libp2p::{Multiaddr, TransportError};
+use libp2p::{Multiaddr, TransportError, multiaddr::Protocol};
 use tokio::sync::watch;
 
 use crate::actors::network::handler::NetworkHandler;

@@ -14,7 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use discv5::enr::{CombinedPublicKey, Enr, EnrPublicKey};
+use enr::{CombinedPublicKey, Enr, EnrPublicKey};
 use libp2p::{Multiaddr, PeerId, multiaddr::Protocol};
 use reth_network_peers::{NodeRecord, id2pk};
 use serde::{Deserialize, Serialize};
@@ -128,7 +128,7 @@ impl ClReachabilityRequest {
 
     /// Parses a signed `enr:` record into a public `IPv4` libp2p probe target.
     fn enr_target(enr: &str) -> Option<Libp2pProbeTarget> {
-        let enr: Enr<discv5::enr::CombinedKey> = enr.parse().ok()?;
+        let enr: Enr<enr::CombinedKey> = enr.parse().ok()?;
         let socket = enr.tcp4_socket()?;
         let address = SocketAddr::from((*socket.ip(), socket.port()));
         if socket.port() == 0 || !ElReachabilityRequest::is_public_ip(address.ip()) {
@@ -362,7 +362,7 @@ mod tests {
 
     use alloy_primitives::B512;
     use axum::{Router, http::StatusCode};
-    use discv5::enr::{CombinedKey, Enr};
+    use enr::{CombinedKey, Enr};
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use super::{
@@ -667,11 +667,11 @@ mod tests {
 
         // The libp2p peer ID must be derived from the same secp256k1 key that
         // signed the ENR.
-        let discv5::enr::CombinedPublicKey::Secp256k1(public_key) = enr.public_key() else {
+        let enr::CombinedPublicKey::Secp256k1(public_key) = enr.public_key() else {
             panic!("expected a secp256k1 ENR key");
         };
         let public_key = libp2p_identity::secp256k1::PublicKey::try_from_bytes(
-            &discv5::enr::EnrPublicKey::encode(&public_key),
+            &enr::EnrPublicKey::encode(&public_key),
         )
         .unwrap();
         let expected = libp2p::PeerId::from_public_key(&public_key.into());

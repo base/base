@@ -95,6 +95,7 @@ alloy-network.workspace = true
 tracing-subscriber.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-rpc-types.workspace = true
+enr = { workspace = true, features = ["k256"] }
 base-protocol = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["test-util"] }
 alloy-primitives = { workspace = true, features = ["k256"] }

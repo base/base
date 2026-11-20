@@ -14,6 +14,7 @@ use base_consensus_node::{
 use base_consensus_peers::BootNode;
 use base_consensus_sources::BlockSigner;
 use discv5::{ConfigBuilder, Enr, ListenConfig};
+use enr::k256::ecdsa::SigningKey as DiscoverySigningKey;
 use libp2p::{Multiaddr, identity::Keypair, multiaddr::Protocol};
 use rand::RngCore;
 use tokio::sync::mpsc;
@@ -92,6 +93,8 @@ impl TestNetworkBuilder {
         let local_node_key = k256::ecdsa::SigningKey::from_bytes(&secp256k1_key.into())
         .map_err(|e| anyhow::anyhow!("Impossible to convert keypair to k256 signing key. This is a bug since we only support secp256k1 keys: {e}")).unwrap();
 
+        let discovery_key = DiscoverySigningKey::from_bytes(&secp256k1_key.into()).unwrap();
+
         let node_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 
         let discovery_config = ConfigBuilder::new(ListenConfig::from_ip(node_addr, 0))
@@ -115,7 +118,7 @@ impl TestNetworkBuilder {
             self.unsafe_block_signer,
             gossip_multiaddr,
             keypair,
-            LocalNode::new(local_node_key.clone(), node_addr, 0, 0),
+            LocalNode::new(discovery_key, node_addr, 0, 0),
             discovery_config,
             Some(BlockSigner::Local(local_node_key.into())),
         )

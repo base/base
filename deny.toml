@@ -89,18 +89,16 @@ skip = [
     "thiserror",
     "thiserror-impl",
 
-    # Reth 2.11 discovery uses the newer networking/crypto stack. Temporary until
-    # consensus upgrades its discv5 pin and libp2p dependencies.
+    # Discovery uses newer networking/crypto versions than libp2p 0.56,
+    # reth-ecies, and other upstream crypto consumers.
     "aead",
     "aes",
     "aes-gcm",
     "cipher",
     "ctr",
     "curve25519-dalek",
-    "discv5",
     "ed25519",
     "ed25519-dalek",
-    "enr",
     "fiat-crypto",
     "ghash",
     "hkdf",
@@ -133,8 +131,6 @@ skip = [
     "redox_users",
 
     # Network crates
-    "tungstenite",
-    "tokio-tungstenite",
     "axum",
     "axum-core",
     "hyper-timeout",
@@ -167,7 +163,6 @@ skip = [
     "miniz_oxide",
     "prost-derive",
     "prost",
-    "prost-types",
     "redox_syscall",
     "ripemd",
     "rustc-hash",
@@ -233,7 +228,6 @@ skip = [
 
     # SP1 and other upstream transitive dependency mismatches
     "opentelemetry",
-    "opentelemetry-appender-tracing",
     "opentelemetry-http",
     "opentelemetry-otlp",
     "opentelemetry-proto",
@@ -314,6 +308,5 @@ allow-git = [
     "https://github.com/op-rs/op-reth",
     "https://github.com/ethereum-optimism/optimism",
     "https://github.com/alloy-rs/evm2",
-    "https://github.com/sigp/discv5",
     "https://www.github.com/alloy-rs/evm2",
 ]

@@ -5,12 +5,9 @@ use std::{net::IpAddr, num::TryFromIntError, sync::Arc};
 use alloy_primitives::map::{HashMap, HashSet};
 use base_consensus_disc::Discv5Handler;
 use base_consensus_peers::BaseEnr;
-use discv5::{
-    enr::{NodeId, k256::ecdsa},
-    multiaddr::Protocol,
-};
+use enr::{NodeId, k256::ecdsa};
 use ipnet::IpNet;
-use libp2p::{Multiaddr, PeerId, gossipsub::TopicHash};
+use libp2p::{Multiaddr, PeerId, gossipsub::TopicHash, multiaddr::Protocol};
 use tokio::sync::oneshot::Sender;
 
 use super::{

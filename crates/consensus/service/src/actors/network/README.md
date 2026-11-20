@@ -22,7 +22,7 @@ use base_consensus_disc::LocalNode;
 use base_consensus_service::{
     NetworkActor, NetworkBuilder, NetworkConfig, NetworkEngineClient, NodeActor,
 };
-use discv5::enr::CombinedKey;
+use enr::CombinedKey;
 use libp2p::{Multiaddr, multiaddr::Protocol};
 use tokio_util::sync::CancellationToken;
 

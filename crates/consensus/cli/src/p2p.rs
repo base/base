@@ -24,7 +24,8 @@ use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLev
 use base_consensus_providers::{AlloyChainProvider, L1RpcProvider};
 use base_retry::RetryConfig;
 use clap::Parser;
-use discv5::{Enr, enr::k256};
+use discv5::Enr;
+use enr::k256;
 use eyre::{Result, WrapErr};
 use libp2p::{Multiaddr, identity::Keypair, multiaddr::Protocol};
 use tokio::time::Duration;

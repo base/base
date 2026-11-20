@@ -189,7 +189,8 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use alloy_chains::Chain;
-    use discv5::{ConfigBuilder, ListenConfig, enr::CombinedKey};
+    use discv5::{ConfigBuilder, ListenConfig};
+    use enr::CombinedKey;
     use libp2p::gossipsub::IdentTopic;
 
     use super::*;

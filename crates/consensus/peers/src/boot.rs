@@ -3,10 +3,8 @@
 use std::str::FromStr;
 
 use derive_more::{Display, From};
-use discv5::{
-    Enr,
-    multiaddr::{Multiaddr, Protocol},
-};
+use discv5::Enr;
+use libp2p::{Multiaddr, multiaddr::Protocol};
 use serde::{Deserialize, Serialize};
 
 use super::utils::{PeerIdConversionError, PeerUtils};
@@ -75,10 +73,8 @@ impl BootNode {
 mod tests {
     use std::{net::Ipv4Addr, str::FromStr};
 
-    use discv5::{
-        enr::{CombinedPublicKey, k256},
-        handler::NodeContact,
-    };
+    use discv5::NodeContact;
+    use enr::{CombinedPublicKey, k256};
     use rstest::rstest;
 
     use super::*;
@@ -114,7 +110,8 @@ mod tests {
         let boot_node = BootNode::from_unsigned(node_record).unwrap();
         let multiaddr = boot_node.to_multiaddr().unwrap();
 
-        let node_contact = NodeContact::try_from_multiaddr(multiaddr).unwrap();
+        let discovery_addr = multiaddr.to_vec().try_into().unwrap();
+        let node_contact = NodeContact::try_from_multiaddr(discovery_addr).unwrap();
 
         // The public key contained in the NodeContact is used to connect to the
         // bootnode.
@@ -128,11 +125,9 @@ mod tests {
 
         // The public key from the peer id is using the uncompressed form.
         let pkey_secp256k1 = PeerUtils::peer_id_to_secp256k1_pubkey(peer_id).unwrap();
-        let p2p_public_key: discv5::libp2p_identity::secp256k1::PublicKey =
-            discv5::libp2p_identity::secp256k1::PublicKey::try_from_bytes(
-                &pkey_secp256k1.serialize(),
-            )
-            .unwrap();
+        let p2p_public_key: libp2p_identity::secp256k1::PublicKey =
+            libp2p_identity::secp256k1::PublicKey::try_from_bytes(&pkey_secp256k1.serialize())
+                .unwrap();
 
         let expected_pkey: CombinedPublicKey =
             k256::ecdsa::VerifyingKey::from_sec1_bytes(&p2p_public_key.to_bytes()).unwrap().into();
