@@ -446,6 +446,20 @@ impl TxBaseSigned {
         }
     }
 
+    /// Checks the EOA `sender_auth` passes the checks [`Self::recover_eoa_sender`]
+    /// applies before ecrecover: the canonical 65-byte `r || s || v` form with
+    /// `v in {27, 28}` and an EIP-2 low `s`. A sender recovered from this
+    /// signature, with either recovery, is then the one the checked recovery
+    /// returns.
+    #[cfg(feature = "k256")]
+    pub fn check_eoa_sender_signature(&self) -> Result<(), alloy_consensus::crypto::RecoveryError> {
+        let signature = Self::parse_raw_k1_signature(self.sender_auth.as_ref())?;
+        if signature.s() > alloy_consensus::crypto::SECP256K1N_HALF {
+            return Err(alloy_consensus::crypto::RecoveryError::new());
+        }
+        Ok(())
+    }
+
     /// Parses a raw `r || s || v` secp256k1 signature, requiring exactly 65
     /// bytes and `v in {27, 28}`. The auth blob is not covered by the hash it
     /// signs, so accepting the alternative `v in {0, 1}` encoding would let a
@@ -996,6 +1010,7 @@ mod tests {
         let signed = TxBaseSigned::new(tx, sender_auth, Bytes::new());
 
         assert_eq!(signed.recover_eoa_sender().unwrap(), Some(expected));
+        assert!(signed.check_eoa_sender_signature().is_ok());
     }
 
     #[cfg(feature = "k256")]
@@ -1018,6 +1033,7 @@ mod tests {
         let signed = TxBaseSigned::new(tx, Bytes::from(bytes), Bytes::new());
         assert!(signed.recover_eoa_sender().is_err());
         assert!(signed.recover_eoa_sender_unchecked().is_err());
+        assert!(signed.check_eoa_sender_signature().is_err());
     }
 
     #[cfg(feature = "k256")]
@@ -1066,6 +1082,8 @@ mod tests {
         // the unchecked recovery accepts it and recovers the same address.
         assert!(signed.recover_eoa_sender().is_err());
         assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), Some(expected));
+        // An unchecked recovery's sender must not stand in for the checked one.
+        assert!(signed.check_eoa_sender_signature().is_err());
     }
 
     #[cfg(feature = "k256")]
