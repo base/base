@@ -57,12 +57,12 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
-    HoldInterrupt, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
-    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    ContractSlotUsage, HoldInterrupt, InclusionTracker, MeteringProvider,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
+    RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
+    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -740,6 +740,9 @@ pub struct ExecutionInfo {
     /// Transaction hashes that exceeded a per-transaction resource limit and should be
     /// permanently removed from the pool and recorded in the shared rejection cache.
     pub permanently_rejected_txs: Vec<TxHash>,
+    /// Changed storage slots per storage owner committed in this payload, for
+    /// dry-run per-contract limits.
+    pub contract_slots: ContractSlotUsage,
 }
 
 impl ExecutionInfo {
@@ -753,6 +756,7 @@ impl ExecutionInfo {
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
             permanently_rejected_txs: Vec::new(),
+            contract_slots: ContractSlotUsage::default(),
         }
     }
 
@@ -992,6 +996,7 @@ where
                         &tx_hash,
                         result_and_state.result.tx_gas_used(),
                         &result_and_state.state,
+                        &mut info.contract_slots,
                     );
                     CommitChanges::Yes
                 },
@@ -1037,6 +1042,7 @@ where
                     &mut info.resource_metering_usage,
                 );
             }
+            resource_metering.commit_contract_slots(&tx_hash, &mut info.contract_slots);
         }
         Ok(info)
     }
@@ -1447,6 +1453,7 @@ where
                         &result_and_state.state,
                         simulated.as_ref(),
                         &info.resource_metering_usage,
+                        &mut info.contract_slots,
                     );
                     if decision.should_exclude() {
                         executed_decision = Some(decision);
@@ -1547,6 +1554,7 @@ where
                     &mut info.resource_metering_usage,
                 );
             }
+            resource_metering.commit_contract_slots(&tx_hash, &mut info.contract_slots);
 
             best_txs.mark_current_committed();
             // Members the pool iterator held are parked in it; a commit that changed the state
@@ -3467,5 +3475,67 @@ mod tests {
             "the cache hit must be timed as well as the read-through; recording only the \
              read-through would hide the benefit of a warm cache"
         );
+    }
+
+    /// A contract creation whose init code writes slots 0..3 of the new contract.
+    fn pool_create_transaction(nonce: u64) -> BasePooledTransaction {
+        let init_code = alloy_primitives::Bytes::from_static(&[
+            0x60, 0x01, 0x60, 0x00, 0x55, // SSTORE(0, 1)
+            0x60, 0x01, 0x60, 0x01, 0x55, // SSTORE(1, 1)
+            0x60, 0x01, 0x60, 0x02, 0x55, // SSTORE(2, 1)
+            0x00, // STOP
+        ]);
+        let envelope = BaseTxEnvelope::Eip1559(
+            TxEip1559 {
+                chain_id: 8_453,
+                nonce,
+                gas_limit: 300_000,
+                max_fee_per_gas: 2_000_000_000,
+                max_priority_fee_per_gas: 1,
+                to: TxKind::Create,
+                input: init_code,
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+        let encoded_len = envelope.encode_2718_len();
+        BasePooledTransaction::new(
+            envelope.try_into_recovered().expect("test signature must recover"),
+            encoded_len,
+        )
+    }
+
+    #[test]
+    fn per_contract_cap_overrun_is_included_and_counts_reset_per_block() {
+        let tx = pool_create_transaction(0);
+        let created = tx.sender().create(0);
+        let mut schedule = ResourceMeteringSchedule::new(Vec::new());
+        schedule.contract_slots = Some(crate::ContractSlotLimits::new(Some(2), None));
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.resource_metering =
+            metering_config(schedule, Arc::new(NoopMeteringProvider));
+        // The test signature recovers a per-transaction sender, so fund this one.
+        let provider = funded_provider(&[tx.sender()]);
+
+        // Two payloads in a row: each starts from empty per-contract totals.
+        for _ in 0..2 {
+            let mut db = State::builder()
+                .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
+                .with_bundle_update()
+                .build();
+            db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
+            let mut builder = ctx.block_builder(&mut db).expect("block builder");
+            builder.apply_pre_execution_changes().expect("pre-execution changes");
+            let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+            let invalid = Arc::new(Mutex::new(Vec::new()));
+            let transactions = TestParkableTransactions::recording(vec![tx.clone()], invalid);
+            ctx.execute_best_transactions(&mut info, &mut builder, transactions, None)
+                .expect("mempool scan");
+
+            assert!(info.cumulative_gas_used > 0, "dry-run overrun must still include the tx");
+            assert!(info.permanently_rejected_txs.is_empty());
+            assert_eq!(info.contract_slots.committed.get(&created), Some(&3));
+            assert_eq!(info.contract_slots.would_limit, 1);
+        }
     }
 }
