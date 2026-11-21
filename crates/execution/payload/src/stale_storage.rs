@@ -55,8 +55,9 @@ pub struct StaleStorageConfig {
     ///
     /// The transaction-scope count gates on the transaction's own changed slots. The block-scope
     /// count gates on the distinct slots the block and the transaction change together, so
-    /// splitting one batch over several transactions does not evade it, while many transactions
-    /// rewriting the same few slots do not pass it. Both skip slots created earlier in the block.
+    /// splitting one batch over several transactions hides at most this many slots per contract,
+    /// while many transactions rewriting the same few slots do not pass it. Both skip slots
+    /// created earlier in the block.
     pub contract_slot_gate: u32,
     /// Dry-run per-transaction limit once the table holds a full window of history.
     pub transaction_limit: u64,
@@ -802,10 +803,11 @@ impl BlockStaleTracker {
                 if !gated_block {
                     continue;
                 }
+                if self.created_slot_keys.contains(&key) {
+                    continue;
+                }
                 sample.gated_cleared_slots += u32::from(cleared);
-                if self.created_slot_keys.contains(&key)
-                    || !self.table.is_stale(key, self.now_hour, self.config.window_hours)
-                {
+                if !self.table.is_stale(key, self.now_hour, self.config.window_hours) {
                     continue;
                 }
                 sample.stale_transaction += u32::from(gated_transaction);
@@ -909,7 +911,7 @@ impl BlockStaleTracker {
     pub fn finish(&self) {
         let totals = self.totals;
         StaleStorageMetrics::build_stale_slots().record(totals.stale_block as f64);
-        if totals.stale_block > 0 || totals.flagged_transaction_scope > 0 {
+        if totals.stale_block > 0 || totals.max_stale_transaction > 0 {
             info!(
                 target: "payload_builder::stale_storage",
                 block_number = self.block_number,
@@ -1311,7 +1313,19 @@ mod tests {
         let clears = (125..250).map(|slot| (contract(7), slot, 1, 0));
         let sample = tracker.evaluate(&state(rewrites.chain(clears)));
         assert_eq!((sample.stale_transaction, sample.stale_block), (0, 0));
-        assert_eq!(sample.gated_cleared_slots, 125);
+        // Clearing a slot the block created is not a clear of a pre-existing slot.
+        assert_eq!(sample.gated_cleared_slots, 0);
+    }
+
+    #[test]
+    fn clears_of_pre_existing_slots_in_a_gated_contract_are_counted() {
+        let meter = meter();
+        let mut tracker = meter.block_tracker(1, NOW);
+        let clears = (0..40).map(|slot| (contract(7), slot, 1, 0));
+        let updates = (40..80).map(|slot| (contract(7), slot, 1, 2));
+        let sample = tracker.evaluate(&state(clears.chain(updates)));
+        assert_eq!(sample.gated_cleared_slots, 40);
+        assert_eq!(sample.stale_transaction, 80);
     }
 
     #[test]

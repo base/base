@@ -111,7 +111,8 @@ fn setup(regime: Regime) -> (Regime, Scan) {
     db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
     let mut builder = ctx.block_builder(db).expect("block builder");
     builder.apply_pre_execution_changes().expect("pre-execution changes");
-    let mut info: ExecutionInfo = ctx.execute_sequencer_transactions(&mut builder).expect("seq");
+    let mut info: ExecutionInfo =
+        ctx.execute_sequencer_transactions(&mut builder, None).expect("seq");
     let yielded = Rc::default();
     // The pool keeps its own reference to each candidate, so dropping one in the scan is a
     // reference-count decrement, as in production.

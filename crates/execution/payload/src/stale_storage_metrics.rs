@@ -3,7 +3,7 @@
 base_metrics::define_metrics! {
     base_payload.stale_storage,
     struct = StaleStorageMetrics,
-    #[describe("Committed transactions a stale-storage limit would have flagged, by scope and limit set")]
+    #[describe("Transactions a stale-storage limit would have flagged, by scope and limit set, counted once per payload build attempt")]
     #[label(scope)]
     #[label(limits)]
     would_flag_total: counter,
