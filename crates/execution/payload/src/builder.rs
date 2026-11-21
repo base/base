@@ -508,7 +508,8 @@ impl<Txs> Builder<'_, Txs> {
         })?;
 
         // 2. execute sequencer transactions
-        let mut info = ctx.execute_sequencer_transactions(&mut builder)?;
+        let mut info =
+            ctx.execute_sequencer_transactions(&mut builder, ctx.stale_storage_tracker())?;
 
         // 3. if mem pool transactions are requested we execute them
         let mut resting = None;
@@ -685,7 +686,7 @@ impl<Txs> Builder<'_, Txs> {
             builder.evm().block().number().try_into().expect("block_number must be < u64::MAX");
 
         builder.apply_pre_execution_changes()?;
-        ctx.execute_sequencer_transactions(&mut builder)?;
+        ctx.execute_sequencer_transactions(&mut builder, None)?;
         builder.into_executor().apply_post_execution_changes()?;
 
         if ctx.cancel.is_cancelled() {
@@ -943,6 +944,17 @@ where
         );
     }
 
+    /// Starts the log-only stale-storage tracker for this build, or `None` when the meter is
+    /// disabled.
+    pub fn stale_storage_tracker(&self) -> Option<BlockStaleTracker> {
+        self.builder_config.stale_storage.as_ref().map(|meter| {
+            meter.block_tracker(
+                self.parent().number().saturating_add(1),
+                self.attributes().timestamp(),
+            )
+        })
+    }
+
     /// Executes all sequencer transactions that are included in the payload attributes.
     ///
     /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
@@ -957,6 +969,9 @@ where
     /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
     /// attribute pre-includes; pre-includes there may legitimately be skipped on `InvalidTx`,
     /// so the historical skip-and-continue behavior is preserved.
+    ///
+    /// `stale_storage` is the build's tracker from [`Self::stale_storage_tracker`], or `None` on
+    /// paths that must not report, such as witness generation.
     #[instrument(
         skip_all,
         fields(phase = "sequencer_txs", block_number = tracing::field::Empty)
@@ -964,15 +979,11 @@ where
     pub fn execute_sequencer_transactions(
         &self,
         builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
+        stale_storage: Option<BlockStaleTracker>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         tracing::Span::current().record("block_number", self.parent().number().saturating_add(1));
         let mut info = ExecutionInfo::new();
-        info.stale_storage = self.builder_config.stale_storage.as_ref().map(|meter| {
-            meter.block_tracker(
-                self.parent().number().saturating_add(1),
-                self.attributes().timestamp(),
-            )
-        });
+        info.stale_storage = stale_storage;
         let no_tx_pool = self.attributes().no_tx_pool();
         let resource_metering = &self.builder_config.resource_metering;
 
@@ -3403,7 +3414,7 @@ mod tests {
         db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
         let mut builder = ctx.block_builder(&mut db).expect("block builder");
         builder.apply_pre_execution_changes().expect("pre-execution changes");
-        let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+        let mut info = ctx.execute_sequencer_transactions(&mut builder, None).expect("sequencer");
         let usage_before = info.resource_metering_usage.clone();
         let nonce_before = builder
             .evm_mut()
