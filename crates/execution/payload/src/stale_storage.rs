@@ -51,11 +51,12 @@ pub struct StaleStorageConfig {
     pub table_log2: u32,
     /// A pre-existing slot is stale when no canonical block wrote it within this many hours.
     pub window_hours: u64,
-    /// Stale slots count only in contracts with more than this many changed slots.
+    /// Stale slots count only in contracts with more than this many distinct changed slots.
     ///
-    /// The transaction-scope count gates on the transaction's own changed slots, so it is the
-    /// same in any block. The block-scope count gates on the block's cumulative changed slots
-    /// plus the transaction's, so splitting one batch over several transactions does not evade it.
+    /// The transaction-scope count gates on the transaction's own changed slots. The block-scope
+    /// count gates on the distinct slots the block and the transaction change together, so
+    /// splitting one batch over several transactions does not evade it, while many transactions
+    /// rewriting the same few slots do not pass it. Both skip slots created earlier in the block.
     pub contract_slot_gate: u32,
     /// Dry-run per-transaction limit once the table holds a full window of history.
     pub transaction_limit: u64,
@@ -185,6 +186,11 @@ impl StaleStorageTable {
     pub const SWEEP_AGE_HOURS: u64 = Self::EPOCH_MODULUS / 2;
     /// Recorded blocks per full sweep of the table.
     pub const SWEEP_BLOCKS: u64 = 1 << 17;
+    /// Stamps at most this many hours ahead of the current hour read as written now.
+    ///
+    /// Far below the gap between [`Self::SWEEP_AGE_HOURS`] plus a full sweep and the epoch
+    /// range, so a swept-table age never falls in this band.
+    pub const FUTURE_TOLERANCE_HOURS: u64 = 168;
 
     /// Creates an empty table of `2^log2` entries keyed with a random secret.
     pub fn new(log2: u32) -> Self {
@@ -278,8 +284,8 @@ impl StaleStorageTable {
         cleared
     }
 
-    /// Entries [`Self::sweep`] visits per recorded canonical segment, so a full pass takes
-    /// [`Self::SWEEP_BLOCKS`] segments.
+    /// Entries [`Self::sweep`] visits per recorded canonical block, so a full pass takes
+    /// [`Self::SWEEP_BLOCKS`] blocks.
     pub fn sweep_entries_per_block(&self) -> u64 {
         (self.entries.len() as u64).div_ceil(Self::SWEEP_BLOCKS)
     }
@@ -295,12 +301,21 @@ impl StaleStorageTable {
     }
 
     /// Hours from a stored epoch to `now_hour`, modulo the epoch range; `None` for `0`.
+    ///
+    /// A stamp up to [`Self::FUTURE_TOLERANCE_HOURS`] after `now_hour`, such as one from a
+    /// canonical tip timestamped after the block being built, reads as age `0` rather than
+    /// wrapping to nearly the full epoch range.
     pub const fn epoch_age(raw: u16, now_hour: u64) -> Option<u64> {
         if raw == 0 {
             return None;
         }
         let stamped = raw as u64 - 1;
-        Some((now_hour % Self::EPOCH_MODULUS + Self::EPOCH_MODULUS - stamped) % Self::EPOCH_MODULUS)
+        let age =
+            (now_hour % Self::EPOCH_MODULUS + Self::EPOCH_MODULUS - stamped) % Self::EPOCH_MODULUS;
+        if age > Self::EPOCH_MODULUS - Self::FUTURE_TOLERANCE_HOURS {
+            return Some(0);
+        }
+        Some(age)
     }
 
     /// `SipHash-2-4` of a 56-byte message given as seven little-endian words.
@@ -401,7 +416,8 @@ impl StaleAgeBuckets {
         [self.le_1h, self.h1_6, self.h6_24, self.d1_7, self.gt_7d, self.never]
     }
 
-    /// Slots older than `window_hours`, counting never-recorded slots, at bucket resolution.
+    /// Slots last written more than 24 hours ago or never recorded. The buckets are fixed, so
+    /// this ignores [`StaleStorageConfig::window_hours`].
     pub const fn older_than_day(&self) -> u64 {
         self.d1_7 + self.gt_7d + self.never
     }
@@ -453,19 +469,27 @@ impl StaleStorageMeter {
             table_age_secs,
             limits: self.config.limits_at_age(table_age_secs),
             contract_changed_slots: AddressMap::default(),
+            changed_slot_keys: HashSet::default(),
             created_slot_keys: HashSet::default(),
             counted_stale_keys: HashSet::default(),
             pending_contracts: Vec::new(),
+            pending_changed_keys: Vec::new(),
             pending_created_keys: Vec::new(),
+            contract_slots: Vec::new(),
             pending_stale_keys: Vec::new(),
             pending: None,
             totals: BlockStaleTotals::default(),
         }
     }
 
-    /// Stamps every changed slot of a canonical segment whose tip is at `timestamp`, and
-    /// measures the age of each pre-existing one first.
-    pub fn record_bundle(&self, bundle: &BundleState, timestamp: u64) -> CanonicalStaleRecord {
+    /// Stamps every changed slot of a canonical segment of `blocks` blocks whose tip is at
+    /// `timestamp`, and measures the age of each pre-existing one first.
+    pub fn record_bundle(
+        &self,
+        bundle: &BundleState,
+        blocks: u64,
+        timestamp: u64,
+    ) -> CanonicalStaleRecord {
         let now_hour = timestamp / STALE_STORAGE_EPOCH_SECONDS;
         let gate = u64::from(self.config.contract_slot_gate);
         let mut record = CanonicalStaleRecord::default();
@@ -504,8 +528,10 @@ impl StaleStorageMeter {
             Ordering::Relaxed,
             Ordering::Relaxed,
         );
-        self.table.recorded_blocks.fetch_add(1, Ordering::Relaxed);
-        record.swept_entries = self.table.sweep(now_hour, self.table.sweep_entries_per_block());
+        self.table.recorded_blocks.fetch_add(blocks, Ordering::Relaxed);
+        record.swept_entries = self
+            .table
+            .sweep(now_hour, self.table.sweep_entries_per_block().saturating_mul(blocks.max(1)));
         record
     }
 
@@ -523,7 +549,11 @@ impl StaleStorageMeter {
             return None;
         }
         let tip = committed.tip();
-        let record = self.record_bundle(&committed.execution_outcome().bundle, tip.timestamp());
+        let record = self.record_bundle(
+            &committed.execution_outcome().bundle,
+            committed.len() as u64,
+            tip.timestamp(),
+        );
         let table_age_secs = self.table.age_secs(tip.timestamp()).unwrap_or_default();
         StaleStorageMetrics::recorded_blocks_total().increment(committed.len() as u64);
         StaleStorageMetrics::table_age_seconds().set(table_age_secs as f64);
@@ -685,14 +715,19 @@ pub struct BlockStaleTracker {
     now_hour: u64,
     table_age_secs: Option<u64>,
     limits: StaleStorageLimits,
-    /// Cumulative changed slots per contract across committed transactions.
+    /// Distinct changed slots per contract across committed transactions.
     contract_changed_slots: AddressMap<u32>,
+    /// Slots changed by committed transactions of this block.
+    changed_slot_keys: HashSet<u64>,
     /// Slots created by committed transactions of this block: they did not exist before it.
     created_slot_keys: HashSet<u64>,
     /// Stale slots already counted in this block's block-scope total.
     counted_stale_keys: HashSet<u64>,
     pending_contracts: Vec<(Address, u32)>,
+    pending_changed_keys: Vec<u64>,
     pending_created_keys: Vec<u64>,
+    /// Scratch `(key, created, cleared)` for the changed slots of one contract.
+    contract_slots: Vec<(u64, bool, bool)>,
     pending_stale_keys: Vec<u64>,
     pending: Option<StaleTxSample>,
     totals: BlockStaleTotals,
@@ -711,48 +746,63 @@ impl BlockStaleTracker {
 
     /// Counts the stale slots of an executed transaction without changing the block state.
     ///
-    /// Only changed slots count toward the gate; slots that were only read are skipped. A
-    /// contract under the gate costs one map lookup and no hashing of pre-existing slots.
-    ///
-    /// Created slots in every contract are hashed so a later transaction in the block that
-    /// rewrites one does not read it as an old, never-recorded slot.
+    /// Only changed slots count toward the gate; slots that were only read are skipped. Each
+    /// changed slot is hashed once, so the block-scope gate counts distinct slots and a later
+    /// transaction that rewrites a slot created earlier in the block does not read it as an
+    /// old, never-recorded slot. Only contracts past a gate probe the table.
     pub fn evaluate(&mut self, state: &EvmState) -> StaleTxSample {
         self.pending_contracts.clear();
+        self.pending_changed_keys.clear();
         self.pending_created_keys.clear();
         self.pending_stale_keys.clear();
         let gate = self.config.contract_slot_gate;
         let mut sample = StaleTxSample::default();
         let mut top_contract_stale = 0;
         for (address, account) in state {
-            let changed = account.storage.values().filter(|slot| slot.is_changed()).count() as u32;
+            self.contract_slots.clear();
+            let mut new_changed = 0u32;
+            for (slot_id, slot) in &account.storage {
+                if !slot.is_changed() {
+                    continue;
+                }
+                let key = self.table.slot_key(address, slot_id);
+                if !self.changed_slot_keys.contains(&key) {
+                    new_changed += 1;
+                    self.pending_changed_keys.push(key);
+                }
+                self.contract_slots.push((
+                    key,
+                    slot.original_value().is_zero(),
+                    slot.present_value().is_zero(),
+                ));
+            }
+            let changed = self.contract_slots.len() as u32;
             if changed == 0 {
                 continue;
             }
             sample.changed_slots += changed;
             sample.storage_tries += 1;
             sample.max_contract_changed_slots = sample.max_contract_changed_slots.max(changed);
-            self.pending_contracts.push((*address, changed));
+            self.pending_contracts.push((*address, new_changed));
             let before = self.contract_changed_slots.get(address).copied().unwrap_or_default();
-            let gated_block = before.saturating_add(changed) > gate;
+            let gated_block = before.saturating_add(new_changed) > gate;
+            // A transaction past the gate is always past the block gate: its rewrites of slots
+            // the block already changed are in `before`.
             let gated_transaction = changed > gate;
             if gated_block {
                 sample.gated_changed_slots += changed;
             }
             let mut contract_stale = 0;
-            for (slot_id, slot) in &account.storage {
-                if !slot.is_changed() {
-                    continue;
-                }
-                if slot.original_value().is_zero() {
-                    self.pending_created_keys.push(self.table.slot_key(address, slot_id));
+            for &(key, created, cleared) in &self.contract_slots {
+                if created {
+                    self.pending_created_keys.push(key);
                     sample.gated_created_slots += u32::from(gated_block);
                     continue;
                 }
                 if !gated_block {
                     continue;
                 }
-                sample.gated_cleared_slots += u32::from(slot.present_value().is_zero());
-                let key = self.table.slot_key(address, slot_id);
+                sample.gated_cleared_slots += u32::from(cleared);
                 if self.created_slot_keys.contains(&key)
                     || !self.table.is_stale(key, self.now_hour, self.config.window_hours)
                 {
@@ -784,6 +834,7 @@ impl BlockStaleTracker {
             self.totals.max_contract_changed_slots =
                 self.totals.max_contract_changed_slots.max(u64::from(*total));
         }
+        self.changed_slot_keys.extend(self.pending_changed_keys.drain(..));
         self.created_slot_keys.extend(self.pending_created_keys.drain(..));
         self.counted_stale_keys.extend(self.pending_stale_keys.drain(..));
 
@@ -1059,6 +1110,14 @@ mod tests {
     }
 
     #[test]
+    fn a_stamp_slightly_in_the_future_reads_as_fresh() {
+        let table = StaleStorageTable::with_secret(12, (1, 2));
+        table.stamp(4, NOW_HOUR + 2);
+        assert_eq!(table.age_hours(4, NOW_HOUR), Some(0));
+        assert!(!table.is_stale(4, NOW_HOUR, 24));
+    }
+
+    #[test]
     fn colliding_slots_read_as_the_more_recent_write() {
         let table = StaleStorageTable::with_secret(12, (1, 2));
         table.stamp(3, NOW_HOUR);
@@ -1195,6 +1254,21 @@ mod tests {
     }
 
     #[test]
+    fn rewrites_of_the_same_slots_do_not_pass_the_block_gate() {
+        let meter = meter();
+        let mut tracker = meter.block_tracker(1, NOW);
+        for _ in 0..30 {
+            let sample = tracker.evaluate(&updates(contract(7), 0, 5));
+            assert_eq!((sample.stale_transaction, sample.stale_block), (0, 0));
+            tracker.commit(&TxHash::ZERO);
+        }
+        assert_eq!(tracker.totals().max_contract_changed_slots, 5);
+        // Distinct slots still accumulate toward the gate.
+        let sample = tracker.evaluate(&updates(contract(7), 5, 60));
+        assert_eq!((sample.stale_transaction, sample.stale_block), (0, 60));
+    }
+
+    #[test]
     fn an_uncommitted_transaction_does_not_advance_the_block() {
         let meter = meter();
         let mut tracker = meter.block_tracker(1, NOW);
@@ -1283,7 +1357,7 @@ mod tests {
         let gated: Vec<_> = (0..70).map(|slot| (slot, 1, 2)).collect();
         let small = vec![(0, 1, 2), (1, 0, 5)];
         let record =
-            meter.record_bundle(&bundle([(contract(7), gated), (contract(8), small)]), NOW);
+            meter.record_bundle(&bundle([(contract(7), gated), (contract(8), small)]), 1, NOW);
         assert_eq!(record.changed_slots, 72);
         assert_eq!(record.gated.never, 70);
         assert_eq!(record.ungated.never, 71);
@@ -1295,6 +1369,7 @@ mod tests {
         assert_eq!(meter.table.age_hours(key, NOW_HOUR + 2), Some(2));
         let again = meter.record_bundle(
             &bundle([(contract(7), (0..70).map(|s| (s, 2, 3)).collect())]),
+            1,
             NOW + 3 * HOUR,
         );
         assert_eq!(again.gated.h1_6, 70);
@@ -1303,7 +1378,11 @@ mod tests {
     #[test]
     fn recorded_slots_are_fresh_for_the_next_build() {
         let meter = meter();
-        meter.record_bundle(&bundle([(contract(7), (0..100).map(|s| (s, 1, 2)).collect())]), NOW);
+        meter.record_bundle(
+            &bundle([(contract(7), (0..100).map(|s| (s, 1, 2)).collect())]),
+            1,
+            NOW,
+        );
         let mut tracker = meter.block_tracker(2, NOW + 2);
         assert_eq!(tracker.evaluate(&updates(contract(7), 0, 100)).stale_transaction, 0);
     }
