@@ -31,6 +31,19 @@ struct Cli {
 }
 ```
 
+## Execution-layer sync anchor
+
+`--el-sync-safe-offset` (`BASE_NODE_EL_SYNC_SAFE_OFFSET`) selects the derivation
+anchor age in seconds after an observed execution-layer `SYNCING` → `VALID` transition.
+The default is 43,200 seconds. Anchor age follows the configured block-time schedule,
+including Denim, rather than querying historical block timestamps. Zero trusts the
+execution-valid synced tip as safe; it does not establish L1 finality.
+
+A canonical SafeDB tip takes precedence over the offset. A non-canonical SafeDB tip
+or L1 inclusion key is ignored for anchor selection without trimming or clearing
+the database. Higher existing labels are retained. Immediate-`VALID` snapshot startup
+is unchanged, and finalized only advances later through derivation.
+
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

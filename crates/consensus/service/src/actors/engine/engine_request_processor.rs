@@ -5,6 +5,7 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
+use base_consensus_safedb::{DisabledSafeDB, SafeDBError, SafeDBReader};
 use base_consensus_engine::{
     ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate, EngineTask, EngineTaskError,
     EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, ForkchoiceCheckpointLabel,
@@ -75,6 +76,12 @@ where
     /// When set, engine resets are skipped and the bootstrapped L2 unsafe head is retained
     /// instead of consulting L1 (there is no L1-info deposit to reconstruct the safe head from).
     skip_reset: bool,
+    /// Offset in seconds used when no usable SafeDB head exists.
+    el_safe_offset: u64,
+    /// Persistent derivation history consulted at EL-sync completion.
+    safe_db_reader: Arc<dyn SafeDBReader>,
+    /// Whether normal L1 derivation resumes after EL sync, unlike isolated sequencing.
+    el_sync_promotion_enabled: bool,
 }
 
 impl<EngineClient_, DerivationClient> EngineProcessor<EngineClient_, DerivationClient>
@@ -154,11 +161,154 @@ where
             el_sync_complete: false,
             engine,
             skip_reset: false,
+            el_safe_offset: base_consensus_engine::ElSyncAnchor::DEFAULT_OFFSET_SECONDS,
+            safe_db_reader: Arc::new(DisabledSafeDB),
+            el_sync_promotion_enabled: true,
             last_finalized_head_checkpointed: L2BlockInfo::default(),
             last_safe_head_checkpointed: L2BlockInfo::default(),
             last_safe_head_sent: L2BlockInfo::default(),
             rollup: config,
         }
+    }
+
+    /// Configures offset selection and persistent derivation history for EL-sync completion.
+    pub fn with_el_sync_anchor(mut self, offset_seconds: u64, reader: Arc<dyn SafeDBReader>) -> Self {
+        self.el_safe_offset = offset_seconds;
+        self.safe_db_reader = reader;
+        self
+    }
+
+    /// Retains execution labels when isolated sequencing will not resume L1 derivation.
+    pub const fn without_el_sync_promotion(mut self) -> Self {
+        self.el_sync_promotion_enabled = false;
+        self
+    }
+
+    /// Validates the synced chain and advances safe without inventing new L1 finality.
+    async fn promote_el_sync_anchor(&mut self) -> Result<(), EngineError> {
+        let existing = base_consensus_engine::L2ForkchoiceState::current_with_checkpoint_reader(
+            &self.rollup, self.client.as_ref(), self.checkpoint_reader.as_ref(),
+        ).await.map_err(base_consensus_engine::EngineResetError::SyncStart)?;
+        // Recovery may substitute metadata above a pruned label. It must not become
+        // an authoritative safe/finalized label merely because execution is valid.
+        for (tag, hydrated) in [(BlockNumberOrTag::Safe, existing.safe), (BlockNumberOrTag::Finalized, existing.finalized)] {
+            let labeled = base_consensus_engine::get_block_compat(self.client.as_ref(), tag.into()).await
+                .map_err(|error| EngineError::BootstrapHeadQuery(error.to_string()))?;
+            if labeled.is_some_and(|block| block.header.inner.inner.hash_slow() != hydrated.block_info.hash
+                || block.header.number != hydrated.block_info.number) {
+                return Err(EngineError::BootstrapHeadQuery("EL-sync label recovery requires matching checkpoint metadata".into()));
+            }
+        }
+        let start = base_consensus_engine::find_starting_forkchoice_with_checkpoint_reader(
+            &self.rollup, self.client.as_ref(), self.checkpoint_reader.as_ref(),
+        ).await.map_err(base_consensus_engine::EngineResetError::SyncStart)?;
+        let old = self.engine.state().sync_state;
+        let target = base_consensus_engine::ElSyncAnchor::block_number(
+            &self.rollup, start.un_safe.block_info.number, self.el_safe_offset,
+        );
+        let stored_anchor = match self.safe_db_reader.safe_head_at_l1(u64::MAX).await {
+            Ok(stored) => {
+                let canonical = if existing.safe.block_info.number == stored.safe_head.number
+                    && existing.safe.block_info.hash == stored.safe_head.hash {
+                    Some(existing.safe)
+                } else if existing.finalized.block_info.number == stored.safe_head.number
+                    && existing.finalized.block_info.hash == stored.safe_head.hash {
+                    Some(existing.finalized)
+                } else {
+                    self.client.l2_block_info_by_label(BlockNumberOrTag::Number(stored.safe_head.number))
+                        .await.map_err(|e| EngineError::BootstrapHeadQuery(e.to_string()))?
+                };
+                let canonical = canonical.filter(|head| head.block_info.hash == stored.safe_head.hash);
+                let invalid_reason = if canonical.is_none() {
+                    Some("non-canonical safe tip")
+                } else {
+                    let inclusion = self.client.get_l1_block(stored.l1_block.number.into()).await
+                        .map_err(|e| EngineError::BootstrapHeadQuery(e.to_string()))?;
+                    inclusion.is_none_or(|block| block.header.hash != stored.l1_block.hash)
+                        .then_some("non-canonical L1 inclusion")
+                };
+                if let Some(reason) = invalid_reason {
+                    warn!(target: "engine", safe_db_tip_number = stored.safe_head.number,
+                        safe_db_tip_hash = %stored.safe_head.hash, reason,
+                        "Ignoring non-canonical SafeDB EL-sync anchor");
+                    None
+                } else {
+                    canonical
+                }
+            }
+            Err(SafeDBError::Disabled | SafeDBError::NotFound) => None,
+            Err(error) => return Err(EngineError::BootstrapHeadQuery(error.to_string())),
+        };
+        let anchor = if let Some(anchor) = stored_anchor {
+            anchor
+        } else {
+            let retained = if old.safe_head().block_info.number > existing.safe.block_info.number {
+                old.safe_head()
+            } else {
+                existing.safe
+            };
+            if retained.block_info.number >= target && retained != L2BlockInfo::default() {
+                retained
+            } else if target == self.rollup.genesis.l2.number {
+                L2BlockInfo::from_l2_genesis(&self.rollup.genesis)
+            } else {
+                self.client.l2_block_info_by_label(BlockNumberOrTag::Number(target))
+                    .await.map_err(|e| EngineError::BootstrapHeadQuery(e.to_string()))?
+                    .ok_or_else(|| EngineError::BootstrapHeadQuery("EL-sync offset anchor unavailable".into()))?
+            }
+        };
+        let mut safe = anchor;
+        for retained in [old.safe_head(), existing.safe] {
+            if retained.block_info.number > safe.block_info.number { safe = retained; }
+        }
+        let mut finalized = existing.finalized;
+        if old.finalized_head().block_info.number > finalized.block_info.number {
+            finalized = old.finalized_head();
+        }
+        if finalized.block_info.number > safe.block_info.number { safe = finalized; }
+        let origin = self.client.get_l1_block(safe.l1_origin.number.into()).await
+            .map_err(|e| EngineError::BootstrapHeadQuery(e.to_string()))?;
+        if origin.is_none_or(|block| block.header.hash != safe.l1_origin.hash) {
+            return Err(EngineError::BootstrapHeadQuery("EL-sync anchor has no canonical L1 origin".into()));
+        }
+        // Missing labels remain at configured genesis. An execution-valid block is not
+        // evidence of L1 finality, even when the offset makes it old enough in wall time.
+        let update = EngineSyncStateUpdate {
+            unsafe_head: Some(start.un_safe), local_safe_head: Some(safe),
+            safe_head: Some(safe), finalized_head: Some(finalized),
+        };
+        for label in [safe, finalized, old.safe_head(), old.finalized_head(), existing.safe, existing.finalized] {
+            if label == L2BlockInfo::default() || label == L2BlockInfo::from_l2_genesis(&self.rollup.genesis) { continue; }
+            if label.block_info.number > start.un_safe.block_info.number {
+                return Err(EngineError::BootstrapHeadQuery("EL-sync label is ahead of synced head".into()));
+            }
+            let canonical = self.client.l2_block_by_label(BlockNumberOrTag::Number(label.block_info.number))
+                .await.map_err(|e| EngineError::BootstrapHeadQuery(e.to_string()))?;
+            if canonical.is_none_or(|head| head.header.inner.inner.hash_slow() != label.block_info.hash) {
+                return Err(EngineError::BootstrapHeadQuery("EL-sync label conflicts with synced chain".into()));
+            }
+        }
+        if safe == old.safe_head() && finalized == old.finalized_head() {
+            self.derivation_client.reset_el_sync_anchor(safe).await
+                .map_err(EngineError::ELSyncPipelineReset)?;
+            self.last_safe_head_sent = safe;
+            return Ok(());
+        }
+        let proposed = old.updated(update);
+        let response = self.client.fork_choice_updated_v3(proposed.create_forkchoice_state(), None)
+            .await.map_err(|e| EngineError::BootstrapHeadQuery(e.to_string()))?;
+        if response.payload_status.status != alloy_rpc_types_engine::PayloadStatusEnum::Valid {
+            return Err(EngineError::BootstrapHeadQuery("EL-sync anchor forkchoice is not VALID".into()));
+        }
+        self.engine.seed_state(update);
+        self.checkpoint_forkchoice_state_if_updated().await;
+        self.derivation_client.reset_el_sync_anchor(safe).await
+            .map_err(EngineError::ELSyncPipelineReset)?;
+        self.last_safe_head_sent = safe;
+        info!(target: "engine", old_safe = %old.safe_head().block_info.hash,
+            old_finalized = %old.finalized_head().block_info.hash,
+            new_head = %safe.block_info.hash, "Promoted EL-sync derivation anchor");
+        Ok(())
     }
 
     /// Resets the inner [`Engine`] without notifying derivation.
@@ -319,9 +469,12 @@ where
             Err(err) => self.handle_engine_task_error(err).await?,
         };
 
-        self.checkpoint_forkchoice_state_if_updated().await;
-        self.send_derivation_actor_safe_head_if_updated().await?;
-
+        let selecting_anchor = !self.el_sync_complete && self.el_sync_promotion_enabled && !self.skip_reset
+            && (!self.engine.state().el_sync_finished || self.engine.state().el_sync_started);
+        if !selecting_anchor {
+            self.checkpoint_forkchoice_state_if_updated().await;
+            self.send_derivation_actor_safe_head_if_updated().await?;
+        }
         if !self.el_sync_complete && self.engine.state().el_sync_finished {
             let sync_outcome = self.mark_el_sync_complete_and_notify_derivation_actor().await?;
             // A genuine reset from the drain above takes precedence and stays fatal; only surface
@@ -496,11 +649,12 @@ where
     async fn mark_el_sync_complete_and_notify_derivation_actor(
         &mut self,
     ) -> Result<ResetOutcome, EngineError> {
-        self.el_sync_complete = true;
-
         // Reset the engine if the sync state does not already know about a finalized block.
         let reset_outcome =
-            if self.engine.state().sync_state.finalized_head() == L2BlockInfo::default() {
+            if self.engine.state().el_sync_started && self.el_sync_promotion_enabled && !self.skip_reset {
+                self.promote_el_sync_anchor().await?;
+                ResetOutcome::InitialELSyncReset
+            } else if self.engine.state().sync_state.finalized_head() == L2BlockInfo::default() {
                 // If the sync status is finished, we can reset the engine and start derivation.
                 info!(target: "engine", "Performing initial engine reset");
                 self.reset().await?;
@@ -513,7 +667,7 @@ where
         self.derivation_client
             .notify_sync_completed(self.engine.state().sync_state.safe_head())
             .await
-            .map(|_| Ok(reset_outcome))
+            .map(|_| { self.el_sync_complete = true; Ok(reset_outcome) })
             .map_err(|e| {
                 error!(target: "engine", ?e, "Failed to notify sync completed");
                 EngineError::ChannelClosed
@@ -773,6 +927,204 @@ mod tests {
         let block = RpcBlock::<BaseTransaction>::default();
         let hash = block.clone().into_consensus().hash_slow();
         (block, hash)
+    }
+
+    /// Distinguishes status histories without ambiguous boolean test arguments.
+    enum SyncHistory { CatchUp, Snapshot, PromotionSyncing, StoredSafe, StoredOldSafe, StoredPrunedSafe, MissingErrors, StaleSafe, StaleInclusion }
+
+    /// Real EL catch-up must hand derivation the offset anchor without inventing finality.
+    #[rstest]
+    #[case::real_sync(SyncHistory::CatchUp, 2, 3)]
+    #[case::recent_snapshot(SyncHistory::Snapshot, 2, 2)]
+    #[case::higher_safe_kept(SyncHistory::CatchUp, 4, 4)]
+    #[case::missing_labels(SyncHistory::CatchUp, 0, 3)]
+    #[case::promotion_syncing(SyncHistory::PromotionSyncing, 2, 2)]
+    #[case::stored_safe(SyncHistory::StoredSafe, 2, 4)]
+    #[case::stored_older_safe(SyncHistory::StoredOldSafe, 2, 2)]
+    #[case::stale_safe(SyncHistory::StaleSafe, 2, 3)]
+    #[case::stale_inclusion(SyncHistory::StaleInclusion, 2, 3)]
+    #[case::stored_pruned_safe(SyncHistory::StoredPrunedSafe, 2, 2)]
+    #[case::missing_label_errors(SyncHistory::MissingErrors, 0, 3)]
+    #[tokio::test]
+    async fn real_el_sync_resumes_derivation_at_offset_anchor(
+        #[case] history: SyncHistory,
+        #[case] old_safe_number: u64,
+        #[case] expected_safe_number: u64,
+    ) {
+        let (genesis, genesis_hash) = make_genesis_block();
+        let config = Arc::new(RollupConfig {
+            block_time: 2,
+            genesis: ChainGenesis { l2: BlockNumHash { number: 0, hash: genesis_hash }, ..Default::default() },
+            ..Default::default()
+        });
+        let mut blocks = vec![genesis];
+        let mut infos = vec![L2BlockInfo::from_l2_genesis(&config.genesis)];
+        for number in 1..=5 {
+            let origin = BlockNumHash { number: 100 + number, hash: B256::with_last_byte(number as u8) };
+            let mut block = full_reth_l2_block_with_l1_info(
+                number, infos.last().unwrap().block_info.hash, origin,
+            );
+            block.header.inner.timestamp = number * 2;
+            let decoded = block.clone().into_consensus()
+                .map_transactions(|tx| tx.inner.inner.into_inner());
+            infos.push(L2BlockInfo::from_block_and_genesis(&decoded, &config.genesis).expect("fixture block has L1 origin"));
+            blocks.push(block);
+        }
+        let head = infos[5];
+        let safe = infos[old_safe_number as usize];
+        let finalized = infos[usize::from(old_safe_number != 0)];
+        let expected_safe = infos[expected_safe_number as usize];
+        let inclusion = BlockInfo {
+            number: 110, hash: B256::with_last_byte(110), ..Default::default()
+        };
+        let mut builder = test_engine_client_builder().with_config(Arc::clone(&config))
+            .with_fork_choice_updated_v3_response(syncing_fcu());
+        for origin in infos.iter().skip(1).map(|info| info.l1_origin)
+            .chain([BlockNumHash { number: inclusion.number, hash: inclusion.hash }]) {
+            let mut block = RpcBlock::<EthTransaction>::default();
+            block.header.inner.number = origin.number;
+            block.header.hash = origin.hash;
+            builder = builder.with_l1_block(BlockId::from(origin.number), block);
+        }
+        for (number, block) in blocks.iter().enumerate() {
+            builder = builder.with_l2_block(BlockId::from(number as u64), block.clone())
+                .with_l2_block_by_label(BlockNumberOrTag::Number(number as u64), block.clone())
+                .with_l2_block(BlockId::from(infos[number].block_info.hash), block.clone())
+                .with_block_info_by_tag(BlockNumberOrTag::Number(number as u64), infos[number]);
+        }
+        builder = builder.with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), blocks[5].clone());
+        if old_safe_number != 0 {
+            builder = builder.with_l2_block(BlockId::Number(BlockNumberOrTag::Safe), blocks[old_safe_number as usize].clone())
+                .with_l2_block(BlockId::Number(BlockNumberOrTag::Finalized), blocks[1].clone());
+        }
+        if matches!(history, SyncHistory::StoredPrunedSafe) {
+            let mut pruned = blocks[2].clone();
+            pruned.transactions = BlockTransactions::Hashes(vec![]);
+            builder = builder.with_l2_block(BlockNumberOrTag::Safe.into(), pruned.clone())
+                .with_l2_block_by_label(BlockNumberOrTag::Number(2), pruned);
+        }
+        if matches!(history, SyncHistory::MissingErrors) {
+            builder = builder.with_l2_block_error(BlockNumberOrTag::Safe.into(), base_consensus_engine::test_utils::MockL2BlockError::Custom("block not found".into()))
+                .with_l2_block_error(BlockNumberOrTag::Finalized.into(), base_consensus_engine::test_utils::MockL2BlockError::Custom("Unknown block".into()));
+        }
+        let client = Arc::new(builder.build());
+        if matches!(history, SyncHistory::StoredPrunedSafe) {
+            client.storage().write().await.block_info_by_tag.remove(&BlockNumberOrTag::Number(2));
+        }
+        let state = TestEngineStateBuilder::new()
+            .with_unsafe_head(head)
+            .with_safe_head(safe)
+            .with_finalized_head(finalized)
+            .with_el_sync_finished(false)
+            .build();
+        let (state_tx, _) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let mut engine = Engine::new(state, state_tx, queue_tx);
+        let update = base_consensus_engine::EngineSyncStateUpdate::default();
+        if !matches!(history, SyncHistory::Snapshot) {
+        assert!(!engine.probe_el_sync(Arc::clone(&client), Arc::clone(&config), update).await.expect("SYNCING probe succeeds"), "SYNCING must not complete EL sync");
+        }
+        client.set_fork_choice_updated_v3_response(valid_fcu()).await;
+        assert!(engine.probe_el_sync(Arc::clone(&client), Arc::clone(&config), update).await.expect("VALID probe succeeds"), "VALID must complete EL sync");
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_send_signal().returning(|_| Ok(()));
+        derivation.expect_reset_el_sync_anchor()
+            .withf(move |actual| *actual == expected_safe)
+            .times(usize::from(!matches!(history, SyncHistory::Snapshot | SyncHistory::PromotionSyncing)))
+            .returning(|_| Ok(()));
+        derivation.expect_send_new_engine_safe_head()
+            .times(usize::from(matches!(history, SyncHistory::Snapshot)))
+            .returning(|_| Ok(()));
+        derivation.expect_notify_sync_completed()
+            .withf(move |actual| *actual == expected_safe)
+            .times(usize::from(!matches!(history, SyncHistory::PromotionSyncing)))
+            .returning(|_| Ok(()));
+        if matches!(history, SyncHistory::PromotionSyncing) {
+            client.set_fork_choice_updated_v3_response(syncing_fcu()).await;
+        }
+        let directory = tempfile::tempdir().expect("SafeDB temporary directory is created");
+        let reader: Arc<dyn base_consensus_safedb::SafeDBReader> = if matches!(history, SyncHistory::StoredSafe | SyncHistory::StoredOldSafe | SyncHistory::StoredPrunedSafe | SyncHistory::StaleSafe | SyncHistory::StaleInclusion) {
+            let db = base_consensus_safedb::SafeDB::open(directory.path().join("safe.redb")).expect("SafeDB opens");
+            let mut recorded = infos[if matches!(history, SyncHistory::StoredOldSafe | SyncHistory::StoredPrunedSafe) { 2 } else { 4 }];
+            if matches!(history, SyncHistory::StaleSafe) { recorded.block_info.hash = B256::with_last_byte(99); }
+            let mut recorded_inclusion = inclusion;
+            if matches!(history, SyncHistory::StaleInclusion) {
+                recorded_inclusion.hash = B256::with_last_byte(111);
+            }
+            base_consensus_safedb::SafeHeadListener::safe_head_updated(&db, recorded, recorded_inclusion)
+                .await.expect("stored derivation head is recorded");
+            Arc::new(db)
+        } else { Arc::new(base_consensus_safedb::DisabledSafeDB) };
+        let mut processor = EngineProcessor::new(client, config, derivation, engine)
+            .with_el_sync_anchor(4, reader);
+        if matches!(history, SyncHistory::StoredPrunedSafe) {
+            processor.checkpoint_reader = Arc::new(TestCheckpointReader { safe: Some(safe), finalized: None });
+        }
+        let completion = if matches!(history, SyncHistory::Snapshot) {
+            processor.drain().await
+        } else {
+            processor.mark_el_sync_complete_and_notify_derivation_actor().await
+        };
+        if matches!(history, SyncHistory::Snapshot) {
+            assert_eq!(processor.last_safe_head_sent, safe,
+                "immediate VALID sends the existing safe head in the first drain");
+            assert_eq!(processor.last_safe_head_checkpointed, safe,
+                "immediate VALID writes the existing safe checkpoint in the first drain");
+            assert_eq!(processor.last_finalized_head_checkpointed, finalized,
+                "immediate VALID writes finalized in the first drain without deferral");
+        }
+        assert_eq!(completion.is_err(), matches!(history, SyncHistory::PromotionSyncing),
+            "only an unconfirmed promotion must fail: {completion:?}");
+        assert_eq!(processor.engine_state().sync_state.safe_head(), expected_safe, "safe must respect the real-sync gate and preserve higher labels");
+        assert_eq!(processor.engine_state().sync_state.finalized_head(), finalized, "existing genuine finalized head must not advance");
+        if !matches!(history, SyncHistory::Snapshot | SyncHistory::PromotionSyncing) {
+            assert_eq!(processor.last_safe_head_sent, expected_safe, "completion must consume the anchor notification so the next drain cannot falsely confirm attributes");
+            processor.drain().await.expect("a repeated drain must not emit an anchor confirmation after completion");
+        }
+    }
+
+    /// Startup SYNCING must not publish a seeded safe head into persisted derivation history.
+    #[tokio::test]
+    async fn syncing_drain_defers_safe_head_notifications() {
+        let safe = test_block_info(90);
+        let (mut processor, _) = unsafe_payload_processor(false, test_block_info(100), Some(safe), RollupConfig::default());
+        processor.client.set_fork_choice_updated_v3_response(syncing_fcu()).await;
+        processor.engine.probe_el_sync(Arc::clone(&processor.client), Arc::clone(&processor.rollup), Default::default())
+            .await.expect("SYNCING probe succeeds");
+        // No mock notification expectations: a SafeDB-writing notification must fail the test.
+        processor.drain().await.expect("a pending EL sync drain succeeds without notifications");
+        assert_eq!(processor.last_safe_head_sent, L2BlockInfo::default(), "pending sync leaves safe notification tracking untouched");
+        assert_eq!(processor.engine_state().sync_state.safe_head(), safe, "deferring notification does not regress the safe label");
+    }
+
+    /// A mismatched persisted checkpoint must never become a usable EL-sync anchor.
+    #[tokio::test]
+    async fn el_sync_checkpoint_mismatch_fails_closed() {
+        let block = pruned_reth_l2_block(4, B256::ZERO);
+        let checkpoint = test_block_info(3);
+        let client = Arc::new(test_engine_client_builder()
+            .with_l2_block(BlockId::Number(BlockNumberOrTag::Finalized), block).build());
+        let state = EngineState::default();
+        let (state_tx, _) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(state, state_tx, queue_tx);
+        let mut processor = EngineProcessor::new_with_checkpoint(
+            client, Arc::new(RollupConfig::default()), MockEngineDerivationClient::new(), engine,
+            Arc::new(TestCheckpointReader { safe: None, finalized: Some(checkpoint) }),
+            Arc::new(NoopCheckpointWriter),
+        );
+        let result = processor.promote_el_sync_anchor().await;
+        assert_eq!(processor.engine_state().sync_state, state.sync_state,
+            "checkpoint mismatch must leave every engine label unchanged");
+        match result {
+            Err(crate::EngineError::EngineReset(base_consensus_engine::EngineResetError::SyncStart(
+                base_consensus_engine::SyncStartError::CheckpointMismatch { reth_number, checkpoint_number, .. }
+            ))) => {
+                assert_eq!(reth_number, 4, "mismatch retains the EL-labeled block number");
+                assert_eq!(checkpoint_number, 3, "mismatch retains the incompatible checkpoint number");
+            }
+            other => panic!("checkpoint mismatch must fail closed, got {other:?}"),
+        }
     }
 
     fn valid_fcu() -> ForkchoiceUpdated {

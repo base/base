@@ -15,6 +15,9 @@ pub enum EngineError {
     /// The execution head could not be loaded during engine bootstrap.
     #[error("failed to query execution head during bootstrap: {0}")]
     BootstrapHeadQuery(String),
+    /// Derivation could not initialize at the selected EL-sync anchor.
+    #[error("failed to reset the EL-sync derivation pipeline: {0}")]
+    ELSyncPipelineReset(#[source] crate::DerivationClientError),
     /// Engine reset error.
     #[error(transparent)]
     EngineReset(#[from] EngineResetError),

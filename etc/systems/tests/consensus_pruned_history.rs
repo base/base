@@ -41,6 +41,10 @@ struct NoopDerivationClient;
 
 #[async_trait]
 impl EngineDerivationClient for NoopDerivationClient {
+    async fn reset_el_sync_anchor(&self, _safe_head: L2BlockInfo) -> DerivationClientResult<()> {
+        Ok(())
+    }
+
     async fn notify_sync_completed(&self, _safe_head: L2BlockInfo) -> DerivationClientResult<()> {
         Ok(())
     }

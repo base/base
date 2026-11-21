@@ -313,6 +313,21 @@ where
 
                 self.attempt_derivation().await?;
             }
+            DerivationActorRequest::ResetELSyncAnchor(safe_head, response) => {
+                // Do not use the ordinary reset handler: its previous confirmed safe head
+                // may still be the default sentinel and would erase usable SafeDB history.
+                let result = self.pipeline.signal(ResetSignal { l2_safe_head: *safe_head }.signal()).await;
+                let result = match result {
+                    Ok(()) => {
+                        self.finalizer.clear();
+                        self.pending_derived_from = None;
+                        self.publish_derivation_origin();
+                        self.safe_head_listener.safe_head_reset(*safe_head).await.map_err(|e| e.to_string())
+                    }
+                    Err(error) => Err(error.to_string()),
+                };
+                let _ = response.send(result);
+            }
             DerivationActorRequest::ProcessEngineSyncCompletionRequest(safe_head) => {
                 info!(target: "derivation", "Engine finished syncing, starting derivation.");
 

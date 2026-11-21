@@ -143,6 +143,8 @@ pub struct RollupNode {
     /// If the path is set but the database cannot be opened (e.g., bad permissions, disk
     /// error, or corrupted file), the node **fails to start** with an error.
     pub safedb_path: Option<PathBuf>,
+    /// Seconds of history retained for derivation after a real EL sync.
+    pub el_safe_offset: u64,
     /// Optional upgrade signal configuration for the consensus node.
     pub upgrade_signal_config: Option<UpgradeSignalNodeConfig>,
     /// Optional frozen-payload hints from an embedded execution node.
@@ -234,6 +236,7 @@ impl RollupNode {
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
         conductor: Option<Arc<dyn Conductor>>,
         checkpoint_client: CheckpointClient,
+        safe_db_reader: Arc<dyn SafeDBReader>,
     ) -> (
         EngineActor<ConfiguredEngineReceiver<E>>,
         EngineRpcProcessor<E>,
@@ -256,7 +259,7 @@ impl RollupNode {
             engine,
             checkpoint_reader,
             checkpoint_writer,
-        );
+        ).with_el_sync_anchor(self.el_safe_offset, safe_db_reader);
 
         let engine_rpc_processor = EngineRpcProcessor::new(
             Arc::clone(&engine_client),
@@ -396,6 +399,7 @@ impl RollupNode {
                 unsafe_head_tx,
                 engine_conductor,
                 checkpoint_client,
+                Arc::clone(&safe_db_reader),
             );
 
         let derivation = DerivationActor::new(

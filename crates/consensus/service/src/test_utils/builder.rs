@@ -5,7 +5,7 @@ use std::{num::NonZeroU64, sync::Arc};
 use alloy_consensus::Header as ConsensusHeader;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use base_common_genesis::{ChainGenesis, RollupConfig};
-use base_consensus_derive::test_utils::new_test_pipeline;
+use base_consensus_derive::{PipelineBuilder, test_utils::{new_test_pipeline, TestAttributesBuilder, TestChainProvider, TestDAP, TestL2ChainProvider}};
 use base_consensus_engine::{Engine, EngineState};
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::L2BlockInfo;
@@ -269,11 +269,21 @@ impl HarnessBuilder {
             }
         });
 
+        let pipeline = if self.reset_recovery_support {
+            let mut provider = TestChainProvider::default();
+            provider.insert_block(0, Default::default());
+            let mut l2_provider = TestL2ChainProvider::default();
+            l2_provider.system_configs.insert(config.genesis.l2.hash, Default::default());
+            PipelineBuilder::new().rollup_config(Arc::clone(&config))
+                .origin(Default::default()).dap_source(TestDAP::default())
+                .builder(TestAttributesBuilder::default()).chain_provider(provider)
+                .l2_chain_provider(l2_provider).build_polled()
+        } else { new_test_pipeline() };
         let derivation_actor = DerivationActor::new(
             QueuedDerivationEngineClient::new(engine_actor_request_tx.clone()),
             cancellation.clone(),
             derivation_actor_request_rx,
-            new_test_pipeline(),
+            pipeline,
             Arc::new(fake_safedb),
             // The actor only needs the Sender half of this unsafe-head watch;
             // the harness never observes the channel, so the Receiver is

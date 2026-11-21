@@ -116,12 +116,16 @@ where
 {
     /// Creates a request handler for the given operating mode.
     pub fn new(
-        processor: EngineProcessor<EngineClient_, DerivationClient>,
+        mut processor: EngineProcessor<EngineClient_, DerivationClient>,
         mode: NodeOperatingMode,
         conductor: Option<Arc<dyn Conductor>>,
         sequencer_stopped: bool,
         unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
     ) -> Self {
+        // Isolated sequencers stop L1 derivation after catch-up and must retain their labels.
+        if mode.is_isolated() {
+            processor = processor.without_el_sync_promotion();
+        }
         let catchup_capacity = CanonicalUnsafeCatchup::max_payloads_for(processor.rollup());
         Self {
             processor,

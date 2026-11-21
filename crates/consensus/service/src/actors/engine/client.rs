@@ -11,6 +11,9 @@ use crate::{DerivationActorRequest, DerivationClientError, DerivationClientResul
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait EngineDerivationClient: Debug + Send + Sync {
+    /// Resets the pipeline after EL sync and waits for successful initialization.
+    async fn reset_el_sync_anchor(&self, safe_head: L2BlockInfo) -> DerivationClientResult<()>;
+
     /// Notifies the [`crate::DerivationActor`] that engine syncing has completed.
     /// Note: Does not wait for the derivation client to process this message.
     async fn notify_sync_completed(&self, safe_head: L2BlockInfo) -> DerivationClientResult<()>;
@@ -38,6 +41,9 @@ pub enum QueuedEngineDerivationClient {
 }
 
 impl QueuedEngineDerivationClient {
+    /// Maximum wait for L1-origin lookback and pipeline initialization during EL-sync handoff.
+    pub const EL_SYNC_RESET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
     /// Creates an enabled derivation client.
     pub const fn new(derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>) -> Self {
         Self::Enabled { derivation_actor_request_tx }
@@ -51,6 +57,17 @@ impl QueuedEngineDerivationClient {
 
 #[async_trait]
 impl EngineDerivationClient for QueuedEngineDerivationClient {
+    async fn reset_el_sync_anchor(&self, safe_head: L2BlockInfo) -> DerivationClientResult<()> {
+        let Self::Enabled { derivation_actor_request_tx } = self else { return Ok(()); };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        derivation_actor_request_tx.send(DerivationActorRequest::ResetELSyncAnchor(Box::new(safe_head), tx))
+            .await.map_err(|e| DerivationClientError::RequestError(e.to_string()))?;
+        tokio::time::timeout(Self::EL_SYNC_RESET_TIMEOUT, rx).await
+            .map_err(|e| DerivationClientError::ResponseError(e.to_string()))?
+            .map_err(|e| DerivationClientError::ResponseError(e.to_string()))?
+            .map_err(DerivationClientError::ResponseError)
+    }
+
     async fn notify_sync_completed(&self, safe_head: L2BlockInfo) -> DerivationClientResult<()> {
         match self {
             Self::Enabled { derivation_actor_request_tx } => {
@@ -118,6 +135,27 @@ mod tests {
     use base_protocol::L2BlockInfo;
 
     use super::{EngineDerivationClient, QueuedEngineDerivationClient};
+
+    /// The EL-sync handoff waits for pipeline initialization and propagates failures.
+    #[tokio::test]
+    async fn el_sync_reset_requires_pipeline_acknowledgement() {
+        for outcome in [Ok(()), Err("missing L1 origin".to_string())] {
+            let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+            let client = QueuedEngineDerivationClient::new(tx);
+            let head = base_consensus_engine::test_utils::test_block_info(100);
+            let expected_error = outcome.is_err();
+            let (result, ()) = tokio::join!(client.reset_el_sync_anchor(head), async {
+                match rx.recv().await.expect("actor receives the reset") {
+                    crate::DerivationActorRequest::ResetELSyncAnchor(actual, response) => {
+                        assert_eq!(*actual, head, "pipeline reset receives the selected safe head");
+                        response.send(outcome).expect("engine is waiting for the pipeline acknowledgement");
+                    }
+                    request => panic!("EL-sync reset must use its acknowledged request, got {request:?}"),
+                }
+            });
+            assert_eq!(result.is_err(), expected_error, "pipeline reset errors must reach the engine");
+        }
+    }
 
     #[tokio::test]
     async fn disabled_client_accepts_sync_completion_without_an_actor() {
