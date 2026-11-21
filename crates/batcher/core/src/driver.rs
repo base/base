@@ -149,8 +149,9 @@ where
     /// a failed submission is resent before anything a block ready at the same wait releases. A
     /// stopped batcher does not poll its source at all.
     ///
-    /// Cancellation ends the loop with a bounded drain of the in-flight submissions; see
-    /// `shutdown`.
+    /// Cancellation or any fatal error ends the loop with a bounded drain of the in-flight
+    /// submissions; see `shutdown`. After a fatal error, the driver returns that error once the
+    /// drain is done.
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
         if self.stopped {
             info!(
@@ -159,19 +160,26 @@ where
             );
         }
 
-        loop {
-            let encoding_left = self.work().await?;
+        let work_error = loop {
+            let encoding_left = match self.work().await {
+                Ok(encoding_left) => encoding_left,
+                Err(error) => break Some(error),
+            };
 
             tokio::select! {
                 biased;
 
-                _ = self.runtime.cancelled() => break,
+                _ = self.runtime.cancelled() => break None,
 
-                Some(cmd) = self.admin_rx.recv() => self.on_admin(cmd)?,
+                Some(cmd) = self.admin_rx.recv() => {
+                    if let Err(error) = self.on_admin(cmd) {
+                        break Some(error);
+                    }
+                }
 
                 status = self.derivation_status_rx.recv() => match status {
                     Some(status) => self.on_derivation_status(status),
-                    None => return Err(BatchDriverError::DerivationStatusSourceClosed),
+                    None => break Some(BatchDriverError::DerivationStatusSourceClosed),
                 },
 
                 Some((id, outcome)) = self.submissions.next_settled() => {
@@ -195,9 +203,10 @@ where
                 // continue encoding.
                 () = tokio::task::yield_now(), if encoding_left => {}
             }
-        }
+        };
 
-        self.shutdown().await
+        let shutdown = self.shutdown().await;
+        work_error.map_or(shutdown, Err)
     }
 
     /// The CPU phase: encode what is buffered, apply the DA throttle and submit ready
@@ -231,12 +240,15 @@ where
         let flushed = self.pipeline.flush().inspect_err(|error| {
             warn!(error = %error, "flush failed during shutdown");
         });
-        let worked = self.work().await;
+        let encoded = self.drain_encoding();
+        // Submit what is ready even if encoding fails again, so the flushed channel still goes out.
+        let submitted = self.submissions.submit_pending(&mut self.pipeline).await;
 
         self.submissions.drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout)).await;
 
         flushed?;
-        worked?;
+        encoded?;
+        submitted?;
         Ok(())
     }
 
@@ -450,8 +462,8 @@ mod tests {
     use crate::{
         BatchDriverError, BatchTxCandidateError, DerivationStatus,
         test_utils::{
-            BlockStub, DriverFixture, PipelineCall, ScriptedTxManager, SendOutcome, SubmissionStub,
-            TrackingPipeline,
+            BlockStub, DRAIN_TIMEOUT, DriverFixture, PipelineCall, ScriptedTxManager, SendOutcome,
+            SubmissionStub, TrackingPipeline,
         },
     };
 
@@ -537,6 +549,38 @@ mod tests {
         });
     }
 
+    /// A step error that recurs on every attempt still lets shutdown submit what is ready, so
+    /// the channel flushed on the way out is sent.
+    #[test]
+    fn run_submits_ready_output_when_a_step_error_recurs() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut pipeline = TrackingPipeline::new().with_recurring_step_error(|| {
+                StepError::BlockExceedsChannelLimit {
+                    cursor: 0,
+                    limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
+                }
+            });
+            pipeline.submissions.push_back(SubmissionStub::stub());
+            let recorded = pipeline.recorded();
+            let (driver, _handles) =
+                DriverFixture::new(ctx, pipeline, ScriptedTxManager::confirming_at(1)).build();
+
+            assert!(matches!(
+                driver.run().await,
+                Err(BatchDriverError::Step(StepError::BlockExceedsChannelLimit { .. }))
+            ));
+            assert!(
+                recorded
+                    .lock()
+                    .unwrap()
+                    .calls
+                    .iter()
+                    .any(|c| matches!(c, PipelineCall::Dequeue(_))),
+                "the ready submission must be sent during shutdown"
+            );
+        });
+    }
+
     // The loop polls its arms in priority order. Each test in this group makes several arms
     // ready at once and checks which one the driver serves first. Every call log ends with the
     // shutdown flush.
@@ -585,6 +629,28 @@ mod tests {
             ctx.cancel();
             drop(handles);
             assert!(driver.run().await.is_ok());
+        });
+    }
+
+    /// Losing the derivation-status source halts the driver, but only after the transactions
+    /// already sent have had the drain timeout to settle.
+    #[test]
+    fn run_drains_in_flight_submissions_when_derivation_status_closes() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut pipeline = TrackingPipeline::new();
+            pipeline.submissions.push_back(SubmissionStub::stub());
+            let (driver, handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
+            drop(handles);
+
+            let started_at = ctx.now();
+            let result = driver.run().await;
+
+            assert!(
+                matches!(result, Err(BatchDriverError::DerivationStatusSourceClosed)),
+                "got {result:?}"
+            );
+            assert_eq!(ctx.now() - started_at, DRAIN_TIMEOUT);
         });
     }
 
@@ -771,6 +837,39 @@ mod tests {
                 ),
                 "got {result:?}"
             );
+        });
+    }
+
+    /// A submission failure that halts the driver still lets the transactions already sent
+    /// settle, up to the drain timeout, before the driver returns the failure.
+    #[test]
+    fn run_drains_in_flight_submissions_before_returning_a_work_error() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            pipeline.submissions.push_back(SubmissionStub::stub());
+            // A frame as large as a whole blob no longer fits once framed.
+            pipeline.submissions.push_back(SubmissionPayload::Blobs(vec![BlobPayload::new(vec![
+                Arc::new(Frame {
+                    data: vec![0u8; BlobEncoder::BLOB_MAX_DATA_SIZE],
+                    ..Frame::default()
+                }),
+            ])]));
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([]))
+                    .max_pending(2)
+                    .build();
+
+            let started_at = ctx.now();
+            let result = driver.run().await;
+
+            assert!(matches!(result, Err(BatchDriverError::Blob(_))), "got {result:?}");
+            assert_eq!(
+                ctx.now() - started_at,
+                DRAIN_TIMEOUT,
+                "the driver must wait the drain timeout for the submission in flight"
+            );
+            assert_eq!(recorded.lock().unwrap().flushes(), 1);
         });
     }
 

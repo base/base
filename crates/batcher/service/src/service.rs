@@ -238,6 +238,9 @@ impl BatcherService {
 
     /// Block until the rollup node has processed `target_l1`, or until `timeout` elapses.
     ///
+    /// The node has read an L1 block, and any batcher transaction in it, only once derivation
+    /// has moved past it: its `current_l1` is the block derivation is still processing.
+    ///
     /// RPC errors use exponential backoff capped at [`DEFAULT_UNBOUNDED_MAX_DELAY`].
     async fn wait_for_node_sync(
         rollup_node: &RollupNode,
@@ -254,7 +257,7 @@ impl BatcherService {
             let mut error_backoff = poll_interval;
             loop {
                 match rollup_node.client().sync_status().await {
-                    Ok(status) if status.current_l1.number >= target_l1 => {
+                    Ok(status) if status.current_l1.number > target_l1 => {
                         info!(
                             current_l1 = %status.current_l1.number,
                             unsafe_l2 = %status.unsafe_l2.block_info.number,
@@ -812,10 +815,11 @@ mod tests {
         assert!(runtime.is_cancelled());
     }
 
-    /// Startup goes on once the rollup node has processed the L1 target, and gives up at the
-    /// timeout while the node is behind it.
+    /// Startup goes on once the rollup node has moved past the L1 target, and gives up at the
+    /// timeout while the node is still processing the target or is behind it.
     #[rstest]
-    #[case::reached(5, Ok(()))]
+    #[case::passed(4, Ok(()))]
+    #[case::processing(5, Err("wait_for_node_sync timed out"))]
     #[case::behind(6, Err("wait_for_node_sync timed out"))]
     #[tokio::test]
     async fn wait_for_node_sync_waits_for_the_l1_target(

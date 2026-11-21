@@ -139,6 +139,9 @@ pub struct TrackingPipeline {
     flush_error: Option<StepError>,
     /// When set, the next `step` returns this error.
     step_error: Option<StepError>,
+    /// When set, every `step` returns the error this builds, like a block the encoder can never
+    /// get past.
+    recurring_step_error: Option<fn() -> StepError>,
     /// Blocks left to encode. `step` reports one encoded block per call until it reaches zero.
     encoding_steps: usize,
 }
@@ -157,6 +160,7 @@ impl Default for TrackingPipeline {
             add_block_reorgs: false,
             flush_error: None,
             step_error: None,
+            recurring_step_error: None,
             encoding_steps: 0,
         }
     }
@@ -209,6 +213,12 @@ impl TrackingPipeline {
         self
     }
 
+    /// Make every `step` fail with the error `error` builds.
+    pub fn with_recurring_step_error(mut self, error: fn() -> StepError) -> Self {
+        self.recurring_step_error = Some(error);
+        self
+    }
+
     fn record(&self, call: PipelineCall) {
         self.recorded.lock().unwrap().calls.push(call);
     }
@@ -237,6 +247,9 @@ impl BatchPipeline for TrackingPipeline {
     fn step(&mut self) -> Result<StepResult, StepError> {
         if let Some(error) = self.step_error.take() {
             return Err(error);
+        }
+        if let Some(error) = self.recurring_step_error {
+            return Err(error());
         }
         if self.encoding_steps == 0 {
             return Ok(StepResult::Idle);

@@ -11,6 +11,9 @@ channel duration is measured from the live L1 tip rather than from block 0. The 
 single `tokio::select!` task that reacts to unsafe L2 blocks, derivation-status updates, L1
 heads, completed transaction receipts, admin commands, and cancellation.
 Each arm advances the pipeline or adjusts submission pressure without blocking the others.
+On cancellation, or when encoding or building a submission fails fatally, the driver flushes
+the current channel and waits up to the shutdown drain timeout for in-flight transactions to
+settle; after a fatal failure it then returns that failure.
 
 A derivation status whose safe head is lower than the last one acted on is ignored while the
 rollup node has not read L1 past the block the last safe head was reported at: such a node is
