@@ -18,6 +18,9 @@ use reth_node_core::version::version_metadata;
 use tracing::info;
 
 /// Prunes the proofs storage by removing old proof history and state updates.
+///
+/// Run with the execution node stopped. Startup consistency checks may repair the execution
+/// database and static files before pruning proofs history.
 #[derive(Debug, Parser)]
 pub struct PruneCommand<C: ChainSpecParser> {
     #[command(flatten)]
@@ -97,8 +100,10 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
         );
         proofs_history_db.ensure_storage_path_matches(&storage_path)?;
 
-        // Initialize the environment with read-only access
-        let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RO, runtime)?;
+        // Initialize the environment with read-write access so checked startup can heal static
+        // files left ahead of the database by an interrupted commit. Proof pruning still reads
+        // execution block hashes through read-only providers.
+        let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RW, runtime)?;
 
         match proofs_history_db {
             ProofsHistoryDbBackend::Rocksdb => {
@@ -173,8 +178,68 @@ impl<C: ChainSpecParser> PruneCommand<C> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::Header;
+    use base_node_core::BaseNode;
+    use reth_provider::{StaticFileProviderFactory, StaticFileSegment, StaticFileWriter};
+    use reth_tasks::Runtime;
+    use tempfile::TempDir;
+
     use super::*;
     use crate::chainspec::BaseChainSpecParser;
+
+    /// Verifies pre-launch proofs pruning heals a static-file commit ahead of its DB checkpoint.
+    #[tokio::test]
+    async fn proofs_prune_heals_interrupted_static_file_commit() -> eyre::Result<()> {
+        let directory = TempDir::new()?;
+        let runtime = Runtime::test();
+        let datadir = directory.path().join("execution");
+        let proofs = directory.path().join("proofs");
+        let command = PruneCommand::<BaseChainSpecParser>::try_parse_from([
+            "prune",
+            "--chain",
+            "base-sepolia",
+            "--datadir",
+            datadir.to_str().expect("temporary datadir is UTF-8"),
+            "--proofs-history.storage-path",
+            proofs.to_str().expect("temporary proofs path is UTF-8"),
+            "--proofs-history.db",
+            "rocksdb",
+        ])?;
+        {
+            let environment = command.env.init::<BaseNode>(AccessRights::RW, runtime.clone())?;
+            let static_files = environment.provider_factory.static_file_provider();
+            let header = Header { number: 1, ..Default::default() };
+            {
+                let mut writer = static_files.latest_writer(StaticFileSegment::Headers)?;
+                writer.append_header(&header, &header.hash_slow())?;
+                writer.commit()?;
+            }
+            assert_eq!(
+                static_files.get_highest_static_file_block(StaticFileSegment::Headers),
+                Some(1),
+                "fixture must retain the interrupted static-file commit above genesis"
+            );
+        }
+        let result = command.execute::<BaseNode>(runtime.clone()).await;
+        assert!(result.is_ok(), "offline proofs prune must heal before reading: {result:?}");
+        let env = EnvironmentArgs::<BaseChainSpecParser>::try_parse_from([
+            "inspect",
+            "--chain",
+            "base-sepolia",
+            "--datadir",
+            datadir.to_str().expect("temporary datadir is UTF-8"),
+        ])?;
+        let environment = env.init::<BaseNode>(AccessRights::RO, runtime)?;
+        assert_eq!(
+            environment
+                .provider_factory
+                .static_file_provider()
+                .get_highest_static_file_block(StaticFileSegment::Headers),
+            Some(0),
+            "proofs prune must remove the header above the database checkpoint"
+        );
+        Ok(())
+    }
 
     #[test]
     fn proofs_history_window_accepts_one_block_but_rejects_zero() {
