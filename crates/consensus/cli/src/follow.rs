@@ -122,6 +122,10 @@ impl ConsensusFollowNodeArgs {
 /// Consensus follow-node configuration arguments without chain selection.
 #[derive(Args, Clone, Debug)]
 pub struct ConsensusFollowNodeConfigArgs {
+    /// Explicit permission to launch a new chain from genesis.
+    #[command(flatten)]
+    pub genesis_start: base_cli_utils::GenesisStartArgs,
+
     /// The URL of the node to follow.
     #[arg(long = "source-l2-rpc", env = "BASE_NODE_SOURCE_L2_RPC")]
     pub source_l2_rpc: Url,
@@ -252,6 +256,7 @@ impl From<EmbeddedConsensusFollowNodeConfigArgs> for ConsensusFollowNodeConfigAr
     fn from(args: EmbeddedConsensusFollowNodeConfigArgs) -> Self {
         Self {
             source_l2_rpc: args.source_l2_rpc,
+            genesis_start: Default::default(),
             l2_rpc_url: args.l2_rpc_url,
             // The placeholder engine endpoint is always replaced by the embedded-execution
             // override before the follow node is built.
@@ -312,6 +317,7 @@ impl ConsensusFollowNodeArgs {
 
         let engine_config = EngineConfig {
             config: Arc::clone(&rollup_config),
+            genesis_start: self.config.genesis_start,
             l2_endpoint,
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
@@ -330,6 +336,7 @@ impl ConsensusFollowNodeArgs {
         Ok(FollowNode::new(FollowNodeConfig {
             rollup_config,
             engine_client,
+            genesis_start: self.config.genesis_start,
             l1_provider,
             local_l2_provider,
             l2_source,

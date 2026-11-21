@@ -76,6 +76,7 @@ clap.workspace = true
 eyre.workspace = true
 serde.workspace = true
 humantime.workspace = true
+base-cli-utils.workspace = true
 
 # test-utils dependencies
 serde_json = { workspace = true, optional = true }

@@ -37,6 +37,13 @@ When `RollupNodeBuilder::build()` is called, it constructs the `L1Config` (conta
 
 Calling `RollupNode::start()` begins the actor wiring phase. The sequence is deterministic:
 
+Startup first reads the local execution head, without requesting a block body. A genesis head
+requires `--allow-genesis-start`, only for launching a new chain. Existing chains must restore a
+snapshot. If the EL is still opening its database, temporary request failures retry until shutdown.
+Backoff starts at 1 to 2 seconds and caps at 30 seconds including jitter; each request times out after
+30 seconds. There is no total startup deadline, so a slow EL does not crash-loop the CL. A successful
+genesis response refuses immediately, and terminal protocol or authentication errors are not retried.
+
 First, a root `CancellationToken` is created. If a safe-head database path was provided, a `SafeDB` backed by redb is opened; otherwise a `DisabledSafeDB` is used.
 
 Second, the core channels are created. There is one `mpsc` channel of capacity 1024 for `DerivationActorRequest`, one of capacity 1024 for `EngineActorRequest`, and one `watch` channel for the unsafe L2 head (`L2BlockInfo`).

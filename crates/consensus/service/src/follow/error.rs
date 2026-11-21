@@ -9,6 +9,10 @@ use crate::follow::source::RemoteL2ClientError;
 /// Error returned by follow-mode runtime, client, engine, and RPC operations.
 #[derive(Debug, Error)]
 pub enum FollowError {
+    /// The local execution head failed startup admission.
+    #[error(transparent)]
+    Startup(alloy_transport::TransportError),
+
     /// The local L2 node did not return a block for the requested tag.
     #[error("local L2 block unavailable at {0:?}")]
     LocalBlockUnavailable(BlockNumberOrTag),

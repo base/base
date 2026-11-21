@@ -10,6 +10,7 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
 use alloy_rlp::encode;
+use base_cli_utils::GenesisStartArgs;
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData, PayloadReady};
@@ -60,7 +61,7 @@ use reth_node_builder::{
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::{SealedHeader, header::HeaderMut};
-use reth_provider::providers::ProviderFactoryBuilder;
+use reth_provider::{BlockNumReader, providers::ProviderFactoryBuilder};
 use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::{debug, info};
@@ -266,6 +267,7 @@ impl BaseNode {
             .executor(BaseExecutorBuilder::default())
             .pool(
                 BasePoolBuilder::default()
+                    .with_genesis_start(self.args.genesis_start)
                     .with_ordering(ordering)
                     .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
                     .with_guard_limits(GuardLimits {
@@ -798,6 +800,8 @@ where
 /// config.
 #[derive(Debug)]
 pub struct BasePoolBuilder<T = BasePooledTransaction> {
+    /// Explicit permission to launch a new chain from genesis.
+    pub genesis_start: GenesisStartArgs,
     /// The ordering strategy for the transaction pool.
     pub ordering: BaseOrdering<T>,
     /// Maximum inflight EIP-7702 delegated account transactions per sender.
@@ -815,6 +819,7 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
 impl<T> Default for BasePoolBuilder<T> {
     fn default() -> Self {
         Self {
+            genesis_start: GenesisStartArgs::default(),
             ordering: BaseOrdering::default(),
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
@@ -828,6 +833,7 @@ impl<T> Default for BasePoolBuilder<T> {
 impl<T> Clone for BasePoolBuilder<T> {
     fn clone(&self) -> Self {
         Self {
+            genesis_start: self.genesis_start,
             ordering: self.ordering.clone(),
             max_inflight_delegated_slots: self.max_inflight_delegated_slots,
             guard_limits: self.guard_limits,
@@ -839,6 +845,12 @@ impl<T> Clone for BasePoolBuilder<T> {
 }
 
 impl<T> BasePoolBuilder<T> {
+    /// Sets explicit permission to launch a new chain from genesis.
+    pub const fn with_genesis_start(mut self, genesis_start: GenesisStartArgs) -> Self {
+        self.genesis_start = genesis_start;
+        self
+    }
+
     /// Sets the ordering strategy for the transaction pool.
     pub const fn with_ordering(mut self, ordering: BaseOrdering<T>) -> Self {
         self.ordering = ordering;
@@ -885,6 +897,10 @@ where
         ctx: &BuilderContext<Node>,
         evm_config: Evm,
     ) -> eyre::Result<Self::Pool> {
+        self.genesis_start.check(
+            ctx.provider().best_block_number()?,
+            ctx.chain_spec().genesis_header().number(),
+        )?;
         let Self {
             ordering,
             max_inflight_delegated_slots,

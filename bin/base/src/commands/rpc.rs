@@ -54,6 +54,7 @@ impl RpcCommand {
         let consensus_chain = resolved_chain.consensus_chain_args();
         let mut execution = execution;
         let mut consensus_config: ConsensusNodeConfigArgs = consensus.into();
+        consensus_config.genesis_start = execution.standard.rollup_args.genesis_start;
         execution
             .standard
             .rollup_args

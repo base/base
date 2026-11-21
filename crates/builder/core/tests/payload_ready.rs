@@ -77,7 +77,9 @@ impl NativeNode {
         let runtime = Runtime::test();
         // This is the same service selection and runner handoff as `base sequencer`.
         // Do not attach a sender directly to the builder: that would bypass the wiring under test.
-        let launched = BaseNodeRunner::new(RollupArgs::default())
+        let mut rollup_args = RollupArgs::default();
+        rollup_args.genesis_start.allow_genesis_start = true;
+        let launched = BaseNodeRunner::new(rollup_args)
             .with_service_builder(NativePayloadServiceBuilder::new(BuilderConfig::default()))
             .launch(NodeBuilder::new(config).with_database(db).with_launch_context(runtime.clone()))
             .await?;

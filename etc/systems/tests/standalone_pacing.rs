@@ -118,6 +118,7 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
     .prepare_payload_attributes(genesis_head, l1_info.id())
     .await?;
     let engine = EngineConfig {
+        genesis_start: Default::default(),
         config: Arc::new(canonical.clone()),
         l2_endpoint: EngineEndpoint::Url(engine_url.clone()),
         l2_jwt_secret: jwt_secret,

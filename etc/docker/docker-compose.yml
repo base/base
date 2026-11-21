@@ -276,6 +276,7 @@ services:
       - --chain
       - dev
       - sequencer
+      - --allow-genesis-start
       - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
       - --http
@@ -474,6 +475,7 @@ services:
       - --chain
       - dev
       - rpc
+      - --allow-genesis-start
       - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
       - --http
@@ -587,6 +589,7 @@ services:
       - --chain
       - dev
       - rpc
+      - --allow-genesis-start
       - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
       - --http
@@ -691,6 +694,7 @@ services:
       - --chain
       - dev
       - rpc
+      - --allow-genesis-start
       - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
       - --http

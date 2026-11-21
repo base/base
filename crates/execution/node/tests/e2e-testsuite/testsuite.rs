@@ -5,13 +5,46 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use base_node_core::{BaseEngineTypes, BaseNode};
+use base_node_core::{BaseEngineTypes, BaseFullNodeTypes, BaseNode, BaseNodeTypes, RollupArgs};
 use eyre::Result;
+use reth_node_api::{FullNodeTypes, NodeTypes};
+use reth_node_builder::Node;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,
     actions::AssertMineBlock,
     setup::{NetworkSetup, Setup},
 };
+
+/// Explicit genesis-launch configuration for the default-constructed testsuite nodes.
+#[derive(Debug, Clone, Default)]
+struct GenesisLaunchNode;
+
+impl NodeTypes for GenesisLaunchNode {
+    type Primitives = <BaseNode as NodeTypes>::Primitives;
+    type ChainSpec = <BaseNode as NodeTypes>::ChainSpec;
+    type Storage = <BaseNode as NodeTypes>::Storage;
+    type Payload = <BaseNode as NodeTypes>::Payload;
+}
+
+impl<N> Node<N> for GenesisLaunchNode
+where
+    N: FullNodeTypes<Types: BaseFullNodeTypes + BaseNodeTypes>,
+{
+    type ComponentsBuilder = <BaseNode as Node<N>>::ComponentsBuilder;
+    type AddOns = <BaseNode as Node<N>>::AddOns;
+
+    /// Constructs components with explicit permission to launch the test chain.
+    fn components_builder(&self) -> Self::ComponentsBuilder {
+        let mut args = RollupArgs::default();
+        args.genesis_start.allow_genesis_start = true;
+        BaseNode::new(args).components()
+    }
+
+    /// Uses the production RPC add-ons unchanged.
+    fn add_ons(&self) -> Self::AddOns {
+        <BaseNode as Node<N>>::add_ons(&BaseNode::default())
+    }
+}
 
 #[tokio::test]
 async fn test_testsuite_op_assert_mine_block() -> Result<()> {
@@ -59,7 +92,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
             .expect("valid test payload attributes"),
         ));
 
-    test.run::<BaseNode>().await?;
+    test.run::<GenesisLaunchNode>().await?;
 
     Ok(())
 }
@@ -111,7 +144,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
             .expect("valid test payload attributes"),
         ));
 
-    test.run::<BaseNode>().await?;
+    test.run::<GenesisLaunchNode>().await?;
 
     Ok(())
 }

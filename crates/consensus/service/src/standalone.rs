@@ -6,6 +6,7 @@ use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
+use base_cli_utils::GenesisStartArgs;
 use base_common_consensus::{Predeploys, TxDeposit};
 use base_common_genesis::{BaseFeature, RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -18,7 +19,7 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ConductorClient, DerivationClientResult, EngineActor, EngineDerivationClient, EngineProcessor,
+    ConductorClient, DerivationClientResult, EngineActor, EngineConfig, EngineDerivationClient, EngineProcessor,
     L1OriginSelectorError, NodeActor, NodeOperatingMode, OriginSelector, PayloadBuilder,
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, RecoveryModeGuard,
     SequencerActor, SequencerEngineRequestCoordinator, StandaloneImpersonationQueue,
@@ -241,6 +242,8 @@ pub struct StandaloneSequencerNode<E: EngineClient> {
     pub rollup_config: Arc<RollupConfig>,
     /// The execution engine client connected to the snapshot-backed builder EL.
     pub engine_client: Arc<E>,
+    /// Explicit permission to launch a new chain from genesis.
+    pub genesis_start: GenesisStartArgs,
     /// The attributes builder seeded from the snapshot boundary.
     pub attributes_builder: StandaloneAttributesBuilder,
     /// The fixed-origin selector seeded from the snapshot boundary.
@@ -260,6 +263,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
         l1_info: L1BlockInfoTx,
         system_config: SystemConfig,
         prefund: Option<StandalonePrefund>,
+        genesis_start: GenesisStartArgs,
     ) -> Self {
         Self {
             attributes_builder: StandaloneAttributesBuilder::new(
@@ -271,6 +275,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             origin_selector: StandaloneOriginSelector::new(l1_info),
             rollup_config,
             engine_client,
+            genesis_start,
             schedule_delay: Duration::ZERO,
         }
     }
@@ -285,6 +290,14 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
         &self,
         cancellation: CancellationToken,
     ) -> Result<(), String> {
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => return Ok(()),
+            () = crate::ShutdownSignal::wait() => return Ok(()),
+            result = EngineConfig::check_startup(self.engine_client.as_ref(), self.genesis_start) => {
+                result.map_err(|error| error.to_string())?;
+            }
+        }
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
         let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
         let (engine_state_tx, engine_state_rx) = watch::channel(EngineState::default());
@@ -349,8 +362,10 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_consensus::Transaction as _;
-    use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
+    use alloy_eips::{BlockNumHash, BlockNumberOrTag, eip2718::Decodable2718};
     use alloy_primitives::{Address, B256, U256};
     use base_common_consensus::BaseTxEnvelope;
     use base_common_genesis::{RollupConfig, SystemConfig};
@@ -359,8 +374,32 @@ mod tests {
         BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L1BlockInfoTx, L2BlockInfo,
     };
 
-    use super::{StandaloneAttributesBuilder, StandaloneOriginSelector, StandalonePrefund};
-    use crate::OriginSelector;
+    use super::{StandaloneAttributesBuilder, StandaloneOriginSelector, StandalonePrefund, StandaloneSequencerNode};
+    use crate::{OriginSelector, test_utils::FakeEngineClient};
+    use tokio_util::sync::CancellationToken;
+
+    /// A supplied engine client must not bypass sequencer startup admission.
+    #[tokio::test]
+    async fn refuses_genesis_before_sequencer_bootstrap() {
+        let rollup = Arc::new(RollupConfig::default());
+        let engine = Arc::new(FakeEngineClient::new(Arc::clone(&rollup)));
+        let handle = engine.handle();
+        handle.set_l2_block_by_label(BlockNumberOrTag::Latest, Default::default());
+        let (l1_info, _) = snapshot_boundary();
+        let node = StandaloneSequencerNode::new(
+            rollup, engine, l1_info, SystemConfig::default(), None, Default::default(),
+        );
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            node.start_with_cancellation(CancellationToken::new()),
+        ).await.expect("genesis refusal must finish before any sequencer actors run");
+        assert_eq!(
+            result.expect_err("sequencer startup at genesis must fail without the launch flag"),
+            "refusing to start from genesis; restore a snapshot for an existing chain; use --allow-genesis-start only for launching a new chain",
+            "sequencer startup must return the exact snapshot recovery instructions"
+        );
+        assert_eq!(handle.call_count(), 1, "only the startup height query may run before refusal");
+    }
 
     fn snapshot_boundary() -> (L1BlockInfoTx, L2BlockInfo) {
         let origin_hash = B256::repeat_byte(0x11);

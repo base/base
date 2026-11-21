@@ -187,6 +187,10 @@ impl ConsensusNodeArgs {
 /// Consensus node configuration arguments without chain selection.
 #[derive(Args, Clone, Debug)]
 pub struct ConsensusNodeConfigArgs {
+    /// Explicit permission to launch a new chain from genesis.
+    #[command(flatten)]
+    pub genesis_start: base_cli_utils::GenesisStartArgs,
+
     /// The mode to run the node in.
     #[arg(
         long = "mode",
@@ -323,6 +327,7 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
     fn from(args: EmbeddedConsensusNodeConfigArgs) -> Self {
         Self {
             node_mode: NodeMode::Validator,
+            genesis_start: Default::default(),
             l1_rpc_args: args.l1_rpc_args,
             l2_client_args: args.l2_client_args.into(),
             l1_config: args.l1_config,
@@ -341,6 +346,7 @@ impl From<EmbeddedSequencerConsensusNodeConfigArgs> for ConsensusNodeConfigArgs 
     fn from(args: EmbeddedSequencerConsensusNodeConfigArgs) -> Self {
         Self {
             node_mode: NodeMode::Sequencer,
+            genesis_start: Default::default(),
             l1_rpc_args: args.l1_rpc_args,
             l2_client_args: args.l2_client_args.into(),
             l1_config: args.l1_config,
@@ -548,6 +554,7 @@ impl ConsensusNodeArgs {
 
         let engine_config = EngineConfig {
             config: Arc::new(cfg.clone()),
+            genesis_start: self.config.genesis_start,
             l2_endpoint,
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
@@ -719,6 +726,7 @@ mod tests {
     fn default_node_config_args() -> ConsensusNodeConfigArgs {
         ConsensusNodeConfigArgs {
             node_mode: NodeMode::default(),
+            genesis_start: Default::default(),
             l1_rpc_args: L1ClientArgs::default(),
             l2_client_args: L2ClientArgs::default(),
             l1_config: L1ConfigFile::default(),

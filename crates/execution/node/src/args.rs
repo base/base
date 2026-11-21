@@ -341,6 +341,10 @@ pub trait HasRollupArgs {
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
 pub struct RollupArgs {
+    /// Explicit permission to launch a new chain from genesis.
+    #[command(flatten)]
+    pub genesis_start: base_cli_utils::GenesisStartArgs,
+
     /// Endpoint for the sequencer mempool (can be both HTTP and WS)
     #[arg(long = "rollup.sequencer", visible_aliases = ["rollup.sequencer-http", "rollup.sequencer-ws"])]
     pub sequencer: Option<String>,
@@ -533,6 +537,7 @@ impl Default for RollupArgs {
     fn default() -> Self {
         Self {
             sequencer: None,
+            genesis_start: Default::default(),
             discovery_v4: false,
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,

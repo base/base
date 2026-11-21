@@ -11,6 +11,8 @@ payloads:
 
 benchmarks:
   - variables:
+      - type: node_args
+        value: "--allow-genesis-start"
       - type: payload
         values:
           - transfer-only

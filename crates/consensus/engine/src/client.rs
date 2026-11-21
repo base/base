@@ -60,6 +60,9 @@ pub trait EngineClient: BaseEngineApi + Send + Sync {
     /// Fetches the L2 block with the provided `BlockId`.
     fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse>;
 
+    /// Returns the local execution head height without fetching a block body.
+    async fn latest_block_number(&self) -> TransportResult<u64>;
+
     /// Get the account and storage values of the specified account including the merkle proofs.
     /// This call can be used to verify that the data has not been tampered with.
     fn get_proof(
@@ -248,6 +251,10 @@ where
 
     fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse> {
         self.engine.get_block(block)
+    }
+
+    async fn latest_block_number(&self) -> TransportResult<u64> {
+        self.engine.get_block_number().await
     }
 
     fn get_proof(

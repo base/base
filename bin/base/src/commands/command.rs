@@ -205,6 +205,7 @@ mod tests {
             "--chain",
             "dev",
             &flavor,
+            "--allow-genesis-start",
             "--datadir",
             &dir,
             "--ipcpath",

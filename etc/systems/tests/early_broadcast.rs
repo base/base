@@ -246,8 +246,10 @@ async fn searcher_reactions(early_broadcast: bool) -> Result<Vec<Reaction>> {
     let runtime = Runtime::test();
     // The same payload service and runner handoff as `base sequencer`, so frozen-payload hints
     // reach the consensus layer through the production wiring.
+    let mut rollup_args = RollupArgs::default();
+    rollup_args.genesis_start.allow_genesis_start = true;
     let LaunchedBaseNode { handle, auth_module, engine_api, payload_ready } =
-        BaseNodeRunner::new(RollupArgs::default())
+        BaseNodeRunner::new(rollup_args)
             .with_service_builder(NativePayloadServiceBuilder::new(BuilderConfig::default()))
             .launch(
                 NodeBuilder::new(node_config)
@@ -302,6 +304,7 @@ async fn searcher_reactions(early_broadcast: bool) -> Result<Vec<Reaction>> {
 
     let engine = Arc::new(
         EngineConfig {
+            genesis_start: Default::default(),
             config: Arc::clone(&rollup_config),
             l2_endpoint: EngineEndpoint::InMemory {
                 transport: InMemoryTransport { module: auth_module },

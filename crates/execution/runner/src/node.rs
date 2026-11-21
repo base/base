@@ -119,6 +119,7 @@ impl BaseNode {
             .node_types::<Node>()
             .pool(
                 BasePoolBuilder::default()
+                    .with_genesis_start(self.args.genesis_start)
                     .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
                     .with_guard_limits(GuardLimits {
                         payment_limit: mempool_payer_limit,

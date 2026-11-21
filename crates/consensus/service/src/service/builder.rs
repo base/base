@@ -268,6 +268,10 @@ mod tests {
 
     use alloy_primitives::Address;
     use alloy_rpc_types_engine::JwtSecret;
+    use base_common_network::SharedEngineApi;
+    use base_consensus_engine::InMemoryTransport;
+    use jsonrpsee::RpcModule;
+    use tokio_util::sync::CancellationToken;
     use base_consensus_disc::LocalNode;
     use discv5::enr::k256::ecdsa::SigningKey;
     use libp2p::Multiaddr;
@@ -288,6 +292,7 @@ mod tests {
             da_batcher_sender_override: None,
         };
         let engine_config = EngineConfig {
+            genesis_start: Default::default(),
             config: Arc::new(rollup_config.clone()),
             l2_endpoint: EngineEndpoint::Url(l2_url),
             l2_jwt_secret: JwtSecret::random(),
@@ -333,6 +338,64 @@ mod tests {
         let file_url = Url::parse("file:///tmp/base-engine.ipc").unwrap();
         let normalized_file_url = RollupNodeBuilder::derivation_l2_provider_url(file_url.clone());
         assert_eq!(normalized_file_url, file_url);
+    }
+
+    /// Validator and active sequencer startup must refuse genesis before L1 or actor initialization.
+    #[tokio::test]
+    async fn refuses_genesis_before_pipeline_or_sequencer_reset() {
+        for mode in [NodeOperatingMode::Validator, NodeOperatingMode::Sequencer] {
+            let mut builder = test_builder(Url::parse("http://127.0.0.1:1").expect("valid unused endpoint"));
+            let mut module = RpcModule::new(());
+            module.register_method("eth_blockNumber", |_, _, _| "0x0")
+                .expect("the in-memory head method must register");
+            let fake = crate::test_utils::FakeEngineClient::new(Arc::clone(&builder.engine_config.config));
+            let handle = fake.handle();
+            builder.engine_config.mode = mode;
+            builder.engine_config.l2_endpoint = EngineEndpoint::InMemory {
+                transport: InMemoryTransport { module },
+                engine_api: SharedEngineApi::new(fake),
+            };
+            let node = builder.build().await.expect("in-memory startup must not need L1");
+            let result = tokio::time::timeout(
+                Duration::from_millis(100),
+                node.start_with_cancellation(CancellationToken::new()),
+            ).await.expect("genesis refusal must precede pipeline initialization");
+            assert_eq!(result.expect_err("genesis startup must be refused"),
+                "refusing to start from genesis; restore a snapshot for an existing chain; use --allow-genesis-start only for launching a new chain",
+                "{mode:?} must return the exact recovery instructions");
+            assert_eq!(handle.call_count(), 0, "{mode:?} must not issue Engine API bootstrap calls");
+        }
+    }
+
+    /// Cancelling startup while the EL is unavailable must not start the pipeline or actors.
+    #[tokio::test(start_paused = true)]
+    async fn cancels_startup_while_waiting_for_execution_head() {
+        let mut builder = test_builder(Url::parse("http://127.0.0.1:1").expect("valid unused endpoint"));
+        let cancellation = CancellationToken::new();
+        let signal = cancellation.clone();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let mut module = RpcModule::new(());
+        module.register_method("eth_blockNumber", move |_, _, _| {
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            signal.cancel();
+            Err::<String, _>(jsonrpsee::types::ErrorObjectOwned::owned(
+                -32603, "execution database is opening", None::<()>,
+            ))
+        }).expect("the cancelling head method must register");
+        let fake = crate::test_utils::FakeEngineClient::new(Arc::clone(&builder.engine_config.config));
+        let handle = fake.handle();
+        builder.engine_config.l2_endpoint = EngineEndpoint::InMemory {
+            transport: InMemoryTransport { module },
+            engine_api: SharedEngineApi::new(fake),
+        };
+        let node = builder.build().await.expect("in-memory startup must not need L1");
+        let result = tokio::time::timeout(
+            Duration::from_secs(1), node.start_with_cancellation(cancellation),
+        ).await.expect("cancellation must interrupt startup backoff immediately");
+        assert_eq!(result, Ok(()), "cancelled startup must stop cleanly without admitting the node");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1, "no height request may follow startup cancellation");
+        assert_eq!(handle.call_count(), 0, "cancelled admission must never reach Engine API bootstrap");
     }
 
     #[tokio::test]

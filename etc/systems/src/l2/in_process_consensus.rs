@@ -211,6 +211,7 @@ impl InProcessConsensus {
         };
 
         let engine_config = EngineConfig {
+            genesis_start: base_cli_utils::GenesisStartArgs { allow_genesis_start: true },
             config: Arc::new(rollup_config.clone()),
             l2_endpoint: EngineEndpoint::Url(config.l2_engine_url),
             l2_jwt_secret: config.jwt_secret,

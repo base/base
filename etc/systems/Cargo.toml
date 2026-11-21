@@ -22,6 +22,7 @@ workspace = true
 [dependencies]
 # workspace
 base-runtime.workspace = true
+base-cli-utils.workspace = true
 base-test-utils = { workspace = true, optional = true }
 base-load-tests.workspace = true
 base-txpool-rpc.workspace = true

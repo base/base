@@ -57,7 +57,8 @@ impl FollowCommand {
         };
         let consensus_chain = resolved_chain.consensus_chain_args();
         let mut execution = execution;
-        let follow_config: ConsensusFollowNodeConfigArgs = follow.into();
+        let mut follow_config: ConsensusFollowNodeConfigArgs = follow.into();
+        follow_config.genesis_start = execution.standard.rollup_args.genesis_start;
         execution
             .standard
             .rollup_args

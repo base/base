@@ -2,6 +2,13 @@
 
 Unified Base node binary.
 
+## Starting a node
+
+Restore a snapshot before starting a node on any existing Base network. Nodes refuse
+to start while the local execution head is still genesis, on every network. Only when launching
+a brand-new chain, pass `--allow-genesis-start` to the node command. The flag logs one
+warning per process. A non-genesis head starts unchanged, with or without the flag.
+
 ## OTLP Tracing
 
 Unified commands, including `rpc`, `follow`, and `sequencer`, support the same
@@ -56,7 +63,7 @@ base rpc
 base --chain sepolia rpc
 base -c sepolia rpc
 base --chain zeronet rpc
-base --chain dev rpc
+base --chain dev rpc --allow-genesis-start
 base --chain ./chain.toml rpc
 base -c ./chain.toml rpc
 ```
@@ -65,7 +72,7 @@ The command also accepts an execution chain override when the root `--chain` sel
 for consensus chain resolution:
 
 ```text
-base rpc --execution-chain dev
+base rpc --execution-chain dev --allow-genesis-start
 ```
 
 The command also accepts metering flags such as `--enable-metering` for trusted local devnet
@@ -87,7 +94,7 @@ Supported forms:
 ```text
 base sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
 base --chain sepolia sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.signer.endpoint <url>
-base --chain dev sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
+base --chain dev sequencer --allow-genesis-start --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
 base --chain ./chain.toml sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
 ```
 

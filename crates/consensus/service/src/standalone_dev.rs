@@ -53,6 +53,7 @@ impl StandaloneDevChain {
     ) -> Result<(), StandaloneDevError> {
         let rollup_config = self.rollup_config;
         let engine = EngineConfig {
+            genesis_start: Default::default(),
             config: Arc::new(rollup_config.clone()),
             l2_endpoint: engine_endpoint,
             l2_jwt_secret: jwt_secret,
@@ -121,6 +122,7 @@ impl StandaloneDevChain {
             metadata.l1_info,
             metadata.system_config,
             None,
+            Default::default(),
         );
         node.schedule_delay = schedule_delay;
         node.attributes_builder.impersonation = Some(impersonation);

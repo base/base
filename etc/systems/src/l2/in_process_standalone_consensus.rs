@@ -51,6 +51,7 @@ impl InProcessStandaloneSequencer {
     pub async fn start(config: InProcessStandaloneSequencerConfig) -> Result<Self> {
         let rollup_config = Arc::new(config.rollup_config);
         let engine_config = EngineConfig {
+            genesis_start: Default::default(),
             config: Arc::clone(&rollup_config),
             l2_endpoint: EngineEndpoint::Url(config.l2_engine_url),
             l2_jwt_secret: config.jwt_secret,
@@ -73,6 +74,7 @@ impl InProcessStandaloneSequencer {
             config.l1_info,
             config.system_config,
             config.prefund,
+            Default::default(),
         );
         node.schedule_delay = config.schedule_delay;
         let cancellation = CancellationToken::new();

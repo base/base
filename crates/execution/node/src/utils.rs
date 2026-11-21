@@ -29,6 +29,11 @@ pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<BaseNode>, Wallet)> {
         Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build()),
     )
     .with_attributes_generator(payload_attributes)
+    .with_node(|_| {
+        let mut args = crate::RollupArgs::default();
+        args.genesis_start.allow_genesis_start = true;
+        OtherOpNode::new(args)
+    })
     .build()
     .await
 }

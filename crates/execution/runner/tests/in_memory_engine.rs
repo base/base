@@ -102,7 +102,9 @@ async fn seal_one_block(denim: bool, no_tx_pool: bool) -> Result<()> {
     .wrap_err("Failed to create test database")?;
 
     let runtime = Runtime::test();
-    let mut launched = BaseNodeRunner::new(RollupArgs::default())
+    let mut rollup_args = RollupArgs::default();
+    rollup_args.genesis_start.allow_genesis_start = true;
+    let mut launched = BaseNodeRunner::new(rollup_args)
         .launch(
             NodeBuilder::new(node_config).with_database(db).with_launch_context(runtime.clone()),
         )

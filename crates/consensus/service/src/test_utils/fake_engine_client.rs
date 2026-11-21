@@ -156,6 +156,13 @@ impl EngineClient for FakeEngineClient {
         self.cfg.as_ref()
     }
 
+    async fn latest_block_number(&self) -> TransportResult<u64> {
+        self.get_l2_block(BlockNumberOrTag::Latest.into())
+            .await?
+            .map(|block| block.header.number)
+            .ok_or_else(|| TransportErrorKind::non_retryable_str("local execution head is unavailable"))
+    }
+
     async fn el_syncing(&self) -> Result<bool, EngineClientError> {
         Ok(false)
     }

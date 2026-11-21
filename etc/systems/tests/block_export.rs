@@ -106,6 +106,7 @@ async fn datadir_export_matches_builder_export_and_replays() -> Result<()> {
         ..Default::default()
     });
     let engine = EngineConfig {
+        genesis_start: Default::default(),
         config: Arc::clone(&rollup),
         l2_endpoint: EngineEndpoint::Url(builder.engine_url()?),
         l2_jwt_secret: jwt_secret,
