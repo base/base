@@ -16,6 +16,9 @@ pub use extension::{BaseNodeExtension, FromExtensionConfig};
 mod merkle;
 pub use merkle::MerkleStageDefaults;
 
+mod pruning;
+pub use pruning::PruneGuardedComponents;
+
 mod runner;
 pub use runner::{BaseNodeRunner, LaunchedBaseNode};
 
