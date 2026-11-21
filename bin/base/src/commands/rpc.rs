@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::ResolvedChainConfig;
 
-/// Arguments for `base rpc`.
+/// Arguments for `base rpc` and `base mempool`.
 #[derive(Args, Clone, Debug)]
 #[command(
     mut_arg("builder_disallow", |arg| arg.hide(true).long("__builder-disallow-disabled")),
@@ -44,7 +44,7 @@ pub(crate) struct RpcCommand {
 }
 
 impl RpcCommand {
-    /// Runs the `rpc` flavor.
+    /// Runs the `rpc` or `mempool` flavor.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
         let Self { execution_chain, execution, consensus } = self;
         let mut execution_chain = match execution_chain {
@@ -151,7 +151,6 @@ mod tests {
 
     use base_consensus_cli::ConsensusNodeConfigArgs;
     use base_execution_chainspec::BaseChainSpec;
-    use clap::Parser;
 
     use crate::{cli::BaseCli, commands::BaseCommand, config::ChainArg};
 
@@ -169,7 +168,7 @@ mod tests {
 
     #[test]
     fn parses_execution_port_and_consensus_rpc_port() {
-        let cli = BaseCli::parse_from(rpc_args(&[
+        let cli = BaseCli::parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--port",
@@ -188,7 +187,7 @@ mod tests {
 
     #[test]
     fn parses_upgrade_signal_args_once() {
-        let cli = BaseCli::parse_from(rpc_args(&[
+        let cli = BaseCli::parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--upgrade-signal.contract",
@@ -212,7 +211,7 @@ mod tests {
 
     #[test]
     fn derives_upgrade_signal_l1_rpc_from_integrated_consensus_args() {
-        let cli = BaseCli::parse_from(rpc_args(&[
+        let cli = BaseCli::parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--upgrade-signal.contract",
@@ -244,7 +243,7 @@ mod tests {
 
     #[test]
     fn preserves_explicit_upgrade_signal_l1_rpc() {
-        let cli = BaseCli::parse_from(rpc_args(&[
+        let cli = BaseCli::parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--upgrade-signal.contract",
@@ -278,11 +277,11 @@ mod tests {
 
     #[test]
     fn parses_devnet_unified_client_args() {
-        let cli = BaseCli::parse_from([
+        let cli = BaseCli::parse_curated([
             "base",
             "--chain",
             "dev",
-            "rpc",
+            "mempool",
             "--execution-chain",
             "dev",
             "--datadir=/data",
@@ -292,10 +291,6 @@ mod tests {
             "--ws",
             "--ws.addr=0.0.0.0",
             "--ws.port=8546",
-            "--authrpc.port=8551",
-            "--authrpc.addr=0.0.0.0",
-            "--authrpc.jwtsecret=/genesis/jwt.hex",
-            "--auth-ipc.path=/data/engine.ipc",
             "--port=30303",
             "--discovery.port=30303",
             "--metrics=0.0.0.0:8090",
@@ -312,6 +307,8 @@ mod tests {
             "--rpc.txfeecap=0",
             "--rpc.gascap=600000000",
             "--rpc.eth-proof-window=1209600",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls=http://base-builder:8545",
             "--bootnodes=enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303",
             "--rollup.discovery.v4",
             "--l1-eth-rpc",
@@ -344,11 +341,10 @@ mod tests {
         ]);
 
         assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "dev"));
-        let BaseCommand::Rpc(rpc) = cli.command else {
-            panic!("expected rpc command");
+        let BaseCommand::Mempool(rpc) = cli.command else {
+            panic!("expected mempool command");
         };
 
-        assert_eq!(rpc.execution.node.rpc.auth_ipc_path, "/data/engine.ipc");
         assert_eq!(rpc.execution.node.network.port, 30303);
         assert!(rpc.execution_chain.is_some());
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 8549);
@@ -357,7 +353,7 @@ mod tests {
 
     #[test]
     fn parses_rpc_forwarding_endpoint_arg() {
-        let cli = BaseCli::parse_from(rpc_args(&[
+        let cli = BaseCli::parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--rpc.forwarding-endpoint",
@@ -401,7 +397,7 @@ mod tests {
     #[test]
     #[ignore = "spawned by parses_rpc_forwarding_endpoint_from_env with isolated process env"]
     fn parses_rpc_forwarding_endpoint_from_env_child() {
-        let cli = BaseCli::parse_from(rpc_args(&["base", "rpc"]));
+        let cli = BaseCli::parse_curated(rpc_args(&["base", "rpc"]));
 
         let BaseCommand::Rpc(rpc) = cli.command else {
             panic!("expected rpc command");
@@ -421,8 +417,8 @@ mod tests {
 
     #[test]
     fn rejects_rpc_mode_arg() {
-        let err =
-            BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--mode", "sequencer"])).unwrap_err();
+        let err = BaseCli::try_parse_curated(rpc_args(&["base", "rpc", "--mode", "sequencer"]))
+            .unwrap_err();
 
         let rendered = err.to_string();
         assert!(rendered.contains("--mode"));
@@ -430,8 +426,8 @@ mod tests {
 
     #[test]
     fn rejects_rpc_sequencer_args() {
-        let err =
-            BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--sequencer.stopped"])).unwrap_err();
+        let err = BaseCli::try_parse_curated(rpc_args(&["base", "rpc", "--sequencer.stopped"]))
+            .unwrap_err();
 
         let rendered = err.to_string();
         assert!(rendered.contains("--sequencer.stopped"));
@@ -439,7 +435,7 @@ mod tests {
 
     #[test]
     fn rejects_rpc_conductor_args() {
-        let err = BaseCli::try_parse_from(rpc_args(&[
+        let err = BaseCli::try_parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--conductor.rpc",
@@ -453,8 +449,9 @@ mod tests {
 
     #[test]
     fn rejects_rpc_builder_args() {
-        let err = BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--builder.max-tasks", "1"]))
-            .unwrap_err();
+        let err =
+            BaseCli::try_parse_curated(rpc_args(&["base", "rpc", "--builder.max-tasks", "1"]))
+                .unwrap_err();
 
         let rendered = err.to_string();
         assert!(rendered.contains("--builder.max-tasks"));
@@ -462,9 +459,13 @@ mod tests {
 
     #[test]
     fn rejects_rpc_builder_disallow_arg() {
-        let err =
-            BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--builder.disallow", "deny.json"]))
-                .unwrap_err();
+        let err = BaseCli::try_parse_curated(rpc_args(&[
+            "base",
+            "rpc",
+            "--builder.disallow",
+            "deny.json",
+        ]))
+        .unwrap_err();
 
         let rendered = err.to_string();
         assert!(rendered.contains("--builder.disallow"));
@@ -472,7 +473,7 @@ mod tests {
 
     #[test]
     fn rejects_rpc_rollup_sequencer_arg() {
-        let err = BaseCli::try_parse_from(rpc_args(&[
+        let err = BaseCli::try_parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--rollup.sequencer",
@@ -486,7 +487,7 @@ mod tests {
 
     #[test]
     fn rejects_rpc_rollup_sequencer_http_alias_arg() {
-        let err = BaseCli::try_parse_from(rpc_args(&[
+        let err = BaseCli::try_parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--rollup.sequencer-http",
@@ -500,7 +501,7 @@ mod tests {
 
     #[test]
     fn rejects_rpc_rollup_sequencer_ws_alias_arg() {
-        let err = BaseCli::try_parse_from(rpc_args(&[
+        let err = BaseCli::try_parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--rollup.sequencer-ws",
@@ -514,7 +515,7 @@ mod tests {
 
     #[test]
     fn rejects_rpc_rollup_sequencer_headers_arg() {
-        let err = BaseCli::try_parse_from(rpc_args(&[
+        let err = BaseCli::try_parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--rollup.sequencer-headers",
@@ -528,7 +529,7 @@ mod tests {
 
     #[test]
     fn parses_rpc_metering_args() {
-        let cli = BaseCli::parse_from(rpc_args(&[
+        let cli = BaseCli::parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--enable-metering",
@@ -550,19 +551,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_rpc_validity_forwarding_args() {
-        let cli = BaseCli::parse_from(rpc_args(&[
+    fn parses_mempool_validity_forwarding_args() {
+        let cli = BaseCli::parse_curated(rpc_args(&[
             "base",
-            "rpc",
-            "--enable-tx-forwarding",
+            "mempool",
             "--builder-rpc-urls",
             "http://localhost:8545",
             "--validity-max-predicates",
             "8",
         ]));
 
-        let BaseCommand::Rpc(rpc) = cli.command else {
-            panic!("expected rpc command");
+        let BaseCommand::Mempool(rpc) = cli.command else {
+            panic!("expected mempool command");
         };
 
         let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
@@ -573,17 +573,8 @@ mod tests {
     }
 
     #[test]
-    fn rpc_tx_forwarding_requires_builder_urls() {
-        let err = BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--enable-tx-forwarding"]))
-            .unwrap_err();
-
-        let rendered = err.to_string();
-        assert!(rendered.contains("--builder-rpc-urls"));
-    }
-
-    #[test]
     fn rejects_rpc_p2p_signer_args() {
-        let err = BaseCli::try_parse_from(rpc_args(&[
+        let err = BaseCli::try_parse_curated(rpc_args(&[
             "base",
             "rpc",
             "--p2p.sequencer.key",
