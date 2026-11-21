@@ -12,10 +12,6 @@ ignore = [
     # tar PAX extension vulnerability — comes from reth-cli-commands, waiting for upstream fix
     "RUSTSEC-2026-0066",
 
-    # AWS-LC X.509 vulnerabilities — transitive from aws-sdk deps, waiting for upstream fix
-    "RUSTSEC-2026-0044",
-    "RUSTSEC-2026-0048",
-
     # backoff is unmaintained — transitive from upstream reth/alloy dependencies
     "RUSTSEC-2025-0012",
 
@@ -27,9 +23,6 @@ ignore = [
 
     # aws-lc-sys SHAKE API — transitive from aws-sdk deps
     "RUSTSEC-2026-0074",
-
-    # lz4 decompression info leak — transitive from reth-cli-commands
-    "RUSTSEC-2026-0041",
 
     # rsa Marvin Attack — transitive from upstream dependencies
     "RUSTSEC-2023-0071",
