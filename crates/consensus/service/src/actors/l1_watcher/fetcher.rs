@@ -1,15 +1,16 @@
 //! Narrow provider trait for [`super::L1WatcherActor`].
 
 use alloy_eips::BlockId;
+use alloy_primitives::{Address, B256};
 use alloy_rpc_types_eth::{Block, Filter, Log};
 use async_trait::async_trait;
 
-/// A narrow trait exposing only the two L1 RPC methods used by [`super::L1WatcherActor`].
+/// A narrow trait exposing only the L1 RPC methods used by [`super::L1WatcherActor`].
 ///
 /// Replacing the broad [`alloy_provider::Provider`] bound with this trait makes
 /// in-process test implementations straightforward — a test double only needs
-/// to implement `get_logs` and `get_block` rather than the full ~30-method
-/// provider interface.
+/// to implement these methods rather than the full ~30-method provider interface.
+#[cfg_attr(test, mockall::automock(type Error = String;))]
 #[async_trait]
 pub trait L1BlockFetcher: Send + Sync + 'static {
     /// Error type returned by all fetch operations.
@@ -20,6 +21,14 @@ pub trait L1BlockFetcher: Send + Sync + 'static {
 
     /// Return the block identified by `id`, or `None` if it does not exist.
     async fn get_block(&self, id: BlockId) -> Result<Option<Block>, Self::Error>;
+
+    /// Return the value of storage `slot` of the contract at `address` in the state of `block`.
+    async fn get_storage_at(
+        &self,
+        address: Address,
+        slot: B256,
+        block: BlockId,
+    ) -> Result<B256, Self::Error>;
 }
 
 /// Wraps an [`alloy_provider::Provider`] to implement [`L1BlockFetcher`].
@@ -42,5 +51,14 @@ where
 
     async fn get_block(&self, id: BlockId) -> Result<Option<Block>, Self::Error> {
         self.0.get_block(id).await
+    }
+
+    async fn get_storage_at(
+        &self,
+        address: Address,
+        slot: B256,
+        block: BlockId,
+    ) -> Result<B256, Self::Error> {
+        Ok(self.0.get_storage_at(address, slot.into()).block_id(block).await?.into())
     }
 }
