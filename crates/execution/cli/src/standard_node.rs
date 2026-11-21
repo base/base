@@ -10,7 +10,8 @@ use base_execution_base_tx_rpc_node::TxBaseRpcExtension;
 use base_execution_payer_rpc::{PayerRpcConfig, PayerRpcExtension};
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
-    ResourceMeteringConfig, SharedMeteringProvider,
+    ResourceMeteringConfig, SharedMeteringProvider, StaleStorageConfig, StaleStorageMeter,
+    StaleStorageTable,
 };
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
@@ -37,7 +38,7 @@ use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::{
     UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalStartupMode,
 };
-use tracing::warn;
+use tracing::{info, warn};
 use url::Url;
 
 use crate::upgrade_signal::{
@@ -83,6 +84,10 @@ pub struct MeteringArgs {
     /// payload builder.
     #[command(flatten)]
     pub resource_metering: ResourceMeteringArgs,
+
+    /// Log-only stale-storage meter for the native payload builder.
+    #[command(flatten)]
+    pub stale_storage: StaleStorageArgs,
 }
 
 /// CLI arguments for payload resource metering.
@@ -124,6 +129,146 @@ impl Default for ResourceMeteringArgs {
             rejection_cache_max_capacity: REJECTION_CACHE_MAX_CAPACITY,
             rejection_cache_ttl_secs: REJECTION_CACHE_TTL.as_secs(),
         }
+    }
+}
+
+/// CLI arguments for the log-only stale-storage meter.
+///
+/// The meter counts, for each transaction the native payload builder commits, the storage slots
+/// it rewrites that no canonical block wrote within the window, in contracts past a changed-slot
+/// gate. Many such slots make the serial state root slow. It logs and counts what age-tiered
+/// limits would have flagged and never excludes a transaction. The table is stamped from
+/// canonical-state notifications on every node that runs the payload builder, starts empty at
+/// startup, and is not saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::Args)]
+pub struct StaleStorageArgs {
+    /// Enables the log-only stale-storage meter. Allocates a table of
+    /// `2 * 2^payload.stale-storage-table-log2` bytes (one gibibyte by default).
+    #[arg(
+        id = "stale_storage_enabled",
+        long = "payload.stale-storage-metering",
+        env = "PAYLOAD_STALE_STORAGE_METERING",
+        default_value = "false"
+    )]
+    pub enabled: bool,
+
+    /// Base-2 logarithm of the number of 2-byte stale-storage table entries.
+    #[arg(
+        id = "stale_storage_table_log2",
+        long = "payload.stale-storage-table-log2",
+        env = "PAYLOAD_STALE_STORAGE_TABLE_LOG2",
+        default_value_t = StaleStorageConfig::default().table_log2,
+        value_parser = clap::builder::RangedU64ValueParser::<u32>::new().range(
+            u64::from(StaleStorageConfig::MIN_TABLE_LOG2)..=u64::from(StaleStorageConfig::MAX_TABLE_LOG2)
+        ),
+    )]
+    pub table_log2: u32,
+
+    /// Hours after its last canonical write that a slot counts as stale.
+    #[arg(
+        id = "stale_storage_window_hours",
+        long = "payload.stale-storage-window-hours",
+        env = "PAYLOAD_STALE_STORAGE_WINDOW_HOURS",
+        default_value_t = StaleStorageConfig::default().window_hours,
+        value_parser = clap::builder::RangedU64ValueParser::<u64>::new()
+            .range(1..=StaleStorageTable::SWEEP_AGE_HOURS),
+    )]
+    pub window_hours: u64,
+
+    /// Stale slots count only in contracts with more than this many changed slots.
+    #[arg(
+        id = "stale_storage_contract_slot_gate",
+        long = "payload.stale-storage-contract-gate",
+        env = "PAYLOAD_STALE_STORAGE_CONTRACT_GATE",
+        default_value_t = StaleStorageConfig::default().contract_slot_gate
+    )]
+    pub contract_slot_gate: u32,
+
+    /// Dry-run per-transaction stale-slot limit once the table holds a full window.
+    #[arg(
+        id = "stale_storage_transaction_limit",
+        long = "payload.stale-storage-tx-limit",
+        env = "PAYLOAD_STALE_STORAGE_TX_LIMIT",
+        default_value_t = StaleStorageConfig::default().transaction_limit
+    )]
+    pub transaction_limit: u64,
+
+    /// Dry-run cumulative per-block stale-slot limit once the table holds a full window.
+    #[arg(
+        id = "stale_storage_block_limit",
+        long = "payload.stale-storage-block-limit",
+        env = "PAYLOAD_STALE_STORAGE_BLOCK_LIMIT",
+        default_value_t = StaleStorageConfig::default().block_limit
+    )]
+    pub block_limit: u64,
+
+    /// Dry-run limit while the table holds less than one hour of history.
+    #[arg(
+        id = "stale_storage_first_hour_limit",
+        long = "payload.stale-storage-first-hour-limit",
+        env = "PAYLOAD_STALE_STORAGE_FIRST_HOUR_LIMIT",
+        default_value_t = StaleStorageConfig::default().first_hour_limit
+    )]
+    pub first_hour_limit: u64,
+
+    /// Dry-run limit while the table holds less than one window of history.
+    #[arg(
+        id = "stale_storage_first_day_limit",
+        long = "payload.stale-storage-first-day-limit",
+        env = "PAYLOAD_STALE_STORAGE_FIRST_DAY_LIMIT",
+        default_value_t = StaleStorageConfig::default().first_day_limit
+    )]
+    pub first_day_limit: u64,
+}
+
+impl Default for StaleStorageArgs {
+    fn default() -> Self {
+        let config = StaleStorageConfig::default();
+        Self {
+            enabled: false,
+            table_log2: config.table_log2,
+            window_hours: config.window_hours,
+            contract_slot_gate: config.contract_slot_gate,
+            transaction_limit: config.transaction_limit,
+            block_limit: config.block_limit,
+            first_hour_limit: config.first_hour_limit,
+            first_day_limit: config.first_day_limit,
+        }
+    }
+}
+
+impl StaleStorageArgs {
+    /// Meter settings from these arguments.
+    pub const fn config(&self) -> StaleStorageConfig {
+        StaleStorageConfig {
+            table_log2: self.table_log2,
+            window_hours: self.window_hours,
+            contract_slot_gate: self.contract_slot_gate,
+            transaction_limit: self.transaction_limit,
+            block_limit: self.block_limit,
+            first_hour_limit: self.first_hour_limit,
+            first_day_limit: self.first_day_limit,
+        }
+    }
+
+    /// Allocates the meter when enabled, or returns `None`.
+    pub fn meter(&self) -> eyre::Result<Option<StaleStorageMeter>> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        let config = self.config();
+        let meter = StaleStorageMeter::new(config)?;
+        info!(
+            table_entries = meter.table.len(),
+            window_hours = config.window_hours,
+            contract_slot_gate = config.contract_slot_gate,
+            transaction_limit = config.transaction_limit,
+            block_limit = config.block_limit,
+            first_hour_limit = config.first_hour_limit,
+            first_day_limit = config.first_day_limit,
+            "log-only stale storage meter enabled"
+        );
+        Ok(Some(meter))
     }
 }
 
@@ -699,6 +844,9 @@ impl StandardBaseRethNode {
         );
         runner =
             runner.with_resource_metering(resource_metering).with_rejection_cache(rejection_cache);
+        if let Some(meter) = args.metering.stale_storage.meter()? {
+            runner = runner.with_stale_storage(meter);
+        }
 
         let transaction_event_env = TransactionEventEnv::read();
         let transaction_event_writer_config =
@@ -1565,5 +1713,61 @@ mod tests {
 
         StandardBaseRethNode::runner(args)
             .expect("STATE_ and unknown schedule names must not fail opcode parse");
+    }
+
+    #[test]
+    fn stale_storage_meter_is_off_by_default() {
+        let args = CommandParser::<StaleStorageArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.config(), StaleStorageConfig::default());
+        assert!(args.meter().expect("disabled meter").is_none());
+    }
+
+    #[test]
+    fn stale_storage_flags_configure_the_meter() {
+        let args = CommandParser::<StaleStorageArgs>::parse_from([
+            "reth",
+            "--payload.stale-storage-metering",
+            "--payload.stale-storage-table-log2",
+            "12",
+            "--payload.stale-storage-window-hours",
+            "6",
+            "--payload.stale-storage-contract-gate",
+            "8",
+            "--payload.stale-storage-tx-limit",
+            "20",
+            "--payload.stale-storage-block-limit",
+            "40",
+            "--payload.stale-storage-first-hour-limit",
+            "60",
+            "--payload.stale-storage-first-day-limit",
+            "50",
+        ])
+        .args;
+
+        let meter = args.meter().expect("valid config").expect("enabled");
+        assert_eq!(meter.table.len(), 1 << 12);
+        assert_eq!(
+            meter.config,
+            StaleStorageConfig {
+                table_log2: 12,
+                window_hours: 6,
+                contract_slot_gate: 8,
+                transaction_limit: 20,
+                block_limit: 40,
+                first_hour_limit: 60,
+                first_day_limit: 50,
+            }
+        );
+    }
+
+    #[test]
+    fn stale_storage_rejects_an_out_of_range_table_size() {
+        let result = CommandParser::<StaleStorageArgs>::try_parse_from([
+            "reth",
+            "--payload.stale-storage-metering",
+            "--payload.stale-storage-table-log2",
+            "31",
+        ]);
+        assert!(result.is_err());
     }
 }

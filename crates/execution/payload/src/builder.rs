@@ -56,13 +56,13 @@ use tokio::sync::broadcast;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
-    HoldInterrupt, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
-    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, BlockStaleTracker, BuilderMetrics,
+    CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
+    RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
+    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -567,6 +567,9 @@ impl<Txs> Builder<'_, Txs> {
             }
         }
         let execution_duration = build_start.elapsed();
+        if let Some(stale_storage) = info.stale_storage.as_ref() {
+            stale_storage.finish();
+        }
         // Start the end-of-block sweep now so it overlaps the state root.
         let resting = resting
             .zip(resting_predicates.as_ref())
@@ -740,6 +743,8 @@ pub struct ExecutionInfo {
     /// Transaction hashes that exceeded a per-transaction resource limit and should be
     /// permanently removed from the pool and recorded in the shared rejection cache.
     pub permanently_rejected_txs: Vec<TxHash>,
+    /// Per-build state of the log-only stale-storage meter, when it is enabled.
+    pub stale_storage: Option<BlockStaleTracker>,
 }
 
 impl ExecutionInfo {
@@ -753,6 +758,7 @@ impl ExecutionInfo {
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
             permanently_rejected_txs: Vec::new(),
+            stale_storage: None,
         }
     }
 
@@ -961,6 +967,12 @@ where
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         tracing::Span::current().record("block_number", self.parent().number().saturating_add(1));
         let mut info = ExecutionInfo::new();
+        info.stale_storage = self.builder_config.stale_storage.as_ref().map(|meter| {
+            meter.block_tracker(
+                self.parent().number().saturating_add(1),
+                self.attributes().timestamp(),
+            )
+        });
         let no_tx_pool = self.attributes().no_tx_pool();
         let resource_metering = &self.builder_config.resource_metering;
 
@@ -993,6 +1005,9 @@ where
                         result_and_state.result.tx_gas_used(),
                         &result_and_state.state,
                     );
+                    if let Some(stale_storage) = info.stale_storage.as_mut() {
+                        stale_storage.evaluate(&result_and_state.state);
+                    }
                     CommitChanges::Yes
                 },
             ) {
@@ -1036,6 +1051,9 @@ where
                     &usage,
                     &mut info.resource_metering_usage,
                 );
+            }
+            if let Some(stale_storage) = info.stale_storage.as_mut() {
+                stale_storage.commit(&tx_hash);
             }
         }
         Ok(info)
@@ -1461,6 +1479,9 @@ where
                         if let Some(resting) = resting {
                             resting_woken = resting.wake_by_state(&result_and_state.state);
                         }
+                        if let Some(stale_storage) = info.stale_storage.as_mut() {
+                            stale_storage.evaluate(&result_and_state.state);
+                        }
                         CommitChanges::Yes
                     }
                 },
@@ -1546,6 +1567,9 @@ where
                     &usage,
                     &mut info.resource_metering_usage,
                 );
+            }
+            if let Some(stale_storage) = info.stale_storage.as_mut() {
+                stale_storage.commit(&tx_hash);
             }
 
             best_txs.mark_current_committed();
@@ -1775,8 +1799,8 @@ mod tests {
         BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
         ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
-        RestingPredicateStore, SharedMeteringProvider, SharedRestingPredicates,
-        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        RestingPredicateStore, SharedMeteringProvider, SharedRestingPredicates, StaleStorageConfig,
+        StaleStorageMeter, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
     fn state_root_handle() -> PayloadStateRootHandle {
@@ -2960,6 +2984,41 @@ mod tests {
             }
             other => panic!("expected a built payload, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn stale_storage_meter_observes_without_excluding() {
+        let build = |meter: Option<StaleStorageMeter>| {
+            let evicted = Arc::new(Mutex::new(Vec::new()));
+            let invalid = Arc::new(Mutex::new(Vec::new()));
+            let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+            ctx.builder_config.stale_storage = meter;
+            let transactions = TestParkableTransactions::recording(
+                vec![pool_transaction(0), pool_transaction(1)],
+                Arc::clone(&invalid),
+            );
+            let evicted_by_build = Arc::clone(&evicted);
+            let outcome = build_pool_payload_with(ctx, transactions, move |hashes| {
+                evicted_by_build.lock().unwrap().extend(hashes);
+            });
+            let invalid = invalid.lock().unwrap().len();
+            (included_tx_count(outcome), evicted.lock().unwrap().clone(), invalid)
+        };
+        let config = StaleStorageConfig {
+            table_log2: 12,
+            contract_slot_gate: 0,
+            transaction_limit: 0,
+            block_limit: 0,
+            first_hour_limit: 0,
+            first_day_limit: 0,
+            ..StaleStorageConfig::default()
+        };
+
+        let metered = build(Some(StaleStorageMeter::new(config).unwrap()));
+        let unmetered = build(None);
+
+        assert!(metered.0 > 0);
+        assert_eq!(metered, unmetered);
     }
 
     #[test]
