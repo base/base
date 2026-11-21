@@ -17,6 +17,7 @@ reth-evm.workspace = true
 reth-tasks.workspace = true
 reth-chainspec.workspace = true
 reth-storage-api.workspace = true
+reth-chain-state.workspace = true
 reth-engine-tree.workspace = true
 reth-trie-common.workspace = true
 reth-payload-util.workspace = true
@@ -57,11 +58,13 @@ base-common-rpc-types-engine = { workspace = true, features = ["serde", "reth"] 
 # misc
 serde.workspace = true
 tracing.workspace = true
+futures.workspace = true
 parking_lot.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 derive_more.workspace = true
 tokio = { workspace = true, features = ["sync"] }
+tokio-stream = { workspace = true, features = ["sync"] }
 metrics = { workspace = true, optional = true }
 moka = { workspace = true, features = ["sync"] }
 
@@ -72,7 +75,9 @@ crossbeam-channel.workspace = true
 reth-ethereum-forks.workspace = true
 base-execution-chainspec.workspace = true
 metrics-exporter-prometheus.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
 reth-revm = { workspace = true, features = ["test-utils"] }
+reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 criterion.workspace = true
 tempfile.workspace = true

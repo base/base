@@ -9,7 +9,7 @@ use base_builder_core::{
     ValiditySignatureMode,
 };
 use base_builder_metering::MeteringStore;
-use base_execution_cli::ShadowIndexerArgs;
+use base_execution_cli::{ShadowIndexerArgs, StaleStorageArgs};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -252,6 +252,10 @@ pub struct Args {
     /// Shadow indexer `ExEx` configuration
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// Log-only stale-storage meter for the native payload builder.
+    #[command(flatten)]
+    pub stale_storage: StaleStorageArgs,
 }
 
 impl HasRollupArgs for Args {
@@ -293,6 +297,7 @@ impl Default for Args {
             flashblocks_leeway_time: None,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            stale_storage: StaleStorageArgs::default(),
         }
     }
 }
@@ -352,6 +357,7 @@ impl Args {
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            stale_storage: self.stale_storage.meter()?,
         })
     }
 }

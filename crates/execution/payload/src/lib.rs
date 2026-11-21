@@ -28,6 +28,14 @@ pub use resource_metering::{
 };
 mod resource_metering_metrics;
 pub use resource_metering_metrics::{RejectionCacheMetrics, ResourceMeteringMetrics};
+mod stale_storage;
+pub use stale_storage::{
+    BlockStaleTotals, BlockStaleTracker, CanonicalStaleRecord, STALE_STORAGE_EPOCH_SECONDS,
+    StaleAgeBuckets, StaleStorageConfig, StaleStorageConfigError, StaleStorageLimits,
+    StaleStorageMeter, StaleStorageTable, StaleTxSample, StaleTxVerdict,
+};
+mod stale_storage_metrics;
+pub use stale_storage_metrics::StaleStorageMetrics;
 pub mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 

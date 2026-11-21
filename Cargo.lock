@@ -4483,12 +4483,14 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "derive_more 2.1.1",
+ "futures",
  "iai-callgrind",
  "metrics",
  "metrics-exporter-prometheus",
  "moka",
  "parking_lot",
  "reth-basic-payload-builder",
+ "reth-chain-state",
  "reth-chainspec",
  "reth-engine-tree",
  "reth-ethereum-forks",
@@ -4515,6 +4517,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-stream",
  "tracing",
 ]
 
