@@ -606,6 +606,7 @@ mod tests {
 
     #[test]
     fn test_payload_id_parity_op_geth() {
+        // Expected op-geth payload ID observed as rollup-boost's `payload_id_l2`.
         let expected =
             PayloadId::new(FixedBytes::<8>::from_str("0x03d2dae446d2a86a").unwrap().into());
         let attrs = BasePayloadAttributes {

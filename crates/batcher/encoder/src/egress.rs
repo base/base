@@ -208,6 +208,7 @@ impl DaEgress {
 
     /// Plans one calldata frame without mutating channel output.
     fn plan_calldata(channels: &VecDeque<Channel>) -> Option<(ChannelId, usize, bool)> {
+        // Preserve FIFO ordering: only the first unfinished channel may emit.
         let channel = channels.iter().find(|channel| !channel.framing_complete())?;
         let available = channel.available_output();
 
