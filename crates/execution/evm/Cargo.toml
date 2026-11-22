@@ -11,7 +11,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Reth
 reth-evm.workspace = true
 reth-chainspec.workspace = true
 reth-storage-errors.workspace = true
@@ -23,7 +22,6 @@ reth-errors = { workspace = true, optional = true }
 reth-rpc-eth-api = { workspace = true, optional = true }
 reth-rpc-eth-types = { workspace = true, optional = true }
 
-# ethereum
 alloy-evm.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
@@ -37,10 +35,8 @@ base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 
-# revm
 revm.workspace = true
 
-# misc
 thiserror.workspace = true
 
 [dev-dependencies]

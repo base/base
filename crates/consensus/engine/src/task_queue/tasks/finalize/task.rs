@@ -45,7 +45,6 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
             return Ok(());
         }
 
-        // Sanity check that the block that is being finalized is at least safe.
         if state.sync_state.safe_head().block_info.number < self.block_number {
             return Err(FinalizeTaskError::BlockNotSafe);
         }
@@ -67,7 +66,6 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
         .map_err(FinalizeTaskError::FromBlock)?;
         let block_fetch_duration = block_fetch_start.elapsed();
 
-        // Dispatch a forkchoice update.
         let fcu_start = Instant::now();
         SynchronizeTask::new(
             Arc::clone(&self.client),

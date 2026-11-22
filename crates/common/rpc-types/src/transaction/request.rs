@@ -817,7 +817,6 @@ mod tests {
         assert!(req.as_base_tx().is_none(), "a plain request is not a Base transaction request");
         assert_eq!(req.as_ref().value, Some(U256::from(1u64)));
 
-        // A plain request must not serialize any Base transaction keys.
         let out = serde_json::to_string(&req).unwrap();
         assert!(!out.contains("nonceKey"));
         assert!(!out.contains("calls"));
@@ -840,7 +839,6 @@ mod tests {
         let calls = aa.calls.as_ref().expect("calls present");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].len(), 1);
-        // The base fields still deserialize into the inner request.
         assert_eq!(req.as_ref().max_fee_per_gas, Some(5));
     }
 

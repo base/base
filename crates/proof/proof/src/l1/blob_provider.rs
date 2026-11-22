@@ -50,10 +50,8 @@ impl<T: CommsClient> OracleBlobProvider<T> {
         blob_req_meta[0..32].copy_from_slice(blob_hash.as_ref());
         blob_req_meta[32..40].copy_from_slice(block_ref.timestamp.to_be_bytes().as_ref());
 
-        // Send a hint for the blob commitment and field elements.
         HintType::L1Blob.with_data(&[blob_req_meta.as_ref()]).send(self.oracle.as_ref()).await?;
 
-        // Fetch the blob commitment.
         let mut commitment = [0u8; 48];
         self.oracle
             .get_exact(PreimageKey::new(**blob_hash, PreimageKeyType::Sha256), &mut commitment)
@@ -156,7 +154,6 @@ fn generate_roots_of_unity() -> [Fr; FIELD_ELEMENTS_PER_BLOB as usize] {
     let log_x = FIELD_ELEMENTS_PER_BLOB.trailing_zeros() as u64;
     let expo = 1u64 << (MAX_ORDER_ROOT - log_x);
 
-    // Generator has order x now
     let generator = root_of_unity.pow([expo]);
 
     // Compute all relevant roots of unity, i.e. the multiplicative subgroup of size x
@@ -168,7 +165,6 @@ fn generate_roots_of_unity() -> [Fr; FIELD_ELEMENTS_PER_BLOB as usize] {
 
     let shift_correction = 64 - FIELD_ELEMENTS_PER_BLOB.trailing_zeros();
     (0..FIELD_ELEMENTS_PER_BLOB).for_each(|i| {
-        // Find index irev, such that i and irev get swapped
         let irev = i.reverse_bits() >> shift_correction;
         if irev > i {
             roots_of_unity.swap(i as usize, irev as usize);
@@ -190,10 +186,8 @@ mod tests {
 
     #[test]
     fn test_roots_of_unity() {
-        // Initiate the default Ethereum KZG settings.
         let kzg = EnvKzgSettings::default();
 
-        // Create a blob with random data
         let mut bytes = [0u8; BYTES_PER_BLOB];
         rand::rng().fill(bytes.as_mut_slice());
 
@@ -208,7 +202,6 @@ mod tests {
             Bytes48::new(raw.as_slice().try_into().unwrap())
         };
 
-        // Validate each field element in the blob
         (0..FIELD_ELEMENTS_PER_BLOB).into_par_iter().for_each(|i| {
             let field_element = {
                 let mut fe = [0u8; 32];
@@ -219,14 +212,12 @@ mod tests {
             let z_bytes = Bytes32::new(ROOTS_OF_UNITY[i as usize].into_bigint().to_bytes_be().try_into().unwrap());
             let (proof, fe) = kzg.get().compute_kzg_proof(&blob, &z_bytes).unwrap();
 
-            // Ensure the field element matches the expected value
             assert_eq!(
                 fe.as_slice(),
                 field_element.as_slice(),
                 "Field element {i} does not match the expected value. Expected: {field_element:?}, Got: {fe:?}"
             );
 
-            // Ensure the proof can be verified
             let proof_bytes = Bytes48::new(proof.as_slice().try_into().unwrap());
             let is_valid = kzg.get().verify_kzg_proof(&blob_commitment, &z_bytes, &field_element, &proof_bytes).unwrap();
             assert!(

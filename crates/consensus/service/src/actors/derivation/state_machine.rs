@@ -62,7 +62,6 @@ pub enum DerivationStateTransitionError {
     },
 }
 
-// Details all valid state transitions.
 fn transition(
     state: &DerivationState,
     update: &DerivationStateUpdate,
@@ -254,38 +253,30 @@ mod tests {
         }
     }
 
-    // This is just here to shrink the #[case(...)] statements below for readability.
     fn attrs() -> Box<AttributesWithParent> {
         Box::new(dummy_base_attributes())
     }
 
-    // This is just here to shrink the #[case(...)] statements below for readability.
     fn block() -> Box<L2BlockInfo> {
         Box::new(dummy_l2_block_info())
     }
 
     #[rstest]
-    // AwaitingELSyncCompletion valid transitions
     #[case(AwaitingELSyncCompletion, ELSyncCompleted(block()), Deriving)]
     #[case(AwaitingELSyncCompletion, NewAttributesConfirmed(block()), AwaitingELSyncCompletion)]
     #[case(AwaitingELSyncCompletion, SignalProcessed, AwaitingELSyncCompletion)]
     #[case(AwaitingELSyncCompletion, L1DataReceived, AwaitingELSyncCompletion)]
-    // AwaitingL1Data valid transitions
     #[case(AwaitingL1Data, L1DataReceived, Deriving)]
     #[case(AwaitingL1Data, SignalProcessed, AwaitingUpdateAfterSignal)]
-    // AwaitingSafeHeadConfirmation valid transitions
     #[case(AwaitingSafeHeadConfirmation, NewAttributesConfirmed(block()), Deriving)]
     #[case(AwaitingSafeHeadConfirmation, SignalProcessed, AwaitingUpdateAfterSignal)]
     #[case(AwaitingSafeHeadConfirmation, L1DataReceived, AwaitingSafeHeadConfirmation)]
-    // AwaitingSignal valid transitions
     #[case(AwaitingSignal, SignalProcessed, AwaitingUpdateAfterSignal)]
     #[case(AwaitingSignal, L1DataReceived, AwaitingSignal)]
     #[case(AwaitingSignal, MoreDataNeeded, AwaitingSignal)]
-    // AwaitingUpdateAfterSignal valid transitions
     #[case(AwaitingUpdateAfterSignal, L1DataReceived, Deriving)]
     #[case(AwaitingUpdateAfterSignal, NewAttributesConfirmed(block()), Deriving)]
     #[case(AwaitingUpdateAfterSignal, SignalProcessed, AwaitingUpdateAfterSignal)]
-    // Deriving valid transitions
     #[case(Deriving, NewAttributesDerived(attrs()), AwaitingSafeHeadConfirmation)]
     #[case(Deriving, SignalNeeded, AwaitingSignal)]
     #[case(Deriving, MoreDataNeeded, AwaitingL1Data)]
@@ -304,32 +295,26 @@ mod tests {
     }
 
     #[rstest]
-    // AwaitingELSyncCompletion invalid transitions
     #[case(AwaitingELSyncCompletion, MoreDataNeeded)]
     #[case(AwaitingELSyncCompletion, NewAttributesDerived(attrs()))]
     #[case(AwaitingELSyncCompletion, SignalNeeded)]
-    // AwaitingL1Data invalid transitions
     #[case(AwaitingL1Data, ELSyncCompleted(block()))]
     #[case(AwaitingL1Data, MoreDataNeeded)]
     #[case(AwaitingL1Data, NewAttributesDerived(attrs()))]
     #[case(AwaitingL1Data, NewAttributesConfirmed(block()))]
     #[case(AwaitingL1Data, SignalNeeded)]
-    // AwaitingSafeHeadConfirmation invalid transitions
     #[case(AwaitingSafeHeadConfirmation, ELSyncCompleted(block()))]
     #[case(AwaitingSafeHeadConfirmation, MoreDataNeeded)]
     #[case(AwaitingSafeHeadConfirmation, NewAttributesDerived(attrs()))]
     #[case(AwaitingSafeHeadConfirmation, SignalNeeded)]
-    // AwaitingSignal invalid transitions
     #[case(AwaitingSignal, ELSyncCompleted(block()))]
     #[case(AwaitingSignal, NewAttributesDerived(attrs()))]
     #[case(AwaitingSignal, NewAttributesConfirmed(block()))]
     #[case(AwaitingSignal, SignalNeeded)]
-    // AwaitingUpdateAfterSignal invalid transitions
     #[case(AwaitingUpdateAfterSignal, ELSyncCompleted(block()))]
     #[case(AwaitingUpdateAfterSignal, MoreDataNeeded)]
     #[case(AwaitingUpdateAfterSignal, NewAttributesDerived(attrs()))]
     #[case(AwaitingUpdateAfterSignal, SignalNeeded)]
-    // Deriving invalid transitions
     #[case(Deriving, ELSyncCompleted(block()))]
     #[case(Deriving, L1DataReceived)]
     #[case(Deriving, NewAttributesConfirmed(block()))]
@@ -376,13 +361,10 @@ mod tests {
 
         machine.update(&ELSyncCompleted(Box::new(first_safe_head))).unwrap();
 
-        // Transition to AwaitingL1Data
         machine.update(&MoreDataNeeded).unwrap();
 
-        // Receive L1 data and go back to Deriving
         machine.update(&L1DataReceived).unwrap();
 
-        // Safe head should still be the first one
         assert_eq!(machine.last_confirmed_safe_head(), first_safe_head);
     }
 
@@ -393,7 +375,6 @@ mod tests {
 
         machine.update(&ELSyncCompleted(Box::new(initial_safe_head))).unwrap();
 
-        // Derive new attributes
         machine.update(&NewAttributesDerived(Box::new(dummy_base_attributes()))).unwrap();
 
         let new_safe_head = L2BlockInfo {
@@ -407,7 +388,6 @@ mod tests {
             seq_num: 0,
         };
 
-        // Confirm new attributes
         machine.update(&NewAttributesConfirmed(Box::new(new_safe_head))).unwrap();
 
         assert_eq!(machine.current_state(), Deriving);

@@ -14,11 +14,9 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
 alloy-eips.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
-# Base Alloy
 base-common-consensus.workspace = true
 
 [dev-dependencies]

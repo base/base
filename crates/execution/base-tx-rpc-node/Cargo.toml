@@ -14,15 +14,12 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# base
 base-node-runner.workspace = true
 base-execution-base-tx-rpc.workspace = true
 
-# misc
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-# base
 base-protocol.workspace = true
 base-test-utils.workspace = true
 base-common-evm.workspace = true
@@ -31,10 +28,8 @@ base-common-consensus.workspace = true
 base-execution-chainspec.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
-# reth
 reth-rpc-eth-api.workspace = true
 
-# alloy
 alloy-eips.workspace = true
 alloy-signer.workspace = true
 alloy-genesis.workspace = true
@@ -43,7 +38,6 @@ alloy-provider.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
 
-# misc
 eyre.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }

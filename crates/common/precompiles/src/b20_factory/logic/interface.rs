@@ -25,8 +25,6 @@ pub trait Factory {
         upgrade: BaseUpgrade,
     ) -> Result<Address>;
 
-    // --- version-invariant reads: default pass-throughs to `B20FactoryStorage` ---
-
     /// Returns whether `token` has the structural B-20 prefix.
     fn is_b20(&self, storage: &B20FactoryStorage<'_>, token: Address) -> Result<bool> {
         storage.is_b20(token)

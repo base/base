@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# start-release.sh - Create a new release branch with bumped version
-#
 # Usage: ./start-release.sh <bump_type>  (major|minor|patch)
 
 set -euo pipefail
@@ -24,7 +22,6 @@ fi
 main() {
     echo "=== Start Release (bump: $BUMP_TYPE) ==="
 
-    # Get latest FINAL tag (exact vX.Y.Z, exclude RCs and other suffixes)
     CURRENT_VERSION=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
         | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1 | sed 's/^v//')
 
@@ -43,7 +40,6 @@ main() {
         minor) minor=$((minor + 1)); patch=0; base="main" ;;
         patch)
             patch=$((patch + 1))
-            # Find latest releases/v{major}.{minor}.* branch on remote as base
             base=$(git ls-remote --heads origin "releases/v${major}.${minor}.*" \
                 | awk '{print $2}' | sed 's|refs/heads/||' | sort -V | tail -1)
             if [[ -z "$base" ]]; then
@@ -61,7 +57,6 @@ main() {
     echo "Release branch: $RELEASE_BRANCH"
     echo "Base: $base"
 
-    # Error if branch already exists on remote
     if git ls-remote --heads origin "$RELEASE_BRANCH" | grep -q "$RELEASE_BRANCH"; then
         echo "Error: Branch $RELEASE_BRANCH already exists on remote." >&2
         exit 1
@@ -72,7 +67,6 @@ main() {
     git checkout -b "$RELEASE_BRANCH" "origin/$base"
     git push origin "$RELEASE_BRANCH"
 
-    # Write outputs for workflow step summary
     if [[ -n "${RUNNER_TEMP:-}" ]]; then
         echo "$CURRENT_VERSION" > "${RUNNER_TEMP}/current_version"
         echo "$NEW_VERSION"     > "${RUNNER_TEMP}/new_version"

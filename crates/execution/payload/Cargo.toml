@@ -12,7 +12,6 @@ description = "A payload builder for base-reth that builds Base payloads."
 workspace = true
 
 [dependencies]
-# reth
 reth-evm.workspace = true
 reth-tasks.workspace = true
 reth-chainspec.workspace = true
@@ -32,7 +31,6 @@ reth-basic-payload-builder.workspace = true
 reth-payload-builder-primitives.workspace = true
 reth-revm = { workspace = true, features = ["witness"] }
 
-# op-reth
 base-bundles.workspace = true
 base-metrics.workspace = true
 base-common-evm.workspace = true
@@ -41,7 +39,6 @@ base-execution-txpool.workspace = true
 base-execution-base-tx.workspace = true
 base-observability-events.workspace = true
 
-# ethereum
 revm.workspace = true
 alloy-rlp.workspace = true
 alloy-evm.workspace = true
@@ -54,7 +51,6 @@ alloy-rpc-types-engine.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "reth"] }
 
-# misc
 serde.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true

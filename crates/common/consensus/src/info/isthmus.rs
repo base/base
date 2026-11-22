@@ -106,7 +106,6 @@ impl L1BlockInfoIsthmus {
     pub fn encode_calldata_body(&self, buf: &mut Vec<u8>) {
         self.base.encode_calldata_body(buf);
 
-        // Encode Isthmus-specific fields
         buf.extend_from_slice(self.operator_fee_scalar.to_be_bytes().as_ref());
         buf.extend_from_slice(self.operator_fee_constant.to_be_bytes().as_ref());
     }
@@ -125,7 +124,6 @@ impl L1BlockInfoIsthmus {
     pub fn decode_calldata_body(r: &[u8]) -> Result<Self, DecodeError> {
         let base = L1BlockInfoEcotoneBase::decode_calldata_body(r);
 
-        // Decode Isthmus-specific fields
         // SAFETY: 4 bytes are copied directly into the array
         let mut operator_fee_scalar = [0u8; 4];
         operator_fee_scalar.copy_from_slice(&r[164..168]);

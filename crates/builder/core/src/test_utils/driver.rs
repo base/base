@@ -29,7 +29,6 @@ pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
     validation_nodes: Vec<ExternalNode>,
 }
 
-// instantiation and configuration
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     /// How long each built block waits for the payload job before it is resolved, and how far
     /// ahead of the parent its timestamp is set.
@@ -86,7 +85,6 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     }
 }
 
-// public test api
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     /// Builds a new block using only sequencer-injected transactions, skipping the mempool.
     pub async fn build_new_block_with_no_tx_pool(&self) -> eyre::Result<Block<Transaction>> {
@@ -137,14 +135,12 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                 input: JOVIAN_DATA.into(),
             };
 
-            // Create a temporary signer for the deposit
             let signer = self.signer.clone().unwrap_or_else(PrivateKeySigner::random);
             let signed_tx = sign_base_tx(&signer, BaseTypedTransaction::Deposit(deposit_tx))?;
             signed_tx.encoded_2718().into()
         };
 
         let mut wait_until = None;
-        // If block_timestamp we need to produce new timestamp according to current clocks
         let block_timestamp = block_timestamp.map_or_else(
             || {
                 let latest_timestamp = (chrono::Utc::now().timestamp() + 1) as u64;
@@ -194,7 +190,6 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             .payload_id
             .ok_or_else(|| eyre::eyre!("Forkchoice update did not return a payload ID"))?;
 
-        // wait for the block to be built for the specified chain block time
         if let Some(timestamp_jitter) = timestamp_jitter {
             tokio::time::sleep(Self::BLOCK_TIME.saturating_sub(timestamp_jitter)).await;
         } else {
@@ -229,9 +224,6 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         );
 
         for validation_node in &self.validation_nodes {
-            // optionally for each external validation node, ensure
-            // that they consider the block valid before returning it
-            // to the test author.
             validation_node.post_block(&payload).await?;
         }
 
@@ -246,7 +238,6 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     ) -> eyre::Result<Block<Transaction>> {
         let latest = self.latest().await?;
         let mut latest_timestamp = Duration::from_secs(latest.header.timestamp);
-        // latest_timestamp must be in the future
         latest_timestamp =
             latest_timestamp.max(Duration::from_secs(Utc::now().timestamp() as u64 + 1));
         // The timestamp must be at least `BLOCK_TIME` ahead so the payload does not expire
@@ -319,7 +310,6 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     }
 }
 
-// internal methods
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     async fn fcu(&self, attribs: BasePayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
         let latest = self.latest().await?.header.hash;

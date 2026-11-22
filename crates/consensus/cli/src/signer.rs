@@ -115,10 +115,8 @@ impl SignerArgs {
     ///
     /// The `l2_chain_id` is used to set the chain ID on the signer.
     pub fn config(self, l2_chain_id: u64) -> Result<Option<BlockSigner>, SignerArgsParseError> {
-        // First, resolve the sequencer key from either raw input or file
         let sequencer_key = self.resolve_sequencer_key()?;
 
-        // The sequencer signer obtained from the CLI arguments.
         match (sequencer_key, self.config_remote()?) {
             (Some(_), Some(_)) => Err(SignerArgsParseError::LocalAndRemoteSigner),
             (Some(key), None) => Ok(Some(
@@ -135,7 +133,6 @@ impl SignerArgs {
             (Some(key), None) => Ok(Some(key)),
             (None, Some(path)) => {
                 let keypair = SecretKeyLoader::load(path)?;
-                // Extract the private key bytes from the secp256k1 keypair
                 let secp256k1_keypair = keypair
                     .try_into_secp256k1()
                     .map_err(|_| SignerArgsParseError::SequencerKeyInvalid(ecdsa::Error::new()))?;

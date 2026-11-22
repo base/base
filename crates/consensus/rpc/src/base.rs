@@ -256,8 +256,6 @@ impl BaseApiServer for BaseRpc {
         // so a read that spans the halt-lead window cannot report a stale `would_halt`.
         let now_secs = UpgradeSignalDefaults::now_secs();
 
-        // Derive the readiness inputs from the optional schedule so both the scheduled and
-        // pre-schedule (empty contract) paths flow through a single `evaluate_readiness` call.
         let (signals, l1_block_number) = schedule.as_ref().map_or((&[][..], None), |schedule| {
             (schedule.signals.as_slice(), Some(schedule.l1_block_number))
         });

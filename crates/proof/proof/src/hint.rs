@@ -38,7 +38,6 @@ where
 
     /// Appends more data to [`Hint::data`].
     pub fn with_data<T: AsRef<[u8]>>(self, data: T) -> Self {
-        // No-op if the data is empty.
         if data.as_ref().is_empty() {
             return self;
         }

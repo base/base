@@ -154,7 +154,6 @@ impl InProcessConsensus {
         let p2p_udp_port = config.p2p_udp_port.unwrap_or_else(|| ports.claim());
         let listen_ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
-        // Build keypair from P2P key or generate a random one.
         let keypair = if let Some(mut p2p_key) = config.p2p_key {
             SecretKeyLoader::parse(&mut p2p_key.0).wrap_err("Failed to parse P2P key")?
         } else {
@@ -163,7 +162,6 @@ impl InProcessConsensus {
 
         let peer_id = keypair.public().to_peer_id().to_string();
 
-        // Build the signing key for discv5 from the same P2P key material.
         let signing_key = extract_signing_key(&keypair)?;
 
         let local_node = LocalNode::new(signing_key, listen_ip, p2p_tcp_port, p2p_udp_port);
@@ -189,7 +187,6 @@ impl InProcessConsensus {
             .build()
             .expect("valid gossip config");
 
-        // For sequencer mode, attach a gossip signer.
         if config.mode == NodeMode::Sequencer {
             let seq_key = config
                 .sequencer_key
@@ -280,7 +277,6 @@ impl InProcessConsensus {
             let _ = startup_tx.send(Ok(()));
         });
 
-        // Wait for either an early startup failure or RPC readiness.
         tokio::select! {
             result = startup_rx => {
                 result.wrap_err("startup channel closed")?

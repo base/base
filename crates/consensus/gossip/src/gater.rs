@@ -108,15 +108,12 @@ impl ConnectionGater {
 
     /// Returns if the given [`Multiaddr`] has been dialed the maximum number of times.
     pub fn dial_threshold_reached(&self, addr: &Multiaddr) -> bool {
-        // If the peer has not been dialed yet, the threshold is not reached.
         let Some(dialed) = self.dialed_peers.get(addr) else {
             return false;
         };
-        // If the peer has been dialed and the threshold is not set, the threshold is reached.
         let Some(redialing) = self.config.peer_redialing else {
             return true;
         };
-        // If the threshold is set to `0`, redial indefinitely.
         if redialing == 0 {
             return false;
         }
@@ -156,7 +153,6 @@ impl ConnectionGater {
     ///
     /// Respects the DNS protocol type: `dns4` only returns `IPv4`, `dns6` only returns `IPv6`.
     pub fn try_resolve_dns(addr: &Multiaddr) -> Option<Result<IpAddr, ()>> {
-        // Track which DNS protocol type was used
         let (hostname, ipv4_only, ipv6_only) =
             addr.iter().find_map(|component| match component {
                 libp2p::multiaddr::Protocol::Dns(h) | libp2p::multiaddr::Protocol::Dnsaddr(h) => {
@@ -170,18 +166,15 @@ impl ConnectionGater {
         debug!(target: "p2p", %hostname, ipv4_only, ipv6_only, "Resolving DNS hostname");
 
         let ip = match format!("{hostname}:0").to_socket_addrs() {
-            Ok(addrs) => {
-                // Filter addresses based on DNS protocol type
-                addrs.map(|socket_addr| socket_addr.ip()).find(|ip| {
-                    if ipv4_only {
-                        ip.is_ipv4()
-                    } else if ipv6_only {
-                        ip.is_ipv6()
-                    } else {
-                        true
-                    }
-                })
-            }
+            Ok(addrs) => addrs.map(|socket_addr| socket_addr.ip()).find(|ip| {
+                if ipv4_only {
+                    ip.is_ipv4()
+                } else if ipv6_only {
+                    ip.is_ipv6()
+                } else {
+                    true
+                }
+            }),
             Err(e) => {
                 warn!(target: "p2p", %hostname, error = %e, "DNS resolution failed");
                 return Some(Err(()));
@@ -261,25 +254,20 @@ impl ConnectionGater {
 
 impl ConnectionGate for ConnectionGater {
     fn can_connect_outbound(&mut self, addr: &Multiaddr) -> Result<(), ConnectionError> {
-        // Get the peer id from the given multiaddr.
         let peer_id = Self::peer_id_from_addr(addr).ok_or_else(|| {
             warn!(target: "p2p", peer=?addr, "Failed to extract PeerId from Multiaddr");
             Metrics::dial_peer_error("invalid_multiaddr").increment(1.0);
             ConnectionError::InvalidMultiaddr { addr: addr.clone() }
         })?;
 
-        // Cannot dial a peer that is already being dialed.
         if self.current_dials.contains_key(&peer_id) {
             debug!(target: "gossip", peer=?addr, "Already dialing peer, not dialing");
             Metrics::dial_peer_error("already_dialing").increment(1.0);
             return Err(ConnectionError::AlreadyDialing { peer_id });
         }
 
-        // If the peer is protected, do not apply thresholds.
         let protected = self.protected_peers.contains(&peer_id);
 
-        // If the peer is not protected, its dial threshold is reached and dial period is not
-        // expired, do not dial.
         if !protected && self.dial_threshold_reached(addr) && !self.dial_period_expired(addr) {
             debug!(target: "gossip", peer=?addr, "Dial threshold reached, not dialing");
             Metrics::dial_peer_error("threshold_reached").increment(1.0);
@@ -360,7 +348,6 @@ impl ConnectionGate for ConnectionGater {
             .entry(addr.clone())
             .or_insert_with(|| DialInfo { num_dials: 0, last_dial: Instant::now() });
 
-        // If the last dial was longer than the dial period, reset the number of dials.
         if dial_info.last_dial.elapsed() > self.config.dial_period {
             dial_info.num_dials = 0;
         }
@@ -391,10 +378,8 @@ impl ConnectionGate for ConnectionGater {
     fn can_disconnect(&self, addr: &Multiaddr) -> bool {
         let Some(peer_id) = Self::peer_id_from_addr(addr) else {
             warn!(target: "p2p", peer=?addr, "Failed to extract PeerId from Multiaddr when checking disconnect");
-            // If we cannot extract the PeerId, disconnection is allowed.
             return true;
         };
-        // If the peer is protected, do not disconnect.
         !self.protected_peers.contains(&peer_id)
     }
 
@@ -483,12 +468,10 @@ mod tests {
         gater.blocked_subnets.insert("10.0.0.0/8".parse::<IpNet>().unwrap());
         gater.blocked_subnets.insert("172.16.0.0/16".parse::<IpNet>().unwrap());
 
-        // IP in blocked subnet
         assert!(gater.check_ip_in_blocked_subnets(&IpAddr::from_str("192.168.1.100").unwrap()));
         assert!(gater.check_ip_in_blocked_subnets(&IpAddr::from_str("10.0.0.5").unwrap()));
         assert!(gater.check_ip_in_blocked_subnets(&IpAddr::from_str("172.16.255.255").unwrap()));
 
-        // IP not in any blocked subnet
         assert!(!gater.check_ip_in_blocked_subnets(&IpAddr::from_str("192.168.2.1").unwrap()));
         assert!(!gater.check_ip_in_blocked_subnets(&IpAddr::from_str("172.17.0.1").unwrap()));
         assert!(!gater.check_ip_in_blocked_subnets(&IpAddr::from_str("8.8.8.8").unwrap()));
@@ -498,66 +481,55 @@ mod tests {
     fn test_connection_error_handling() {
         let mut gater = ConnectionGater::new(GaterConfig::default());
 
-        // Test invalid multiaddr (missing peer ID)
         let invalid_addr = Multiaddr::from_str("/ip4/127.0.0.1/tcp/8080").unwrap();
         let result = gater.can_connect_outbound(&invalid_addr);
         assert!(matches!(result, Err(ConnectionError::InvalidMultiaddr { .. })));
 
-        // Test with valid address
         let valid_addr = Multiaddr::from_str(
             "/ip4/127.0.0.1/tcp/8080/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
         )
         .unwrap();
 
-        // First dial should succeed
         assert!(gater.can_connect_outbound(&valid_addr).is_ok());
 
-        // Mark as dialing
         gater.dialing(&valid_addr);
 
-        // Second dial should fail with AlreadyDialing
         let result = gater.can_connect_outbound(&valid_addr);
         assert!(matches!(result, Err(ConnectionError::AlreadyDialing { .. })));
     }
 
     #[test]
     fn test_dns_multiaddr_detection() {
-        // Test DNS4 multiaddr (try_resolve_dns returns Some for DNS addresses)
         let dns4_addr = Multiaddr::from_str(
             "/dns4/example.com/tcp/9003/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
         )
         .unwrap();
         assert!(ConnectionGater::try_resolve_dns(&dns4_addr).is_some());
 
-        // Test DNS6 multiaddr
         let dns6_addr = Multiaddr::from_str(
             "/dns6/example.com/tcp/9003/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
         )
         .unwrap();
         assert!(ConnectionGater::try_resolve_dns(&dns6_addr).is_some());
 
-        // Test DNS multiaddr (generic)
         let dns_addr = Multiaddr::from_str(
             "/dns/example.com/tcp/9003/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
         )
         .unwrap();
         assert!(ConnectionGater::try_resolve_dns(&dns_addr).is_some());
 
-        // Test dnsaddr multiaddr
         let dnsaddr = Multiaddr::from_str(
             "/dnsaddr/example.com/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
         )
         .unwrap();
         assert!(ConnectionGater::try_resolve_dns(&dnsaddr).is_some());
 
-        // Test IP4 multiaddr (should NOT be detected as DNS - returns None)
         let ip4_addr = Multiaddr::from_str(
             "/ip4/127.0.0.1/tcp/9003/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
         )
         .unwrap();
         assert!(ConnectionGater::try_resolve_dns(&ip4_addr).is_none());
 
-        // Test IP6 multiaddr (should NOT be detected as DNS - returns None)
         let ip6_addr = Multiaddr::from_str(
             "/ip6/::1/tcp/9003/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
         )
@@ -569,21 +541,18 @@ mod tests {
     fn test_dns_multiaddr_can_connect_outbound() {
         let mut gater = ConnectionGater::new(GaterConfig::default());
 
-        // DNS4 multiaddr should be allowed to dial (IP checks skipped)
         let dns4_addr = Multiaddr::from_str(
             "/dns4/example.com/tcp/9003/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
         )
         .unwrap();
         assert!(gater.can_connect_outbound(&dns4_addr).is_ok());
 
-        // Real-world DNS multiaddr format (like the one from the issue)
         let real_world_dns = Multiaddr::from_str(
             "/dns4/alfonso-0-opn-reth-a-rpc-1-p2p.primary.infra.dev.oplabs.cloud/tcp/9003/p2p/16Uiu2HAmUSo81N6iNQNKZCiqDAg5Mcmh9gwvPgKmKj1HH6qCR4Kq",
         )
         .unwrap();
         assert!(gater.can_connect_outbound(&real_world_dns).is_ok());
 
-        // DNS multiaddr with blocked peer should still be blocked
         let peer_id = ConnectionGater::peer_id_from_addr(&dns4_addr).unwrap();
         gater.block_peer(&peer_id);
         assert!(gater.can_connect_outbound(&dns4_addr).is_err());
@@ -711,7 +680,6 @@ mod tests {
         gater.dialed(&addr);
         assert_eq!(gater.dialed_peers.len(), 1);
 
-        // Wait for dial_period to expire.
         std::thread::sleep(Duration::from_millis(5));
 
         gater.prune();
@@ -741,7 +709,6 @@ mod tests {
             ..GaterConfig::default()
         });
 
-        // Dial 50 unique addresses.
         for i in 0..50u8 {
             let addr = Multiaddr::from_str(&format!(
                 "/ip4/10.0.0.{}/tcp/8080/p2p/{}",
@@ -753,7 +720,6 @@ mod tests {
         }
         assert_eq!(gater.dialed_peers.len(), 50);
 
-        // Wait for dial_period to expire.
         std::thread::sleep(Duration::from_millis(5));
 
         gater.prune();
@@ -778,15 +744,12 @@ mod tests {
         )
         .unwrap();
 
-        // First outbound check passes.
         assert!(gater.can_connect_outbound(&addr).is_ok());
 
-        // Simulate successful dial.
         gater.dialing(&addr);
         gater.dialed(&addr);
         gater.remove_dial(&ConnectionGater::peer_id_from_addr(&addr).unwrap());
 
-        // Threshold reached: second outbound check is rejected.
         assert!(
             matches!(
                 gater.can_connect_outbound(&addr),
@@ -795,11 +758,9 @@ mod tests {
             "dial should be rejected while threshold is reached and period has not expired"
         );
 
-        // Wait for dial_period to expire, then prune.
         std::thread::sleep(Duration::from_millis(5));
         gater.prune();
 
-        // After prune, the peer is dialable again.
         assert!(
             gater.can_connect_outbound(&addr).is_ok(),
             "dial should succeed after prune clears expired dialed_peers entry"

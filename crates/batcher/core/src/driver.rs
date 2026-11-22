@@ -362,7 +362,6 @@ where
     ///
     /// Submissions already in flight keep settling.
     fn on_admin_stop(&mut self) {
-        // Leave a stopped batcher alone. It holds nothing to reset.
         if self.stopped {
             return;
         }
@@ -537,10 +536,6 @@ mod tests {
         });
     }
 
-    // The loop polls its arms in priority order. Each test in this group makes several arms
-    // ready at once and checks which one the driver serves first. Every call log ends with the
-    // shutdown flush.
-
     /// A cancelled driver shuts down without serving the admin flush, block and L1 head already
     /// waiting, and the flush call fails.
     #[test]
@@ -555,7 +550,6 @@ mod tests {
                     .l1_head_source(l1_head_source)
                     .build();
 
-            // Queue a flush, then cancel before the driver runs.
             let admin = handles.admin.clone();
             let flush = ctx.spawn(async move { admin.flush().await });
             ctx.sleep(Duration::from_millis(1)).await;
@@ -563,8 +557,6 @@ mod tests {
 
             assert!(driver.run().await.is_ok());
             assert!(flush.await.unwrap().is_err(), "a cancelled driver must not serve the flush");
-            // Only the shutdown flush is recorded, so neither the admin flush, the block nor the
-            // head was served.
             assert_eq!(recorded.lock().unwrap().calls, [PipelineCall::Flush]);
         });
     }
@@ -602,7 +594,6 @@ mod tests {
                     .l1_head_source(l1_head_source)
                     .build();
 
-            // Queue a flush before the driver runs.
             let admin = handles.admin.clone();
             let flush = ctx.spawn(async move { admin.flush().await });
             ctx.sleep(Duration::from_millis(1)).await;
@@ -696,9 +687,6 @@ mod tests {
         });
     }
 
-    // Encoding runs in slices of `STEP_BUDGET` steps. The tests below check what happens
-    // between two slices.
-
     /// A backlog larger than one encoding slice is finished without any external event.
     #[test]
     fn run_finishes_a_backlog_larger_than_one_slice_without_events() {
@@ -743,8 +731,6 @@ mod tests {
             assert!(encoded < 3 * STEP_BUDGET, "the stop must not wait for the whole backlog");
         });
     }
-
-    // The tests below check how ready submissions become L1 transactions.
 
     /// A blob submission that cannot be built into a transaction is fatal, because a retry would
     /// fail the same way and hold back every submission behind it.

@@ -13,13 +13,11 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
 alloy-evm.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
-# base
 base-common-flz.workspace = true
 base-common-l1-fees.workspace = true
 base-common-chains.workspace = true
@@ -31,19 +29,15 @@ base-precompile-storage = { workspace = true, optional = true }
 base-execution-base-tx = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["evm"] }
 
-# revm
 revm.workspace = true
 
-# misc
 auto_impl.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, optional = true }
 
-# metrics
 base-metrics = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 
-# reth
 reth-evm = { workspace = true, optional = true }
 
 [dev-dependencies]

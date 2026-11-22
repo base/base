@@ -108,7 +108,6 @@ fn init_tests() {
             _ => return,
         };
 
-        // let prefix_blacklist = &["alloy_transport_ipc", "storage::db::mdbx"];
         let prefix_blacklist = &["storage::db::mdbx"];
 
         tracing_subscriber::registry()

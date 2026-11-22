@@ -101,8 +101,6 @@ fn run_child(test_name: &str, mode: &str) -> Output {
     }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────
-
 /// Assert the child was killed by a signal and the SIGSEGV banner was printed.
 fn assert_killed_by_sigsegv(output: &Output, stderr: &str) {
     assert!(!output.status.success(), "child should have been terminated by a signal, got success");
@@ -117,8 +115,6 @@ fn assert_killed_by_sigsegv(output: &Output, stderr: &str) {
         "stderr should contain SIGSEGV banner.\nstderr:\n{stderr}"
     );
 }
-
-// ── Tests ──────────────────────────────────────────────────────────────
 
 #[test]
 fn segfault_produces_backtrace() {

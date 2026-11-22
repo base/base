@@ -269,7 +269,6 @@ where
 
     /// Ensure proofs storage is initialized
     fn ensure_initialized(&self) -> eyre::Result<()> {
-        // Check if proofs storage is initialized
         let earliest_block_number = match self.storage.get_earliest_block_number()? {
             Some((n, _)) => n,
             None => {
@@ -650,10 +649,8 @@ where
 
         let first_old = old.first().block_with_parent();
 
-        // Invalidate any cached blocks from the old chain.
         sync_target.clear_from(first_old.block.number);
 
-        // Cache trie data for all blocks in the new chain.
         for (&block_number, block) in new.blocks() {
             if let Some(trie_data) = new.trie_data_at(block_number) {
                 sync_target.insert(
@@ -694,7 +691,6 @@ where
 
         let first_old = old.first().block_with_parent();
 
-        // Invalidate any cached blocks that are being reverted.
         sync_target.clear_from(first_old.block.number);
 
         sync_target.update_state(SyncTargetState::Revert { revert_to: first_old });
@@ -722,22 +718,12 @@ mod tests {
 
     use super::*;
 
-    // -------------------------------------------------------------------------
-    // Helpers: deterministic blocks and deterministic Chain with precomputed updates
-    // -------------------------------------------------------------------------
     fn b256(byte: u8) -> B256 {
         B256::new([byte; 32])
     }
 
-    // deterministic hash from block number: 0 -> 0x00.., 1 -> 0x01.., etc.
     fn hash_for_num(num: u64) -> B256 {
-        // if you only care about small test numbers, this is enough:
         b256(num as u8)
-
-        // If you want to avoid wrapping when num > 255, use something like:
-        // let mut out = [0u8; 32];
-        // out[0..8].copy_from_slice(&num.to_be_bytes());
-        // B256::new(out)
     }
 
     fn mk_block(num: u64) -> RecoveredBlock<Block> {
@@ -804,7 +790,6 @@ mod tests {
             .expect("store trie update");
     }
 
-    // Initialize exex with config
     fn build_test_exex<NodeT, Store>(
         ctx: ExExContext<NodeT>,
         storage: BaseProofsStorage<Store>,
@@ -823,7 +808,6 @@ mod tests {
 
     #[tokio::test]
     async fn handle_notification_chain_committed() {
-        // RocksDB proofs storage
         let dir = tempdir_path();
         let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
         let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
@@ -962,7 +946,6 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_initialized_errors_on_storage_not_initialized() {
-        // RocksDB proofs storage
         let dir = tempdir_path();
         let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
         let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
@@ -976,7 +959,6 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_initialized_errors_when_prune_exceeds_threshold() {
-        // RocksDB proofs storage
         let dir = tempdir_path();
         let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
         let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
@@ -1004,7 +986,6 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_initialized_succeeds() {
-        // RocksDB proofs storage
         let dir = tempdir_path();
         let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
         let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
@@ -1020,7 +1001,6 @@ mod tests {
 
     #[tokio::test]
     async fn handle_notification_schedules_async_on_gap() {
-        // RocksDB proofs storage
         let dir = tempdir_path();
         let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
         let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
@@ -1038,11 +1018,9 @@ mod tests {
 
         let sync_target = SyncTarget::new();
 
-        // Process notification
         exex.handle_notification(notif, &sync_target)
             .expect("handle chain commit should return ok immediately");
 
-        // Verify the sync target state was set
         let state = sync_target.take_state().expect("should have pending state");
         assert!(
             matches!(state, SyncTargetState::SyncUpTo { to: 10 }),

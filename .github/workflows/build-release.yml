@@ -27,7 +27,6 @@ permissions:
   attestations: write
 
 jobs:
-  # Build native binaries for release artifacts
   build-binaries:
     strategy:
       fail-fast: false
@@ -188,7 +187,6 @@ jobs:
           fi
           gh release upload --clobber "$TAG" "${files[@]}"
 
-  # Build multi-arch Docker images
   build-and-push:
     strategy:
       fail-fast: false
@@ -313,7 +311,6 @@ jobs:
             echo "has_digests=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Merge Docker manifests and publish
   publish:
     needs: [find-docker-artifacts]
     if: ${{ !cancelled() && needs.find-docker-artifacts.outputs.has_digests == 'true' }}

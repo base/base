@@ -7,7 +7,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-// Logging
 #[macro_use]
 extern crate tracing;
 

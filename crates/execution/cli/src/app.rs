@@ -61,8 +61,6 @@ where
             None => CliRunner::try_default_runtime()?,
         };
 
-        // add network name to logs dir
-        // Add network name if available to the logs dir
         if let Some(chain_spec) = self.cli.command.chain_spec() {
             self.cli.logs.log_file_directory =
                 self.cli.logs.log_file_directory.join(chain_spec.chain.to_string());
@@ -70,7 +68,6 @@ where
 
         self.init_tracing(&runner)?;
 
-        // Install the prometheus recorder to be sure to record all metrics
         install_prometheus_recorder();
 
         let components = |spec: Arc<BaseChainSpec>| {
@@ -82,7 +79,6 @@ where
 
         match self.cli.command {
             Commands::Node(command) => {
-                // Validate RPC modules using the configured validator
                 if let Some(http_api) = &command.rpc.http_api {
                     Rpc::validate_selection(http_api, "http.api").map_err(|e| eyre!("{e}"))?;
                 }

@@ -83,14 +83,12 @@ impl SingleBatch {
         l2_safe_head: L2BlockInfo,
         inclusion_block: &BlockInfo,
     ) -> BatchValidity {
-        // Cannot have empty l1_blocks for batch validation.
         if l1_blocks.is_empty() {
             return BatchValidity::Undecided;
         }
 
         let epoch = l1_blocks[0];
 
-        // If the batch is not accepted by the timestamp check, return the result.
         let timestamp_check = self.check_batch_timestamp(cfg, l2_safe_head, inclusion_block);
         if !timestamp_check.is_accept() {
             return timestamp_check;
@@ -111,17 +109,14 @@ impl SingleBatch {
             return BatchValidity::Drop(BatchDropReason::SameSecondOriginChange);
         }
 
-        // Filter out batches that were included too late.
         if self.epoch_num + cfg.seq_window_size < inclusion_block.number {
             return BatchValidity::Drop(BatchDropReason::IncludedTooLate);
         }
 
-        // Check the L1 origin of the batch
         let mut batch_origin = epoch;
         if self.epoch_num < epoch.number {
             return BatchValidity::Drop(BatchDropReason::EpochTooOld);
         } else if self.epoch_num == epoch.number {
-            // Batch is sticking to the current epoch, continue.
         } else if self.epoch_num == epoch.number + 1 {
             // With only 1 l1Block we cannot look at the next L1 Origin.
             // Note: This means that we are unable to determine validity of a batch
@@ -136,7 +131,6 @@ impl SingleBatch {
             return BatchValidity::Drop(BatchDropReason::EpochTooFarInFuture);
         }
 
-        // Validate the batch epoch hash
         if self.epoch_hash != batch_origin.hash {
             return BatchValidity::Drop(BatchDropReason::EpochHashMismatch);
         }
@@ -145,7 +139,6 @@ impl SingleBatch {
             return BatchValidity::Drop(BatchDropReason::TimestampBeforeL1Origin);
         }
 
-        // Check if we ran out of sequencer time drift
         let max_drift = cfg.max_sequencer_drift(batch_origin.timestamp);
         let max = if let Some(max) = batch_origin.timestamp.checked_add(max_drift) {
             max
@@ -170,7 +163,6 @@ impl SingleBatch {
                     return BatchValidity::Undecided;
                 }
                 let next_origin = l1_blocks[1];
-                // Check if the next L1 Origin could have been adopted
                 if self.timestamp >= next_origin.timestamp {
                     return BatchValidity::Drop(
                         BatchDropReason::SequencerDriftNotAdoptedNextOrigin,
@@ -179,8 +171,6 @@ impl SingleBatch {
             }
         }
 
-        // If this is the first block in the jovian upgrade, and the batch contains any
-        // transactions, it must be dropped.
         if cfg.is_feature_activation_block_cascading(
             BaseFeature::JovianUpgradeTransactions,
             self.timestamp,
@@ -202,14 +192,11 @@ impl SingleBatch {
             if tx.as_ref().first() == Some(&(OpTxType::Deposit as u8)) {
                 return BatchValidity::Drop(BatchDropReason::DepositTransaction);
             }
-            // If isthmus is not active yet and the transaction is a 7702, drop the batch.
             if !cfg.is_feature_active_cascading(BaseFeature::Eip7702, self.timestamp)
                 && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
             {
                 return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
             }
-            // If Everest is not active yet and the transaction is a Base transaction, drop the
-            // batch.
             if !cfg.is_feature_active_cascading(BaseFeature::TxBase, self.timestamp)
                 && tx.as_ref().first() == Some(&(OpTxType::Base as u8))
             {
@@ -571,7 +558,6 @@ mod tests {
     fn example_transactions() -> Vec<Bytes> {
         let mut transactions = Vec::new();
 
-        // First Transaction in the batch.
         let tx = eip_1559_tx();
         let sig = Signature::test_signature();
         let tx_signed = tx.into_signed(sig);
@@ -582,7 +568,6 @@ mod tests {
         let decoded = TxEnvelope::decode_2718(&mut slice).unwrap();
         assert!(matches!(decoded, TxEnvelope::Eip1559(_)));
 
-        // Second transaction in the batch.
         let mut tx = eip_1559_tx();
         tx.to = Address::left_padding_from(&[7]).into();
         let sig = Signature::test_signature();
@@ -718,10 +703,8 @@ mod tests {
     fn test_check_batch_drop_non_empty_jovian_transition() {
         let (trace_store, _guard) = crate::capture_traces!();
 
-        // Gather a few test transactions for the batch.
         let transactions = example_transactions();
 
-        // Construct a basic `SingleBatch`
         let parent_hash = BlockHash::ZERO;
         let epoch_num = 1;
         let epoch_hash = BlockHash::ZERO;

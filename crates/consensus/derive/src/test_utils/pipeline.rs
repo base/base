@@ -7,16 +7,11 @@ use alloy_eips::BlockNumHash;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
-// Re-export these types used internally to the test pipeline.
 use crate::{
-    AttributesQueue, BatchStream, ChannelProvider, ChannelReader, DerivationPipeline, FrameQueue,
-    L1Retrieval, NextAttributes, OriginAdvancer, OriginProvider, PipelineBuilder, PipelineError,
-    PollingTraversal, StageReset,
-    test_utils::{TestAttributesBuilder, TestDAP},
-};
-use crate::{
-    BatchProvider, PipelineResult,
-    test_utils::{TestChainProvider, TestL2ChainProvider},
+    AttributesQueue, BatchProvider, BatchStream, ChannelProvider, ChannelReader,
+    DerivationPipeline, FrameQueue, L1Retrieval, NextAttributes, OriginAdvancer, OriginProvider,
+    PipelineBuilder, PipelineError, PipelineResult, PollingTraversal, StageReset,
+    test_utils::{TestAttributesBuilder, TestChainProvider, TestDAP, TestL2ChainProvider},
 };
 
 /// A fully custom [`NextAttributes`].

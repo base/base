@@ -103,7 +103,6 @@ def main():
 
     crate_dirs = build_crate_map(meta)
 
-    # Files at the workspace root that affect all crates when changed
     workspace_root_patterns = (
         "Cargo.toml",
         "Cargo.lock",
@@ -116,11 +115,9 @@ def main():
         ".github/actions/setup/",
     )
 
-    # Map changed files to their crate (longest prefix match)
     sorted_dirs = sorted(crate_dirs.keys(), key=len, reverse=True)
     changed_crates = set()
     for f in changed_files:
-        # If a workspace-root build file changed, all crates are affected
         if any(f == p or f.startswith(p) for p in workspace_root_patterns):
             changed_crates = set(all_names)
             break
@@ -134,7 +131,6 @@ def main():
 
     reverse_deps = build_reverse_deps(meta)
     affected = transitive_rdeps(changed_crates, reverse_deps)
-    # Only output workspace members, minus exclusions
     affected &= all_names
     affected -= exclude
 

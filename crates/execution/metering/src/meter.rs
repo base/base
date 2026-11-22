@@ -482,7 +482,6 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
     let eip2780 = spec.into_eth_spec().is_enabled_in(SpecId::AMSTERDAM).then(|| {
         revm::context_interface::cfg::gas_params::Eip2780TxInfo {
             value: tx.value(),
-            // Self-transfer: a `Call` whose recipient is the sender itself.
             is_self_transfer: tx.kind().to() == Some(tx.signer_ref()),
         }
     });
@@ -692,7 +691,6 @@ where
     } = input;
     let header = &header;
     let metered_opcodes = metered_opcodes.as_ref();
-    // Get bundle hash
     let bundle_hash = bundle.bundle_hash();
 
     let meters_value_transfer_effects =
@@ -710,7 +708,6 @@ where
         }
     }
 
-    // Create state database
     let state_db = StateProviderDatabase::new(state_provider.into_evm_state_provider());
     let mut db = State::builder().with_database(state_db).with_bundle_update().build();
 
@@ -863,7 +860,6 @@ where
             total_gas_used = total_gas_used.saturating_add(gas_used);
             total_gas_fees = total_gas_fees.saturating_add(gas_fees);
 
-            // Extract per-transaction opcode and precompile gas, then reset for next tx.
             let inspector = builder.evm_mut().inspector_mut();
             let opcode_data = inspector.take_opcode_gas();
             let precompile_data = inspector.take_precompile_gas();
@@ -1215,7 +1211,6 @@ mod tests {
         assert!(output.results.is_empty());
         assert_eq!(output.total_gas_used, 0);
         assert_eq!(output.total_gas_fees, U256::ZERO);
-        // Even empty bundles have some EVM setup overhead
         assert!(output.total_time_us > 0);
         assert_eq!(output.bundle_hash, keccak256([]));
 
@@ -1772,7 +1767,6 @@ mod tests {
             100_000,
         );
 
-        // Only request SSTORE — other opcodes like PUSH, ADD, etc. should be filtered out.
         let metered = MeteredOpcodes::parse(&["SSTORE".to_string()]).unwrap();
 
         let output = TestSupport::run_meter(&harness, vec![tx], metered)?;
@@ -2189,7 +2183,6 @@ mod tests {
         let to_1 = Address::random();
         let to_2 = Address::random();
 
-        // Create first transaction
         let tx_1 = TestSupport::sign(
             TransactionBuilder::default()
                 .signer(Account::Alice.signer_b256())
@@ -2202,7 +2195,6 @@ mod tests {
                 .max_priority_fee_per_gas(1),
         );
 
-        // Create second transaction
         let tx_2 = TestSupport::sign(
             TransactionBuilder::default()
                 .signer(Account::Bob.signer_b256())
@@ -2223,7 +2215,6 @@ mod tests {
         assert_eq!(output.results.len(), 2);
         assert!(output.total_time_us > 0);
 
-        // Check first transaction
         let result_1 = &output.results[0];
         assert_eq!(result_1.from_address, Account::Alice.address());
         assert_eq!(result_1.to_address, Some(to_1));
@@ -2232,7 +2223,6 @@ mod tests {
         assert_eq!(result_1.gas_used, 21_000);
         assert_eq!(result_1.coinbase_diff, (U256::from(21_000) * U256::from(10)),);
 
-        // Check second transaction
         let result_2 = &output.results[1];
         assert_eq!(result_2.from_address, Account::Bob.address());
         assert_eq!(result_2.to_address, Some(to_2));
@@ -2241,13 +2231,11 @@ mod tests {
         assert_eq!(result_2.gas_used, 21_000);
         assert_eq!(result_2.coinbase_diff, U256::from(21_000) * U256::from(15),);
 
-        // Check aggregated values
         assert_eq!(output.total_gas_used, 42_000);
         let expected_total_fees =
             U256::from(21_000) * U256::from(10) + U256::from(21_000) * U256::from(15);
         assert_eq!(output.total_gas_fees, expected_total_fees);
 
-        // Check bundle hash includes both transactions
         let mut concatenated = Vec::with_capacity(64);
         concatenated.extend_from_slice(tx_hash_1.as_slice());
         concatenated.extend_from_slice(tx_hash_2.as_slice());

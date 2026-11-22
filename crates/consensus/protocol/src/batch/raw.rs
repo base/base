@@ -66,7 +66,6 @@ impl RawSpanBatch {
             }
         }
 
-        // Get all transactions in the batch.
         let enveloped_txs = self.payload.txs.full_txs(chain_id)?;
 
         let mut tx_idx = 0;

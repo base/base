@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-provider.workspace = true
@@ -22,13 +21,10 @@ alloy-trie = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, optional = true }
 alloy-rpc-types-eth = { workspace = true, optional = true }
 
-# Tx Manager
 base-tx-manager.workspace = true
 
-# Balance Monitor
 base-balance-monitor.workspace = true
 
-# Proof
 base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
 base-proof-primitives.workspace = true
@@ -36,48 +32,36 @@ base-proof-submission = { workspace = true, features = ["snark-receipt"] }
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
 
-# Protocol
 base-protocol.workspace = true
 base-common-consensus.workspace = true
 
-# Async
 tokio.workspace = true
 futures.workspace = true
 async-trait = { workspace = true, optional = true }
 
-# Tracing
 tracing.workspace = true
 
-# Serialization
 serde.workspace = true
 
-# Error handling
 eyre.workspace = true
 thiserror.workspace = true
 
-# CLI
 base-cli-utils.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 
-# Metrics
 base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
 
-# TLS
 rustls = { workspace = true, features = ["ring"] }
 
-# Runtime
 tokio-util.workspace = true
 base-runtime = { workspace = true, features = ["tokio"] }
 
-# Health
 base-health = { workspace = true, features = ["axum-server"] }
 
-# Misc
 url.workspace = true
 humantime.workspace = true
 
-# Test utilities (optional)
 serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]

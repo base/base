@@ -188,10 +188,6 @@ async fn setup_running_request(pool: &PgPool, repo: &ProofRequestRepo) -> (Uuid,
     (id, backend_id)
 }
 
-// ============================================================
-// Basic CRUD tests
-// ============================================================
-
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_create_and_get_compressed() {
@@ -343,10 +339,6 @@ async fn test_get_nonexistent_returns_none() {
     assert!(result.is_none());
 }
 
-// ============================================================
-// Proof session tests
-// ============================================================
-
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_get_sessions_for_request() {
@@ -365,10 +357,6 @@ async fn test_get_sessions_for_request() {
     assert_eq!(sessions[0].session_type, SessionType::Stark);
     assert_eq!(sessions[1].session_type, SessionType::Snark);
 }
-
-// ============================================================
-// Retry logic tests
-// ============================================================
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
@@ -447,17 +435,14 @@ async fn test_retry_or_fail_stuck_request_exhausted() {
 
     let id = repo.create(compressed_request()).await.unwrap();
 
-    // Retry 3 times: each cycle is claim → retry (resets to CREATED) → claim again
     for i in 0..3 {
         set_request_state(&pool, id, ProofStatus::Pending, ProofJobStatus::Pending).await;
         let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
         assert!(matches!(outcome, RetryOutcome::Retried), "retry {i} should succeed");
     }
 
-    // retry_count is now 3, claim once more
     set_request_state(&pool, id, ProofStatus::Pending, ProofJobStatus::Pending).await;
 
-    // This time should permanently fail (retry_count >= max_retries)
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
     let RetryOutcome::PermanentlyFailed(job) = outcome else {
         panic!("expected permanent failure outcome");
@@ -480,12 +465,11 @@ async fn test_retry_or_fail_stuck_request_wrong_state() {
 
     let (id, _backend_id) = setup_running_request(&pool, &repo).await;
 
-    // Request is RUNNING, not PENDING — should be skipped
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
     assert!(matches!(outcome, RetryOutcome::Skipped));
 
     let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Running); // unchanged
+    assert_eq!(req.status, ProofStatus::Running);
 }
 
 #[tokio::test]
@@ -562,10 +546,6 @@ async fn test_retry_or_fail_stuck_request_requeues_migration_parked_running_requ
 
     assert_eq!(session_status, SessionStatus::Failed);
 }
-
-// ============================================================
-// Worker queue create tests
-// ============================================================
 
 /// Mark a request `FAILED` directly (same end state as a failed worker attempt).
 async fn drive_to_failed(pool: &PgPool, id: Uuid, error_message: &str) {
@@ -968,10 +948,6 @@ async fn test_delete_proof_request_by_session_id_rejects_non_terminal_row() {
     assert!(repo.get(explicit_id).await.unwrap().is_some());
 }
 
-// ============================================================
-// Query tests
-// ============================================================
-
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_list_with_filter() {
@@ -981,22 +957,16 @@ async fn test_list_with_filter() {
     let id1 = repo.create(compressed_request()).await.unwrap();
     let (id2, _backend_id) = setup_running_request(&pool, &repo).await;
 
-    // List only CREATED
     let created_list = repo.list(Some(ProofStatus::Created), 100).await.unwrap();
     let has_id1 = created_list.iter().any(|r| r.id == id1);
     let has_id2 = created_list.iter().any(|r| r.id == id2);
     assert!(has_id1, "CREATED request should be in list");
     assert!(!has_id2, "RUNNING request should not be in CREATED list");
 
-    // List all
     let all_list = repo.list(None, 100).await.unwrap();
     assert!(all_list.iter().any(|r| r.id == id1));
     assert!(all_list.iter().any(|r| r.id == id2));
 }
-
-// ============================================================
-// Worker job claim tests (`claim_next_proof_job`)
-// ============================================================
 
 /// Build a claim with a long lease so claimed jobs stay out of the pool.
 fn claim_job(
@@ -1090,11 +1060,9 @@ async fn test_claim_next_proof_job_claim_and_capabilities() {
     drain_claimable_tee_jobs(&repo).await;
     let id = repo.create(tee_request()).await.unwrap();
 
-    // A worker advertising no matching capability claims nothing.
     let no_caps = claim_job("no-caps", ApiProofType::Tee, vec![], vec![], 3);
     assert!(repo.claim_next_proof_job(no_caps).await.unwrap().is_none());
 
-    // A capable TEE worker claims the pending job and flips it to CLAIMED/RUNNING.
     let job = repo
         .claim_next_proof_job(tee_claim("worker-1", 3))
         .await
@@ -1143,7 +1111,6 @@ async fn test_claim_next_proof_job_concurrent_workers_never_double_claim() {
         repo_b.claim_next_proof_job(tee_claim("worker-b", 3)),
     );
 
-    // Exactly one worker wins the single available job.
     let (a, b) = (a.unwrap(), b.unwrap());
     assert_eq!([&a, &b].into_iter().filter(|j| j.is_some()).count(), 1);
     let winner = a.or(b).unwrap();
@@ -1181,7 +1148,6 @@ async fn test_claim_next_proof_job_expired_lock_lifecycle() {
     drain_claimable_tee_jobs(&repo).await;
     let id = repo.create(tee_request()).await.unwrap();
 
-    // First claim, then expire the lock so it becomes reclaimable.
     let first = repo
         .claim_next_proof_job(tee_claim("worker-a", 2))
         .await
@@ -1190,7 +1156,6 @@ async fn test_claim_next_proof_job_expired_lock_lifecycle() {
     assert_eq!(first.attempt, 1);
     expire_lock(&pool, id).await;
 
-    // Reclaim issues a fresh lock and increments the attempt (1 < max_attempts 2).
     let second = repo
         .claim_next_proof_job(tee_claim("worker-b", 2))
         .await
@@ -1201,7 +1166,6 @@ async fn test_claim_next_proof_job_expired_lock_lifecycle() {
     assert_eq!(second.worker_id.as_deref(), Some("worker-b"));
     assert_ne!(second.lock_id, first.lock_id, "a fresh fencing token is issued");
 
-    // Once attempts are exhausted (2 == max_attempts), an expired lock is not reclaimed.
     expire_lock(&pool, id).await;
     assert!(
         repo.claim_next_proof_job(tee_claim("worker-c", 2)).await.unwrap().is_none(),
@@ -1621,7 +1585,6 @@ async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
         .unwrap();
     assert!(matches!(mismatch, SubmitProofOutcome::ResultMismatch { .. }));
 
-    // The job is left untouched.
     let job = repo
         .get_proof_job_by_session_id(&claimed.session_id)
         .await
@@ -1751,10 +1714,6 @@ async fn test_fail_expired_proof_jobs_honors_batch_size() {
         .unwrap();
     assert!(final_batch.is_empty());
 }
-
-// ============================================================
-// Worker backend session tracking (`record_worker_proof_session` / `get_active_session`)
-// ============================================================
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]

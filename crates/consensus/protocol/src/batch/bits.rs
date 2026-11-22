@@ -74,17 +74,11 @@ impl SpanBatchBits {
         let byte_index = index / 8;
         let bit_index = index % 8;
 
-        // Check if the byte index is within the bounds of the bitlist
         if byte_index < self.0.len() {
-            // Retrieve the specific byte that contains the bit we're interested in
             let byte = self.0[self.0.len() - byte_index - 1];
 
-            // Shift the bits of the byte to the right, based on the bit index, and
-            // mask it with 1 to isolate the bit we're interested in.
-            // If the result is not zero, the bit is set to 1, otherwise it's 0.
             Some(if byte & (1 << bit_index) != 0 { 1 } else { 0 })
         } else {
-            // Return None if the index is out of bounds
             None
         }
     }
@@ -94,40 +88,31 @@ impl SpanBatchBits {
         let byte_index = index / 8;
         let bit_index = index % 8;
 
-        // Ensure the vector is large enough to contain the bit at 'index'.
-        // If not, resize the vector, filling with 0s.
         if byte_index >= self.0.len() {
             Self::resize_from_right(&mut self.0, byte_index + 1);
         }
 
-        // Retrieve the specific byte to modify
         let len = self.0.len();
         let byte = &mut self.0[len - byte_index - 1];
 
         if value {
-            // Set the bit to 1
             *byte |= 1 << bit_index;
         } else {
-            // Set the bit to 0
             *byte &= !(1 << bit_index);
         }
     }
 
     /// Calculates the bit length of the [`SpanBatchBits`] bitfield.
     pub fn bit_len(&self) -> usize {
-        // Iterate over the bytes from left to right to find the first non-zero byte
         for (i, &byte) in self.0.iter().enumerate() {
             if byte != 0 {
-                // Calculate the index of the most significant bit in the byte
-                let msb_index = 7 - byte.leading_zeros() as usize; // 0-based index
+                let msb_index = 7 - byte.leading_zeros() as usize;
 
-                // Calculate the total bit length
                 let total_bit_length = msb_index + 1 + ((self.0.len() - i - 1) * 8);
                 return total_bit_length;
             }
         }
 
-        // If all bytes are zero, the bitlist is considered to have a length of 0
         0
     }
 
@@ -136,19 +121,16 @@ impl SpanBatchBits {
         let current_size = vec.len();
         match new_size.cmp(&current_size) {
             Ordering::Less => {
-                // Remove elements from the beginning.
                 let remove_count = current_size - new_size;
                 vec.drain(0..remove_count);
             }
             Ordering::Greater => {
-                // Calculate how many new elements to add.
                 let additional = new_size - current_size;
-                // Prepend new elements with default values.
                 let mut prepend_elements = vec![T::default(); new_size];
                 prepend_elements[additional..].copy_from_slice(vec.as_ref());
                 *vec = prepend_elements;
             }
-            Ordering::Equal => { /* If new_size == current_size, do nothing. */ }
+            Ordering::Equal => {}
         }
     }
 }
@@ -183,7 +165,6 @@ mod tests {
             let second_index = first_index.clamp(0, first_index - 8);
             let mut bits = SpanBatchBits::default();
 
-            // Set and clear first index.
             bits.set_bit(first_index, true);
             assert_eq!(bits.0.len(), (first_index / 8) + 1);
             assert_eq!(bits.bit_len(), first_index + 1);

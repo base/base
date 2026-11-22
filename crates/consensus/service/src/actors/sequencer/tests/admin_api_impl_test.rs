@@ -91,8 +91,6 @@ async fn test_in_recovery_mode(
     assert_eq!(recovery_mode, result.unwrap());
 }
 
-// --- start_sequencer tests ---
-
 /// No conductor configured: start always succeeds regardless of leadership state.
 #[rstest]
 #[tokio::test]
@@ -413,12 +411,10 @@ async fn test_stop_sequencer_success(
     actor.engine_client = Arc::new(client);
     actor.is_active = !already_stopped;
 
-    // verify starting state
     let result = actor.is_sequencer_active().await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), !already_stopped);
 
-    // stop the sequencer
     let (tx, rx) = oneshot::channel();
     let mut next_payload = None;
     if via_channel {
@@ -430,7 +426,6 @@ async fn test_stop_sequencer_success(
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), expected_hash);
 
-    // verify ending state
     let result = actor.is_sequencer_active().await;
     assert!(result.is_ok());
     assert!(!result.unwrap());
@@ -475,12 +470,10 @@ async fn test_set_recovery_mode(
     let mut actor = test_actor();
     actor.recovery_mode.set(starting_mode);
 
-    // verify starting state
     let result = actor.in_recovery_mode().await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), starting_mode);
 
-    // set recovery mode
     let result = async {
         match via_channel {
             false => actor.set_recovery_mode(mode_to_set).await,
@@ -499,7 +492,6 @@ async fn test_set_recovery_mode(
     .await;
     assert!(result.is_ok());
 
-    // verify it is set
     let result = actor.in_recovery_mode().await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), mode_to_set);
@@ -517,7 +509,6 @@ async fn test_override_leader(
     let conductor_error_string = "test: error within conductor";
 
     let mut actor = {
-        // wire up conductor absence/presence and response error/success
         if !conductor_configured {
             test_actor()
         } else if conductor_error {
@@ -537,7 +528,6 @@ async fn test_override_leader(
         }
     };
 
-    // call to override leader
     let result = async {
         match via_channel {
             false => actor.override_leader().await,
@@ -550,7 +540,6 @@ async fn test_override_leader(
     }
     .await;
 
-    // verify result
     if !conductor_configured || conductor_error {
         assert!(result.is_err());
         assert_eq!(
@@ -644,47 +633,38 @@ async fn test_handle_admin_query_resilient_to_dropped_receiver() {
 
     let mut queries: Vec<SequencerAdminQuery> = Vec::new();
     {
-        // immediately drop receiver
         let (tx, _rx) = oneshot::channel();
         queries.push(SequencerAdminQuery::SequencerActive(tx));
     }
     {
-        // immediately drop receiver
         let (tx, _rx) = oneshot::channel();
         queries.push(SequencerAdminQuery::StartSequencer(B256::ZERO, tx));
     }
     {
-        // immediately drop receiver
         let (tx, _rx) = oneshot::channel();
         queries.push(SequencerAdminQuery::StopSequencer(tx));
     }
     {
-        // immediately drop receiver
         let (tx, _rx) = oneshot::channel();
         queries.push(SequencerAdminQuery::ConductorEnabled(tx));
     }
     {
-        // immediately drop receiver
         let (tx, _rx) = oneshot::channel();
         queries.push(SequencerAdminQuery::RecoveryMode(tx));
     }
     {
-        // immediately drop receiver
         let (tx, _rx) = oneshot::channel();
         queries.push(SequencerAdminQuery::SetRecoveryMode(true, tx));
     }
     {
-        // immediately drop receiver
         let (tx, _rx) = oneshot::channel();
         queries.push(SequencerAdminQuery::OverrideLeader(tx));
     }
     {
-        // immediately drop receiver
         let (tx, _rx) = oneshot::channel();
         queries.push(SequencerAdminQuery::ResetDerivationPipeline(tx));
     }
 
-    // None of these should fail even if the receiver is dropped
     let mut next_payload = None;
     for query in queries {
         actor.handle_admin_query(&mut next_payload, query).await;

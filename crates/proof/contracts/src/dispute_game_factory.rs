@@ -394,7 +394,6 @@ mod tests {
         assert_eq!(decode_create_calldata(&[]), None);
         assert_eq!(decode_create_calldata(&[0x12, 0x34, 0x56, 0x78]), None);
 
-        // Correct selector but truncated arguments.
         let selector = IDisputeGameFactory::createWithInitDataCall::SELECTOR;
         assert_eq!(decode_create_calldata(&selector), None);
     }
@@ -403,7 +402,6 @@ mod tests {
     fn test_game_already_exists_selector() {
         let selector = game_already_exists_selector();
         assert_eq!(selector.len(), 4);
-        // Just verify we get a non-zero selector
         assert_ne!(selector, [0u8; 4]);
     }
 

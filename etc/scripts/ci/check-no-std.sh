@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-# Crates that must compile in a no_std environment.
 # If a crate is added with `#![cfg_attr(not(feature = "std"), no_std)]` or `#![no_std]`,
 # add it here to ensure it stays no_std-compatible.
 no_std_packages=(
-  # common crates (ported from op-alloy)
   base-common-blobs
   base-common-consensus
   base-common-evm
@@ -13,7 +11,6 @@ no_std_packages=(
   base-common-rpc-types
   base-common-rpc-types-engine
 
-  # consensus protocol crates
   base-metrics
   base-common-genesis
   base-consensus-derive

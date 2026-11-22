@@ -8,25 +8,20 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# protocol
 base-prover-service-protocol.workspace = true
 
-# database
 futures.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-native-tls"] }
 
-# serialization
 serde_json.workspace = true
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
-# error handling
 anyhow.workspace = true
 thiserror.workspace = true
 
-# tracing
 tracing.workspace = true
 
 [dev-dependencies]

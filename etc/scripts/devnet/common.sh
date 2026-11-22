@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-# Source devnet-env if it exists
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/../../docker/devnet-env"
 if [ -f "$ENV_FILE" ]; then
@@ -9,7 +8,6 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
-# Build accounts array from env vars
 ACCOUNTS=(
     "$ANVIL_ACCOUNT_0_ADDR:$ANVIL_ACCOUNT_0_KEY"
     "$ANVIL_ACCOUNT_1_ADDR:$ANVIL_ACCOUNT_1_KEY"

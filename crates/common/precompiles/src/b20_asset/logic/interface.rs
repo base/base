@@ -215,8 +215,6 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
         args: PermitArgs,
     ) -> Result<()>;
 
-    // --- Asset-specific mutations ---
-
     /// Instant failsafe: sets the current multiplier immediately. Requires the operator role
     /// unless privileged.
     fn update_multiplier(
@@ -349,8 +347,6 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
         token.accounting().is_announcement_id_used(id)
     }
 
-    // --- Computed reads: derive from storage but encode version-defined semantics ---
-
     /// Returns whether the given pause `feature` is currently set.
     fn is_paused(
         &self,
@@ -381,8 +377,6 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
 
     /// Returns the asset operator role identifier (required for `announce` / `updateMultiplier`).
     fn operator_role(&self) -> B256;
-
-    // --- ERC-8056 scheduled multiplier (introduced at `AssetV2`, Cobalt) ---
 
     /// Returns the effective multiplier.
     fn effective_multiplier(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {

@@ -25,10 +25,6 @@ use crate::{
     DEPOSIT_TX_TYPE_ID, DepositReceipt, OpTxType, TxBase, TxBaseReceipt, TxDeposit,
 };
 
-// ---------------------------------------------------------------------------
-// Compact – TxDeposit
-// ---------------------------------------------------------------------------
-
 /// Helper struct for deriving `Compact` on deposit transactions.
 ///
 /// 1:1 with [`TxDeposit`] but uses `Option<u128>` for `mint` so the bitflag
@@ -91,10 +87,6 @@ impl Compact for TxDeposit {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Compact – OpTxType
-// ---------------------------------------------------------------------------
-
 impl Compact for OpTxType {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
@@ -140,10 +132,6 @@ impl Compact for OpTxType {
         )
     }
 }
-
-// ---------------------------------------------------------------------------
-// Compact – BaseTypedTransaction
-// ---------------------------------------------------------------------------
 
 impl Compact for BaseTypedTransaction {
     fn to_compact<B>(&self, out: &mut B) -> usize
@@ -192,10 +180,6 @@ impl Compact for BaseTypedTransaction {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// ToTxCompact / FromTxCompact – BaseTxEnvelope
-// ---------------------------------------------------------------------------
 
 impl reth_codecs::alloy::transaction::ToTxCompact for BaseTxEnvelope {
     fn to_tx_compact(&self, buf: &mut (impl BufMut + AsMut<[u8]>)) {
@@ -264,10 +248,6 @@ impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Envelope – BaseTxEnvelope
-// ---------------------------------------------------------------------------
-
 /// Placeholder signature used for transaction types without an ECDSA signature.
 const PLACEHOLDER_SIGNATURE: Signature = Signature::new(U256::ZERO, U256::ZERO, false);
 
@@ -292,10 +272,6 @@ impl reth_codecs::alloy::transaction::Envelope for BaseTxEnvelope {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Compact – BaseTxEnvelope (via CompactEnvelope)
-// ---------------------------------------------------------------------------
-
 impl Compact for BaseTxEnvelope {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
@@ -308,10 +284,6 @@ impl Compact for BaseTxEnvelope {
         reth_codecs::alloy::transaction::CompactEnvelope::from_compact(buf, len)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Compact – BaseReceipt (via CompactZstd helper)
-// ---------------------------------------------------------------------------
 
 /// Backward-compatible `Compact` wrapper for the Base transaction committed phase
 /// count stored as the trailing field of [`CompactBaseReceipt`].
@@ -429,10 +401,6 @@ impl Compact for BaseReceipt {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Compress / Decompress (reth-db-api)
-// ---------------------------------------------------------------------------
-
 impl reth_db_api::table::Compress for BaseTxEnvelope {
     type Compressed = Vec<u8>;
 
@@ -462,10 +430,6 @@ impl reth_db_api::table::Decompress for BaseReceipt {
         Ok(obj)
     }
 }
-
-// ---------------------------------------------------------------------------
-// DepositReceiptExt trait
-// ---------------------------------------------------------------------------
 
 /// Trait for accessing deposit receipt fields on a [`reth_primitives_traits::Receipt`].
 pub trait DepositReceiptExt: reth_primitives_traits::Receipt {
@@ -501,10 +465,6 @@ impl DepositReceiptExt for BaseReceipt {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// BaseBlockBody / BasePrimitives
-// ---------------------------------------------------------------------------
 
 /// Base-specific block body type.
 pub type BaseBlockBody = <BaseBlock as reth_primitives_traits::Block>::Body;

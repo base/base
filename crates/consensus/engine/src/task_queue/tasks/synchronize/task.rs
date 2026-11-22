@@ -127,10 +127,7 @@ impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
                 debug!(target: "engine", "Forkchoice update returned Syncing; state not advanced");
                 Ok(false)
             }
-            s => {
-                // Other codes are not expected.
-                Err(SynchronizeTaskError::UnexpectedPayloadStatus(s.clone()))
-            }
+            s => Err(SynchronizeTaskError::UnexpectedPayloadStatus(s.clone())),
         }
     }
 }
@@ -141,15 +138,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
     type Error = SynchronizeTaskError;
 
     async fn execute(&self, state: &mut EngineState) -> Result<Self::Output, SynchronizeTaskError> {
-        // Apply the sync state update to the engine state.
         let new_sync_state = state.sync_state.updated(self.state_update);
 
-        // Check if a forkchoice update is not needed, return early.
-        // A forkchoice update is not needed if...
-        // 1. The engine state is not default (initial forkchoice state has been emitted), and
-        // 2. The new sync state is the same as the current sync state (no changes to the sync
-        //    state).
-        //
         // NOTE:
         // We shouldn't retry the synchronize task there. Since the `sync_state` is only updated
         // inside the `SynchronizeTask` (except inside the ConsolidateTask, when the block is not
@@ -162,7 +152,6 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
             return Ok(());
         }
 
-        // Check if the head is behind the finalized head.
         if new_sync_state.unsafe_head().block_info.number
             < new_sync_state.finalized_head().block_info.number
         {
@@ -174,17 +163,14 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
 
         let fcu_time_start = Instant::now();
 
-        // Send the forkchoice update through the input.
         let forkchoice = new_sync_state.create_forkchoice_state();
 
-        // Handle the forkchoice update result.
         // NOTE: it doesn't matter which version we use here, because we're not sending any
         // payload attributes. The forkchoice updated call is version agnostic if no payload
         // attributes are provided.
         let response = self.client.fork_choice_updated_v3(forkchoice, None).await;
 
         let valid_response = response.map_err(|e| {
-            // Fatal forkchoice update error.
             let error = e
                 .as_error_resp()
                 .and_then(|e| {

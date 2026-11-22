@@ -6,10 +6,6 @@
 use base_prover_service_db::{ApiProofType, ProofJob};
 use metrics::{counter, describe_counter, describe_histogram, histogram};
 
-// ---------------------------------------------------------------------------
-// Metric name constants
-// ---------------------------------------------------------------------------
-
 /// Unified RPC request counter. Tags: method, success, `status_code`.
 /// Worker-scoped RPCs also include `worker_id` and `prover_id`.
 pub const REQUESTS: &str = "prover_service.requests";
@@ -31,10 +27,6 @@ pub const WORKER_JOBS_FAILED: &str = "prover_service.worker_jobs_failed";
 pub const PROOF_STATUS_SUCCEEDED: &str = "succeeded";
 /// Terminal failure status label.
 pub const PROOF_STATUS_FAILED: &str = "failed";
-
-// ---------------------------------------------------------------------------
-// ProverMetrics — metric descriptions (called once at init)
-// ---------------------------------------------------------------------------
 
 /// Registers metric descriptions with the global recorder.
 #[derive(Debug)]
@@ -59,10 +51,6 @@ impl ProverMetrics {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Convenience helpers — thin wrappers around `metrics` crate macros
-// ---------------------------------------------------------------------------
 
 /// Record a unified RPC request metric. Called once per RPC at handler completion.
 pub fn inc_requests(method: &str, success: bool, status_code: &str) {
@@ -148,10 +136,6 @@ pub fn record_terminal_proof_job(status: &str, job: &ProofJob) {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
 
 /// Map API proof type to a short string for metric tags.
 pub const fn api_proof_type_label(proof_type: ApiProofType) -> &'static str {

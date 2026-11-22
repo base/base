@@ -85,7 +85,6 @@ where
     pub fn ingest_frame(&mut self, frame: Frame) -> PipelineResult<()> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
 
-        // Get the channel for the frame, or create a new one if it doesn't exist.
         let current_channel = match self.channels.get_mut(&frame.id) {
             Some(c) => c,
             None => {
@@ -96,7 +95,6 @@ where
             }
         };
 
-        // Check if the channel is not timed out. If it has, ignore the frame.
         if current_channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp)
             < origin.number
         {
@@ -107,7 +105,6 @@ where
             return Ok(());
         }
 
-        // Ingest the frame. If it fails, ignore the frame.
         let frame_id = frame.id;
         if current_channel.add_frame(frame, origin).is_err() {
             warn!(target: "channel_bank", frame_id = ?frame_id, "Failed to add frame to channel");
@@ -121,7 +118,6 @@ where
     ///
     /// Returns an error if there is nothing new to read.
     pub fn read(&mut self) -> PipelineResult<Option<Bytes>> {
-        // Bail if there are no channels to read from.
         if self.channel_queue.is_empty() {
             trace!(target: "channel_bank", "No channels to read from");
             return Err(PipelineError::Eof.temp());
@@ -144,10 +140,6 @@ where
             return Ok(None);
         }
 
-        // At this point we have removed all timed out channels from the front of the
-        // `channel_queue`. Pre-Canyon we simply check the first index.
-        // Post-Canyon we read the entire channelQueue for the first ready channel.
-        // If no channel is available, we return `PipelineError::Eof`.
         // Canyon is activated when the first L1 block whose time >= CanyonTime, not on the L2
         // timestamp.
         if !self
@@ -210,7 +202,6 @@ where
             data => return data,
         };
 
-        // Load the data into the channel bank
         let frame = match self.prev.next_frame().await {
             Ok(f) => f,
             Err(e) => {
@@ -488,7 +479,6 @@ mod tests {
         assert_eq!(channel_bank.ingest_frame(frame.clone()), Ok(()));
         assert_eq!(channel_bank.size(), base_protocol::Frame::OVERHEAD);
         assert_eq!(channel_bank.channels.len(), 1);
-        // This should fail since the frame is already ingested.
         assert_eq!(channel_bank.ingest_frame(frame), Ok(()));
         assert_eq!(channel_bank.size(), base_protocol::Frame::OVERHEAD);
         assert_eq!(channel_bank.channels.len(), 1);
@@ -501,7 +491,6 @@ mod tests {
         let mock = TestNextFrameProvider::new(vec![]);
         let cfg = Arc::new(RollupConfig::default());
         let mut channel_bank = ChannelBank::new(cfg, mock);
-        // Ingest frames until the channel bank is full and it stops increasing in size
         let mut current_size = 0;
         let next_frame = frames.pop().unwrap();
         channel_bank.ingest_frame(next_frame).unwrap();
@@ -511,10 +500,7 @@ mod tests {
             channel_bank.ingest_frame(next_frame).unwrap();
             assert!(channel_bank.size() <= MAX_CHANNEL_BANK_SIZE);
         }
-        // There should be a bunch of frames leftover
         assert!(!frames.is_empty());
-        // If we ingest one more frame, the channel bank should prune
-        // and the size should be the same
         let next_frame = frames.pop().unwrap();
         channel_bank.ingest_frame(next_frame).unwrap();
         assert_eq!(channel_bank.size(), current_size);
@@ -529,7 +515,6 @@ mod tests {
             ..Default::default()
         });
         let mut channel_bank = ChannelBank::new(cfg, mock);
-        // Ingest frames until the channel bank is full and it stops increasing in size
         let mut current_size = 0;
         let next_frame = frames.pop().unwrap();
         channel_bank.ingest_frame(next_frame).unwrap();
@@ -539,10 +524,7 @@ mod tests {
             channel_bank.ingest_frame(next_frame).unwrap();
             assert!(channel_bank.size() <= FJORD_MAX_CHANNEL_BANK_SIZE);
         }
-        // There should be a bunch of frames leftover
         assert!(!frames.is_empty());
-        // If we ingest one more frame, the channel bank should prune
-        // and the size should be the same
         let next_frame = frames.pop().unwrap();
         channel_bank.ingest_frame(next_frame).unwrap();
         assert_eq!(channel_bank.size(), current_size);
@@ -578,7 +560,6 @@ mod tests {
             let cfg = Arc::new(cfg);
             let mut channel_bank = ChannelBank::new(Arc::clone(&cfg), mock);
 
-            // Ingest first frame
             let err = channel_bank.next_data().await.unwrap_err();
             assert_eq!(err, PipelineError::NotEnoughData.temp());
 
@@ -586,18 +567,14 @@ mod tests {
                 channel_bank.advance_origin().await.unwrap();
             }
 
-            // There should be an in-progress channel.
             assert_eq!(channel_bank.channels.len(), 1);
             assert_eq!(channel_bank.channel_queue.len(), 1);
 
-            // Should be `Ok(())`, channel timed out.
             channel_bank.next_data().await.unwrap();
 
-            // The channel should have been pruned.
             assert_eq!(channel_bank.channels.len(), 0);
             assert_eq!(channel_bank.channel_queue.len(), 0);
 
-            // Ensure the channel was successfully timed out.
             let (_, warning_trace) = trace_store
                 .lock()
                 .iter()

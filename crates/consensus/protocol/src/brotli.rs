@@ -39,7 +39,6 @@ impl Brotli {
         let hc_allocator = MemPool::<HuffmanCode>::new_allocator(&mut hc_buffer, bzero);
         let mut brotli_state = BrotliState::new(u8_allocator, u32_allocator, hc_allocator);
 
-        // Setup the decompressor inputs and outputs.
         // Cap initial buffer at the limit to prevent over-allocation.
         let mut output = vec![0; core::cmp::min(data.len(), max_rlp_bytes_per_channel)];
         let mut available_in = data.len();
@@ -48,7 +47,6 @@ impl Brotli {
         let mut output_offset = 0;
         let mut written = 0;
 
-        // Decompress the data stream until success or failure.
         // The output buffer is grown as needed, capped at max_rlp_bytes_per_channel.
         // Per spec, if decompressed data exceeds the limit, the output is truncated
         // to max_rlp_bytes_per_channel bytes (not rejected).
@@ -69,13 +67,11 @@ impl Brotli {
                 // Buffer was already grown to the limit on a previous iteration, but the decompressor
                 // filled it and still has more to produce: stop per spec.
                 BrotliResult::NeedsMoreOutput if old_len >= max_rlp_bytes_per_channel => break,
-                // Enlarge output buffer to continue decompression.
                 BrotliResult::NeedsMoreOutput => {
                     let new_len = core::cmp::min((old_len * 2).max(1), max_rlp_bytes_per_channel);
                     output.resize(new_len, 0);
                     available_out += new_len - old_len;
                 }
-                // No output: error.
                 _ if written == 0 => {
                     return Err(BrotliDecompressionError::DecompressionFailed(result));
                 }

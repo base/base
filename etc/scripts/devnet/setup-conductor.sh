@@ -33,8 +33,6 @@ wait_for_rpc "$CONDUCTOR0_URL" "op-conductor-0"
 wait_for_rpc "$CONDUCTOR1_URL" "op-conductor-1"
 wait_for_rpc "$CONDUCTOR2_URL" "op-conductor-2"
 
-# Sends a JSON-RPC request and prints the response. Returns non-zero if curl fails or
-# the response is not JSON. An optional fourth argument overrides the timeout in seconds.
 rpc_call() {
   local url="$1"
   local method="$2"
@@ -100,7 +98,6 @@ count_voters() {
     select(.suffrage == 0 or ((.suffrage | tostring | ascii_downcase) == "voter"))] | length'
 }
 
-# Waits until op-conductor-0 reports exactly 3 servers in the cluster, all voters.
 verify_membership() {
   local max_retries=20
   local count=0

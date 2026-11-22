@@ -32,24 +32,12 @@ async fn over_drift_batches_with_transactions_become_deposit_only_once_the_windo
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    // Pin the sequencer to L1 genesis (epoch 0, ts=0).
     let l1_genesis = h.l1.block_info_at(0);
     sequencer.pin_l1_origin(l1_genesis);
 
-    // Build 8 L2 blocks pinned to epoch 0 (block_time=300 s, max_drift=1800 s):
-    //   block 1: ts= 300 (drift=  300 ≤ 1800) ✓
-    //   block 2: ts= 600 (drift=  600 ≤ 1800) ✓
-    //   block 3: ts= 900 (drift=  900 ≤ 1800) ✓
-    //   block 4: ts=1200 (drift= 1200 ≤ 1800) ✓
-    //   block 5: ts=1500 (drift= 1500 ≤ 1800) ✓
-    //   block 6: ts=1800 (drift= 1800 ≤ 1800) ✓ (exactly at boundary)
-    //   block 7: ts=2100 (drift= 2100 > 1800) ✗ over drift
-    //   block 8: ts=2400 (drift= 2400 > 1800) ✗ over drift
-    //
     // Blocks 1-6 have user transactions. Blocks 7-8 also have user txs
     // (sequencer doesn't enforce drift), but the pipeline should drop them.
 
-    // Collect all 8 blocks and batch them in one L1 block.
     let mut source = ActionL2Source::new();
     for _ in 1u64..=8 {
         source.push(sequencer.build_next_block_with_single_transaction().await);
@@ -91,7 +79,6 @@ async fn over_drift_batches_with_transactions_become_deposit_only_once_the_windo
     );
     assert_eq!(total_derived, 8, "all 8 blocks derived");
 
-    // Blocks 1-6 keep their user transaction, blocks 7-8 are deposit-only.
     for number in 1..=8 {
         let block = node.derived_block(number).expect("derived block");
         assert_eq!(block.is_deposit_only(), number > 6, "block {number}");

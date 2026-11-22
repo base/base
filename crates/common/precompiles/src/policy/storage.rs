@@ -175,8 +175,6 @@ mod tests {
     const POLICY_REGISTRY_ROOT: U256 =
         uint!(0x00503aeb06982fa1fe3151dc68f90b3946c55c449dfd447e49dcaece71ba4a00_U256);
 
-    // --- PackedPolicy value-type unit tests ---
-
     #[test]
     fn packed_policy_new_roundtrips_admin() {
         let p = PackedPolicy::new(ADMIN);
@@ -237,8 +235,6 @@ mod tests {
         assert_eq!(exists_only.admin(), Address::ZERO, "exists-only word must have zero admin");
         assert!(exists_only.exists());
     }
-
-    // --- Storage layout / namespace (consensus-critical slot mapping) ---
 
     /// Seeds both built-in policies via the pinned V1 bootstrap and returns the provider.
     fn seeded_storage() -> HashMapStorageProvider {
@@ -343,8 +339,6 @@ mod tests {
             );
         });
     }
-
-    // --- static-call guard (storage-layer write protection) ---
 
     #[test]
     fn write_in_static_context_reverts() {

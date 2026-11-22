@@ -97,7 +97,6 @@ async fn injected_forged_block_dropped_real_block_accepted() {
     transport.set_block_signer(key.address());
     transport.set_chain_id(h.rollup_config.l2_chain_id.id());
 
-    // Build a block and get its execution payload.
     let block = seq.build_next_block_with_single_transaction().await;
     let block_hash = block.header.hash_slow();
     let (execution_payload, _) = BaseExecutionPayload::from_block_unchecked(block_hash, &block);
@@ -111,7 +110,6 @@ async fn injected_forged_block_dropped_real_block_accepted() {
     });
     assert!(transport.try_next_unsafe_block().is_none(), "forged block must be dropped");
 
-    // Now broadcast through the sequencer's signed path — should be accepted.
     seq.broadcast_unsafe_block(&block);
     assert!(transport.try_next_unsafe_block().is_some(), "correctly signed block must be accepted");
 }
@@ -134,7 +132,6 @@ async fn signer_rotation_gates_acceptance() {
     transport.set_block_signer(key_a.address());
     transport.set_chain_id(h.rollup_config.l2_chain_id.id());
 
-    // key_a block, expected key_a → accepted.
     let block1 = seq.build_next_block_with_single_transaction().await;
     seq.broadcast_unsafe_block(&block1);
     assert!(transport.try_next_unsafe_block().is_some(), "key_a block must pass before rotation");
@@ -149,7 +146,6 @@ async fn signer_rotation_gates_acceptance() {
         "key_a block must be rejected after rotation to key_b"
     );
 
-    // Rotate sequencer to key_b.
     seq.set_unsafe_block_signer(key_b);
 
     let block3 = seq.build_next_block_with_single_transaction().await;

@@ -254,7 +254,6 @@ where
             0
         };
 
-        // Execute transaction and return the result
         let result = self.evm.transact(tx_env).map_err(|err| {
             let hash = tx.tx().trie_hash();
             BlockExecutionError::evm(err, hash)
@@ -436,7 +435,6 @@ mod tests {
         );
         let tx_with_encoded = WithEncoded::new(tx.encoded_2718().into(), tx.clone());
 
-        // make sure we can use both `WithEncoded` and transaction itself as inputs.
         let _ = executor.execute_transaction(&tx);
         let _ = executor.execute_transaction(&tx_with_encoded);
     }
@@ -564,7 +562,6 @@ mod tests {
             Some(base_common_flz::flz_compress_len(&tx.encoded_2718()))
         );
 
-        // make sure we can use both `WithEncoded` and transaction itself as inputs.
         let res = executor.execute_transaction(&tx);
         assert!(res.is_ok());
 
@@ -610,7 +607,6 @@ mod tests {
         let expected_da_footprint =
             executor.jovian_da_footprint_estimation(&mut tx_env, &tx).unwrap();
 
-        // make sure we can use both `WithEncoded` and transaction itself as inputs.
         let res = executor.execute_transaction(&tx);
         assert!(res.is_err());
         let err = res.unwrap_err();
@@ -668,7 +664,6 @@ mod tests {
         let expected_da_footprint =
             executor.jovian_da_footprint_estimation(&mut tx_env, &tx).unwrap();
 
-        // make sure we can use both `WithEncoded` and transaction itself as inputs.
         let gas_used_tx = executor.execute_transaction(&tx).expect("failed to execute transaction");
 
         // The gas used when executing the transaction should be the legacy value...
@@ -879,8 +874,6 @@ mod tests {
 
         assert_eq!(result.base_tx_committed_phases, 1);
     }
-
-    // ---- Gas-limit billing (BaseFeature::GasLimitBilling) ----
 
     /// The gas-limit billing block fixture: a `GAS_LIMIT_BILLING_BLOCK_GAS` block filled with
     /// `GAS_LIMIT_BILLING_TX_GAS` transactions that each use only a plain transfer's 21k gas.

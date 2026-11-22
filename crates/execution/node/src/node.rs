@@ -555,7 +555,6 @@ where
             ctx.node.provider().clone(),
             ctx.node.evm_config().clone(),
         );
-        // Install additional rollup-specific RPC methods.
         let debug_ext = BaseDebugWitnessApi::<_, _, _, Attrs>::new(
             ctx.node.provider().clone(),
             ctx.node.task_executor().clone(),
@@ -573,19 +572,16 @@ where
                 debug!(target: "reth::cli", "Installing debug payload witness rpc endpoint");
                 modules.merge_if_module_configured(RethRpcModule::Debug, debug_ext.into_rpc())?;
 
-                // extend the miner namespace if configured in the regular http server
                 modules.add_or_replace_if_module_configured(
                     RethRpcModule::Miner,
                     miner_ext.clone().into_rpc(),
                 )?;
 
-                // install the miner extension in the authenticated if configured
                 if modules.module_config().contains_any(&RethRpcModule::Miner) {
                     debug!(target: "reth::cli", "Installing miner DA rpc endpoint");
                     auth_module.merge_auth_methods(miner_ext.into_rpc())?;
                 }
 
-                // install the debug namespace in the authenticated if configured
                 if modules.module_config().contains_any(&RethRpcModule::Debug) {
                     debug!(target: "reth::cli", "Installing debug rpc endpoint");
                     auth_module.merge_auth_methods(registry.debug_api().into_rpc())?;
@@ -1270,26 +1266,23 @@ impl BaseNetworkBuilder {
     {
         let discovery_config = BaseDiscoveryConfig::new(self.disable_discovery_v4);
         let args = &ctx.config().network;
-        let network_builder = ctx
-            .network_config_builder()?
-            // apply discovery settings
-            .apply(|builder| {
-                let external_addr = if args.discovery.disable_discovery {
-                    None
-                } else {
-                    Self::block_on(args.nat.clone().external_addr())
-                };
-                discovery_config.apply_to_network_builder(
-                    builder,
-                    args,
-                    ctx.config()
-                        .network
-                        .resolved_bootnodes()
-                        .or_else(|| ctx.chain_spec().bootnodes())
-                        .unwrap_or_default(),
-                    external_addr,
-                )
-            });
+        let network_builder = ctx.network_config_builder()?.apply(|builder| {
+            let external_addr = if args.discovery.disable_discovery {
+                None
+            } else {
+                Self::block_on(args.nat.clone().external_addr())
+            };
+            discovery_config.apply_to_network_builder(
+                builder,
+                args,
+                ctx.config()
+                    .network
+                    .resolved_bootnodes()
+                    .or_else(|| ctx.chain_spec().bootnodes())
+                    .unwrap_or_default(),
+                external_addr,
+            )
+        });
 
         let mut network_config = ctx.build_network_config(network_builder);
 

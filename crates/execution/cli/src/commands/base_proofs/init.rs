@@ -69,7 +69,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         );
         proofs_history_db.ensure_storage_path_matches(&storage_path)?;
 
-        // Initialize the environment with read-only access
         let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RO, runtime)?;
 
         match proofs_history_db {
@@ -105,7 +104,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         S: BaseProofsInitialStateStore + BaseProofsStore + 'static,
         F: BlockNumReader + DatabaseProviderFactory + StorageSettingsCache,
     {
-        // Check if already initialized
         if let Some((block_number, block_hash)) = storage.get_earliest_block_number()? {
             info!(
                 target: "reth::cli",
@@ -116,7 +114,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
             return Ok(());
         }
 
-        // Get the current chain state
         let ChainInfo { best_number, best_hash, .. } = provider_factory.chain_info()?;
 
         info!(
@@ -126,7 +123,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
             "Starting backfill job for current chain state"
         );
 
-        // Run the backfill job
         {
             let trie_layout = if provider_factory.cached_storage_settings().is_v2() {
                 RethTrieStorageLayout::Packed

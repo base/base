@@ -158,7 +158,6 @@ impl P2pRpcRequest {
             warn!(target: "p2p::rpc", peer_id = %peer_id, error = ?e, "Failed to disconnect peer");
         } else {
             info!(target: "p2p::rpc", peer_id = %peer_id, "Disconnected peer");
-            // Record the duration of the peer connection.
             if let Some(start_time) = gossip.peer_connection_start.remove(&peer_id) {
                 let peer_duration = start_time.elapsed();
                 Metrics::gossip_peer_connection_duration_seconds()
@@ -209,11 +208,8 @@ impl P2pRpcRequest {
             gossip.peerstore.iter().map(|(peer_id, _)| *peer_id).collect()
         };
 
-        // Get the set of actually connected peers from the swarm for accurate connectedness
-        // reporting.
         let actually_connected: HashSet<PeerId> = gossip.swarm.connected_peers().copied().collect();
 
-        // Get connection gate information.
         let banned_subnets = gossip.connection_gate.list_blocked_subnets();
         let banned_ips = gossip.connection_gate.list_blocked_addrs();
         let banned_peers = gossip.connection_gate.list_blocked_peers();
@@ -236,7 +232,6 @@ impl P2pRpcRequest {
             })
             .collect::<HashMap<PeerId, Connectedness>>();
 
-        // Clone the ping map
         let pings = Arc::clone(&gossip.ping);
 
         #[derive(Default)]
@@ -248,7 +243,6 @@ impl P2pRpcRequest {
             score: f64,
         }
 
-        // Build a map of peer ids to their supported protocols and addresses.
         let mut peer_metadata: HashMap<PeerId, PeerMetadata> = gossip
             .peerstore
             .iter()
@@ -342,14 +336,12 @@ impl P2pRpcRequest {
             }
             ).collect();
 
-            // Filter out peers that are not in the gossip network.
             let node_to_table_infos = table_infos
                 .into_iter()
                 .filter(|(id, _, _)| node_to_peer_id.contains_key(id))
                 .map(|(id, enr, status)| (id, (enr, status)))
                 .collect::<HashMap<_, _>>();
 
-            // Build the peer info map.
             let infos: HashMap<String, PeerInfo> = node_to_peer_id
                 .iter()
                 .map(|(id, peer_id)| {
@@ -473,7 +465,6 @@ impl P2pRpcRequest {
             // `NodeId` strips some part of the hex string and replaces it with "...".
             let node_id = format!("{:?}", &enr.node_id());
 
-            // We need to add the local multiaddr to the list of known addresses.
             let peer_info = PeerInfo {
                 peer_id: peer_id.to_string(),
                 node_id,
@@ -560,10 +551,6 @@ impl P2pRpcRequest {
                 return;
             };
 
-            // Given a topic hash, this method:
-            // - gets the number of peers in the mesh for that topic
-            // - returns an error if the number of peers in the mesh overflows a u32
-            // - returns 0 if there are no peers in the mesh for that topic
             let get_topic = |topic: &TopicHash| {
                 Ok::<u32, TryFromIntError>(
                     topics

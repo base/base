@@ -244,17 +244,12 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                         .ok_or_else(|| serde::de::Error::missing_field("transactions"))?,
                 };
 
-                // Ensure `withdrawals` is present before proceeding
                 let withdrawals =
                     withdrawals.ok_or_else(|| serde::de::Error::missing_field("withdrawals"))?;
 
-                // Construct base V2 payload
                 let payload_v2 = ExecutionPayloadV2 { payload_inner: v1, withdrawals };
 
-                // Ensure `blob_gas_used` and `excess_blob_gas` are either both present or both
-                // absent
                 match (blob_gas_used, excess_blob_gas) {
-                    // If both are present, create V3
                     (Some(blob_gas_used), Some(excess_blob_gas)) => {
                         let payload_v3 = ExecutionPayloadV3 {
                             payload_inner: payload_v2,
@@ -262,7 +257,6 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                             excess_blob_gas,
                         };
 
-                        // If `withdrawals_root` is present, wrap into V4; otherwise, return V3
                         if let Some(withdrawals_root) = withdrawals_root {
                             Ok(BaseExecutionPayload::V4(BaseExecutionPayloadV4 {
                                 payload_inner: payload_v3,
@@ -272,11 +266,9 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                             Ok(BaseExecutionPayload::V3(payload_v3))
                         }
                     }
-                    // If one is missing, reject as invalid
                     (Some(_), None) | (None, Some(_)) => {
                         Err(serde::de::Error::custom("invalid enum variant"))
                     }
-                    // If neither are present, return V2
                     (None, None) => Ok(BaseExecutionPayload::V2(payload_v2)),
                 }
             }
@@ -339,24 +331,16 @@ impl BaseExecutionPayload {
 
         let execution_payload = match block.withdrawals_root() {
             Some(withdrawals_root) if sidecar.isthmus().is_some() => {
-                // block with (empty) request hashes: V4
                 Self::V4(BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
                     ExecutionPayloadV3::from_block_unchecked(block_hash, block),
                     withdrawals_root,
                 ))
             }
             Some(_) if block.header.parent_beacon_block_root().is_some() => {
-                // block with parent beacon block root: at least V3
                 Self::V3(ExecutionPayloadV3::from_block_unchecked(block_hash, block))
             }
-            Some(_) => {
-                // block with withdrawals root: at least V2
-                Self::V2(ExecutionPayloadV2::from_block_unchecked(block_hash, block))
-            }
-            None => {
-                // otherwise V1
-                Self::V1(ExecutionPayloadV1::from_block_unchecked(block_hash, block))
-            }
+            Some(_) => Self::V2(ExecutionPayloadV2::from_block_unchecked(block_hash, block)),
+            None => Self::V1(ExecutionPayloadV1::from_block_unchecked(block_hash, block)),
         };
 
         (execution_payload, sidecar)

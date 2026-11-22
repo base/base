@@ -16,17 +16,14 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-# Internal
 base-tx-manager.workspace = true
 reth-node-core = { workspace = true, features = ["otlp"] }
 base-cli-utils = { workspace = true, features = ["otlp"] }
 base-proof-tee-registrar = { workspace = true, features = ["metrics"] }
 
-# Alloy
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 
-# CLI / runtime
 url.workspace = true
 eyre.workspace = true
 serde.workspace = true

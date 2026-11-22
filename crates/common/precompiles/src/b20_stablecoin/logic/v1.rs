@@ -768,8 +768,6 @@ mod tests {
         args
     }
 
-    // --- transfer ---
-
     #[rstest]
     fn transfer_moves_balance_and_emits_transfer(#[from(funded_token)] mut tok: Tok) {
         LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(30u64), true).unwrap();
@@ -831,8 +829,6 @@ mod tests {
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
     }
 
-    // --- transfer_from ---
-
     #[rstest]
     fn transfer_from_decrements_finite_allowance(#[from(funded_token)] mut tok: Tok) {
         tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
@@ -863,8 +859,6 @@ mod tests {
         );
     }
 
-    // --- approve ---
-
     #[rstest]
     fn approve_sets_allowance_and_emits(#[from(token)] mut tok: Tok) {
         LOGIC.approve(&mut tok, ALICE, BOB, U256::from(50u64)).unwrap();
@@ -880,8 +874,6 @@ mod tests {
             BasePrecompileError::revert(IB20::InvalidSpender { spender: Address::ZERO })
         );
     }
-
-    // --- mint ---
 
     #[rstest]
     fn mint_privileged_increases_supply_and_balance(#[from(token)] mut tok: Tok) {
@@ -916,8 +908,6 @@ mod tests {
             })
         );
     }
-
-    // --- burn / burn_blocked ---
 
     #[rstest]
     fn burn_requires_role_then_decreases_supply(#[from(funded_token)] mut tok: Tok) {
@@ -956,8 +946,6 @@ mod tests {
         let err = LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(1u64), true).unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE }));
     }
-
-    // --- pause ---
 
     #[rstest]
     fn pause_and_unpause_toggle_feature_bit(#[from(token)] mut tok: Tok) {
@@ -1004,8 +992,6 @@ mod tests {
         assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::BURN).unwrap());
     }
 
-    // --- config / metadata ---
-
     #[rstest]
     fn update_supply_cap_sets_and_emits(#[from(token)] mut tok: Tok) {
         LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(1_000u64), true).unwrap();
@@ -1034,8 +1020,6 @@ mod tests {
         assert_eq!(events[events.len() - 2].topics()[0], IB20::NameUpdated::SIGNATURE_HASH);
         assert_eq!(events[events.len() - 1].topics()[0], IB20::EIP712DomainChanged::SIGNATURE_HASH);
     }
-
-    // --- roles ---
 
     #[rstest]
     fn grant_role_privileged_grants_and_emits(#[from(token)] mut tok: Tok) {
@@ -1073,8 +1057,6 @@ mod tests {
         );
     }
 
-    // --- policy ---
-
     #[rstest]
     fn update_policy_sets_new_id(#[from(token)] mut tok: Tok) {
         tok.policy_storage_mut().create_existing_policy(7);
@@ -1099,8 +1081,6 @@ mod tests {
             BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope })
         );
     }
-
-    // --- permit ---
 
     #[rstest]
     fn permit_sets_allowance_and_increments_nonce(#[from(token)] mut tok: Tok) {
@@ -1130,8 +1110,6 @@ mod tests {
         // Same (v, r, s): the nonce has advanced, so recovery no longer matches `owner`.
         assert!(LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).is_err());
     }
-
-    // --- reads ---
 
     #[rstest]
     fn currency_reads_storage(#[from(token)] tok: Tok) {

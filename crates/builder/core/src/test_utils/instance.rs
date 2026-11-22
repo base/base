@@ -231,8 +231,6 @@ impl LocalInstance {
             .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        // Apply caller-supplied extensions through the production hook pipeline, then append an
-        // internal node-started hook that captures the running node's transaction pool.
         let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
         let hooks = hooks.add_node_started_hook(move |full_node| {
             if txpool_ready_tx.send(full_node.pool.all_transactions_event_listener()).is_err() {
@@ -250,7 +248,6 @@ impl LocalInstance {
         let exit_future = node_handle.node_exit_future;
         let node_handle: Box<dyn Any + Send> = Box::new(node_handle.node);
 
-        // Wait for the node-started hook to publish the pool handles.
         let pool_monitor = txpool_ready_rx.await.expect("Failed to receive txpool ready signal");
         let pool_handle = pool_handle_rx.await.expect("Failed to receive pool handle");
 

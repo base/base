@@ -39,7 +39,6 @@ pub async fn fetch_full_system_config(
     l1_rpc_url: &str,
     system_config_address: Address,
 ) -> Result<SystemConfig> {
-    // Use CallBatchLayer to batch all concurrent calls into a single Multicall3 call
     let provider = ProviderBuilder::new()
         .layer(CallBatchLayer::new().wait(Duration::from_millis(10)))
         .connect(l1_rpc_url)
@@ -56,7 +55,6 @@ pub async fn fetch_full_system_config(
     let basefee_scalar_call = contract.basefeeScalar();
     let blobbasefee_scalar_call = contract.blobbasefeeScalar();
 
-    // Fetch all values concurrently - each may fail on older versions
     let (
         gas_limit,
         eip1559_elasticity,

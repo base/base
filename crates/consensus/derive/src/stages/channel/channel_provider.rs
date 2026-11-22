@@ -59,8 +59,6 @@ where
     pub fn attempt_update(&mut self) -> PipelineResult<()> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         if let Some(prev) = self.prev.take() {
-            // On the first call to `attempt_update`, we need to determine the active stage to
-            // initialize the mux with.
             if self.cfg.is_feature_active_cascading(
                 BaseFeature::StrictDerivationOrdering,
                 origin.timestamp,
@@ -75,8 +73,6 @@ where
                 origin.timestamp,
             )
         {
-            // If the channel bank is active and Holocene is also active, transition to the channel
-            // assembler.
             let channel_bank = self.channel_bank.take().expect("Must have channel bank");
             self.channel_assembler =
                 Some(ChannelAssembler::new(Arc::clone(&self.cfg), channel_bank.prev));
@@ -243,17 +239,14 @@ mod tests {
         let cfg = Arc::new(RollupConfig::default());
         let mut channel_provider = ChannelProvider::new(cfg, provider);
 
-        // Assert the multiplexer hasn't been initialized.
         assert!(channel_provider.channel_bank.is_none());
         assert!(channel_provider.channel_assembler.is_none());
         assert!(channel_provider.prev.is_some());
 
-        // Load in the active stage.
         channel_provider.attempt_update().unwrap();
         assert!(channel_provider.channel_bank.is_some());
         assert!(channel_provider.channel_assembler.is_none());
         assert!(channel_provider.prev.is_none());
-        // Ensure the active stage is retained on the second call.
         channel_provider.attempt_update().unwrap();
         assert!(channel_provider.channel_bank.is_some());
         assert!(channel_provider.channel_assembler.is_none());
@@ -269,17 +262,14 @@ mod tests {
         });
         let mut channel_provider = ChannelProvider::new(cfg, provider);
 
-        // Assert the multiplexer hasn't been initialized.
         assert!(channel_provider.channel_bank.is_none());
         assert!(channel_provider.channel_assembler.is_none());
         assert!(channel_provider.prev.is_some());
 
-        // Load in the active stage.
         channel_provider.attempt_update().unwrap();
         assert!(channel_provider.channel_bank.is_none());
         assert!(channel_provider.channel_assembler.is_some());
         assert!(channel_provider.prev.is_none());
-        // Ensure the active stage is retained on the second call.
         channel_provider.attempt_update().unwrap();
         assert!(channel_provider.channel_bank.is_none());
         assert!(channel_provider.channel_assembler.is_some());
@@ -297,13 +287,11 @@ mod tests {
 
         channel_provider.attempt_update().unwrap();
 
-        // Update the L1 origin to Holocene activation.
         let Some(ref mut stage) = channel_provider.channel_bank else {
             panic!("Expected ChannelBank");
         };
         stage.prev.block_info = Some(BlockInfo { number: 1, timestamp: 2, ..Default::default() });
 
-        // Transition to the ChannelAssembler stage.
         channel_provider.attempt_update().unwrap();
         assert!(channel_provider.channel_bank.is_none());
         assert!(channel_provider.channel_assembler.is_some());
@@ -322,13 +310,11 @@ mod tests {
 
         channel_provider.attempt_update().unwrap();
 
-        // Update the L1 origin to Holocene activation.
         let Some(ref mut stage) = channel_provider.channel_bank else {
             panic!("Expected ChannelBank");
         };
         stage.prev.block_info = Some(BlockInfo { number: 1, timestamp: 2, ..Default::default() });
 
-        // Transition to the ChannelAssembler stage.
         channel_provider.attempt_update().unwrap();
         assert!(channel_provider.channel_bank.is_none());
         assert!(channel_provider.channel_assembler.is_some());
@@ -354,7 +340,6 @@ mod tests {
         let cfg = Arc::new(RollupConfig::default());
         let mut channel_provider = ChannelProvider::new(Arc::clone(&cfg), provider);
 
-        // Load in the first frame.
         assert_eq!(
             channel_provider.next_data().await.unwrap_err(),
             PipelineError::NotEnoughData.temp()
@@ -362,13 +347,10 @@ mod tests {
         let Some(channel_bank) = channel_provider.channel_bank.as_mut() else {
             panic!("Expected ChannelBank");
         };
-        // Ensure a channel is in the queue.
         assert!(channel_bank.channel_queue.len() == 1);
 
-        // Reset the channel provider.
         channel_provider.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
 
-        // Ensure the channel queue is empty after reset.
         let Some(channel_bank) = channel_provider.channel_bank.as_mut() else {
             panic!("Expected ChannelBank");
         };
@@ -388,7 +370,6 @@ mod tests {
         });
         let mut channel_provider = ChannelProvider::new(Arc::clone(&cfg), provider);
 
-        // Load in the first frame.
         assert_eq!(
             channel_provider.next_data().await.unwrap_err(),
             PipelineError::NotEnoughData.temp()
@@ -396,13 +377,10 @@ mod tests {
         let Some(channel_assembler) = channel_provider.channel_assembler.as_mut() else {
             panic!("Expected ChannelAssembler");
         };
-        // Ensure a channel is being built.
         assert!(channel_assembler.channel.is_some());
 
-        // Reset the channel provider.
         channel_provider.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
 
-        // Ensure the channel assembler is empty after reset.
         let Some(channel_assembler) = channel_provider.channel_assembler.as_mut() else {
             panic!("Expected ChannelAssembler");
         };

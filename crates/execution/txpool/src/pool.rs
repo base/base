@@ -5469,7 +5469,6 @@ mod tests {
         let replaced = TxHash::repeat_byte(0x11);
         let new_hash = TxHash::repeat_byte(0x22);
 
-        // Seed the index with the soon-to-be-replaced transaction.
         pool.register_block_expiry(replaced, Some(100), None);
         assert_eq!(pool.block_expiry.read().len(), 1);
 
@@ -5478,7 +5477,6 @@ mod tests {
         pool.register_block_expiry(new_hash, Some(200), Some(replaced));
         assert_eq!(pool.block_expiry.read().len(), 1);
 
-        // Only the new hash remains, tracked at its own bound.
         let mut index = pool.block_expiry.write();
         assert!(index.drain_expired(150).is_empty());
         assert_eq!(index.drain_expired(200), vec![new_hash]);
@@ -5560,7 +5558,6 @@ mod tests {
         let hash = *transaction.hash();
         pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
 
-        // The sidecar admission path must record the tx's last valid block.
         assert_eq!(pool.block_expiry.read().len(), 1);
         assert!(pool.get(&hash).is_some());
 
@@ -5661,8 +5658,6 @@ mod tests {
         assert!(listeners.new_propagate.is_empty());
         assert!(listeners.all_events.is_empty());
     }
-    // ----- Validity pool isolation -----
-
     /// A block bound none of these tests reach, so the transaction rests until
     /// something else removes it.
     const RESTING_EXPIRY_BLOCK: u64 = 1_000;

@@ -167,7 +167,6 @@ pub struct TransactionPoolObserver {
 
 impl Drop for TransactionPoolObserver {
     fn drop(&mut self) {
-        // Signal the listener loop to stop listening for events
         if let Some(term) = self.term.take() {
             let _ = term.send(true);
         }

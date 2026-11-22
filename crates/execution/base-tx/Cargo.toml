@@ -14,19 +14,15 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
 alloy-primitives.workspace = true
 
-# base
 base-precompile-storage.workspace = true
 base-common-precompiles.workspace = true
 base-common-base-tx = { workspace = true, default-features = false }
 base-common-consensus = { workspace = true, default-features = false, features = ["k256"] }
 
-# revm
 revm.workspace = true
 
-# misc
 thiserror.workspace = true
 
 [dev-dependencies]

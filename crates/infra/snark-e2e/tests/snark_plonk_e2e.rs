@@ -17,7 +17,6 @@ async fn snark_plonk_e2e_prove_and_verify() {
         return;
     }
 
-    // Initialize tracing so the shared module's tracing::info! calls produce output.
     let _ = tracing_subscriber::fmt()
         .with_test_writer()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

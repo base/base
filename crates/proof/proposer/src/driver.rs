@@ -23,10 +23,6 @@ use tracing::{error, info};
 
 use crate::pipeline::ProvingPipeline;
 
-// ---------------------------------------------------------------------------
-// Core types
-// ---------------------------------------------------------------------------
-
 /// Driver configuration.
 #[derive(Debug, Clone)]
 pub struct DriverConfig {
@@ -78,10 +74,6 @@ pub struct RecoveredState {
     /// L2 block number of the claim.
     pub l2_block_number: u64,
 }
-
-// ---------------------------------------------------------------------------
-// Lifecycle management
-// ---------------------------------------------------------------------------
 
 /// Trait for controlling the proposer at runtime.
 ///

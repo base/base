@@ -66,8 +66,6 @@ impl<'a> StorageCtx<'a> {
         f(&mut **guard)
     }
 
-    // --- Provider method delegates ---
-
     /// Executes a closure with account info, returning the closure's result.
     pub fn with_account_info<T>(
         &self,
@@ -501,7 +499,6 @@ mod tests {
         let key = U256::from(1);
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
-            // Write a non-zero value then clear it to generate an EIP-3529 refund.
             ctx.sstore(addr, key, U256::from(42)).unwrap();
             ctx.sstore(addr, key, U256::ZERO).unwrap();
 

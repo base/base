@@ -137,7 +137,6 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
 
     let client = activated_client(&provider, &admin).await?;
 
-    // --- Create ALLOWLIST policy ---
     let policy_id = create_policy(
         &client,
         admin.address(),
@@ -146,7 +145,6 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
     )
     .await?;
 
-    // Non-member is not authorized under the allowlist.
     assert!(
         !is_authorized(&client, policy_id, non_member.address()).await?,
         "non-member must not be authorized on a fresh ALLOWLIST policy",
@@ -169,16 +167,13 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
         "admin must be authorized after being added to the allowlist",
     );
 
-    // --- Create B20 token and wire the allowlist policy ---
     let token =
         create_token(&client, admin.address(), SALT_ALLOWLIST, "Allowlist Token", "ALT").await?;
     set_transfer_sender_policy(&client, token, policy_id).await?;
 
-    // Seed the non-member with tokens so they have a balance to transfer from.
     client.transfer(token, non_member.address(), U256::from(TRANSFER_AMOUNT)).await?;
     assert_eq!(client.balance_of(token, non_member.address()).await?, U256::from(TRANSFER_AMOUNT));
 
-    // Non-member is not on the allowlist: transfer must revert.
     let non_member_client = B20PrecompileClient::new(&provider, &non_member, common::L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     let blocked = non_member_client
@@ -190,7 +185,6 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
         .await?;
     assert!(!blocked, "transfer from non-member must revert when ALLOWLIST policy is wired");
 
-    // --- Add non-member to the allowlist ---
     client
         .send_call(
             PolicyRegistryStorage::ADDRESS,
@@ -206,13 +200,11 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
     let current_block = provider.get_block_number().await?;
     common::wait_for_block(&provider, current_block + 1).await?;
 
-    // Non-member is now authorized.
     assert!(
         is_authorized(&client, policy_id, non_member.address()).await?,
         "non-member must be authorized after being added to the allowlist",
     );
 
-    // Transfer from the now-allowlisted sender must succeed.
     let allowed = non_member_client
         .try_send_call(
             token,
@@ -247,7 +239,6 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
 
     let client = activated_client(&provider, &admin).await?;
 
-    // --- Create BLOCKLIST policy ---
     let policy_id = create_policy(
         &client,
         admin.address(),
@@ -256,25 +247,21 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
     )
     .await?;
 
-    // The sender is not on the blocklist; they are authorized.
     assert!(
         is_authorized(&client, policy_id, blocked_sender.address()).await?,
         "non-blocked account must be authorized on a fresh BLOCKLIST policy",
     );
 
-    // --- Create B20 token and wire the blocklist policy ---
     let token =
         create_token(&client, admin.address(), SALT_BLOCKLIST, "Blocklist Token", "BLT").await?;
     set_transfer_sender_policy(&client, token, policy_id).await?;
 
-    // Seed the sender with tokens.
     client.transfer(token, blocked_sender.address(), U256::from(TRANSFER_AMOUNT)).await?;
     assert_eq!(
         client.balance_of(token, blocked_sender.address()).await?,
         U256::from(TRANSFER_AMOUNT),
     );
 
-    // Transfer from the (not-yet-blocked) sender must succeed.
     let sender_client = B20PrecompileClient::new(&provider, &blocked_sender, common::L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     let first_transfer = sender_client
@@ -286,7 +273,6 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
         .await?;
     assert!(first_transfer, "transfer from non-blocked sender must succeed");
 
-    // --- Block the sender ---
     client
         .send_call(
             PolicyRegistryStorage::ADDRESS,
@@ -299,13 +285,11 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
         )
         .await?;
 
-    // Sender is now on the blocklist and must not be authorized.
     assert!(
         !is_authorized(&client, policy_id, blocked_sender.address()).await?,
         "blocked account must not be authorized after being added to the blocklist",
     );
 
-    // Transfer from the blocked sender must revert.
     let second_transfer = sender_client
         .try_send_call(
             token,
@@ -334,7 +318,6 @@ async fn test_always_block_policy_blocks_transfer() -> Result<()> {
 
     let client = activated_client(&provider, &admin).await?;
 
-    // ALWAYS_BLOCK must deny every account unconditionally.
     assert!(
         !is_authorized(&client, PolicyRegistryStorage::ALWAYS_BLOCK_ID, admin.address()).await?,
         "ALWAYS_BLOCK must deny the admin",
@@ -344,7 +327,6 @@ async fn test_always_block_policy_blocks_transfer() -> Result<()> {
         "ALWAYS_BLOCK must deny any arbitrary account",
     );
 
-    // The ALWAYS_BLOCK policy exists as a built-in.
     let output = client
         .call(
             PolicyRegistryStorage::ADDRESS,
@@ -355,12 +337,10 @@ async fn test_always_block_policy_blocks_transfer() -> Result<()> {
         .wrap_err("Failed to decode policyExists")?;
     assert!(exists, "ALWAYS_BLOCK policy must exist");
 
-    // --- Create B20 token and wire ALWAYS_BLOCK to TRANSFER_SENDER_POLICY ---
     let token =
         create_token(&client, admin.address(), SALT_ALWAYS_BLOCK, "Blocked Token", "BLKD").await?;
     set_transfer_sender_policy(&client, token, PolicyRegistryStorage::ALWAYS_BLOCK_ID).await?;
 
-    // Transfer from admin must revert: ALWAYS_BLOCK denies every sender unconditionally.
     let blocked = client
         .try_send_call(
             token,

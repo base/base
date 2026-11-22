@@ -131,7 +131,6 @@ where
                     .map_err(RethError::other)
                     .map_err(Self::Error::from_eth_err)?;
 
-                // Always disable EIP-3607
                 evm_env.cfg_env.disable_eip3607 = true;
 
                 // EIP-7825's transaction gas cap is only active with Amsterdam's
@@ -195,8 +194,6 @@ where
                 };
 
                 let (result, results) = if trace_transfers {
-                    // prepare inspector to capture transfer inside the evm so they are recorded
-                    // and included in logs
                     let inspector = TransferInspector::new(false).with_logs(true);
                     let evm =
                         this.evm_config().evm_with_env_and_inspector(&mut db, evm_env, inspector);

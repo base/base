@@ -196,10 +196,8 @@ where
             return Ok(Default::default());
         }
 
-        // Calculate the slot for the given timestamp.
         let slot = Self::slot(self.genesis_time, self.slot_interval, block_ref.timestamp)?;
 
-        // Fetch and validate blobs from the beacon client.
         // The beacon client already validates each blob by recomputing its commitment
         // and checking it against the expected hash.
         let blobs = self.fetch_filtered_blobs(slot, blob_hashes).await?;
@@ -386,8 +384,6 @@ mod tests {
         let commitment = result[0].kzg_commitment;
         assert_ne!(commitment, FixedBytes::ZERO, "KZG commitment must be non-zero");
 
-        // Recompute the versioned hash from the returned commitment and verify it
-        // matches the hash we originally requested.
         let recomputed_hash = kzg_to_versioned_hash(commitment.as_slice());
         assert_eq!(
             recomputed_hash, hash,

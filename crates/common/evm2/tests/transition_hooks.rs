@@ -61,7 +61,6 @@ fn slot(evm: &mut Evm<'static, BaseEvmTypes>, addr: Address, key: U256) -> U256 
 
 #[test]
 fn canyon_force_deploys_create2_on_activation_block() {
-    // Canyon activates at ts=1000; the block at ts=1000 is the activation block.
     let mut executor = executor(BaseUpgrade::Canyon, 1000, InMemoryDB::default());
     executor.apply_transition_hooks(&schedule(BaseUpgrade::Canyon, 1000)).expect("hooks apply");
     let (mut evm, _, block_state) = executor.finish();
@@ -71,13 +70,11 @@ fn canyon_force_deploys_create2_on_activation_block() {
         CREATE2_DEPLOYER_CODEHASH,
         "create2 deployer code installed",
     );
-    // The transition is recorded in the block-state delta.
     assert!(!block_state.is_empty(), "the force-deploy is in the block-state delta");
 }
 
 #[test]
 fn canyon_is_skipped_after_the_activation_block() {
-    // Canyon activated at ts=1000; a later block (ts=2000) is not the activation block.
     let mut executor = executor(BaseUpgrade::Canyon, 2000, InMemoryDB::default());
     executor.apply_transition_hooks(&schedule(BaseUpgrade::Canyon, 1000)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
@@ -116,7 +113,6 @@ fn everest_does_not_overwrite_existing_code() {
 #[test]
 fn everest_is_skipped_before_activation() {
     let mut executor = executor(BaseUpgrade::Isthmus, 1000, db_with_valid_proxy());
-    // Everest is scheduled far in the future; at ts=1000 it is inactive.
     executor.apply_transition_hooks(&schedule(BaseUpgrade::Everest, 10_000)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
 
@@ -146,12 +142,10 @@ fn base_time_installs_and_links_implementation_on_denim() {
     executor.apply_transition_hooks(&schedule(BaseUpgrade::Denim, 1000)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
 
-    // The implementation runtime is installed at its code-namespace address.
     assert_eq!(
         code_hash(&mut evm, BaseTime::IMPLEMENTATION_ADDRESS),
         BaseTime::IMPLEMENTATION_CODE_HASH,
     );
-    // The proxy's EIP-1967 implementation slot points at the implementation address.
     assert_eq!(
         slot(&mut evm, Predeploys::BASE_TIME, IMPLEMENTATION_SLOT),
         U256::from_be_slice(BaseTime::IMPLEMENTATION_ADDRESS.as_slice()),
@@ -199,7 +193,6 @@ fn base_time_errors_on_unexpected_proxy_admin() {
 #[test]
 fn base_time_is_idempotent_when_already_linked() {
     let mut db = db_with_valid_proxy();
-    // Pre-link the implementation slot: the transition must be a no-op and preserve it.
     let existing = address!("0x1111111111111111111111111111111111111111");
     db.insert_account_storage(
         &Predeploys::BASE_TIME,

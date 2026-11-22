@@ -58,8 +58,6 @@ pub trait BatchValidationProviderDerive: BatchValidationProvider {
     ) -> PipelineErrorKind;
 }
 
-// Auto-implement the [BatchValidationProviderDerive] trait for all types that implement
-// [BatchValidationProvider] where the error can be converted into [PipelineErrorKind].
 impl<T> BatchValidationProviderDerive for T
 where
     T: BatchValidationProvider,

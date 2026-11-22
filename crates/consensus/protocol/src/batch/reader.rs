@@ -97,7 +97,6 @@ impl BatchReader {
             None => Err(DecompressionError::EmptyData),
             Some(data) if data.is_empty() => Err(DecompressionError::EmptyData),
             Some(data) => {
-                // Peek at the data to determine the compression type.
                 let compression_type = data[0];
                 if (compression_type & 0x0F) == Self::ZLIB_DEFLATE_COMPRESSION_METHOD
                     || (compression_type & 0x0F) == Self::ZLIB_RESERVED_COMPRESSION_METHOD
@@ -152,19 +151,16 @@ impl BatchReader {
         &mut self,
         cfg: &RollupConfig,
     ) -> Result<Option<Batch>, BatchReaderError> {
-        // Ensure the data is decompressed.
         self.decompress()?;
 
         if self.cursor >= self.decompressed.len() {
             return Ok(None);
         }
 
-        // Decompress and RLP decode the batch data, before finally decoding the batch itself.
         let decompressed_reader = &mut self.decompressed.as_slice()[self.cursor..].as_ref();
         let bytes = Bytes::decode(decompressed_reader)?;
         let batch = Batch::decode(&mut bytes.as_ref(), cfg)?;
 
-        // Advance the cursor on the reader.
         self.cursor = self.decompressed.len() - decompressed_reader.len();
         Ok(Some(batch))
     }

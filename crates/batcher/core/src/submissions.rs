@@ -108,7 +108,6 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 return Ok(());
             };
 
-            // Build the transaction.
             let da_type_label = match sub.da_type() {
                 DaType::Blob => BatcherMetrics::DA_TYPE_BLOB,
                 DaType::Calldata => BatcherMetrics::DA_TYPE_CALLDATA,
@@ -141,7 +140,6 @@ impl<TM: TxManager> SubmissionQueue<TM> {
             BatcherMetrics::da_bytes_submitted_total(da_type_label).increment(frame_bytes as u64);
             BatcherMetrics::in_flight_submissions().increment(1.0);
 
-            // Send it, and track its receipt until the transaction settles.
             let handle = self.tx_manager.send_async(candidate).await;
             self.in_flight.push(Box::pin(async move {
                 let outcome = match handle.await {

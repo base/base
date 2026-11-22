@@ -1,13 +1,9 @@
 #!/bin/bash
-# Polls all op-conductor nodes to find the current raft leader, then streams
-# logs from the corresponding unified sequencer container. Automatically switches
-# when leadership changes.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEVNET_ENV="$SCRIPT_DIR/../../docker/devnet-env"
 
-# Load port configuration from devnet-env if available
 if [ -f "$DEVNET_ENV" ]; then
   # shellcheck source=/dev/null
   source "$DEVNET_ENV"
@@ -94,7 +90,6 @@ while true; do
 
   sleep "$POLL_INTERVAL"
 
-  # Check if docker logs exited unexpectedly (container stopped, etc.)
   if [ -n "$LOG_PID" ] && ! kill -0 "$LOG_PID" 2>/dev/null; then
     LOG_PID=""
     CURRENT_LEADER=""

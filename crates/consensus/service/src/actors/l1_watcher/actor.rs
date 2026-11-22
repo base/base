@@ -224,7 +224,6 @@ where
                 Some(head) => head,
                 None => select! {
                     _ = cancel.cancelled() => {
-                        // Exit the task on cancellation.
                         info!(
                             target: "l1_watcher",
                             "Received shutdown signal. Exiting L1 watcher task."
@@ -271,8 +270,6 @@ where
             // derivation pipeline can enforce the confirmation depth cutoff.
             self.l1_head_number.store(head_block_info.number, Ordering::Relaxed);
 
-            // Apply verifier confirmation delay: derive from
-            // `head - verifier_l1_confs` when the chain is deep enough.
             let derivation_block =
                 if self.verifier_l1_confs > 0 && head_block_info.number >= self.verifier_l1_confs {
                     let target = head_block_info.number - self.verifier_l1_confs;
@@ -312,10 +309,6 @@ where
                 L1WatcherActorError::DerivationClientError(e)
             })?;
 
-            // For each log, attempt to construct a [`SystemConfigLog`].
-            // Build the [`SystemConfigUpdate`] from the log.
-            // If the update is an Unsafe block signer update, send the address
-            // to the block signer sender.
             let filter_address = self.rollup_config.l1_system_config_address;
             let filter = Filter::new().address(filter_address).select(derivation_block.hash);
 
@@ -458,10 +451,6 @@ mod tests {
 
     type BoxedBlockStream = Pin<Box<dyn Stream<Item = BlockInfo> + Unpin + Send>>;
 
-    // ---------------------------------------------------------------------------
-    // Mock L1BlockFetcher used by LogRetrier tests.
-    // ---------------------------------------------------------------------------
-
     struct MockFetcher {
         call_count: Arc<AtomicU32>,
         fail_count: u32,
@@ -579,10 +568,6 @@ mod tests {
         BlockInfo { hash: B256::ZERO, number: 0, parent_hash: B256::ZERO, timestamp: 0 }
     }
 
-    // ---------------------------------------------------------------------------
-    // Configurable fetcher for verifier L1 confs tests
-    // ---------------------------------------------------------------------------
-
     /// Response behaviour for [`ConfigurableFetcher::get_block`].
     enum GetBlockBehavior {
         /// Always return a default [`Block`].
@@ -659,10 +644,6 @@ mod tests {
         }
     }
 
-    // ---------------------------------------------------------------------------
-    // Mock derivation client that captures sent blocks
-    // ---------------------------------------------------------------------------
-
     #[derive(Debug, Clone, Default)]
     struct RecordingDerivationClient {
         heads: Arc<Mutex<Vec<BlockInfo>>>,
@@ -687,10 +668,6 @@ mod tests {
             self.heads.lock().unwrap().clone()
         }
     }
-
-    // ---------------------------------------------------------------------------
-    // Actor test helpers
-    // ---------------------------------------------------------------------------
 
     fn block_at(number: u64) -> BlockInfo {
         BlockInfo {
@@ -736,7 +713,6 @@ mod tests {
             Arc::clone(&l1_head_number),
         );
 
-        // The actor loop will process all head_stream items then return StreamEnded.
         let _ = actor.start(()).await;
 
         (derivation_client, l1_head_rx, l1_head_number)
@@ -778,10 +754,6 @@ mod tests {
     fn open_stream(blocks: Vec<BlockInfo>) -> BoxedBlockStream {
         Box::pin(futures::stream::iter(blocks).chain(futures::stream::pending()))
     }
-
-    // ---------------------------------------------------------------------------
-    // LogRetrier tests
-    // ---------------------------------------------------------------------------
 
     #[tokio::test]
     async fn fetch_logs_succeeds_on_first_try() {
@@ -1009,25 +981,18 @@ mod tests {
         assert_eq!(safe_rx.borrow().unwrap().number, 7);
     }
 
-    // ---------------------------------------------------------------------------
-    // Verifier L1 confs tests
-    // ---------------------------------------------------------------------------
-
     #[tokio::test]
     async fn zero_confs_forwards_real_head_to_derivation() {
         let head = block_at(100);
         let (client, rx, l1_head_number) =
             run_actor(ConfigurableFetcher::returning_default_block(), vec![head], 0).await;
 
-        // Derivation receives the real head block.
         let heads = client.sent_heads();
         assert_eq!(heads.len(), 1);
         assert_eq!(heads[0].number, 100);
 
-        // Watch channel also has the real head.
         assert_eq!(rx.borrow().unwrap().number, 100);
 
-        // L1 head number atomic is updated to the real head.
         assert_eq!(l1_head_number.load(Ordering::Relaxed), 100);
     }
 
@@ -1043,10 +1008,8 @@ mod tests {
         // The fetcher returns Block::default() which converts to BlockInfo with number 0.
         assert_eq!(heads[0].number, 0);
 
-        // Watch channel still has the real head.
         assert_eq!(rx.borrow().unwrap().number, 100);
 
-        // L1 head number atomic is set to the real head (not the delayed one).
         assert_eq!(l1_head_number.load(Ordering::Relaxed), 100);
     }
 
@@ -1079,10 +1042,8 @@ mod tests {
         let ids = Arc::clone(&fetcher.get_block_requested_ids);
         let (client, _rx, _) = run_actor(fetcher, vec![block_at(2)], 4).await;
 
-        // No get_block call should have been made.
         assert!(ids.lock().unwrap().is_empty());
 
-        // Derivation receives the real head.
         let heads = client.sent_heads();
         assert_eq!(heads.len(), 1);
         assert_eq!(heads[0].number, 2);
@@ -1093,10 +1054,8 @@ mod tests {
         let (client, rx, _) =
             run_actor(ConfigurableFetcher::returning_none(), vec![block_at(100)], 4).await;
 
-        // Derivation should NOT receive any head — the block was not found.
         assert!(client.sent_heads().is_empty());
 
-        // Watch channel still has the real head.
         assert_eq!(rx.borrow().unwrap().number, 100);
     }
 
@@ -1105,10 +1064,8 @@ mod tests {
         let (client, rx, _) =
             run_actor(ConfigurableFetcher::returning_error(), vec![block_at(100)], 4).await;
 
-        // Derivation should NOT receive any head — the fetch errored.
         assert!(client.sent_heads().is_empty());
 
-        // Watch channel still has the real head.
         assert_eq!(rx.borrow().unwrap().number, 100);
     }
 
@@ -1137,7 +1094,6 @@ mod tests {
         let (_, _, l1_head_number) =
             run_actor(fetcher, vec![block_at(10), block_at(20), block_at(30)], 4).await;
 
-        // After processing all three heads, the atomic should hold the last one.
         assert_eq!(l1_head_number.load(Ordering::Relaxed), 30);
     }
 
@@ -1149,13 +1105,10 @@ mod tests {
         let (client, _rx, _) = run_actor(fetcher, vec![block_at(3), block_at(10)], 4).await;
 
         let heads = client.sent_heads();
-        // Two derivation sends: block 3 forwarded directly, block 10 fetched as delayed.
         assert_eq!(heads.len(), 2);
         assert_eq!(heads[0].number, 3);
-        // Block::default() converts to number 0.
         assert_eq!(heads[1].number, 0);
 
-        // Only the second head triggered a get_block call.
         assert_eq!(ids.lock().unwrap().len(), 1);
         assert_eq!(ids.lock().unwrap()[0], BlockId::Number(6u64.into()));
     }

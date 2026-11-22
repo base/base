@@ -46,20 +46,16 @@ fn test_contract_macro_basic_roundtrip() {
         let alice = Address::from([0xaa; 20]);
         let bob = Address::from([0xbb; 20]);
 
-        // Write owner and total_supply
         token.owner.write(alice).unwrap();
         token.total_supply.write(U256::from(1_000_000u64)).unwrap();
 
-        // Read back
         assert_eq!(token.owner.read().unwrap(), alice);
         assert_eq!(token.total_supply.read().unwrap(), U256::from(1_000_000u64));
 
-        // Write and read a mapping entry
         token.balances.at_mut(&alice).write(U256::from(500u64)).unwrap();
         assert_eq!(token.balances.at(&alice).read().unwrap(), U256::from(500u64));
         assert_eq!(token.balances.at(&bob).read().unwrap(), U256::ZERO);
 
-        // Nested mapping
         token.allowances[alice][bob].write(U256::from(100u64)).unwrap();
         assert_eq!(token.allowances[alice][bob].read().unwrap(), U256::from(100u64));
         assert_eq!(token.allowances[bob][alice].read().unwrap(), U256::ZERO);
@@ -90,8 +86,6 @@ mod mapping_only_storable_layout {
 
 #[test]
 fn test_contract_slots_are_deterministic() {
-    // Verify that the generated slot constants are stable across runs.
-    // owner is field 0 → slot 0, total_supply is field 1 → slot 1.
     assert_eq!(slots::OWNER, U256::ZERO);
     assert_eq!(slots::TOTAL_SUPPLY, U256::from(1u64));
     assert_eq!(slots::BALANCES, U256::from(2u64));
@@ -100,7 +94,6 @@ fn test_contract_slots_are_deterministic() {
 
 #[test]
 fn test_contract_mapping_slot_derivation() {
-    // Verify that mapping slots match the Solidity keccak256 derivation.
     let alice = Address::from([0xaa; 20]);
     let expected = alice.mapping_slot(slots::BALANCES);
 
@@ -110,7 +103,6 @@ fn test_contract_mapping_slot_derivation() {
         let write_value = U256::from(42u64);
         token.balances.at_mut(&alice).write(write_value).unwrap();
 
-        // Verify the raw storage slot matches the expected derivation.
         let raw = ctx.sload(TEST_ADDR, expected).unwrap();
         assert_eq!(raw, write_value);
     });
@@ -130,7 +122,6 @@ fn test_contract_multiple_instances_independent() {
 
     StorageCtx::enter(&mut storage2, |ctx| {
         let t2 = TestToken::new(ctx);
-        // storage2 is independent — balance should be zero.
         assert_eq!(t2.balances.at(&alice).read().unwrap(), U256::ZERO);
     });
 }
@@ -613,7 +604,6 @@ mod packed_slot_layout {
 
     #[test]
     fn packed_slot_bit_positions_match_declared_offsets() {
-        // Slot constants: all four small fields share slot 0; big_val is slot 1.
         assert_eq!(slots::LOW_BYTE, U256::ZERO);
         assert_eq!(slots::LOW_BYTE_OFFSET, 0);
         assert_eq!(slots::MID_SHORT, U256::ZERO);
@@ -635,27 +625,22 @@ mod packed_slot_layout {
 
             let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
 
-            // offset_bytes=0 → bits [0..7]
             assert_eq!(raw & U256::from(0xFF_u32), U256::from(0xAB_u32), "low_byte at bits [0..7]");
-            // offset_bytes=1 → bits [8..23]
             assert_eq!(
                 (raw >> 8) & U256::from(0xFFFF_u32),
                 U256::from(0x1234_u32),
                 "mid_short at bits [8..23]"
             );
-            // offset_bytes=3 → bits [24..55]
             assert_eq!(
                 (raw >> 24) & U256::from(0xFFFF_FFFF_u32),
                 U256::from(0xDEAD_BEEF_u32),
                 "mid_int at bits [24..55]"
             );
-            // offset_bytes=7 → bits [56..119]
             assert_eq!(
                 (raw >> 56) & U256::from(u64::MAX),
                 U256::from(0xCAFE_BABE_CAFE_BABE_u64),
                 "high_long at bits [56..119]"
             );
-            // Bits above high_long (120..255) must be untouched.
             assert_eq!(raw >> 120, U256::ZERO, "bits above high_long must be zero");
         });
     }
@@ -667,7 +652,6 @@ mod packed_slot_layout {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut layout = PackedFieldsStorage::new(ctx);
 
-            // Write only low_byte; all other packed fields must stay zero.
             layout.low_byte.write(0xFF_u8).unwrap();
             let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
             assert_eq!(raw & U256::from(0xFF_u32), U256::from(0xFF_u32));
@@ -683,7 +667,6 @@ mod packed_slot_layout {
             );
             assert_eq!((raw >> 56) & U256::from(u64::MAX), U256::ZERO, "high_long must be zero");
 
-            // Write mid_short; low_byte must be preserved exactly.
             layout.mid_short.write(0xABCD_u16).unwrap();
             let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
             assert_eq!(
@@ -698,7 +681,6 @@ mod packed_slot_layout {
                 "mid_int must still be zero"
             );
 
-            // Overwrite low_byte; mid_short must be preserved exactly.
             layout.low_byte.write(0x42_u8).unwrap();
             let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
             assert_eq!(raw & U256::from(0xFF_u32), U256::from(0x42_u32));
@@ -708,7 +690,6 @@ mod packed_slot_layout {
                 "mid_short must survive low_byte overwrite"
             );
 
-            // Write mid_int; previously written fields must be unchanged.
             layout.mid_int.write(0x1234_5678_u32).unwrap();
             let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
             assert_eq!(
@@ -723,7 +704,6 @@ mod packed_slot_layout {
             );
             assert_eq!((raw >> 24) & U256::from(0xFFFF_FFFF_u32), U256::from(0x1234_5678_u32));
 
-            // Write high_long; all lower fields must be preserved exactly.
             layout.high_long.write(0xDEAD_BEEF_DEAD_BEEF_u64).unwrap();
             let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
             assert_eq!(

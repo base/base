@@ -94,7 +94,6 @@ impl std::fmt::Debug for RollupClient {
 impl RollupClient {
     /// Creates a new rollup client from the given configuration.
     pub fn new(config: RollupClientConfig) -> RpcResult<Self> {
-        // Create reqwest Client with timeout
         let mut builder = Client::builder().timeout(config.timeout);
 
         if config.skip_tls_verify {
@@ -106,7 +105,6 @@ impl RollupClient {
             .build()
             .map_err(|e| RpcError::Connection(format!("Failed to build HTTP client: {e}")))?;
 
-        // Create HTTP transport with custom client
         let http = Http::with_client(client, config.endpoint);
         let rpc_client = RpcClient::new(http, false);
 

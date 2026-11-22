@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-consensus.workspace = true
@@ -24,12 +23,10 @@ alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std", "kzg"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
-# base
 base-metrics.workspace = true
 base-common-signer.workspace = true
 base-runtime = { workspace = true, features = ["tokio"] }
 
-# misc
 url.workspace = true
 backon.workspace = true
 futures.workspace = true

@@ -359,11 +359,8 @@ mod tests {
 
     #[test]
     fn test_fill_cfg_and_block_env() {
-        // Create a default header
         let header = Header::default();
 
-        // Build the ChainSpec for Ethereum mainnet, activating London, Paris, and Shanghai
-        // upgrades
         let chain_spec = ChainSpec::builder()
             .chain(0.into())
             .genesis(Genesis::default())
@@ -372,15 +369,11 @@ mod tests {
             .shanghai_activated()
             .build();
 
-        // Use the `BaseEvmConfig` to create the `cfg_env` and `block_env` based on the ChainSpec,
-        // Header, and total difficulty
         let EvmEnv { cfg_env, .. } =
             BaseEvmConfig::base(Arc::new(BaseChainSpec::from(chain_spec.clone())))
                 .evm_env(&header)
                 .unwrap();
 
-        // Assert that the chain ID in the `cfg_env` is correctly set to the chain ID of the
-        // ChainSpec
         assert_eq!(cfg_env.chain_id, chain_spec.chain().id());
     }
 
@@ -394,7 +387,6 @@ mod tests {
 
         let evm = evm_config.evm_with_env(db, evm_env.clone());
 
-        // Check that the EVM environment
         assert_eq!(evm.cfg, evm_env.cfg_env);
     }
 
@@ -404,7 +396,6 @@ mod tests {
 
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
-        // Create a custom configuration environment with a chain ID of 111
         let cfg = CfgEnv::new()
             .with_chain_id(111)
             .with_spec_and_mainnet_gas_params(BaseSpecId::default());
@@ -413,7 +404,6 @@ mod tests {
 
         let evm = evm_config.evm_with_env(db, evm_env);
 
-        // Check that the EVM environment is initialized with the custom environment
         assert_eq!(evm.cfg, cfg);
     }
 
@@ -423,7 +413,6 @@ mod tests {
 
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
-        // Create customs block and tx env
         let block = BlockEnv {
             basefee: 1000,
             gas_limit: 10_000_000,
@@ -435,7 +424,6 @@ mod tests {
 
         let evm = evm_config.evm_with_env(db, evm_env.clone());
 
-        // Verify that the block and transaction environments are set correctly
         assert_eq!(evm.block, evm_env.block_env);
     }
 
@@ -465,7 +453,6 @@ mod tests {
 
         let evm = evm_config.evm_with_env_and_inspector(db, evm_env.clone(), NoOpInspector {});
 
-        // Check that the EVM environment is set to default values
         assert_eq!(evm.block, evm_env.block_env);
         assert_eq!(evm.cfg, evm_env.cfg_env);
     }
@@ -483,7 +470,6 @@ mod tests {
 
         let evm = evm_config.evm_with_env_and_inspector(db, evm_env.clone(), NoOpInspector {});
 
-        // Check that the EVM environment is set with custom configuration
         assert_eq!(evm.cfg, cfg);
         assert_eq!(evm.block, evm_env.block_env);
     }
@@ -493,7 +479,6 @@ mod tests {
         let evm_config = test_evm_config();
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
-        // Create custom block and tx environment
         let block = BlockEnv {
             basefee: 1000,
             gas_limit: 10_000_000,
@@ -504,7 +489,6 @@ mod tests {
 
         let evm = evm_config.evm_with_env_and_inspector(db, evm_env.clone(), NoOpInspector {});
 
-        // Verify that the block and transaction environments are set correctly
         assert_eq!(evm.block, evm_env.block_env);
     }
 
@@ -521,7 +505,6 @@ mod tests {
 
         let evm = evm_config.evm_with_env_and_inspector(db, evm_env.clone(), NoOpInspector {});
 
-        // Check that the spec ID is set properly
         assert_eq!(evm.cfg, evm_env.cfg_env);
         assert_eq!(evm.block, evm_env.block_env);
     }

@@ -16,23 +16,18 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-# Workspace – prover service
 base-prover-service.workspace = true
 base-prover-service-db.workspace = true
 base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
 
-# CLI
 eyre.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
 reth-node-core = { workspace = true, features = ["otlp"] }
 base-cli-utils = { workspace = true, features = ["otlp"] }
 
-# RPC
 jsonrpsee = { workspace = true, features = ["server"] }
 
-# Async
 tokio = { workspace = true, features = ["full"] }
 
-# Tracing
 tracing.workspace = true

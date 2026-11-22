@@ -67,7 +67,6 @@ where
     async fn next_data(&mut self) -> PipelineResult<Option<Bytes>> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
 
-        // Time out the channel if it has timed out.
         if let Some(channel) = self.channel.as_ref()
             && self.is_timed_out()?
         {
@@ -81,10 +80,8 @@ where
             self.channel = None;
         }
 
-        // Grab the next frame from the previous stage.
         let next_frame = self.prev.next_frame().await?;
 
-        // Start a new channel if the frame number is 0.
         if next_frame.number == 0 {
             info!(
                 target: "channel_assembler",
@@ -99,13 +96,10 @@ where
         Metrics::pipeline_channel_buffer().set(count);
 
         if let Some(channel) = self.channel.as_mut() {
-            // Track the number of blocks until the channel times out.
             let timeout = channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp);
             let margin = timeout.saturating_sub(origin.number) as f64;
             Metrics::pipeline_channel_timeout().set(margin);
 
-            // Add the frame to the channel. If this fails, return NotEnoughData and discard the
-            // frame.
             debug!(
                 target: "channel_assembler",
                 frame_number = next_frame.number,
@@ -160,7 +154,6 @@ where
                 return Err(PipelineError::NotEnoughData.temp());
             }
 
-            // If the channel is ready, forward the channel to the next stage.
             if channel.is_ready() {
                 let channel_bytes =
                     channel.frame_data().ok_or(PipelineError::ChannelNotFound.crit())?;
@@ -171,7 +164,6 @@ where
                     "Channel ready for decompression"
                 );
 
-                // Reset the channel and return the compressed bytes.
                 self.channel = None;
                 return Ok(Some(channel_bytes));
             }
@@ -253,31 +245,24 @@ mod tests {
         let cfg = Arc::new(RollupConfig::default());
         let mut assembler = ChannelAssembler::new(cfg, mock);
 
-        // Set the origin to default block info @ block # 0.
         assembler.prev.block_info = Some(BlockInfo::default());
 
-        // Read in the first frame. Since the frame isn't the last, the assembler
-        // should return None.
         assert!(assembler.channel.is_none());
         assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(assembler.channel.is_some());
 
-        // Push the origin forward past channel timeout.
         assembler.prev.block_info =
             Some(BlockInfo { number: assembler.cfg.channel_timeout(0) + 1, ..Default::default() });
 
-        // Assert that the assembler has timed out the channel.
         assert!(assembler.is_timed_out().unwrap());
         assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(assembler.channel.is_none());
 
-        // Assert that the info log was emitted.
         let info_logs = trace_store.get_by_level(Level::INFO);
         assert_eq!(info_logs.len(), 1);
         let info_str = "Starting new channel";
         assert!(info_logs[0].contains(info_str));
 
-        // Assert that the warning log was emitted.
         let warning_logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(warning_logs.len(), 1);
         let warn_str = "timed out at L1 origin";
@@ -294,8 +279,6 @@ mod tests {
         let cfg = Arc::new(RollupConfig::default());
         let mut assembler = ChannelAssembler::new(cfg, mock);
 
-        // Send in the second frame first. This should result in no channel being created,
-        // and the frame being discarded.
         assert!(assembler.channel.is_none());
         assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(assembler.channel.is_none());
@@ -313,12 +296,10 @@ mod tests {
         let cfg = Arc::new(RollupConfig::default());
         let mut assembler = ChannelAssembler::new(cfg, mock);
 
-        // Send in the first frame. This should result in a channel being created.
         assert!(assembler.channel.is_none());
         assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(assembler.channel.is_some());
 
-        // Send in a malformed second frame. This should result in an error in `add_frame`.
         assembler.prev.data.push(Ok(frames[1].clone()).map(|mut f| {
             f.id = Default::default();
             f
@@ -326,11 +307,9 @@ mod tests {
         assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(assembler.channel.is_some());
 
-        // Send in the second frame again. This should return the channel bytes.
         assert!(assembler.next_data().await.unwrap().is_some());
         assert!(assembler.channel.is_none());
 
-        // Assert that the error log was emitted.
         let error_logs = trace_store.get_by_level(Level::ERROR);
         assert_eq!(error_logs.len(), 1);
         let error_str = "Failed to add frame to channel";
@@ -378,13 +357,10 @@ mod tests {
 
         let mut assembler = ChannelAssembler::new(cfg, mock);
 
-        // Send in the first frame. This should result in a channel being created.
         assert!(assembler.channel.is_none());
         assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(assembler.channel.is_some());
 
-        // Send in the second frame. This should result in the channel being dropped due to the size
-        // limit being reached.
         assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(assembler.channel.is_none());
 
@@ -413,13 +389,10 @@ mod tests {
 
         let mut assembler = ChannelAssembler::new(cfg, mock);
 
-        // Send in the first frame. This should result in a channel being created.
         assert!(assembler.channel.is_none());
         assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(assembler.channel.is_some());
 
-        // Send in the second frame. This should result in the channel being dropped due to the size
-        // limit being reached.
         assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(assembler.channel.is_none());
 

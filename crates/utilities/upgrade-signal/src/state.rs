@@ -907,7 +907,6 @@ mod tests {
         let chain_id = 9_100_091;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
-        // Node supports 1.1.0.
         let node_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
         let refresher = refresher(chain_id, node_version);
         let activation = 1_000_000;
@@ -1028,14 +1027,10 @@ mod tests {
         let unsupported =
             versioned_schedule(activation, UpgradeSignalDefaults::packed_protocol_version(1, 1, 1));
 
-        // Outside the lead window: not flagged.
         assert!(config.fail_closed_upgrade(&unsupported, activation - lead - 1, lead).is_none());
-        // Inside the lead window: flagged.
         assert!(config.fail_closed_upgrade(&unsupported, activation - lead + 1, lead).is_some());
-        // Overdue: flagged.
         assert!(config.fail_closed_upgrade(&unsupported, activation + 100, lead).is_some());
 
-        // A supported upgrade is never flagged, even when overdue.
         let supported =
             versioned_schedule(activation, UpgradeSignalDefaults::packed_protocol_version(1, 1, 0));
         assert!(config.fail_closed_upgrade(&supported, activation + 100, lead).is_none());

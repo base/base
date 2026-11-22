@@ -115,8 +115,6 @@ pub struct SequencerArgs {
 
 impl Default for SequencerArgs {
     fn default() -> Self {
-        // Construct default values using the clap parser.
-        // This works since none of the cli flags are required.
         Self::parse_from::<[_; 0], &str>([])
     }
 }

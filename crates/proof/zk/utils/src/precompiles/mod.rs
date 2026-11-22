@@ -224,8 +224,6 @@ mod tests {
         Context::base().with_db(EmptyDB::new())
     }
 
-    // ===== Precompile Provider Functional Tests =====
-
     /// Test that precompiles are looked up by `bytecode_address`, not `target_address`.
     /// This is critical for DELEGATECALL scenarios where these addresses differ.
     #[test]
@@ -240,10 +238,8 @@ mod tests {
         // Create inputs where bytecode_address != target_address (DELEGATECALL scenario)
         let call_inputs = create_call_inputs(sha256_addr, Bytes::from_static(b"test"), u64::MAX);
 
-        // Verify target_address is different from bytecode_address
         assert_ne!(call_inputs.bytecode_address, call_inputs.target_address);
 
-        // Should find the precompile via bytecode_address
         let result = precompiles.run(&mut ctx, &call_inputs).unwrap();
         assert!(result.is_some(), "Precompile should be found via bytecode_address");
 
@@ -310,8 +306,6 @@ mod tests {
         assert!(result.is_some());
     }
 
-    // ===== Cycle Tracker Name Tests =====
-
     #[test]
     fn test_precompile_tracker_name_bn_add() {
         assert_eq!(
@@ -366,8 +360,6 @@ mod tests {
         assert_eq!(get_precompile_tracker_name(&PrecompileId::Sha256), None);
         assert_eq!(get_precompile_tracker_name(&PrecompileId::Identity), None);
     }
-
-    // ===== Consistency Tests =====
 
     #[test]
     fn test_zkvm_precompiles_match_base_evm_precompiles() {

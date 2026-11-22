@@ -22,17 +22,13 @@ pub const GENESIS_GAS_LIMIT: u64 = 100_000_000;
 /// - Base EIP-1559 settings (elasticity=6, denominator=50)
 /// - Pre-funded test accounts from the `Account` enum
 pub fn build_test_genesis() -> Genesis {
-    // Base EIP-1559 base fee parameters.
     const EIP1559_ELASTICITY: u64 = 6;
     const EIP1559_DENOMINATOR: u64 = 50;
 
-    // Test account balance: 1 million ETH
     let test_account_balance: U256 = parse_ether("1000000").expect("valid ether amount");
 
-    // Build chain config with all upgrades enabled at genesis
     let config = ChainConfig {
         chain_id: DEVNET_CHAIN_ID,
-        // Block-based EVM upgrades (all at block 0)
         homestead_block: Some(0),
         eip150_block: Some(0),
         eip155_block: Some(0),
@@ -47,14 +43,11 @@ pub fn build_test_genesis() -> Genesis {
         arrow_glacier_block: Some(0),
         gray_glacier_block: Some(0),
         merge_netsplit_block: Some(0),
-        // Time-based upgrades
         shanghai_time: Some(0),
         cancun_time: Some(0),
         prague_time: Some(0),
-        // Post-merge settings
         terminal_total_difficulty: Some(U256::ZERO),
         terminal_total_difficulty_passed: true,
-        // Rollup upgrades and settings via extra_fields
         extra_fields: [
             ("blockTime", serde_json::json!(2)),
             ("bedrockBlock", serde_json::json!(0)),
@@ -80,7 +73,6 @@ pub fn build_test_genesis() -> Genesis {
         ..Default::default()
     };
 
-    // Pre-fund all test accounts
     let mut alloc: BTreeMap<Address, GenesisAccount> = Account::all()
         .into_iter()
         .map(|account| {

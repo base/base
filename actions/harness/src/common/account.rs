@@ -15,7 +15,6 @@ pub const TEST_ACCOUNT_KEY: B256 = B256::new([0x01u8; 32]);
 /// The L2 address derived from [`TEST_ACCOUNT_KEY`].
 ///
 /// Pre-computed so callers can reference it without constructing a signer.
-// Address derived from the secp256k1 public key of [0x01; 32].
 pub const TEST_ACCOUNT_ADDRESS: Address =
     alloy_primitives::address!("1a642f0E3c3aF545E7AcBD38b07251B3990914F1");
 

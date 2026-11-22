@@ -570,10 +570,6 @@ mod tests {
         }));
     }
 
-    // ==========================================================================
-    // Helper functions for creating test transactions
-    // ==========================================================================
-
     /// Creates a valid EIP-2718 encoded deposit transaction.
     fn create_deposit_tx() -> (Address, Bytes) {
         let sender = Address::repeat_byte(0x42);
@@ -623,10 +619,6 @@ mod tests {
     ) -> ValidatedTransaction<E> {
         ValidatedTransaction { sender, raw, metering: None, extensions }
     }
-
-    // ==========================================================================
-    // Wire extension tests
-    // ==========================================================================
 
     /// Extension payload that records whether `apply` ran, and can be told to
     /// fail so the handler's error mapping is observable.
@@ -778,15 +770,9 @@ mod tests {
 
     #[test]
     fn both_monomorphizations_build_rpc_modules() {
-        // The stock call-site shape must keep working untouched...
         let _stock = handler().into_rpc();
-        // ...and a custom extension payload must also produce a module.
         let _custom = extension_handler(true).into_rpc();
     }
-
-    // ==========================================================================
-    // Decode error tests
-    // ==========================================================================
 
     #[tokio::test]
     async fn decode_invalid_bytes_returns_invalid_params() {
@@ -835,7 +821,6 @@ mod tests {
     async fn decode_truncated_tx_returns_invalid_params() {
         let handler = handler();
 
-        // Create valid tx then truncate it
         let (sender, full_raw) = create_deposit_tx();
         let truncated = Bytes::from(full_raw[..full_raw.len() / 2].to_vec());
 
@@ -874,7 +859,6 @@ mod tests {
     async fn decode_single_byte_returns_invalid_params() {
         let handler = handler();
 
-        // Just the type byte, without a payload.
         let tx = validated_transaction(Address::ZERO, Bytes::from_static(&[0x02]), NoExtensions {});
 
         let result = handler.insert_validated_transaction(tx).await;

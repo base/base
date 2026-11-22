@@ -130,10 +130,8 @@ mod tests {
         let blob = BlobEncoder::encode(payload).unwrap();
         let data: &[u8; BYTES_PER_BLOB] = blob.as_ref();
 
-        // Byte 1 (VERSIONED_HASH_VERSION_KZG offset) contains the encoding version.
         assert_eq!(data[1], 0u8, "encoding version must be 0");
 
-        // Bytes 2..5 contain a 3-byte big-endian length.
         let length = u32::from_be_bytes([0, data[2], data[3], data[4]]) as usize;
         assert_eq!(length, payload.len());
     }

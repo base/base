@@ -334,9 +334,7 @@ mod tests {
     #[test]
     fn invalid_legacy_pooled_decoding_input_too_short() {
         let input_too_short = [
-            // this should fail because the payload length is longer than expected
             &hex!("d90b0280808bc5cd028083c5cdfd9e407c56565656")[..],
-            // these should fail decoding
             //
             // The `c1` at the beginning is a list header, and the rest is a valid legacy
             // transaction, BUT the payload length of the list header is 1, and the payload is
@@ -401,7 +399,6 @@ mod tests {
         assert!(res.is_ok());
         assert!(input_rlp.is_empty());
 
-        // we can also decode_enveloped
         let res = BasePooledTransaction::decode_2718(&mut &data[..]);
         assert!(res.is_ok());
     }

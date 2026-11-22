@@ -129,7 +129,6 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         None
     };
 
-    // Continuous mode is applied by LoadTestExecutor from LoadTestRunOptions.
     let mut load_config = test_config.to_load_config(rpc_chain_id)?;
     load_config.separate_setup = args.separate_setup;
     load_config.block_gas_limit = args.block_gas_limit.map(NonZeroU64::get);
@@ -373,10 +372,6 @@ fn present_load_test_summary(summary: &MetricsSummary) {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// rescue subcommand
-// ---------------------------------------------------------------------------
 
 #[derive(Args, Clone, Debug)]
 #[command(group(

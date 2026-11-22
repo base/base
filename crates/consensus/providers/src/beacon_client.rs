@@ -147,7 +147,6 @@ impl OnlineBeaconClient {
     }
 
     fn with_timeout(mut base: String, timeout: Duration) -> Self {
-        // If base ends with a slash, remove it
         if base.ends_with('/') {
             base.remove(base.len() - 1);
         }
@@ -206,9 +205,6 @@ impl OnlineBeaconClient {
             })
             .collect::<Result<HashMap<_, _>, BeaconClientError>>()?;
 
-        // Map the input (blob_hashes) into the output,
-        // finding the blob from the response
-        // whose hash matches the input:
         blob_hashes
             .iter()
             .map(|blob_hash| -> Result<BoxedBlob, BeaconClientError> {
@@ -232,7 +228,6 @@ impl BeaconClient for OnlineBeaconClient {
     async fn slot_interval(&self) -> Result<APIConfigResponse, Self::Error> {
         Metrics::beacon_requests("spec").increment(1);
 
-        // Use the l1 slot duration if provided
         if let Some(l1_slot_duration) = self.l1_slot_duration {
             return Ok(APIConfigResponse::new(l1_slot_duration));
         }
@@ -278,7 +273,6 @@ impl BeaconClient for OnlineBeaconClient {
     ) -> Result<Vec<BoxedBlob>, BeaconClientError> {
         Metrics::beacon_requests("blobs").increment(1);
 
-        // Try to get the blobs from the blobs endpoint.
         let result = base_metrics::time!(Metrics::request_duration("blobs"), {
             self.filtered_beacon_blobs(slot, blob_hashes).await
         });
@@ -349,7 +343,6 @@ mod tests {
         let result = client.filtered_beacon_blobs(slot, &requested_hashes).await.unwrap();
         blobs_mock.assert();
 
-        // Output must follow request order (hash_b first, then hash_a).
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], BoxedBlob { blob: Box::new(blob_b) }, "first result must be blob_b");
         assert_eq!(result[1], BoxedBlob { blob: Box::new(blob_a) }, "second result must be blob_a");

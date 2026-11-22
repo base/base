@@ -85,7 +85,6 @@ mod tests {
         let outcome = run_pair_granite(&input, 260_000, 0).unwrap();
         assert_eq!(outcome.bytes, expected);
 
-        // Invalid input length
         let bad_input = hex::decode(
             "\
           1111111111111111111111111111111111111111111111111111111111111111\
@@ -98,12 +97,10 @@ mod tests {
             matches!(run_pair_granite(&bad_input, 260_000, 0), Ok(o) if o.halt_reason().is_some())
         );
 
-        // Valid input length shorter than 112687 - halts are wrapped in Ok
         let at_gas_limit = vec![1u8; 586 * bn254::PAIR_ELEMENT_LEN];
         let result = run_pair_granite(&at_gas_limit, 260_000, 0);
         assert!(result.is_ok(), "halts are wrapped in Ok by call_eth_precompile");
 
-        // Input length longer than 112687
         let over_limit = vec![1u8; 587 * bn254::PAIR_ELEMENT_LEN];
         assert!(matches!(
             run_pair_granite(&over_limit, 260_000, 0),

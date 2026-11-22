@@ -22,7 +22,6 @@ use base_common_consensus::TxBaseConstants;
 pub struct TxBaseGasSchedule;
 
 impl TxBaseGasSchedule {
-    // ── EIP-2929 storage access ──────────────────────────────────────────────
     /// Cold `SLOAD` (first access to a slot in the transaction).
     pub const COLD_SLOAD: u64 = 2_100;
     /// Warm `SLOAD` (repeat access to an already-touched slot).
@@ -35,13 +34,11 @@ impl TxBaseGasSchedule {
     /// as EIP-2780 charges `tx.to`. Tracks the EVM's cold account access cost.
     pub const COLD_ACCOUNT_ACCESS: u64 = 2_600;
 
-    // ── EIP-2028 data availability ───────────────────────────────────────────
     /// Cost of a zero byte of serialized transaction data.
     pub const TX_DATA_ZERO_BYTE: u64 = 4;
     /// Cost of a non-zero byte of serialized transaction data.
     pub const TX_DATA_NONZERO_BYTE: u64 = 16;
 
-    // ── EIP-7623 calldata floor ──────────────────────────────────────────────
     /// `TOTAL_COST_FLOOR_PER_TOKEN`: the per-token gas an EIP-7623 transaction
     /// pays for data availability under the floor branch. A Base transaction has
     /// no single `data` field, so the floor is evaluated over the metered payload
@@ -53,7 +50,6 @@ impl TxBaseGasSchedule {
     /// `gas_primitives_match_evm_reference` drift tripwire.
     pub const TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
 
-    // ── Base transaction table values ────────────────────────────────────────
     /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`), equal to
     /// EIP-2780's `TX_BASE_COST`: one account access, one nonce write and one
     /// balance write, whichever accounts they land in. A sponsored transaction
@@ -99,7 +95,6 @@ impl TxBaseGasSchedule {
     /// Account-creation charge for a value-bearing call to an account that does
     /// not exist, charged at dispatch because existence is only known then.
     pub const NEW_ACCOUNT_COST: u64 = 25_000;
-    // ── Authentication (chain policy) ─────────────────────────────────────────
     /// secp256k1 (`K1_AUTHENTICATOR` sentinel / EOA path) execution gas — the
     /// `ECRECOVER` precompile cost.
     pub const AUTH_EXEC_K1: u64 = 3_000;

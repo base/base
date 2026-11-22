@@ -48,21 +48,15 @@ pub trait TokenAccounting {
     /// Returns whether marker bytecode is deployed at this token's address.
     fn is_initialized(&self) -> Result<bool>;
 
-    // --- Balances ---
-
     /// Returns the token balance of `account`.
     fn balance_of(&self, account: Address) -> Result<U256>;
     /// Overwrites the token balance of `account`.
     fn set_balance(&mut self, account: Address, balance: U256) -> Result<()>;
 
-    // --- Allowances ---
-
     /// Returns the allowance granted by `owner` to `spender`.
     fn allowance(&self, owner: Address, spender: Address) -> Result<U256>;
     /// Overwrites the allowance granted by `owner` to `spender`.
     fn set_allowance(&mut self, owner: Address, spender: Address, amount: U256) -> Result<()>;
-
-    // --- Supply ---
 
     /// Returns the total token supply currently in circulation.
     fn total_supply(&self) -> Result<U256>;
@@ -72,8 +66,6 @@ pub trait TokenAccounting {
     fn supply_cap(&self) -> Result<U256>;
     /// Overwrites the supply cap.
     fn set_supply_cap(&mut self, cap: U256) -> Result<()>;
-
-    // --- Metadata ---
 
     /// Returns the token name.
     fn name(&self) -> Result<String>;
@@ -86,28 +78,20 @@ pub trait TokenAccounting {
     /// Returns the number of decimal places.
     fn decimals(&self) -> Result<u8>;
 
-    // --- Pause ---
-
     /// Returns the current paused-vector bitmask.
     fn paused(&self) -> Result<U256>;
     /// Overwrites the paused-vector bitmask.
     fn set_paused(&mut self, vectors: U256) -> Result<()>;
-
-    // --- Permit nonces ---
 
     /// Returns the current EIP-2612 permit nonce for `owner`.
     fn nonce(&self, owner: Address) -> Result<U256>;
     /// Increments the EIP-2612 permit nonce for `owner` by one.
     fn increment_nonce(&mut self, owner: Address) -> Result<()>;
 
-    // --- Contract URI ---
-
     /// Returns the off-chain metadata URI for this token (ERC-7572).
     fn contract_uri(&self) -> Result<String>;
     /// Overwrites the contract URI.
     fn set_contract_uri(&mut self, uri: String) -> Result<()>;
-
-    // --- Roles ---
 
     /// Returns whether `account` has `role`.
     fn has_role(&self, role: B256, account: Address) -> Result<bool>;
@@ -122,8 +106,6 @@ pub trait TokenAccounting {
     /// Overwrites the admin role for `role`.
     fn set_role_admin(&mut self, role: B256, admin_role: B256) -> Result<()>;
 
-    // --- Policies ---
-
     /// Returns the policy ID assigned to `policy_scope`.
     fn policy_id(&self, policy_scope: B256) -> Result<u64>;
     /// Overwrites the policy ID assigned to `policy_scope`.
@@ -137,12 +119,8 @@ pub trait TokenAccounting {
     /// behaviorally identical.
     fn transfer_policy_ids(&self) -> Result<TransferPolicyIds>;
 
-    // --- Event emission ---
-
     /// Publishes a pre-encoded EVM event log from this token's address.
     fn emit_event(&mut self, log: LogData) -> Result<()>;
-
-    // --- Gas metering ---
 
     /// Computes `keccak256(data)` and charges the EVM keccak schedule
     /// (`KECCAK256 + KECCAK256WORD * ceil(len / 32)`) against remaining gas.

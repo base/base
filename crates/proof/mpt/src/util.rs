@@ -14,7 +14,6 @@ where
     let mut value_buffer = Vec::new();
     let items_len = items.len();
 
-    // Store preimages for all intermediates
     let path_nibbles = (0..items_len)
         .map(|i| {
             let index = adjust_index_for_rlp(i, items_len);

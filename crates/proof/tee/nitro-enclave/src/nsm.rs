@@ -9,10 +9,6 @@ use tracing::debug;
 
 use crate::error::{NsmError, Result};
 
-// ---------------------------------------------------------------------------
-// NsmSession
-// ---------------------------------------------------------------------------
-
 /// A session with the Nitro Secure Module.
 ///
 /// On Linux, this wraps an NSM file descriptor.
@@ -153,10 +149,6 @@ impl Drop for NsmSession {
         nsm_exit(self.fd);
     }
 }
-
-// ---------------------------------------------------------------------------
-// NsmRng
-// ---------------------------------------------------------------------------
 
 /// A cryptographically secure random number generator backed by NSM.
 ///

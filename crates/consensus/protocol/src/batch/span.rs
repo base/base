@@ -324,37 +324,28 @@ impl SpanBatch {
         singular_batch: SingleBatch,
         seq_num: u64,
     ) -> Result<(), SpanBatchError> {
-        // If the new element is not ordered with respect to the last element, panic.
         if !self.batches.is_empty() && self.peek(0).timestamp > singular_batch.timestamp {
             panic!("Batch is not ordered");
         }
 
         let SingleBatch { epoch_hash, parent_hash, .. } = singular_batch;
 
-        // Always append the new batch and set the L1 origin check.
         self.batches.push(singular_batch.into());
-        // Always update the L1 origin check.
         self.l1_origin_check = epoch_hash[..20].try_into().expect("Sub-slice cannot fail");
 
         let epoch_bit = if self.batches.len() == 1 {
-            // If there is only one batch, initialize the parent check and set the epoch bit based
-            // on the sequence number.
             self.parent_check = parent_hash[..20].try_into().expect("Sub-slice cannot fail");
             seq_num == 0
         } else {
-            // If there is more than one batch, set the epoch bit based on the last two batches.
             self.peek(1).epoch_num < self.peek(0).epoch_num
         };
 
-        // Set the respective bit in the origin bits.
         self.origin_bits.set_bit(self.batches.len() - 1, epoch_bit);
 
         let new_txs = self.peek(0).transactions.clone();
 
-        // Update the block tx counts cache with the latest batch's transaction count.
         self.block_tx_counts.push(new_txs.len() as u64);
 
-        // Add the new transactions to the transaction cache.
         self.txs.add_txs(new_txs, self.chain_id)
     }
 
@@ -395,7 +386,6 @@ impl SpanBatch {
                 return BatchValidity::Drop(BatchDropReason::L1OriginBeforeSafeHead);
             }
 
-            // Find the L1 origin for the batch.
             let Some((offset, l1_origin)) =
                 l1_blocks[origin_index..].iter().enumerate().find(|(_, b)| batch_epoch == b.number)
             else {
@@ -426,7 +416,6 @@ impl SpanBatch {
                 return BatchValidity::Drop(BatchDropReason::TimestampBeforeL1Origin);
             }
 
-            // Check if we ran out of sequencer time drift
             let max_drift = cfg.max_sequencer_drift(l1_origin.timestamp);
             if batch_timestamp > l1_origin.timestamp + max_drift {
                 if batch.transactions.is_empty() {
@@ -444,7 +433,6 @@ impl SpanBatch {
                             return BatchValidity::Undecided;
                         }
                         if batch_timestamp >= l1_blocks[origin_index + 1].timestamp {
-                            // check if the next L1 origin could have been adopted
                             warn!(
                                 target: "batch_span",
                                 "batch exceeded sequencer time drift without adopting next origin, and next L1 origin would have been valid"
@@ -471,7 +459,6 @@ impl SpanBatch {
                 }
             }
 
-            // Check that the transactions are not empty and do not contain any deposits.
             for (i, tx) in batch.transactions.iter().enumerate() {
                 if tx.is_empty() {
                     warn!(
@@ -490,7 +477,6 @@ impl SpanBatch {
                     return BatchValidity::Drop(BatchDropReason::DepositTransaction);
                 }
 
-                // If isthmus is not active yet and the transaction is a 7702, drop the batch.
                 if !cfg.is_feature_active_cascading(BaseFeature::Eip7702, batch.timestamp)
                     && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
                 {
@@ -498,8 +484,6 @@ impl SpanBatch {
                     return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
                 }
 
-                // If Everest is not active yet and the transaction is a Base transaction, drop the
-                // batch.
                 if !cfg.is_feature_active_cascading(BaseFeature::TxBase, batch.timestamp)
                     && tx.as_ref().first() == Some(&(OpTxType::Base as u8))
                 {
@@ -509,7 +493,6 @@ impl SpanBatch {
             }
         }
 
-        // Check overlapped blocks
         let parent_num = parent_block.block_info.number;
         let next_timestamp =
             cfg.l2_block_timestamp(l2_safe_head.block_info.number.saturating_add(1));
@@ -650,7 +633,6 @@ impl SpanBatch {
             return (BatchValidity::Future, None);
         }
 
-        // Drop the batch if it has no new blocks after the safe head.
         if self.final_timestamp() < next_timestamp {
             warn!(target: "batch_span", "span batch has no new blocks after safe head");
             return if cfg.is_feature_active_cascading(
@@ -663,7 +645,6 @@ impl SpanBatch {
             };
         }
 
-        // Find the parent block of the span batch.
         // If the span batch does not overlap the current safe chain, parent block should be the L2
         // safe head.
         let mut parent_num = l2_safe_head.block_info.number;
@@ -687,7 +668,6 @@ impl SpanBatch {
                 Ok(block) => block,
                 Err(e) => {
                     warn!(target: "batch_span", block_number = parent_num, error = %e, "Failed to fetch L2 block");
-                    // Unable to validate the batch for now. Retry later.
                     return (BatchValidity::Undecided, None);
                 }
             };
@@ -704,13 +684,11 @@ impl SpanBatch {
             return (BatchValidity::Drop(BatchDropReason::ParentHashMismatch), None);
         }
 
-        // Filter out batches that were included too late.
         if starting_epoch_num + cfg.seq_window_size < inclusion_block.number {
             warn!(target: "batch_span", "batch was included too late, sequence window expired");
             return (BatchValidity::Drop(BatchDropReason::IncludedTooLate), None);
         }
 
-        // Check the L1 origin of the batch
         if starting_epoch_num > parent_block.l1_origin.number + 1 {
             warn!(
                 target: "batch_span",
@@ -721,7 +699,6 @@ impl SpanBatch {
             return (BatchValidity::Drop(BatchDropReason::EpochTooFarInFuture), None);
         }
 
-        // Verify the l1 origin hash for each l1 block.
         // SAFETY: `Self::batches` is not empty, so the last element is guaranteed to exist.
         let end_epoch_num = self.batches.last().unwrap().epoch_num;
         let mut origin_checked = false;
@@ -841,7 +818,6 @@ mod tests {
         assert_eq!(batch.block_tx_counts, vec![0]);
         assert_eq!(batch.txs.tx_data.len(), 0);
 
-        // Add another empty single batch.
         let singular_batch = SingleBatch {
             epoch_num: 11,
             epoch_hash: FixedBytes::from([17u8; 32]),

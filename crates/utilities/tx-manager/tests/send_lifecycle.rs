@@ -85,8 +85,6 @@ async fn assert_send_error_resets_nonce(config: TxManagerConfig) {
     assert_eq!(guard.nonce(), 0, "nonce manager should be reset after a pre-publish send failure",);
 }
 
-// ── send() ────────────────────────────────────────────────────────────
-
 /// Happy-path test: send a simple value transfer through the full
 /// `send_tx` event loop and verify the returned receipt.
 #[tokio::test]
@@ -153,8 +151,6 @@ async fn send_resets_nonce_manager_on_pre_publish_failure(#[case] tx_send_timeou
     assert_send_error_resets_nonce(config).await;
 }
 
-// ── publish_tx() ──────────────────────────────────────────────────────
-
 /// `publish_tx` broadcasts a valid raw transaction, returns a non-zero
 /// hash, and records a successful publish on the `SendState`.
 #[tokio::test]
@@ -165,8 +161,6 @@ async fn publish_tx_success_returns_hash_and_records_publish() {
     assert_ne!(tx_hash, B256::ZERO, "published tx hash should be non-zero");
     assert!(send_state.has_published(), "should record a successful publish");
 }
-
-// ── query_receipt() ───────────────────────────────────────────────────
 
 /// `query_receipt` returns `None` for a transaction hash that does not
 /// exist on chain, and records `tx_not_mined` on the `SendState`.
@@ -251,8 +245,6 @@ async fn query_receipt_returns_none_when_not_enough_confirmations() {
     );
 }
 
-// ── wait_mined() ──────────────────────────────────────────────────────
-
 /// `wait_mined` returns a confirmed receipt for a mined transaction.
 #[tokio::test]
 async fn wait_mined_returns_confirmed_receipt() {
@@ -292,8 +284,6 @@ async fn wait_mined_returns_none_on_shutdown() {
 
     assert!(receipt.is_none(), "should return None when closed");
 }
-
-// ── wait_for_tx() ─────────────────────────────────────────────────────
 
 /// `wait_for_tx` delivers a receipt through the mpsc channel.
 #[tokio::test]
@@ -369,8 +359,6 @@ async fn wait_for_tx_does_not_panic_on_dropped_receiver() {
         .expect("task should not panic");
 }
 
-// ── query_receipt() error paths ───────────────────────────────────────
-
 /// `query_receipt` returns `Err` when the provider is unreachable.
 #[tokio::test]
 async fn query_receipt_returns_error_on_unreachable_provider() {
@@ -391,8 +379,6 @@ async fn query_receipt_returns_error_on_unreachable_provider() {
 
     assert!(result.is_err(), "query_receipt should fail when provider is unreachable");
 }
-
-// ── refused fee bumps ─────────────────────────────────────────────────
 
 /// A fee bump refused because the transaction is already mined does not fail the send.
 #[tokio::test]
@@ -446,7 +432,6 @@ async fn bumps_refused_for_a_foreign_transaction_fail_the_send() {
     let handle = manager.send_async(simple_tx_candidate()).await;
     wait_for_publication(manager.provider(), sender).await;
 
-    // Replace the transaction with a better-paid one that Anvil signs, then mine it.
     let foreign = TransactionRequest::default()
         .with_from(sender)
         .with_to(TEST_RECIPIENT)
@@ -474,8 +459,6 @@ async fn bumps_refused_for_a_foreign_transaction_fail_the_send() {
     let mined = manager.provider().get_transaction_receipt(foreign_hash).await.unwrap();
     assert!(mined.is_some(), "the foreign transaction took the nonce");
 }
-
-// ── send_async() nonce ordering ───────────────────────────────────────
 
 /// Sequential `send_async()` calls receive monotonically increasing nonces,
 /// regardless of tokio task scheduling order.

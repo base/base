@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
 alloy-eips.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
@@ -26,12 +25,10 @@ alloy-contract = { workspace = true, optional = true }
 alloy-sol-types = { workspace = true, features = ["std"], optional = true }
 alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
 
-# base-alloy
 base-common-evm.workspace = true
 base-common-consensus.workspace = true
 base-common-rpc-types.workspace = true
 
-# misc
 eyre.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 

@@ -20,10 +20,6 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 /// Health-check HTTP server.
 ///
 /// Exposes `GET /healthz` (liveness) and `GET /readyz` (readiness) endpoints
@@ -136,17 +132,14 @@ mod tests {
         let ready = Arc::new(AtomicBool::new(false));
         let (addr, cancel) = start_test_server(Arc::clone(&ready)).await;
 
-        // Initially not ready
         let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
         assert_eq!(resp.status(), 503);
 
-        // Mark as ready
         ready.store(true, Ordering::SeqCst);
 
         let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
         assert_eq!(resp.status(), 200);
 
-        // Mark as not ready (shutdown)
         ready.store(false, Ordering::SeqCst);
 
         let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();

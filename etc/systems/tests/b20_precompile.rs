@@ -512,7 +512,6 @@ async fn test_b20_supply_cap() -> Result<()> {
 
     assert_eq!(b20.supply_cap(token).await?, U256::from(INITIAL_SUPPLY_CAP));
 
-    // Cap below current total supply reverts.
     assert!(
         !b20.try_send_call(
             token,
@@ -523,11 +522,9 @@ async fn test_b20_supply_cap() -> Result<()> {
         "updateSupplyCap below total supply should revert",
     );
 
-    // Tighten cap to exactly the current supply.
     b20.update_supply_cap(token, U256::from(INITIAL_SUPPLY)).await?;
     assert_eq!(b20.supply_cap(token).await?, U256::from(INITIAL_SUPPLY));
 
-    // Minting past the cap reverts.
     assert!(
         !b20.try_send_call(
             token,
@@ -598,7 +595,6 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
     let token = b20.create_token(B20Variant::Asset, params, salt).await?;
     b20.wait_for_token_code(token, beryl::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
-    // Transfer succeeds before pause.
     b20.transfer(token, recipient, U256::from(PAUSE_TRANSFER_AMOUNT)).await?;
     assert_eq!(b20.balance_of(token, recipient).await?, U256::from(PAUSE_TRANSFER_AMOUNT));
 
@@ -618,7 +614,6 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
     b20.pause(token, U256::from(1)).await?;
     assert_ne!(b20.paused(token).await?, U256::ZERO, "token should be paused");
 
-    // Transfer reverts while paused.
     assert!(
         !b20.try_send_call(
             token,

@@ -188,7 +188,6 @@ impl Tracker {
                 let time_in_mempool = Instant::now().duration_since(mempool_time);
 
                 if self.is_overflowed(&tx_hash, &event_log) {
-                    // The tx is already removed from the cache from `pop`.
                     return;
                 }
 
@@ -217,7 +216,6 @@ impl Tracker {
             }
         }
 
-        // Update the new pool the transaction is in.
         self.tx_states.put(tx_hash, pool.clone());
         debug!(target: "tracex", tx_hash = ?tx_hash, state = ?pool, "Transaction moved pools");
     }
@@ -569,22 +567,17 @@ mod tests {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
-        // Start with pending transaction
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
         tracker.transaction_moved(tx_hash, Pool::Pending);
 
-        // Verify pending_time is set
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
         let pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
 
-        // Move to queued
         tracker.transaction_moved(tx_hash, Pool::Queued);
 
-        // Verify event was logged and pending_time is preserved
         let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
         assert_eq!(event_log.events.len(), 2);
         assert_eq!(event_log.events[1].1, TxEvent::PendingToQueued);
-        // pending_time should be preserved (not reset)
         assert_eq!(event_log.pending_time, pending_time);
     }
 
@@ -593,14 +586,11 @@ mod tests {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
-        // Insert and move to pending
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
         tracker.transaction_moved(tx_hash, Pool::Pending);
 
-        // Try moving to same pool again
         tracker.transaction_moved(tx_hash, Pool::Pending);
 
-        // Should still only have 1 event
         let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
         assert_eq!(event_log.events.len(), 1);
     }
@@ -610,17 +600,13 @@ mod tests {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
-        // Create a pending transaction (which sets pending_time)
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
         tracker.transaction_moved(tx_hash, Pool::Pending);
 
-        // Verify pending_time is set
         assert!(tracker.txs.peek(&tx_hash).unwrap().pending_time.is_some());
 
-        // Complete the transaction with block inclusion
         tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion, Instant::now());
 
-        // Transaction should be removed from txs cache
         assert!(tracker.txs.get(&tx_hash).is_none());
     }
 
@@ -629,13 +615,10 @@ mod tests {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
-        // Insert transaction
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
 
-        // Drop the transaction
         tracker.transaction_completed(tx_hash, TxEvent::Dropped, Instant::now());
 
-        // Transaction should be removed from cache
         assert!(tracker.txs.get(&tx_hash).is_none());
     }
 
@@ -645,17 +628,14 @@ mod tests {
         let tx_hash = TxHash::random();
         let replacement_hash = TxHash::random();
 
-        // Insert original transaction
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
         let original_pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
         assert_eq!(tracker.txs.len(), 1);
 
         std::thread::sleep(Duration::from_millis(1));
 
-        // Replace transaction
         tracker.transaction_replaced(tx_hash, replacement_hash);
 
-        // Original should be gone, replacement should exist
         assert!(tracker.txs.get(&tx_hash).is_none());
         assert!(tracker.txs.get(&replacement_hash).is_some());
 
@@ -664,7 +644,6 @@ mod tests {
         assert_eq!(event_log.events[0].1, TxEvent::Pending);
         assert_eq!(event_log.events[1].1, TxEvent::Replaced);
 
-        // pending_time should be reset, not inherited from original
         assert!(event_log.pending_time.unwrap() > original_pending_time.unwrap());
     }
 
@@ -674,10 +653,8 @@ mod tests {
         let tx_hash = TxHash::random();
         let replacement_hash = TxHash::random();
 
-        // Try to replace a transaction that doesn't exist
         tracker.transaction_replaced(tx_hash, replacement_hash);
 
-        // Nothing should happen
         assert_eq!(tracker.txs.len(), 0);
     }
 
@@ -686,11 +663,9 @@ mod tests {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
-        // Create an event log - starts with 1 event (Pending)
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
         tracker.transaction_moved(tx_hash, Pool::Pending);
 
-        // Add events until we hit the limit (limit is 10, we have 1 event already)
         for _ in 0..9 {
             if let Some(mut event_log) = tracker.txs.pop(&tx_hash) {
                 event_log.push(Local::now(), TxEvent::PendingToQueued);
@@ -698,13 +673,10 @@ mod tests {
             }
         }
 
-        // Verify we're at the limit
         assert_eq!(tracker.txs.get(&tx_hash).unwrap().events.len(), 10);
 
-        // Try to move again - should trigger overflow check
         tracker.transaction_moved(tx_hash, Pool::Queued);
 
-        // Transaction should be removed due to overflow
         assert!(tracker.txs.get(&tx_hash).is_none());
     }
 
@@ -713,17 +685,14 @@ mod tests {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
-        // Start with queued
         tracker.transaction_inserted(tx_hash, TxEvent::Queued);
         tracker.transaction_moved(tx_hash, Pool::Queued);
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_none());
 
-        // Move to pending (should set pending_time)
         tracker.transaction_moved(tx_hash, Pool::Pending);
         let first_pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
         assert!(first_pending_time.is_some());
 
-        // Move back to queued
         tracker.transaction_moved(tx_hash, Pool::Queued);
 
         std::thread::sleep(Duration::from_millis(1));
@@ -739,13 +708,11 @@ mod tests {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
-        // 1. Transaction enters as queued
         tracker.transaction_inserted(tx_hash, TxEvent::Queued);
         tracker.transaction_moved(tx_hash, Pool::Queued);
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_none());
 
-        // 2. Transaction moves to pending
         tracker.transaction_moved(tx_hash, Pool::Pending);
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
 
@@ -754,7 +721,6 @@ mod tests {
         assert_eq!(event_log.events[0].1, TxEvent::Queued);
         assert_eq!(event_log.events[1].1, TxEvent::QueuedToPending);
 
-        // 3. Transaction included in block
         tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion, Instant::now());
         assert!(tracker.txs.get(&tx_hash).is_none());
     }
@@ -764,13 +730,11 @@ mod tests {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
-        // 1. Transaction enters as pending
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
         tracker.transaction_moved(tx_hash, Pool::Pending);
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
 
-        // 2. Transaction included in block
         tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion, Instant::now());
         assert!(tracker.txs.get(&tx_hash).is_none());
     }
@@ -781,20 +745,16 @@ mod tests {
         let tx_hash1 = TxHash::random();
         let tx_hash2 = TxHash::random();
 
-        // Insert two different transactions
         tracker.transaction_inserted(tx_hash1, TxEvent::Pending);
         tracker.transaction_inserted(tx_hash2, TxEvent::Queued);
 
         assert_eq!(tracker.txs.len(), 2);
 
-        // Verify they're tracked independently
         assert!(tracker.txs.get(&tx_hash1).unwrap().pending_time.is_some());
         assert!(tracker.txs.get(&tx_hash2).unwrap().pending_time.is_none());
 
-        // Complete one
         tracker.transaction_completed(tx_hash1, TxEvent::BlockInclusion, Instant::now());
 
-        // Only one should remain
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash2).is_some());
     }
@@ -843,7 +803,6 @@ mod tests {
         let summary = tracker.nonce_summaries.get(&slot).unwrap();
         assert_eq!(summary.replacement_count, 1);
 
-        // Original hash slot mapping should be gone (overwritten by replacement)
         assert_eq!(*tracker.tx_nonce_slots.get(&replacement_hash).unwrap(), slot);
 
         tracker.nonce_completed(

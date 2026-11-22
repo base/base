@@ -1,6 +1,5 @@
 use core::ops::Index;
 
-// Production imports for upgrade implementations
 use EthereumHardfork::{
     Amsterdam, ArrowGlacier, Berlin, Bogota, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium,
     Constantinople, Dao, Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Paris,
@@ -277,25 +276,21 @@ mod tests {
 
     #[test]
     fn is_azul_active_at_timestamp() {
-        // Azul is scheduled on mainnet at 1779991200
         let base_mainnet_forks = ChainUpgrades::mainnet();
         assert!(!base_mainnet_forks.is_azul_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_azul_active_at_timestamp(1_779_991_199));
         assert!(base_mainnet_forks.is_azul_active_at_timestamp(1_779_991_200));
         assert!(base_mainnet_forks.is_azul_active_at_timestamp(u64::MAX));
 
-        // Azul is scheduled on sepolia at 1776708000
         let base_sepolia_forks = ChainUpgrades::sepolia();
         assert!(!base_sepolia_forks.is_azul_active_at_timestamp(0));
         assert!(!base_sepolia_forks.is_azul_active_at_timestamp(1_776_707_999));
         assert!(base_sepolia_forks.is_azul_active_at_timestamp(1_776_708_000));
         assert!(base_sepolia_forks.is_azul_active_at_timestamp(u64::MAX));
 
-        // Azul is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
         let devnet_forks = ChainUpgrades::devnet();
         assert!(devnet_forks.is_azul_active_at_timestamp(0));
 
-        // Azul is scheduled on zeronet at 1782348888
         let zeronet_forks = ChainUpgrades::zeronet();
         assert!(!zeronet_forks.is_azul_active_at_timestamp(0));
         assert!(!zeronet_forks.is_azul_active_at_timestamp(1_782_348_887));
@@ -351,7 +346,6 @@ mod tests {
 
     #[test]
     fn is_denim_active_at_timestamp() {
-        // Denim is unscheduled on devnet.
         let base_mainnet_forks = ChainUpgrades::mainnet();
         assert!(!base_mainnet_forks.is_denim_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_denim_active_at_timestamp(1_793_901_599));

@@ -100,9 +100,6 @@ impl AttributesMatch {
     /// We start by checking that there are the same number of transactions in both the attribute
     /// payload and the block. Then we compare their contents
     fn check_transactions(attributes_txs: &[Bytes], block: &Block<Transaction>) -> Self {
-        // Before checking the number of transactions, we have to make sure that the block
-        // has the right transactions format. We need to have access to the
-        // full transactions to be able to compare their contents.
         let block_txs = match block.transactions {
             BlockTransactions::Hashes(_) | BlockTransactions::Full(_)
                 if attributes_txs.is_empty() && block.transactions.is_empty() =>
@@ -116,7 +113,6 @@ impl AttributesMatch {
                 return Self::Match;
             }
             BlockTransactions::Uncle => {
-                // This can never be uncle transactions
                 error!(
                     "Invalid format for the block transactions. The `Uncle` transaction format is not relevant in that context and should not get used here. This is a bug"
                 );
@@ -124,7 +120,6 @@ impl AttributesMatch {
                 return AttributesMismatch::MalformedBlockTransactions.into();
             }
             BlockTransactions::Hashes(_) => {
-                // We can't have hash transactions with non empty blocks
                 error!(
                     "Invalid format for the block transactions. The `Hash` transaction format is not relevant in that context and should not get used here. This is a bug."
                 );
@@ -141,7 +136,6 @@ impl AttributesMatch {
             return AttributesMismatch::TransactionLen(attributes_txs_len, block_txs_len).into();
         }
 
-        // Then we need to check that the content of the encoded transactions match
         // Note that it is safe to zip both iterators because we checked their length
         // beforehand.
         for (attr_tx_bytes, block_tx) in attributes_txs.iter().zip(block_txs) {
@@ -195,7 +189,6 @@ impl AttributesMatch {
                     return AttributesMismatch::MissingAttributesEIP1559.into();
                 }
 
-                // If the attributes are not specified, that means we can just early return.
                 return Self::Match;
             }
             Some((0, e)) if e != 0 => {
@@ -312,11 +305,9 @@ impl AttributesMatch {
             .into();
         }
 
-        // Let's extract the list of attribute transactions
         let default_vec = vec![];
         let attributes_txs = attributes.attributes().transactions.as_ref().unwrap_or(&default_vec);
 
-        // Check transactions
         if let mismatch @ Self::Mismatch(_) = Self::check_transactions(attributes_txs, block) {
             return mismatch;
         }
@@ -353,7 +344,6 @@ impl AttributesMatch {
             .into();
         }
 
-        // Check the EIP-1559 parameters in a separate helper method
         if let m @ Self::Mismatch(_) = Self::check_eip1559(config, attributes, block) {
             return m;
         }
@@ -565,7 +555,6 @@ mod tests {
     }
 
     fn generate_txs(num_txs: usize) -> Vec<Transaction> {
-        // Simulate some random data
         let mut data = vec![0; 1024];
         let mut rng = rand::rng();
 
@@ -573,10 +562,8 @@ mod tests {
             .map(|_| {
                 rand::Rng::fill(&mut rng, &mut data[..]);
 
-                // Create unstructured data with the random bytes
                 let u = Unstructured::new(&data);
 
-                // Generate a random instance of MyStruct
                 Transaction::arbitrary_take_rest(u).expect("Impossible to generate arbitrary tx")
             })
             .collect()
@@ -733,8 +720,6 @@ mod tests {
         assert!(check.is_mismatch());
     }
 
-    // Test that the check pass if the transactions obtained from the attributes have the format
-    // `Some(vec![])`, ie an empty vector inside a `Some` option.
     #[test]
     fn test_attributes_and_block_transactions_empty() {
         let cfg = rollup_config!(ChainConfig::MAINNET);
@@ -758,8 +743,6 @@ mod tests {
         assert_eq!(check, AttributesMatch::Match);
     }
 
-    // Edge case: if the payload attributes has the format `Some(vec![])`, we can still
-    // use the hash format.
     #[test]
     fn test_attributes_and_block_transactions_empty_hash_format() {
         let cfg = rollup_config!(ChainConfig::MAINNET);
@@ -774,7 +757,6 @@ mod tests {
         assert_eq!(check, AttributesMatch::Match);
     }
 
-    // Test that the check fails if the block format is incorrect and the attributes are empty
     #[test]
     fn test_attributes_empty_and_block_uncle() {
         let cfg = rollup_config!(ChainConfig::MAINNET);

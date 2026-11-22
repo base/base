@@ -18,10 +18,6 @@ use crate::{
     tui::{AppFrame, ConsensusBadge, Toast, restore_terminal, setup_terminal},
 };
 
-// ---------------------------------------------------------------------------
-// Network picker
-// ---------------------------------------------------------------------------
-
 /// Overlay state for the network-switching picker.
 #[derive(Debug)]
 struct NetworkPicker {
@@ -34,10 +30,6 @@ impl NetworkPicker {
         Self { options: MonitoringConfig::available_names(), cursor: 0 }
     }
 }
-
-// ---------------------------------------------------------------------------
-// App
-// ---------------------------------------------------------------------------
 
 /// Main TUI application that manages views, routing, and the event loop.
 pub struct App {
@@ -126,7 +118,6 @@ impl App {
             }
             self.resources.poll_sys_config();
 
-            // Check for a completed async network switch.
             self.poll_pending_network(&mut current_view, view_factory);
 
             let action = current_view.tick(&mut self.resources);
@@ -149,7 +140,6 @@ impl App {
                     ),
                     current_view.keybindings(),
                 );
-                // Network picker overlays the entire frame, above the view.
                 if let Some(ref picker) = self.network_picker {
                     render_network_picker(frame, frame.area(), picker, self.resources.chain_name());
                 }
@@ -222,10 +212,6 @@ impl App {
         Ok(())
     }
 
-    // -----------------------------------------------------------------------
-    // Network switching
-    // -----------------------------------------------------------------------
-
     fn handle_network_picker_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -242,7 +228,6 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                // Extract selection before dropping the picker borrow.
                 let selected = self
                     .network_picker
                     .as_ref()
@@ -321,7 +306,6 @@ impl App {
         // Replacing resources aborts the previous network's background tasks.
         self.resources = Resources::new(new_config.clone());
         start_background_services(&new_config, &mut self.resources, self.conductor_rpc.clone());
-        // Discard all cached view state so views re-initialise for the new network.
         self.view_cache.clear();
         self.router = Router::new(ViewId::Home);
         *current_view = view_factory(ViewId::Home);
@@ -361,10 +345,6 @@ impl App {
             .push(Toast::info(format!("Using {label} EL RPC: {}", AppFrame::endpoint_label(&rpc))));
     }
 
-    // -----------------------------------------------------------------------
-    // View routing
-    // -----------------------------------------------------------------------
-
     fn handle_action<F>(
         &mut self,
         action: Action,
@@ -390,10 +370,6 @@ impl App {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Network picker renderer
-// ---------------------------------------------------------------------------
 
 fn render_network_picker(
     frame: &mut Frame<'_>,
@@ -423,7 +399,6 @@ fn render_network_picker(
     let dim_style = Style::default().fg(Color::DarkGray);
     let hint_style = Style::default().fg(Color::DarkGray);
 
-    // Compute scroll so the cursor row is always visible.
     let visible_rows = (inner.height as usize).saturating_sub(3); // blank + blank + hint
     let scroll = if picker.cursor >= visible_rows { picker.cursor - visible_rows + 1 } else { 0 };
 

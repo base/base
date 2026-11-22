@@ -289,7 +289,6 @@ mod tx_serde {
                 deposit_nonce,
             } = value;
 
-            // if inner transaction is a deposit, then don't serialize `from` directly
             let from = if inner.as_deposit().is_some() { None } else { Some(inner.signer()) };
 
             // The Base transaction consensus serde omits its cached hash so deserialization
@@ -297,7 +296,6 @@ mod tx_serde {
             // other types.
             let hash = inner.as_base_tx().map(|tx| *tx.hash());
 
-            // if inner transaction has its own `gasPrice` don't serialize it in this struct.
             let effective_gas_price = effective_gas_price.filter(|_| inner.gas_price().is_none());
 
             Self {
@@ -328,8 +326,6 @@ mod tx_serde {
                 other,
             } = value;
 
-            // Try to get `from` field from inner envelope or from `MaybeFrom`, otherwise return
-            // error
             let from = if let Some(from) = other.from {
                 from
             } else {

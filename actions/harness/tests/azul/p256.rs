@@ -33,7 +33,6 @@ async fn azul_p256_verify_gas_cost_increase() {
     let mut env = AzulTestEnv::new();
     let contract_addr = env.first_contract_address();
 
-    // ── Block 1 (ts=2, pre-fork): deploy P256VERIFY probe contract ───
     let deploy_tx =
         env.create_tx(TxKind::Create, Bytes::from_static(&P256_INIT_CODE), U256::ZERO, 100_000);
     let block1 = env.sequencer.build_next_block_with_transactions(vec![deploy_tx]).await;
@@ -44,7 +43,6 @@ async fn azul_p256_verify_gas_cost_increase() {
     // still charges its base gas fee, which is what we measure.
     let p256_input = Bytes::new();
 
-    // ── Block 2 (ts=4, pre-fork): call P256VERIFY ────────────────────
     let call_pre =
         env.create_tx(TxKind::Call(contract_addr), p256_input.clone(), U256::ZERO, 100_000);
     let block2 = env.sequencer.build_next_block_with_transactions(vec![call_pre]).await;
@@ -58,7 +56,6 @@ async fn azul_p256_verify_gas_cost_increase() {
         assert_eq!(success, U256::from(1), "P256VERIFY must succeed pre-fork");
     }
 
-    // ── Block 3 (ts=6, post-fork): call P256VERIFY with same input ───
     let call_post = env.create_tx(TxKind::Call(contract_addr), p256_input, U256::ZERO, 100_000);
     let block3 = env.sequencer.build_next_block_with_transactions(vec![call_post]).await;
 
@@ -76,6 +73,5 @@ async fn azul_p256_verify_gas_cost_increase() {
          ({gas_delta_pre}) due to doubled base gas fee"
     );
 
-    // ── Batch and derive ─────────────────────────────────────────────
     env.derive_blocks([(block1, 1), (block2, 2), (block3, 3)], 3, "Base Azul").await;
 }

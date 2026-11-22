@@ -32,14 +32,12 @@ pub trait WitnessData: Sized {
         let (owned_preimage_store, owned_blob_data) = self.into_parts();
 
         println!("cycle-tracker-report-start: oracle-verify");
-        // Check the preimages in the witness are valid.
         owned_preimage_store.check_preimages().expect("Failed to validate preimages");
         println!("cycle-tracker-report-end: oracle-verify");
 
         // Wrap the preimage store so that a key missing from the witness aborts the program.
         let oracle = Arc::new(WitnessOracle::new(owned_preimage_store));
 
-        // Create a BlobStore from the blobs in the witness and verifies them for correctness.
         println!("cycle-tracker-report-start: blob-verification");
         let beacon = BlobStore::from(owned_blob_data);
         println!("cycle-tracker-report-end: blob-verification");

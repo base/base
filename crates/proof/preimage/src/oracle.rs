@@ -25,11 +25,9 @@ where
     /// block until the host has prepared the preimage and responded with the length of the
     /// preimage.
     async fn write_key(&self, key: PreimageKey) -> PreimageOracleResult<usize> {
-        // Write the key to the host so that it can prepare the preimage.
         let key_bytes: [u8; 32] = key.into();
         self.channel.write(&key_bytes).await?;
 
-        // Read the length prefix and reset the cursor.
         let mut length_buffer = [0u8; 8];
         self.channel.read_exact(&mut length_buffer).await?;
         Ok(u64::from_be_bytes(length_buffer) as usize)
@@ -56,7 +54,6 @@ where
 
         trace!(target: "oracle_client", key = %key, "Reading data from preimage oracle");
 
-        // Grab a read lock on the preimage channel to read the data.
         self.channel.read_exact(&mut data_buffer).await?;
 
         trace!(target: "oracle_client", key = %key, "Successfully read data from preimage oracle");
@@ -69,12 +66,10 @@ where
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
         trace!(target: "oracle_client", key = %key, "Requesting data from preimage oracle");
 
-        // Write the key to the host and read the length of the preimage.
         let length = self.write_key(key).await?;
 
         trace!(target: "oracle_client", key = %key, "Reading data from preimage oracle");
 
-        // Ensure the buffer is the correct size.
         if buf.len() != length {
             return Err(PreimageOracleError::BufferLengthMismatch(length, buf.len()));
         }
@@ -116,14 +111,12 @@ where
     where
         F: PreimageFetcher + Send + Sync,
     {
-        // Read the preimage request from the client, and throw early if there isn't any.
         let mut buf = [0u8; 32];
         self.channel.read_exact(&mut buf).await?;
         let preimage_key = PreimageKey::try_from(buf)?;
 
         trace!(target: "oracle_server", key = %preimage_key, "Fetching preimage");
 
-        // Fetch the preimage value from the preimage getter.
         let value = fetcher.get_preimage(preimage_key).await?;
 
         // Write the length as a big-endian u64 followed by the data.

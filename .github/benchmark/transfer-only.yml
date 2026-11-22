@@ -1,6 +1,3 @@
-# Benchmark config for testing base-builder with base-reth-node as validator
-# This config tests transfer throughput with base-builder as sequencer and
-# the base-reth-node (built from this repo) as the validator node.
 name: Base builder transfer throughput test
 description: Test base-builder transfer throughput with base-reth-node as validator
 

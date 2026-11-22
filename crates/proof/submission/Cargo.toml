@@ -12,21 +12,16 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
 
-# Tx Manager
 base-tx-manager.workspace = true
 
-# Proof
 base-proof-contracts.workspace = true
 base-proof-primitives = { workspace = true, optional = true }
 
-# Encoding
 bincode = { workspace = true, optional = true, features = ["serde"] }
 
-# Error handling
 thiserror.workspace = true
 
 [dev-dependencies]

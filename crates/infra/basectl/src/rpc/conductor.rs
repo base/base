@@ -22,7 +22,6 @@ pub struct ConductorNodeStatus {
     /// Human-readable name for this node.
     pub name: String,
 
-    // ── Conductor ────────────────────────────────────────────────────────
     /// Whether this node is the Raft leader. `None` means the node is unreachable.
     pub is_leader: Option<bool>,
     /// Whether the conductor's sequencer is actively sequencing (`conductor_active`).
@@ -43,7 +42,6 @@ pub struct ConductorNodeStatus {
     /// unreachable.
     pub sequencer_active: Option<bool>,
 
-    // ── CL (consensus layer) ─────────────────────────────────────────────
     /// Unsafe L2 block number from `optimism_syncStatus`.
     pub unsafe_l2_block: Option<u64>,
     /// Unsafe L2 block hash from `optimism_syncStatus`.
@@ -61,7 +59,6 @@ pub struct ConductorNodeStatus {
     /// Number of connected CL libp2p peers from `opp2p_peerStats`.
     pub cl_peer_count: Option<u32>,
 
-    // ── EL (execution layer) ─────────────────────────────────────────────
     /// Latest block number from `eth_blockNumber`. `None` if `el_rpc` not configured.
     pub el_block: Option<u64>,
     /// Whether the EL is snap-syncing (`eth_syncing` returns non-false). `None` if not
@@ -70,7 +67,6 @@ pub struct ConductorNodeStatus {
     /// Number of connected EL devp2p peers from `net_peerCount`. `None` if not configured.
     pub el_peer_count: Option<u32>,
 
-    // ── Cluster membership ───────────────────────────────────────────────
     /// Raft suffrage (Voter/Nonvoter) reported for this node by the most recent
     /// `conductor_clusterMembership` snapshot, looked up by `server_id`. `None`
     /// when membership has not yet been observed or this node is not present.

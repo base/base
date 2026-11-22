@@ -10,8 +10,6 @@ use std::time::Duration;
 use alloy_primitives::utils::parse_units;
 use thiserror::Error;
 
-// ── Error ───────────────────────────────────────────────────────────────
-
 /// Errors returned during configuration validation.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -45,8 +43,6 @@ pub enum ConfigError {
         reason: String,
     },
 }
-
-// ── GweiParser ─────────────────────────────────────────────────────────
 
 /// Parses gwei decimal strings to wei (`u128`) via
 /// [`alloy_primitives::utils::parse_units`].
@@ -87,8 +83,6 @@ impl GweiParser {
         })
     }
 }
-
-// ── TxManagerConfig ─────────────────────────────────────────────────────
 
 /// Validated runtime configuration for the transaction manager.
 ///
@@ -259,8 +253,6 @@ mod tests {
 
     use super::*;
 
-    // ── GweiParser tests ───────────────────────────────────────────
-
     #[rstest]
     #[case::zero("0", 0)]
     #[case::one_gwei("1", 1_000_000_000)]
@@ -294,8 +286,6 @@ mod tests {
         assert!(err.to_string().contains("negative"), "error should mention negative: {err}");
     }
 
-    // ── ConfigError display ─────────────────────────────────────────
-
     #[rstest]
     #[case::out_of_range(
         ConfigError::OutOfRange { field: "num_confirmations", constraint: ">= 1", value: "0".to_string() },
@@ -310,15 +300,11 @@ mod tests {
         assert!(msg.contains(expected), "expected display to contain {expected:?}, got: {msg}");
     }
 
-    // ── Thread safety ───────────────────────────────────────────────
-
     #[test]
     fn tx_manager_config_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<TxManagerConfig>();
     }
-
-    // ── Property tests ──────────────────────────────────────────────
 
     proptest! {
         #[test]
@@ -328,8 +314,6 @@ mod tests {
             prop_assert!(result.is_ok(), "valid decimal string should parse: {gwei_str}");
         }
     }
-
-    // ── Default impl tests ─────────────────────────────────────────
 
     #[test]
     fn default_passes_validation() {

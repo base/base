@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Runs the curated deterministic iai-callgrind benchmark subset, printing raw
-# instruction counts to stdout for iai_compare.py to diff base against head.
-#
 # bench-iai.yml hoists the head commit's copy of this script and runs it against
 # both the base and head trees, so an identical bench list runs on each side. A
 # bench that does not exist on the base commit — e.g. the PR that first introduces

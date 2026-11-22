@@ -5,10 +5,6 @@ use serial_test::serial;
 
 use super::*;
 
-// =============================================================================
-// 1. Basic Cursor Operations
-// =============================================================================
-
 /// Test cursor operations on empty trie
 #[rstest]
 #[case::in_memory(InMemoryProofsStorage::new())]
@@ -20,7 +16,6 @@ fn test_cursor_empty_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
 ) -> Result<(), BaseProofsStorageError> {
     let mut cursor = storage.account_trie_cursor(100)?;
 
-    // All operations should return None on empty trie
     assert!(cursor.seek_exact(Nibbles::default())?.is_none());
     assert!(cursor.seek(Nibbles::default())?.is_none());
     assert!(cursor.next()?.is_none());
@@ -41,19 +36,15 @@ fn test_cursor_single_entry<S: BaseProofsStore + BaseProofsInitialStateStore>(
     let path = nibbles_from(vec![1, 2, 3]);
     let branch = create_test_branch();
 
-    // Store single entry
     storage.store_account_branches(vec![(path, Some(branch))])?;
 
     let mut cursor = storage.account_trie_cursor(100)?;
 
-    // Test seek_exact
     let result = cursor.seek_exact(path)?.unwrap();
     assert_eq!(result.0, path);
 
-    // Test current position
     assert_eq!(cursor.current()?.unwrap(), path);
 
-    // Test next from end should return None
     assert!(cursor.next()?.is_none());
 
     Ok(())
@@ -100,31 +91,24 @@ fn test_cursor_multiple_entries<S: BaseProofsStore + BaseProofsInitialStateStore
     ];
     let branch = create_test_branch();
 
-    // Store multiple entries
     for path in &paths {
         storage.store_account_branches(vec![(*path, Some(branch.clone()))])?;
     }
 
     let mut cursor = storage.account_trie_cursor(100)?;
 
-    // Test that we can iterate through all entries
     let mut found_paths = Vec::new();
     while let Some((path, _)) = cursor.next()? {
         found_paths.push(path);
     }
 
     assert_eq!(found_paths.len(), 4);
-    // Paths should be in lexicographic order
     for i in 0..paths.len() {
         assert_eq!(found_paths[i], paths[i]);
     }
 
     Ok(())
 }
-
-// =============================================================================
-// 2. Seek Operations
-// =============================================================================
 
 /// Test `seek_exact` with empty path
 #[rstest]
@@ -185,7 +169,6 @@ fn test_seek_between_existing_nodes<S: BaseProofsStore + BaseProofsInitialStateS
     storage.store_account_branches(vec![(path2, Some(branch))])?;
 
     let mut cursor = storage.account_trie_cursor(100)?;
-    // Seek to path between 1 and 3, should return path 3
     let seek_path = nibbles_from(vec![2]);
     let result = cursor.seek(seek_path)?.unwrap();
     assert_eq!(result.0, path2);
@@ -208,7 +191,6 @@ fn test_seek_after_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage.store_account_branches(vec![(path, Some(branch))])?;
 
     let mut cursor = storage.account_trie_cursor(100)?;
-    // Seek to path after all nodes
     let seek_path = nibbles_from(vec![9]);
     assert!(cursor.seek(seek_path)?.is_none());
 
@@ -230,17 +212,12 @@ fn test_seek_before_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage.store_account_branches(vec![(path, Some(branch))])?;
 
     let mut cursor = storage.account_trie_cursor(100)?;
-    // Seek to path before all nodes, should return first node
     let seek_path = nibbles_from(vec![1]);
     let result = cursor.seek(seek_path)?.unwrap();
     assert_eq!(result.0, path);
 
     Ok(())
 }
-
-// =============================================================================
-// 3. Navigation Tests
-// =============================================================================
 
 /// Test next after seek
 #[rstest]
@@ -261,7 +238,6 @@ fn test_next_after_seek<S: BaseProofsStore + BaseProofsInitialStateStore>(
     let mut cursor = storage.account_trie_cursor(100)?;
     cursor.seek(path1)?;
 
-    // next() should return second node
     let result = cursor.next()?.unwrap();
     assert_eq!(result.0, path2);
 
@@ -286,13 +262,11 @@ fn test_multiple_consecutive_next<S: BaseProofsStore + BaseProofsInitialStateSto
 
     let mut cursor = storage.account_trie_cursor(100)?;
 
-    // Iterate through all with consecutive next() calls
     for expected_path in &paths {
         let result = cursor.next()?.unwrap();
         assert_eq!(result.0, *expected_path);
     }
 
-    // Final next() should return None
     assert!(cursor.next()?.is_none());
 
     Ok(())
@@ -316,23 +290,16 @@ fn test_current_after_operations<S: BaseProofsStore + BaseProofsInitialStateStor
 
     let mut cursor = storage.account_trie_cursor(100)?;
 
-    // Current should be None initially
     assert!(cursor.current()?.is_none());
 
-    // After seek, current should track position
     cursor.seek(path1)?;
     assert_eq!(cursor.current()?.unwrap(), path1);
 
-    // After next, current should update
     cursor.next()?;
     assert_eq!(cursor.current()?.unwrap(), path2);
 
     Ok(())
 }
-
-// =============================================================================
-// 4. Block Number Filtering
-// =============================================================================
 
 /// Test that rewriting the same path keeps only the latest node
 #[rstest]
@@ -370,10 +337,8 @@ fn test_deleted_branch_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
     let branch = create_test_branch();
     let block_ref = BlockWithParent::new(B256::ZERO, NumHash::new(100, B256::repeat_byte(0x96)));
 
-    // Store branch node, then delete it (store None)
     storage.store_account_branches(vec![(path, Some(branch))])?;
 
-    // Cursor before deletion should see the node
     let mut cursor75 = storage.account_trie_cursor(75)?;
     assert!(cursor75.seek_exact(path)?.is_some());
 
@@ -385,16 +350,11 @@ fn test_deleted_branch_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
     };
     storage.store_trie_updates(block_ref, block_state_diff)?;
 
-    // Cursor after deletion should not see the node
     let mut cursor150 = storage.account_trie_cursor(150)?;
     assert!(cursor150.seek_exact(path)?.is_none());
 
     Ok(())
 }
-
-// =============================================================================
-// 5. Hashed Address Filtering
-// =============================================================================
 
 /// Test account-specific cursor
 #[rstest]
@@ -410,27 +370,23 @@ fn test_account_specific_cursor<S: BaseProofsStore + BaseProofsInitialStateStore
     let addr2 = B256::repeat_byte(0x02);
     let branch = create_test_branch();
 
-    // Store same path for different accounts (using storage branches)
     storage.store_storage_branches(addr1, vec![(path, Some(branch.clone()))])?;
     storage.store_storage_branches(addr2, vec![(path, Some(branch))])?;
 
-    // Cursor for addr1 should only see addr1 data
     let mut cursor1 = storage.storage_trie_cursor(addr1, 100)?;
     let result1 = cursor1.seek_exact(path)?.unwrap();
     assert_eq!(result1.0, path);
 
-    // Cursor for addr2 should only see addr2 data
     let mut cursor2 = storage.storage_trie_cursor(addr2, 100)?;
     let result2 = cursor2.seek_exact(path)?.unwrap();
     assert_eq!(result2.0, path);
 
-    // Cursor for addr1 should not see addr2 data when iterating
     let mut cursor1_iter = storage.storage_trie_cursor(addr1, 100)?;
     let mut found_count = 0;
     while cursor1_iter.next()?.is_some() {
         found_count += 1;
     }
-    assert_eq!(found_count, 1); // Should only see one entry (for addr1)
+    assert_eq!(found_count, 1);
 
     Ok(())
 }
@@ -448,23 +404,20 @@ fn test_state_trie_cursor<S: BaseProofsStore + BaseProofsInitialStateStore>(
     let addr = B256::repeat_byte(0x01);
     let branch = create_test_branch();
 
-    // Store data for account trie and state trie
     storage.store_storage_branches(addr, vec![(path, Some(branch.clone()))])?;
     storage.store_account_branches(vec![(path, Some(branch))])?;
 
-    // State trie cursor (None address) should only see state trie data
     let mut state_cursor = storage.account_trie_cursor(100)?;
     let result = state_cursor.seek_exact(path)?.unwrap();
     assert_eq!(result.0, path);
 
-    // Verify state cursor doesn't see account data when iterating
     let mut state_cursor_iter = storage.account_trie_cursor(100)?;
     let mut found_count = 0;
     while state_cursor_iter.next()?.is_some() {
         found_count += 1;
     }
 
-    assert_eq!(found_count, 1); // Should only see state trie entry
+    assert_eq!(found_count, 1);
 
     Ok(())
 }
@@ -483,11 +436,9 @@ fn test_mixed_account_state_data<S: BaseProofsStore + BaseProofsInitialStateStor
     let addr = B256::repeat_byte(0x01);
     let branch = create_test_branch();
 
-    // Store mixed account and state trie data
     storage.store_storage_branches(addr, vec![(path1, Some(branch.clone()))])?;
     storage.store_account_branches(vec![(path2, Some(branch))])?;
 
-    // Account cursor should only see account data
     let mut account_cursor = storage.storage_trie_cursor(addr, 100)?;
     let mut account_paths = Vec::new();
     while let Some((path, _)) = account_cursor.next()? {
@@ -496,7 +447,6 @@ fn test_mixed_account_state_data<S: BaseProofsStore + BaseProofsInitialStateStor
     assert_eq!(account_paths.len(), 1);
     assert_eq!(account_paths[0], path1);
 
-    // State cursor should only see state data
     let mut state_cursor = storage.account_trie_cursor(100)?;
     let mut state_paths = Vec::new();
     while let Some((path, _)) = state_cursor.next()? {
@@ -507,10 +457,6 @@ fn test_mixed_account_state_data<S: BaseProofsStore + BaseProofsInitialStateStor
 
     Ok(())
 }
-
-// =============================================================================
-// 6. Path Ordering Tests
-// =============================================================================
 
 /// Test lexicographic ordering
 #[rstest]
@@ -529,7 +475,6 @@ fn test_lexicographic_ordering<S: BaseProofsStore + BaseProofsInitialStateStore>
     ];
     let branch = create_test_branch();
 
-    // Store paths in random order
     for path in &paths {
         storage.store_account_branches(vec![(*path, Some(branch.clone()))])?;
     }
@@ -540,7 +485,6 @@ fn test_lexicographic_ordering<S: BaseProofsStore + BaseProofsInitialStateStore>
         found_paths.push(path);
     }
 
-    // Should be returned in lexicographic order: [1], [1,2], [2], [3,1]
     let expected_order = vec![
         nibbles_from(vec![1]),
         nibbles_from(vec![1, 2]),
@@ -562,11 +506,7 @@ fn test_lexicographic_ordering<S: BaseProofsStore + BaseProofsInitialStateStore>
 fn test_path_prefix_scenarios<S: BaseProofsStore + BaseProofsInitialStateStore>(
     #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
-    let paths = vec![
-        nibbles_from(vec![1]),       // Prefix of next
-        nibbles_from(vec![1, 2]),    // Extends first
-        nibbles_from(vec![1, 2, 3]), // Extends second
-    ];
+    let paths = vec![nibbles_from(vec![1]), nibbles_from(vec![1, 2]), nibbles_from(vec![1, 2, 3])];
     let branch = create_test_branch();
 
     for path in &paths {
@@ -575,11 +515,9 @@ fn test_path_prefix_scenarios<S: BaseProofsStore + BaseProofsInitialStateStore>(
 
     let mut cursor = storage.account_trie_cursor(100)?;
 
-    // Seek to prefix should find exact match
     let result = cursor.seek_exact(paths[0])?.unwrap();
     assert_eq!(result.0, paths[0]);
 
-    // Next should go to next path, not skip prefixed paths
     let result = cursor.next()?.unwrap();
     assert_eq!(result.0, paths[1]);
 
@@ -598,7 +536,6 @@ fn test_path_prefix_scenarios<S: BaseProofsStore + BaseProofsInitialStateStore>(
 fn test_complex_nibble_combinations<S: BaseProofsStore + BaseProofsInitialStateStore>(
     #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
-    // Test various nibble patterns including edge values
     let paths = vec![
         nibbles_from(vec![0]),
         nibbles_from(vec![0, 15]),
@@ -618,10 +555,8 @@ fn test_complex_nibble_combinations<S: BaseProofsStore + BaseProofsInitialStateS
         found_paths.push(path);
     }
 
-    // All paths should be found and in correct order
     assert_eq!(found_paths.len(), 5);
 
-    // Verify specific ordering for edge cases
     assert_eq!(found_paths[0], nibbles_from(vec![0]));
     assert_eq!(found_paths[1], nibbles_from(vec![0, 15]));
     assert_eq!(found_paths[4], nibbles_from(vec![15, 0]));

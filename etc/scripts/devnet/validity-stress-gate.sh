@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Machine-checkable acceptance gate for the validity stress workload.
 
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://localhost:9090}"
 WINDOW="${WINDOW:-2m}"

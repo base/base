@@ -167,7 +167,6 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
         config: HealthcheckConfig,
         metrics: HealthcheckMetrics,
     ) -> Self {
-        // default to healthy until first classification
         let initial_status: u8 = HealthState::Healthy.code();
         Self { node, client, config, status_code: Arc::new(AtomicU8::new(initial_status)), metrics }
     }
@@ -184,7 +183,6 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
 
         debug!(sequencer = %url, "checking block production health");
 
-        // Enforce a 2s timeout on header fetch
         let header_result = timeout(Duration::from_secs(2), self.client.latest_header()).await;
 
         let latest = match header_result {
@@ -209,7 +207,6 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             }
         };
 
-        // Compute block age
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|_| Duration::from_secs(0))
@@ -353,11 +350,9 @@ mod tests {
         let metrics = mock_metrics();
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
 
-        // First healthy block
         checker.run_health_check().await;
         assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
 
-        // Next block arrives but is delayed beyond grace
         let delayed_ts = start.saturating_sub((grace_ms / 1000) + 1);
         *shared_header.lock().unwrap() =
             HeaderSummary { number: 2, timestamp_unix_seconds: delayed_ts, transaction_count: 5 };
@@ -380,7 +375,6 @@ mod tests {
         let metrics = mock_metrics();
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
 
-        // First observation (healthy)
         checker.run_health_check().await;
         assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
 
@@ -394,7 +388,6 @@ mod tests {
         checker.run_health_check().await;
         assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Unhealthy.code());
 
-        // Re-run again with same head: should not re-emit; flag remains set
         checker.run_health_check().await;
         assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Unhealthy.code());
     }

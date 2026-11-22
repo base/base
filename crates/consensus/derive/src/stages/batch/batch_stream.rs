@@ -130,8 +130,6 @@ where
         parent: L2BlockInfo,
         l1_origins: &[BlockInfo],
     ) -> PipelineResult<Batch> {
-        // If the stage is not active, "pass" the next batch
-        // through this stage to the BatchQueue stage.
         if !self.is_active()? {
             trace!(target: "batch_span", "BatchStream stage is inactive, pass-through.");
             return self.prev.next_batch().await;
@@ -148,17 +146,12 @@ where
             return Err(PipelineError::NotEnoughData.temp());
         }
 
-        // If the buffer is empty, attempt to pull a batch from the previous stage.
         if self.buffer.is_empty() {
-            // Safety: bubble up any errors from the batch reader.
             let batch_with_inclusion = BatchWithInclusionBlock::new(
                 self.origin().ok_or(PipelineError::MissingOrigin.crit())?,
                 self.prev.next_batch().await?,
             );
 
-            // If the next batch is a singular batch, it is immediately
-            // forwarded to the `BatchQueue` stage. Otherwise, we buffer
-            // the span batch in this stage if it passes the validity checks.
             match batch_with_inclusion.batch {
                 Batch::Single(b) => return Ok(Batch::Single(b)),
                 Batch::Span(b) => {
@@ -178,7 +171,6 @@ where
                     match validity {
                         BatchValidity::Accept => self.span = Some(b),
                         BatchValidity::Drop(_) => {
-                            // Flush the stage.
                             self.flush();
 
                             return Err(PipelineError::NotEnoughData.temp());
@@ -199,7 +191,6 @@ where
             }
         }
 
-        // Attempt to pull a SingleBatch out of the SpanBatch.
         match self.get_single_batch(parent, l1_origins) {
             Ok(Some(single_batch)) => Ok(Batch::Single(single_batch)),
             Ok(None) => Err(PipelineError::NotEnoughData.temp()),
@@ -350,10 +341,8 @@ mod tests {
         let mut stream =
             BatchStream::new(prev, Arc::clone(&config), TestL2ChainProvider::default());
 
-        // The stage should not be active.
         assert!(!stream.is_active().unwrap());
 
-        // The next batch should be passed through to the [BatchQueue] stage.
         let batch = stream.next_batch(Default::default(), &[]).await.unwrap();
         assert_eq!(batch, Batch::Single(SingleBatch::default()));
 
@@ -387,10 +376,8 @@ mod tests {
         let provider = TestL2ChainProvider::default();
         let mut stream = BatchStream::new(prev, Arc::clone(&config), provider);
 
-        // The stage should be active.
         assert!(stream.is_active().unwrap());
 
-        // The next batches should be single batches derived from the span batch.
         let batch = stream.next_batch(Default::default(), &mock_origins).await.unwrap();
         if let Batch::Single(single) = batch {
             assert_eq!(single.epoch_num, 1);
@@ -417,10 +404,8 @@ mod tests {
         assert_eq!(stream.span_buffer_size(), 0);
         assert!(stream.span.is_none());
 
-        // Add more data into the provider, see if the buffer is re-hydrated.
         stream.prev.batches.push(Ok(Batch::Span(mock_batch.clone())));
 
-        // The next batches should be single batches derived from the span batch.
         let batch = stream.next_batch(Default::default(), &mock_origins).await.unwrap();
         if let Batch::Single(single) = batch {
             assert_eq!(single.epoch_num, 1);
@@ -582,10 +567,8 @@ mod tests {
         let mut stream =
             BatchStream::new(prev, Arc::clone(&config), TestL2ChainProvider::default());
 
-        // The stage should be active.
         assert!(stream.is_active().unwrap());
 
-        // The next batch should be passed through to the [BatchQueue] stage.
         let batch = stream.next_batch(Default::default(), &[]).await.unwrap();
         assert_eq!(batch, Batch::Single(single));
         assert_eq!(stream.span_buffer_size(), 0);
@@ -612,7 +595,6 @@ mod tests {
         let mut stream =
             BatchStream::new(prev, Arc::clone(&config), TestL2ChainProvider::default());
 
-        // The stage should be active.
         assert!(stream.is_active().unwrap());
 
         let parent = L2BlockInfo {
@@ -621,7 +603,6 @@ mod tests {
             seq_num: 0,
         };
 
-        // `next_batch` should return an error if the span batch is in the past.
         let err = stream.next_batch(parent, &mock_origins).await.unwrap_err();
         assert_eq!(err, PipelineError::NotEnoughData.temp());
     }

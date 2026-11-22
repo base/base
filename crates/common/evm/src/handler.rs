@@ -97,7 +97,6 @@ where
             return Ok(());
         }
 
-        // Check that non-deposit transactions have enveloped_tx set
         if tx.enveloped_tx().is_none() {
             return Err(BaseTransactionError::MissingEnvelopedTx.into());
         }
@@ -150,7 +149,6 @@ where
                 new_balance = new_balance.max(tx.value());
             }
 
-            // set the new balance and bump the nonce if it is a call
             caller.set_balance(new_balance);
             if tx.kind().is_call() {
                 caller.bump_nonce();
@@ -167,10 +165,8 @@ where
 
         let mut caller_account = journal.load_account_with_code_mut(tx.caller())?.data;
 
-        // validates account nonce and code
         validate_account_nonce_and_code_with_components(&caller_account.account().info, tx, cfg)?;
 
-        // check additional cost and deduct it from the caller's balances
         let mut balance = caller_account.account().info.balance;
 
         if !cfg.is_fee_charge_disabled() {
@@ -191,7 +187,6 @@ where
 
         let balance = calculate_caller_fee(balance, tx, block, cfg)?;
 
-        // make changes to the account
         caller_account.set_balance(balance);
         if tx.kind().is_call() {
             caller_account.bump_nonce();
@@ -335,7 +330,6 @@ where
     ) -> Result<(), Self::Error> {
         let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
 
-        // Transfer fee to coinbase/beneficiary.
         if is_deposit {
             return Ok(());
         }
@@ -366,7 +360,6 @@ where
         };
         let base_fee_amount = U256::from(basefee.saturating_mul(frame_result.gas().used() as u128));
 
-        // Send fees to their respective recipients
         for (recipient, amount) in [
             (Predeploys::L1_FEE_VAULT, l1_cost),
             (Predeploys::BASE_FEE_VAULT, base_fee_amount),
@@ -393,7 +386,6 @@ where
             return Err(ERROR::from(BaseTransactionError::HaltedDepositPostRegolith));
         }
 
-        // commit transaction
         evm.ctx().journal_mut().commit_tx();
         evm.ctx().chain_mut().clear_tx_l1_cost();
         evm.ctx().local_mut().clear();
@@ -420,7 +412,6 @@ where
             let gas_limit = tx.gas_limit();
             let journal = evm.ctx().journal_mut();
 
-            // discard all changes of this transaction
             // Default JournalCheckpoint is the first checkpoint and will wipe all changes.
             journal.checkpoint_revert(JournalCheckpoint::default());
 
@@ -428,12 +419,10 @@ where
             acc.bump_nonce();
             acc.incr_balance(U256::from(mint.unwrap_or_default()));
 
-            drop(acc); // Drop acc to avoid borrow checker issues.
+            drop(acc);
 
-            // We can now commit the changes.
             journal.commit_tx();
 
-            // clear the journal
             output = Ok(ExecutionResult::Halt {
                 reason: BaseHaltReason::FailedDeposit,
                 gas: ResultGas::new_with_state_gas(gas_limit, 0, 0, 0),
@@ -443,7 +432,6 @@ where
             evm.ctx().journal_mut().discard_tx();
         }
 
-        // do the cleanup
         evm.ctx().chain_mut().clear_tx_l1_cost();
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
@@ -708,7 +696,6 @@ mod tests {
             .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
             .unwrap();
 
-        // Check the account balance is updated.
         let account = evm.ctx_mut().journal_mut().load_account(caller).unwrap();
         assert_eq!(account.info.balance, U256::from(1010));
     }
@@ -752,7 +739,6 @@ mod tests {
             .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
             .unwrap();
 
-        // Check the account balance is updated.
         let account = evm.ctx_mut().journal_mut().load_account(caller).unwrap();
         assert_eq!(account.info.balance, U256::from(10)); // 1058 - 1048 = 10
     }
@@ -1104,8 +1090,6 @@ mod tests {
             "stale authorizer transaction must not make the next EXTCODESIZE(authorizer) warm"
         );
     }
-
-    // ---- Gas-limit billing (BaseFeature::GasLimitBilling) ----
 
     /// Fee settlement of one transaction, read from the post-transaction state.
     #[derive(Debug, PartialEq, Eq)]

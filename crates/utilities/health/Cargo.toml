@@ -21,7 +21,6 @@ async-trait.workspace = true
 serde = { workspace = true, features = ["derive"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
-# Optional dependencies for the axum-based health server
 eyre = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }

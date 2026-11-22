@@ -153,10 +153,7 @@ impl EventLog {
     pub fn to_vec(&self) -> Vec<String> {
         self.events
             .iter()
-            .map(|(t, event)| {
-                // example: 08:57:37.979 pm - Pending
-                format!("{} - {}", t.format("%H:%M:%S%.3f"), event)
-            })
+            .map(|(t, event)| format!("{} - {}", t.format("%H:%M:%S%.3f"), event))
             .collect::<Vec<_>>()
     }
 }

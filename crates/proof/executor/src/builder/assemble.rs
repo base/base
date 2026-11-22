@@ -38,7 +38,6 @@ where
     ) -> ExecutorResult<Sealed<Header>> {
         let timestamp = block_env.timestamp.saturating_to::<u64>();
 
-        // Compute the roots for the block header.
         let state_root = self.trie_db.state_root(&bundle)?;
         let transactions_root = ordered_trie_with_encoder(
             // SAFETY: The Base protocol will never generate a payload attributes with an empty
@@ -58,10 +57,8 @@ where
                 None
             };
 
-        // Compute the logs bloom from the receipts generated during block execution.
         let logs_bloom = logs_bloom(ex_result.receipts.iter().flat_map(|r| r.logs()));
 
-        // Compute Cancun fields, if active.
         let (blob_gas_used, excess_blob_gas) =
             if self.config.is_feature_active_cascading(BaseFeature::DaFootprint, timestamp) {
                 (Some(ex_result.blob_gas_used), Some(0))
@@ -98,7 +95,6 @@ where
             .is_feature_active_cascading(BaseFeature::EmptyRequestsHash, timestamp)
             .then_some(EMPTY_REQUESTS_HASH);
 
-        // Construct the new header.
         let header = Header {
             parent_hash,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
@@ -150,7 +146,6 @@ where
         let storage_root = self.message_passer_account(parent_number)?;
         let parent_header = self.trie_db.parent_block_header();
 
-        // Construct the raw output and hash it.
         let output_root_hash =
             OutputRoot::from_parts(parent_header.state_root, storage_root, parent_header.seal())
                 .hash();
@@ -162,7 +157,6 @@ where
             "Computed output root",
         );
 
-        // Hash the output and return
         Ok(output_root_hash)
     }
 

@@ -159,8 +159,6 @@ mod tests {
         module
     }
 
-    // ── EthHealthCheckLayer short-circuit: GET / with no query and no body ────────
-
     #[tokio::test]
     async fn test_empty_get_root_returns_200() {
         // The canonical go-ethereum health probe: plain GET / with no query string and
@@ -170,8 +168,6 @@ mod tests {
         let resp = reqwest::get(format!("http://{addr}/")).await.unwrap();
         assert_eq!(resp.status(), 200);
     }
-
-    // ── Conditions that must NOT trigger the short-circuit ────────────────────────
 
     #[tokio::test]
     async fn test_get_root_with_query_passes_through() {
@@ -204,8 +200,6 @@ mod tests {
             .send()
             .await
             .unwrap();
-        // EthHealthCheckLayer must NOT short-circuit (content_length != 0);
-        // the request reaches the jsonrpsee transport, which rejects GET with 405.
         assert_eq!(resp.status(), 405);
     }
 
@@ -216,12 +210,9 @@ mod tests {
         // health-check conditions. Only GET triggers the short-circuit.
         let (addr, _handle) = build_server(healthz_module()).await;
         let client = HttpClientBuilder::default().build(format!("http://{addr}")).unwrap();
-        // A well-formed JSON-RPC POST reaches the inner service and succeeds.
         let result: HealthzResponse = client.request("healthz", rpc_params![]).await.unwrap();
         assert_eq!(result.version, env!("CARGO_PKG_VERSION"));
     }
-
-    // ── End-to-end: GET /healthz proxied through to the RPC method ────────────────
 
     #[tokio::test]
     async fn test_get_healthz_returns_200() {
@@ -232,8 +223,6 @@ mod tests {
         let resp = reqwest::get(format!("http://{addr}/healthz")).await.unwrap();
         assert_eq!(resp.status(), 200);
     }
-
-    // ── Edge case: GET /? (bare `?` with empty query string) ─────────────────────
 
     #[tokio::test]
     async fn test_bare_query_marker_returns_200() {

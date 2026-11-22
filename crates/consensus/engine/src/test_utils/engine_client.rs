@@ -59,7 +59,6 @@ pub struct MockEngineStorage {
     /// Whether the EL is actively syncing.
     pub el_syncing: bool,
 
-    // Version-specific new_payload responses
     /// Storage for `new_payload_v2` responses.
     pub new_payload_v2_response: Option<PayloadStatus>,
     /// Storage for the most recent `new_payload_v2` request.
@@ -69,7 +68,6 @@ pub struct MockEngineStorage {
     /// Storage for `new_payload_v4` responses.
     pub new_payload_v4_response: Option<PayloadStatus>,
 
-    // Version-specific fork_choice_updated responses
     /// Storage for `fork_choice_updated_v2` responses.
     pub fork_choice_updated_v2_response: Option<ForkchoiceUpdated>,
     /// Storage for `fork_choice_updated_v2` requests and whether they included payload attributes.
@@ -79,13 +77,11 @@ pub struct MockEngineStorage {
     /// Storage for `fork_choice_updated_v3` requests and whether they included payload attributes.
     pub fork_choice_updated_v3_requests: Vec<(ForkchoiceState, bool)>,
 
-    // Version-specific fork_choice_updated error overrides
     /// Error to return for `fork_choice_updated_v2` instead of a response.
     pub fork_choice_updated_v2_error: Option<ErrorPayload>,
     /// Error to return for `fork_choice_updated_v3` instead of a response.
     pub fork_choice_updated_v3_error: Option<ErrorPayload>,
 
-    // Version-specific get_payload responses
     /// Storage for execution payload envelope v2 responses.
     pub execution_payload_v2: Option<ExecutionPayloadEnvelopeV2>,
     /// Storage for Base execution payload envelope v3 responses.
@@ -95,19 +91,16 @@ pub struct MockEngineStorage {
     /// Storage for Base execution payload envelope v5 responses.
     pub execution_payload_v5: Option<BaseExecutionPayloadEnvelopeV5>,
 
-    // Version-specific get_payload_bodies responses
     /// Storage for `get_payload_bodies_by_hash_v1` responses.
     pub get_payload_bodies_by_hash_v1_response: Option<ExecutionPayloadBodiesV1>,
     /// Storage for `get_payload_bodies_by_range_v1` responses.
     pub get_payload_bodies_by_range_v1_response: Option<ExecutionPayloadBodiesV1>,
 
-    // Non-versioned responses
     /// Storage for client version responses.
     pub client_versions: Option<Vec<ClientVersionV1>>,
     /// Storage for capabilities responses.
     pub capabilities: Option<Vec<String>>,
 
-    // Storage for get_l1_block, get_l2_block, and get_proof
     /// Storage for L1 blocks by stringified `BlockId`.
     /// L1 blocks use standard Ethereum transactions.
     pub l1_blocks_by_id: HashMap<String, Block<EthTransaction>>,
@@ -777,7 +770,6 @@ mod tests {
 
         let mock = MockEngineClient::new(Arc::clone(&cfg));
 
-        // Verify the config was set correctly
         assert_eq!(mock.cfg().block_time, cfg.block_time);
     }
 
@@ -792,7 +784,6 @@ mod tests {
 
         mock.set_new_payload_v2_response(status.clone()).await;
 
-        // Create a minimal ExecutionPayloadInputV2 for testing
         let payload = ExecutionPayloadInputV2 {
             execution_payload: ExecutionPayloadV1 {
                 parent_hash: B256::ZERO,
@@ -850,10 +841,8 @@ mod tests {
             .with_new_payload_v2_response(status.clone())
             .build();
 
-        // Verify the config was set
         assert_eq!(mock.cfg().block_time, cfg.block_time);
 
-        // Create a minimal ExecutionPayloadInputV2 for testing
         let payload = ExecutionPayloadInputV2 {
             execution_payload: ExecutionPayloadV1 {
                 parent_hash: B256::ZERO,
@@ -874,7 +863,6 @@ mod tests {
             withdrawals: None,
         };
 
-        // Verify the pre-configured response is returned
         let result = mock.new_payload_v2(payload).await.unwrap();
         assert_eq!(result.status, status.status);
     }

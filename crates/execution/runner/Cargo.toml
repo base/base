@@ -12,10 +12,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
 base-test-utils = { workspace = true, optional = true }
 
-# reth
 reth-db.workspace = true
 reth-exex.workspace = true
 reth-config.workspace = true
@@ -29,14 +27,12 @@ reth-node-core = { workspace = true, optional = true }
 reth-rpc-layer = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 
-# op-reth
 base-node-core.workspace = true
 base-execution-txpool.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
 base-execution-rpc = { workspace = true, features = ["client"] }
 
-# alloy
 alloy-provider = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
@@ -47,19 +43,15 @@ alloy-rpc-types-engine = { workspace = true, optional = true, features = [
   "std",
 ] }
 
-# base-alloy
 base-common-network.workspace = true
 base-common-rpc-types-engine.workspace = true
 base-common-rpc-types = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
-# tokio
 tokio = { workspace = true, features = ["sync"] }
 
-# rpc
 jsonrpsee.workspace = true
 
-# misc
 eyre.workspace = true
 futures.workspace = true
 url = { workspace = true, optional = true }

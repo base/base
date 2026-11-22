@@ -528,15 +528,12 @@ fn simple_tx_manager_is_send_and_sync() {
     assert_send_sync::<SimpleTxManager<RootProvider>>();
 }
 
-// ── increase_gas_price ──────────────────────────────────────────────
-
 #[tokio::test]
 async fn increase_gas_price_bumps_above_threshold() {
     let (manager, _anvil) = setup().await;
 
     let candidate = value_transfer(1_000);
 
-    // Use the initial on-wire fees as the "old" values.
     let prepared = manager.craft_tx(&candidate, None).await.expect("should craft initial tx");
     let initial_tip = prepared.gas_tip_cap;
     let initial_fee_cap = prepared.gas_fee_cap;
@@ -589,8 +586,6 @@ async fn increase_gas_price_fee_limit_exceeded() {
         "expected TxManagerError::FeeLimitExceeded, got {err:?}",
     );
 }
-
-// ── blob fee policy ─────────────────────────────────────────────────
 
 /// A new blob transaction is priced per blob from the lower bound and the current base fee
 /// and blob base fee, without the fee limit that applies to regular transactions.

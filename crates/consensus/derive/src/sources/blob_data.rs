@@ -32,7 +32,6 @@ impl BlobData {
     /// There should be exactly one placeholder blobOrCalldata
     /// element for each blob, otherwise an error is returned.
     pub fn fill(&mut self, blobs: &[Box<Blob>], index: usize) -> Result<bool, BlobProviderError> {
-        // Do not fill if there is calldata here
         if self.calldata.is_some() {
             return Ok(false);
         }

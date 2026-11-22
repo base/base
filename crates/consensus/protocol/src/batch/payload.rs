@@ -55,8 +55,6 @@ impl SpanBatchPayload {
     pub fn decode_block_count(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
         let (block_count, remaining) = unsigned_varint::decode::u64(r)
             .map_err(|_| SpanBatchError::Decoding(SpanDecodingError::BlockCount))?;
-        // The number of transactions in a single L2 block cannot be greater than
-        // [SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS].
         if block_count > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS {
             return Err(SpanBatchError::TooBigSpanBatchSize);
         }
@@ -78,8 +76,6 @@ impl SpanBatchPayload {
             let (block_tx_count, remaining) = unsigned_varint::decode::u64(r)
                 .map_err(|_| SpanBatchError::Decoding(SpanDecodingError::BlockTxCounts))?;
 
-            // The number of transactions in a single L2 block cannot be greater than
-            // [SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS].
             if block_tx_count > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS {
                 return Err(SpanBatchError::TooBigSpanBatchSize);
             }
@@ -101,8 +97,6 @@ impl SpanBatchPayload {
                 acc.checked_add(*block_tx_count).ok_or(SpanBatchError::TooBigSpanBatchSize)
             })?;
 
-        // The total number of transactions in a span batch cannot be greater than
-        // [SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS].
         if total_block_tx_count > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS {
             return Err(SpanBatchError::TooBigSpanBatchSize);
         }

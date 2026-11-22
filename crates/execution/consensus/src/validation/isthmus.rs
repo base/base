@@ -110,7 +110,6 @@ mod tests {
     fn l2tol1_message_passer_no_withdrawals() {
         let hashed_address = keccak256(Predeploys::L2_TO_L1_MESSAGE_PASSER);
 
-        // create account storage
         let init_storage = HashedStorage::from_iter(
             [
                 "50000000000000000000000000000004253371b55351a08cb3267d4d265530b6",
@@ -123,7 +122,6 @@ mod tests {
         let mut state = HashedPostState::default();
         state.storages.insert(hashed_address, init_storage.clone());
 
-        // init test db
         // note: must be empty (default) chain spec to ensure storage is empty after init genesis,
         // otherwise can't use `storage_root_prehashed` to determine storage root later
         let provider_factory = create_test_provider_factory_with_node_types::<BaseNode>(Arc::new(
@@ -131,21 +129,17 @@ mod tests {
         ));
         let _ = init_genesis(&provider_factory).unwrap();
 
-        // write account storage to database
         let provider_rw = provider_factory.provider_rw().unwrap();
         provider_rw.write_hashed_state(&state.clone().into_sorted()).unwrap();
         provider_rw.commit().unwrap();
 
-        // create block header with withdrawals root set to storage root of l2tol1-msg-passer
         let header = Header {
             withdrawals_root: Some(storage_root_prehashed(init_storage.storage)),
             ..Default::default()
         };
 
-        // create state provider factory
         let state_provider_factory = BlockchainProvider::new(provider_factory).unwrap();
 
-        // validate block against existing state by passing empty pre-hashed storage updates
         verify_withdrawals_root_prehashed(
             HashedStorage::default(),
             state_provider_factory.latest().expect("load state"),

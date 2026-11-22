@@ -125,7 +125,6 @@ impl JwtValidator {
             })
             .await
             .map_err(|e| {
-                // Convert eyre::Error back to JwtValidationError
                 if Self::is_jwt_signature_error_from_eyre(&e) {
                     JwtValidationError::InvalidSignature
                 } else {

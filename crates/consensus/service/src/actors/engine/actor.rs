@@ -48,7 +48,6 @@ where
     async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
         let (engine_processing_tx, engine_processing_rx) = mpsc::channel(1024);
 
-        // Helper to DRY task completion handling.
         let handle_task_result = |task_name: &'static str, cancel_token: CancellationToken| {
             move |result: Option<Result<Result<(), EngineError>, tokio::task::JoinError>>| async move {
                 cancel_token.cancel();
@@ -77,14 +76,12 @@ where
         };
 
         let processing_cancellation = self.cancellation_token.clone();
-        // Start the engine processing task.
         let processing_handle = self
             .engine_receiver
             .start(engine_processing_rx)
             .with_cancellation_token(&processing_cancellation)
             .then(handle_task_result("Engine processing", processing_cancellation.clone()));
 
-        // Helper to send processing requests with error handling.
         let send_engine_processing_request = |req: EngineActorRequest| async {
             engine_processing_tx.send(req).await.map_err(|_| {
                 error!(target: "engine", "Engine processing channel closed unexpectedly");

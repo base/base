@@ -1181,7 +1181,6 @@ mod tests {
 
     #[tokio::test]
     async fn partial_convergence_and_freshness_observations_remain_infrastructure_errors() {
-        // Exercise both unavailable heads and unavailable historical comparison blocks.
         for script in [vec![Value::Null], vec![block(10, 'a'), Value::Null]] {
             let left = server(replies(&script)).await;
             let right = server(replies(&[block(10, 'a')])).await;

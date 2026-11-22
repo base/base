@@ -373,7 +373,6 @@ pub struct BatcherArgs {
 impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
     pub fn into_config(self, metrics_enabled: bool) -> eyre::Result<BatcherConfig> {
-        // Shadow mode takes all four of its flags, and a canonical batcher none of them.
         let shadow = match (
             self.shadow_enabled,
             self.shadow_inbox,
@@ -417,7 +416,6 @@ impl BatcherArgs {
             brotli_level,
         };
 
-        // Fail at startup, before constructing the service or accepting blocks.
         encoder_config.validate()?;
         Ok(BatcherConfig {
             l1_rpc_url: self.l1_rpc_url,

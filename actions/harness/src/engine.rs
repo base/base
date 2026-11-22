@@ -173,7 +173,6 @@ impl ActionEngineClient {
         );
 
         let hf = &rollup_config.upgrades;
-        // Helper: set or clear a JSON extra-field that BaseChainSpec::from_genesis reads.
         macro_rules! set_ts {
             ($key:expr, $val:expr) => {
                 match $val {
@@ -243,7 +242,6 @@ impl ActionEngineClient {
         } else {
             genesis.config.extra_fields.insert("base".to_string(), base.into());
         }
-        // Generated harness genesis specs use the funded test account as the activation admin.
         genesis.config.extra_fields.insert(
             "activationAdminAddress".to_string(),
             serde_json::json!(crate::TEST_ACCOUNT_ADDRESS),
@@ -557,7 +555,6 @@ impl ActionEngineClient {
             }
         }
 
-        // Convert ExecutionPayloadV1 into BasePayloadAttributes for the builder.
         let attrs = BasePayloadAttributes {
             payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
                 timestamp: payload.timestamp,
@@ -603,7 +600,6 @@ impl ActionEngineClient {
     ) -> TransportResult<B256> {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
 
-        // Skip re-execution if this block was already built.
         if let Some(existing) = guard.executed_headers.get(&block_number) {
             return Ok(existing.hash_slow());
         }
@@ -874,14 +870,12 @@ impl BaseEngineApi for ActionEngineClient {
         let head = fork_choice_state.head_block_hash;
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
 
-        // Update canonical head if the block is in our executed headers.
         if let Some(h) = guard.executed_headers.values().find(|h| h.hash_slow() == head).cloned()
             && let Some(info) = guard.executed_infos.get(&h.number)
         {
             guard.canonical_head = *info;
         }
 
-        // Sequencer mode: build a block from the provided attributes.
         if let Some(ref attrs) = payload_attributes {
             let payload_id = Self::build_payload_inner(&mut guard, head, attrs)?;
             return Ok(ForkchoiceUpdated {
@@ -1027,7 +1021,6 @@ impl SequencerEngineClient for ActionEngineClient {
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> Result<L2BlockInfo, NodeEngineClientError> {
-        // Extract the V1 payload for execution.
         let v1 = payload.execution_payload.as_v1();
         let head_hash = v1.block_hash;
 

@@ -37,24 +37,19 @@ where
     ) -> fmt::Result {
         let meta = event.metadata();
 
-        // Write timestamp
         let time_format = SystemTime;
         write!(writer, "time=\"")?;
         time_format.format_time(&mut writer)?;
         write!(writer, "\" ")?;
 
-        // Write level
         write!(writer, "level={} ", meta.level())?;
 
-        // Write target
         write!(writer, "target={} ", meta.target())?;
 
-        // Write the message and fields
         write!(writer, "msg=\"")?;
         ctx.field_format().format_fields(writer.by_ref(), event)?;
         write!(writer, "\"")?;
 
-        // Write span context
         if let Some(scope) = ctx.event_scope() {
             for span in scope.from_root() {
                 write!(writer, " {}={{", span.name())?;
@@ -101,15 +96,12 @@ impl LogConfig {
         let filter = self.build_filter_from_directives(directives);
         let registry = tracing_subscriber::registry().with(extra_layer);
 
-        // Build stdout layer
         let stdout_layer =
             self.stdout_logs.as_ref().map(|config| build_stdout_layer(config, filter.clone()));
 
-        // Build file layer
         let file_layer =
             self.file_logs.as_ref().map(|config| build_file_layer(config, filter.clone()));
 
-        // Combine and init
         registry
             .with(stdout_layer)
             .with(file_layer)
@@ -252,6 +244,6 @@ mod tests {
     #[test]
     fn init_test_tracing_idempotent() {
         init_test_tracing();
-        init_test_tracing(); // Should not panic
+        init_test_tracing();
     }
 }

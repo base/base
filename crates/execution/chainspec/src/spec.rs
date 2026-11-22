@@ -167,7 +167,6 @@ impl BaseChainSpec {
             .filter_map(|(upgrade, opt)| opt.map(|block| (upgrade, ForkCondition::Block(block))))
             .collect::<Vec<_>>();
 
-        // We set the paris upgrade for Base networks to zero
         upgrades.push((
             EthereumHardfork::Paris.boxed(),
             ForkCondition::TTD {
@@ -181,7 +180,6 @@ impl BaseChainSpec {
             upgrades.push((BaseUpgrade::Bedrock.boxed(), ForkCondition::Block(block)));
         }
 
-        // Time-based upgrades
         // L1 upgrades are mapped to the activation timestamps of the corresponding Base upgrades
         let azul_time = genesis_info.base.azul;
         let beryl_time = genesis_info.base.beryl;
@@ -410,7 +408,6 @@ impl BaseChainSpec {
         static EXECUTION_LADDER: [BaseUpgrade; BaseUpgrade::EXECUTION_VARIANTS.len()] =
             BaseUpgrade::EXECUTION_VARIANTS;
 
-        // Forks in the startup schedule, with any runtime override applied to the condition.
         let mut forks = self
             .inner
             .forks_iter()

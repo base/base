@@ -89,9 +89,7 @@ where
             ..Default::default()
         };
 
-        // Prune in batches
         while current_earliest_block < target_earliest_block {
-            // Calculate the end of this batch
             let batch_end_block = cmp::min(
                 current_earliest_block.saturating_add(self.prune_batch_size),
                 target_earliest_block,
@@ -109,7 +107,6 @@ where
 
             prune_output.extend_ref(batch_output);
 
-            // Update loop state
             current_earliest_block = batch_end_block;
         }
 
@@ -126,8 +123,6 @@ where
             "Resolving proof storage prune batch block hashes",
         );
 
-        // Fetch the block hash for the new earliest block of this batch.
-        //
         // The parent hash is intentionally not fetched: `prune_earliest_state` only reads
         // `block.number` and `block.hash` from the supplied `BlockWithParent`. Fetching the
         // parent hash here was wasted I/O proportional to the number of batches.
@@ -250,26 +245,21 @@ mod tests {
 
                 #[tokio::test]
                 async fn run_inner_and_and_verify_updated_state() {
-                    // --- env/store ---
                     let dir = TempDir::new().unwrap();
                     let store: BaseProofsStorage<Arc<$storage>> =
                         BaseProofsStorage::from(Arc::new($storage::new(dir.path()).expect("env")));
 
                     store.set_earliest_block_number(0, B256::ZERO).expect("set earliest");
 
-                    // --- entities ---
-                    // accounts
                     let a1 = B256::from([0xA1; 32]);
                     let a2 = B256::from([0xA2; 32]);
-                    let a3 = B256::from([0xA3; 32]); // introduced later
+                    let a3 = B256::from([0xA3; 32]);
 
-                    // one storage address with 3 slots
                     let stor_addr = B256::from([0x10; 32]);
                     let s1 = B256::from([0xB1; 32]);
                     let s2 = B256::from([0xB2; 32]);
                     let s3 = B256::from([0xB3; 32]);
 
-                    // account-trie paths (p1 gets removed by block 3; p2 remains; p3 added later)
                     let p1 = Nibbles::from_nibbles_unchecked([0x01, 0x02]);
                     let p2 = Nibbles::from_nibbles_unchecked([0x03, 0x04]);
                     let p3 = Nibbles::from_nibbles_unchecked([0x05, 0x06]);
@@ -281,7 +271,6 @@ mod tests {
                     let node_p3 =
                         BranchNodeCompact::new(0b11, 0, 0, vec![], Some(B256::from([0x33; 32])));
 
-                    // storage-trie paths (st1 removed by block 3; st2 remains; st3 added later)
                     let st1 = Nibbles::from_nibbles_unchecked([0x0A]);
                     let st2 = Nibbles::from_nibbles_unchecked([0x0B]);
                     let st3 = Nibbles::from_nibbles_unchecked([0x0C]);
@@ -291,10 +280,8 @@ mod tests {
                     let node_st3 =
                         BranchNodeCompact::new(0b110, 0, 0, vec![], Some(B256::from([0x55; 32])));
 
-                    // --- write 5 blocks manually ---
                     let mut parent = B256::ZERO;
 
-                    // Block 1: add a1,a2; s1=100, s2=200; add p1, st1
                     {
                         let b1 = block(1, parent);
 
@@ -335,7 +322,6 @@ mod tests {
                         parent = b256(1);
                     }
 
-                    // Block 2: update a2; add a3; s2=220, s3=300; add p2, st2
                     {
                         let b2 = block(2, parent);
 
@@ -376,20 +362,16 @@ mod tests {
                         parent = b256(2);
                     }
 
-                    // Block 3: delete a1; leave a2,a3; remove p1; remove st1 (storage-trie)
                     {
                         let b3 = block(3, parent);
 
                         let mut d_trie_updates = TrieUpdates::default();
                         let mut d_post_state = HashedPostState::default();
 
-                        // delete a1, keep a2 & a3 values unchanged for this block
                         d_post_state.accounts.insert(a1, None);
 
-                        // remove account trie node p1
                         d_trie_updates.removed_nodes.insert(p1);
 
-                        // remove storage-trie node st1
                         let mut st_upd = StorageTrieUpdates::default();
                         st_upd.removed_nodes.insert(st1);
                         d_trie_updates.storage_tries.insert(stor_addr, st_upd);
@@ -402,7 +384,6 @@ mod tests {
                         parent = b256(3);
                     }
 
-                    // Block 4 (kept): update a2; s1=140; add p3, st3
                     {
                         let b4 = block(4, parent);
 
@@ -433,7 +414,6 @@ mod tests {
                         parent = b256(4);
                     }
 
-                    // Block 5 (kept): update a3; s3=330
                     {
                         let b5 = block(5, parent);
 
@@ -459,7 +439,6 @@ mod tests {
                         store.store_trie_updates(b5, d).expect("b5");
                     }
 
-                    // sanity: earliest=0, latest=5
                     {
                         let e = store.get_earliest_block_number().expect("earliest").expect("some");
                         let l = store.get_latest_block_number().expect("latest").expect("some");
@@ -467,8 +446,6 @@ mod tests {
                         assert_eq!(l.0, 5);
                     }
 
-                    // --- prune: remove the first 3 blocks, keep 4 and 5
-                    // new_earliest = 5-1 = 4
                     let mut block_hash_reader = MockBlockHashReader::new();
                     block_hash_reader
                         .expect_block_hash()
@@ -481,7 +458,6 @@ mod tests {
                     assert_eq!(out.start_block, 0);
                     assert_eq!(out.end_block, 4, "pruned up to 4 (inclusive); new earliest is 4");
 
-                    // proof window moved: earliest=4, latest=5
                     {
                         let e = store.get_earliest_block_number().expect("earliest").expect("some");
                         let l = store.get_latest_block_number().expect("latest").expect("some");
@@ -491,14 +467,12 @@ mod tests {
                         assert_eq!(l.1, b256(5));
                     }
 
-                    // --- DB checks
                     let mut acc_cur = store.account_hashed_cursor(4).expect("acc cur");
                     let mut stor_cur = store.storage_hashed_cursor(stor_addr, 4).expect("stor cur");
                     let mut acc_trie_cur = store.account_trie_cursor(4).expect("acc trie cur");
                     let mut stor_trie_cur =
                         store.storage_trie_cursor(stor_addr, 4).expect("stor trie cur");
 
-                    // Check these histories have been removed
                     let pruned_hashed_account = a1;
                     let pruned_trie_accounts = p1;
                     let pruned_trie_storage = st1;
@@ -519,7 +493,6 @@ mod tests {
                         "deleted storage trie must not exist in earliest snapshot"
                     );
 
-                    // Check these histories have been updated - till block 4
                     let updated_hashed_accounts = vec![
                         (
                             a2,
@@ -559,7 +532,6 @@ mod tests {
                     }
                 }
 
-                // Both latest and earliest blocks are None -> early return default; DB untouched.
                 #[tokio::test]
                 async fn run_inner_where_latest_block_is_none() {
                     let dir = TempDir::new().unwrap();
@@ -577,14 +549,12 @@ mod tests {
                     assert_eq!(out, PrunerOutput::default(), "should early-return default output");
                 }
 
-                // The earliest block is None, but the latest block exists -> early return default.
                 #[tokio::test]
                 async fn run_inner_earliest_none_real_db() {
                     let dir = TempDir::new().unwrap();
                     let store: BaseProofsStorage<Arc<$storage>> =
                         BaseProofsStorage::from(Arc::new($storage::new(dir.path()).expect("env")));
 
-                    // Write a single block to set *latest* only.
                     store
                         .store_trie_updates(block(3, B256::ZERO), BlockStateDiff::default())
                         .expect("store b1");
@@ -600,29 +570,24 @@ mod tests {
                     assert_eq!(out, PrunerOutput::default(), "should early-return default output");
                 }
 
-                // interval < min_block_interval -> "Nothing to prune" path; default output.
                 #[tokio::test]
                 async fn run_inner_interval_too_small_real_db() {
                     let dir = TempDir::new().unwrap();
                     let store: BaseProofsStorage<Arc<$storage>> =
                         BaseProofsStorage::from(Arc::new($storage::new(dir.path()).expect("env")));
 
-                    // Set earliest=4 explicitly
                     let earliest_num = 4u64;
                     let h4 = b256(4);
                     store.set_earliest_block_number(earliest_num, h4).expect("set earliest");
 
-                    // Set latest=5 by storing block 5
                     let b5 = block(5, h4);
                     store.store_trie_updates(b5, BlockStateDiff::default()).expect("store b5");
 
-                    // Sanity: earliest=4, latest=5 => interval=1
                     let e = store.get_earliest_block_number().unwrap().unwrap();
                     let l = store.get_latest_block_number().unwrap().unwrap();
                     assert_eq!(e.0, 4);
                     assert_eq!(l.0, 5);
 
-                    // Require min_block_interval=2 (or greater) so interval < min
                     let block_hash_reader = MockBlockHashReader::new();
                     let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 2, 1000);
                     let out = pruner.run_inner().expect("ok");

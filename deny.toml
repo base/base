@@ -57,7 +57,6 @@ allow = [
 ]
 confidence-threshold = 0.8
 
-# Allow workspace crates that don't have explicit license fields
 exceptions = []
 
 [bans]
@@ -85,11 +84,9 @@ skip = [
     "windows_x86_64_gnullvm",
     "windows_x86_64_msvc",
 
-    # Core macro/derive crates - commonly have version differences across ecosystem
     "thiserror",
     "thiserror-impl",
 
-    # Crypto/random crates - version differences from different crypto stacks
     "chacha20",
     "rand",
     "rand_core",
@@ -99,19 +96,16 @@ skip = [
     "secp256k1",
     "secp256k1-sys",
 
-    # Hash/collection crates
     "hashbrown",
     "hashlink",
     "foldhash",
     "itertools",
     "lru",
 
-    # System/platform crates
     "socket2",
     "bitflags",
     "redox_users",
 
-    # Network crates
     "tungstenite",
     "tokio-tungstenite",
     "axum",
@@ -120,7 +114,6 @@ skip = [
     "tonic",
     "tower",
 
-    # Other common duplicates from upstream
     "alloy-eip7928",
     "base64",
     "bincode",

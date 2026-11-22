@@ -11,7 +11,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
 alloy-rlp.workspace = true
 alloy-trie.workspace = true
 alloy-provider.workspace = true
@@ -19,11 +18,9 @@ alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
 alloy-transport-http.workspace = true
 
-# base
 base-common-network.workspace = true
 base-proof-mpt = { workspace = true, features = ["std"] }
 
-# misc
 hex.workspace = true
 eyre.workspace = true
 serde.workspace = true

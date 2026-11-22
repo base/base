@@ -23,7 +23,6 @@ async fn test_base_node_custom_genesis_number() {
 
     let genesis_number = 1000;
 
-    // Create genesis with custom block number (1000)
     let mut genesis: Genesis =
         serde_json::from_str(include_str!("../assets/genesis.json")).unwrap();
     genesis.number = Some(genesis_number);
@@ -40,7 +39,6 @@ async fn test_base_node_custom_genesis_number() {
         .await
         .expect("Failed to launch node");
 
-    // Verify stage checkpoints are initialized to genesis block number (1000)
     for stage in StageId::ALL {
         let checkpoint = node.inner.provider.get_stage_checkpoint(stage).unwrap();
         assert!(checkpoint.is_some(), "Stage {stage:?} checkpoint should exist");
@@ -51,11 +49,9 @@ async fn test_base_node_custom_genesis_number() {
         );
     }
 
-    // Query genesis block should succeed
     let genesis_header = node.inner.provider.header_by_number(genesis_number).unwrap();
     assert!(genesis_header.is_some(), "Genesis block at {genesis_number} should exist");
 
-    // Query blocks before genesis should return None
     for block_num in [0, 1, genesis_number - 1] {
         let header = node.inner.provider.header_by_number(block_num).unwrap();
         assert!(header.is_none(), "Block {block_num} before genesis should not exist");
@@ -66,7 +62,6 @@ async fn test_base_node_custom_genesis_number() {
     assert_eq!(block_payloads.len(), 1);
     let block = block_payloads.first().unwrap().block();
 
-    // Verify the new block is at 1001 (genesis 1000 + 1)
     assert_eq!(
         block.number(),
         1001,

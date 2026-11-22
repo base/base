@@ -130,7 +130,6 @@ impl<'a> CertChain<'a> {
         let mut expiries = Vec::with_capacity(self.certs.len());
 
         for (i, parsed) in self.certs.iter().enumerate() {
-            // Extract notAfter as seconds since epoch for on-chain expiry tracking.
             let not_after = parsed.cert.validity().not_after.timestamp();
             let not_after_secs = u64::try_from(not_after).map_err(|_| {
                 VerifierError::CertificateVerification(format!(
@@ -148,7 +147,6 @@ impl<'a> CertChain<'a> {
                 )));
             }
 
-            // Skip validation for trusted prefix certs.
             if i < trusted_prefix_len {
                 continue;
             }
@@ -157,13 +155,10 @@ impl<'a> CertChain<'a> {
             // A single-cert chain (root only) is treated as CA, not leaf.
             let is_leaf = i == self.certs.len() - 1 && self.certs.len() > 1;
 
-            // Validate x509 content (M-01 audit fixes).
             Self::validate_cert_content(&parsed.cert, is_leaf)?;
 
-            // Validate validity period.
             Self::check_validity(&parsed.cert, timestamp, i)?;
 
-            // Validate issuer/subject chain consistency and path length.
             if i > 0 {
                 let parent_cert = &self.certs[i - 1].cert;
 
@@ -173,7 +168,6 @@ impl<'a> CertChain<'a> {
                     )));
                 }
 
-                // Check path length constraint from parent's basicConstraints.
                 let parent_bc = parent_cert.basic_constraints().map_err(|e| {
                     VerifierError::CertificateVerification(format!(
                         "certificate {}: parent basicConstraints parse: {e}",
@@ -219,7 +213,6 @@ impl<'a> CertChain<'a> {
     /// - `basicConstraints`: `cA` must be `false` (or absent)
     /// - `keyUsage`: must include `digital_signature` if present
     fn validate_cert_content(cert: &X509Certificate<'_>, is_leaf: bool) -> Result<()> {
-        // Check algorithm is ECDSA-SHA384 over P384.
         let sig_oid = cert.signature_algorithm.oid();
         if *sig_oid != OID_SIG_ECDSA_WITH_SHA384 {
             return Err(VerifierError::CertificateVerification(format!(
@@ -250,7 +243,6 @@ impl<'a> CertChain<'a> {
             )));
         }
 
-        // Parse extensions.
         let basic_constraints = cert.basic_constraints().map_err(|e| {
             VerifierError::CertificateVerification(format!("basicConstraints parse: {e}"))
         })?;
@@ -260,7 +252,6 @@ impl<'a> CertChain<'a> {
             .map_err(|e| VerifierError::CertificateVerification(format!("keyUsage parse: {e}")))?;
 
         if is_leaf {
-            // Leaf: cA must NOT be true.
             if let Some(bc) = basic_constraints
                 && bc.value.ca
             {
@@ -268,7 +259,6 @@ impl<'a> CertChain<'a> {
                     "leaf certificate has cA=true".into(),
                 ));
             }
-            // Leaf: keyUsage should include digitalSignature if present.
             if let Some(ku) = key_usage
                 && !ku.value.digital_signature()
             {
@@ -277,7 +267,6 @@ impl<'a> CertChain<'a> {
                 ));
             }
         } else {
-            // CA: basicConstraints must exist with cA=true.
             let bc = basic_constraints.ok_or_else(|| {
                 VerifierError::CertificateVerification(
                     "CA certificate missing basicConstraints".into(),
@@ -288,7 +277,6 @@ impl<'a> CertChain<'a> {
                     "CA certificate has cA=false".into(),
                 ));
             }
-            // CA: keyUsage must exist and include keyCertSign.
             let ku = key_usage.ok_or_else(|| {
                 VerifierError::CertificateVerification("CA certificate missing keyUsage".into())
             })?;
@@ -336,7 +324,6 @@ impl<'a> CertChain<'a> {
         child: &ParsedCert<'_>,
         child_index: usize,
     ) -> Result<()> {
-        // Extract the parent's public key (uncompressed P384 point).
         let pk_bytes = parent.public_key().subject_public_key.data.as_ref();
         let verifying_key = VerifyingKey::from_sec1_bytes(pk_bytes).map_err(|e| {
             VerifierError::SignatureVerification(format!(
@@ -344,7 +331,6 @@ impl<'a> CertChain<'a> {
             ))
         })?;
 
-        // The signature on the child's TBS (to-be-signed) certificate.
         let sig_bytes = child.cert.signature_value.data.as_ref();
         let signature = Signature::from_der(sig_bytes).map_err(|e| {
             VerifierError::SignatureVerification(format!(
@@ -352,7 +338,6 @@ impl<'a> CertChain<'a> {
             ))
         })?;
 
-        // The TBS data to verify.
         let tbs = child.cert.tbs_certificate.as_ref();
 
         verifying_key.verify(tbs, &signature).map_err(|e| {
@@ -401,8 +386,6 @@ mod tests {
         1732994568, // Leaf: 2024-11-30T19:22:48Z
     ];
 
-    // ── Fixtures ────────────────────────────────────────────────────────
-
     /// Full 5-cert chain (root → 3 intermediates → leaf) from real Nitro attestation.
     #[fixture]
     fn full_chain_der() -> Vec<Vec<u8>> {
@@ -417,8 +400,6 @@ mod tests {
     fn root_der() -> Vec<u8> {
         hex::decode(ROOT_HEX).unwrap()
     }
-
-    // ── Happy-path tests ────────────────────────────────────────────────
 
     #[rstest]
     fn root_ca_self_signed_verifies(root_der: Vec<u8>) {
@@ -490,11 +471,9 @@ mod tests {
         let chain = CertChain::from_der(&refs).unwrap();
         let (digests, _expiries) = chain.verify_chain(5, 0).unwrap();
 
-        // First digest = sha256(root_der).
         let root_hash = B256::from_slice(Sha256::digest(&full_chain_der[0]).as_slice());
         assert_eq!(digests[0], root_hash);
 
-        // Second digest = sha256(root_hash || sha256(inter1_der)).
         let inter1_hash = B256::from_slice(Sha256::digest(&full_chain_der[1]).as_slice());
         let mut hasher = Sha256::new();
         hasher.update(root_hash.as_slice());
@@ -512,8 +491,6 @@ mod tests {
         assert_eq!(pk.len(), 97);
         assert_eq!(pk[0], 0x04);
     }
-
-    // ── Parsing error tests ─────────────────────────────────────────────
 
     #[rstest]
     fn empty_chain_rejected() {
@@ -542,8 +519,6 @@ mod tests {
         assert!(msg.contains("trailing DER data"), "expected trailing DER error, got: {msg}");
     }
 
-    // ── Trusted prefix boundary tests ───────────────────────────────────
-
     #[rstest]
     fn trusted_prefix_skips_validation(root_der: Vec<u8>) {
         let certs = vec![root_der.as_slice()];
@@ -560,8 +535,6 @@ mod tests {
         let chain = CertChain::from_der(&certs).unwrap();
         assert!(chain.verify_chain(5, 0).is_err());
     }
-
-    // ── M-01: Validity period checks ────────────────────────────────────
 
     #[rstest]
     fn expired_cert_rejected(full_chain_der: Vec<Vec<u8>>) {
@@ -587,8 +560,6 @@ mod tests {
         );
     }
 
-    // ── M-01: Chain ordering ────────────────────────────────────────────
-
     #[rstest]
     fn wrong_chain_order_rejected(full_chain_der: Vec<Vec<u8>>) {
         // Swap intermediate1 and intermediate2 → issuer/subject mismatch.
@@ -608,12 +579,9 @@ mod tests {
         );
     }
 
-    // ── M-01: Tampered cert rejected ────────────────────────────────────
-
     #[rstest]
     fn tampered_cert_signature_fails(full_chain_der: Vec<Vec<u8>>) {
         let mut tampered = full_chain_der;
-        // Flip a byte in the middle of inter1 to corrupt it.
         let mid = tampered[1].len() / 2;
         tampered[1][mid] ^= 0xFF;
         let refs: Vec<&[u8]> = tampered.iter().map(|c| c.as_slice()).collect();
@@ -623,8 +591,6 @@ mod tests {
         }
     }
 
-    // ── Certificate expiry extraction ───────────────────────────────────
-
     #[rstest]
     fn expiries_match_known_cert_validity(full_chain_der: Vec<Vec<u8>>) {
         let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
@@ -633,7 +599,6 @@ mod tests {
         let (_digests, expiries) = chain.verify_chain(5, 0).unwrap();
         assert_eq!(expiries.len(), EXPECTED_EXPIRIES.len());
 
-        // Verify each cert's notAfter against the known X.509 validity periods.
         for (i, (&actual, &expected)) in expiries.iter().zip(EXPECTED_EXPIRIES.iter()).enumerate() {
             assert_eq!(actual, expected, "expiry mismatch at cert index {i}");
         }
@@ -644,13 +609,9 @@ mod tests {
         let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
         let chain = CertChain::from_der(&refs).unwrap();
 
-        // Trusted prefix = 4: root + 3 intermediates cached, only leaf validated.
         let (_digests, expiries_prefix4) = chain.verify_chain(4, VALID_TIMESTAMP_MS).unwrap();
-        // All trusted: skip all validation.
         let (_digests, expiries_all) = chain.verify_chain(5, 0).unwrap();
 
-        // Expiries must be identical regardless of trusted prefix length,
-        // since notAfter is extracted unconditionally for all certs.
         assert_eq!(expiries_prefix4, expiries_all);
     }
 

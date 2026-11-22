@@ -143,7 +143,6 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
     let (sender, raw) = create_eip1559_tx(harness.chain_id());
     let validated_tx =
         ValidatedTransaction { sender, raw, metering: None, extensions: NoExtensions {} };
-    // EIP-1559 transactions are supported by the pool
     let result: Result<(), _> =
         client.request("base_insertValidatedTransaction", (validated_tx,)).await;
 

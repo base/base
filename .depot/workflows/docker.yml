@@ -1,6 +1,3 @@
-# Depot CI Migration
-# Source: .github/workflows/docker.yml
-
 name: Docker
 on:
   push:

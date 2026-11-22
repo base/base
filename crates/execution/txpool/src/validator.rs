@@ -1168,10 +1168,8 @@ where
         check_cost: bool,
     ) -> TransactionValidationOutcome<Tx> {
         if !self.requires_l1_data_gas_fee() {
-            // no need to check L1 gas fee
             return outcome;
         }
-        // ensure that the account has enough balance to cover the L1 gas cost
         if let TransactionValidationOutcome::Valid {
             balance,
             state_nonce,
@@ -1183,7 +1181,6 @@ where
         {
             let mut l1_block_info = self.block_info.l1_block_info.read().clone();
 
-            // Check to ensure tx doesn't exceed the DA footprint limit
             if self
                 .chain_spec()
                 .is_feature_active_at_timestamp(BaseFeature::DaFootprint, self.block_timestamp())
@@ -1231,7 +1228,6 @@ where
             );
             let cost = valid_tx.transaction().cost().saturating_add(cost_addition);
 
-            // Checks for max cost
             if cost > balance {
                 return TransactionValidationOutcome::Invalid(
                     valid_tx.into_transaction(),

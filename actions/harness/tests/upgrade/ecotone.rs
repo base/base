@@ -7,10 +7,6 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_genesis::UpgradeConfig;
 use base_protocol::L1BlockInfoTx;
 
-// ---------------------------------------------------------------------------
-// A. L1 info format transitions at Ecotone activation
-// ---------------------------------------------------------------------------
-
 /// The L1 info deposit transaction changes format at Ecotone activation in
 /// **two steps**:
 ///
@@ -44,7 +40,6 @@ async fn ecotone_l1_info_format_transitions_at_activation() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    // Block 1: ts=2 — pre-Ecotone. Expect Bedrock format.
     let block1 = builder.build_next_block_with_single_transaction().await;
     let info1 = ActionTestHarness::l1_info_from_block(&block1);
     assert!(
@@ -52,7 +47,6 @@ async fn ecotone_l1_info_format_transitions_at_activation() {
         "block 1 (pre-Ecotone ts=2) must use Bedrock format, got {info1:?}"
     );
 
-    // Block 2: ts=4 — still pre-Ecotone. Expect Bedrock format.
     let block2 = builder.build_next_block_with_single_transaction().await;
     let info2 = ActionTestHarness::l1_info_from_block(&block2);
     assert!(
@@ -71,8 +65,6 @@ async fn ecotone_l1_info_format_transitions_at_activation() {
         "block 3 (first Ecotone ts=6) must still use Bedrock format, got {info3:?}"
     );
 
-    // Block 4: ts=8 — second Ecotone block. L1Block contract now upgraded.
-    // Sequencer sends Ecotone-format L1 info tx.
     let block4 = builder.build_next_block_with_single_transaction().await;
     let info4 = ActionTestHarness::l1_info_from_block(&block4);
     assert!(
@@ -80,10 +72,6 @@ async fn ecotone_l1_info_format_transitions_at_activation() {
         "block 4 (post-Ecotone ts=8) must use Ecotone format, got {info4:?}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// B. Ecotone activation block user txs are accepted at the batch layer
-// ---------------------------------------------------------------------------
 
 /// Unlike the Jovian upgrade, Ecotone does **not** enforce an empty first block
 /// at the batch-validation layer. There is no `NonEmptyTransitionBlock` check
@@ -108,7 +96,6 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
         ..BatcherConfig::default()
     };
 
-    // Canyon and Delta active at genesis; Ecotone at ts=6 (block 3).
     let ecotone_time = 6u64;
     let upgrades = UpgradeConfig {
         canyon_time: Some(0),
@@ -123,7 +110,6 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    // Blocks 1 and 2: pre-Ecotone, user txs OK.
     for nonce in 0..2 {
         let block = builder.build_next_block_with_single_transaction().await;
         h.submit_single_batch_zlib_calldata(&batcher_cfg, &block, nonce)
@@ -141,7 +127,6 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     h.submit_single_batch_zlib_calldata(&batcher_cfg, &block3_with_user_tx, 2)
         .expect("valid Ecotone activation zlib batch");
 
-    // Block 4: post-Ecotone, user txs OK.
     let block4 = builder.build_next_block_with_single_transaction().await;
     h.submit_single_batch_zlib_calldata(&batcher_cfg, &block4, 3)
         .expect("valid post-Ecotone zlib batch");
@@ -152,24 +137,16 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     );
     node.initialize().await;
 
-    // Drive derivation through all 4 L1 blocks.
     for _ in 1..=4u64 {
         node.run_until_idle().await;
     }
 
-    // Ecotone has no NonEmptyTransitionBlock batch check, so block 3's batch
-    // (with user txs) is accepted. All 4 blocks must derive: block 3 is NOT
-    // deposit-only, unlike the Jovian transition block.
     assert_eq!(
         node.l2_safe_number(),
         4,
         "safe head must reach block 4; Ecotone has no batch-level empty-block enforcement"
     );
 }
-
-// ---------------------------------------------------------------------------
-// C. Derivation through the Ecotone activation boundary
-// ---------------------------------------------------------------------------
 
 /// Full end-to-end derivation through the Ecotone activation boundary,
 /// following the same pattern as `jovian_derivation_crosses_activation_boundary`
@@ -205,7 +182,6 @@ async fn ecotone_derivation_crosses_activation_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    // Build and submit 4 L2 blocks individually (one batch per L1 block).
     for i in 1..=4u64 {
         let block = if i == 3 {
             // First Ecotone block: must be deposit-only (no user txs) because

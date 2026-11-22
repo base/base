@@ -235,25 +235,21 @@ fn render_sync_gaps(frame: &mut Frame<'_>, area: Rect, snapshot: &ProofsSnapshot
 
     let mut lines = Vec::new();
 
-    // Proposer behind safe head.
     if let (Some(proposed), Some(safe_block)) = (proposed_l2, safe) {
         let gap = safe_block.saturating_sub(proposed);
         lines.push(gap_line("Proposer behind safe head", gap));
     }
 
-    // Proposer behind latest head.
     if let (Some(proposed), Some(latest_block)) = (proposed_l2, latest) {
         let gap = latest_block.saturating_sub(proposed);
         lines.push(gap_line("Proposer behind latest head", gap));
     }
 
-    // Anchor behind latest proposal.
     if let (Some(anchor_block), Some(proposed)) = (anchor, proposed_l2) {
         let gap = proposed.saturating_sub(anchor_block);
         lines.push(gap_line("Anchor behind latest proposal", gap));
     }
 
-    // Anchor behind safe head.
     if let (Some(anchor_block), Some(safe_block)) = (anchor, safe) {
         let gap = safe_block.saturating_sub(anchor_block);
         lines.push(gap_line("Anchor behind safe head", gap));
@@ -268,10 +264,6 @@ fn render_sync_gaps(frame: &mut Frame<'_>, area: Rect, snapshot: &ProofsSnapshot
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
-
-// =============================================================================
-// Helpers
-// =============================================================================
 
 fn kv_line(label: &str, value: &str) -> Line<'static> {
     Line::from(vec![

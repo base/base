@@ -103,8 +103,6 @@ impl MeteringProvider for MeteringStore {
     }
 
     fn insert(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
-        // If the builder needed metering data for this tx but didn't have it,
-        // the data arrived late. Record how late and what the values were.
         if let Some(needed_at) = self.needed_at.remove(&tx_hash) {
             let latency_ms = needed_at.elapsed().as_millis() as f64;
             BuilderMetrics::metering_late_arrival_total().increment(1);
@@ -233,7 +231,6 @@ mod tests {
 
         store.insert(tx1, create_test_metering(1000));
         store.insert(tx2, create_test_metering(2000));
-        // Trigger eviction by inserting a third entry.
         store.insert(tx3, create_test_metering(3000));
 
         // Moka evicts asynchronously; run pending tasks to ensure eviction completes.
@@ -264,7 +261,6 @@ mod tests {
         store.mark_included_without_metering(&tx_hash);
         assert!(store.needed_at.contains_key(&tx_hash));
 
-        // Late-arriving data is consumed by insert(), does not enter cache
         store.insert(tx_hash, create_test_metering(42000));
         store.run_pending_tasks();
         assert!(!store.needed_at.contains_key(&tx_hash));
@@ -282,7 +278,6 @@ mod tests {
         store.skip(&tx_hash);
         assert!(!store.needed_at.contains_key(&tx_hash));
 
-        // Data arrives after skip — normal insert, not a late arrival
         store.insert(tx_hash, create_test_metering(21000));
         assert!(store.get(&tx_hash).is_some());
     }
@@ -292,7 +287,6 @@ mod tests {
         let store = MeteringStore::new(true, 100, Duration::from_secs(30));
         let tx_hash = TxHash::random();
 
-        // Insert data first, then get() finds it — no needed_at entry
         store.insert(tx_hash, create_test_metering(21000));
         assert!(store.get(&tx_hash).is_some());
         assert!(!store.needed_at.contains_key(&tx_hash));

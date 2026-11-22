@@ -68,34 +68,25 @@ where
             let next_frame = &self.queue[i + 1];
             let extends_channel = prev_frame.id == next_frame.id;
 
-            // If the frames are in the same channel, and the frame numbers are not sequential,
-            // drop the next frame.
             if extends_channel && prev_frame.number + 1 != next_frame.number {
                 self.queue.remove(i + 1);
                 continue;
             }
 
-            // If the frames are in the same channel, and the previous is last, drop the next frame.
             if extends_channel && prev_frame.is_last {
                 self.queue.remove(i + 1);
                 continue;
             }
 
-            // If the frames are in different channels, the next frame must be first.
             if !extends_channel && next_frame.number != 0 {
                 self.queue.remove(i + 1);
                 continue;
             }
 
-            // If the frames are in different channels, and the current channel is not last, walk
-            // back the channel and drop all prev frames.
             if !extends_channel && !prev_frame.is_last && next_frame.number == 0 {
-                // Find the index of the first frame in the queue with the same channel ID
-                // as the previous frame.
                 let first_frame =
                     self.queue.iter().position(|f| f.id == prev_frame.id).expect("infallible");
 
-                // Drain all frames from the previous channel.
                 let drained = self.queue.drain(first_frame..=i);
                 i = i.saturating_sub(drained.len());
                 continue;
@@ -107,7 +98,6 @@ where
 
     /// Loads more frames into the [`FrameQueue`].
     pub async fn load_frames(&mut self) -> PipelineResult<()> {
-        // Skip loading frames if the queue is not empty.
         if !self.queue.is_empty() {
             return Ok(());
         }
@@ -128,14 +118,11 @@ where
             return Ok(());
         };
 
-        // Optimistically extend the queue with the new frames.
         self.queue.extend(frames);
 
-        // Prune frames if Holocene is active.
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         self.prune(origin);
 
-        // Update metrics with the post-prune queue state.
         Metrics::pipeline_frame_queue_buffer().set(self.queue.len() as f64);
         let queue_size = self.queue.iter().map(|f| f.size()).sum::<usize>() as f64;
         Metrics::pipeline_frame_queue_mem().set(queue_size);
@@ -372,12 +359,10 @@ pub(super) mod tests {
     #[tokio::test]
     async fn test_holocene_unordered_frames() {
         let frames = [
-            // -- First Channel --
             crate::frame!(0xEE, 0, vec![0xDD; 50], false),
             crate::frame!(0xEE, 1, vec![0xDD; 50], false),
             crate::frame!(0xEE, 2, vec![0xDD; 50], true),
-            crate::frame!(0xEE, 3, vec![0xDD; 50], false), // Dropped
-            // -- Next Channel --
+            crate::frame!(0xEE, 3, vec![0xDD; 50], false),
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
@@ -398,11 +383,10 @@ pub(super) mod tests {
     #[tokio::test]
     async fn test_holocene_non_sequential_frames() {
         let frames = [
-            // -- First Channel --
             crate::frame!(0xEE, 0, vec![0xDD; 50], false),
             crate::frame!(0xEE, 1, vec![0xDD; 50], false),
-            crate::frame!(0xEE, 3, vec![0xDD; 50], true), // Dropped
-            crate::frame!(0xEE, 4, vec![0xDD; 50], false), // Dropped
+            crate::frame!(0xEE, 3, vec![0xDD; 50], true),
+            crate::frame!(0xEE, 4, vec![0xDD; 50], false),
         ];
         let cfg = RollupConfig {
             upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
@@ -421,12 +405,10 @@ pub(super) mod tests {
     #[tokio::test]
     async fn test_holocene_unclosed_channel() {
         let frames = [
-            // -- First Channel --
             crate::frame!(0xEE, 0, vec![0xDD; 50], false),
             crate::frame!(0xEE, 1, vec![0xDD; 50], false),
             crate::frame!(0xEE, 2, vec![0xDD; 50], false),
             crate::frame!(0xEE, 3, vec![0xDD; 50], false),
-            // -- Next Channel --
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
@@ -447,15 +429,12 @@ pub(super) mod tests {
     #[tokio::test]
     async fn test_holocene_unstarted_channel() {
         let frames = [
-            // -- First Channel --
             crate::frame!(0xDD, 0, vec![0xDD; 50], false),
             crate::frame!(0xDD, 1, vec![0xDD; 50], false),
             crate::frame!(0xDD, 2, vec![0xDD; 50], false),
             crate::frame!(0xDD, 3, vec![0xDD; 50], true),
-            // -- Second Channel --
-            crate::frame!(0xEE, 1, vec![0xDD; 50], false), // Dropped
-            crate::frame!(0xEE, 2, vec![0xDD; 50], true),  // Dropped
-            // -- Third Channel --
+            crate::frame!(0xEE, 1, vec![0xDD; 50], false),
+            crate::frame!(0xEE, 2, vec![0xDD; 50], true),
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
@@ -476,14 +455,12 @@ pub(super) mod tests {
     #[tokio::test]
     async fn test_holocene_unclosed_channel_with_invalid_start() {
         let frames = [
-            // -- First Channel --
             crate::frame!(0xEE, 0, vec![0xDD; 50], false),
             crate::frame!(0xEE, 1, vec![0xDD; 50], false),
             crate::frame!(0xEE, 2, vec![0xDD; 50], false),
             crate::frame!(0xEE, 3, vec![0xDD; 50], false),
-            // -- Next Channel --
-            crate::frame!(0xFF, 1, vec![0xDD; 50], false), // Dropped
-            crate::frame!(0xFF, 2, vec![0xDD; 50], true),  // Dropped
+            crate::frame!(0xFF, 1, vec![0xDD; 50], false),
+            crate::frame!(0xFF, 2, vec![0xDD; 50], true),
         ];
         let cfg = RollupConfig {
             upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
@@ -502,13 +479,10 @@ pub(super) mod tests {
     #[tokio::test]
     async fn test_holocene_replace_channel() {
         let frames = [
-            // -- First Channel - VALID & CLOSED --
             crate::frame!(0xDD, 0, vec![0xDD; 50], false),
             crate::frame!(0xDD, 1, vec![0xDD; 50], true),
-            // -- Second Channel - VALID & NOT CLOSED / DROPPED --
             crate::frame!(0xEE, 0, vec![0xDD; 50], false),
             crate::frame!(0xEE, 1, vec![0xDD; 50], false),
-            // -- Third Channel - VALID & CLOSED / REPLACES CHANNEL #2 --
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
@@ -529,13 +503,10 @@ pub(super) mod tests {
     #[tokio::test]
     async fn test_holocene_interleaved_invalid_channel() {
         let frames = [
-            // -- First channel is dropped since it is replaced by the second channel --
-            // -- Second channel is dropped since it isn't closed --
             crate::frame!(0x01, 0, vec![0xDD; 50], false),
             crate::frame!(0x02, 0, vec![0xDD; 50], false),
             crate::frame!(0x01, 1, vec![0xDD; 50], true),
             crate::frame!(0x02, 1, vec![0xDD; 50], false),
-            // -- Third Channel - VALID & CLOSED --
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
@@ -556,13 +527,10 @@ pub(super) mod tests {
     #[tokio::test]
     async fn test_holocene_interleaved_valid_channel() {
         let frames = [
-            // -- First channel is dropped since it is replaced by the second channel --
-            // -- Second channel is successfully closed so it's valid --
             crate::frame!(0x01, 0, vec![0xDD; 50], false),
             crate::frame!(0x02, 0, vec![0xDD; 50], false),
             crate::frame!(0x01, 1, vec![0xDD; 50], true),
             crate::frame!(0x02, 1, vec![0xDD; 50], true),
-            // -- Third Channel - VALID & CLOSED --
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];

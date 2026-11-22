@@ -163,12 +163,10 @@ where
 
         modules.merge(HealthzApiServer::into_rpc(HealthzRpc {}))?;
 
-        // Build the p2p rpc module.
         if let Some(p2p_network) = p2p_network {
             modules.merge(P2pRpc::new(p2p_network).into_rpc())?;
         }
 
-        // Build the admin rpc module, gated on the `--rpc.enable-admin` flag.
         if self.config.admin_enabled() {
             let sequencer_admin_client = self.sequencer_admin_rpc_client.take();
             let admin_rpc = AdminRpc::new(sequencer_admin_client, admin_network_access);
@@ -177,7 +175,6 @@ where
             )?;
         }
 
-        // Create context for communication between actors.
         let rollup_rpc = RollupRpc::new(
             self.engine_rpc_client.clone(),
             l1_watcher_queries,
@@ -191,7 +188,6 @@ where
             modules.merge(base_rpc.into_rpc())?;
         }
 
-        // Add development RPC module for engine state introspection if enabled
         if self.config.dev_enabled() {
             let dev_rpc = DevEngineRpc::new(self.engine_rpc_client.clone());
             modules.merge(dev_rpc.into_rpc())?;
@@ -218,7 +214,6 @@ where
                     }
                 }
                 _ = cancellation.cancelled() => {
-                    // The cancellation token has been triggered, so we should stop the server.
                     handle.stop().map_err(|_| RpcActorError::StopFailed)?;
                     // Since the RPC Server didn't originate the error, we should return Ok.
                     return Ok(());
@@ -226,7 +221,6 @@ where
             }
         }
 
-        // Stop the node if there has already been 3 rpc restarts.
         cancellation.cancel();
         return Err(RpcActorError::ServerStopped);
     }

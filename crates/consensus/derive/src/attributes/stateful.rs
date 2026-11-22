@@ -157,8 +157,6 @@ where
             l2_parent.seq_num + 1
         };
 
-        // Sanity check the L1 origin was correctly selected to maintain the time invariant
-        // between L1 and L2.
         if target_l2_time < l1_header.timestamp {
             return Err(PipelineErrorKind::Reset(
                 BuilderError::BrokenTimeInvariant(
@@ -214,7 +212,6 @@ where
             upgrade_transactions.extend(Upgrades::JOVIAN.txs());
         }
 
-        // Build and encode the L1 info transaction for the current payload.
         let (_, l1_info_tx_envelope) = L1BlockInfoTx::try_new_with_deposit_tx(
             &self.rollup_cfg,
             &self.l1_cfg,
@@ -262,7 +259,6 @@ where
 
         let mut parent_beacon_root = None;
         if self.rollup_cfg.is_feature_active_cascading(BaseFeature::BeaconRoots, target_l2_time) {
-            // if the parent beacon root is not available, default to zero hash
             parent_beacon_root = Some(l1_header.parent_beacon_block_root.unwrap_or_default());
         }
 
@@ -289,8 +285,7 @@ where
             min_base_fee: self
                 .rollup_cfg
                 .is_feature_active_cascading(BaseFeature::MinBaseFee, target_l2_time)
-                .then(|| sys_config.min_base_fee.unwrap_or_default()), /* Default to zero if not
-                                                                        * set at Jovian */
+                .then(|| sys_config.min_base_fee.unwrap_or_default()),
         })
     }
 }
@@ -355,16 +350,12 @@ mod tests {
         data[24..32].copy_from_slice(&offset);
         let len: [u8; 8] = U64::from(128).to_be_bytes();
         data[56..64].copy_from_slice(&len);
-        // Copy the u128 mint value
         let mint: [u8; 16] = 10_u128.to_be_bytes();
         data[80..96].copy_from_slice(&mint);
-        // Copy the tx value
         let value: [u8; 32] = U256::from(100).to_be_bytes();
         data[96..128].copy_from_slice(&value);
-        // Copy the gas limit
         let gas: [u8; 8] = 1000_u64.to_be_bytes();
         data[128..136].copy_from_slice(&gas);
-        // Copy the isCreation flag
         data[136] = 1;
         let from = address!("2222222222222222222222222222222222222222");
         let mut from_bytes = vec![0u8; 32];
@@ -648,8 +639,6 @@ mod tests {
             l1_origin: BlockNumHash { hash: B256::left_padding_from(&[0xFF]), number: 2 },
             seq_num: 0,
         };
-        // This should error because the l2 parent's l1_origin.hash should equal the epoch header
-        // hash. Here we use the default header whose hash will not equal the custom `l2_hash`.
         let expected =
             BuilderError::BlockMismatchEpochReset(epoch, l2_parent.l1_origin, B256::default());
         let err = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap_err();
@@ -675,8 +664,6 @@ mod tests {
             l1_origin: BlockNumHash { hash: B256::ZERO, number: l2_number },
             seq_num: 0,
         };
-        // This should error because the l2 parent's l1_origin.hash should equal the epoch hash
-        // Here the default header is used whose hash will not equal the custom `l2_hash` above.
         let expected = BuilderError::BlockMismatch(epoch, l2_parent.l1_origin);
         let err = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap_err();
         assert_eq!(err, PipelineErrorKind::Reset(ResetError::AttributesBuilder(expected)));
@@ -1014,7 +1001,6 @@ mod tests {
         fetcher.system_configs.insert(B256::ZERO, SystemConfig::default());
         let mut provider = TestChainProvider::default();
 
-        // The epoch header's parent_hash must match l2_parent.l1_origin.hash.
         let origin_hash = B256::left_padding_from(&[0xBB]);
         let header = Header { parent_hash: origin_hash, ..Default::default() };
         let epoch_hash = header.hash_slow();
@@ -1043,7 +1029,6 @@ mod tests {
             seq_num: 0,
         };
 
-        // Should succeed despite the malformed system config receipt.
         assert!(builder.prepare_payload_attributes(l2_parent, epoch).await.is_ok());
     }
 }

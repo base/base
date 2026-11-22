@@ -114,7 +114,6 @@ where
     }
 
     fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
-        // Check ommers hash
         let ommers_hash = block.body().calculate_ommers_root();
         if Some(block.ommers_hash()) != ommers_hash {
             return Err(ConsensusError::BodyOmmersHashDiff(
@@ -126,7 +125,6 @@ where
             ));
         }
 
-        // Check transaction root
         if let Err(error) = block.ensure_transaction_root_valid() {
             return Err(ConsensusError::BodyTransactionRootDiff(error.into()));
         }
@@ -138,7 +136,6 @@ where
             block.body().transactions(),
         )?;
 
-        // Check empty shanghai-withdrawals
         if self
             .chain_spec
             .is_feature_active_at_timestamp(BaseFeature::Withdrawals, block.timestamp())
@@ -152,7 +149,6 @@ where
             return Ok(());
         }
 
-        // Blob gas used validation
         // In Jovian, the blob gas used computation has changed. We are moving the blob base fee
         // validation to post-execution since the DA footprint calculation is stateful.
         // Pre-execution we only validate that the blob gas used is present in the header.
@@ -168,7 +164,6 @@ where
             validate_cancun_gas(block)?;
         }
 
-        // Check withdrawals root field in header
         if self
             .chain_spec
             .is_feature_active_at_timestamp(BaseFeature::L2ToL1MessageRoot, block.timestamp())
@@ -180,7 +175,6 @@ where
                 )))
             })?
         } else {
-            // canyon is active, else would have returned already
             canyon::ensure_empty_withdrawals_root(block.header())?
         }
 
@@ -208,7 +202,6 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
         // Block validation with respect to the parent should ensure that the block timestamp
         // is greater than its parent timestamp.
 
-        // validate header extra data for all networks post merge
         validate_header_extra_data(header, self.max_extra_data_size)?;
         validate_header_gas(header)?;
         validate_header_base_fee(header, &self.chain_spec)?;
@@ -586,7 +579,6 @@ mod tests {
     fn test_block_blob_gas_used_validation_isthmus() {
         let chain_spec = base_mainnet_builder().isthmus_activated().build();
 
-        // create a tx
         let transaction = mock_tx(0);
 
         let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
@@ -609,7 +601,6 @@ mod tests {
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
 
-        // validate blob, it should pass blob gas used validation
         let pre_execution = beacon_consensus.validate_block_pre_execution(&block);
 
         assert!(pre_execution.is_ok());
@@ -619,7 +610,6 @@ mod tests {
     fn test_block_blob_gas_used_validation_failure_isthmus() {
         let chain_spec = base_mainnet_builder().isthmus_activated().build();
 
-        // create a tx
         let transaction = mock_tx(0);
 
         let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
@@ -642,7 +632,6 @@ mod tests {
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
 
-        // validate blob, it should fail blob gas used validation
         let pre_execution = beacon_consensus.validate_block_pre_execution(&block);
 
         assert!(matches!(
@@ -658,7 +647,6 @@ mod tests {
 
         let chain_spec = base_mainnet_builder().jovian_activated().build();
 
-        // create a tx
         let transaction = mock_tx(0);
 
         let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
@@ -699,7 +687,6 @@ mod tests {
             gas_used: GAS_USED,
         };
 
-        // validate blob, it should pass blob gas used validation
         let pre_execution = beacon_consensus.validate_block_pre_execution(&block);
 
         assert!(pre_execution.is_ok());
@@ -715,7 +702,6 @@ mod tests {
                 None,
             );
 
-        // validate blob, it should pass blob gas used validation
         assert!(post_execution.is_ok());
     }
 
@@ -726,7 +712,6 @@ mod tests {
 
         let chain_spec = base_mainnet_builder().jovian_activated().build();
 
-        // create a tx
         let transaction = mock_tx(0);
 
         let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
@@ -767,7 +752,6 @@ mod tests {
             gas_used: GAS_USED,
         };
 
-        // validate blob, it should pass blob gas used validation
         let pre_execution = beacon_consensus.validate_block_pre_execution(&block);
 
         assert!(pre_execution.is_ok());
@@ -783,7 +767,6 @@ mod tests {
                 None,
             );
 
-        // validate blob, it should fail blob gas used validation post execution.
         assert!(matches!(
             post_execution.unwrap_err(),
             ConsensusError::BlobGasUsedDiff(diff)
@@ -797,7 +780,6 @@ mod tests {
 
         let chain_spec = base_mainnet_builder().jovian_activated().build();
 
-        // create a tx
         let transaction = mock_tx(0);
 
         let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
@@ -864,7 +846,6 @@ mod tests {
 
         let chain_spec = base_mainnet_builder().jovian_activated().build();
 
-        // create a tx
         let transaction = mock_tx(0);
 
         let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
@@ -937,7 +918,6 @@ mod tests {
 
         let chain_spec = base_mainnet_builder().jovian_activated().build();
 
-        // create a tx
         let transaction = mock_tx(0);
 
         let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
@@ -1007,7 +987,6 @@ mod tests {
 
         let chain_spec = base_mainnet_builder().isthmus_activated().build();
 
-        // create a tx
         let transaction = mock_tx(0);
 
         let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));

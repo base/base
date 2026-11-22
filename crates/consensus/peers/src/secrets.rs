@@ -163,18 +163,15 @@ mod tests {
 
     #[test]
     fn test_load_file() {
-        // Create a temporary directory.
         let dir = std::env::temp_dir();
         let mut key_path = dir.clone();
         assert!(std::env::set_current_dir(dir).is_ok());
 
-        // Write a private key to a file.
         let key = b256!("1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be");
         let hex = alloy_primitives::hex::encode(key.0);
         key_path.push("test.txt");
         std::fs::write(&key_path, &hex).unwrap();
 
-        // Validate the keypair and file contents (to make sure it wasn't overwritten).
         assert!(SecretKeyLoader::load(&key_path).is_ok());
         let contents = std::fs::read_to_string(&key_path).unwrap();
         assert_eq!(contents, hex);
@@ -182,22 +179,18 @@ mod tests {
 
     #[test]
     fn test_load_file_with_whitespace_produces_same_peer_id() {
-        // Create a temporary directory.
         let dir = std::env::temp_dir();
         assert!(std::env::set_current_dir(dir.clone()).is_ok());
 
         let key = b256!("1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be");
         let hex = alloy_primitives::hex::encode(key.0);
 
-        // Write clean key.
         let clean_path = dir.join("test_clean.txt");
         std::fs::write(&clean_path, &hex).unwrap();
 
-        // Write key with various whitespace.
         let whitespace_path = dir.join("test_whitespace.txt");
         std::fs::write(&whitespace_path, format!("  {hex}\r\n  ")).unwrap();
 
-        // Both should produce the same peer ID.
         let clean_keypair = SecretKeyLoader::load(&clean_path).unwrap();
         let whitespace_keypair = SecretKeyLoader::load(&whitespace_path).unwrap();
 

@@ -42,7 +42,6 @@ async fn jovian_no_tx_pool_sync() -> eyre::Result<()> {
     let block =
         driver.build_new_block_with_txs_timestamp(vec![], Some(true), None, None, Some(0)).await?;
 
-    // Deposit transaction only
     assert_eq!(block.transactions.len(), 1);
     assert_eq!(block.header.blob_gas_used, Some(0));
 
@@ -57,7 +56,6 @@ async fn jovian_no_tx_pool_sync() -> eyre::Result<()> {
         )
         .await?;
 
-    // Deposit transaction + user transaction
     assert_eq!(block.transactions.len(), 2);
     assert_eq!(block.header.blob_gas_used, Some(40_000));
 

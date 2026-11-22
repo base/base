@@ -9,14 +9,11 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# local
 base-proof-zk-utils.workspace = true
 
-# op-alloy
 base-common-network.workspace = true
 base-common-consensus.workspace = true
 
-# base proof/consensus
 base-consensus-derive.workspace = true
 base-common-genesis.workspace = true
 base-proof-host.workspace = true
@@ -26,14 +23,12 @@ base-protocol.workspace = true
 base-common-chains.workspace = true
 base-proof-primitives.workspace = true
 
-# alloy
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
 alloy-sol-types.workspace = true
 
-# general
 anyhow.workspace = true
 async-trait.workspace = true
 c-kzg.workspace = true

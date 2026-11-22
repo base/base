@@ -887,11 +887,9 @@ mod tests {
     fn send_raw_transaction_validity_request_uses_positional_params() {
         let (tx, options) = validity_request(Bytes::from_static(&[0x02]));
 
-        // The raw transaction is the leading bare param, serialized as a hex string.
         let tx_value = serde_json::to_value(tx).expect("tx should serialize");
         assert_eq!(tx_value, "0x02");
 
-        // The options object carries only `validity` alongside the transaction.
         let options_value = serde_json::to_value(options).expect("options should serialize");
         assert!(options_value.get("tx").is_none());
         assert_eq!(options_value["validity"][0]["type"], "storage");
@@ -1558,7 +1556,6 @@ mod tests {
         let sender1 = Address::random();
         let sender2 = Address::random();
 
-        // Add transactions from two different senders (different nonces to avoid replacement)
         let tx1 = MockTransaction::eip1559().with_sender(sender1).with_nonce(0);
         let tx2 = MockTransaction::eip1559().with_sender(sender1).with_nonce(1);
         let tx3 = MockTransaction::eip1559().with_sender(sender2).with_nonce(0);
@@ -1573,13 +1570,11 @@ mod tests {
 
         let rpc = AdminTxPoolApiImpl::new(pool.clone());
 
-        // Remove sender1's transactions
         let removed = rpc.drop_sender_transactions(sender1).await.expect("should succeed");
         assert_eq!(2, removed.len());
         assert!(removed.contains(&hash1));
         assert!(removed.contains(&hash2));
 
-        // sender2's transaction should still be in pool
         let remaining = pool.all_transaction_hashes();
         assert_eq!(1, remaining.len());
         assert!(remaining.contains(&hash3));
@@ -1608,7 +1603,6 @@ mod tests {
         let result = rpc.drop_transaction(hash).await.expect("should succeed");
         assert!(result);
 
-        // Verify tx is gone
         assert!(pool.get(&hash).is_none());
     }
 
@@ -1626,7 +1620,6 @@ mod tests {
         let first = rpc.drop_transaction(hash).await.expect("should succeed");
         assert!(first);
 
-        // Second removal should return false
         let second = rpc.drop_transaction(hash).await.expect("should succeed");
         assert!(!second);
     }

@@ -12,25 +12,19 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# database
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 
-# primitives
 reth-primitives-traits = { workspace = true, features = ["serde"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives.workspace = true
 
-# serialization
 serde.workspace = true
 chrono.workspace = true
 
-# async
 tokio.workspace = true
 
-# error handling
 anyhow.workspace = true
 
-# tracing
 tracing.workspace = true
 
 [dev-dependencies]

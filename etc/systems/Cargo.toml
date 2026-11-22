@@ -20,7 +20,6 @@ path = "src/bin/base_bench.rs"
 workspace = true
 
 [dependencies]
-# workspace
 base-runtime.workspace = true
 base-test-utils = { workspace = true, optional = true }
 base-load-tests.workspace = true
@@ -39,7 +38,6 @@ base-protocol = { workspace = true, features = ["serde", "std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-builder-core = { workspace = true, features = ["test-utils"] }
 
-# consensus
 base-consensus-disc.workspace = true
 base-consensus-node.workspace = true
 base-consensus-peers.workspace = true
@@ -50,7 +48,6 @@ base-consensus-providers.workspace = true
 base-common-genesis.workspace = true
 base-common-chains.workspace = true
 
-# reth
 reth-db.workspace = true
 reth-tasks = { workspace = true, features = ["rayon"] }
 reth-provider.workspace = true
@@ -62,7 +59,6 @@ base-execution-txpool.workspace = true
 base-execution-chainspec.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
-# alloy
 alloy-signer.workspace = true
 alloy-network.workspace = true
 alloy-rpc-client.workspace = true
@@ -76,14 +72,12 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
-# base-alloy
 base-common-network.workspace = true
 base-common-consensus.workspace = true
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 base-common-rpc-types.workspace = true
 base-common-precompiles.workspace = true
 
-# proof
 base-proof-zk-host.workspace = true
 base-prover-service.workspace = true
 base-proof-zk-backend.workspace = true
@@ -91,22 +85,18 @@ base-prover-service-db.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
 
-# tokio
 tokio-util.workspace = true
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
 futures.workspace = true
 
-# rpc
 axum = { workspace = true, features = ["http1", "tokio"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 reth-rpc-layer.workspace = true
 tower.workspace = true
 
-# p2p
 k256.workspace = true
 libp2p.workspace = true
 
-# misc
 hex.workspace = true
 url.workspace = true
 rand.workspace = true
@@ -137,30 +127,22 @@ default = [ "upgrade-signal" ]
 upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]
 
 [dev-dependencies]
-# consensus
 base-consensus-derive.workspace = true
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 
-# alloy
 alloy-json-rpc.workspace = true
 
-# base-alloy
 base-common-base-tx = { workspace = true, features = ["std"] }
 
-# proof
 base-optimism-rpc.workspace = true
 
-# execution
 base-shadow-indexer.workspace = true
 base-shadow-indexer-db.workspace = true
 
-# reth
 reth-primitives-traits.workspace = true
 
-# database
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 
-# misc
 anyhow.workspace = true
 indicatif.workspace = true
 

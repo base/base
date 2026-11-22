@@ -371,13 +371,11 @@ where
 
     /// Dials the given [`Multiaddr`].
     pub fn dial_multiaddr(&mut self, addr: Multiaddr) {
-        // Check if we're allowed to dial the address.
         if let Err(connect_error) = self.connection_gate.can_connect_outbound(&addr) {
             debug!(target: "gossip", ?connect_error, "unable to dial peer");
             return;
         }
 
-        // Extract the peer ID from the address.
         let Some(peer_id) = ConnectionGater::peer_id_from_addr(&addr) else {
             warn!(target: "gossip", peer=?addr, "Failed to extract PeerId from Multiaddr");
             return;
@@ -389,7 +387,6 @@ where
             return;
         }
 
-        // Let the gate know we are dialing the address.
         // Note: libp2p-dns will automatically resolve DNS multiaddrs at the transport layer.
         self.connection_gate.dialing(&addr);
 
@@ -443,14 +440,12 @@ where
             Event::Ping(libp2p::ping::Event { peer, result, .. }) => {
                 trace!(target: "gossip", ?peer, ?result, "Ping received");
 
-                // If the peer is connected to gossip, record the connection duration.
                 if let Some(start_time) = self.peer_connection_start.get(&peer) {
                     let _ping_duration = start_time.elapsed();
                     Metrics::gossip_peer_connection_duration_seconds()
                         .record(_ping_duration.as_secs_f64());
                 }
 
-                // Record the peer score in the metrics if available.
                 if let Some(_peer_score) = self.behaviour_mut().gossipsub.peer_score(&peer) {
                     Metrics::peer_scores().record(_peer_score);
                 }
@@ -605,13 +600,11 @@ where
                 Metrics::gossipsub_connection("closed").increment(1.0);
                 Metrics::gossip_peer_count().set(peer_count as f64);
 
-                // Record the total connection duration.
                 if let Some(start_time) = self.peer_connection_start.remove(&peer_id) {
                     Metrics::gossip_peer_connection_duration_seconds()
                         .record(start_time.elapsed().as_secs_f64());
                 }
 
-                // Record the peer score in the metrics if available.
                 if let Some(_peer_score) = self.behaviour_mut().gossipsub.peer_score(&peer_id) {
                     Metrics::peer_scores().record(_peer_score);
                 }

@@ -9,10 +9,6 @@ use libp2p::{
 use sha2::{Digest, Sha256};
 use snap::raw::Decoder;
 
-////////////////////////////////////////////////////////////////////////////////////////////////
-// GossipSub Constants
-////////////////////////////////////////////////////////////////////////////////////////////////
-
 /// The maximum gossip size.
 /// Limits the total size of gossip RPC containers as well as decompressed individual messages.
 pub const MAX_GOSSIP_SIZE: usize = 10 * (1 << 20);
@@ -64,10 +60,6 @@ const DOMAIN_VALID_SNAPPY: [u8; 4] = [0x1, 0x0, 0x0, 0x0];
 pub const DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS: NonZeroUsize =
     NonZeroUsize::new(1024).expect("default identify peerstore limit must be non-zero");
 
-////////////////////////////////////////////////////////////////////////////////////////////////
-// Duration Constants
-////////////////////////////////////////////////////////////////////////////////////////////////
-
 /// The gossip heartbeat.
 pub const GOSSIP_HEARTBEAT: Duration = Duration::from_millis(500);
 
@@ -91,10 +83,6 @@ pub const PENDING_DIAL_PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
 /// How often the network actor redials disconnected trusted peers.
 pub const TRUSTED_PEER_REDIAL_INTERVAL: Duration = Duration::from_secs(60);
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-// Config Building
-////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Connection limits for the libp2p swarm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -12,14 +12,12 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
 base-bundles.workspace = true
 base-protocol.workspace = true
 base-node-runner.workspace = true
 base-common-genesis.workspace = true
 base-common-precompiles.workspace = true
 
-# reth
 reth-evm.workspace = true
 reth-revm.workspace = true
 reth-provider.workspace = true
@@ -28,35 +26,28 @@ base-execution-evm.workspace = true
 reth-primitives-traits.workspace = true
 base-execution-chainspec.workspace = true
 
-# revm
 revm.workspace = true
 revm-bytecode.workspace = true
 
-# alloy
 alloy-evm.workspace = true
 alloy-primitives.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 
-# rpc
 jsonrpsee.workspace = true
 
-# base-alloy
 base-common-consensus.workspace = true
 
-# misc
 eyre.workspace = true
 derive_more.workspace = true
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-# workspace
 base-test-utils = { workspace = true, features = ["contracts"] }
 base-common-chains.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
-# reth
 base-node-core.workspace = true
 reth-chainspec.workspace = true
 reth-db-common.workspace = true
@@ -64,11 +55,9 @@ reth-db = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
-# revm
 revm.workspace = true
 revm-bytecode.workspace = true
 
-# alloy
 alloy-network.workspace = true
 alloy-sol-types.workspace = true
 alloy-rpc-types-engine.workspace = true
@@ -76,10 +65,8 @@ alloy-rpc-client.workspace = true
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
-# base-alloy
 base-common-rpc-types.workspace = true
 
-# misc
 rand.workspace = true
 tokio.workspace = true
 serde_json.workspace = true

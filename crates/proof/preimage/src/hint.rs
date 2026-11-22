@@ -39,7 +39,6 @@ where
 
         trace!(target: "hint_writer", "Successfully wrote hint");
 
-        // Read the hint acknowledgement from the host.
         let mut hint_ack = [0u8; 1];
         self.channel.read_exact(&mut hint_ack).await?;
 
@@ -75,12 +74,10 @@ where
     where
         R: HintRouter + Send + Sync,
     {
-        // Read the length of the raw hint payload.
         let mut len_buf = [0u8; 4];
         self.channel.read_exact(&mut len_buf).await?;
         let len = u32::from_be_bytes(len_buf);
 
-        // Read the raw hint payload.
         let mut raw_payload = vec![0u8; len as usize];
         self.channel.read_exact(raw_payload.as_mut_slice()).await?;
         let payload = match String::from_utf8(raw_payload) {
@@ -97,7 +94,6 @@ where
 
         trace!(target: "hint_reader", payload = %payload, "Successfully read hint");
 
-        // Route the hint
         if let Err(e) = hint_router.route_hint(payload).await {
             // Write back on error to prevent blocking the client.
             self.channel.write(&[0x00]).await?;

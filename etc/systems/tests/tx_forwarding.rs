@@ -231,7 +231,6 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
 
     let builder_provider = system.l2_builder_provider()?;
 
-    // Wait for some blocks to be produced so the chain is ready
     timeout(Duration::from_secs(15), async {
         loop {
             let block = builder_provider.get_block_number().await?;
@@ -244,37 +243,29 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
     .await
     .wrap_err("Builder block production timed out")??;
 
-    // Set up the signer with a funded account
     let private_key_hex = format!("0x{}", hex::encode(ANVIL_ACCOUNT_1.private_key.as_slice()));
     let signer: PrivateKeySigner = private_key_hex.parse()?;
     let sender = signer.address();
 
-    // Verify sender has balance
     let balance = builder_provider.get_balance(sender).await?;
     assert!(balance > U256::ZERO, "Sender should have balance");
 
-    // Get current nonce
     let nonce = builder_provider.get_transaction_count(sender).await?;
 
-    // Create a signed transaction
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
     let (sender, raw_tx, expected_tx_hash) =
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
 
-    // Create the ValidatedTransaction payload
     let validated_tx =
         ValidatedTransaction { sender, raw: raw_tx, metering: None, extensions: NoExtensions {} };
-    // Create RPC client for the builder
     let builder_rpc_url = system.l2_rpc_url()?;
     let rpc_client = RpcClient::builder().http(builder_rpc_url);
 
-    // Call base_insertValidatedTransaction
     let result: Result<(), _> =
         rpc_client.request("base_insertValidatedTransaction", (validated_tx,)).await;
 
     assert!(result.is_ok(), "base_insertValidatedTransaction should succeed, got: {result:?}");
 
-    // Wait for the transaction to be included in a block
     let receipt = timeout(TX_RECEIPT_TIMEOUT, async {
         loop {
             if let Some(receipt) =
@@ -289,7 +280,6 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
     .wrap_err("Transaction receipt timed out")?
     .wrap_err("Failed to get transaction receipt")?;
 
-    // Verify the transaction was included
     assert_eq!(receipt.inner.transaction_hash, expected_tx_hash);
     assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
     assert_eq!(receipt.inner.from, sender);
@@ -312,8 +302,6 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
 /// directly calls the RPC endpoint. Here we test the full pipeline.
 #[tokio::test]
 async fn test_tx_forwarding_pipeline_system() -> Result<()> {
-    // Build a system test stack with tx forwarding enabled on the client.
-    // The client will forward transactions to the builder's RPC endpoint
     let forwarding =
         TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100);
 
@@ -327,7 +315,6 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     let builder_provider = system.l2_builder_provider()?;
     let client_provider = system.l2_client_provider()?;
 
-    // Wait for some blocks to be produced so both nodes are synced
     timeout(Duration::from_secs(15), async {
         loop {
             let builder_block = builder_provider.get_block_number().await?;
@@ -341,12 +328,10 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     .await
     .wrap_err("Block production/sync timed out")??;
 
-    // Set up the signer with a funded account
     let private_key_hex = format!("0x{}", hex::encode(ANVIL_ACCOUNT_1.private_key.as_slice()));
     let signer: PrivateKeySigner = private_key_hex.parse()?;
     let sender = signer.address();
 
-    // Wait for client to sync balance
     timeout(Duration::from_secs(15), async {
         loop {
             let client_balance = client_provider.get_balance(sender).await?;
@@ -359,16 +344,12 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     .await
     .wrap_err("Timed out waiting for client to sync balance")??;
 
-    // Get nonce from client (the node we'll send to)
     let nonce = client_provider.get_transaction_count(sender).await?;
 
-    // Create a signed transaction
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
     let (_, raw_tx, expected_tx_hash) =
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
 
-    // Send the transaction to the CLIENT node (not builder)
-    // The forwarding pipeline should forward it to the builder
     let pending_tx = client_provider
         .send_raw_transaction(&raw_tx)
         .await
@@ -376,8 +357,6 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     let tx_hash = *pending_tx.tx_hash();
     assert_eq!(tx_hash, expected_tx_hash, "Transaction hash mismatch");
 
-    // Wait for the transaction to be included in a block on the BUILDER
-    // This proves the forwarding pipeline worked
     let receipt = timeout(TX_RECEIPT_TIMEOUT, async {
         loop {
             if let Some(receipt) =
@@ -392,7 +371,6 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     .wrap_err("Transaction receipt timed out on builder - forwarding may have failed")?
     .wrap_err("Failed to get transaction receipt")?;
 
-    // Verify the transaction was included
     assert_eq!(receipt.inner.transaction_hash, expected_tx_hash);
     assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
     assert_eq!(receipt.inner.from, sender);
@@ -937,7 +915,6 @@ async fn test_tx_forwarding_pipeline_system_high_load() -> Result<()> {
     let builder_provider = system.l2_builder_provider()?;
     let client_provider = system.l2_client_provider()?;
 
-    // Wait for some blocks to be produced so both nodes are synced
     timeout(Duration::from_secs(15), async {
         loop {
             let builder_block = builder_provider.get_block_number().await?;
@@ -951,7 +928,6 @@ async fn test_tx_forwarding_pipeline_system_high_load() -> Result<()> {
     .await
     .wrap_err("Block production/sync timed out")??;
 
-    // Set up signers for all accounts
     let signers: Vec<PrivateKeySigner> = accounts
         .iter()
         .map(|acct| {
@@ -960,7 +936,6 @@ async fn test_tx_forwarding_pipeline_system_high_load() -> Result<()> {
         })
         .collect::<Result<Vec<PrivateKeySigner>>>()?;
 
-    // Wait for all accounts to have balance on the client
     timeout(Duration::from_secs(15), async {
         loop {
             let mut all_funded = true;

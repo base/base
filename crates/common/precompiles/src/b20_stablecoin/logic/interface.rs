@@ -297,8 +297,6 @@ pub trait Stablecoin<S: StablecoinAccounting, A: PolicyAccounting> {
         token.accounting().role_admin(role)
     }
 
-    // --- Computed reads: derive from storage but encode version-defined semantics ---
-
     /// Returns whether the given pause `feature` is currently set.
     fn is_paused(
         &self,

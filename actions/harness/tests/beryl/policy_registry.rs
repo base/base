@@ -55,7 +55,6 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
 
     assert!(env.user_tx_succeeded(&block2, 0), "POLICY_REGISTRY activation must succeed");
 
-    // Block3: probe runs against the committed activated state.
     let post_beryl_probe =
         env.create_tx(TxKind::Call(probe), policy_exists_call.clone(), GAS_LIMIT);
     let block3 = env.sequencer.build_next_block_with_transactions(vec![post_beryl_probe]).await;
@@ -71,14 +70,11 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
         "policy registry policyExists(ALWAYS_ALLOW_ID) must return true after activation"
     );
 
-    // -- Deactivation tests --
-    // Block4: deactivate POLICY_REGISTRY (committed state before block5).
     let deactivate_registry = env.deactivate_feature_tx(BerylTestEnv::policy_registry_feature());
     let block4 = env.sequencer.build_next_block_with_transactions(vec![deactivate_registry]).await;
 
     assert!(env.user_tx_succeeded(&block4, 0), "POLICY_REGISTRY deactivation must succeed");
 
-    // Block5: probe's staticcall (view function) must succeed even while POLICY_REGISTRY is deactivated.
     let probe_while_deactivated =
         env.create_tx(TxKind::Call(probe), policy_exists_call.clone(), GAS_LIMIT);
     let block5 =
@@ -90,7 +86,6 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
         "policy registry view staticcall must succeed when POLICY_REGISTRY is deactivated"
     );
 
-    // Block6: write calls must still fail while POLICY_REGISTRY is deactivated.
     let write_while_deactivated = env.create_tx(
         TxKind::Call(PolicyRegistryStorage::ADDRESS),
         Bytes::from(
@@ -109,13 +104,11 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
         "policy registry write call must revert when POLICY_REGISTRY is deactivated"
     );
 
-    // Block7: re-activate POLICY_REGISTRY (committed state before block8).
     let reactivate_registry = env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
     let block7 = env.sequencer.build_next_block_with_transactions(vec![reactivate_registry]).await;
 
     assert!(env.user_tx_succeeded(&block7, 0), "POLICY_REGISTRY re-activation must succeed");
 
-    // Block8: probe's staticcall must succeed again after re-activation.
     let probe_after_reactivate = env.create_tx(TxKind::Call(probe), policy_exists_call, GAS_LIMIT);
     let block8 =
         env.sequencer.build_next_block_with_transactions(vec![probe_after_reactivate]).await;
@@ -398,7 +391,6 @@ async fn policy_registry_action_tests_cover_error_paths() {
     let allowlist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
     let blocklist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 3);
 
-    // Setup: create an allowlist policy and a blocklist policy, both with alice as admin.
     let create_allowlist = scenario.tx(IPolicyRegistry::createPolicyCall {
         admin: BerylTestEnv::alice(),
         policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
@@ -419,7 +411,6 @@ async fn policy_registry_action_tests_cover_error_paths() {
         "createPolicy(BLOCKLIST) setup must succeed"
     );
 
-    // Unauthorized: bob calls updateAllowlist on alice's allowlist policy.
     let unauthorized = scenario.bob_tx(IPolicyRegistry::updateAllowlistCall {
         policyId: allowlist_id,
         allowed: true,
@@ -431,7 +422,6 @@ async fn policy_registry_action_tests_cover_error_paths() {
         "updateAllowlist() by non-admin must revert with Unauthorized"
     );
 
-    // PolicyNotFound: operate on a policy id that does not exist.
     let not_found = scenario.tx(IPolicyRegistry::updateAllowlistCall {
         policyId: 999,
         allowed: true,
@@ -443,7 +433,6 @@ async fn policy_registry_action_tests_cover_error_paths() {
         "updateAllowlist() on nonexistent policy must revert with PolicyNotFound"
     );
 
-    // IncompatiblePolicyType: updateAllowlist on a BLOCKLIST policy.
     let allowlist_on_blocklist = scenario.tx(IPolicyRegistry::updateAllowlistCall {
         policyId: blocklist_id,
         allowed: true,
@@ -455,7 +444,6 @@ async fn policy_registry_action_tests_cover_error_paths() {
         "updateAllowlist() on a BLOCKLIST policy must revert with IncompatiblePolicyType"
     );
 
-    // IncompatiblePolicyType: updateBlocklist on an ALLOWLIST policy.
     let blocklist_on_allowlist = scenario.tx(IPolicyRegistry::updateBlocklistCall {
         policyId: allowlist_id,
         blocked: true,
@@ -492,7 +480,6 @@ async fn policy_registry_action_tests_cover_error_paths() {
         "createPolicy() via STATICCALL must fail with StaticCallNotAllowed"
     );
 
-    // NoPendingAdmin: finalizeUpdateAdmin before any stageUpdateAdmin call.
     let no_pending =
         scenario.tx(IPolicyRegistry::finalizeUpdateAdminCall { policyId: allowlist_id });
     let block = scenario.build_block_with_transactions(vec![no_pending]).await;
@@ -510,7 +497,6 @@ async fn policy_registry_renounced_policy_is_frozen() {
     let allowlist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
     let blocklist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 3);
 
-    // Setup: alice creates an ALLOWLIST policy.
     let create_allowlist = scenario.tx(IPolicyRegistry::createPolicyCall {
         admin: BerylTestEnv::alice(),
         policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
@@ -527,7 +513,6 @@ async fn policy_registry_renounced_policy_is_frozen() {
     let block = scenario.build_block_with_transactions(vec![create_blocklist]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "createPolicy(BLOCKLIST) must succeed");
 
-    // Setup: alice adds bob as a member of the allowlist.
     let add_bob = scenario.tx(IPolicyRegistry::updateAllowlistCall {
         policyId: allowlist_id,
         allowed: true,
@@ -536,7 +521,6 @@ async fn policy_registry_renounced_policy_is_frozen() {
     let block = scenario.build_block_with_transactions(vec![add_bob]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updateAllowlist() must succeed");
 
-    // Setup: alice renounces admin on both policies.
     let renounce_allowlist =
         scenario.tx(IPolicyRegistry::renounceAdminCall { policyId: allowlist_id });
     let block = scenario.build_block_with_transactions(vec![renounce_allowlist]).await;
@@ -547,9 +531,6 @@ async fn policy_registry_renounced_policy_is_frozen() {
     let block = scenario.build_block_with_transactions(vec![renounce_blocklist]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "renounceAdmin(blocklist) must succeed");
 
-    // Mutating ops must all revert now that there is no admin.
-
-    // updateAllowlist from alice reverts (Unauthorized).
     let update_allowlist = scenario.tx(IPolicyRegistry::updateAllowlistCall {
         policyId: allowlist_id,
         allowed: false,
@@ -575,7 +556,6 @@ async fn policy_registry_renounced_policy_is_frozen() {
         "updateBlocklist() after renounceAdmin must revert"
     );
 
-    // stageUpdateAdmin from alice reverts (Unauthorized).
     let stage_admin = scenario.tx(IPolicyRegistry::stageUpdateAdminCall {
         policyId: allowlist_id,
         newAdmin: BerylTestEnv::alice(),
@@ -596,9 +576,6 @@ async fn policy_registry_renounced_policy_is_frozen() {
         "finalizeUpdateAdmin() after renounceAdmin must revert"
     );
 
-    // Read-only views must still work correctly.
-
-    // bob is still in the allowlist.
     scenario
         .assert_probe_word(
             "isAuthorized(bob) still true after renounce",
@@ -611,7 +588,6 @@ async fn policy_registry_renounced_policy_is_frozen() {
         )
         .await;
 
-    // carol was never added and must remain unauthorized.
     scenario
         .assert_probe_word(
             "isAuthorized(carol) still false after renounce",
@@ -624,7 +600,6 @@ async fn policy_registry_renounced_policy_is_frozen() {
         )
         .await;
 
-    // policyAdmin returns Address::ZERO after renounce.
     scenario
         .assert_probe_word(
             "policyAdmin returns zero after renounce",
@@ -633,7 +608,6 @@ async fn policy_registry_renounced_policy_is_frozen() {
         )
         .await;
 
-    // policyExists still returns true.
     scenario
         .assert_probe_word(
             "policyExists still true after renounce",

@@ -233,7 +233,6 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
 
     assert!(!succeeded, "activate from non-admin should revert");
 
-    // Feature remains inactive after the failed attempt.
     let output = client
         .call(
             ActivationRegistryStorage::ADDRESS,

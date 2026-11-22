@@ -572,7 +572,6 @@ mod tests {
             assert!(guard.try_admit(adm).is_ok());
         }
         assert!(guard.release(&hash(0)));
-        // A slot opened up.
         let adm = Admission { payer, ..self_pay(200, addr(200), 10) };
         assert!(guard.try_admit(adm).is_ok());
         assert!(!guard.release(&hash(123)), "untracked release is a no-op");
@@ -583,12 +582,10 @@ mod tests {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let payer = addr(9);
 
-        // Fill the payer's payment dimension to its default cap.
         for i in 0..DEFAULT_PAYMENT_LIMIT as u8 {
             let adm = Admission { payer, ..self_pay(i, addr(i + 1), 10) };
             assert!(guard.try_admit(adm).is_ok());
         }
-        // A genuinely new tx is rejected at the cap.
         let new = Admission { payer, ..self_pay(50, addr(200), 10) };
         assert_eq!(guard.try_admit(new), Err(LimitRejection::PaymentLimit));
 
@@ -616,7 +613,6 @@ mod tests {
         };
         assert!(guard.try_admit(adm).is_ok());
 
-        // An unrelated slot change drops nothing.
         assert!(guard.invalidate_exact([other]).is_empty());
         assert_eq!(guard.len(), 1);
 
@@ -663,9 +659,7 @@ mod tests {
         };
         assert!(guard.try_admit(adm).is_ok());
 
-        // Balance still covers it: kept.
         assert!(guard.on_balance_changed(account, U256::from(500u64)).is_empty());
-        // Balance drops below cost: dropped.
         let dropped = guard.on_balance_changed(account, U256::from(499u64));
         assert_eq!(dropped, vec![hash(1)]);
         assert!(guard.is_empty());
@@ -739,11 +733,9 @@ mod tests {
 
         let adm = self_pay(1, account, 10);
         guard.insert_forced(adm.clone());
-        // Re-forcing the same hash is a no-op (no double counting).
         guard.insert_forced(adm);
         assert_eq!(guard.len(), 1);
 
-        // A forced insert is released through the normal path and frees the slot.
         assert!(guard.release(&hash(1)));
         assert!(guard.is_empty());
     }

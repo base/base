@@ -14,37 +14,29 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-genesis.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
-# compat
 alloy-network = { workspace = true, optional = true }
 alloy-rpc-types-eth = { workspace = true, optional = true }
 
-# misc
 thiserror.workspace = true
 ambassador.workspace = true
 
-# Base
 base-common-genesis.workspace = true
 
-# arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
-# serde
 serde_with = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 
-# evm
 revm = { workspace = true, optional = true }
 alloy-evm = { workspace = true, optional = true }
 
-# reth
 bytes = { workspace = true, optional = true }
 reth-codecs = { workspace = true, optional = true }
 reth-db-api = { workspace = true, optional = true }

@@ -16,9 +16,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-# workspace
 base-cli-utils.workspace = true
 base-consensus-cli.workspace = true
 
-# cli
 clap = { workspace = true, features = ["env"] }

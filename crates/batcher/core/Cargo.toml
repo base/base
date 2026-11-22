@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# local
 base-tx-manager.workspace = true
 base-common-blobs.workspace = true
 base-batcher-source.workspace = true
@@ -21,7 +20,6 @@ base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 
-# external
 futures.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
@@ -31,7 +29,6 @@ alloy-primitives = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros", "rt"] }
 clap = { workspace = true, features = ["derive"], optional = true }
 
-# optional — activated by the `test-utils` feature
 async-trait = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, features = ["std"], optional = true }
 alloy-rpc-types-eth = { workspace = true, features = ["std"], optional = true }

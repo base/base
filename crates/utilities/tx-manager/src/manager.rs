@@ -510,7 +510,6 @@ where
     ///
     /// Returns [`TxManagerError::Rpc`] if any provider call fails.
     pub async fn suggest_gas_price_caps(&self) -> TxManagerResult<GasPriceCaps> {
-        // Query tip cap and latest block concurrently.
         let (tip_result, block_result) = tokio::join!(
             RuntimeTimeout::run(
                 &self.runtime,
@@ -525,17 +524,13 @@ where
             .map_err(|e| self.classify_and_record_rpc(&e))?;
         let raw_base_fee = self.base_fee(block_result?)?;
 
-        // Compute raw gas fee cap from provider values before enforcing minimums.
         let raw_gas_fee_cap = FeeCalculator::calc_gas_fee_cap(raw_base_fee, raw_tip_cap);
 
-        // Enforce minimum tip cap and base fee.
         let tip_cap = raw_tip_cap.max(self.config.min_tip_cap);
         let base_fee = raw_base_fee.max(self.config.min_basefee);
 
-        // Compute gas fee cap with enforced minimums.
         let gas_fee_cap = FeeCalculator::calc_gas_fee_cap(base_fee, tip_cap);
 
-        // Record fee metrics (converted from wei to gwei with fractional precision).
         self.metrics.record_basefee(base_fee as f64 / WEI_PER_GWEI);
         self.metrics.record_tipcap(tip_cap as f64 / WEI_PER_GWEI);
 
@@ -613,17 +608,13 @@ where
         old_tip: u128,
         old_fee_cap: u128,
     ) -> TxManagerResult<BumpedFees> {
-        // Step 1: Fetch fresh network fees.
         let caps = self.suggest_gas_price_caps().await?;
 
-        // Step 2: Derive effective base fee from the caps.
         let new_base_fee = FeeCalculator::base_fee_from_caps(caps.gas_fee_cap, caps.gas_tip_cap);
 
-        // Step 3: Compute bumped tip and fee cap.
         let (bumped_tip, bumped_fee_cap) =
             FeeCalculator::update_fees(old_tip, old_fee_cap, caps.gas_tip_cap, new_base_fee, false);
 
-        // Step 4: Enforce the fee ceiling.
         self.check_fee_limit(bumped_fee_cap, caps.raw_gas_fee_cap)?;
 
         info!(%old_tip, %old_fee_cap, %bumped_tip, %bumped_fee_cap, "gas price increase computed");
@@ -690,14 +681,12 @@ where
     ) -> TxManagerResult<PreparedTx> {
         let is_blob = candidate.is_blob();
 
-        // Blob transactions must have a recipient address (no contract creation).
         if is_blob && candidate.to.is_none() {
             return Err(TxManagerError::Unsupported(
                 "blob transactions must have a recipient address".to_string(),
             ));
         }
 
-        // Reject blob transactions that exceed the per-transaction blob limit.
         if is_blob && candidate.blobs.len() > crate::MAX_BLOBS_PER_TX {
             return Err(TxManagerError::Unsupported(format!(
                 "blob count {} exceeds maximum {} per transaction",
@@ -723,14 +712,11 @@ where
                 .record_blob_fee_cap(fees.blob_fee_cap.unwrap_or_default() as f64 / WEI_PER_GWEI);
             (fees.gas_tip_cap, fees.gas_fee_cap, fees.blob_fee_cap)
         } else {
-            // Step 1: Get fee estimates.
             let caps = match caps {
                 Some(caps) => caps,
                 None => self.suggest_gas_price_caps().await?,
             };
 
-            // Step 2: Apply fee overrides as a floor.
-            //
             // During fee bumps the caller passes the bumped (tip, fee_cap)
             // as overrides. We take the max of the fresh network estimate
             // and the override so the replacement transaction is guaranteed
@@ -741,8 +727,6 @@ where
                     (caps.gas_tip_cap.max(fo.gas_tip_cap), caps.gas_fee_cap.max(fo.gas_fee_cap))
                 });
 
-            // Step 3: Check fee limits.
-            //
             // The `suggested` parameter is the raw gas_fee_cap computed from
             // the provider's values before enforcing our configured minimums
             // (`min_tip_cap`, `min_basefee`). This detects when enforced
@@ -752,7 +736,6 @@ where
             (tip_cap, fee_cap, None)
         };
 
-        // Step 4: Build TransactionRequest.
         let from =
             <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&self.wallet);
         let mut tx_request = TransactionRequest::default()
@@ -769,8 +752,6 @@ where
             None => tx_request = tx_request.into_create(),
         }
 
-        // Step 4b: Attach blob sidecar and blob-specific fields.
-        //
         // Reuse a cached sidecar when available (fee bump iterations) to
         // avoid recomputing KZG proofs from the same blob data.
         let built_sidecar = if is_blob {
@@ -786,8 +767,6 @@ where
             None
         };
 
-        // Step 5: Gas estimation.
-        //
         // Always call estimate_gas to enforce intrinsic gas checks (e.g.
         // the 21,000 minimum for plain value transfers). When the caller
         // supplies an explicit gas_limit, it is used as a floor via max()
@@ -811,8 +790,6 @@ where
         let gas_limit = candidate.gas_limit.max(gas_floor).max(estimated);
         tx_request = tx_request.with_gas_limit(gas_limit);
 
-        // Step 6: Assign nonce.
-        //
         // When a nonce was pre-assigned (via `send_async`), use it directly
         // without acquiring the nonce manager lock. Otherwise, acquire a
         // `NonceGuard` so the nonce can be rolled back on sign failure.
@@ -836,7 +813,6 @@ where
             "transaction crafted",
         );
 
-        // Step 7: Sign and encode.
         let sign_result: Result<
             <Ethereum as Network>::TxEnvelope,
             TransactionBuilderError<Ethereum>,
@@ -848,7 +824,6 @@ where
 
         match sign_result {
             Ok(envelope) => {
-                // Consume the nonce (drop guard if present).
                 drop(guard);
 
                 // Record max possible fee metric in gwei. Intentionally recorded on every
@@ -867,7 +842,6 @@ where
                 })
             }
             Err(e) => {
-                // Roll back nonce on sign failure (only when guard-managed).
                 if let Some(g) = guard {
                     g.rollback();
                 }
@@ -926,7 +900,6 @@ where
 
         let send_state = Arc::new(SendState::new(self.config.safe_abort_nonce_too_low_count)?);
 
-        // Set mempool deadline if configured.
         if !self.config.tx_not_in_mempool_timeout.is_zero() {
             send_state.set_runtime_mempool_deadline(
                 self.runtime.now() + self.config.tx_not_in_mempool_timeout,
@@ -937,7 +910,6 @@ where
         // Inclusion is measured against an L1 block timestamp, which is wall-clock time.
         let start_unix_ms = self.runtime.wall_clock_unix_millis();
 
-        // Wrap the event loop in a send timeout if configured.
         let result = if self.config.tx_send_timeout.is_zero() {
             self.send_event_loop(&candidate, &send_state, nonce_override).await
         } else {
@@ -1073,16 +1045,13 @@ where
         // new wait tasks with different tx hashes.
         let (receipt_tx, mut receipt_rx) = mpsc::channel::<ConfirmedTx>(1);
 
-        // Spawn background receipt polling for the initial tx hash.
         self.spawn_wait_for_tx(Arc::clone(send_state), bump.tx_hash, receipt_tx.clone());
 
-        // Resubmission timer for fee bumping.
         let mut bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
         // Consume the first immediate tick.
         bump_ticker.next().await;
 
         let confirmed = loop {
-            // Check shutdown and critical errors before blocking.
             if self.is_closed() {
                 return Err(TxManagerError::ChannelClosed);
             }
@@ -1699,7 +1668,6 @@ where
                 }
             }
 
-            // Check shutdown state each iteration to support cancellation.
             if closed.is_cancelled() {
                 debug!(tx_hash = %tx_hash, "manager closed, stopping receipt polling");
                 return None;
@@ -1821,10 +1789,8 @@ where
             return Ok(None);
         };
 
-        // Receipt is on the canonical chain — record as mined.
         send_state.tx_mined(tx_hash);
 
-        // Check confirmation depth: tx_block + num_confirmations <= tip + 1
         if tx_block.saturating_add(num_confirmations) <= tip_height.saturating_add(1) {
             info!(
                 tx_hash = %tx_hash,
@@ -2878,8 +2844,6 @@ mod tests {
         });
     }
 
-    // ── blob fee policy ────────────────────────────────────────────────
-
     const BLOB_RESUBMISSION_TIMEOUT: Duration = Duration::from_secs(10);
 
     /// A one-blob candidate.
@@ -3586,8 +3550,6 @@ mod tests {
             assert!(asserter.read_q().is_empty(), "every mocked response should be used");
         });
     }
-
-    // ── should_reset_nonce_on_send_error ───────────────────────────────
 
     #[rstest]
     #[case::error_before_first_publish(false, Err(TxManagerError::SendTimeout), None, true)]

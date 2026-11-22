@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# common.sh - Shared helper functions for release scripts
-#
 # Usage: source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 set -euo pipefail

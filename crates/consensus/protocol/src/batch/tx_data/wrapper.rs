@@ -55,7 +55,6 @@ impl Encodable for SpanBatchTransactionData {
 impl Decodable for SpanBatchTransactionData {
     fn decode(r: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
         if !r.is_empty() && r[0] > 0x7F {
-            // Legacy transaction
             return Ok(Self::Legacy(SpanBatchLegacyTransactionData::decode(r)?));
         }
         // Non-legacy transaction (EIP-2718 envelope encoding)

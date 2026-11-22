@@ -346,8 +346,6 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
             });
         }
 
-        // Compute expected checkpoint count so we can verify intermediate_roots
-        // covers every required block.
         let span = l2_block_number - starting_block_number;
         let expected_count = usize::try_from(span / intermediate_block_interval).map_err(|_| {
             ValidatorError::ArithmeticOverflow { block_number: starting_block_number }
@@ -457,8 +455,6 @@ mod tests {
     /// Valid intermediate roots: all checkpoints match expected output roots.
     #[tokio::test]
     async fn test_validate_intermediate_roots_valid() {
-        // starting_block = 90, l2_block = 100, interval = 5
-        // Checkpoint blocks: 95, 100
         let final_claimed = B256::repeat_byte(0xAA);
         let (provider, roots) = mock_with_blocks(&[95, 100]);
         let validator = OutputValidator::new(Arc::new(provider));
@@ -478,22 +474,17 @@ mod tests {
 
         assert!(result.is_valid);
         assert_eq!(result.invalid_intermediate_index, None);
-        // When all intermediates are valid, expected_root equals claimed_root
         assert_eq!(result.expected_root, final_claimed);
     }
 
     /// Invalid intermediate root: the second checkpoint does not match.
     #[tokio::test]
     async fn test_validate_intermediate_roots_invalid() {
-        // starting_block = 90, l2_block = 100, interval = 5
-        // Checkpoint blocks: 95, 100
         let (provider, mut roots) = mock_with_blocks(&[95, 100]);
-        // Save the correct root at block 100 before corrupting
         let correct_root_at_100 = roots[1];
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x04);
 
-        // Corrupt the second intermediate root
         roots[1] = B256::repeat_byte(0xFF);
 
         let result = validator
@@ -510,24 +501,20 @@ mod tests {
 
         assert!(!result.is_valid);
         assert_eq!(result.invalid_intermediate_index, Some(1));
-        // expected_root is the computed root at the first failing checkpoint
         assert_eq!(result.expected_root, correct_root_at_100);
     }
 
     /// Final root is valid but intermediate root is invalid.
     #[tokio::test]
     async fn test_final_valid_intermediate_invalid() {
-        // Block 100 is the final block, block 95 is intermediate checkpoint
         let (provider, roots) = mock_with_blocks(&[95, 100]);
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x05);
 
-        // Final root validation succeeds
         let final_result =
             validator.validate_claimed_root_at_block(game_address, 100, roots[1]).await.unwrap();
         assert!(final_result.is_valid);
 
-        // Intermediate root validation fails (corrupt index 0)
         let mut intermediate_roots = roots.clone();
         intermediate_roots[0] = B256::repeat_byte(0xDD);
 
@@ -545,7 +532,6 @@ mod tests {
 
         assert!(!intermediate_result.is_valid);
         assert_eq!(intermediate_result.invalid_intermediate_index, Some(0));
-        // expected_root is the computed root at checkpoint block 95 (the first failing index)
         assert_eq!(intermediate_result.expected_root, roots[0]);
     }
 
@@ -553,7 +539,6 @@ mod tests {
     #[tokio::test]
     async fn test_missing_l2_block() {
         let mut provider = MockL2Provider::default();
-        // Mark block 100 as an error block (not yet produced)
         provider.error_blocks.push(100);
 
         let validator = OutputValidator::new(Arc::new(provider));
@@ -635,7 +620,6 @@ mod tests {
         let starting = u64::MAX - 20;
         let l2 = u64::MAX;
         let interval = NonZeroU64::new(10).unwrap();
-        // Checkpoints: (u64::MAX - 20) + 10 = u64::MAX - 10, then u64::MAX - 10 + 10 = u64::MAX
         let checkpoint_blocks = [u64::MAX - 10, u64::MAX];
 
         let (provider, roots) = mock_with_blocks(&checkpoint_blocks);
@@ -690,10 +674,6 @@ mod tests {
     /// the error instead of silently succeeding.
     #[tokio::test]
     async fn test_validate_intermediate_roots_rpc_error() {
-        // starting_block = 90, l2_block = 100, interval = 5
-        // Checkpoint blocks: 95, 100
-        // Block 95: fully configured (header + proof) -> succeeds
-        // Block 100: header only, no proof -> RPC error
         let storage_hash = B256::repeat_byte(0xBB);
         let (header_95, account_95) = build_test_header_and_account(95, storage_hash);
         let root_95 =
@@ -739,9 +719,7 @@ mod tests {
         let correct_hash = consensus_header.hash_slow();
 
         let mut provider = MockL2Provider::default();
-        // Insert block normally first, then tamper with the header hash
         provider.insert_block(100, consensus_header.clone(), account);
-        // Overwrite the header with a mismatched hash
         let tampered_header = RpcHeader {
             hash: B256::repeat_byte(0xEE),
             inner: consensus_header,
@@ -773,7 +751,6 @@ mod tests {
         let storage_hash = B256::repeat_byte(0xBB);
         let (_, account) = build_test_header_and_account(100, storage_hash);
 
-        // Create a header with a different state root that won't match the proof
         let header_wrong_root = ConsensusHeader {
             number: 100,
             state_root: B256::repeat_byte(0xFF),
@@ -781,8 +758,6 @@ mod tests {
         };
 
         let mut provider = MockL2Provider::default();
-        // Insert the wrong-root header but the account proof built for a
-        // different state root.
         let block_hash = header_wrong_root.hash_slow();
         let rpc_header =
             RpcHeader { hash: block_hash, inner: header_wrong_root, ..Default::default() };

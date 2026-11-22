@@ -14,10 +14,8 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
 base-common-consensus = { workspace = true, features = ["serde"] }
 
-# Alloy
 alloy-serde.workspace = true
 alloy-consensus.workspace = true
 alloy-network-primitives.workspace = true
@@ -25,28 +23,22 @@ alloy-eips = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
 
-# network
 alloy-network = { workspace = true, optional = true }
 
-# Serde
 serde_json = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
 
-# reth
 revm = { workspace = true, optional = true }
 alloy-evm = { workspace = true, optional = true }
 base-common-evm = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
 
-# signing
 alloy-signer = { workspace = true, optional = true }
 
 
-# arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
-# misc
 thiserror = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
 

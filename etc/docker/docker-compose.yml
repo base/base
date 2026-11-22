@@ -182,7 +182,6 @@ services:
       <<: *rust-service-build
       target: base
     container_name: base-bootnode
-    # Gate L2 startup on the L1 execution and beacon APIs.
     depends_on:
       l1-el:
         condition: service_healthy

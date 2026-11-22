@@ -17,7 +17,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[0;33m'; NC='\033[0m'
 
 pass() {
@@ -32,9 +31,7 @@ fail() {
 section() { echo -e "\n${CYAN}=== $1 ===${NC}"; }
 info()    { echo -e "${YELLOW}  →  $1${NC}"; }
 
-# ── Config ────────────────────────────────────────────────────────────────────
 
-# Source devnet accounts if the env file exists
 ENV_FILE="$REPO_ROOT/etc/docker/devnet-env"
 [[ -f "$ENV_FILE" ]] && source "$ENV_FILE"
 
@@ -57,14 +54,12 @@ for pair in "${CANDIDATE_PAIRS[@]}"; do
     addr="${pair%%:*}"; key="${pair##*:}"
     [[ -z "$addr" || -z "$key" ]] && continue
     bal=$(cast balance --rpc-url "$RPC_URL" "$addr" 2>/dev/null || echo "0")
-    # Compare as string: non-zero and not empty means funded
     if [[ -n "$bal" && "$bal" != "0" ]]; then
         ALICE_ADDR="$addr"; ALICE_KEY="$key"; break
     fi
 done
 [[ -n "$ALICE_ADDR" ]] || { echo "No funded account found — check devnet genesis"; exit 1; }
 
-# Bob: pick a different funded account for the transfer recipient
 declare -a BOB_CANDIDATES=(
     "${ANVIL_ACCOUNT_8_ADDR:-}:${ANVIL_ACCOUNT_8_KEY:-}"
     "${ANVIL_ACCOUNT_3_ADDR:-}:${ANVIL_ACCOUNT_3_KEY:-}"
@@ -80,7 +75,6 @@ done
 # Factory precompile (singleton, fixed at chain genesis)
 FACTORY="0xb20f000000000000000000000000000000000000"
 
-# Token creation parameters
 TOKEN_NAME="Base USD"
 TOKEN_SYMBOL="BUSD"
 TOKEN_DECIMALS=18
@@ -92,12 +86,10 @@ SALT="0x$(cast keccak "check-factory-live-$$-$(date +%s)" | sed 's/0x//')"
 # Transfer amount: 0.3 BUSD
 TRANSFER_AMOUNT=300000000000000000
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 # Trim whitespace, quotes, and cast's pretty-print suffix (e.g. "1000000 [1e6]" → "1000000")
 trim() { echo "$1" | tr -d '"' | sed 's/ \[.*\]$//' | xargs; }
 
-# cast call wrapper — always read-only, does not consume gas
 ccall() {
     local addr="$1"; local sig="$2"; shift 2
     cast call --rpc-url "$RPC_URL" "$addr" "$sig" "$@" 2>&1
@@ -113,7 +105,6 @@ assert_eq() {
     fi
 }
 
-# ── 0. Pre-flight ─────────────────────────────────────────────────────────────
 
 section "0/5  Pre-flight checks"
 
@@ -129,7 +120,6 @@ ALICE_BAL=$(cast balance --rpc-url "$RPC_URL" "$ALICE_ADDR" 2>&1)
     fail "Alice ($ALICE_ADDR) has no ETH — check genesis allocation"
 pass "Alice is funded ($ALICE_ADDR)" "balance=$(cast from-wei "$ALICE_BAL") ETH"
 
-# ── 1. Address prediction ─────────────────────────────────────────────────────
 
 section "1/5  Predict token address (read-only)"
 
@@ -142,7 +132,6 @@ PREDICTED=$(trim "$PREDICTED")
 info "Predicted token address: $PREDICTED"
 pass "getB20Address returned a valid address"
 
-# Verify the prefix encodes the B-20 marker and variant=DEFAULT.
 PREFIX=$(echo "${PREDICTED:2:22}" | tr '[:upper:]' '[:lower:]')
 EXPECTED_PREFIX="b200000000000000000001"
 [[ "$PREFIX" == "$EXPECTED_PREFIX" ]] || \
@@ -154,11 +143,9 @@ IS_B20_BEFORE=$(ccall "$FACTORY" "isB20(address)(bool)" "$PREDICTED")
 IS_B20_BEFORE=$(trim "$IS_B20_BEFORE")
 assert_eq "isB20 is true before creation" "true" "$IS_B20_BEFORE"
 
-# ── 2. Create token ───────────────────────────────────────────────────────────
 
 section "2/5  Create token (real transaction)"
 
-# Build B20CreateParams, then configure optional state through initCalls.
 CREATE_PARAMS=$(cast abi-encode \
     "params(uint8,string,string,address)" \
     1 "$TOKEN_NAME" "$TOKEN_SYMBOL" "$ALICE_ADDR")
@@ -184,22 +171,18 @@ TX_STATUS=$(echo "$TX_OUTPUT" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
 info "Transaction: $TX_HASH  (status=$TX_STATUS)"
 pass "createB20 transaction mined and succeeded"
 
-# The token address must match the prediction
 TOKEN="$PREDICTED"
 info "Token deployed at: $TOKEN"
 
-# ── 3. Verify factory state ───────────────────────────────────────────────────
 
 section "3/5  Verify factory state (read-only calls)"
 
-# isB20 must now be true
 IS_B20=$(ccall "$FACTORY" "isB20(address)(bool)" "$TOKEN")
 IS_B20=$(trim "$IS_B20")
 assert_eq "isB20 is true after creation" "true" "$IS_B20"
 
 pass "Factory state is correct"
 
-# ── 4. Verify token metadata ──────────────────────────────────────────────────
 
 section "4/5  Verify token metadata (calls to token address)"
 
@@ -223,7 +206,6 @@ assert_eq "balanceOf(bob) = 0 before transfer" "0" "$BOB_TOKEN_BAL"
 
 pass "All metadata fields match creation parameters"
 
-# ── 5. Transfer tokens ────────────────────────────────────────────────────────
 
 section "5/5  Transfer tokens (real transaction)"
 
@@ -243,7 +225,6 @@ XFER_STATUS=$(echo "$XFER_OUTPUT" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
 info "Transaction: $XFER_HASH  (status=$XFER_STATUS)"
 pass "transfer transaction mined and succeeded"
 
-# Verify balances changed correctly
 EXPECTED_ALICE=$((INITIAL_SUPPLY - TRANSFER_AMOUNT))
 ALICE_BAL_AFTER=$(trim "$(ccall "$TOKEN" "balanceOf(address)(uint256)" "$ALICE_ADDR")")
 assert_eq "Alice balance after transfer" "$EXPECTED_ALICE" "$ALICE_BAL_AFTER"
@@ -251,13 +232,11 @@ assert_eq "Alice balance after transfer" "$EXPECTED_ALICE" "$ALICE_BAL_AFTER"
 BOB_BAL_AFTER=$(trim "$(ccall "$TOKEN" "balanceOf(address)(uint256)" "$BOB_ADDR")")
 assert_eq "Bob balance after transfer" "$TRANSFER_AMOUNT" "$BOB_BAL_AFTER"
 
-# Total supply must be unchanged by a transfer
 TOTAL_AFTER=$(trim "$(ccall "$TOKEN" "totalSupply()(uint256)")")
 assert_eq "totalSupply unchanged after transfer" "$INITIAL_SUPPLY" "$TOTAL_AFTER"
 
 pass "Balances updated correctly; total supply preserved"
 
-# ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""
 echo -e "${GREEN}All live checks passed.${NC}"

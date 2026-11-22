@@ -263,7 +263,6 @@ async fn syncing_then_valid_advances_state_on_second_call() {
 
     let mut state = TestEngineStateBuilder::new().with_el_sync_finished(false).build();
 
-    // First call: EL returns Syncing → state stays put.
     let task = SynchronizeTask::new(
         Arc::clone(&client),
         Arc::clone(&cfg),
@@ -273,10 +272,8 @@ async fn syncing_then_valid_advances_state_on_second_call() {
     assert_eq!(state.sync_state.unsafe_head().block_info.number, 0);
     assert!(!state.el_sync_finished);
 
-    // Reconfigure mock to return Valid.
     client.set_fork_choice_updated_v3_response(valid_fcu()).await;
 
-    // Second call: EL returns Valid → state advances.
     let task = SynchronizeTask::new(
         Arc::clone(&client),
         Arc::clone(&cfg),

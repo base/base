@@ -59,7 +59,6 @@ pub struct RPCConfig {
     pub l1_beacon_rpc: Option<Url>,
     /// L2 execution RPC URL.
     pub l2_rpc: Url,
-    // TODO(fakedev9999): Make optional if possible.
     /// L2 consensus node RPC URL.
     pub l2_node_rpc: Url,
     /// Directory containing `<chain_id>.json` L1 chain configs.
@@ -101,7 +100,6 @@ impl OPSuccinctDataFetcher {
         let (rollup_config, rollup_config_path) =
             Self::fetch_and_save_rollup_config(&rpc_config).await?;
 
-        // Add warning if the chain is pre-Holocene, as derivation is significantly slower.
         let unix_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         if !rollup_config
             .is_feature_active_cascading(BaseFeature::StrictDerivationOrdering, unix_timestamp)
@@ -111,7 +109,6 @@ impl OPSuccinctDataFetcher {
             );
         }
 
-        // Fetch and save L1 config based on the rollup config's L1 chain ID
         let l1_config_path = Self::fetch_and_save_l1_config(&rollup_config, &rpc_config).await?;
 
         Ok(Self {
@@ -145,10 +142,8 @@ impl OPSuccinctDataFetcher {
         let l2_config_dir = rpc_config.l2_config_directory();
         fs::create_dir_all(&l2_config_dir)?;
 
-        // Save rollup config to a file named by chain ID
         let rollup_config_path = l2_config_dir.join(format!("{}.json", rollup_config.l2_chain_id));
 
-        // Write the rollup config to the file
         let rollup_config_str = serde_json::to_string_pretty(&rollup_config)?;
         fs::write(&rollup_config_path, rollup_config_str)?;
 
@@ -158,7 +153,6 @@ impl OPSuccinctDataFetcher {
             rollup_config_path.display()
         );
 
-        // Return both the rollup config and the path to the temporary file
         Ok((rollup_config, rollup_config_path))
     }
 
@@ -169,7 +163,6 @@ impl OPSuccinctDataFetcher {
     ) -> Result<PathBuf> {
         let l1_config_dir = rpc_config.l1_config_directory();
 
-        // Check if the L1 config file exists. If it does, return the path to the file.
         let l1_config_path = l1_config_dir.join(format!("{}.json", rollup_config.l1_chain_id));
         if l1_config_path.exists() {
             tracing::info!(
@@ -189,7 +182,6 @@ impl OPSuccinctDataFetcher {
             return Ok(l1_config_path);
         }
 
-        // Lookup the L1 config from the registry.
         let l1_config =
             base_common_chains::L1_CONFIGS.get(&rollup_config.l1_chain_id).ok_or_else(|| {
                 anyhow::anyhow!(
@@ -208,11 +200,9 @@ impl OPSuccinctDataFetcher {
             "fetched l1 config from built-in mapping"
         );
 
-        // Create the L1 config directory if it doesn't exist.
         fs::create_dir_all(&l1_config_dir)
             .with_context(|| format!("creating {}", l1_config_dir.display()))?;
 
-        // Write the L1 config to the file
         let l1_config_str = serde_json::to_string_pretty(l1_config)?;
         fs::write(&l1_config_path, l1_config_str)?;
 
@@ -243,7 +233,6 @@ impl OPSuccinctDataFetcher {
             .json::<serde_json::Value>()
             .await?;
 
-        // Check for RPC error from the JSON RPC response.
         if let Some(error) = response.get("error") {
             let error_message = error["message"].as_str().unwrap_or("Unknown error");
             return Err(anyhow::anyhow!("Error calling {method}: {error_message}"));
@@ -318,13 +307,11 @@ impl OPSuccinctDataFetcher {
         boot_infos: &Vec<BootInfoStruct>,
         checkpoint_block_hash: B256,
     ) -> Result<Vec<Header>> {
-        // Get the earliest L1 Head from the boot_infos.
         let start_header = self.get_earliest_l1_head_in_batch(boot_infos).await?;
 
         // Fetch the full header for the latest L1 Head (which is validated on chain).
         let latest_header = self.get_l1_header(checkpoint_block_hash.into()).await?;
 
-        // Create a vector of futures for fetching all headers
         let headers =
             self.fetch_headers_in_range(start_header.number, latest_header.number).await?;
 
@@ -354,7 +341,6 @@ impl OPSuccinctDataFetcher {
 
         let l2_provider = Arc::clone(&self.l2_provider);
 
-        // Get L2 output data.
         let l2_output_block = l2_provider
             .get_block_by_number(l2_start_block.into())
             .await
@@ -374,7 +360,6 @@ impl OPSuccinctDataFetcher {
         };
         let agreed_l2_output_root = keccak256(l2_output_encoded.abi_encode());
 
-        // Get L2 claim data.
         let l2_claim_block = l2_provider
             .get_block_by_number(l2_end_block.into())
             .await
@@ -401,7 +386,6 @@ impl OPSuccinctDataFetcher {
             .map(|addr| addr.as_str().trim_end_matches('/').to_string())
             .unwrap_or_default();
 
-        // Load L1 config from file or registry.
         let l1_config = if let Some(ref l1_config_path) = self.l1_config_path {
             let file = fs::File::open(l1_config_path)
                 .with_context(|| format!("open L1 config {}", l1_config_path.display()))?;

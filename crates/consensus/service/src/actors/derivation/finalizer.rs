@@ -82,11 +82,8 @@ impl L2Finalizer {
         &mut self,
         new_finalized_l1_block: BlockInfo,
     ) -> Option<L2BlockNumber> {
-        // Find the highest safe L2 block that is contained within the finalized chain,
-        // that the finalizer is aware of.
         let result =
             *self.awaiting_finalization.range(..=new_finalized_l1_block.number).next_back()?.1;
-        // Drain the queue of all L1 blocks contained in the finalized L1 chain.
         self.awaiting_finalization.retain(|&number, _| number > new_finalized_l1_block.number);
         Some(result)
     }
@@ -143,41 +140,35 @@ mod tests {
     #[test]
     fn single_entry_l1_not_yet_finalized() {
         let mut f = L2Finalizer::default();
-        // L2 block 10 came from L1 origin 5. Finalizing at L1=3 should not include it.
-        f.enqueue_for_finalization(&attrs(9, 5)); // l2=10, l1_origin=5
+        f.enqueue_for_finalization(&attrs(9, 5));
         assert!(f.try_finalize_next(l1_at(3)).is_none());
-        // Entry must still be in the queue.
         assert!(f.try_finalize_next(l1_at(5)).is_some());
     }
 
     #[test]
     fn single_entry_l1_exactly_at_finalized() {
-        // Boundary: l1_origin == finalized_l1. The range is `..=`, so this must match.
         let mut f = L2Finalizer::default();
-        f.enqueue_for_finalization(&attrs(9, 5)); // l2=10, l1_origin=5
+        f.enqueue_for_finalization(&attrs(9, 5));
         assert_eq!(f.try_finalize_next(l1_at(5)), Some(10));
     }
 
     #[test]
     fn multiple_l2_per_epoch_keeps_highest() {
-        // Three L2 blocks all derived from L1 epoch 1. Only the highest (3) should be returned.
         let mut f = L2Finalizer::default();
-        f.enqueue_for_finalization(&attrs(0, 1)); // l2=1, l1_origin=1
-        f.enqueue_for_finalization(&attrs(1, 1)); // l2=2, l1_origin=1
-        f.enqueue_for_finalization(&attrs(2, 1)); // l2=3, l1_origin=1
+        f.enqueue_for_finalization(&attrs(0, 1));
+        f.enqueue_for_finalization(&attrs(1, 1));
+        f.enqueue_for_finalization(&attrs(2, 1));
         assert_eq!(f.try_finalize_next(l1_at(1)), Some(3));
     }
 
     #[test]
     fn partial_finalization_drains_lower_entries() {
-        // Entries at L1=1,2,3. Finalizing at L1=2 returns highest across L1<=2 and drains those.
         let mut f = L2Finalizer::default();
-        f.enqueue_for_finalization(&attrs(4, 1)); // l2=5,  l1_origin=1
-        f.enqueue_for_finalization(&attrs(7, 2)); // l2=8,  l1_origin=2
-        f.enqueue_for_finalization(&attrs(10, 3)); // l2=11, l1_origin=3
+        f.enqueue_for_finalization(&attrs(4, 1));
+        f.enqueue_for_finalization(&attrs(7, 2));
+        f.enqueue_for_finalization(&attrs(10, 3));
 
         assert_eq!(f.try_finalize_next(l1_at(2)), Some(8));
-        // L1=3 entry must still be present.
         assert_eq!(f.try_finalize_next(l1_at(3)), Some(11));
     }
 
@@ -204,24 +195,20 @@ mod tests {
 
     #[test]
     fn drain_preserves_future_entries() {
-        // After finalizing up to L1=2, entries at L1=5 must survive.
         let mut f = L2Finalizer::default();
-        f.enqueue_for_finalization(&attrs(4, 2)); // l2=5,  l1_origin=2
-        f.enqueue_for_finalization(&attrs(9, 5)); // l2=10, l1_origin=5
+        f.enqueue_for_finalization(&attrs(4, 2));
+        f.enqueue_for_finalization(&attrs(9, 5));
 
         assert_eq!(f.try_finalize_next(l1_at(2)), Some(5));
-        // L1=5 entry is still present; finalizing it now returns l2=10.
         assert_eq!(f.try_finalize_next(l1_at(5)), Some(10));
     }
 
     #[test]
     fn old_finalized_signal_returns_none_after_drain() {
-        // After draining all entries up to L1=5, a later signal for L1=2 finds nothing.
         let mut f = L2Finalizer::default();
-        f.enqueue_for_finalization(&attrs(19, 5)); // l2=20, l1_origin=5
+        f.enqueue_for_finalization(&attrs(19, 5));
 
         assert_eq!(f.try_finalize_next(l1_at(5)), Some(20));
-        // Queue is now empty; an older signal cannot regress to a stale entry.
         assert!(f.try_finalize_next(l1_at(2)).is_none());
     }
 

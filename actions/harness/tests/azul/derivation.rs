@@ -15,12 +15,6 @@ async fn azul_derivation_crosses_activation_boundary() {
         ..BatcherConfig::default()
     };
 
-    // All inherited rollup forks through Jovian active from genesis; Base Azul at ts=4.
-    // With block_time=2 and L2 genesis at ts=0:
-    //   block 1 → ts=2  (pre-Base Azul)
-    //   block 2 → ts=4  (first Base Azul block)
-    //   block 3 → ts=6  (post-Base Azul)
-    //   block 4 → ts=8  (post-Base Azul)
     let base_azul_time = 4u64;
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
         .through_isthmus()

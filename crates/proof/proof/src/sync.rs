@@ -40,12 +40,10 @@ where
     }
     let origin = chain_provider.block_info_by_number(l1_origin_number).await?;
 
-    // Construct the cursor.
     let mut cursor = PipelineCursor::new(channel_timeout, origin);
     let tip = TipCursor::new(safe_head_info, safe_header, agreed_l2_output_root);
     cursor.advance(origin, tip);
 
-    // Wrap the cursor in a shared read-write lock
     Ok(Arc::new(RwLock::new(cursor)))
 }
 

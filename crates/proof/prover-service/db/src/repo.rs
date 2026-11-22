@@ -450,8 +450,6 @@ impl ProofRequestRepo {
         row.map(|r| row_to_proof_request(&r)).transpose()
     }
 
-    // ========== Worker Job API Methods ==========
-
     /// Atomically claim the next eligible worker proof job (`getNextProof`).
     ///
     /// Expired claims are reclaimable while `attempt < max_attempts`. Rows are
@@ -963,8 +961,6 @@ impl ProofRequestRepo {
         tx.commit().await?;
         Ok(RetryOutcome::Retried)
     }
-
-    // ========== Proof Session Methods ==========
 
     /// Get all sessions for a proof request
     pub async fn get_sessions_for_request(

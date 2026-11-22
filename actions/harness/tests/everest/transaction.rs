@@ -15,8 +15,6 @@ async fn base_tx_executes_and_derives_at_everest() {
     let tx = env.create_base_tx(0);
     let everest_block = env.sequencer.build_next_block_with_transactions(vec![tx]).await;
 
-    // The Base transaction must produce a successful account-abstraction
-    // receipt with a single committed call phase.
     let receipt = env.user_tx_receipt(&everest_block, 0);
     let BaseReceipt::Base(receipt) = receipt else {
         panic!("expected a Base transaction receipt");
@@ -24,7 +22,5 @@ async fn base_tx_executes_and_derives_at_everest() {
     assert!(receipt.inner.status());
     assert_eq!(receipt.committed_phases, 1);
 
-    // Send both blocks through the batcher and verifier, asserting the verifier
-    // re-derives them with matching state.
     env.derive_blocks([(pre_everest, 1), (everest_block, 2)], 2).await;
 }

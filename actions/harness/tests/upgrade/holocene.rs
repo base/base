@@ -8,10 +8,6 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_genesis::UpgradeConfig;
 use base_consensus_derive::StepResult;
 
-// ---------------------------------------------------------------------------
-// A. Basic derivation through the Holocene activation boundary
-// ---------------------------------------------------------------------------
-
 /// Full end-to-end derivation through the Holocene activation boundary.
 ///
 /// Holocene does **not** inject upgrade transactions (unlike Ecotone, Fjord,
@@ -232,10 +228,6 @@ async fn holocene_reorg_backward_restores_pre_holocene_batch_buffering() {
     assert_eq!(node.l2_safe_number(), 2);
 }
 
-// ---------------------------------------------------------------------------
-// B. Holocene frame pruning: non-sequential frame is dropped
-// ---------------------------------------------------------------------------
-
 /// Under Holocene, [`FrameQueue::prune`] enforces sequential frame numbers
 /// within the same channel. If frame 0 is followed by frame 2 (skipping
 /// frame 1), the [`FrameQueue`] prunes frame 2 immediately. The channel
@@ -281,7 +273,6 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block_with_single_transaction().await;
 
-    // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();
     source.push(block);
     let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
@@ -310,8 +301,6 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     node.initialize().await;
     node.run_until_idle().await;
 
-    // Frame 2 is pruned by FrameQueue — channel 0 only has frame 0.
-    // Channel is incomplete; safe head stays at genesis.
     assert_eq!(
         node.l2_safe_number(),
         0,
@@ -333,10 +322,6 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
         "safe head must remain at genesis: non-sequential frame was pruned, channel never completed"
     );
 }
-
-// ---------------------------------------------------------------------------
-// C. Holocene: new channel (frame 0) abandons incomplete old channel
-// ---------------------------------------------------------------------------
 
 /// Under Holocene frame pruning, when a new channel (different channel ID,
 /// `frame_number=0`) arrives while the previous channel is still incomplete,
@@ -417,7 +402,6 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     node.initialize().await;
     node.run_until_idle().await;
 
-    // Channel A is open but incomplete — safe head stays at genesis.
     assert_eq!(
         node.l2_safe_number(),
         0,
@@ -453,10 +437,6 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
          block B (L2 block 2) is a future batch and cannot be emitted"
     );
 }
-
-// ---------------------------------------------------------------------------
-// D. Holocene frame pruning: non-sequential frame pruned, then recovery
-// ---------------------------------------------------------------------------
 
 /// Same scenario as [`holocene_non_sequential_frame_pruned_channel_never_completes`]:
 /// a non-sequential frame causes the channel to be pruned and the safe head
@@ -496,7 +476,6 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block_with_single_transaction().await;
 
-    // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();
     source.push(block.clone());
     let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
@@ -520,7 +499,6 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     node.initialize().await;
     node.run_until_idle().await;
 
-    // Channel is broken — safe head stays at genesis.
     assert_eq!(
         node.l2_safe_number(),
         0,
@@ -546,10 +524,6 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
         "safe head must remain at genesis: broken channel was pruned, no recovery submitted yet"
     );
 
-    // -- Recovery: new Batcher (new channel ID) re-submits all frames in order.
-    // `block` was cloned into `source` above (line 372), so the original value
-    // is still valid here — same L2 block 1 with the same transactions and
-    // timestamp. The sequencer has not advanced since build_next_block_with_single_transaction().
     let mut recovery_source = ActionL2Source::new();
     recovery_source.push(block);
     let batcher2 = Batcher::new(recovery_source, &h.rollup_config, batcher_cfg.clone());

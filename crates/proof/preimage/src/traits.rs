@@ -44,7 +44,6 @@ pub trait HintWriterClient {
 /// A [`CommsClient`] is a trait that combines the [`PreimageOracleClient`] and [`HintWriterClient`]
 pub trait CommsClient: PreimageOracleClient + Clone + HintWriterClient {}
 
-// Implement the super trait for any type that satisfies the bounds
 impl<T: PreimageOracleClient + Clone + HintWriterClient> CommsClient for T {}
 
 /// A [`PreimageOracleServer`] is a high-level interface to accept read requests from the client and
@@ -108,7 +107,6 @@ pub trait PreimageFetcher {
 /// traits.
 pub trait PreimageServerBackend: PreimageFetcher + HintRouter {}
 
-// Implement the super trait for any type that satisfies the bounds
 impl<T: PreimageFetcher + HintRouter> PreimageServerBackend for T {}
 
 /// A cache that can be flushed to discard cached data.

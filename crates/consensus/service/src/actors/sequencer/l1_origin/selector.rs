@@ -171,8 +171,6 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
 
         let next = self.next_ready();
 
-        // Start building on the next L1 origin block if the next L2 block's timestamp is
-        // greater than or equal to the next L1 origin's timestamp.
         if let Some(next) = next
             && next_l2_timestamp >= next.header.timestamp
         {
@@ -183,7 +181,6 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
         let past_seq_drift =
             next_l2_timestamp.saturating_sub(current.header.timestamp) > max_seq_drift;
 
-        // If the sequencer drift has not been exceeded, return the current L1 origin.
         if !past_seq_drift {
             return Ok(current.clone());
         }
@@ -198,8 +195,6 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
         );
 
         if next.map(|next| next_l2_timestamp < next.header.timestamp).unwrap_or(false) {
-            // If the next L1 origin is ahead of the next L2 block's timestamp, return the current
-            // origin.
             return Ok(current.clone());
         }
 
@@ -220,7 +215,6 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
         let origin_hash = unsafe_head.l1_origin.hash;
 
         if self.current.as_ref().is_some_and(|current| current.hash == origin_hash) {
-            // The next L2 block remains in the current sequencing epoch.
         } else if let Some(promoted) = self.take_ready_if(origin_hash) {
             // The accepted unsafe head confirms that the prepared successor was used. Promote it
             // before applying speculative chain-view invalidation so a normal L1 head advance
@@ -635,13 +629,9 @@ mod tests {
     #[case::single_epoch(1)]
     #[case::many_epochs(12)]
     async fn test_next_l1_origin_several_epochs(#[case] num_epochs: usize) {
-        // Assume an L1 slot time of 12 seconds.
         const L1_SLOT_TIME: u64 = 12;
-        // Assume an L2 block time of 2 seconds.
         const L2_BLOCK_TIME: u64 = 2;
 
-        // Initialize the rollup configuration with a block time of 2 seconds and a sequencer drift
-        // of 600 seconds.
         let cfg = Arc::new(RollupConfig {
             block_time: L2_BLOCK_TIME,
             max_sequencer_drift: 600,
@@ -662,8 +652,6 @@ mod tests {
 
         let mut selector = L1OriginSelector::new(Arc::clone(&cfg), provider);
 
-        // Ensure all L1 origin blocks are produced correctly for each L2 block within all available
-        // epochs.
         for i in 0..(num_epochs as u64 * (L1_SLOT_TIME / cfg.block_time)) {
             let current_epoch = (i * cfg.block_time) / L1_SLOT_TIME;
             let unsafe_head = L2BlockInfo {
@@ -684,8 +672,6 @@ mod tests {
             assert!(selector.next().is_some(), "next origin not ready at L2 block {i}");
             let next = selector.next_l1_origin(unsafe_head).await.unwrap();
 
-            // The expected L1 origin block is the one corresponding to the epoch of the current L2
-            // block.
             let expected_epoch = ((i + 1) * cfg.block_time) / L1_SLOT_TIME;
             assert_eq!(
                 next.hash,
@@ -884,18 +870,14 @@ mod tests {
     #[case::not_available(false)]
     #[case::is_available(true)]
     async fn test_next_l1_origin_next_maybe_available(#[case] next_l1_origin_available: bool) {
-        // Assume an L2 block time of 2 seconds.
         const L2_BLOCK_TIME: u64 = 2;
 
-        // Initialize the rollup configuration with a block time of 2 seconds and a sequencer drift
-        // of 600 seconds.
         let cfg = Arc::new(RollupConfig {
             block_time: L2_BLOCK_TIME,
             max_sequencer_drift: 600,
             ..Default::default()
         });
 
-        // Initialize the provider with a single L1 block.
         let provider = MockOriginSelectorProvider::default();
         provider.with_block(BlockInfo {
             parent_hash: B256::ZERO,
@@ -905,7 +887,6 @@ mod tests {
         });
 
         if next_l1_origin_available {
-            // If the next L1 origin is available, add it to the provider.
             provider.with_block(BlockInfo {
                 parent_hash: B256::ZERO,
                 hash: B256::with_last_byte(1),
@@ -1023,18 +1004,14 @@ mod tests {
         #[case] next_available: bool,
         #[case] next_ahead_of_unsafe: bool,
     ) {
-        // Assume an L2 block time of 2 seconds.
         const L2_BLOCK_TIME: u64 = 2;
 
-        // Initialize the rollup configuration with a block time of 2 seconds and a sequencer drift
-        // of 600 seconds.
         let cfg = Arc::new(RollupConfig {
             block_time: L2_BLOCK_TIME,
             max_sequencer_drift: 600,
             ..Default::default()
         });
 
-        // Initialize the provider with a single L1 block.
         let provider = MockOriginSelectorProvider::default();
         provider.with_block(BlockInfo {
             parent_hash: B256::ZERO,
@@ -1044,7 +1021,6 @@ mod tests {
         });
 
         if next_available {
-            // If the next L1 origin is to be available, add it to the provider.
             provider.with_block(BlockInfo {
                 parent_hash: B256::ZERO,
                 hash: B256::with_last_byte(1),
@@ -1078,13 +1054,9 @@ mod tests {
             selector.await_inflight().await;
             let next = selector.next_l1_origin(unsafe_head).await.unwrap();
             if next_ahead_of_unsafe {
-                // If the next L1 origin is available and ahead of the unsafe head, the L1 origin
-                // should not change.
                 assert_eq!(next.hash, B256::ZERO);
                 assert_eq!(next.number, 0);
             } else {
-                // If the next L1 origin is available and behind the unsafe head, the L1 origin
-                // should advance.
                 assert_eq!(next.hash, B256::with_last_byte(1));
                 assert_eq!(next.number, 1);
             }

@@ -86,7 +86,6 @@ async fn test_rollup_node_gossip_then_derivation() {
     let transport = h.create_supervised_p2p(&mut sequencer);
     let mut node = h.create_test_rollup_node(&sequencer, chain.clone(), transport);
 
-    // Build blocks and gossip each one before any L1 batching.
     let mut source = ActionL2Source::new();
     for _ in 0..L2_BLOCK_COUNT {
         let block = sequencer.build_next_block_with_single_transaction().await;
@@ -94,7 +93,6 @@ async fn test_rollup_node_gossip_then_derivation() {
         source.push(block);
     }
 
-    // Initialize then step once to drain the gossip channel; unsafe_head should be at 5.
     node.initialize().await;
     node.run_until_idle().await;
 
@@ -105,7 +103,6 @@ async fn test_rollup_node_gossip_then_derivation() {
     );
     assert_eq!(node.l2_safe_number(), 0, "safe_head must stay at genesis before batches land");
 
-    // Batch and mine so the pipeline can derive.
     Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
     let derived = node.run_until_idle().await;
@@ -140,18 +137,14 @@ async fn test_rollup_node_out_of_order_gossip_dropped() {
     let _block2 = sequencer.build_next_block_with_single_transaction().await;
     let block3 = sequencer.build_next_block_with_single_transaction().await;
 
-    // Inject block 3 first — gap-jump, must be dropped.
     sequencer.broadcast_unsafe_block(&block3);
     node.initialize().await;
     assert_eq!(node.l2_unsafe_number(), 0, "gap-jump block 3 must be dropped");
 
-    // Inject block 1 — sequential, must advance.
     sequencer.broadcast_unsafe_block(&block1);
-    // step() calls drain_gossip() internally.
     node.step().await;
     assert_eq!(node.l2_unsafe_number(), 1, "block 1 should advance unsafe_head to 1");
 
-    // Inject block 3 again — still a gap (unsafe_head=1, next expected=2).
     sequencer.broadcast_unsafe_block(&block3);
     node.step().await;
     assert_eq!(node.l2_unsafe_number(), 1, "block 3 must be dropped when unsafe_head=1");

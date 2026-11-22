@@ -22,7 +22,6 @@ pub struct BaseTransactionReceipt {
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
-    /* ----------------------------------- Base transaction ----------------------------------- */
     /// Gas payer address for Base transactions: the sender for self-pay, or the
     /// specified payer for sponsored transactions.
     ///
@@ -134,13 +133,11 @@ pub struct TransactionReceiptFields {
     /// L1 block info.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
-    /* --------------------------------------- Regolith --------------------------------------- */
     /// Deposit nonce for deposit transactions.
     ///
     /// Always null prior to the Regolith upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_nonce: Option<u64>,
-    /* ---------------------------------------- Canyon ---------------------------------------- */
     /// Deposit receipt version for deposit transactions.
     ///
     /// Always null prior to the Canyon upgrade.
@@ -247,7 +244,6 @@ pub struct L1BlockInfo {
     /// Present from pre-bedrock to Ecotone. Null after Ecotone.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "l1_fee_scalar_serde")]
     pub l1_fee_scalar: Option<f64>,
-    /* ---------------------------------------- Ecotone ---------------------------------------- */
     /// L1 base fee scalar. Applied to base fee to compute weighted gas price multiplier.
     ///
     /// Always null prior to the Ecotone upgrade.
@@ -263,7 +259,6 @@ pub struct L1BlockInfo {
     /// Always null prior to the Ecotone upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_blob_base_fee_scalar: Option<u128>,
-    /* ---------------------------------------- Isthmus ---------------------------------------- */
     /// Operator fee scalar.
     ///
     /// Always null prior to the Isthmus upgrade.
@@ -274,7 +269,6 @@ pub struct L1BlockInfo {
     /// Always null prior to the Isthmus upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub operator_fee_constant: Option<u128>,
-    /* ---------------------------------------- Jovian ---------------------------------------- */
     /// DA footprint gas scalar. Used to set the DA footprint block limit on the L2.
     ///
     /// Always null prior to the Jovian upgrade.
@@ -432,7 +426,6 @@ mod tests {
         let back: BaseTransactionReceipt = serde_json::from_value(json).unwrap();
         assert_eq!(back.phase_statuses, Some(Vec::new()));
 
-        // Populated statuses serialize as an array of quantity bytes.
         receipt.phase_statuses = Some(vec![0x01, 0x00]);
         let json = serde_json::to_value(&receipt).unwrap();
         assert_eq!(json["phaseStatuses"], json!(["0x1", "0x0"]));

@@ -54,7 +54,6 @@ fn test_start_triggers_catchup_from_safe_head() {
         .build();
         let handle = ctx.spawn(driver.run());
 
-        // Stop then start with safe_head = 42; the source will poll 43 next.
         handles.admin.stop().await.unwrap();
         handles.admin.start().await.unwrap();
         handles.admin.start().await.unwrap();
@@ -83,7 +82,6 @@ fn test_stopped_leaves_the_source_unread() {
                 .build();
         let handle = ctx.spawn(driver.run());
 
-        // A block sent after the stop stays in the source.
         handles.admin.stop().await.unwrap();
         source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
@@ -92,7 +90,6 @@ fn test_stopped_leaves_the_source_unread() {
             "a stopped batcher must not ingest blocks"
         );
 
-        // After the start, the queued block and the next one reach the pipeline.
         handles.admin.start().await.unwrap();
         source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(2)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
@@ -119,13 +116,11 @@ fn test_stop_leaves_in_flight_submissions_to_settle() {
             DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).build();
         let handle = ctx.spawn(driver.run());
 
-        // Stop while the stub is in flight.
         handles.admin.stop().await.unwrap();
         let status = handles.admin.get_status().await.unwrap();
         assert!(status.stopped);
         assert_eq!(status.in_flight, 1);
 
-        // Confirm the submission and let the driver process the receipt.
         tx_manager.confirm_next(1);
         ctx.sleep(Duration::from_millis(1)).await;
         assert_eq!(handles.admin.get_status().await.unwrap().in_flight, 0);

@@ -231,8 +231,6 @@ impl PolicyRegistryV3 {
         if counter >= Self::BUILTIN_POLICY_COUNT {
             return Ok(counter);
         }
-        // Assert that the ID constants match the enum discriminants and counter slots,
-        // catching any future drift from enum reordering or constant changes.
         debug_assert_eq!(
             Self::make_id(PolicyType::BLOCKLIST.as_discriminant(), 0),
             Self::ALWAYS_ALLOW_ID
@@ -665,8 +663,6 @@ mod tests {
         (0..count).map(|i| Address::from_word(U256::from(i as u64 + 1).into())).collect()
     }
 
-    // --- built-in IDs ---
-
     #[test]
     fn always_allow_id_authorizes_any_account() {
         let rt = initialized();
@@ -710,8 +706,6 @@ mod tests {
         assert!(!LOGIC.policy_exists(&rt, malformed).unwrap());
     }
 
-    // --- ensure_initialized_and_get_counter ---
-
     #[test]
     fn first_create_policy_initializes_builtins_and_starts_counter_at_two() {
         let mut rt = bare();
@@ -730,8 +724,6 @@ mod tests {
         }
         assert_eq!(rt.next_counter, PolicyRegistryV3::BUILTIN_POLICY_COUNT);
     }
-
-    // --- createPolicy ---
 
     #[test]
     fn create_policy_zero_admin_reverts() {
@@ -793,8 +785,6 @@ mod tests {
         assert!(updated.allowed);
         assert_eq!(updated.accounts, vec![ALICE]);
     }
-
-    // --- ALLOWLIST membership ---
 
     #[test]
     fn allowlist_non_member_is_not_authorized() {
@@ -873,8 +863,6 @@ mod tests {
         assert!(matches!(err, BasePrecompileError::Revert(_)));
     }
 
-    // --- BLOCKLIST membership ---
-
     #[test]
     fn blocklist_non_member_is_authorized() {
         let mut rt = initialized();
@@ -931,8 +919,6 @@ mod tests {
         let err = LOGIC.update_blocklist(&mut rt, id, true, vec![BOB]).unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
     }
-
-    // --- createPolicyWithAccounts ---
 
     #[test]
     fn create_policy_with_accounts_seeds_members() {
@@ -1055,8 +1041,6 @@ mod tests {
         assert!(!is_authorized(&rt, id, BOB));
     }
 
-    // --- two-step admin transfer ---
-
     #[test]
     fn admin_transfer_two_step() {
         let mut rt = initialized();
@@ -1096,8 +1080,6 @@ mod tests {
         assert!(matches!(err, BasePrecompileError::Revert(_)));
     }
 
-    // --- renounceAdmin ---
-
     #[test]
     fn renounce_admin_freezes_policy() {
         let mut rt = initialized();
@@ -1124,8 +1106,6 @@ mod tests {
             assert!(matches!(err, BasePrecompileError::Revert(_)));
         }
     }
-
-    // --- read helpers for built-in / unknown / malformed IDs ---
 
     #[test]
     fn policy_exists_builtin_ids_always_return_true() {
@@ -1222,8 +1202,6 @@ mod tests {
         let nonexistent = PolicyRegistryV3::make_id(0, 999);
         assert_eq!(LOGIC.pending_policy_admin(&rt, nonexistent).unwrap(), Address::ZERO);
     }
-
-    // --- composite policies (UNION / INTERSECT) ---
 
     fn create_union(rt: &mut Storage, children: Vec<u64>) -> u64 {
         set_caller(rt, ADMIN);
@@ -1537,8 +1515,6 @@ mod tests {
             })
         );
     }
-
-    // --- inverted policy IDs (V3 / Denim) ---
 
     #[test]
     fn inverted_policy_id_toggles_bit_and_round_trips() {

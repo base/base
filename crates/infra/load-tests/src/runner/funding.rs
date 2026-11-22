@@ -48,7 +48,6 @@ impl LoadRunner {
 
         let pb_check = self.progress_bar(total_accounts as u64, "Checking balances");
 
-        // Phase 1: Parallel balance + nonce queries.
         let addresses: Vec<(Address, usize)> =
             self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
 
@@ -749,7 +748,6 @@ impl LoadRunner {
         let token_count = tokens.len();
         let total_pairs = token_count * sender_addresses.len();
 
-        // Phase 1: Check existing token balances for all (token, sender) pairs.
         let pb_check = self.progress_bar(total_pairs as u64, "Checking token balances");
         let client = &self.client;
 
@@ -784,7 +782,6 @@ impl LoadRunner {
             .await;
         pb_check.finish_and_clear();
 
-        // Filter to only (token, sender) pairs that need funding.
         let mut transfers_needed: Vec<(Address, Address)> = Vec::new();
         let mut already_funded = 0usize;
         for (token, sender, balance) in balance_results {
@@ -813,7 +810,6 @@ impl LoadRunner {
             "distributing swap tokens"
         );
 
-        // Phase 2: Setup for transfers.
         let funder_address = funding_key.address();
         let wallet = EthereumWallet::from(funding_key);
         let funder_provider =
@@ -848,7 +844,6 @@ impl LoadRunner {
             .await
             .rpc("get pending transaction count")?;
 
-        // Phase 3: Execute transfers for accounts that need tokens.
         let pb = self.progress_bar(transfers_needed.len() as u64, "Minting tokens");
         let mut failed_count: usize = 0;
 

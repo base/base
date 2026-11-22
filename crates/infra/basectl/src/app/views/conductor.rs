@@ -1315,7 +1315,6 @@ fn render_cluster_table(
         constraints.push(Constraint::Percentage(node_pct));
     }
 
-    // ── Fork detection: find leader's unsafe and safe hashes ──────────────
     let leader_unsafe: Option<(u64, alloy_primitives::B256)> = nodes.iter().find_map(|n| {
         if n.is_leader == Some(true) { n.unsafe_l2_block.zip(n.unsafe_l2_hash) } else { None }
     });
@@ -1327,7 +1326,6 @@ fn render_cluster_table(
     let finalized_l2_baseline = latest_block(nodes, |node| node.finalized_l2_block);
     let el_block_baseline = latest_block(nodes, |node| node.el_block);
 
-    // ── Header row: node names ─────────────────────────────────────────────
     let mut header_cells = vec![Cell::from("")];
     for (i, node) in nodes.iter().enumerate() {
         let is_selected = i == selected;
@@ -1351,7 +1349,6 @@ fn render_cluster_table(
 
     let label_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
 
-    // ── Role row ───────────────────────────────────────────────────────────
     let mut role_cells = vec![Cell::from("  Role").style(label_style)];
     for node in nodes {
         let (label, style) = if paused_nodes.contains_key(&node.name) {
@@ -1369,7 +1366,6 @@ fn render_cluster_table(
     }
     let role_row = Row::new(role_cells).height(1);
 
-    // ── Active row (conductor) ─────────────────────────────────────────────
     let mut active_cells = vec![Cell::from("  Active").style(label_style)];
     for node in nodes {
         let (label, style) = if paused_nodes.contains_key(&node.name) {
@@ -1414,7 +1410,6 @@ fn render_cluster_table(
         ("   yes", "   no"),
     );
 
-    // ── Seq active row (admin RPC) ─────────────────────────────────────────
     let mut seq_active_cells = vec![Cell::from("  Seq active").style(label_style)];
     for node in nodes {
         let (label, style) = if paused_nodes.contains_key(&node.name) {
@@ -1432,7 +1427,6 @@ fn render_cluster_table(
     }
     let seq_active_row = Row::new(seq_active_cells).height(1);
 
-    // ── Unsafe L2 row ──────────────────────────────────────────────────────
     let mut l2_cells = vec![Cell::from("  Unsafe L2").style(label_style)];
     for node in nodes {
         let (label, style) = match node.unsafe_l2_block {
@@ -1446,7 +1440,6 @@ fn render_cluster_table(
     }
     let l2_row = Row::new(l2_cells).height(1);
 
-    // ── Unsafe L2 hash row ────────────────────────────────────────────────
     let mut l2_hash_cells = vec![Cell::from("  Unsafe Hash").style(label_style)];
     for node in nodes {
         let (label, style) = match node.unsafe_l2_hash {
@@ -1470,7 +1463,6 @@ fn render_cluster_table(
     }
     let l2_hash_row = Row::new(l2_hash_cells).height(1);
 
-    // ── Safe L2 row ────────────────────────────────────────────────────────
     let mut safe_l2_cells = vec![Cell::from("  Safe L2").style(label_style)];
     for node in nodes {
         let (label, style) = match node.safe_l2_block {
@@ -1484,7 +1476,6 @@ fn render_cluster_table(
     }
     let safe_l2_row = Row::new(safe_l2_cells).height(1);
 
-    // ── Safe L2 hash row ──────────────────────────────────────────────────
     let mut safe_hash_cells = vec![Cell::from("  Safe Hash").style(label_style)];
     for node in nodes {
         let (label, style) = match node.safe_l2_hash {
@@ -1508,7 +1499,6 @@ fn render_cluster_table(
     }
     let safe_hash_row = Row::new(safe_hash_cells).height(1);
 
-    // ── Finalized L2 row ───────────────────────────────────────────────────
     let mut finalized_l2_cells = vec![Cell::from("  Finalized L2").style(label_style)];
     for node in nodes {
         let (label, style) = match node.finalized_l2_block {
@@ -1522,7 +1512,6 @@ fn render_cluster_table(
     }
     let finalized_l2_row = Row::new(finalized_l2_cells).height(1);
 
-    // ── L1 derivation row ──────────────────────────────────────────────────
     let mut l1_cells = vec![Cell::from("  L1 Derived").style(label_style)];
     for node in nodes {
         let (label, style) = match (node.current_l1_block, node.head_l1_block) {
@@ -1537,7 +1526,6 @@ fn render_cluster_table(
     }
     let l1_row = Row::new(l1_cells).height(1);
 
-    // ── CL peer count row ──────────────────────────────────────────────────
     let mut cl_peers_cells = vec![Cell::from("  CL Peers").style(label_style)];
     for node in nodes {
         let (label, style) = match node.cl_peer_count {
@@ -1549,7 +1537,6 @@ fn render_cluster_table(
     }
     let cl_peers_row = Row::new(cl_peers_cells).height(1);
 
-    // ── EL block row ───────────────────────────────────────────────────────
     let mut el_block_cells = vec![Cell::from("  Block").style(label_style)];
     for node in nodes {
         let (label, style) = match node.el_block {
@@ -1563,7 +1550,6 @@ fn render_cluster_table(
     }
     let el_block_row = Row::new(el_block_cells).height(1);
 
-    // ── EL syncing row ─────────────────────────────────────────────────────
     let mut el_syncing_cells = vec![Cell::from("  Syncing").style(label_style)];
     for node in nodes {
         let (label, style) = match node.el_syncing {
@@ -1575,7 +1561,6 @@ fn render_cluster_table(
     }
     let el_syncing_row = Row::new(el_syncing_cells).height(1);
 
-    // ── EL peer count row ──────────────────────────────────────────────────
     let mut el_peers_cells = vec![Cell::from("  EL Peers").style(label_style)];
     for node in nodes {
         let (label, style) = match node.el_peer_count {
@@ -1641,14 +1626,12 @@ fn render_cluster_table(
     }
 
     let rows = vec![
-        // ── Conductor ────────────────────────────────────────────────────
         role_row,
         active_row,
         paused_row,
         stopped_row,
         healthy_row,
         seq_active_row,
-        // ── CL ───────────────────────────────────────────────────────────
         spacer.clone(),
         cl_section,
         l2_row,
@@ -1658,7 +1641,6 @@ fn render_cluster_table(
         finalized_l2_row,
         l1_row,
         cl_peers_row,
-        // ── EL ───────────────────────────────────────────────────────────
         spacer,
         el_section,
         el_block_row,
@@ -1814,7 +1796,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let finalized_l2_baseline = latest_block(nodes, |node| node.finalized_l2_block);
     let el_block_baseline = latest_block(nodes, |node| node.el_block);
 
-    // ── Header row: node names ─────────────────────────────────────────────
     let mut header_cells = vec![Cell::from("")];
     for node in nodes {
         let style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
@@ -1826,7 +1807,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
 
     let label_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
 
-    // ── Binary row ────────────────────────────────────────────────────────
     let mut binary_cells = vec![Cell::from("  Binary").style(label_style)];
     for node in nodes {
         let (label, style) = node.binary.as_ref().map_or_else(
@@ -1837,10 +1817,8 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     }
     let binary_row = Row::new(binary_cells).height(1);
 
-    // ── CL section header ──────────────────────────────────────────────────
     let cl_section = section_row("CL", node_count);
 
-    // ── Unsafe L2 row ──────────────────────────────────────────────────────
     let mut l2_cells = vec![Cell::from("  Unsafe L2").style(label_style)];
     for node in nodes {
         let (label, style) = node.unsafe_l2_block.map_or_else(
@@ -1851,7 +1829,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     }
     let l2_row = Row::new(l2_cells).height(1);
 
-    // ── Unsafe L2 hash row ────────────────────────────────────────────────
     let mut l2_hash_cells = vec![Cell::from("  Unsafe Hash").style(label_style)];
     for node in nodes {
         let (label, style) = node.unsafe_l2_hash.map_or_else(
@@ -1865,7 +1842,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     }
     let l2_hash_row = Row::new(l2_hash_cells).height(1);
 
-    // ── Safe L2 row ────────────────────────────────────────────────────────
     let mut safe_l2_cells = vec![Cell::from("  Safe L2").style(label_style)];
     for node in nodes {
         let (label, style) = node.safe_l2_block.map_or_else(
@@ -1876,7 +1852,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     }
     let safe_l2_row = Row::new(safe_l2_cells).height(1);
 
-    // ── Safe L2 hash row ──────────────────────────────────────────────────
     let mut safe_hash_cells = vec![Cell::from("  Safe Hash").style(label_style)];
     for node in nodes {
         let (label, style) = node.safe_l2_hash.map_or_else(
@@ -1890,7 +1865,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     }
     let safe_hash_row = Row::new(safe_hash_cells).height(1);
 
-    // ── Finalized L2 row ───────────────────────────────────────────────────
     let mut finalized_l2_cells = vec![Cell::from("  Finalized L2").style(label_style)];
     for node in nodes {
         let (label, style) = node.finalized_l2_block.map_or_else(
@@ -1901,7 +1875,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     }
     let finalized_l2_row = Row::new(finalized_l2_cells).height(1);
 
-    // ── L1 derivation row ──────────────────────────────────────────────────
     let mut l1_cells = vec![Cell::from("  L1 Derived").style(label_style)];
     for node in nodes {
         let (label, style) = match (node.current_l1_block, node.head_l1_block) {
@@ -1916,7 +1889,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     }
     let l1_row = Row::new(l1_cells).height(1);
 
-    // ── CL peer count row ──────────────────────────────────────────────────
     let mut cl_peers_cells = vec![Cell::from("  CL Peers").style(label_style)];
     for node in nodes {
         let (label, style) = match node.cl_peer_count {
@@ -1928,10 +1900,8 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     }
     let cl_peers_row = Row::new(cl_peers_cells).height(1);
 
-    // ── EL section header ──────────────────────────────────────────────────
     let el_section = section_row("EL", node_count);
 
-    // ── EL block row ───────────────────────────────────────────────────────
     let mut el_block_cells = vec![Cell::from("  Block").style(label_style)];
     for node in nodes {
         let (label, style) = node.el_block.map_or_else(
@@ -1942,7 +1912,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     }
     let el_block_row = Row::new(el_block_cells).height(1);
 
-    // ── EL syncing row ─────────────────────────────────────────────────────
     let mut el_syncing_cells = vec![Cell::from("  Syncing").style(label_style)];
     for node in nodes {
         let (label, style) = match node.el_syncing {
@@ -1954,7 +1923,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     }
     let el_syncing_row = Row::new(el_syncing_cells).height(1);
 
-    // ── EL peer count row ──────────────────────────────────────────────────
     let mut el_peers_cells = vec![Cell::from("  EL Peers").style(label_style)];
     for node in nodes {
         let (label, style) = match node.el_peer_count {
@@ -1970,7 +1938,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
 
     let rows = vec![
         binary_row,
-        // ── CL ───────────────────────────────────────────────────────────
         spacer.clone(),
         cl_section,
         l2_row,
@@ -1980,7 +1947,6 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
         finalized_l2_row,
         l1_row,
         cl_peers_row,
-        // ── EL ───────────────────────────────────────────────────────────
         spacer,
         el_section,
         el_block_row,

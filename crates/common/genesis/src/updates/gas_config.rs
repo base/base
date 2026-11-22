@@ -64,7 +64,6 @@ impl TryFrom<&SystemConfigLog> for GasConfigUpdate {
             return Ok(Self::default());
         }
 
-        // If ecotone is active, set the overhead to zero, otherwise set to the decoded value.
         let overhead = if sys_log.ecotone_active { U256::ZERO } else { overhead };
 
         Ok(Self { scalar: Some(scalar), overhead: Some(overhead) })

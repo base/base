@@ -70,10 +70,8 @@ where
 
     let expected_hash = payload.block_hash();
 
-    // First parse the block
     let sealed_block = payload.try_into_block_with_sidecar(&sidecar)?.seal_slow();
 
-    // Ensure the hash included in the payload matches the block hash
     if expected_hash != sealed_block.hash() {
         Err(PayloadError::BlockHash { execution: sealed_block.hash(), consensus: expected_hash })?;
     }

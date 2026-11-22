@@ -147,7 +147,6 @@ mod tests {
             ..Default::default()
         };
 
-        // Should successfully retrieve a blob batch from the block
         let mut data_source = EthereumDataSource::new(blob, calldata, &cfg);
         let data = data_source.next(&BlockInfo::default(), Address::ZERO).await.unwrap();
         assert_eq!(data, Bytes::default());
@@ -224,12 +223,10 @@ mod tests {
         cfg.genesis.system_config = Some(SystemConfig { batcher_address, ..Default::default() });
         cfg.batch_inbox_address = batch_inbox;
 
-        // load a test batcher transaction
         let raw_batcher_tx = include_bytes!("../../testdata/raw_batcher_tx.hex");
         let tx = TxEnvelope::decode_2718(&mut raw_batcher_tx.as_ref()).unwrap();
         chain.insert_block_with_transactions(10, block_ref, vec![tx]);
 
-        // Should successfully retrieve a calldata batch from the block
         let mut data_source = EthereumDataSource::new_from_parts(chain, blob, &cfg);
         let calldata_batch = data_source.next(&block_ref, batcher_address).await.unwrap();
         assert_eq!(calldata_batch.len(), 119823);

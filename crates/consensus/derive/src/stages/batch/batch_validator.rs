@@ -85,7 +85,6 @@ where
         // after the update code runs, this is consistent.
         let origin_behind = self.origin_behind(parent);
 
-        // Advance the origin if needed.
         // The entire pipeline has the same origin.
         // Batches prior to the l1 origin of the l2 safe head are not accepted.
         if self.origin != self.prev.origin() {
@@ -108,7 +107,6 @@ where
             );
         }
 
-        // If the epoch is advanced, update the l1 blocks.
         // Advancing epoch must be done after the pipeline successfully applies the entire span
         // batch to the chain.
         // Because the span batch can be reverted during processing the batch, then we must
@@ -121,7 +119,6 @@ where
                     break;
                 }
             }
-            // If the origin of the parent block is not included, we must advance the origin.
         }
 
         if let Some(origin) = self.l1_blocks.first() {
@@ -144,8 +141,6 @@ where
     pub fn try_derive_empty_batch(&mut self, parent: &L2BlockInfo) -> PipelineResult<SingleBatch> {
         let epoch = self.l1_blocks[0];
 
-        // If the current epoch is too old compared to the L1 block we are at,
-        // i.e. if the sequence window expired, we create empty batches for the current epoch
         let stage_origin = self.origin.ok_or(PipelineError::MissingOrigin.crit())?;
         let expiry_epoch = epoch.number + self.cfg.seq_window_size;
         let force_empty_batches = expiry_epoch <= stage_origin.number;
@@ -155,14 +150,10 @@ where
             self.cfg.is_feature_active_cascading(BaseFeature::SubsecondBlocks, next_timestamp)
                 && next_timestamp == parent.block_info.timestamp;
 
-        // If the sequencer window did not expire,
-        // there is still room to receive batches for the current epoch.
-        // No need to force-create empty batch(es) towards the next epoch yet.
         if !force_empty_batches {
             return Err(PipelineError::Eof.temp());
         }
 
-        // The next L1 block is needed to proceed towards the next epoch.
         if self.l1_blocks.len() < 2 {
             return Err(PipelineError::Eof.temp());
         }
@@ -183,8 +174,6 @@ where
             });
         }
 
-        // At this point we have auto generated every batch for the current epoch
-        // that we can, so we can advance to the next epoch.
         debug!(
             target: "batch_validator",
             "Advancing batch validator epoch: {}, timestamp: {}, epoch timestamp: {}",
@@ -202,7 +191,6 @@ where
     F: L2ChainProvider + Send + Debug,
 {
     async fn next_batch(&mut self, parent: L2BlockInfo) -> PipelineResult<SingleBatch> {
-        // Update the L1 origin blocks within the stage.
         self.update_origins(&parent)?;
 
         // If the origin is behind, we must drain previous stages to catch up.
@@ -299,7 +287,6 @@ where
             }
         }
 
-        // Check the validity of the single batch before forwarding it.
         match next_batch.check_batch(
             self.cfg.as_ref(),
             self.l1_blocks.as_ref(),
@@ -468,7 +455,6 @@ mod tests {
         mock.origin = Some(BlockInfo::default());
         let mut bv = BatchValidator::new(cfg, mock, TestL2ChainProvider::default());
 
-        // Set up state as if the pipeline was reset with l1_origin = block #1.
         bv.origin = Some(BlockInfo { number: 1, ..Default::default() });
         bv.l1_blocks.clear();
         bv.l1_blocks.push(BlockInfo { number: 1, ..Default::default() });
@@ -489,7 +475,6 @@ mod tests {
         mock.origin = Some(BlockInfo { number: 2, ..Default::default() });
         let mut bv = BatchValidator::new(cfg, mock, TestL2ChainProvider::default());
 
-        // Set up state as if the pipeline was reset with l1_origin = block #1.
         bv.origin = Some(BlockInfo { number: 1, ..Default::default() });
         bv.l1_blocks.clear();
         bv.l1_blocks.push(BlockInfo { number: 1, ..Default::default() });
@@ -510,7 +495,6 @@ mod tests {
         mock.origin = Some(BlockInfo { number: 2, ..Default::default() });
         let mut bv = BatchValidator::new(cfg, mock, TestL2ChainProvider::default());
 
-        // Set up state as if the pipeline was reset with l1_origin = block #1.
         bv.origin = Some(BlockInfo { number: 1, ..Default::default() });
         bv.l1_blocks.clear();
         bv.l1_blocks.push(BlockInfo { number: 1, ..Default::default() });
@@ -619,21 +603,17 @@ mod tests {
             ..Default::default()
         };
 
-        // Setup batch validator deps
         let batch_vec = vec![PipelineResult::Ok(Batch::Single(batch.clone()))];
         let mut mock = TestNextBatchProvider::new(batch_vec);
         mock.origin = Some(BlockInfo { number: 1, ..Default::default() });
 
-        // Configure batch validator
         let mut bv = BatchValidator::new(cfg, mock, TestL2ChainProvider::default());
 
-        // Reset the pipeline to add the L1 origin to the stage.
         bv.reset(BlockNumHash { number: 1, ..Default::default() }, SystemConfig::default())
             .await
             .unwrap();
         bv.l1_blocks.push(BlockInfo { number: 1, ..Default::default() });
 
-        // Grab the next batch.
         let produced_batch = bv.next_batch(parent).await.unwrap();
         assert_eq!(produced_batch, batch);
     }
@@ -647,17 +627,14 @@ mod tests {
         mock.origin = Some(BlockInfo { number: 1, ..Default::default() });
         let mut bv = BatchValidator::new(cfg, mock, TestL2ChainProvider::default());
 
-        // Reset the pipeline to add the L1 origin to the stage.
         bv.reset(BlockNumHash { number: 1, ..Default::default() }, SystemConfig::default())
             .await
             .unwrap();
 
-        // Advance the origin of the previous stage to block #6.
         for _ in 0..6 {
             bv.advance_origin().await.unwrap();
         }
 
-        // The sequence window is expired, so we should generate an empty batch.
         let mock_parent = L2BlockInfo {
             l1_origin: BlockNumHash { number: 0, ..Default::default() },
             ..Default::default()
@@ -680,17 +657,14 @@ mod tests {
         mock.origin = Some(BlockInfo { number: 1, ..Default::default() });
         let mut bv = BatchValidator::new(cfg, mock, TestL2ChainProvider::default());
 
-        // Reset the pipeline to add the L1 origin to the stage.
         bv.reset(BlockNumHash { number: 1, ..Default::default() }, SystemConfig::default())
             .await
             .unwrap();
 
-        // Advance the origin of the previous stage to block #6.
         for _ in 0..6 {
             bv.advance_origin().await.unwrap();
         }
 
-        // The sequence window is expired, so we should generate an empty batch.
         let mock_parent = L2BlockInfo {
             l1_origin: BlockNumHash { number: 1, ..Default::default() },
             ..Default::default()

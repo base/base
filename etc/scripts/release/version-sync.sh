@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# version-sync.sh - Create a PR to sync Cargo.toml version with release branch name
-#
 # Usage: ./version-sync.sh <branch_name>
 # Example: ./version-sync.sh releases/v1.0.0
 #
@@ -48,7 +46,6 @@ main() {
     configure_git
     git checkout -b "$SYNC_BRANCH"
 
-    # Use compatible sed syntax for macOS/Linux
     if [[ "$OSTYPE" == "darwin"* ]]; then
         sed -i '' "s/^version = \".*\"/version = \"$BRANCH_VERSION\"/" Cargo.toml
     else

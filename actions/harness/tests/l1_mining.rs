@@ -64,44 +64,36 @@ fn parent_hash_chain_is_valid() {
 fn explicit_safe_finalized_pointer_control() {
     let mut h = ActionTestHarness::default();
 
-    // Initially both safe and finalized are at genesis (block 0).
     assert_eq!(h.l1.safe_number(), 0);
     assert_eq!(h.l1.finalized_number(), 0);
     assert_eq!(h.l1.safe_head().number(), 0);
     assert_eq!(h.l1.finalized_head().number(), 0);
 
-    // Mine several blocks; pointers do not move automatically.
     h.mine_l1_blocks(5);
     assert_eq!(h.l1.safe_number(), 0, "safe pointer should not auto-advance");
     assert_eq!(h.l1.finalized_number(), 0, "finalized pointer should not auto-advance");
 
-    // Advance safe one block at a time.
-    h.l1.act_l1_safe_next(); // → 1
+    h.l1.act_l1_safe_next();
     assert_eq!(h.l1.safe_number(), 1);
-    h.l1.act_l1_safe_next(); // → 2
+    h.l1.act_l1_safe_next();
     assert_eq!(h.l1.safe_number(), 2);
 
-    // Advance finalized one block at a time (capped at safe).
-    h.l1.act_l1_finalize_next(); // → 1
+    h.l1.act_l1_finalize_next();
     assert_eq!(h.l1.finalized_number(), 1);
-    h.l1.act_l1_finalize_next(); // → 2
+    h.l1.act_l1_finalize_next();
     assert_eq!(h.l1.finalized_number(), 2);
 
-    // Finalized cannot exceed safe.
-    h.l1.act_l1_finalize_next(); // clamped to safe=2
+    h.l1.act_l1_finalize_next();
     assert_eq!(h.l1.finalized_number(), 2);
 
-    // Jump to specific values.
     h.l1.act_l1_safe(5);
     assert_eq!(h.l1.safe_number(), 5);
     h.l1.act_l1_finalize(4);
     assert_eq!(h.l1.finalized_number(), 4);
 
-    // Safe head block reference is correct.
     assert_eq!(h.l1.safe_head().number(), 5);
     assert_eq!(h.l1.finalized_head().number(), 4);
 
-    // After a reorg, pointers are clamped.
     h.l1.reorg_to(3).unwrap();
     assert_eq!(h.l1.safe_number(), 3, "safe clamped to reorg target");
     assert_eq!(h.l1.finalized_number(), 3, "finalized clamped to safe after reorg");
@@ -141,13 +133,11 @@ fn signed_transactions_included_in_mined_block() {
 fn signed_transactions_do_not_carry_over_to_next_block() {
     let mut h = ActionTestHarness::default();
     h.l1.submit_transaction(signed_tx(Bytes::new(), 0, Address::ZERO));
-    h.l1.mine_block(); // consumes the tx
-    h.l1.mine_block(); // nothing pending
+    h.l1.mine_block();
+    h.l1.mine_block();
 
     assert!(h.l1.latest().transactions.is_empty());
 }
-
-// ── Reorg scenarios ───────────────────────────────────────────────────────────
 
 /// Reorging back to block N removes all later blocks from the canonical chain.
 #[test]
@@ -156,7 +146,7 @@ fn reorg_shortens_chain() {
     h.mine_l1_blocks(5);
 
     let discarded = h.l1.reorg_to(2).unwrap();
-    assert_eq!(discarded.len(), 3); // blocks 3, 4, 5
+    assert_eq!(discarded.len(), 3);
     assert_eq!(h.l1.latest_number(), 2);
 }
 
@@ -168,22 +158,19 @@ fn reorg_surfaces_lost_transactions() {
     let frame = Bytes::from_static(b"\x00reorged_frame");
 
     let mut h = ActionTestHarness::default();
-    h.mine_l1_blocks(2); // blocks 1–2, no batches
+    h.mine_l1_blocks(2);
 
-    // Submit a batch and mine it into block 3.
     h.l1.submit_transaction(signed_tx(frame.clone(), 0, inbox));
-    h.l1.mine_block(); // block 3 contains the batch
+    h.l1.mine_block();
 
-    h.mine_l1_blocks(2); // blocks 4–5, empty
+    h.mine_l1_blocks(2);
 
-    // Reorg back to block 2. Blocks 3–5 are discarded; block 3 held the batch.
     let discarded = h.l1.reorg_to(2).unwrap();
     assert_eq!(h.l1.latest_number(), 2);
     let batch_block = discarded.iter().find(|b| b.number() == 3).unwrap();
     assert_eq!(batch_block.transactions.len(), 1);
     assert_eq!(batch_block.transactions[0].input(), &frame);
 
-    // Canonical chain no longer has any signed batch transactions.
     let canonical_txs: usize = h.l1.chain().iter().map(|b| b.transactions.len()).sum();
     assert_eq!(canonical_txs, 0);
 }
@@ -195,12 +182,11 @@ fn mine_after_reorg_extends_correct_tip() {
     let mut h = ActionTestHarness::default();
     h.mine_l1_blocks(4);
 
-    h.l1.reorg_to(2).unwrap(); // chain: 0–1–2
-    h.mine_l1_blocks(3); // chain: 0–1–2–3'–4'–5'
+    h.l1.reorg_to(2).unwrap();
+    h.mine_l1_blocks(3);
 
     assert_eq!(h.l1.latest_number(), 5);
 
-    // Parent-hash chain must be intact across the fork point.
     for n in 1..=5u64 {
         let b = h.l1.block_by_number(n).unwrap();
         let p = h.l1.block_by_number(n - 1).unwrap();
@@ -217,7 +203,7 @@ fn post_reorg_blocks_differ_from_originals() {
     let original_3 = h.l1.block_by_number(3).unwrap().hash();
 
     h.l1.reorg_to(2).unwrap();
-    h.l1.mine_block(); // new block 3 on the fork
+    h.l1.mine_block();
 
     let forked_3 = h.l1.block_by_number(3).unwrap().hash();
     assert_ne!(forked_3, original_3, "forked block 3 must have a different hash");
@@ -232,17 +218,14 @@ fn resubmit_after_reorg_lands_on_new_fork() {
 
     let mut h = ActionTestHarness::default();
     h.l1.submit_transaction(signed_tx(input.clone(), 0, to));
-    h.l1.mine_block(); // block 1 contains the batch
+    h.l1.mine_block();
     let original_input = h.l1.block_by_number(1).unwrap().transactions[0].input().clone();
 
-    // Mine a second block and reorg it away, simulating a short reorg while
-    // keeping the first (batch-carrying) block on the canonical chain.
-    h.l1.mine_block(); // block 2
-    h.l1.reorg_to(1).unwrap(); // discard block 2
+    h.l1.mine_block();
+    h.l1.reorg_to(1).unwrap();
 
-    // Resubmit the same frame data on the new fork.
     h.l1.submit_transaction(signed_tx(input, 1, to));
-    h.l1.mine_block(); // new block 2 on fork 1
+    h.l1.mine_block();
 
     assert_eq!(h.l1.latest_number(), 2);
     assert_eq!(h.l1.latest().transactions[0].input(), &original_input);
@@ -256,5 +239,5 @@ fn custom_block_time_is_respected() {
         Default::default(),
     );
     h.mine_l1_blocks(3);
-    assert_eq!(h.l1.latest().timestamp(), 18); // 3 × 6s
+    assert_eq!(h.l1.latest().timestamp(), 18);
 }

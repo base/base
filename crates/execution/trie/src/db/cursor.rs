@@ -61,15 +61,12 @@ where
         &mut self,
         key: T::Key,
     ) -> BaseProofsStorageResult<Option<(T::Key, T::Value)>> {
-        // First dup with subkey >= max_block_number
         let seek_res = self.cursor.seek_by_key_subkey(key.clone(), self.max_block_number)?;
 
         if let Some(vv) = seek_res {
             if vv.block_number > self.max_block_number {
-                // step back to the last dup < max
                 return Ok(self.cursor.prev_dup()?);
             }
-            // already at the dup = max
             return Ok(Some((key, vv)));
         }
 
@@ -102,12 +99,10 @@ where
         mut first_key: T::Key,
     ) -> BaseProofsStorageResult<Option<(T::Key, V)>> {
         loop {
-            // Compute latest version ≤ max for this key
             if let Some((k, v)) = self.seek_exact(first_key.clone())? {
                 return Ok(Some((k, v)));
             }
 
-            // Move to next distinct key, or EOF
             let Some((next_key, _)) = self.cursor.next_no_dup()? else {
                 return Ok(None);
             };
@@ -121,7 +116,6 @@ where
     /// - Try exact key first (above). If alive, return it.
     /// - Otherwise hop to next distinct key and repeat until we find a live version or hit EOF.
     fn seek(&mut self, start_key: T::Key) -> BaseProofsStorageResult<Option<(T::Key, V)>> {
-        // Position MDBX at first key >= start_key
         if let Some((first_key, _)) = self.cursor.seek(start_key)? {
             return self.next_live_from(first_key);
         }
@@ -135,7 +129,6 @@ where
     where
         T::Key: Default,
     {
-        // If not positioned, start from the beginning (default key).
         if self.cursor.current()?.is_none() {
             let Some((first_key, _)) = self.cursor.seek(T::Key::default())? else {
                 return Ok(None);
@@ -143,7 +136,6 @@ where
             return self.next_live_from(first_key);
         }
 
-        // Otherwise advance to next distinct key and resume the walk.
         let Some((next_key, _)) = self.cursor.next_no_dup()? else {
             return Ok(None);
         };
@@ -503,7 +495,6 @@ mod tests {
         c.append_dup(key, vv).expect("append dup");
     }
 
-    // Open a dup-RO cursor and wrap it in a BlockNumberVersionedCursor with a given bound.
     fn version_cursor(
         tx: &<DatabaseEnv as Database>::TX,
         max_block: u64,
@@ -521,7 +512,6 @@ mod tests {
         MdbxTrieCursor::new(c, max_block, None)
     }
 
-    // Helper: build a Storage trie cursor bound to an address
     fn storage_trie_cursor(
         tx: &'_ <DatabaseEnv as Database>::TX,
         max_block: u64,
@@ -548,7 +538,6 @@ mod tests {
         MdbxAccountCursor::new(c, max_block)
     }
 
-    // Assert helper: ensure the chosen VersionedValue has the expected block and deletion flag.
     fn assert_block(
         got: Option<(StoredNibbles, VersionedValue<BranchNodeCompact>)>,
         expected_block: u64,
@@ -905,9 +894,7 @@ mod tests {
         let tx = db.tx().expect("ro tx");
         let mut cur = version_cursor(&tx, 100);
 
-        // Position at k1
         let _ = cur.seek(k1).expect("ok").expect("some");
-        // Next should yield k2
         let out = cur.next().expect("ok").expect("some");
         assert_eq!(out.0, k2);
     }
@@ -935,9 +922,7 @@ mod tests {
         let tx = db.tx().expect("ro tx");
         let mut cur = version_cursor(&tx, 50);
 
-        // Position at k1
         let _ = cur.seek(k1).expect("ok").expect("some");
-        // next should skip k2 (tombstoned latest) and return k3
         let out = cur.next().expect("ok").expect("some");
         assert_eq!(out.0, k3);
     }
@@ -959,9 +944,7 @@ mod tests {
         let tx = db.tx().expect("ro tx");
         let mut cur = version_cursor(&tx, 100);
 
-        // Position at the last key k2
         let _ = cur.seek(k2).expect("ok").expect("some");
-        // `next()` should hit EOF
         let out = cur.next().expect("ok");
         assert!(out.is_none());
     }
@@ -1002,8 +985,6 @@ mod tests {
         assert!(out.is_none());
     }
 
-    // ----------------- Account trie cursor thin-wrapper checks -----------------
-
     #[test]
     fn account_seek_exact_live_maps_key_and_value() {
         let db = setup_db();
@@ -1017,10 +998,8 @@ mod tests {
 
         let tx = db.tx().expect("ro tx");
 
-        // Build wrapper
         let mut cur = account_trie_cursor(&tx, 100);
 
-        // Wrapper should return (Nibbles, BranchNodeCompact)
         let out = TrieCursor::seek_exact(&mut cur, k).expect("ok").expect("some");
         assert_eq!(out.0, k);
     }
@@ -1060,20 +1039,15 @@ mod tests {
         let tx = db.tx().expect("ro tx");
         let mut cur = account_trie_cursor(&tx, 100);
 
-        // seek at k1
         let out1 = TrieCursor::seek(&mut cur, k1).expect("ok").expect("some");
         assert_eq!(out1.0, k1);
 
-        // current should be k1
         let cur_k = TrieCursor::current(&mut cur).expect("ok").expect("some");
         assert_eq!(cur_k, k1);
 
-        // next should move to k2
         let out2 = TrieCursor::next(&mut cur).expect("ok").expect("some");
         assert_eq!(out2.0, k2);
     }
-
-    // ----------------- Storage trie cursor thin-wrapper checks -----------------
 
     #[test]
     fn storage_seek_exact_respects_address_filter() {
@@ -1086,19 +1060,16 @@ mod tests {
 
         {
             let wtx = db.tx_mut().expect("rw tx");
-            // insert only under B
             append_storage_trie(&wtx, addr_b, path, 10, Some(node()));
             wtx.commit().expect("commit");
         }
 
         let tx = db.tx().expect("ro tx");
 
-        // Cursor bound to A must not see B’s data
         let mut cur_a = storage_trie_cursor(&tx, 100, addr_a);
         let out_a = TrieCursor::seek_exact(&mut cur_a, path).expect("ok");
         assert!(out_a.is_none(), "no data for addr A");
 
-        // Cursor bound to B should see it
         let mut cur_b = storage_trie_cursor(&tx, 100, addr_b);
         let out_b = TrieCursor::seek_exact(&mut cur_b, path).expect("ok").expect("some");
         assert_eq!(out_b.0, path);
@@ -1117,32 +1088,25 @@ mod tests {
 
         {
             let wtx = db.tx_mut().expect("rw tx");
-            // For A: only p2
             append_storage_trie(&wtx, addr_a, p2, 10, Some(node()));
-            // For B: p1
             append_storage_trie(&wtx, addr_b, p1, 10, Some(node()));
             wtx.commit().expect("commit");
         }
 
-        // test seek behaviour
         {
             let tx = db.tx().expect("ro tx");
             let mut cur_a = storage_trie_cursor(&tx, 100, addr_a);
 
-            // seek at p1: for A there is no p1; the next key >= p1 under A is p2
             let out = TrieCursor::seek(&mut cur_a, p1).expect("ok").expect("some");
             assert_eq!(out.0, p2);
 
-            // seek at p2: exact match
             let out = TrieCursor::seek(&mut cur_a, p2).expect("ok").expect("some");
             assert_eq!(out.0, p2);
 
-            // seek at p3: no p3 under A; no next key ≥ p3 under A → None
             let out = TrieCursor::seek(&mut cur_a, p3).expect("ok");
             assert!(out.is_none(), "no key ≥ p3 under A");
         }
 
-        // test next behaviour
         {
             let tx = db.tx().expect("ro tx");
             let mut cur_a = storage_trie_cursor(&tx, 100, addr_a);
@@ -1150,29 +1114,23 @@ mod tests {
             let out = TrieCursor::next(&mut cur_a).expect("ok").expect("some");
             assert_eq!(out.0, p2);
 
-            // next should yield None as there is no further key under A
             let out = TrieCursor::next(&mut cur_a).expect("ok");
             assert!(out.is_none(), "no more keys under A");
 
-            // current should return None
             let out = TrieCursor::current(&mut cur_a).expect("ok");
             assert!(out.is_none(), "no current key after EOF");
         }
 
-        // test seek_exact behaviour
         {
             let tx = db.tx().expect("ro tx");
             let mut cur_a = storage_trie_cursor(&tx, 100, addr_a);
 
-            // seek_exact at p1: no exact match
             let out = TrieCursor::seek_exact(&mut cur_a, p1).expect("ok");
             assert!(out.is_none(), "no exact p1 under A");
 
-            // seek_exact at p2: exact match
             let out = TrieCursor::seek_exact(&mut cur_a, p2).expect("ok").expect("some");
             assert_eq!(out.0, p2);
 
-            // seek_exact at p3: no exact match
             let out = TrieCursor::seek_exact(&mut cur_a, p3).expect("ok");
             assert!(out.is_none(), "no exact p3 under A");
         }
@@ -1198,10 +1156,8 @@ mod tests {
         let tx = db.tx().expect("ro tx");
         let mut cur_a = storage_trie_cursor(&tx, 100, addr_a);
 
-        // position at p1 (A)
         let _ = TrieCursor::seek_exact(&mut cur_a, p1).expect("ok").expect("some");
 
-        // next should reach boundary; impl filters different address and returns None
         let out = TrieCursor::next(&mut cur_a).expect("ok");
         assert!(out.is_none(), "next() should stop when next key is a different address");
     }
@@ -1414,10 +1370,8 @@ mod tests {
 
         {
             let wtx = db.tx_mut().expect("rw");
-            // Add storage for first address
             append_hashed_storage(&wtx, addr1, slot1, 10, Some(U256::from(100)));
 
-            // Add storage for second address
             append_hashed_storage(&wtx, addr2, slot2, 10, Some(U256::from(200)));
             wtx.commit().expect("commit");
         }
@@ -1446,7 +1400,6 @@ mod tests {
             assert_eq!(val, U256::from(200));
         }
 
-        // Verify that seek() works correctly
         let mut cur3 = storage_cursor(&tx, 100, addr2);
         let result3_with_seek = cur3.seek(slot2).expect("ok");
         assert!(result3_with_seek.is_some(), "seek() should find the slot for addr2");

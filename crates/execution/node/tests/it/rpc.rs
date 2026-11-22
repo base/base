@@ -21,7 +21,6 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
     let exec = Runtime::test();
 
     let external_ip = "10.64.128.71".parse().unwrap();
-    // Node setup
     let mut network_args = NetworkArgs::default()
         .with_unused_ports()
         .with_nat_resolver(NatResolver::ExternalIp(external_ip));

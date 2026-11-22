@@ -651,7 +651,6 @@ mod tests {
             provider.set_code(Address::ZERO, Bytecode::new_raw([0x60u8, 0x00].as_ref().into())),
             Err(BasePrecompileError::StaticCallViolation),
         );
-        // No gas must have been consumed.
         assert_eq!(provider.gas_used(), 0);
     }
 
