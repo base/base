@@ -125,6 +125,7 @@ impl PolicyRegistryV1 {
         if counter >= Self::BUILTIN_POLICY_COUNT {
             return Ok(counter);
         }
+        // Guard fixed policy IDs and reserved counter slots against enum-reordering drift.
         debug_assert_eq!(
             Self::make_id(PolicyType::BLOCKLIST.as_discriminant(), 0),
             Self::ALWAYS_ALLOW_ID

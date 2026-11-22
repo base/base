@@ -282,6 +282,7 @@ where
                 l2_parent.block_info.timestamp,
                 target_l2_time,
             ),
+            // Jovian requires zero when the system config has no minimum base fee.
             min_base_fee: self
                 .rollup_cfg
                 .is_feature_active_cascading(BaseFeature::MinBaseFee, target_l2_time)

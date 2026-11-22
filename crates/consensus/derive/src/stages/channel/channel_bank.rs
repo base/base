@@ -140,8 +140,8 @@ where
             return Ok(None);
         }
 
-        // Canyon is activated when the first L1 block whose time >= CanyonTime, not on the L2
-        // timestamp.
+        // Before Canyon only the queue head is eligible; from Canyon the first ready channel
+        // anywhere in the queue is eligible. Activation uses the L1 origin time, not L2 time.
         if !self
             .cfg
             .is_feature_active_cascading(BaseFeature::ReadyChannelSelection, origin.timestamp)

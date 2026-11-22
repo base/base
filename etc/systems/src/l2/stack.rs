@@ -265,8 +265,8 @@ impl L2Stack {
             .await
             .wrap_err("Failed to start builder consensus")?;
 
-        // Delayed-shadow tests start a
-        // short-lived, deterministic batcher after producing their historical prefix.
+        // Normal tests start batching immediately; delayed-shadow tests use a short-lived,
+        // deterministic batcher only after producing their historical prefix.
         let delayed_shadow =
             config.shadow_sequencers.as_ref().is_some_and(|c| c.start_block.is_some());
         let mut batcher = if delayed_shadow {
