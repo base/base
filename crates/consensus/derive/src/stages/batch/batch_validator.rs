@@ -142,6 +142,8 @@ where
         let epoch = self.l1_blocks[0];
 
         let stage_origin = self.origin.ok_or(PipelineError::MissingOrigin.crit())?;
+        // Upstream has returned Eof: window expiry forces empty batches to keep derivation moving.
+        // Before expiry, Eof leaves room for the sequencer's remaining batches to arrive.
         let expiry_epoch = epoch.number + self.cfg.seq_window_size;
         let force_empty_batches = expiry_epoch <= stage_origin.number;
         let first_of_epoch = epoch.number == parent.l1_origin.number + 1;
@@ -174,6 +176,7 @@ where
             });
         }
 
+        // No more empty batches fit this epoch; advance it and let the pipeline retry.
         debug!(
             target: "batch_validator",
             "Advancing batch validator epoch: {}, timestamp: {}, epoch timestamp: {}",

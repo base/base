@@ -62,6 +62,8 @@ where
             return;
         }
 
+        // Holocene strict frame ordering:
+        // https://specs.base.org/upgrades/holocene/derivation#frame-queue
         let mut i = 0;
         while i < self.queue.len() - 1 {
             let prev_frame = &self.queue[i];
@@ -83,6 +85,7 @@ where
                 continue;
             }
 
+            // A new channel supersedes an unfinished predecessor; discard all its queued frames.
             if !extends_channel && !prev_frame.is_last && next_frame.number == 0 {
                 let first_frame =
                     self.queue.iter().position(|f| f.id == prev_frame.id).expect("infallible");

@@ -192,6 +192,8 @@ where
             keep
         });
 
+        // Window expiry forces empty batches so derivation progresses without sequencer data.
+        // At the expiry block, exhaust this origin's input first; before expiry, Eof waits for data.
         let expiry_epoch = epoch.number + self.cfg.seq_window_size;
         let force_empty_batches =
             (expiry_epoch == origin.number && empty) || expiry_epoch < origin.number;
@@ -231,6 +233,7 @@ where
             }));
         }
 
+        // No more empty batches fit this epoch; advance it and let the pipeline retry.
         info!(
             target: "batch_queue",
             next_epoch_number = next_epoch.number,
