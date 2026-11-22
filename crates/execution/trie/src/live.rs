@@ -80,6 +80,8 @@ where
         let block_ref =
             BlockWithParent::new(block.parent_hash(), NumHash::new(block.number(), block.hash()));
 
+        // TODO: should we check block hash here?
+
         let state_provider = BaseProofsStateProviderRef::new(
             self.provider.state_by_block_hash(block.parent_hash())?,
             self.storage,

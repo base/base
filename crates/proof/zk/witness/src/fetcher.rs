@@ -59,6 +59,7 @@ pub struct RPCConfig {
     pub l1_beacon_rpc: Option<Url>,
     /// L2 execution RPC URL.
     pub l2_rpc: Url,
+    // TODO(fakedev9999): Make optional if possible.
     /// L2 consensus node RPC URL.
     pub l2_node_rpc: Url,
     /// Directory containing `<chain_id>.json` L1 chain configs.
