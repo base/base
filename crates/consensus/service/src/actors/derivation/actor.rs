@@ -168,7 +168,9 @@ where
                         .await
                 });
             match step_result {
-                StepResult::PreparedAttributes => {}
+                StepResult::PreparedAttributes => {
+                    // Fall through to retrieve the prepared attributes below.
+                }
                 StepResult::AdvancedOrigin => {
                     let origin =
                         self.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?;

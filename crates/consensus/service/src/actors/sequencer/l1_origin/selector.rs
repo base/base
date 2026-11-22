@@ -215,6 +215,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
         let origin_hash = unsafe_head.l1_origin.hash;
 
         if self.current.as_ref().is_some_and(|current| current.hash == origin_hash) {
+            // The next L2 block remains in the current sequencing epoch.
         } else if let Some(promoted) = self.take_ready_if(origin_hash) {
             // The accepted unsafe head confirms that the prepared successor was used. Promote it
             // before applying speculative chain-view invalidation so a normal L1 head advance

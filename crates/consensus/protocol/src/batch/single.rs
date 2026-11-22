@@ -117,6 +117,7 @@ impl SingleBatch {
         if self.epoch_num < epoch.number {
             return BatchValidity::Drop(BatchDropReason::EpochTooOld);
         } else if self.epoch_num == epoch.number {
+            // Batch is sticking to the current epoch, continue.
         } else if self.epoch_num == epoch.number + 1 {
             // With only 1 l1Block we cannot look at the next L1 Origin.
             // Note: This means that we are unable to determine validity of a batch
