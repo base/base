@@ -182,6 +182,13 @@ where
             return Err(HistoricalStartupFailure::ReusedTarget { target: target.block_info.number, local: local.block_info.number }.into());
         }
         self.historical_startup_initial_head = Some(local.block_info.number);
+        info!(
+            target: "engine",
+            block = target.block_info.number,
+            hash = %target.block_info.hash,
+            local_head = local.block_info.number,
+            "Historical startup phase starting"
+        );
         Ok(())
     }
 
