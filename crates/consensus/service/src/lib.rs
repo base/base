@@ -45,6 +45,7 @@ pub use actors::{
     EngineConfig, EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver,
     EngineRpcProcessor, EngineRpcRequest, ExecutionForwarding, ExecutionForwardingLayer,
     ForwardedParams, GetPayloadRequest, GossipTransport, InsertUnsafePayloadRequest,
+    HistoricalStartupFailure, HistoricalStartupHandoff,
     L1BlockFetcher, L1OriginSelector, L1OriginSelectorError, L1OriginSelectorProvider,
     L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient, L1WatcherQueryExecutor,
     L1WatcherQueryProcessor, L2Finalizer, LogRetrier, NetworkActor, NetworkActorError,

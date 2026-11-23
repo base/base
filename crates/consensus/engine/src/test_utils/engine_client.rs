@@ -1,6 +1,6 @@
 //! Mock implementations for testing engine client functionality.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, VecDeque}, sync::Arc};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_json_rpc::ErrorPayload;
@@ -76,6 +76,10 @@ pub struct MockEngineStorage {
     pub fork_choice_updated_v2_requests: Vec<(ForkchoiceState, bool)>,
     /// Storage for `fork_choice_updated_v3` responses.
     pub fork_choice_updated_v3_response: Option<ForkchoiceUpdated>,
+    /// Ordered FCU responses consumed before the fallback response.
+    pub fork_choice_updated_v3_responses: VecDeque<ForkchoiceUpdated>,
+    /// Ordered latest-head observations consumed before the fallback head.
+    pub latest_block_info_responses: VecDeque<Option<L2BlockInfo>>,
     /// Storage for `fork_choice_updated_v3` requests and whether they included payload attributes.
     pub fork_choice_updated_v3_requests: Vec<(ForkchoiceState, bool)>,
 
@@ -566,7 +570,10 @@ impl EngineClient for MockEngineClient {
         &self,
         numtag: BlockNumberOrTag,
     ) -> Result<Option<L2BlockInfo>, EngineClientError> {
-        let storage = self.storage.read().await;
+        let mut storage = self.storage.write().await;
+        if numtag == BlockNumberOrTag::Latest && let Some(head) = storage.latest_block_info_responses.pop_front() {
+            return Ok(head);
+        }
         Ok(storage.block_info_by_tag.get(&numtag).copied())
     }
 
@@ -650,6 +657,9 @@ impl BaseEngineApi for MockEngineClient {
             .push((fork_choice_state, payload_attributes.is_some()));
         if let Some(error) = storage.fork_choice_updated_v3_error.clone() {
             return Err(TransportError::ErrorResp(error));
+        }
+        if let Some(response) = storage.fork_choice_updated_v3_responses.pop_front() {
+            return Ok(response);
         }
         storage.fork_choice_updated_v3_response.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
