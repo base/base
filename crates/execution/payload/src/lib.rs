@@ -33,9 +33,10 @@ pub use stale_storage::{
     BlockStaleTotals, BlockStaleTracker, CanonicalStaleRecord, STALE_STORAGE_CACHE_MIB,
     STALE_STORAGE_CACHE_WAYS, STALE_STORAGE_CONTRACT_SLOT_GATE, STALE_STORAGE_EPOCH_SECONDS,
     STALE_STORAGE_FIRST_DAY_LIMIT, STALE_STORAGE_FIRST_HOUR_LIMIT, STALE_STORAGE_LIMIT,
-    STALE_STORAGE_MAX_CACHE_MIB, STALE_STORAGE_MIN_CACHE_MIB, STALE_STORAGE_WINDOW_HOURS,
-    StaleAgeBuckets, StaleStorageCache, StaleStorageCacheSet, StaleStorageCacheWrite,
-    StaleStorageLimits, StaleStorageMeter, StaleStorageSweep, StaleTxSample, StaleTxVerdict,
+    STALE_STORAGE_MAX_CACHE_MIB, STALE_STORAGE_MIN_CACHE_MIB, STALE_STORAGE_TRIE_PREFIX_NIBBLES,
+    STALE_STORAGE_WINDOW_HOURS, StaleAgeBuckets, StaleStorageCache, StaleStorageCacheSet,
+    StaleStorageCacheWrite, StaleStorageLimits, StaleStorageMeter, StaleStorageSweep,
+    StaleTxSample, StaleTxVerdict,
 };
 mod stale_storage_metrics;
 pub use stale_storage_metrics::StaleStorageMetrics;

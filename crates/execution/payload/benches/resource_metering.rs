@@ -1,17 +1,26 @@
 //! Benchmarks for per-transaction resource-metering checks in the native payload builder.
 
-use std::{hint::black_box, sync::Arc};
+use std::{
+    hint::black_box,
+    sync::{
+        Arc,
+        atomic::{AtomicU16, Ordering},
+    },
+};
 
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_primitives::{Address, TxHash, U256, keccak256};
 use base_bundles::OpcodeGas;
 use base_execution_payload_builder::{
     BlockStaleTracker, NoopMeteringProvider, ResourceMeteringConfig, ResourceMeteringDimension,
     ResourceMeteringOperation, ResourceMeteringSchedule, ResourceSample, STALE_STORAGE_CACHE_MIB,
     STALE_STORAGE_CACHE_WAYS, STALE_STORAGE_CONTRACT_SLOT_GATE, STALE_STORAGE_EPOCH_SECONDS,
-    StaleStorageCache, StaleStorageMeter,
+    STALE_STORAGE_WINDOW_HOURS, StaleStorageCache, StaleStorageMeter,
 };
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
-use revm::state::{Account, EvmState, EvmStorageSlot, TransactionId};
+use revm::{
+    database::{AccountStatus, BundleAccount, BundleState, states::StorageSlot},
+    state::{Account, EvmState, EvmStorageSlot, TransactionId},
+};
 
 fn operation(name: &str, count_cost: u64) -> ResourceMeteringOperation {
     ResourceMeteringOperation { name: name.to_string(), gas_used_weight: 1, count_cost }
@@ -221,8 +230,6 @@ fn bench_stale_storage(c: &mut Criterion) {
 /// cache with a fingerprint no entry has: a full-set miss on memory that is mostly not in the
 /// CPU cache.
 fn bench_stale_storage_cache(c: &mut Criterion) {
-    /// Odd multiplier that spreads consecutive counters over every key bit.
-    const SPREAD: u64 = 0x9e37_79b9_7f4a_7c15;
     let meter = filled_meter();
     let now_hour = BLOCK_TIMESTAMP / STALE_STORAGE_EPOCH_SECONDS;
     let mut group = c.benchmark_group("stale_storage_cache");
@@ -243,10 +250,184 @@ fn bench_stale_storage_cache(c: &mut Criterion) {
     group.finish();
 }
 
+/// Odd multiplier that spreads consecutive counters over every bit.
+const SPREAD: u64 = 0x9e37_79b9_7f4a_7c15;
+
+/// The previous design, kept here only as a baseline: a direct-mapped table of `2^29` two-byte
+/// hour stamps (one gibibyte) indexed by the keyed `SipHash` of the exact slot, without fingerprints.
+struct DirectTable {
+    entries: Box<[AtomicU16]>,
+    mask: u64,
+}
+
+impl DirectTable {
+    const LOG2: u32 = 29;
+
+    /// Every entry stamped two hours before the block, as in a table that has seen a full day.
+    fn filled(hour: u64) -> Self {
+        let stamp = (hour % 65_535 + 1) as u16;
+        let entries =
+            std::iter::repeat_with(|| AtomicU16::new(stamp)).take(1 << Self::LOG2).collect();
+        Self { entries, mask: (1 << Self::LOG2) - 1 }
+    }
+
+    /// Reads the stamp for `key`, then stamps it with `now_hour`. Returns whether it was stale.
+    fn lookup_and_record(&self, key: u64, now_hour: u64) -> bool {
+        let stamp = (now_hour % 65_535 + 1) as u16;
+        let entry = &self.entries[(key & self.mask) as usize];
+        let previous = entry.load(Ordering::Relaxed);
+        let age = u64::from(stamp.wrapping_sub(previous) % 65_535);
+        entry.store(stamp, Ordering::Relaxed);
+        previous == 0 || age > STALE_STORAGE_WINDOW_HOURS
+    }
+}
+
+/// Per-slot cost of one cache lookup plus one recorded write, including key derivation, for the
+/// old direct table and for the cache keyed by exact slot and by trie region
+/// ([`STALE_STORAGE_TRIE_PREFIX_NIBBLES`](base_execution_payload_builder::STALE_STORAGE_TRIE_PREFIX_NIBBLES)). Slots are
+/// pseudo-random, so each operation touches memory that is mostly not in the CPU cache. The
+/// contract's hashed address is computed once per contract and excluded here; `keccak256_32_bytes`
+/// is that cost, and also the slot-hashing share of the cache variants.
+fn bench_stale_storage_key_variants(c: &mut Criterion) {
+    let meter = filled_meter();
+    let now_hour = BLOCK_TIMESTAMP / STALE_STORAGE_EPOCH_SECONDS;
+    let table = DirectTable::filled(now_hour - 2);
+    let address = Address::repeat_byte(0x55);
+    let hashed_address = keccak256(address);
+    let slot = |count: u64| U256::from(count.wrapping_mul(SPREAD)) << 64 | U256::from(count);
+    let mut group = c.benchmark_group("stale_storage_lookup_record_per_slot");
+    group.bench_function("old_direct_1gib_siphash", |b| {
+        let mut count = 0u64;
+        b.iter(|| {
+            count += 1;
+            let key = meter.cache.slot_key(&address, &slot(black_box(count)));
+            black_box(table.lookup_and_record(key, now_hour))
+        });
+    });
+    group.bench_function("cache_exact_slot_keccak", |b| {
+        let mut count = 0u64;
+        b.iter(|| {
+            count += 1;
+            let hashed_slot = keccak256(slot(black_box(count)).to_be_bytes::<32>());
+            let key = meter.cache.region_key_at_depth(&hashed_address, &hashed_slot, 64);
+            black_box(meter.cache.is_stale(key, now_hour));
+            black_box(meter.cache.record(key, now_hour))
+        });
+    });
+    group.bench_function("cache_trie_prefix_keccak", |b| {
+        let mut count = 0u64;
+        b.iter(|| {
+            count += 1;
+            let key = meter.cache.region_key(&hashed_address, &slot(black_box(count)));
+            black_box(meter.cache.is_stale(key, now_hour));
+            black_box(meter.cache.record(key, now_hour))
+        });
+    });
+    group.bench_function("keccak256_32_bytes", |b| {
+        let mut count = 0u64;
+        b.iter(|| {
+            count += 1;
+            black_box(keccak256(slot(black_box(count)).to_be_bytes::<32>()))
+        });
+    });
+    group.finish();
+}
+
+/// Changed slots of a typical Base Mainnet block: 17 transactions, each changing two or three
+/// pre-existing slots in each of three contracts drawn from 40, about 127 slot changes in all.
+fn typical_block_states() -> Vec<EvmState> {
+    (0..17u64)
+        .map(|tx| {
+            let mut state = EvmState::default();
+            for contract in 0..3u64 {
+                let mut account = Account::default();
+                account.mark_touch();
+                for slot in 0..2 + (tx + contract) % 2 {
+                    account.storage.insert(
+                        U256::from((tx * 8 + contract * 3 + slot).wrapping_mul(SPREAD)),
+                        EvmStorageSlot::new_changed(
+                            U256::from(1),
+                            U256::from(2),
+                            TransactionId::ZERO,
+                        ),
+                    );
+                }
+                state.insert(
+                    Address::with_last_byte(((tx * 7 + contract * 13) % 40) as u8),
+                    account,
+                );
+            }
+            state
+        })
+        .collect()
+}
+
+/// The canonical bundle of `states`: every changed slot once, as the recorder sees the block.
+fn block_bundle(states: &[EvmState]) -> BundleState {
+    let mut bundle = BundleState::default();
+    for state in states {
+        for (address, account) in state {
+            let entry = bundle.state.entry(*address).or_insert_with(|| BundleAccount {
+                info: None,
+                original_info: None,
+                storage: Default::default(),
+                status: AccountStatus::Changed,
+            });
+            for (slot, value) in &account.storage {
+                entry.storage.insert(
+                    *slot,
+                    StorageSlot {
+                        previous_or_original_value: value.original_value(),
+                        present_value: value.present_value(),
+                    },
+                );
+            }
+        }
+    }
+    bundle
+}
+
+/// Total meter work for one block against the full default-size cache.
+///
+/// - `builder_*`: [`BlockStaleTracker::evaluate`] and [`BlockStaleTracker::commit`] for every
+///   transaction, on the payload builder's commit path.
+/// - `recorder_*`: [`StaleStorageMeter::record_bundle`] for the canonical block, including its
+///   incremental sweep, on the canonical-state task.
+/// - `typical`: [`typical_block_states`]; `xen`: the same plus one 725-slot claim batch.
+fn bench_stale_storage_block(c: &mut Criterion) {
+    let meter = filled_meter();
+    let typical = typical_block_states();
+    let mut xen = typical.clone();
+    xen.push(batch_state(Address::repeat_byte(0x55), 725));
+    let mut group = c.benchmark_group("stale_storage_block");
+    for (label, states) in [("typical", &typical), ("xen", &xen)] {
+        group.bench_function(BenchmarkId::new("builder", label), |b| {
+            b.iter_batched(
+                || meter.block_tracker(1, BLOCK_TIMESTAMP),
+                |mut tracker| {
+                    for state in states {
+                        black_box(tracker.evaluate(black_box(state)));
+                        black_box(tracker.commit(&TxHash::ZERO));
+                    }
+                    tracker
+                },
+                BatchSize::SmallInput,
+            );
+        });
+        let bundle = block_bundle(states);
+        group.bench_function(BenchmarkId::new("recorder", label), |b| {
+            b.iter(|| black_box(meter.record_bundle(black_box(&bundle), 1, BLOCK_TIMESTAMP)));
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_check_executed_usage,
     bench_stale_storage,
-    bench_stale_storage_cache
+    bench_stale_storage_cache,
+    bench_stale_storage_key_variants,
+    bench_stale_storage_block
 );
 criterion_main!(benches);

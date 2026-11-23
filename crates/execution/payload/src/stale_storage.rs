@@ -7,7 +7,8 @@
 //! would have flagged. It never excludes a transaction.
 //!
 //! - [`StaleStorageCache`] is a fixed-size, lock-free, keyed 8-way set-associative
-//!   cache of the hour each `(contract, slot)` was last written. It is stamped off
+//!   cache of the hour each storage-trie region (a contract's slots under one
+//!   depth-[`STALE_STORAGE_TRIE_PREFIX_NIBBLES`] trie node) was last written. It is stamped off
 //!   the transaction loop from canonical-state notifications, on every node that
 //!   runs the payload builder, so a leader handoff does not empty it. It starts
 //!   empty at process start and is never saved or rebuilt. A slot it does not hold
@@ -26,7 +27,7 @@ use std::{
 };
 
 use alloy_primitives::{
-    Address, TxHash, U256,
+    Address, B256, TxHash, U256, keccak256,
     map::{AddressMap, HashSet},
 };
 use futures::StreamExt;
@@ -43,8 +44,8 @@ pub const STALE_STORAGE_EPOCH_SECONDS: u64 = 3_600;
 
 /// Default size of the recency cache, in mebibytes: `2^25` four-byte entries in `2^22` sets.
 ///
-/// Base Mainnet writes an estimated 10 million distinct storage slots a day. At that volume
-/// about 0.04% of sets overflow within the window, and about 1.9% at twice the volume. An
+/// Base Mainnet writes an estimated 10 million distinct storage slots a day, which map to fewer
+/// distinct trie regions. At 10 million keys about 0.04% of sets overflow within the window, and about 1.9% at twice the volume. An
 /// overflow evicts the oldest entry, which then reads as stale, so an undersized cache only
 /// over-meters. Raise the size with `--payload.stale-storage-cache-mib` when
 /// `cache_unexpired_evictions_total` exceeds about 1% of `cache_writes_total`.
@@ -84,6 +85,20 @@ pub const STALE_STORAGE_FIRST_DAY_LIMIT: u64 = 300;
 
 /// Dry-run limit while the cache holds less than one hour of history, including an empty cache.
 pub const STALE_STORAGE_FIRST_HOUR_LIMIT: u64 = 450;
+
+/// Storage-trie depth, in nibbles, of the region one cache entry stands for.
+///
+/// The cache key is the contract's hashed address plus the first four nibbles of the hashed
+/// slot, the slot's path in the contract's storage trie. A slot therefore reads recent when it,
+/// or any sibling under the same depth-four trie node, was written within the window, which
+/// approximates whether the upper part of its trie path is still warm. The meter still counts
+/// slots: dedupe, the gate and the limits use exact slot identities.
+///
+/// Four is the shallowest depth that consolidates large contracts without changing the meter
+/// for small ones. In a five-hour Base Mainnet replay it cut distinct keys by 22% overall and by
+/// about three quarters in the largest contracts, left stale counts in contracts with under a
+/// thousand written slots within 0.3%, and changed no dry-run verdict.
+pub const STALE_STORAGE_TRIE_PREFIX_NIBBLES: u32 = 4;
 
 /// Entries per cache set.
 pub const STALE_STORAGE_CACHE_WAYS: usize = 8;
@@ -164,12 +179,15 @@ pub struct StaleStorageSweep {
 /// Keyed, 8-way set-associative cache of the hour each `(contract, slot)` was last written by a
 /// canonical block.
 ///
-/// A slot reads as recent only if its set holds an entry with the slot's 24-bit fingerprint and
-/// a stamp within [`STALE_STORAGE_WINDOW_HOURS`]. Every other slot reads as stale, so errors run
-/// one way: a slot that was evicted, lost a write race or was never seen over-meters. The only
-/// false recent reading is a fingerprint collision, about `8 / 2^24` per probe of a full set.
-/// Set index and fingerprint come from disjoint bits of a `SipHash-2-4` keyed with a per-process
-/// random secret, so a sender cannot choose slots that crowd one set.
+/// Entries are keyed by storage-trie region, not by slot: [`Self::region_key`] covers every slot
+/// of a contract whose hashed key starts with the same [`STALE_STORAGE_TRIE_PREFIX_NIBBLES`]
+/// nibbles. A slot reads as recent only if its set holds an entry with its region's 24-bit
+/// fingerprint and a stamp within [`STALE_STORAGE_WINDOW_HOURS`], meaning the slot or a trie
+/// sibling was written recently. Every other slot reads as stale, so errors run one way: a region
+/// that was evicted, lost a write race or was never seen over-meters. The only false recent
+/// reading beyond that intended sharing is a fingerprint collision, about `8 / 2^24` per probe of
+/// a full set. Set index and fingerprint come from disjoint bits of a `SipHash-2-4` keyed with a
+/// per-process random secret, so a sender cannot choose slots that crowd one set.
 ///
 /// Stamps are `hour % 255 + 1` in one byte, so a stamp repeats every 255 hours. An incremental
 /// sweep clears expired entries well before they could wrap and read as recent, and a
@@ -264,7 +282,8 @@ impl StaleStorageCache {
         self.sets.is_empty()
     }
 
-    /// Keyed `SipHash-2-4` of a `(contract, slot)` pair.
+    /// Keyed `SipHash-2-4` identity of a `(contract, slot)` pair. The builder dedupes slots
+    /// within a block by this key; the cache itself is keyed by [`Self::region_key`].
     ///
     /// The message is the 20-byte address, four zero bytes, and the slot's 32 bytes in
     /// little-endian limb order.
@@ -286,6 +305,52 @@ impl StaleStorageCache {
                 limbs[1],
                 limbs[2],
                 limbs[3],
+            ],
+        )
+    }
+
+    /// Recency key of the depth-[`STALE_STORAGE_TRIE_PREFIX_NIBBLES`] storage-trie region of
+    /// `slot` in the contract whose hashed address is `hashed_address`.
+    pub fn region_key(&self, hashed_address: &B256, slot: &U256) -> u64 {
+        self.region_key_at_depth(
+            hashed_address,
+            &keccak256(slot.to_be_bytes::<32>()),
+            STALE_STORAGE_TRIE_PREFIX_NIBBLES,
+        )
+    }
+
+    /// Keyed `SipHash-2-4` of a hashed address and the first `nibbles` nibbles of a hashed slot,
+    /// the slot's storage-trie path. Slots that share that path prefix share the key; 64 nibbles
+    /// keys each slot separately.
+    ///
+    /// The secret keeps set index and fingerprint unpredictable even though trie paths are
+    /// public, so a sender cannot grind slots or addresses into one set or onto a fingerprint.
+    pub fn region_key_at_depth(
+        &self,
+        hashed_address: &B256,
+        hashed_slot: &B256,
+        nibbles: u32,
+    ) -> u64 {
+        let word = |bytes: &B256, index: usize| {
+            u64::from_be_bytes(core::array::from_fn(|byte| bytes.0[index * 8 + byte]))
+        };
+        let path_bits = u64::from(nibbles.min(64)) * 4;
+        let path_word = |index: usize| {
+            let kept = path_bits.saturating_sub(index as u64 * 64).min(64);
+            let mask = if kept == 0 { 0 } else { u64::MAX << (64 - kept) };
+            word(hashed_slot, index) & mask
+        };
+        Self::siphash24(
+            self.secret,
+            [
+                word(hashed_address, 0),
+                word(hashed_address, 1),
+                word(hashed_address, 2),
+                word(hashed_address, 3),
+                path_word(0),
+                path_word(1),
+                path_word(2),
+                path_word(3),
             ],
         )
     }
@@ -445,8 +510,8 @@ impl StaleStorageCache {
         last != 0 && now_hour > last - 1 + Self::MAX_RECORD_GAP_HOURS
     }
 
-    /// `SipHash-2-4` of a 56-byte message given as seven little-endian words.
-    pub const fn siphash24(key: (u64, u64), words: [u64; 7]) -> u64 {
+    /// `SipHash-2-4` of a `8 * N`-byte message given as `N` little-endian words.
+    pub const fn siphash24<const N: usize>(key: (u64, u64), words: [u64; N]) -> u64 {
         let mut v = [
             key.0 ^ 0x736f_6d65_7073_6575,
             key.1 ^ 0x646f_7261_6e64_6f6d,
@@ -462,7 +527,7 @@ impl StaleStorageCache {
             index += 1;
         }
         // Final block: no tail bytes, message length in the top byte.
-        let last = 56_u64 << 56;
+        let last = ((N as u64 * 8) & 0xff) << 56;
         v[3] ^= last;
         Self::sip_round(&mut v);
         Self::sip_round(&mut v);
@@ -634,11 +699,12 @@ impl StaleStorageMeter {
             record.changed_slots += changed;
             record.max_contract_changed_slots = record.max_contract_changed_slots.max(changed);
             let gated = changed > gate;
+            let hashed_address = keccak256(address);
             for (slot_id, slot) in &account.storage {
                 if !slot.is_changed() {
                     continue;
                 }
-                let key = self.cache.slot_key(address, slot_id);
+                let key = self.cache.region_key(&hashed_address, slot_id);
                 // One set scan reads the previous age and records the write.
                 let write = self.cache.record(key, now_hour);
                 record.unexpired_evictions += u64::from(write.evicted_unexpired);
@@ -877,8 +943,8 @@ pub struct BlockStaleTracker {
     pending_contracts: Vec<(Address, u32)>,
     pending_changed_keys: Vec<u64>,
     pending_created_keys: Vec<u64>,
-    /// Scratch `(key, created, cleared)` for the changed slots of one contract.
-    contract_slots: Vec<(u64, bool, bool)>,
+    /// Scratch `(identity key, slot, created, cleared)` for the changed slots of one contract.
+    contract_slots: Vec<(u64, U256, bool, bool)>,
     pending_stale_keys: Vec<u64>,
     pending: Option<StaleTxSample>,
     totals: BlockStaleTotals,
@@ -900,7 +966,8 @@ impl BlockStaleTracker {
     /// Only changed slots count toward the gate; slots that were only read are skipped. Each
     /// changed slot is hashed once, so the block-scope gate counts distinct slots and a later
     /// transaction that rewrites a slot created earlier in the block does not read it as an
-    /// old, never-recorded slot. Only contracts past a gate probe the cache.
+    /// old, never-recorded slot. Only contracts past a gate probe the cache, by trie region
+    /// ([`StaleStorageCache::region_key`]); each slot still counts once.
     pub fn evaluate(&mut self, state: &EvmState) -> StaleTxSample {
         self.pending_contracts.clear();
         self.pending_changed_keys.clear();
@@ -923,6 +990,7 @@ impl BlockStaleTracker {
                 }
                 self.contract_slots.push((
                     key,
+                    *slot_id,
                     slot.original_value().is_zero(),
                     slot.present_value().is_zero(),
                 ));
@@ -944,7 +1012,9 @@ impl BlockStaleTracker {
                 sample.gated_changed_slots += changed;
             }
             let mut contract_stale = 0;
-            for &(key, created, cleared) in &self.contract_slots {
+            // Hashed once per gated contract, only if one of its slots is probed.
+            let mut hashed_address = None;
+            for &(key, slot_id, created, cleared) in &self.contract_slots {
                 if created {
                     self.pending_created_keys.push(key);
                     sample.gated_created_slots += u32::from(gated_block);
@@ -957,8 +1027,14 @@ impl BlockStaleTracker {
                     continue;
                 }
                 sample.gated_cleared_slots += u32::from(cleared);
-                if !self.cache_expired && !self.cache.is_stale(key, self.now_hour) {
-                    continue;
+                if !self.cache_expired {
+                    let hashed_address = hashed_address.get_or_insert_with(|| keccak256(address));
+                    if !self
+                        .cache
+                        .is_stale(self.cache.region_key(hashed_address, &slot_id), self.now_hour)
+                    {
+                        continue;
+                    }
                 }
                 sample.stale_transaction += u32::from(gated_transaction);
                 if !self.counted_stale_keys.contains(&key) {
@@ -1157,7 +1233,7 @@ mod tests {
         hour: u64,
     ) {
         for slot in slots {
-            meter.cache.record(meter.cache.slot_key(&address, &word(slot)), hour);
+            meter.cache.record(meter.cache.region_key(&keccak256(address), &word(slot)), hour);
         }
     }
 
@@ -1203,7 +1279,7 @@ mod tests {
     fn siphash_matches_the_reference_implementation() {
         // Key 00..0f and message 00..37: the reference SipHash-2-4 output for that input.
         let key = (0x0706_0504_0302_0100, 0x0f0e_0d0c_0b0a_0908);
-        let words = core::array::from_fn(|index| {
+        let words: [u64; 7] = core::array::from_fn(|index| {
             let base = (index * 8) as u8;
             u64::from_le_bytes(core::array::from_fn(|byte| base + byte as u8))
         });
@@ -1223,6 +1299,25 @@ mod tests {
         let other = StaleStorageCache::with_secret(1 << 12, (12, 13));
         assert_ne!(cache.slot_key(&contract(7), &a), other.slot_key(&contract(7), &a));
         assert_eq!(cache.slot_key(&contract(7), &a), cache.slot_key(&contract(7), &a));
+    }
+
+    #[test]
+    fn region_keys_merge_trie_siblings_only_up_to_the_chosen_depth() {
+        let cache = StaleStorageCache::with_secret(1 << 12, (11, 13));
+        let (a, b) = sibling_pairs(1)[0];
+        let hashed = |slot: u64| keccak256(word(slot).to_be_bytes::<32>());
+        let address = keccak256(contract(7));
+        let at = |slot, nibbles| cache.region_key_at_depth(&address, &hashed(slot), nibbles);
+        assert_eq!(
+            at(a, STALE_STORAGE_TRIE_PREFIX_NIBBLES),
+            at(b, STALE_STORAGE_TRIE_PREFIX_NIBBLES)
+        );
+        assert_eq!(cache.region_key(&address, &word(a)), at(a, STALE_STORAGE_TRIE_PREFIX_NIBBLES));
+        assert_ne!(at(a, 64), at(b, 64));
+        assert_ne!(
+            cache.region_key(&address, &word(a)),
+            cache.region_key(&keccak256(contract(8)), &word(a))
+        );
     }
 
     // ---------------------------------------------------------------- recency cache
@@ -1661,7 +1756,7 @@ mod tests {
         assert_eq!(meter.cache.recorded_blocks(), 1);
         assert_eq!(meter.cache.age_secs(NOW + 60), Some(60));
         // Every changed slot is stamped, created ones included.
-        let key = meter.cache.slot_key(&contract(8), &word(1));
+        let key = meter.cache.region_key(&keccak256(contract(8)), &word(1));
         assert_eq!(meter.cache.age_hours(key, NOW_HOUR + 2), Some(2));
         let again = meter.record_bundle(
             &bundle([(contract(7), (0..70).map(|s| (s, 2, 3)).collect())]),
@@ -1683,6 +1778,74 @@ mod tests {
         assert_eq!(tracker.evaluate(&updates(contract(7), 0, 100)).stale_transaction, 0);
     }
 
+    /// `count` disjoint pairs of distinct slots whose hashed keys share their first
+    /// [`STALE_STORAGE_TRIE_PREFIX_NIBBLES`] nibbles: siblings under one storage-trie node.
+    fn sibling_pairs(count: usize) -> Vec<(u64, u64)> {
+        let shift = 64 - 4 * STALE_STORAGE_TRIE_PREFIX_NIBBLES;
+        let mut first_by_prefix = std::collections::HashMap::new();
+        let mut pairs = Vec::new();
+        for slot in 0u64.. {
+            let hashed = keccak256(word(slot).to_be_bytes::<32>());
+            let prefix = u64::from_be_bytes(core::array::from_fn(|byte| hashed.0[byte])) >> shift;
+            match first_by_prefix.remove(&prefix) {
+                Some(sibling) => pairs.push((sibling, slot)),
+                None => {
+                    first_by_prefix.insert(prefix, slot);
+                }
+            }
+            if pairs.len() == count {
+                break;
+            }
+        }
+        pairs
+    }
+
+    #[test]
+    fn a_slot_whose_trie_sibling_was_written_recently_reads_recent() {
+        let meter = meter();
+        let pairs = sibling_pairs(70);
+        meter.record_bundle(
+            &bundle([(contract(7), pairs.iter().map(|&(written, _)| (written, 1, 2)).collect())]),
+            1,
+            NOW,
+        );
+        let mut tracker = meter.block_tracker(2, NOW + 2);
+        let siblings = state(pairs.iter().map(|&(_, read)| (contract(7), read, 1, 2)));
+        assert_eq!(tracker.evaluate(&siblings).stale_transaction, 0);
+    }
+
+    #[test]
+    fn a_trie_sibling_in_another_contract_does_not_make_a_slot_recent() {
+        let meter = meter();
+        let pairs = sibling_pairs(70);
+        meter.record_bundle(
+            &bundle([(contract(8), pairs.iter().map(|&(written, _)| (written, 1, 2)).collect())]),
+            1,
+            NOW,
+        );
+        let mut tracker = meter.block_tracker(2, NOW + 2);
+        let siblings = state(pairs.iter().map(|&(_, read)| (contract(7), read, 1, 2)));
+        assert_eq!(tracker.evaluate(&siblings).stale_transaction, 70);
+    }
+
+    #[test]
+    fn stale_siblings_in_one_trie_region_each_count_as_a_slot() {
+        let meter = meter();
+        let pairs = sibling_pairs(40);
+        let both = state(
+            pairs.iter().flat_map(|&(a, b)| [(contract(7), a, 1, 2), (contract(7), b, 1, 2)]),
+        );
+        let mut tracker = meter.block_tracker(2, NOW);
+        let sample = tracker.evaluate(&both);
+        assert_eq!(
+            (sample.changed_slots, sample.stale_transaction, sample.stale_block),
+            (80, 80, 80)
+        );
+        tracker.commit(&TxHash::ZERO);
+        // A later transaction rewriting the same slots adds nothing to the block count.
+        assert_eq!(tracker.evaluate(&both).stale_block, 0);
+    }
+
     #[tokio::test]
     async fn the_recorder_stamps_commits_and_reorgs_and_survives_a_lag() {
         let meter = meter();
@@ -1702,8 +1865,10 @@ mod tests {
             .unwrap();
         drop(sender);
         task.await.unwrap();
-        let age =
-            |byte| meter.cache.age_hours(meter.cache.slot_key(&contract(byte), &word(1)), NOW_HOUR);
+        let age = |byte| {
+            let key = meter.cache.region_key(&keccak256(contract(byte)), &word(1));
+            meter.cache.age_hours(key, NOW_HOUR)
+        };
         assert_eq!(age(1), None, "the lagged notification was dropped");
         assert_eq!(age(2), Some(0));
         assert_eq!(age(3), Some(0));
