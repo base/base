@@ -62,10 +62,15 @@ impl SequencerStartupSync {
         self.status
     }
 
+    /// Drops any previous confirmation without changing the selected target.
+    pub const fn invalidate(&mut self) {
+        self.status = StartupSyncStatus::Pending;
+    }
+
     /// Replaces the caller-authenticated target and invalidates any previous confirmation.
     pub const fn set_target(&mut self, target: L2BlockInfo) {
         self.target = target;
-        self.status = StartupSyncStatus::Pending;
+        self.invalidate();
     }
 
     /// Confirms the selected target with one attribute-free FCU within the remaining caller budget.
@@ -79,7 +84,7 @@ impl SequencerStartupSync {
         client: &C,
         remaining: Duration,
     ) -> Result<StartupSyncStatus, StartupSyncError> {
-        self.status = StartupSyncStatus::Pending;
+        self.invalidate();
         if remaining.is_zero() {
             return Err(StartupSyncError::Timeout);
         }

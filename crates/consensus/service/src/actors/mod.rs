@@ -18,6 +18,7 @@ pub use engine::{
     BuildRequest, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
     EngineConfig, EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver,
     EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
+    HistoricalStartupFailure, HistoricalStartupHandoff,
     QueuedEngineDerivationClient, ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetReason,
     ResetRequest, ResetRequestOutcome, ValidatorEngineRequestHandler,
 };
