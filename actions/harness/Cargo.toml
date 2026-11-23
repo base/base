@@ -49,7 +49,6 @@ base-common-consensus = { workspace = true, features = ["std", "evm"] }
 base-runtime.workspace = true
 base-node-core.workspace = true
 base-test-utils.workspace = true
-base-tx-manager = { workspace = true, features = ["kzg"] }
 base-batcher-core.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
@@ -63,6 +62,7 @@ base-execution-txpool.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
 base-protocol = { workspace = true, features = ["std"] }
+base-tx-manager = { workspace = true, features = ["kzg"] }
 base-common-genesis = { workspace = true, features = ["std"] }
 base-builder-core = { workspace = true, features = ["test-utils"] }
 base-batcher-encoder = { workspace = true, features = ["test-utils"] }

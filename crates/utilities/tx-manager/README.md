@@ -7,7 +7,7 @@ Transaction lifecycle management for Base onchain components.
 
 ## Overview
 
-Manages the full lifecycle of EIP-1559 and EIP-4844 blob transactions: fee
+Manages the full lifecycle of EIP-1559 and (with the `kzg` feature) EIP-4844 blob transactions: fee
 estimation, construction, signing, submission, fee bumping, and receipt
 confirmation.
 
@@ -65,8 +65,13 @@ confirmation.
 
 ### Blob support
 
-- **`BlobTxBuilder`** — builds EIP-7594 cell-proof sidecars from raw blobs.
+- **`BlobTxBuilder`** *(requires feature `kzg`)* — builds EIP-7594 cell-proof sidecars from raw blobs.
 - **`MAX_BLOBS_PER_TX`** — maximum blobs per transaction (Fusaka limit).
+
+Blob sidecar construction is gated behind the `kzg` Cargo feature (enabled by default on this crate,
+and disabled via `default-features = false` in the workspace dependency so non-blob consumers do not
+build `c-kzg`/`blst`). Without `kzg`, `BlobTxBuilder` is not exported and `SimpleTxManager::craft_tx` /
+`send` reject non-empty blob candidates with `TxManagerError::Unsupported`.
 
 ### Config types
 

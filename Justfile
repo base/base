@@ -130,6 +130,7 @@ test-affected base="main": install-nextest build::contracts build::elfs
 # Runs tests with ci profile for minimal disk usage
 test-ci: install-nextest build::contracts
     RUST_MIN_STACK={{ test_min_stack }} cargo nextest run -P ci --locked --workspace --all-features --exclude base-system-tests --cargo-profile ci
+    RUST_MIN_STACK={{ test_min_stack }} cargo test --locked --profile ci -p base-tx-manager --no-default-features --lib
 
 # Runs tests only for affected crates with ci profile (for PRs)
 test-affected-ci base="main": install-nextest build::contracts
@@ -153,6 +154,9 @@ test-affected-ci base="main": install-nextest build::contracts
         fi
         exit $code
     }
+    if printf '%s\n' "${pkg_args[@]}" | grep -qx 'base-tx-manager'; then
+        RUST_MIN_STACK={{ test_min_stack }} cargo test --locked --profile ci -p base-tx-manager --no-default-features --lib
+    fi
 
 # Runs cargo hack against the workspace
 hack:

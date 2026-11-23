@@ -21,7 +21,6 @@ tokio-util.workspace = true
 async-trait.workspace = true
 base-retry.workspace = true
 base-metrics.workspace = true
-base-tx-manager = { workspace = true, features = ["kzg"] }
 alloy-sol-types.workspace = true
 alloy-rpc-client.workspace = true
 base-batcher-core.workspace = true
@@ -34,6 +33,7 @@ metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
 base-runtime = { workspace = true, features = ["tokio"] }
+base-tx-manager = { workspace = true, features = ["kzg"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }

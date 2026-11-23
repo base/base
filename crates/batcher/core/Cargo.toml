@@ -13,12 +13,12 @@ workspace = true
 
 [dependencies]
 # local
-base-tx-manager = { workspace = true, features = ["kzg"] }
 base-common-blobs.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
 base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
+base-tx-manager = { workspace = true, features = ["kzg"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 
 # external
