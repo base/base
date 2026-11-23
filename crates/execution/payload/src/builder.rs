@@ -3160,6 +3160,9 @@ mod tests {
         }
     }
 
+    /// Enabling the meter leaves the built block unchanged. The plain transfers here stay under
+    /// [`crate::STALE_STORAGE_CONTRACT_SLOT_GATE`], so nothing is flagged; the flag and limit paths
+    /// are covered by the `stale_storage` unit tests.
     #[test]
     fn stale_storage_meter_observes_without_excluding() {
         let build = |meter: Option<StaleStorageMeter>| {

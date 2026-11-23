@@ -179,7 +179,7 @@ impl StaleStorageTable {
         self.entries.len()
     }
 
-    /// Returns `false`: a table always has at least `2^MIN_TABLE_LOG2` entries.
+    /// Returns `false`: a table of `2^log2` entries always has at least one.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -401,7 +401,10 @@ pub struct CanonicalStaleRecord {
     pub swept_entries: u64,
 }
 
-/// The table and settings shared by the canonical-state recorder and the payload builder.
+/// The table shared by the canonical-state recorder and the payload builder.
+///
+/// The window, gate and limits are the `STALE_STORAGE_*` constants; only the table size is a
+/// parameter, so tests can use small tables.
 #[derive(Debug, Clone)]
 pub struct StaleStorageMeter {
     /// Shared epoch table.

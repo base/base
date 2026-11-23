@@ -7,7 +7,8 @@ use base_bundles::OpcodeGas;
 use base_execution_payload_builder::{
     BlockStaleTracker, NoopMeteringProvider, ResourceMeteringConfig, ResourceMeteringDimension,
     ResourceMeteringOperation, ResourceMeteringSchedule, ResourceSample,
-    STALE_STORAGE_EPOCH_SECONDS, STALE_STORAGE_TABLE_LOG2, StaleStorageMeter, StaleStorageTable,
+    STALE_STORAGE_CONTRACT_SLOT_GATE, STALE_STORAGE_EPOCH_SECONDS, STALE_STORAGE_TABLE_LOG2,
+    STALE_STORAGE_WINDOW_HOURS, StaleStorageMeter, StaleStorageTable,
 };
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use revm::state::{Account, EvmState, EvmStorageSlot, TransactionId};
@@ -113,11 +114,12 @@ fn bench_check_executed_usage(c: &mut Criterion) {
 /// Block timestamp for the stale-storage benchmarks.
 const BLOCK_TIMESTAMP: u64 = 1_800_000_000;
 
-/// A production-size (one-gibibyte) table with every entry stamped two days before the block, so
-/// probes read resident memory and every probed slot is stale.
+/// A production-size table ([`STALE_STORAGE_TABLE_LOG2`]) with every entry stamped two windows
+/// before the block, so probes read resident memory and every probed slot is stale.
 fn filled_meter() -> StaleStorageMeter {
     let table = StaleStorageTable::new(STALE_STORAGE_TABLE_LOG2);
-    let stamped_hour = BLOCK_TIMESTAMP / STALE_STORAGE_EPOCH_SECONDS - 48;
+    let stamped_hour =
+        BLOCK_TIMESTAMP / STALE_STORAGE_EPOCH_SECONDS - 2 * STALE_STORAGE_WINDOW_HOURS;
     for key in 0..table.len() as u64 {
         table.stamp(key, stamped_hour);
     }
@@ -144,10 +146,10 @@ fn batch_state(address: Address, count: u64) -> EvmState {
 /// Per-transaction cost of the log-only stale-storage meter on the builder's commit path:
 /// [`BlockStaleTracker::evaluate`] followed by [`BlockStaleTracker::commit`].
 ///
-/// - `transfer_under_gate`: an ordinary token transfer in a contract under the 64-slot gate,
-///   which is most transactions.
-/// - `transfer_in_gated_contract`: the same transfer after the block has already written 64
-///   slots of the token, so its pre-existing slots are hashed and probed.
+/// - `transfer_under_gate`: an ordinary token transfer in a contract under
+///   [`STALE_STORAGE_CONTRACT_SLOT_GATE`], which is most transactions.
+/// - `transfer_in_gated_contract`: the same transfer after the block has already written as many
+///   slots of the token as the gate, so its pre-existing slots are hashed and probed.
 /// - `batch_725_slots`: a 725-slot batch in one contract, the largest slow XEN shape.
 fn bench_stale_storage(c: &mut Criterion) {
     let meter = filled_meter();
@@ -156,7 +158,7 @@ fn bench_stale_storage(c: &mut Criterion) {
     let token_prefill = {
         let mut account = Account::default();
         account.mark_touch();
-        for slot in 1_000..1_064u64 {
+        for slot in 1_000..1_000 + u64::from(STALE_STORAGE_CONTRACT_SLOT_GATE) {
             account.storage.insert(
                 U256::from(slot),
                 EvmStorageSlot::new_changed(U256::from(1), U256::from(2), TransactionId::ZERO),
