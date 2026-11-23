@@ -127,6 +127,7 @@ mod unix_impl {
     /// Signal handler installed for SIGSEGV.
     extern "C" fn print_stack_trace(_: libc::c_int) {
         const MAX_FRAMES: usize = 256;
+        const STACK_OVERFLOW_DEPTH_HINT: usize = 128;
         let mut stack_trace: [*mut libc::c_void; MAX_FRAMES] = [ptr::null_mut(); MAX_FRAMES];
         let mut depth = 0usize;
 
@@ -189,8 +190,7 @@ mod unix_impl {
         raw_errln!("");
         written += rem.len() + 1;
 
-        let random_depth = || 8 * 16;
-        if cyclic || stack.len() > random_depth() {
+        if cyclic || stack.len() > STACK_OVERFLOW_DEPTH_HINT {
             raw_errln!("note: process unexpectedly overflowed its stack! this is a bug");
             written += 1;
         }

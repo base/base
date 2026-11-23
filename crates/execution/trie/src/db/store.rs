@@ -231,6 +231,7 @@ impl MdbxProofsStorage {
         {
             let mut del_cur = tx.cursor_dup_write::<T>()?;
             for (k, _) in &pairs {
+                // Range seeks can return a later version; only block-zero entries may be deleted.
                 if let Some(vv) = del_cur.seek_by_key_subkey(k.clone(), 0)?
                     && vv.block_number == 0
                 {
@@ -266,6 +267,7 @@ impl MdbxProofsStorage {
     {
         let mut cur = tx.cursor_dup_write::<T>()?;
         for (key, subkey) in items {
+            // Range seeks can return a later version; deletion requires an exact subkey match.
             if let Some(vv) = cur.seek_by_key_subkey(key, subkey)?
                 && vv.block_number == subkey
             {
