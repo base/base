@@ -3,26 +3,20 @@
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 use alloy_consensus::Header;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_client::RpcClient;
+use alloy_rpc_client::ClientBuilder;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_transport::{RpcError, TransportErrorKind};
-use alloy_transport_http::{
-    AuthLayer, Http, HyperClient,
-    hyper_util::{client::legacy::Client, rt::TokioExecutor},
-};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
-use http_body_util::Full;
 use lru::LruCache;
-use tower::ServiceBuilder;
 
-use crate::Metrics;
+use crate::{JwtAuthLayer, Metrics};
 
 const L2_BLOCK_REF_BY_NUMBER_METHOD: &str = "l2_block_ref_by_number";
 const L2_BLOCK_REF_BY_HASH_METHOD: &str = "l2_block_ref_by_hash";
@@ -171,14 +165,10 @@ impl AlloyL2ChainProvider {
         cache_size: usize,
         jwt: JwtSecret,
     ) -> Self {
-        let hyper_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
-
-        let auth_layer = AuthLayer::new(jwt);
-        let service = ServiceBuilder::new().layer(auth_layer).service(hyper_client);
-
-        let layer_transport = HyperClient::with_service(service);
-        let http_hyper = Http::with_client(layer_transport, url);
-        let rpc_client = RpcClient::new(http_hyper, false);
+        let transport =
+            JwtAuthLayer::build_http_transport(url).expect("failed to build direct HTTP transport");
+        let rpc_client =
+            ClientBuilder::default().layer(JwtAuthLayer::new(jwt)).transport(transport, false);
 
         let rpc = RootProvider::<Base>::new(rpc_client);
         Self::new(rpc, rollup_config, cache_size)

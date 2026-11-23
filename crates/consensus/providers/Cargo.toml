@@ -19,6 +19,7 @@ base-consensus-derive.workspace = true
 base-common-genesis.workspace = true
 
 alloy-genesis.workspace = true
+alloy-json-rpc.workspace = true
 alloy-transport.workspace = true
 alloy-rpc-client.workspace = true
 alloy-rpc-types-beacon.workspace = true
@@ -26,9 +27,9 @@ alloy-serde = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map"] }
 alloy-eips = { workspace = true, features = ["kzg", "std"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["jwt", "jwt-aws-lc-rs", "std"] }
 alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest"] }
-alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
+alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls"] }
 
 base-common-network.workspace = true
 base-common-consensus.workspace = true
@@ -38,7 +39,7 @@ url.workspace = true
 tower.workspace = true
 reqwest.workspace = true
 async-trait.workspace = true
-http-body-util.workspace = true
+http.workspace = true
 serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["time"] }

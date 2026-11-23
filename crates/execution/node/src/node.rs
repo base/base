@@ -30,7 +30,7 @@ use base_execution_rpc::{
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
     BaseTransactionValidator, GuardLimits, ParkableTransactionPool, TimestampedTransaction,
-    ValidityPoolLimits, maintain_state_diff_invalidation,
+    ValidityDormancyMode, ValidityPoolLimits, maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
@@ -273,6 +273,7 @@ impl BaseNode {
                         allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
                     .with_validity_pool_limits(self.args.validity_pool_limits())
+                    .with_validity_dormancy(self.args.validity_dormancy)
                     .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
             )
             .payload(BasePayloadServiceBuilder::new(
@@ -802,6 +803,8 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub guard_limits: GuardLimits,
     /// Capacity of the validity pool; unset fields copy the pending subpool limit.
     pub validity_pool_limits: ValidityPoolLimits,
+    /// Where the native builder keeps the validity transactions it parked between blocks.
+    pub validity_dormancy: ValidityDormancyMode,
     /// Operator-allowlisted Base transaction payers.
     pub allowlisted_payers: AddressSet,
     /// Marker for the pooled transaction type.
@@ -815,6 +818,7 @@ impl<T> Default for BasePoolBuilder<T> {
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
             validity_pool_limits: ValidityPoolLimits::inherit(),
+            validity_dormancy: ValidityDormancyMode::Resting,
             allowlisted_payers: AddressSet::default(),
             _pd: Default::default(),
         }
@@ -828,6 +832,7 @@ impl<T> Clone for BasePoolBuilder<T> {
             max_inflight_delegated_slots: self.max_inflight_delegated_slots,
             guard_limits: self.guard_limits,
             validity_pool_limits: self.validity_pool_limits,
+            validity_dormancy: self.validity_dormancy,
             allowlisted_payers: self.allowlisted_payers.clone(),
             _pd: core::marker::PhantomData,
         }
@@ -859,6 +864,12 @@ impl<T> BasePoolBuilder<T> {
         self
     }
 
+    /// Sets where the native builder keeps the validity transactions it parked between blocks.
+    pub const fn with_validity_dormancy(mut self, mode: ValidityDormancyMode) -> Self {
+        self.validity_dormancy = mode;
+        self
+    }
+
     /// Sets the operator-allowlisted Base transaction payers, limited to
     /// [`GuardLimits::allowlisted_payment_limit`] inflight payments and bounded
     /// by their balance.
@@ -886,6 +897,7 @@ where
             max_inflight_delegated_slots,
             guard_limits,
             validity_pool_limits,
+            validity_dormancy,
             allowlisted_payers,
             ..
         } = self;
@@ -922,7 +934,8 @@ where
         let allowlisted_payer_count = allowlisted_payers.len();
         let transaction_pool = BaseTransactionPool::new(transaction_pool, ordering)
             .with_guard_limits(guard_limits)
-            .with_validity_pool_limits(validity_pool_limits);
+            .with_validity_pool_limits(validity_pool_limits)
+            .with_validity_dormancy(validity_dormancy);
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(

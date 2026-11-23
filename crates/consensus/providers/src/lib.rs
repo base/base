@@ -27,6 +27,9 @@ pub use chain_provider::{AlloyChainProvider, AlloyChainProviderError};
 mod conf_depth;
 pub use conf_depth::{ConfDepthProvider, L1HeadNumber};
 
+mod jwt_auth;
+pub use jwt_auth::{JwtAuthLayer, JwtAuthService};
+
 mod l2_chain_provider;
 pub use l2_chain_provider::{AlloyL2ChainProvider, AlloyL2ChainProviderError};
 
