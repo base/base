@@ -29,6 +29,7 @@
 
 ## Documentation and Lints
 
+- Do not add code comments in any language, including inline comments, block comments, section banners, or commented-out code. Express intent through names, types, constants, and control flow; put explanatory context in the adjacent README. The only exceptions are required license notices, executable or tool directives, safety contracts, and documentation required by the rules below or enforced lints.
 - Docs are READMEs next to the code they describe, plus cross-cutting guides in `docs/guides/`. Open every doc with a short paragraph that says what it covers in plain terms, naming the generic concept alongside any codename (for example, "Azul network upgrade"), so a text search finds it.
 - Use `#![doc = include_str!("../README.md")]` for crate documentation in `lib.rs`; never use `//!` comments there.
 - Begin every `mod.rs` file with a `//!` module doc comment describing its contents.
@@ -96,7 +97,7 @@ let bal = wallet.account.balance();
 - Reuse existing types, APIs, and fixtures; add abstractions or configuration only for concrete supported use cases.
 - Prefer domain types and named constants over magic strings and numbers; name values by their meaning and units.
 - Keep modules and actor loops focused; put state-specific logic on the type that owns it.
-- Document contracts and non-obvious reasons, not code narration or change history; keep docs consistent with behavior.
+- Document contracts and non-obvious reasons in the adjacent README, not code comments; keep docs consistent with behavior.
 - Preserve historical fork behavior and parity across execution paths; test both old and new fork behavior.
 - Cost hot-path work at its production frequency, not per call. Hot paths and their rates are listed in [docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md](docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md). Keep allocation, cloning, serialization, I/O, and metric-handle lookups out of per-candidate work, and do not scan pool-sized collections per candidate or rejection.
 - Measure default-off features with the feature enabled, and benchmark production code when claiming performance gains.
