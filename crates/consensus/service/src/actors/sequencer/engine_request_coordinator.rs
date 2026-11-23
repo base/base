@@ -155,10 +155,26 @@ where
         Ok(())
     }
 
-    /// Confirms only the selected target, independently of the old engine readiness latch.
-    pub async fn probe_historical_startup(&mut self, remaining: Duration) -> Result<base_consensus_engine::StartupSyncStatus, base_consensus_engine::StartupSyncError> {
-        self.historical_startup.as_mut().expect("historical startup selected")
-            .probe(self.processor.client().as_ref(), remaining).await
+    /// Confirms the selected target only after non-leader admission, within one shared budget.
+    ///
+    /// Admission failure revokes earlier readiness. The old engine completion latch is not used.
+    pub async fn probe_historical_startup(&mut self, remaining: Duration) -> Result<base_consensus_engine::StartupSyncStatus, EngineError> {
+        let started = TokioInstant::now();
+        let phase = self.historical_startup.as_mut().expect("historical startup selected");
+        phase.set_target(phase.target());
+        if remaining.is_zero() {
+            return Err(EngineError::BootstrapHeadQuery("historical startup probe budget exhausted".into()));
+        }
+        if let Some(conductor) = &self.conductor {
+            let leader = time::timeout(remaining, conductor.leader()).await
+                .map_err(|_| EngineError::BootstrapHeadQuery("historical startup leadership query timed out".into()))?
+                .map_err(|error| EngineError::BootstrapHeadQuery(error.to_string()))?;
+            if leader {
+                return Err(EngineError::BootstrapHeadQuery("historical startup requires a non-leader".into()));
+            }
+        }
+        phase.probe(self.processor.client().as_ref(), remaining.saturating_sub(started.elapsed())).await
+            .map_err(|error| EngineError::BootstrapHeadQuery(error.to_string()))
     }
 
     /// Services startup requests without allowing ordinary engine queue work to execute.
@@ -226,8 +242,7 @@ where
                 }
                 _ = interval.tick() => {
                     let remaining = deadline.saturating_duration_since(TokioInstant::now()).min(SEQUENCER_EL_SYNC_PROBE_INTERVAL);
-                    let status = self.probe_historical_startup(remaining).await
-                        .map_err(|error| EngineError::BootstrapHeadQuery(error.to_string()))?;
+                    let status = self.probe_historical_startup(remaining).await?;
                     if status == base_consensus_engine::StartupSyncStatus::ExecutionReady {
                         let target = self.historical_startup.as_ref().expect("startup phase").target();
                         time::timeout_at(deadline, self.processor.handoff_historical_startup(target)).await
@@ -1223,6 +1238,18 @@ mod tests {
         coordinator_task.abort();
         assert!(coordinator_task.await.unwrap_err().is_cancelled(), "the test must stop its coordinator");
         drop(request_tx);
+    }
+
+    /// Public pre-start probing must not bypass conductor admission enforced by task entry.
+    #[tokio::test]
+    async fn historical_startup_public_probe_rejects_leader_before_engine_calls() {
+        let mut conductor = MockConductor::new();
+        conductor.expect_leader().times(1).returning(|| Ok(true));
+        let mut coordinator = coordinator(false, true, Some(Arc::new(conductor)));
+        coordinator.begin_historical_startup(test_block_info(100)).expect("stopped target");
+        coordinator.processor.client().set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None }, payload_id: None }).await;
+        assert!(coordinator.probe_historical_startup(Duration::from_secs(1)).await.is_err(), "public probes must refuse a configured leader before sending FCU");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "no public pre-start FCU may bypass leadership admission");
     }
 
     /// A configured leader cannot enter the inactive phase, even when locally stopped.
