@@ -88,33 +88,29 @@ pub const STALE_STORAGE_FIRST_HOUR_LIMIT: u64 = 450;
 
 /// Storage-trie depth, in nibbles, of the region one cache entry stands for.
 ///
-/// The cache key is the contract's hashed address plus the first four nibbles of the hashed
+/// The cache key is the contract's hashed address plus the first five nibbles of the hashed
 /// slot, the slot's path in the contract's storage trie. A slot therefore reads recent when it,
-/// or any sibling under the same depth-four trie node, was written within the window, which
+/// or any sibling under the same depth-five trie node, was written within the window, which
 /// approximates whether the upper part of its trie path is still warm. The meter still counts
 /// slots: dedupe, the gate and the limits use exact slot identities.
 ///
-/// Four is the shallowest depth that consolidates large contracts without changing the meter
-/// for small ones. In a five-hour Base Mainnet replay it cut distinct keys by 22% overall and by
-/// about three quarters in the largest contracts, left stale counts in contracts with under a
-/// thousand written slots within 0.3%, and changed no dry-run verdict.
-pub const STALE_STORAGE_TRIE_PREFIX_NIBBLES: u32 = 4;
+/// A depth-`d` region shares trie nodes only down to depth `d`; slots in it that do not share
+/// deeper branch nodes still fault those in. A contract with `n` slots has about `n / 16^d`
+/// slots per region, so depth four would put about 15 slots of a million-slot contract in each
+/// region, hiding cold faults in the largest contracts, which are the meter's main target.
+/// Depth five keeps that near one slot per region up to a million slots. In a five-hour Base
+/// Mainnet replay it left contracts with under a thousand written slots unchanged, removed 2.4%
+/// of distinct keys, and changed no dry-run verdict.
+pub const STALE_STORAGE_TRIE_PREFIX_NIBBLES: u32 = 5;
 
 /// Entries per cache set.
 pub const STALE_STORAGE_CACHE_WAYS: usize = 8;
-
-const _: () = assert!(
-    STALE_STORAGE_WINDOW_HOURS
-        + StaleStorageCache::MAX_RECORD_GAP_HOURS
-        + StaleStorageCache::SWEEP_PASS_HOURS
-        + StaleStorageCache::FUTURE_TOLERANCE_HOURS
-        < StaleStorageCache::STAMP_PERIOD_HOURS
-);
 
 // Set-index bits stay below the fingerprint bits at the largest size, so the two are independent.
 const _: () = assert!(
     StaleStorageCache::sets_for_size((STALE_STORAGE_MAX_CACHE_MIB as u64) << 20).trailing_zeros()
         <= StaleStorageCache::FINGERPRINT_SHIFT
+        && StaleStorageCache::FINGERPRINT_SHIFT + 16 <= 64
 );
 
 /// Dry-run stale-slot limits in effect for one build.
@@ -149,8 +145,8 @@ impl StaleStorageLimits {
 #[derive(Debug, Default)]
 #[repr(C, align(32))]
 pub struct StaleStorageCacheSet {
-    /// Entries: a 24-bit key fingerprint in the high bits and an hour stamp in the low byte.
-    /// A zero stamp byte marks an empty entry.
+    /// Entries: a 16-bit key fingerprint in the high half and a 16-bit hour stamp, counted from
+    /// the cache's base hour, in the low half. A zero stamp marks an empty entry.
     pub entries: [AtomicU32; STALE_STORAGE_CACHE_WAYS],
 }
 
@@ -165,14 +161,12 @@ pub struct StaleStorageCacheWrite {
     pub evicted_unexpired: bool,
 }
 
-/// What one incremental sweep found.
+/// What one occupancy sample found.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct StaleStorageSweep {
+pub struct StaleStorageOccupancy {
     /// Entries visited.
     pub visited: u64,
-    /// Expired entries cleared.
-    pub cleared: u64,
-    /// Entries still within the window.
+    /// Entries within the window.
     pub live: u64,
 }
 
@@ -181,17 +175,20 @@ pub struct StaleStorageSweep {
 ///
 /// Entries are keyed by storage-trie region, not by slot: [`Self::region_key`] covers every slot
 /// of a contract whose hashed key starts with the same [`STALE_STORAGE_TRIE_PREFIX_NIBBLES`]
-/// nibbles. A slot reads as recent only if its set holds an entry with its region's 24-bit
+/// nibbles. A slot reads as recent only if its set holds an entry with its region's 16-bit
 /// fingerprint and a stamp within [`STALE_STORAGE_WINDOW_HOURS`], meaning the slot or a trie
 /// sibling was written recently. Every other slot reads as stale, so errors run one way: a region
 /// that was evicted, lost a write race or was never seen over-meters. The only false recent
-/// reading beyond that intended sharing is a fingerprint collision, about `8 / 2^24` per probe of
-/// a full set. Set index and fingerprint come from disjoint bits of a `SipHash-2-4` keyed with a
-/// per-process random secret, so a sender cannot choose slots that crowd one set.
+/// reading beyond that intended sharing is a fingerprint collision: at most `8 / 2^16` per probe
+/// of a set full of live entries, about one probe in 8,000, and less in a set that is not full.
+/// Set index and fingerprint come from disjoint bits of a `SipHash-2-4` keyed with a per-process
+/// random secret, so a sender cannot choose slots that crowd one set.
 ///
-/// Stamps are `hour % 255 + 1` in one byte, so a stamp repeats every 255 hours. An incremental
-/// sweep clears expired entries well before they could wrap and read as recent, and a
-/// recording gap longer than [`Self::MAX_RECORD_GAP_HOURS`] clears the whole cache.
+/// Stamps are exact: an entry holds the hours from the cache's base hour, set a window before
+/// the first recorded block, to the hour it was written. Ages never wrap, so an entry left
+/// untouched for any length of time reads as stale, without relying on a sweep. The 16-bit
+/// stamp covers [`Self::MAX_STAMP_HOURS`] (about seven years) of history; recording past that
+/// clears the cache and starts a new base.
 ///
 /// Entries are single atomic words updated by compare-and-swap. Builder threads read while the
 /// canonical-state task writes; a reader sees either the old or the new entry, both of which
@@ -204,8 +201,10 @@ pub struct StaleStorageCache {
     first_recorded_timestamp: AtomicU64,
     /// One more than the last recorded hour, or `0` while empty.
     last_recorded_hour: AtomicU64,
+    /// One more than the hour stamps count from, or `0` while empty.
+    base_hour: AtomicU64,
     recorded_blocks: AtomicU64,
-    sweep_cursor: AtomicU64,
+    sample_cursor: AtomicU64,
 }
 
 impl fmt::Debug for StaleStorageCache {
@@ -219,25 +218,27 @@ impl fmt::Debug for StaleStorageCache {
 }
 
 impl StaleStorageCache {
-    /// Number of distinct hour stamps an entry can hold; stamp `0` marks an empty entry.
-    pub const STAMP_PERIOD_HOURS: u64 = 255;
+    /// Largest hour offset from the base hour a stamp can hold; stamp `0` marks an empty entry.
+    pub const MAX_STAMP_HOURS: u64 = u16::MAX as u64 - 1;
+    /// Hours the base hour lies before the first recorded hour, so a reorg to slightly older
+    /// blocks still has a stamp.
+    pub const BASE_MARGIN_HOURS: u64 = STALE_STORAGE_WINDOW_HOURS;
     /// Stamps at most this many hours ahead of the current hour, such as one from a canonical
-    /// tip timestamped after the block being built, read as written now.
+    /// tip timestamped after the block being built, read as written now. Stamps further ahead
+    /// read as stale.
     pub const FUTURE_TOLERANCE_HOURS: u64 = 2;
-    /// Recorded blocks per full sweep of the cache.
-    pub const SWEEP_BLOCKS: u64 = 1 << 16;
-    /// Hours a full sweep takes at two-second blocks, rounded up.
-    pub const SWEEP_PASS_HOURS: u64 =
-        (Self::SWEEP_BLOCKS * 2).div_ceil(STALE_STORAGE_EPOCH_SECONDS);
+    /// Sets an occupancy sample visits per recorded notification.
+    pub const OCCUPANCY_SAMPLE_SETS: u64 = 64;
     /// A recording gap longer than this clears the cache, and a build this far past the last
-    /// recorded hour treats the cache as empty, so no unswept stamp can wrap.
+    /// recorded hour treats the cache as empty. The cache misses every write in the gap, so after
+    /// four days it is no better than an empty one and gets the young-cache limits.
     pub const MAX_RECORD_GAP_HOURS: u64 = 96;
     /// Compare-and-swap attempts per write before giving up. A lost write leaves the slot
     /// reading stale.
     pub const WRITE_ATTEMPTS: usize = 4;
     /// Bytes per set.
     pub const SET_BYTES: u64 = 32;
-    /// Bit offset of the 24-bit fingerprint in the key, above every set-index bit.
+    /// Bit offset of the 16-bit fingerprint in the key, above every set-index bit.
     pub const FINGERPRINT_SHIFT: u32 = 40;
 
     /// Creates an empty cache of about `size_bytes` keyed with a random secret.
@@ -261,8 +262,9 @@ impl StaleStorageCache {
             secret,
             first_recorded_timestamp: AtomicU64::new(0),
             last_recorded_hour: AtomicU64::new(0),
+            base_hour: AtomicU64::new(0),
             recorded_blocks: AtomicU64::new(0),
-            sweep_cursor: AtomicU64::new(0),
+            sample_cursor: AtomicU64::new(0),
         }
     }
 
@@ -355,31 +357,46 @@ impl StaleStorageCache {
         )
     }
 
-    /// The 24-bit fingerprint of `key`, from bits disjoint from the set index.
+    /// The 16-bit fingerprint of `key`, from bits disjoint from the set index.
     pub const fn fingerprint(key: u64) -> u32 {
-        (key >> Self::FINGERPRINT_SHIFT) as u32 & 0x00ff_ffff
+        (key >> Self::FINGERPRINT_SHIFT) as u32 & 0xffff
     }
 
-    /// The stored entry for `fingerprint` written in `hour`.
-    pub const fn encode(fingerprint: u32, hour: u64) -> u32 {
-        (fingerprint << 8) | ((hour % Self::STAMP_PERIOD_HOURS) as u32 + 1)
+    /// The stored entry for `fingerprint` written `offset` hours after the base hour, at most
+    /// [`Self::MAX_STAMP_HOURS`].
+    pub const fn encode(fingerprint: u32, offset: u64) -> u32 {
+        (fingerprint << 16) | (offset as u32 + 1)
     }
 
-    /// Hours from an entry's stamp to `now_hour`, modulo the stamp period; `None` if empty.
+    /// Hours from an entry's stamp to `now_hour`, given the cache's `base_hour`; `None` if empty.
     ///
-    /// A stamp up to [`Self::FUTURE_TOLERANCE_HOURS`] after `now_hour` reads as age `0` rather
-    /// than wrapping to nearly the full period.
-    pub const fn entry_age(entry: u32, now_hour: u64) -> Option<u64> {
-        let stamp = (entry & 0xff) as u64;
+    /// A stamp up to [`Self::FUTURE_TOLERANCE_HOURS`] after `now_hour` reads as age `0`; one
+    /// further ahead reads as `u64::MAX`, which is stale.
+    pub const fn entry_age(entry: u32, now_hour: u64, base_hour: u64) -> Option<u64> {
+        let stamp = (entry & 0xffff) as u64;
         if stamp == 0 {
             return None;
         }
-        let period = Self::STAMP_PERIOD_HOURS;
-        let age = (now_hour % period + period - (stamp - 1)) % period;
-        if age > period - 1 - Self::FUTURE_TOLERANCE_HOURS {
-            return Some(0);
+        let written = base_hour + stamp - 1;
+        if written <= now_hour {
+            Some(now_hour - written)
+        } else if written - now_hour <= Self::FUTURE_TOLERANCE_HOURS {
+            Some(0)
+        } else {
+            Some(u64::MAX)
         }
-        Some(age)
+    }
+
+    /// The hour stamps count from, or `None` while nothing has been recorded.
+    pub fn base_hour(&self) -> Option<u64> {
+        self.base_hour.load(Ordering::Relaxed).checked_sub(1)
+    }
+
+    /// Whether a write in `now_hour` fits the stamp range of the current base hour. Always true
+    /// for an empty cache, which takes its base from the first write.
+    pub fn can_stamp(&self, now_hour: u64) -> bool {
+        self.base_hour()
+            .is_none_or(|base| now_hour >= base && now_hour - base <= Self::MAX_STAMP_HOURS)
     }
 
     /// The set `key` maps to.
@@ -390,13 +407,14 @@ impl StaleStorageCache {
     /// Hours since `key` was last written, if that is within the window; `None` means stale:
     /// never recorded, evicted, or written more than [`STALE_STORAGE_WINDOW_HOURS`] ago.
     pub fn age_hours(&self, key: u64, now_hour: u64) -> Option<u64> {
+        let base_hour = self.base_hour()?;
         let fingerprint = Self::fingerprint(key);
         self.set(key)
             .entries
             .iter()
             .map(|entry| entry.load(Ordering::Relaxed))
-            .filter(|&entry| entry >> 8 == fingerprint)
-            .filter_map(|entry| Self::entry_age(entry, now_hour))
+            .filter(|&entry| entry >> 16 == fingerprint)
+            .filter_map(|entry| Self::entry_age(entry, now_hour, base_hour))
             .filter(|&age| age <= STALE_STORAGE_WINDOW_HOURS)
             .min()
     }
@@ -410,10 +428,24 @@ impl StaleStorageCache {
     ///
     /// Updates the entry with `key`'s fingerprint, otherwise takes an empty or expired entry,
     /// otherwise evicts the oldest. If every attempt loses a race with another writer, the write
-    /// is dropped and the slot reads stale.
+    /// is dropped and the slot reads stale. The first write sets the base hour; a write outside
+    /// its stamp range (see [`Self::can_stamp`]) is dropped too.
     pub fn record(&self, key: u64, now_hour: u64) -> StaleStorageCacheWrite {
+        let candidate = now_hour.saturating_sub(Self::BASE_MARGIN_HOURS) + 1;
+        let base_hour = match self.base_hour.compare_exchange(
+            0,
+            candidate,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => candidate - 1,
+            Err(current) => current - 1,
+        };
+        if now_hour < base_hour || now_hour - base_hour > Self::MAX_STAMP_HOURS {
+            return StaleStorageCacheWrite::default();
+        }
         let fingerprint = Self::fingerprint(key);
-        let written = Self::encode(fingerprint, now_hour);
+        let written = Self::encode(fingerprint, now_hour - base_hour);
         let set = self.set(key);
         let mut previous_age = None;
         for _ in 0..Self::WRITE_ATTEMPTS {
@@ -423,8 +455,8 @@ impl StaleStorageCache {
             let mut victim = (0, 0, 0);
             for (way, entry) in set.entries.iter().enumerate() {
                 let current = entry.load(Ordering::Relaxed);
-                let age = Self::entry_age(current, now_hour);
-                if age.is_some() && current >> 8 == fingerprint {
+                let age = Self::entry_age(current, now_hour, base_hour);
+                if age.is_some() && current >> 16 == fingerprint {
                     if let Some(age) = age.filter(|&age| age <= STALE_STORAGE_WINDOW_HOURS) {
                         previous_age =
                             Some(previous_age.map_or(age, |previous: u64| previous.min(age)));
@@ -458,38 +490,25 @@ impl StaleStorageCache {
         StaleStorageCacheWrite { previous_age, evicted_unexpired: false }
     }
 
-    /// Clears expired entries in up to `sets` sets, continuing from where the previous sweep
-    /// stopped.
-    pub fn sweep(&self, now_hour: u64, sets: u64) -> StaleStorageSweep {
+    /// Counts live entries in up to `sets` sets, continuing from where the previous sample
+    /// stopped. Read-only: expired entries need no clearing, since ages never wrap and a write
+    /// replaces an expired entry before a live one.
+    pub fn sample_occupancy(&self, now_hour: u64, sets: u64) -> StaleStorageOccupancy {
         let len = self.sets.len() as u64;
         let count = sets.min(len);
-        let start = self.sweep_cursor.fetch_add(count, Ordering::Relaxed) % len;
-        let mut sweep = StaleStorageSweep::default();
+        let start = self.sample_cursor.fetch_add(count, Ordering::Relaxed) % len;
+        let mut sample =
+            StaleStorageOccupancy { visited: count * STALE_STORAGE_CACHE_WAYS as u64, live: 0 };
+        let Some(base_hour) = self.base_hour() else {
+            return sample;
+        };
         for offset in 0..count {
             for entry in &self.sets[((start + offset) % len) as usize].entries {
-                sweep.visited += 1;
-                let current = entry.load(Ordering::Relaxed);
-                match Self::entry_age(current, now_hour) {
-                    None => {}
-                    Some(age) if age <= STALE_STORAGE_WINDOW_HOURS => sweep.live += 1,
-                    // A failed exchange means a writer just refreshed or replaced the entry.
-                    Some(_) => {
-                        sweep.cleared += u64::from(
-                            entry
-                                .compare_exchange(current, 0, Ordering::Relaxed, Ordering::Relaxed)
-                                .is_ok(),
-                        );
-                    }
-                }
+                let age = Self::entry_age(entry.load(Ordering::Relaxed), now_hour, base_hour);
+                sample.live += u64::from(age.is_some_and(|age| age <= STALE_STORAGE_WINDOW_HOURS));
             }
         }
-        sweep
-    }
-
-    /// Sets [`Self::sweep`] visits per recorded canonical block, so a full pass takes
-    /// [`Self::SWEEP_BLOCKS`] blocks.
-    pub const fn sweep_sets_per_block(&self) -> u64 {
-        (self.sets.len() as u64).div_ceil(Self::SWEEP_BLOCKS)
+        sample
     }
 
     /// Empties the cache and its history.
@@ -501,10 +520,11 @@ impl StaleStorageCache {
         }
         self.first_recorded_timestamp.store(0, Ordering::Relaxed);
         self.last_recorded_hour.store(0, Ordering::Relaxed);
+        self.base_hour.store(0, Ordering::Relaxed);
     }
 
     /// Whether a build at `now_hour` is more than [`Self::MAX_RECORD_GAP_HOURS`] past the last
-    /// recorded hour. Such a build treats the cache as empty, since unswept stamps may wrap.
+    /// recorded hour. Such a build treats the cache as empty, since it misses the gap's writes.
     pub fn is_expired_at(&self, now_hour: u64) -> bool {
         let last = self.last_recorded_hour.load(Ordering::Relaxed);
         last != 0 && now_hour > last - 1 + Self::MAX_RECORD_GAP_HOURS
@@ -621,11 +641,11 @@ pub struct CanonicalStaleRecord {
     pub max_contract_changed_slots: u64,
     /// Writes that evicted another slot's entry still within the window.
     pub unexpired_evictions: u64,
-    /// What the sweep found.
-    pub sweep: StaleStorageSweep,
-    /// The cache was cleared first because recording had stopped for longer than
-    /// [`StaleStorageCache::MAX_RECORD_GAP_HOURS`].
-    pub cleared_after_gap: bool,
+    /// What the occupancy sample found.
+    pub occupancy: StaleStorageOccupancy,
+    /// The cache was cleared first, because recording had stopped for longer than
+    /// [`StaleStorageCache::MAX_RECORD_GAP_HOURS`] or the hour was past the stamp range.
+    pub cleared: bool,
 }
 
 /// The cache shared by the canonical-state recorder and the payload builder.
@@ -678,6 +698,11 @@ impl StaleStorageMeter {
 
     /// Stamps every changed slot of a canonical segment of `blocks` blocks whose tip is at
     /// `timestamp`, and measures the age of each pre-existing one first.
+    ///
+    /// Every slot is classified against the cache as it was before the segment, and only then
+    /// are the segment's regions stamped. Trie siblings share a region, so classifying and
+    /// stamping slot by slot would let a slot read its sibling's stamp from the same segment,
+    /// and the result would depend on iteration order.
     pub fn record_bundle(
         &self,
         bundle: &BundleState,
@@ -687,10 +712,11 @@ impl StaleStorageMeter {
         let now_hour = timestamp / STALE_STORAGE_EPOCH_SECONDS;
         let gate = u64::from(STALE_STORAGE_CONTRACT_SLOT_GATE);
         let mut record = CanonicalStaleRecord::default();
-        if self.cache.is_expired_at(now_hour) {
+        if self.cache.is_expired_at(now_hour) || !self.cache.can_stamp(now_hour) {
             self.cache.clear();
-            record.cleared_after_gap = true;
+            record.cleared = true;
         }
+        let mut keys = Vec::new();
         for (address, account) in &bundle.state {
             let changed = account.storage.values().filter(|slot| slot.is_changed()).count() as u64;
             if changed == 0 {
@@ -705,19 +731,22 @@ impl StaleStorageMeter {
                     continue;
                 }
                 let key = self.cache.region_key(&hashed_address, slot_id);
-                // One set scan reads the previous age and records the write.
-                let write = self.cache.record(key, now_hour);
-                record.unexpired_evictions += u64::from(write.evicted_unexpired);
+                keys.push(key);
                 if slot.previous_or_original_value.is_zero() {
                     record.gated_created_slots += u64::from(gated);
-                } else {
-                    record.ungated.add(write.previous_age);
-                    if gated {
-                        record.gated.add(write.previous_age);
-                        record.gated_cleared_slots += u64::from(slot.present_value.is_zero());
-                    }
+                    continue;
+                }
+                let age = self.cache.age_hours(key, now_hour);
+                record.ungated.add(age);
+                if gated {
+                    record.gated.add(age);
+                    record.gated_cleared_slots += u64::from(slot.present_value.is_zero());
                 }
             }
+        }
+        for key in keys {
+            record.unexpired_evictions +=
+                u64::from(self.cache.record(key, now_hour).evicted_unexpired);
         }
         // Timestamps are never zero on a real chain; `max(1)` keeps `0` meaning empty.
         let _ = self.cache.first_recorded_timestamp.compare_exchange(
@@ -728,9 +757,8 @@ impl StaleStorageMeter {
         );
         self.cache.last_recorded_hour.fetch_max(now_hour + 1, Ordering::Relaxed);
         self.cache.recorded_blocks.fetch_add(blocks, Ordering::Relaxed);
-        record.sweep = self
-            .cache
-            .sweep(now_hour, self.cache.sweep_sets_per_block().saturating_mul(blocks.max(1)));
+        record.occupancy =
+            self.cache.sample_occupancy(now_hour, StaleStorageCache::OCCUPANCY_SAMPLE_SETS);
         record
     }
 
@@ -761,16 +789,16 @@ impl StaleStorageMeter {
             StaleStorageMetrics::cache_unexpired_evictions_total()
                 .increment(record.unexpired_evictions);
         }
-        if record.sweep.visited > 0 {
+        if record.occupancy.visited > 0 {
             StaleStorageMetrics::cache_occupancy_ratio()
-                .set(record.sweep.live as f64 / record.sweep.visited as f64);
+                .set(record.occupancy.live as f64 / record.occupancy.visited as f64);
         }
-        if record.cleared_after_gap {
+        if record.cleared {
             warn!(
                 target: "payload_builder::stale_storage",
                 block_number = tip.number(),
                 max_gap_hours = StaleStorageCache::MAX_RECORD_GAP_HOURS,
-                "stale storage recording resumed after a long gap; cleared the cache"
+                "stale storage recording resumed after a long gap or past the stamp range; cleared the cache"
             );
         }
         for (gate, buckets) in [("ungated", &record.ungated), ("gated", &record.gated)] {
@@ -1374,38 +1402,60 @@ mod tests {
     }
 
     #[test]
-    fn stamps_wrap_cleanly_and_the_sweep_clears_them_before_they_alias() {
+    fn a_stamp_far_in_the_future_reads_stale() {
         let cache = StaleStorageCache::with_secret(1 << 12, (1, 2));
-        let period = StaleStorageCache::STAMP_PERIOD_HOURS;
-        let hour = period * 7 - 3;
-        cache.record(9, hour);
-        assert_eq!(cache.age_hours(9, hour + 5), Some(5));
-        assert!(cache.is_stale(9, hour + 30));
-        // A stamp a full period old aliases to "this hour" ...
-        let raw = StaleStorageCache::encode(StaleStorageCache::fingerprint(9), hour);
-        assert_eq!(StaleStorageCache::entry_age(raw, hour + period), Some(0));
-        // ... so the sweep clears it once it expires, and it then reads stale at the alias hour.
-        let sweep = cache.sweep(hour + 25, 1 << 20);
-        assert_eq!((sweep.cleared, sweep.live), (1, 0));
-        assert!(cache.is_stale(9, hour + period));
+        cache.record(4, NOW_HOUR + StaleStorageCache::FUTURE_TOLERANCE_HOURS + 1);
+        assert!(cache.is_stale(4, NOW_HOUR));
     }
 
     #[test]
-    fn the_sweep_keeps_live_entries_and_resumes_where_it_stopped() {
+    fn writes_outside_the_stamp_range_are_dropped() {
+        let cache = StaleStorageCache::with_secret(1 << 12, (1, 2));
+        cache.record(1, NOW_HOUR);
+        let base = cache.base_hour().unwrap();
+        assert_eq!(base, NOW_HOUR - StaleStorageCache::BASE_MARGIN_HOURS);
+        let last = base + StaleStorageCache::MAX_STAMP_HOURS;
+        assert!(cache.can_stamp(last));
+        cache.record(2, last);
+        assert_eq!(cache.age_hours(2, last), Some(0));
+        assert!(!cache.can_stamp(last + 1));
+        cache.record(3, last + 1);
+        assert!(cache.is_stale(3, last + 1));
+        assert!(!cache.can_stamp(base - 1));
+        cache.record(4, base - 1);
+        assert!(cache.is_stale(4, base - 1));
+    }
+
+    #[test]
+    fn the_occupancy_sample_counts_live_entries_and_resumes_where_it_stopped() {
         let cache = StaleStorageCache::with_secret(64 * 32, (1, 2));
         for set in 0..64 {
             cache.record(key(set, 1), NOW_HOUR);
             cache.record(key(set, 2), NOW_HOUR + 20);
         }
         let later = NOW_HOUR + 30;
-        let first = cache.sweep(later, 16);
-        assert_eq!(first, StaleStorageSweep { visited: 128, cleared: 16, live: 16 });
-        let rest = cache.sweep(later, 48);
-        assert_eq!((rest.cleared, rest.live), (48, 48));
-        let again = cache.sweep(later, 64);
-        assert_eq!((again.cleared, again.live), (0, 64));
-        assert!(cache.is_stale(key(3, 1), later));
-        assert_eq!(cache.age_hours(key(3, 2), later), Some(10));
+        let first = cache.sample_occupancy(later, 16);
+        assert_eq!(first, StaleStorageOccupancy { visited: 128, live: 16 });
+        let rest = cache.sample_occupancy(later, 48);
+        assert_eq!(rest, StaleStorageOccupancy { visited: 384, live: 48 });
+        // Sampling clears nothing.
+        assert_eq!(cache.sample_occupancy(NOW_HOUR + 20, 64).live, 128);
+    }
+
+    #[test]
+    fn fingerprint_collisions_against_full_live_sets_stay_rare() {
+        const SPREAD: u64 = 0x9e37_79b9_7f4a_7c15;
+        let cache = StaleStorageCache::with_secret(256 * 32, (1, 2));
+        for count in 0..256 * 8 {
+            let set = count / 8;
+            cache.record(key(set, count % 8 * 997 + 1), NOW_HOUR);
+        }
+        let probes = 200_000u64;
+        let recent = (1..=probes)
+            .filter(|count| !cache.is_stale(count.wrapping_mul(SPREAD), NOW_HOUR))
+            .count();
+        // Expected `probes * 8 / 2^16`, about 24.
+        assert!(recent < 60, "{recent} false recent readings");
     }
 
     #[test]
@@ -1435,6 +1485,28 @@ mod tests {
         assert!(!write.evicted_unexpired);
         for fingerprint in 2..=9 {
             assert!(!cache.is_stale(key(0, fingerprint), NOW_HOUR + 30));
+        }
+    }
+
+    #[test]
+    fn a_region_left_unwritten_for_whole_stamp_periods_reads_stale() {
+        let cache = StaleStorageCache::with_secret(1 << 12, (1, 2));
+        cache.record(key(3, 7), NOW_HOUR);
+        for gap in [25, 255, 256, 510, 512, 765, 768, 1_000, 65_535, 65_536] {
+            assert_eq!(cache.age_hours(key(3, 7), NOW_HOUR + gap), None, "gap of {gap} hours");
+        }
+    }
+
+    #[test]
+    fn evicting_an_entry_from_whole_stamp_periods_ago_is_not_an_unexpired_eviction() {
+        for gap in [255, 256, 510, 512] {
+            let cache = one_set();
+            for fingerprint in 1..=8 {
+                cache.record(key(0, fingerprint), NOW_HOUR);
+            }
+            let write = cache.record(key(0, 9), NOW_HOUR + gap);
+            assert!(!write.evicted_unexpired, "gap of {gap} hours");
+            assert_eq!(write.previous_age, None);
         }
     }
 
@@ -1506,19 +1578,34 @@ mod tests {
             1,
             NOW,
         );
-        // A full stamp period later the unswept stamps alias to the current hour.
-        let later = NOW + StaleStorageCache::STAMP_PERIOD_HOURS * HOUR;
+        // Past the gap limit the cache has missed too many writes to be trusted.
+        let later = NOW + (StaleStorageCache::MAX_RECORD_GAP_HOURS + 1) * HOUR;
         let mut tracker = meter.block_tracker(2, later);
         assert_eq!(tracker.limits().transaction, STALE_STORAGE_FIRST_HOUR_LIMIT);
         assert_eq!(tracker.evaluate(&updates(contract(7), 0, 100)).stale_transaction, 100);
-        // Recording resumes by clearing the cache, so the old stamps cannot read recent.
+        // Recording resumes by clearing the cache.
         let record = meter.record_bundle(
             &bundle([(contract(7), (0..100).map(|s| (s, 2, 3)).collect())]),
             1,
             later,
         );
-        assert!(record.cleared_after_gap);
+        assert!(record.cleared);
         assert_eq!(record.gated.stale, 100);
+        assert_eq!(meter.cache.age_secs(later), Some(0));
+    }
+
+    #[test]
+    fn recording_past_the_stamp_range_starts_a_new_base() {
+        let meter = meter();
+        meter.record_bundle(&bundle([(contract(7), vec![(1, 1, 2)])]), 1, NOW);
+        let base = meter.cache.base_hour().unwrap();
+        let past = (base + StaleStorageCache::MAX_STAMP_HOURS + 1) * HOUR;
+        // Keep recording within the gap limit so only the stamp range forces the clear.
+        meter.cache.last_recorded_hour.store(past / HOUR, Ordering::Relaxed);
+        let record = meter.record_bundle(&bundle([(contract(8), vec![(1, 1, 2)])]), 1, past);
+        assert!(record.cleared);
+        let key = meter.cache.region_key(&keccak256(contract(8)), &word(1));
+        assert_eq!(meter.cache.age_hours(key, past / HOUR), Some(0));
     }
 
     #[cfg(feature = "metrics")]
@@ -1844,6 +1931,47 @@ mod tests {
         tracker.commit(&TxHash::ZERO);
         // A later transaction rewriting the same slots adds nothing to the block count.
         assert_eq!(tracker.evaluate(&both).stale_block, 0);
+    }
+
+    #[test]
+    fn a_departed_region_stays_stale_while_other_slots_keep_recording() {
+        let meter = meter();
+        meter.record_bundle(&bundle([(contract(7), vec![(1, 1, 2)])]), 1, NOW);
+        let departed = meter.cache.region_key(&keccak256(contract(7)), &word(1));
+        // Other contracts keep writing every 12 hours; the departed region is never refreshed.
+        let mut hour = 0;
+        for gap in [255, 256, 510, 765] {
+            while hour + 12 <= gap {
+                hour += 12;
+                meter.record_bundle(
+                    &bundle([(contract(8), vec![(hour, 1, 2)])]),
+                    1,
+                    NOW + hour * HOUR,
+                );
+            }
+            assert_eq!(meter.cache.age_hours(departed, NOW_HOUR + gap), None, "gap of {gap} hours");
+            let mut tracker = meter.block_tracker(2, NOW + gap * HOUR);
+            let rewrite = state((0..70).map(|slot| (contract(7), slot + 1, 1, 2)));
+            assert_eq!(tracker.evaluate(&rewrite).stale_transaction, 70, "gap of {gap} hours");
+        }
+    }
+
+    #[test]
+    fn recording_classifies_trie_siblings_against_the_cache_before_the_bundle() {
+        let meter = meter();
+        let pairs = sibling_pairs(40);
+        let forward: Vec<_> = pairs.iter().flat_map(|&(a, b)| [(a, 1, 2), (b, 1, 2)]).collect();
+        let record = meter.record_bundle(&bundle([(contract(7), forward)]), 1, NOW);
+        assert_eq!((record.gated.stale, record.ungated.stale), (80, 80));
+        assert_eq!(record.gated.le_1h, 0);
+
+        // A sibling written in an earlier bundle makes the slot recent, whatever the order.
+        let again = meter.record_bundle(
+            &bundle([(contract(7), pairs.iter().map(|&(_, b)| (b, 2, 3)).collect())]),
+            1,
+            NOW + HOUR,
+        );
+        assert_eq!((again.ungated.le_1h, again.ungated.stale), (40, 0));
     }
 
     #[tokio::test]

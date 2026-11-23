@@ -392,7 +392,7 @@ fn block_bundle(states: &[EvmState]) -> BundleState {
 /// - `builder_*`: [`BlockStaleTracker::evaluate`] and [`BlockStaleTracker::commit`] for every
 ///   transaction, on the payload builder's commit path.
 /// - `recorder_*`: [`StaleStorageMeter::record_bundle`] for the canonical block, including its
-///   incremental sweep, on the canonical-state task.
+///   occupancy sample, on the canonical-state task.
 /// - `typical`: [`typical_block_states`]; `xen`: the same plus one 725-slot claim batch.
 fn bench_stale_storage_block(c: &mut Criterion) {
     let meter = filled_meter();

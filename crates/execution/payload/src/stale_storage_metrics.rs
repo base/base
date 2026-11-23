@@ -22,7 +22,7 @@ base_metrics::define_metrics! {
     cache_writes_total: counter,
     #[describe("Stale-storage cache writes that evicted another slot still within the window, so it reads stale early; raise the cache size when this exceeds about 1% of cache_writes_total")]
     cache_unexpired_evictions_total: counter,
-    #[describe("Share of stale-storage cache entries within the window, sampled from the sets the last sweep visited")]
+    #[describe("Share of stale-storage cache entries within the window, sampled from 64 sets per recorded canonical notification")]
     #[no_zero]
     cache_occupancy_ratio: gauge,
     #[describe("Canonical-state notifications the stale-storage recorder missed because its stream lagged")]

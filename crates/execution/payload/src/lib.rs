@@ -35,7 +35,7 @@ pub use stale_storage::{
     STALE_STORAGE_FIRST_DAY_LIMIT, STALE_STORAGE_FIRST_HOUR_LIMIT, STALE_STORAGE_LIMIT,
     STALE_STORAGE_MAX_CACHE_MIB, STALE_STORAGE_MIN_CACHE_MIB, STALE_STORAGE_TRIE_PREFIX_NIBBLES,
     STALE_STORAGE_WINDOW_HOURS, StaleAgeBuckets, StaleStorageCache, StaleStorageCacheSet,
-    StaleStorageCacheWrite, StaleStorageLimits, StaleStorageMeter, StaleStorageSweep,
+    StaleStorageCacheWrite, StaleStorageLimits, StaleStorageMeter, StaleStorageOccupancy,
     StaleTxSample, StaleTxVerdict,
 };
 mod stale_storage_metrics;
