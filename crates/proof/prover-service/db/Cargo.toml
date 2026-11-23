@@ -13,7 +13,7 @@ base-prover-service-protocol.workspace = true
 
 # database
 futures.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-native-tls"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-rustls-ring"] }
 
 # serialization
 serde_json.workspace = true

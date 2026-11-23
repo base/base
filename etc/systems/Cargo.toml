@@ -125,7 +125,7 @@ serde_json = { workspace = true, features = ["std", "raw_value"] }
 serde = { workspace = true, features = ["derive", "std"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-rustls-ring"] }
 
 [features]
 default = [ "upgrade-signal" ]
@@ -158,7 +158,7 @@ base-shadow-indexer-db.workspace = true
 reth-primitives-traits.workspace = true
 
 # database
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-rustls-ring"] }
 
 # misc
 anyhow.workspace = true

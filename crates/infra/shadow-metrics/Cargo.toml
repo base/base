@@ -20,7 +20,7 @@ serde = { workspace = true, features = ["derive"] }
 axum = { workspace = true, features = ["json", "query"] }
 anyhow = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "tls-native-tls"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "tls-rustls-ring"] }
 
 [dev-dependencies]
 chrono.workspace = true

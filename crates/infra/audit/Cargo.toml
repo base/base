@@ -26,7 +26,7 @@ serde = { workspace = true, features = ["std", "derive"] }
 base-metrics = { workspace = true, features = ["metrics"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-rustls-ring"] }
 
 [dev-dependencies]
 testcontainers.workspace = true
