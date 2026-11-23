@@ -529,6 +529,15 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         self.state_sender.send_replace(self.state);
     }
 
+    /// Commits labels after the serialized owner has received VALID for this exact forkchoice.
+    ///
+    /// This sends no RPC. The caller must not use execution-only target confirmation to invent
+    /// safe or finalized labels. Historical startup calls this only after its label FCU is VALID.
+    pub fn accept_confirmed_startup(&mut self, update: EngineSyncStateUpdate) {
+        self.state.el_sync_finished = true;
+        self.seed_state(update);
+    }
+
     /// Probes the EL with a bare FCU to determine whether a snap-sync is in progress.
     ///
     /// Unlike [`Engine::reset`], this does not search for a sync starting point —

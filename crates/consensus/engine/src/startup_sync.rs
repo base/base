@@ -52,6 +52,11 @@ impl SequencerStartupSync {
         Self { target, status: StartupSyncStatus::Pending }
     }
 
+    /// Returns the caller-authenticated target whose execution is being confirmed.
+    pub const fn target(&self) -> L2BlockInfo {
+        self.target
+    }
+
     /// Returns execution readiness only, without authorizing leadership or block production.
     pub const fn status(&self) -> StartupSyncStatus {
         self.status

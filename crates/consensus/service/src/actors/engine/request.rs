@@ -42,6 +42,10 @@ pub enum EngineClientError {
     #[error("EL sync or canonical catch-up in progress; reset deferred")]
     ELSyncing,
 
+    /// Historical startup has not completed its target confirmation and derivation handoff.
+    #[error("historical execution startup is pending")]
+    HistoricalStartupPending,
+
     /// Shadow reconciliation is unavailable in this mode.
     #[error("shadow reconciliation is disabled")]
     ShadowReconciliationDisabled,

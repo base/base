@@ -106,6 +106,8 @@ where
     /// Recent canonical payloads retained during catch-up, and the largest gap between the unsafe
     /// head and external gossip still admitted while regular. Both span the same wall-clock window.
     catchup_capacity: usize,
+    /// Opt-in, caller-authenticated historical startup, completed before ordinary routing.
+historical_startup: Option<Box<base_consensus_engine::SequencerStartupSync>>,
 }
 
 impl<EngineClient_, DerivationClient>
@@ -137,6 +139,100 @@ where
             sequencer_kind: mode.into(),
             unsafe_head_tx,
             catchup_capacity,
+            historical_startup: None,
+        }
+    }
+
+    /// Opts a stopped regular coordinator into historical startup at an authenticated target.
+    ///
+    /// Call before `start`. The owner must supply a trusted target and no outstanding build jobs.
+    /// This Rust API is intentionally not a new public RPC or a default change for existing nodes.
+    pub fn begin_historical_startup(&mut self, target: base_protocol::L2BlockInfo) -> Result<(), EngineClientError> {
+        if !self.sequencer_stopped || self.sequencer_kind != SequencerKind::Regular {
+            return Err(EngineClientError::RequestError("historical startup requires a stopped regular sequencer".into()));
+        }
+self.historical_startup = Some(Box::new(base_consensus_engine::SequencerStartupSync::new(target)));
+        Ok(())
+    }
+
+    /// Confirms only the selected target, independently of the old engine readiness latch.
+    pub async fn probe_historical_startup(&mut self, remaining: Duration) -> Result<base_consensus_engine::StartupSyncStatus, base_consensus_engine::StartupSyncError> {
+        self.historical_startup.as_mut().expect("historical startup selected")
+            .probe(self.processor.client().as_ref(), remaining).await
+    }
+
+    /// Services startup requests without allowing ordinary engine queue work to execute.
+    async fn handle_historical_startup_request(&mut self, request: EngineActorRequest) {
+        match request {
+            EngineActorRequest::PrepareSequencerStart { result_tx, .. } => {
+                let _ = result_tx.send(Err(EngineClientError::HistoricalStartupPending)).await;
+            }
+            EngineActorRequest::BuildRequest(request) => {
+                let _ = request.result_tx.send(Err(base_consensus_engine::BuildTaskError::EngineBuildError(
+                    base_consensus_engine::EngineBuildError::EngineSyncing,
+                ))).await;
+            }
+            EngineActorRequest::ResetRequest(request) => {
+                let _ = request.result_tx.send(Err(EngineClientError::HistoricalStartupPending)).await;
+            }
+            EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
+                // Only this request has already passed the network actor's signer authentication.
+                let phase = self.historical_startup.as_mut().expect("startup request routing");
+                if envelope.execution_payload.block_number() >= phase.target().block_info.number {
+                    match base_protocol::L2BlockInfo::from_payload_and_genesis(
+                        envelope.execution_payload, envelope.parent_beacon_block_root, &self.processor.rollup().genesis,
+                    ) {
+                        Ok(target) if target != phase.target() => phase.set_target(target),
+                        Ok(_) => {}
+                        Err(error) => warn!(target: "engine", %error, "Ignoring undecodable historical startup target"),
+                    }
+                }
+            }
+            // Derivation is not running and no local job may exist at cold-start entry. Dropping
+            // other requests closes response channels without executing FCU or newPayload. Normal
+            // derivation is reset at handoff, so stale unsolicited signals are not replayed.
+            _ => {}
+        }
+    }
+
+    /// Exclusively owns coordinator engine calls through target confirmation and handoff.
+    async fn run_historical_startup(&mut self, requests: &mut mpsc::Receiver<EngineActorRequest>) -> Result<(), EngineError> {
+        if let Some(conductor) = &self.conductor {
+            let leader = time::timeout(SEQUENCER_EL_SYNC_PROBE_INTERVAL, conductor.leader()).await
+                .map_err(|_| EngineError::BootstrapHeadQuery("historical startup leadership query timed out".into()))?
+                .map_err(|error| EngineError::BootstrapHeadQuery(error.to_string()))?;
+            if leader {
+                return Err(EngineError::BootstrapHeadQuery("historical startup requires a non-leader".into()));
+            }
+        }
+        let deadline = TokioInstant::now() + Duration::from_secs(600);
+        let mut interval = time::interval(SEQUENCER_EL_SYNC_PROBE_INTERVAL);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                request = requests.recv() => {
+                    // Ordinary engine routing is inaccessible while this loop owns requests.
+                    let request = request.ok_or(EngineError::ChannelClosed)?;
+                    self.handle_historical_startup_request(request).await;
+                }
+                _ = time::sleep_until(deadline) => {
+                    return Err(EngineError::BootstrapHeadQuery("historical startup deadline exceeded".into()));
+                }
+                _ = interval.tick() => {
+                    let remaining = deadline.saturating_duration_since(TokioInstant::now()).min(SEQUENCER_EL_SYNC_PROBE_INTERVAL);
+                    let status = self.probe_historical_startup(remaining).await
+                        .map_err(|error| EngineError::BootstrapHeadQuery(error.to_string()))?;
+                    if status == base_consensus_engine::StartupSyncStatus::ExecutionReady {
+                        let target = self.historical_startup.as_ref().expect("startup phase").target();
+                        time::timeout_at(deadline, self.processor.handoff_historical_startup(target)).await
+                            .map_err(|_| EngineError::BootstrapHeadQuery("historical startup handoff timed out".into()))??;
+                        // Normal routing starts only after canonical reset and completion delivery.
+                        self.historical_startup = None;
+                        self.complete_startup(target);
+                        return Ok(());
+                    }
+                }
+            }
         }
     }
 
@@ -187,6 +283,9 @@ where
         expected_hash: B256,
     ) -> Result<(), EngineClientError> {
         let sync_state = self.processor.engine_state().sync_state;
+        if self.historical_startup.is_some() {
+            return Err(EngineClientError::HistoricalStartupPending);
+        }
         let head = sync_state.unsafe_head();
         if expected_hash == B256::ZERO || head.block_info.hash == B256::ZERO {
             return Err(EngineClientError::RequestError(
@@ -504,6 +603,7 @@ where
     ) -> JoinHandle<Result<(), EngineError>> {
         tokio::spawn(async move {
             // Bootstrap: pre-populate the unsafe_head_tx watch channel so that external callers
+            // An explicitly selected historical phase owns the connection before bootstrap.
             // (admin_startSequencer, sync-status RPC) never observe a zero hash.
             //
             // We gate on whether reth's current head is at the rollup genesis:
@@ -518,6 +618,10 @@ where
             //     enter an infinite reset loop. Instead we seed the watch channel from reth's
             //     current head directly; derivation will issue its own FCU once the first Reset
             //     task arrives.
+            let historical_startup_selected = self.historical_startup.is_some();
+            if historical_startup_selected {
+                self.run_historical_startup(&mut request_channel).await?;
+            }
             let opt_head = self
                 .processor
                 .client()
@@ -531,7 +635,7 @@ where
                 .is_none_or(|head| head.block_info.hash == self.processor.rollup().genesis.l2.hash);
 
             let bootstrap_role = self.resolve_bootstrap_role().await;
-            if matches!(self.sequencer_state, SequencerEngineState::Regular) {
+            if !historical_startup_selected && matches!(self.sequencer_state, SequencerEngineState::Regular) {
                 self.sequencer_state = match (self.sequencer_kind, bootstrap_role, at_genesis) {
                     (SequencerKind::Shadow, _, _)
                     | (_, BootstrapRole::ConductorFollower, false) => {
@@ -544,7 +648,9 @@ where
                     }
                 };
             }
-            if self.sequencer_kind == SequencerKind::Isolated {
+            if historical_startup_selected {
+                // Historical startup already initialized labels and delivered derivation completion.
+            } else if self.sequencer_kind == SequencerKind::Isolated {
                 // Follow validator EL sync: a follower probe can declare sync at the local head
                 // before canonical gossip arrives.
                 self.processor.bootstrap_validator(opt_head).await;
@@ -944,6 +1050,147 @@ mod tests {
         );
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
         SequencerEngineRequestCoordinator::new(processor, mode, conductor, stopped, unsafe_head_tx)
+    }
+
+    /// Historical startup must gate activation even if the old EL completion latch is true.
+    #[tokio::test]
+    async fn historical_startup_gate_is_independent_of_engine_latch() {
+        let mut coordinator = coordinator(false, true, None);
+        let target = test_block_info(100);
+        coordinator.begin_historical_startup(target).expect("stopped regular sequencer accepts a startup target");
+        assert!(matches!(coordinator.prepare_sequencer_start(target.block_info.hash), Err(EngineClientError::HistoricalStartupPending)), "activation must reject a pending target");
+        assert!(coordinator.probe_historical_startup(Duration::ZERO).await.is_err(), "an exhausted budget must not confirm startup");
+        assert!(matches!(coordinator.prepare_sequencer_start(target.block_info.hash), Err(EngineClientError::HistoricalStartupPending)), "failed probe must leave activation gated");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "no FCU may escape an expired budget");
+    }
+
+    /// The startup request router must reject mutations without reaching the execution client.
+    #[tokio::test]
+    async fn historical_startup_router_serializes_engine_ownership() {
+        let mut coordinator = coordinator(false, true, None);
+        let target = test_block_info(100);
+        coordinator.begin_historical_startup(target).expect("startup target");
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        coordinator.handle_historical_startup_request(EngineActorRequest::BuildRequest(Box::new(crate::BuildRequest {
+            attributes: TestAttributesBuilder::new().with_parent(target).build(),
+            result_tx, otel_cx: Default::default(),
+        }))).await;
+        assert!(matches!(result_rx.recv().await.unwrap(), Err(base_consensus_engine::BuildTaskError::EngineBuildError(base_consensus_engine::EngineBuildError::EngineSyncing))), "building must return the named syncing error");
+        coordinator.handle_historical_startup_request(EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(Box::new(payload(101, 9)))).await;
+        coordinator.handle_historical_startup_request(EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(Box::new(50))).await;
+        assert!(coordinator.processor.client().last_new_payload_v2().await.is_none(), "admin inserts must not interleave with startup FCU");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "build and finalization must not send an FCU");
+    }
+
+    /// A previously latched engine still waits for this target and completes delivery before release.
+    #[tokio::test]
+    async fn historical_startup_valid_handoff_releases_gate_after_derivation_delivery() {
+        let old = test_block_info(100);
+        let attributes = TestAttributesBuilder::new().with_parent(test_block_info(999))
+            .with_transactions(vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())]).build();
+        let block = base_consensus_engine::test_utils::matching_rpc_block(&attributes);
+        let target = L2BlockInfo::from_block_and_genesis(
+            &block.clone().into_consensus()
+                .map_transactions(|tx| tx.inner.inner.into_inner()), &RollupConfig::default().genesis,
+        ).expect("fixture contains an L1 info deposit");
+        let safe = target;
+        let state = TestEngineStateBuilder::new().with_unsafe_head(old).with_safe_head(safe)
+            .with_finalized_head(test_block_info(80)).with_el_sync_finished(true).build();
+        let client = Arc::new(test_engine_client_builder()
+            .with_block_info_by_tag(BlockNumberOrTag::Latest, target)
+            .with_l2_block(BlockNumberOrTag::Latest.into(), block.clone())
+            .with_l2_block(BlockNumberOrTag::Safe.into(), block.clone())
+            .with_l2_block(BlockNumberOrTag::Finalized.into(), block)
+            .with_l1_block(0u64.into(), Default::default())
+            .with_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None }, payload_id: None }).build());
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_send_signal().times(1).returning(|_| Ok(()));
+        derivation.expect_send_new_engine_safe_head().times(1).withf(move |actual| *actual == safe).returning(|_| Ok(()));
+        derivation.expect_notify_sync_completed().times(1).withf(move |actual| *actual == safe).returning(|_| Ok(()));
+        let (state_tx, _) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0);
+        // Real sync-start selection must retain the safe/finalized labels supplied by this EL.
+        let processor = EngineProcessor::new(Arc::clone(&client), Arc::new(RollupConfig::default()), derivation, Engine::new(state, state_tx, queue_tx));
+        let (head_tx, _) = watch::channel(old);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(processor, NodeOperatingMode::Sequencer, None, true, head_tx);
+        coordinator.begin_historical_startup(target).expect("startup target");
+        assert!(matches!(coordinator.prepare_sequencer_start(old.block_info.hash), Err(EngineClientError::HistoricalStartupPending)), "old VALID latch must not authorize activation");
+        let (_tx, mut rx) = mpsc::channel(4);
+        coordinator.run_historical_startup(&mut rx).await.expect("VALID and derivation delivery complete handoff");
+        assert!(coordinator.historical_startup.is_none(), "the gate releases only after successful delivery");
+        assert_eq!(coordinator.processor.engine_state().sync_state.unsafe_head(), target, "normal routing must inherit the confirmed target");
+        assert!(coordinator.prepare_sequencer_start(target.block_info.hash).is_ok(), "activation may proceed at the handed-off target");
+        assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), 2, "handoff requires target VALID then one label FCU, independently of the old latch");
+    }
+
+    /// Confirmation and retargeting never consult or modify the old readiness latch.
+    #[tokio::test]
+    async fn historical_startup_retarget_syncing_and_error_remain_gated() {
+        let mut coordinator = coordinator(false, true, None);
+        let first = test_block_info(100);
+        let second = test_block_info(200);
+        let client = Arc::clone(coordinator.processor.client());
+        coordinator.begin_historical_startup(first).expect("initial target");
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None }, payload_id: None }).await;
+        assert_eq!(coordinator.probe_historical_startup(Duration::from_secs(1)).await.unwrap(), base_consensus_engine::StartupSyncStatus::ExecutionReady, "VALID confirms execution but not handoff");
+        assert!(matches!(coordinator.prepare_sequencer_start(first.block_info.hash), Err(EngineClientError::HistoricalStartupPending)), "raw VALID alone must not authorize activation");
+        coordinator.begin_historical_startup(second).expect("replacement target");
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }, payload_id: None }).await;
+        assert_eq!(coordinator.probe_historical_startup(Duration::from_secs(1)).await.unwrap(), base_consensus_engine::StartupSyncStatus::Pending, "new target SYNCING must be pending");
+        client.storage().write().await.fork_choice_updated_v3_response = None;
+        assert!(coordinator.probe_historical_startup(Duration::from_secs(1)).await.is_err(), "RPC failure must fail closed");
+        assert!(matches!(coordinator.prepare_sequencer_start(second.block_info.hash), Err(EngineClientError::HistoricalStartupPending)), "retarget and RPC failure cannot reuse earlier VALID");
+        assert!(!coordinator.processor.engine_state().el_sync_finished, "raw probes must not set the old latch");
+        let requests = client.storage().read().await.fork_choice_updated_v3_requests.clone();
+        assert_eq!(requests.len(), 3, "each explicit probe must reach EL exactly once");
+        assert_eq!(requests[0].0.head_block_hash, first.block_info.hash, "first probe target");
+        assert_eq!(requests[1].0.head_block_hash, second.block_info.hash, "retargeted SYNCING probe");
+        assert_eq!(requests[2].0.head_block_hash, second.block_info.hash, "failed reconfirmation target");
+    }
+
+    /// The real coordinator task enters startup before ordinary bootstrap and engine draining.
+    #[tokio::test]
+    async fn historical_startup_task_rejects_build_and_admin_start() {
+        let mut coordinator = coordinator(false, true, None);
+        let target = test_block_info(1000);
+        let client = Arc::clone(coordinator.processor.client());
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }, payload_id: None }).await;
+        coordinator.begin_historical_startup(target).expect("inactive startup target");
+        let (tx, rx) = mpsc::channel(8);
+        let task = coordinator.start(rx);
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        tx.send(EngineActorRequest::BuildRequest(Box::new(crate::BuildRequest { attributes: TestAttributesBuilder::new().with_parent(target).build(), result_tx, otel_cx: Default::default() }))).await.expect("build request");
+        assert!(matches!(tokio::time::timeout(Duration::from_secs(1), result_rx.recv()).await.unwrap().unwrap(), Err(base_consensus_engine::BuildTaskError::EngineBuildError(base_consensus_engine::EngineBuildError::EngineSyncing))), "real task must reject a build while startup owns EL");
+        tx.send(EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(Box::new(payload(1001, 8)))).await.expect("admin payload");
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        tx.send(EngineActorRequest::PrepareSequencerStart { expected_hash: target.block_info.hash, result_tx }).await.expect("activation request");
+        assert!(matches!(tokio::time::timeout(Duration::from_secs(1), result_rx.recv()).await.unwrap().unwrap(), Err(EngineClientError::HistoricalStartupPending)), "real activation path must stay gated");
+        assert!(client.last_new_payload_v2().await.is_none(), "admin newPayload must not interleave");
+        assert!(client.storage().read().await.fork_choice_updated_v3_requests.iter().all(|(fc, attributes)| fc.head_block_hash == target.block_info.hash && !attributes), "every engine call during startup must be a target-only FCU");
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled(), "the test must stop its coordinator task");
+    }
+
+    /// A configured leader cannot enter the inactive phase, even when locally stopped.
+    #[tokio::test]
+    async fn historical_startup_rejects_conductor_leader_before_engine_calls() {
+        let mut conductor = MockConductor::new();
+        conductor.expect_leader().times(1).returning(|| Ok(true));
+        let mut coordinator = coordinator(false, true, Some(Arc::new(conductor)));
+        coordinator.begin_historical_startup(test_block_info(100)).expect("stopped target");
+        let (_tx, mut rx) = mpsc::channel(1);
+        assert!(coordinator.run_historical_startup(&mut rx).await.is_err(), "a leader must use a separate initialization path");
+        assert!(coordinator.historical_startup.is_some(), "failed entry must not release the gate");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "leadership admission runs before any engine call");
+    }
+
+    /// Active or private sequencing must not enter a canonical historical startup phase.
+    #[test]
+    fn historical_startup_requires_stopped_regular_sequencer() {
+        let mut active = coordinator(false, false, None);
+        assert!(active.begin_historical_startup(test_block_info(100)).is_err(), "an active sequencer cannot enter startup");
+        let mut shadow = coordinator(true, true, None);
+        assert!(shadow.begin_historical_startup(test_block_info(100)).is_err(), "a shadow sequencer cannot enter regular startup");
     }
 
     fn payload(number: u64, hash: u8) -> BaseExecutionPayloadEnvelope {
