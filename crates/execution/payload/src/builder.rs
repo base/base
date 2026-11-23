@@ -3181,7 +3181,7 @@ mod tests {
             let invalid = invalid.lock().unwrap().len();
             (included_tx_count(outcome), evicted.lock().unwrap().clone(), invalid)
         };
-        let metered = build(Some(StaleStorageMeter::new(12)));
+        let metered = build(Some(StaleStorageMeter::new(1 << 16)));
         let unmetered = build(None);
 
         assert!(metered.0 > 0);

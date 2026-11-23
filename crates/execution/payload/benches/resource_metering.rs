@@ -6,9 +6,9 @@ use alloy_primitives::{Address, TxHash, U256};
 use base_bundles::OpcodeGas;
 use base_execution_payload_builder::{
     BlockStaleTracker, NoopMeteringProvider, ResourceMeteringConfig, ResourceMeteringDimension,
-    ResourceMeteringOperation, ResourceMeteringSchedule, ResourceSample,
-    STALE_STORAGE_CONTRACT_SLOT_GATE, STALE_STORAGE_EPOCH_SECONDS, STALE_STORAGE_TABLE_LOG2,
-    STALE_STORAGE_WINDOW_HOURS, StaleStorageMeter, StaleStorageTable,
+    ResourceMeteringOperation, ResourceMeteringSchedule, ResourceSample, STALE_STORAGE_CACHE_MIB,
+    STALE_STORAGE_CACHE_WAYS, STALE_STORAGE_CONTRACT_SLOT_GATE, STALE_STORAGE_EPOCH_SECONDS,
+    StaleStorageCache, StaleStorageMeter,
 };
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use revm::state::{Account, EvmState, EvmStorageSlot, TransactionId};
@@ -114,16 +114,19 @@ fn bench_check_executed_usage(c: &mut Criterion) {
 /// Block timestamp for the stale-storage benchmarks.
 const BLOCK_TIMESTAMP: u64 = 1_800_000_000;
 
-/// A production-size table ([`STALE_STORAGE_TABLE_LOG2`]) with every entry stamped two windows
-/// before the block, so probes read resident memory and every probed slot is stale.
+/// A default-size ([`STALE_STORAGE_CACHE_MIB`]) cache with every entry live two hours before
+/// the block, under fingerprints no probed slot has, so each probe scans a full set and misses
+/// and each write evicts. That is the steady state of a full cache and its slowest path.
 fn filled_meter() -> StaleStorageMeter {
-    let table = StaleStorageTable::new(STALE_STORAGE_TABLE_LOG2);
-    let stamped_hour =
-        BLOCK_TIMESTAMP / STALE_STORAGE_EPOCH_SECONDS - 2 * STALE_STORAGE_WINDOW_HOURS;
-    for key in 0..table.len() as u64 {
-        table.stamp(key, stamped_hour);
+    let meter = StaleStorageMeter::with_cache_mib(STALE_STORAGE_CACHE_MIB);
+    let hour = BLOCK_TIMESTAMP / STALE_STORAGE_EPOCH_SECONDS - 2;
+    let sets = (meter.cache.len() / STALE_STORAGE_CACHE_WAYS) as u64;
+    for set in 0..sets {
+        for fingerprint in 1..=STALE_STORAGE_CACHE_WAYS as u64 {
+            meter.cache.record((fingerprint << StaleStorageCache::FINGERPRINT_SHIFT) | set, hour);
+        }
     }
-    StaleStorageMeter { table: Arc::new(table) }
+    meter
 }
 
 /// One contract with `count` updated pre-existing slots, half of them cleared, as in a batched
@@ -213,5 +216,37 @@ fn bench_stale_storage(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_check_executed_usage, bench_stale_storage);
+/// Cost of one recency-cache probe and one recorded write against the full default-size cache.
+/// Each operation uses a fresh pseudo-random key, so it lands in a random set of the default
+/// cache with a fingerprint no entry has: a full-set miss on memory that is mostly not in the
+/// CPU cache.
+fn bench_stale_storage_cache(c: &mut Criterion) {
+    /// Odd multiplier that spreads consecutive counters over every key bit.
+    const SPREAD: u64 = 0x9e37_79b9_7f4a_7c15;
+    let meter = filled_meter();
+    let now_hour = BLOCK_TIMESTAMP / STALE_STORAGE_EPOCH_SECONDS;
+    let mut group = c.benchmark_group("stale_storage_cache");
+    group.bench_function("probe_full_set_miss", |b| {
+        let mut count = 0u64;
+        b.iter(|| {
+            count += 1;
+            black_box(meter.cache.is_stale(black_box(count.wrapping_mul(SPREAD)), now_hour))
+        });
+    });
+    group.bench_function("record_miss_evicting", |b| {
+        let mut count = 0u64;
+        b.iter(|| {
+            count += 1;
+            black_box(meter.cache.record(black_box(count.wrapping_mul(SPREAD)), now_hour))
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_check_executed_usage,
+    bench_stale_storage,
+    bench_stale_storage_cache
+);
 criterion_main!(benches);

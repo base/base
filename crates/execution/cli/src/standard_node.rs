@@ -10,9 +10,10 @@ use base_execution_base_tx_rpc_node::TxBaseRpcExtension;
 use base_execution_payer_rpc::{PayerRpcConfig, PayerRpcExtension};
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
-    ResourceMeteringConfig, STALE_STORAGE_CONTRACT_SLOT_GATE, STALE_STORAGE_FIRST_DAY_LIMIT,
-    STALE_STORAGE_FIRST_HOUR_LIMIT, STALE_STORAGE_LIMIT, STALE_STORAGE_TABLE_LOG2,
-    STALE_STORAGE_WINDOW_HOURS, SharedMeteringProvider, StaleStorageMeter,
+    ResourceMeteringConfig, STALE_STORAGE_CACHE_MIB, STALE_STORAGE_CONTRACT_SLOT_GATE,
+    STALE_STORAGE_FIRST_DAY_LIMIT, STALE_STORAGE_FIRST_HOUR_LIMIT, STALE_STORAGE_LIMIT,
+    STALE_STORAGE_MAX_CACHE_MIB, STALE_STORAGE_MIN_CACHE_MIB, STALE_STORAGE_WINDOW_HOURS,
+    SharedMeteringProvider, StaleStorageMeter,
 };
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
@@ -138,12 +139,12 @@ impl Default for ResourceMeteringArgs {
 /// The meter counts, for each transaction the native payload builder commits, the storage slots
 /// it rewrites that no canonical block wrote within the window, in contracts past a changed-slot
 /// gate. Many such slots make the serial state root slow. It logs and counts what age-tiered
-/// limits would have flagged and never excludes a transaction. The table is stamped from
-/// canonical-state notifications on every node that runs the payload builder, starts empty at
-/// startup, and is not saved.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::Args)]
+/// limits would have flagged and never excludes a transaction. The recency cache is stamped
+/// from canonical-state notifications on every node that runs the payload builder, starts empty
+/// at startup, and is not saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::Args)]
 pub struct StaleStorageArgs {
-    /// Enables the log-only stale-storage meter. Allocates a one-gibibyte table.
+    /// Enables the log-only stale-storage meter.
     #[arg(
         id = "stale_storage_enabled",
         long = "payload.stale-storage-metering",
@@ -151,17 +152,51 @@ pub struct StaleStorageArgs {
         default_value = "false"
     )]
     pub enabled: bool,
+
+    /// Size of the stale-storage recency cache in mebibytes: a power of two from 8 to 4096. Raise it
+    /// when unexpired evictions exceed about 1% of cache writes.
+    #[arg(
+        id = "stale_storage_cache_mib",
+        long = "payload.stale-storage-cache-mib",
+        env = "PAYLOAD_STALE_STORAGE_CACHE_MIB",
+        default_value_t = STALE_STORAGE_CACHE_MIB,
+        value_parser = StaleStorageArgs::parse_cache_mib
+    )]
+    pub cache_mib: u32,
+}
+
+impl Default for StaleStorageArgs {
+    fn default() -> Self {
+        Self { enabled: false, cache_mib: STALE_STORAGE_CACHE_MIB }
+    }
 }
 
 impl StaleStorageArgs {
+    /// Parses a cache size in mebibytes. Sizes that are not a power of two are rejected rather than
+    /// rounded, so the configured size is the allocated size.
+    pub fn parse_cache_mib(value: &str) -> Result<u32, String> {
+        let mib: u32 = value.parse().map_err(|error| format!("{error}"))?;
+        if (STALE_STORAGE_MIN_CACHE_MIB..=STALE_STORAGE_MAX_CACHE_MIB).contains(&mib)
+            && mib.is_power_of_two()
+        {
+            Ok(mib)
+        } else {
+            Err(format!(
+                "must be a power of two from {STALE_STORAGE_MIN_CACHE_MIB} to \
+                 {STALE_STORAGE_MAX_CACHE_MIB} MiB"
+            ))
+        }
+    }
+
     /// Allocates the meter when enabled, or returns `None`.
     pub fn meter(&self) -> Option<StaleStorageMeter> {
         if !self.enabled {
             return None;
         }
-        let meter = StaleStorageMeter::new(STALE_STORAGE_TABLE_LOG2);
+        let meter = StaleStorageMeter::with_cache_mib(self.cache_mib);
         info!(
-            table_entries = meter.table.len(),
+            cache_mib = self.cache_mib,
+            cache_entries = meter.cache.len(),
             window_hours = STALE_STORAGE_WINDOW_HOURS,
             contract_slot_gate = STALE_STORAGE_CONTRACT_SLOT_GATE,
             limit = STALE_STORAGE_LIMIT,
@@ -1624,13 +1659,19 @@ mod tests {
     }
 
     #[test]
-    fn stale_storage_metering_is_the_only_stale_storage_flag() {
+    fn stale_storage_has_only_the_metering_and_cache_size_flags() {
         let command = CommandParser::<StaleStorageArgs>::command();
         let flags: Vec<_> = command
             .get_arguments()
             .filter_map(|arg| Some((arg.get_long()?, arg.get_env()?.to_str()?)))
             .collect();
-        assert_eq!(flags, [("payload.stale-storage-metering", "PAYLOAD_STALE_STORAGE_METERING")]);
+        assert_eq!(
+            flags,
+            [
+                ("payload.stale-storage-metering", "PAYLOAD_STALE_STORAGE_METERING"),
+                ("payload.stale-storage-cache-mib", "PAYLOAD_STALE_STORAGE_CACHE_MIB"),
+            ]
+        );
 
         let parse = |flags: &[&str]| {
             CommandParser::<StaleStorageArgs>::try_parse_from(["reth"].iter().chain(flags).copied())
@@ -1648,6 +1689,24 @@ mod tests {
             assert!(
                 parse(&["--payload.stale-storage-metering", removed, "12"]).is_err(),
                 "{removed} must not be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn the_stale_storage_cache_size_defaults_to_128_mib_and_is_validated() {
+        let meter = |flags: &[&str]| {
+            CommandParser::<StaleStorageArgs>::try_parse_from(
+                ["reth", "--payload.stale-storage-metering"].iter().chain(flags).copied(),
+            )
+            .map(|parsed| parsed.args.meter().expect("enabled").cache.len())
+        };
+        assert_eq!(meter(&[]).expect("default"), 128 << 18);
+        assert_eq!(meter(&["--payload.stale-storage-cache-mib", "8"]).expect("override"), 8 << 18);
+        for rejected in ["0", "4", "7", "12", "8192", "-8", "abc"] {
+            assert!(
+                meter(&["--payload.stale-storage-cache-mib", rejected]).is_err(),
+                "{rejected} MiB must be rejected"
             );
         }
     }

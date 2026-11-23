@@ -384,10 +384,22 @@ mod tests {
     }
 
     #[test]
-    fn stale_storage_metering_is_the_builders_only_stale_storage_flag() {
+    fn stale_storage_metering_and_cache_size_are_the_builders_stale_storage_flags() {
         let parsed = CommandParser::try_parse_from(["builder", "--payload.stale-storage-metering"])
             .expect("metering flag");
         assert!(parsed.args.stale_storage.enabled);
+        let cache_entries = |size: &str| {
+            CommandParser::try_parse_from([
+                "builder",
+                "--payload.stale-storage-metering",
+                "--payload.stale-storage-cache-mib",
+                size,
+            ])
+            .map(|parsed| parsed.args.stale_storage.meter().expect("enabled").cache.len())
+        };
+        assert_eq!(cache_entries("8").expect("override"), 8 << 18);
+        assert!(cache_entries("100").is_err());
+        assert!(cache_entries("8192").is_err());
         assert!(
             CommandParser::try_parse_from([
                 "builder",
