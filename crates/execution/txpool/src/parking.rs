@@ -102,8 +102,7 @@ pub type DormancyWake<T> = Box<dyn Fn(&EvmState) -> Vec<WokenLane<T>> + Send + S
 /// [`ParkedBestTransactions::with_held_at_source`]. The iterator asks it about the candidates
 /// that reach it.
 ///
-/// The pool calls every method of the hold with its store locks held, so an implementation
-/// must not call back into the pool.
+/// Snapshot filtering invokes the hold only after releasing both lane-store read guards.
 pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     /// Returns whether `transaction` is parked instead of yielded. Called for candidates that
     /// carry validity predicates and are not blocked by their lane: when the pool is
@@ -112,7 +111,7 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
 
     /// Records the time spent holding transactions back: by a pool snapshot from its first hold
-    /// until it has visited every lane, and by one `next` call from its first hold until it
+    /// until it has filtered the independent heads, and by one `next` call from its first hold until it
     /// found a candidate, which includes advancing past further held transactions. Snapshots
     /// and calls that hold nothing record nothing.
     fn record_duration(&mut self, duration: Duration);

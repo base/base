@@ -1583,7 +1583,7 @@ where
 
     /// [`Self::merged_best_transactions`] without the validity transactions `hold` holds, which
     /// are returned for the caller to park; see
-    /// [`TwoDNoncePool::best_transactions_holding`].
+    /// [`TwoDNoncePool::snapshot_lanes`].
     fn merged_best_transactions_holding(
         &self,
         attributes: BestTransactionsAttributes,
@@ -1599,17 +1599,12 @@ where
         // and a stale one leaves a validity head waiting, never released early.
         // The bookkeeping comes from the validity pool's incremental indexes,
         // so this costs the lanes that straddle stores, not the pool sizes.
-        let (sidecar, (validity, held), anchors, bridged) = {
+        let (sidecar, validity, anchors, bridged) = {
             let sidecar = self.sidecar.pool.read();
             let validity = self.validity.pool.read();
             (
                 sidecar.best_transactions(self.ordering.clone(), base_fee, false),
-                validity.best_transactions_holding(
-                    self.ordering.clone(),
-                    base_fee,
-                    skip_dormant,
-                    hold,
-                ),
+                validity.snapshot_lanes(skip_dormant, hold.is_some()),
                 validity.lanes_ahead_of_state().clone(),
                 self.bridged_descendants(&sidecar, &validity),
             )
@@ -1617,6 +1612,7 @@ where
         // Reth hands back a boxed iterator of a private type, so it is boxed
         // once more as a `MergeSource`: one allocation per build.
         let protocol = self.protocol_pool.best_transactions_with_attributes(attributes);
+        let (validity, held) = validity.rank(self.ordering.clone(), base_fee, hold);
         let merged = MergeBestTransactions::new(
             Box::new(protocol),
             Box::new(sidecar),
@@ -6876,6 +6872,31 @@ mod tests {
 
         assert!(build.promote(held));
         assert_eq!(build.next().map(|transaction| *transaction.hash()), Some(held));
+    }
+
+    #[tokio::test]
+    async fn snapshot_hold_does_not_block_store_writers() {
+        struct WriterProbe(IntegrationPool);
+        impl BestTransactionsHold<BasePooledTransaction> for WriterProbe {
+            fn hold(&mut self, _: &ValidPoolTransaction<BasePooledTransaction>) -> bool {
+                let _sidecar =
+                    self.0.sidecar.pool.try_write().expect("sidecar writer blocked by snapshot");
+                let _validity =
+                    self.0.validity.pool.try_write().expect("validity writer blocked by snapshot");
+                true
+            }
+
+            fn record_duration(&mut self, _: Duration) {}
+        }
+        let (pool, client) = build_integration_pool();
+        let hash = add(&pool, validity_1559(&funded_signer(&client), 0, 900)).await;
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            Some(Box::new(WriterProbe(pool.clone()))),
+            None,
+        );
+        assert!(build.promote(hash), "transaction was held before iteration");
+        assert_eq!(build.next().map(|tx| *tx.hash()), Some(hash));
     }
 
     /// A set-aside transaction is fetched from the pool when it is promoted, so one that left

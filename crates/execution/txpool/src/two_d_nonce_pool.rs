@@ -1707,52 +1707,31 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     where
         O: TransactionOrdering<Transaction = T>,
     {
-        self.best_transactions_holding(ordering, base_fee, skip_dormant, None).0
+        self.snapshot_lanes(skip_dormant, false).rank(ordering, base_fee, None).0
     }
 
-    /// Returns a best-transactions iterator snapshot without the candidates `hold` holds, and
-    /// what identifies those candidates.
-    ///
-    /// Only a candidate the iterator would hand straight to the hold of the
-    /// [`ParkedBestTransactions`] above it is offered to `hold` here: a nonce-free transaction
-    /// or the only pending member of a lane no other store sequences, priced at or above
-    /// `base_fee`. A held one is left out of the iterator and returned by hash and admission
-    /// instant, so the caller parks it without the iterator ranking and yielding it, or the
-    /// snapshot taking a reference to it. Every other candidate takes the iterator's
-    /// usual path: a lane with pending descendants, a lane that straddles stores, which the
-    /// merge sequences against the other store, and an underpriced transaction, which the
-    /// merge drops.
-    ///
-    /// [`ParkedBestTransactions`]: crate::ParkedBestTransactions
-    pub(crate) fn best_transactions_holding<O>(
+    /// Copies the pending runs and, for a build with a hold, separates independent heads.
+    /// Eligibility depends on the other stores' lane bookkeeping at this snapshot, not on
+    /// the pool's state when the hold runs after the store guards drop.
+    pub(crate) fn snapshot_lanes(
         &self,
-        ordering: O,
-        base_fee: u64,
         skip_dormant: bool,
-        hold: Option<&mut dyn BestTransactionsHold<T>>,
-    ) -> (BestTwoDTransactions<T, O>, Vec<HeldBestTransaction>)
-    where
-        O: TransactionOrdering<Transaction = T>,
-    {
-        let hold =
-            hold.map(|hold| SnapshotHold { hold, shared_lanes: &self.shared_lanes, base_fee });
+        with_hold: bool,
+    ) -> TwoDLaneSnapshot<T> {
+        let shared = with_hold.then_some(&self.shared_lanes);
         if !skip_dormant {
-            return BestTwoDTransactions::new(
+            return TwoDLaneSnapshot::new(
                 self.lanes.iter(),
                 self.nonce_free.values(),
                 self.protocol_nonce_lanes,
-                ordering,
-                base_fee,
-                hold,
+                shared,
             );
         }
-        BestTwoDTransactions::new(
+        TwoDLaneSnapshot::new(
             self.ready_lanes.iter().filter_map(|id| Some((id, self.lanes.get(id)?))),
-            self.ready_nonce_free.iter().filter_map(|replay_id| self.nonce_free.get(replay_id)),
+            self.ready_nonce_free.iter().filter_map(|id| self.nonce_free.get(id)),
             self.protocol_nonce_lanes,
-            ordering,
-            base_fee,
-            hold,
+            shared,
         )
     }
 
@@ -1986,35 +1965,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 }
 
-/// The hold a snapshot offers candidates to, with what decides which candidates it may hold.
-struct SnapshotHold<'a, T: BasePooledTx> {
-    hold: &'a mut dyn BestTransactionsHold<T>,
-    /// Lanes another store also holds transactions in.
-    shared_lanes: &'a HashSet<LaneId>,
-    /// Base fee of the block being built.
-    base_fee: u64,
-}
-
-impl<T: BasePooledTx> SnapshotHold<'_, T> {
-    /// Whether `head`, the head of `lane` or a nonce-free transaction when `lane` is `None`, is
-    /// held instead of offered; see [`TwoDNoncePool::best_transactions_holding`].
-    fn holds(
-        &mut self,
-        lane: Option<(&LaneId, &NonceLane<T>)>,
-        head: &ValidPoolTransaction<T>,
-    ) -> bool {
-        let sequenced_alone = lane.is_none_or(|(id, lane)| {
-            lane.has_single_pending()
-                && !lane.is_ahead_of_state()
-                && (self.shared_lanes.is_empty() || !self.shared_lanes.contains(id))
-        });
-        sequenced_alone
-            && !head.transaction.validity_conditions().is_empty()
-            && head.effective_tip_per_gas(self.base_fee).is_some()
-            && self.hold.hold(head)
-    }
-}
-
 /// Snapshot iterator over the current best transactions of the Base transaction sidecar.
 ///
 /// Each finite channel contributes its contiguous head and each nonce-free
@@ -2070,62 +2020,88 @@ impl<T: BasePooledTx> LaneIterator<T> {
     }
 }
 
-impl<T: BasePooledTx, O> BestTwoDTransactions<T, O>
-where
-    O: TransactionOrdering<Transaction = T>,
-{
-    /// Snapshots the pending run of every lane and every nonce-free transaction. With a `hold`,
-    /// the candidates it holds are returned instead of offered; see
-    /// [`TwoDNoncePool::best_transactions_holding`].
+/// Owned lane state. Ranking and hold callbacks need no pool guards.
+#[derive(Debug)]
+pub(crate) struct TwoDLaneSnapshot<T: BasePooledTx> {
+    lanes: Vec<LaneIterator<T>>,
+    independent: Vec<(LaneId, Arc<ValidPoolTransaction<T>>)>,
+    protocol_nonce_lanes: bool,
+}
+
+impl<T: BasePooledTx> TwoDLaneSnapshot<T> {
     fn new<'a>(
         lanes: impl Iterator<Item = (&'a LaneId, &'a NonceLane<T>)>,
         nonce_free: impl Iterator<Item = &'a Arc<ValidPoolTransaction<T>>>,
         protocol_nonce_lanes: bool,
-        ordering: O,
-        base_fee: u64,
-        mut hold: Option<SnapshotHold<'_, T>>,
-    ) -> (Self, Vec<HeldBestTransaction>)
+        shared: Option<&HashSet<LaneId>>,
+    ) -> Self
     where
         T: 'a,
     {
         let capacity = |(lower, upper): (usize, Option<usize>)| upper.unwrap_or(lower);
-        // A snapshot with a hold sets most lanes aside, so only one without a hold reserves a
-        // slot per lane.
-        let mut snapshot = Vec::with_capacity(match hold {
-            Some(_) => 0,
-            None => capacity(lanes.size_hint()) + capacity(nonce_free.size_hint()),
-        });
+        let count = capacity(lanes.size_hint()) + capacity(nonce_free.size_hint());
+        let mut snapshot = Self {
+            lanes: Vec::with_capacity(if shared.is_none() { count } else { 0 }),
+            independent: Vec::new(),
+            protocol_nonce_lanes,
+        };
+        for (id, lane) in lanes {
+            let Some(head) = lane.pending_head() else { continue };
+            if let Some(shared) = shared
+                && lane.has_single_pending()
+                && !lane.is_ahead_of_state()
+                && (shared.is_empty() || !shared.contains(id))
+            {
+                snapshot.independent.push((*id, Arc::clone(head)));
+            } else {
+                snapshot.lanes.push(LaneIterator::new(
+                    *id,
+                    Arc::clone(head),
+                    lane.pending_descendants(),
+                ));
+            }
+        }
+        for head in nonce_free {
+            let id = (head.sender(), TxBaseConstants::NONCE_KEY_MAX);
+            if shared.is_some() {
+                snapshot.independent.push((id, Arc::clone(head)));
+            } else {
+                snapshot.lanes.push(LaneIterator::new(id, Arc::clone(head), Vec::new()));
+            }
+        }
+        snapshot
+    }
+
+    /// Applies the hold to independently sequenced, sufficiently priced validity heads before
+    /// ranking. Held transactions retain only their hash and original admission instant.
+    pub(crate) fn rank<O: TransactionOrdering<Transaction = T>>(
+        self,
+        ordering: O,
+        base_fee: u64,
+        mut hold: Option<&mut dyn BestTransactionsHold<T>>,
+    ) -> (BestTwoDTransactions<T, O>, Vec<HeldBestTransaction>) {
+        let mut snapshot = self.lanes;
         let mut held = Vec::new();
         let mut hold_start = None;
-        let lane_heads =
-            lanes.filter_map(|(id, lane)| Some((Some((id, lane)), lane.pending_head()?)));
-        let nonce_free = nonce_free.map(|transaction| (None, transaction));
-        for (lane, head) in lane_heads.chain(nonce_free) {
-            if let Some(hold) = hold.as_mut()
-                && hold.holds(lane, head)
+        for (id, head) in self.independent {
+            if let Some(hold) = hold.as_deref_mut()
+                && !head.transaction.validity_conditions().is_empty()
+                && head.effective_tip_per_gas(base_fee).is_some()
+                && hold.hold(&head)
             {
-                // The clock starts at the first hold, so a snapshot that holds nothing pays no
-                // timer read.
                 hold_start.get_or_insert_with(Instant::now);
                 held.push(HeldBestTransaction { hash: *head.hash(), admitted_at: head.timestamp });
-                // A build that stopped selecting takes nothing from the lanes left unvisited.
                 if held.len().is_multiple_of(HOLD_INTERRUPT_INTERVAL as usize)
-                    && hold.hold.is_interrupted()
+                    && hold.is_interrupted()
                 {
                     break;
                 }
-                continue;
+            } else {
+                snapshot.push(LaneIterator::new(id, head, Vec::new()));
             }
-            let (id, tail) = lane.map_or_else(
-                || ((head.sender(), TxBaseConstants::NONCE_KEY_MAX), Vec::new()),
-                |(id, lane)| (*id, lane.pending_descendants()),
-            );
-            snapshot.push(LaneIterator::new(id, Arc::clone(head), tail));
         }
-        if let Some(start) = hold_start
-            && let Some(hold) = hold.as_mut()
-        {
-            hold.hold.record_duration(start.elapsed());
+        if let (Some(start), Some(hold)) = (hold_start, hold) {
+            hold.record_duration(start.elapsed());
         }
         let lane_indexes = snapshot
             .iter()
@@ -2143,18 +2119,20 @@ where
                 .collect::<Vec<_>>(),
         );
         (
-            Self {
+            BestTwoDTransactions {
                 lanes: snapshot,
                 candidates,
                 lane_indexes,
-                protocol_nonce_lanes,
+                protocol_nonce_lanes: self.protocol_nonce_lanes,
                 ordering,
                 base_fee,
             },
             held,
         )
     }
+}
 
+impl<T: BasePooledTx, O: TransactionOrdering<Transaction = T>> BestTwoDTransactions<T, O> {
     fn push_lane_head(&mut self, index: usize) {
         let lane = &self.lanes[index];
         if lane.invalidated || lane.held {
@@ -2424,15 +2402,9 @@ mod tests {
         let setup_elapsed = setup_started.elapsed();
 
         let snapshot_started = Instant::now();
-        let best = BestTwoDTransactions::new(
-            lanes.iter(),
-            std::iter::empty(),
-            false,
-            BaseOrdering::coinbase_tip(),
-            0,
-            None,
-        )
-        .0;
+        let best = TwoDLaneSnapshot::new(lanes.iter(), std::iter::empty(), false, None)
+            .rank(BaseOrdering::coinbase_tip(), 0, None)
+            .0;
         let snapshot_elapsed = snapshot_started.elapsed();
 
         let drain_started = Instant::now();
@@ -2914,15 +2886,9 @@ mod tests {
         .into_iter()
         .collect();
 
-        let mut best = BestTwoDTransactions::new(
-            lanes.iter(),
-            std::iter::empty(),
-            false,
-            BaseOrdering::coinbase_tip(),
-            0,
-            None,
-        )
-        .0;
+        let mut best = TwoDLaneSnapshot::new(lanes.iter(), std::iter::empty(), false, None)
+            .rank(BaseOrdering::coinbase_tip(), 0, None)
+            .0;
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(*transaction.hash()));
         assert!(best.next().is_none());
     }
