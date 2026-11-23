@@ -27,7 +27,8 @@ pub struct SequencerArgs {
     pub stopped: bool,
 
     /// Start historical EL synchronization at this operator-authenticated `L2BlockInfo` JSON target.
-    /// Requires a stopped regular sequencer; supplying the target opts into the startup phase.
+    /// Requires a stopped regular sequencer; a configured conductor must report non-leadership.
+    /// Supplying the target opts into the startup phase.
     /// This target is single-use: remove the flag after handoff, before restarting the node.
     #[arg(
         long = "sequencer.historical-el-sync-target",
@@ -165,7 +166,7 @@ mod tests {
         utils::{Unit, parse_ether},
     };
     use base_consensus_node::ShadowFunding;
-    use clap::{Parser, error::ErrorKind};
+    use clap::{CommandFactory, Parser, error::ErrorKind};
 
     use super::{SequencerArgs, SequencerConfig};
     use crate::L1ClientArgs;
@@ -176,6 +177,15 @@ mod tests {
         l1: L1ClientArgs,
         #[command(flatten)]
         sequencer: SequencerArgs,
+    }
+
+    /// Long help must disclose stopped admission and the configured conductor's leader gate.
+    #[test]
+    fn historical_el_sync_help_requires_non_leader() {
+        let help = SequencerArgs::command().render_long_help().to_string();
+        let normalized = help.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(normalized.contains("Requires a stopped regular sequencer"), "historical-target help must state stopped regular admission");
+        assert!(normalized.contains("configured conductor must report non-leadership"), "historical-target help must disclose the conductor's non-leader requirement");
     }
 
     /// Historical startup is opt-in and requires a stopped node and a complete trusted target.
