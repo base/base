@@ -231,8 +231,8 @@ constant time wherever it happens, including on the build path (a parent other
 than the tip, a dropped build, a deferred discard applied at seal or drop): it
 sets the index aside. Until canonical maintenance has made the set-aside
 transactions ready again (clearing their lanes' dormant flags, restoring the
-pending-lane indexes and queueing them for classification, in one lock hold),
-every snapshot and bridging walk offers every pending lane,
+pending-lane indexes and queueing them for classification, in chunks of at most
+256 per lock hold), every snapshot and bridging walk offers every pending lane,
 as with `off`, and pending and queued counts may still count those lanes as
 queued.
 
@@ -275,16 +275,16 @@ block does not become the tip.
   first block that satisfies it.
 - **Seal** makes the sealed block's hash the tip, unless a discard was deferred
   during the build, and returns. A blocking task then merges what the build
-  still holds parked into the pool's index, so later blocks built on this one
-  leave it out; only roots and nonce-free transactions become dormant. The merge
-  may take the lock more than once; no other build sees the index in between,
-  since the sealing build owns it until the merge ends. When the index is empty,
-  as on the first seal or after a discard, the build's parks are adopted as the
-  index wholesale and the merge only confirms or drops each. The build keeps the
-  index until the merge ends; a build starting meanwhile waits for it, up to
-  100 ms, before running without the index. A merge that panics or is
-  cancelled discards the build's index instead, ending its ownership. Dropping a
-  build discards its parks.
+  still holds parked into the pool's index, in chunks of at most 256, so later
+  blocks built on this one leave it out; only roots and nonce-free transactions
+  become dormant. No other build sees the index between chunks, since the
+  sealing build owns it until the merge ends. When the index is empty, as on the
+  first seal or after a discard, the build's parks are adopted as the index
+  wholesale and the merge only confirms or drops each. The build keeps the index
+  until the merge ends; a build starting meanwhile waits for it, up to 100 ms,
+  before running without the index. A merge that panics or is cancelled discards
+  the build's index instead, ending its ownership. Dropping a build discards its
+  parks.
 - **Canonical notifications** only check the tip: a committed block at the tip's
   height with another hash, a reorg or a gap in the canonical-state feed
   discards the index, after the running build ends if one runs. Canonical state
@@ -301,12 +301,12 @@ transaction is dormant when its block-number lower bound or one of its balance,
 nonce or storage predicates fails; it is indexed under that one blocking
 predicate. Flashblock-index predicates never make a transaction dormant, and a
 transaction whose block bounds have already passed is left to block expiry.
-The pass's candidates are taken in one lock hold and their results installed
-in another. Every 256 candidates (`DORMANCY_CLASSIFICATION_CHUNK`) the pass
-checks that its results still count; once the index was discarded or a fence
-overflowed it stops reading state and queues the candidates it did not
-classify again. Each result is installed against the pool as it is then: a
-transaction is parked only if the very
+The pass's queued transactions are looked up, classified and installed in
+chunks of at most 256 transactions, so no lock hold costs more than one chunk.
+Before each chunk the pass checks that its results still count; once the index
+was discarded or a fence overflowed it stops reading state and queues the
+transactions it did not classify again. Each result is installed against the
+pool as it is then: a transaction is parked only if the very
 transaction classified is still pooled (a readmitted envelope with other
 predicates has the same hash but is a new transaction) and is still a ready root
 or nonce-free transaction, no build has written its blocking location since the
@@ -325,6 +325,11 @@ recorded and nothing is parked until the next seal without a
 classification in flight; a commit that destroys an account fences all its
 storage slots.
 
+**Canary.** Each classification also re-evaluates up to 64 dormant
+transactions blocked on state. One that matches is woken and counted as a false
+dormancy. Transactions blocked on a block number are skipped: the build at
+their height releases them.
+
 Every failure mode errs toward ready: a state read error, an overflowing fence,
 a missed canonical notification or an unknown parent leaves transactions ready.
 
@@ -338,6 +343,7 @@ stop forwarding dormant transactions. With `enforce`, a native build that owns
 the index ignores its resting-predicate mode: the pool's index replaces it. Metrics:
 `txpool.validity.dormant_transactions` (gauge),
 `txpool.validity.dormant_wakes` (histogram, transactions woken per build),
+`txpool.validity.false_dormancy` (counter),
 `txpool.validity.dormancy_discards{reason}` (counter; `parent_mismatch`,
 `abandoned`, `canonical_mismatch`, `reorg`, `feed_gap` or `merge_failed`; a
 deferred discard counts its own reason when it is applied),
