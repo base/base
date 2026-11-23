@@ -151,7 +151,7 @@ where
         if !self.sequencer_stopped || self.sequencer_kind != SequencerKind::Regular {
             return Err(EngineClientError::RequestError("historical startup requires a stopped regular sequencer".into()));
         }
-self.historical_startup = Some(Box::new(base_consensus_engine::SequencerStartupSync::new(target)));
+        self.historical_startup = Some(Box::new(base_consensus_engine::SequencerStartupSync::new(target)));
         Ok(())
     }
 
@@ -173,7 +173,13 @@ self.historical_startup = Some(Box::new(base_consensus_engine::SequencerStartupS
                 ))).await;
             }
             EngineActorRequest::ResetRequest(request) => {
-                let _ = request.result_tx.send(Err(EngineClientError::HistoricalStartupPending)).await;
+                // The stopped actor sends this reset on launch and recognizes ELSyncing as
+                // deferred. A new error would terminate the actor before startup can finish.
+                let error = match request.reason {
+                    ResetReason::SequencerStartup => EngineClientError::ELSyncing,
+                    _ => EngineClientError::HistoricalStartupPending,
+                };
+                let _ = request.result_tx.send(Err(error)).await;
             }
             EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
                 // Only this request has already passed the network actor's signer authentication.
@@ -1169,6 +1175,54 @@ mod tests {
         assert!(client.storage().read().await.fork_choice_updated_v3_requests.iter().all(|(fc, attributes)| fc.head_block_hash == target.block_info.hash && !attributes), "every engine call during startup must be a target-only FCU");
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled(), "the test must stop its coordinator task");
+    }
+
+    /// The stopped actor must defer its automatic initial reset rather than terminate startup.
+    #[tokio::test]
+    async fn historical_startup_keeps_stopped_sequencer_actor_alive() {
+        let mut coordinator = coordinator(false, true, None);
+        let target = test_block_info(1000);
+        let client = Arc::clone(coordinator.processor.client());
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }, payload_id: None }).await;
+        coordinator.begin_historical_startup(target).expect("historical target");
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let (_head_tx, head_rx) = watch::channel(target);
+        let (_state_tx, state_rx) = watch::channel(*coordinator.processor.engine_state());
+        let engine_client = Arc::new(crate::QueuedSequencerEngineClient::new(request_tx.clone(), head_rx, state_rx));
+        let mut seed = super::super::tests::test_actor();
+        Arc::make_mut(&mut seed.rollup_config).block_time = 2;
+        seed.builder.rollup_config = Arc::clone(&seed.rollup_config);
+        let actor = crate::SequencerActor {
+            builder: crate::PayloadBuilder {
+                attributes_builder: seed.builder.attributes_builder,
+                origin_selector: seed.builder.origin_selector,
+                recovery_mode: seed.builder.recovery_mode,
+                rollup_config: seed.builder.rollup_config,
+                engine_client: Arc::clone(&engine_client),
+            },
+            admin_api_rx: seed.admin_api_rx, cancellation_token: seed.cancellation_token,
+            conductor: seed.conductor, engine_client, is_active: false, mode: seed.mode,
+            shadow_funding: seed.shadow_funding, recovery_mode: seed.recovery_mode,
+            rollup_config: seed.rollup_config, seal_offset: seed.seal_offset,
+            schedule_delay: seed.schedule_delay, unsafe_payload_gossip_client: seed.unsafe_payload_gossip_client,
+            sealer: seed.sealer, pending_stop: seed.pending_stop, payload_ready: seed.payload_ready,
+        };
+        let cancellation = actor.cancellation_token.clone();
+        let coordinator_task = coordinator.start(request_rx);
+        let mut actor_task = tokio::spawn(crate::NodeActor::start(actor, ()));
+        tokio::select! {
+            result = &mut actor_task => {
+                coordinator_task.abort();
+                panic!("stopped sequencer must wait through historical startup, got {result:?}");
+            }
+            _ = tokio::time::sleep(Duration::from_millis(20)) => {}
+        }
+        cancellation.cancel();
+        actor_task.await.expect("actor task must join").expect("deferred initial reset must honor cancellation");
+        assert!(client.last_new_payload_v2().await.is_none(), "the stopped actor cannot insert a payload");
+        coordinator_task.abort();
+        assert!(coordinator_task.await.unwrap_err().is_cancelled(), "the test must stop its coordinator");
+        drop(request_tx);
     }
 
     /// A configured leader cannot enter the inactive phase, even when locally stopped.
