@@ -266,10 +266,10 @@ impl MdbxProofsStorage {
     {
         let mut cur = tx.cursor_dup_write::<T>()?;
         for (key, subkey) in items {
-            if let Some(vv) = cur.seek_by_key_subkey(key, subkey)? {
-                if vv.block_number == subkey {
-                    cur.delete_current()?;
-                }
+            if let Some(vv) = cur.seek_by_key_subkey(key, subkey)?
+                && vv.block_number == subkey
+            {
+                cur.delete_current()?;
             }
         }
         Ok(())
