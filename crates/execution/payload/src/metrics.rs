@@ -119,6 +119,18 @@ base_metrics::define_metrics! {
     )]
     native_payload_state_root_duration: histogram,
     #[describe(
+        "Time from the end of transaction execution until the parallel state-root job returns in one native payload build, zero without a job, in seconds"
+    )]
+    native_payload_state_root_wait_duration: histogram,
+    #[describe(
+        "Time in BlockBuilder::finish in one native payload build: post-execution changes, hashed post-state, block assembly, and the synchronous state root when no job produced one, in seconds"
+    )]
+    native_payload_finish_duration: histogram,
+    #[describe(
+        "Time from BlockBuilder::finish returning until the native payload is ready: block hash, resting and dormancy seal, bundle take, and payload construction, in seconds"
+    )]
+    native_payload_seal_duration: histogram,
+    #[describe(
         "Frozen-payload hints published for the consensus layer, by whether a receiver was subscribed"
     )]
     #[label(name = "result", default = ["delivered", "no_receiver"])]
@@ -218,6 +230,32 @@ type CounterHandle = metrics::Counter;
 #[cfg(not(feature = "metrics"))]
 type CounterHandle = base_metrics::NoopMetric;
 
+/// Consecutive stages of one native payload build. They are measured between shared instants, so
+/// they sum to the whole build time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NativeBuildTimings {
+    /// Pre-execution changes, sequencer transactions and pool transactions.
+    pub execution: Duration,
+    /// Waiting for the parallel state-root job after execution ends; zero without a job.
+    pub state_root_wait: Duration,
+    /// `BlockBuilder::finish`, including the synchronous state root when no job produced one.
+    pub finish: Duration,
+    /// From `finish` returning until the payload is ready.
+    pub seal: Duration,
+}
+
+impl NativeBuildTimings {
+    /// Time from the end of execution until the payload is ready.
+    pub fn after_execution(&self) -> Duration {
+        self.state_root_wait + self.finish + self.seal
+    }
+
+    /// Whole build time.
+    pub fn total(&self) -> Duration {
+        self.execution + self.after_execution()
+    }
+}
+
 /// `outcome` label of `validity_predicate_evaluations_total` recorded by the native build loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidityEvaluationOutcome {
@@ -312,12 +350,15 @@ impl BuilderMetrics {
         Self::coinbase_tip_revenue_wei(FLOW_VALIDITY).record(tracker.validity.coinbase_tips_f64());
     }
 
-    /// Records the execution and total duration of one native payload build.
-    pub fn record_native_build(execution: Duration, total: Duration) {
-        Self::native_payload_build_duration().record(total.as_secs_f64());
-        Self::native_payload_execution_duration().record(execution.as_secs_f64());
-        Self::native_payload_state_root_duration()
-            .record(total.saturating_sub(execution).as_secs_f64());
+    /// Records the stage durations of one native payload build.
+    pub fn record_native_build(timings: &NativeBuildTimings) {
+        Self::native_payload_build_duration().record(timings.total().as_secs_f64());
+        Self::native_payload_execution_duration().record(timings.execution.as_secs_f64());
+        Self::native_payload_state_root_duration().record(timings.after_execution().as_secs_f64());
+        Self::native_payload_state_root_wait_duration()
+            .record(timings.state_root_wait.as_secs_f64());
+        Self::native_payload_finish_duration().record(timings.finish.as_secs_f64());
+        Self::native_payload_seal_duration().record(timings.seal.as_secs_f64());
     }
 
     /// Records one frozen-payload hint published for the consensus layer. `delivered` is false
