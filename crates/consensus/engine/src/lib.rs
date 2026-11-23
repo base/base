@@ -18,6 +18,9 @@ pub use task_queue::{
     SynchronizeTaskError,
 };
 
+mod startup_sync;
+pub use startup_sync::{SequencerStartupSync, StartupSyncError, StartupSyncStatus};
+
 mod attributes;
 pub use attributes::{AttributesMatch, AttributesMismatch};
 
