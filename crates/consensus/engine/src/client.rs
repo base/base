@@ -4,7 +4,7 @@ use std::{future::Future, io, sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_network::{Ethereum, Network};
-use alloy_primitives::{Address, B256, BlockHash, Bytes, StorageKey};
+use alloy_primitives::{Address, B256, BlockHash, StorageKey};
 use alloy_provider::{EthGetBlock, IpcConnect, Provider, RootProvider, RpcWithBlock};
 use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_rpc_types_engine::{
@@ -13,10 +13,6 @@ use alloy_rpc_types_engine::{
 };
 use alloy_rpc_types_eth::{EIP1186AccountProofResponse, SyncStatus as EthSyncStatus};
 use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
-use alloy_transport_http::{
-    AuthLayer, Http, HyperClient,
-    hyper_util::{client::legacy::Client, rt::TokioExecutor},
-};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi, SharedEngineApi};
@@ -24,11 +20,9 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BasePayloadAttributes,
 };
-use base_consensus_providers::L1RpcProvider;
+use base_consensus_providers::{JwtAuthLayer, L1RpcProvider};
 use base_protocol::{FromBlockError, L2BlockInfo};
-use http_body_util::Full;
 use thiserror::Error;
-use tower::ServiceBuilder;
 use url::Url;
 
 use crate::{InMemoryTransport, JwtWsConnect, Metrics, trace_layer::TraceContextLayer};
@@ -144,16 +138,11 @@ where
                 Ok(RootProvider::<N>::new(client))
             }
             "http" | "https" => {
-                let hyper_client =
-                    Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
-                let auth_layer = AuthLayer::new(jwt);
-                let service = ServiceBuilder::new()
+                let transport = JwtAuthLayer::build_http_transport(addr)?;
+                let rpc_client = ClientBuilder::default()
                     .layer(TraceContextLayer)
-                    .layer(auth_layer)
-                    .service(hyper_client);
-                let layer_transport = HyperClient::with_service(service);
-                let http_hyper = Http::with_client(layer_transport, addr);
-                let rpc_client = RpcClient::new(http_hyper, false);
+                    .layer(JwtAuthLayer::new(jwt))
+                    .transport(transport, false);
                 Ok(RootProvider::<N>::new(rpc_client))
             }
             scheme => Err(TransportErrorKind::custom(io::Error::new(

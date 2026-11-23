@@ -45,7 +45,7 @@ impl JwtWsConnect {
     /// The `exp` field is `None`, matching the authentication model used by
     /// the HTTP [`AuthLayer`].
     ///
-    /// [`AuthLayer`]: alloy_transport_http::AuthLayer
+    /// [`AuthLayer`]: base_consensus_providers::JwtAuthLayer
     pub fn mint_bearer(&self) -> Authorization {
         let iat = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let token =
