@@ -1904,8 +1904,8 @@ mod tests {
         BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
         ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
-        RestingPredicateStore, SharedMeteringProvider, SharedRestingPredicates, StaleStorageConfig,
-        StaleStorageMeter, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        RestingPredicateStore, SharedMeteringProvider, SharedRestingPredicates, StaleStorageMeter,
+        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
     fn state_root_handle() -> PayloadStateRootHandle {
@@ -3178,17 +3178,7 @@ mod tests {
             let invalid = invalid.lock().unwrap().len();
             (included_tx_count(outcome), evicted.lock().unwrap().clone(), invalid)
         };
-        let config = StaleStorageConfig {
-            table_log2: 12,
-            contract_slot_gate: 0,
-            transaction_limit: 0,
-            block_limit: 0,
-            first_hour_limit: 0,
-            first_day_limit: 0,
-            ..StaleStorageConfig::default()
-        };
-
-        let metered = build(Some(StaleStorageMeter::new(config).unwrap()));
+        let metered = build(Some(StaleStorageMeter::new(12)));
         let unmetered = build(None);
 
         assert!(metered.0 > 0);

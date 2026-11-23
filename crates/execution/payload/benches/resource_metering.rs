@@ -7,7 +7,7 @@ use base_bundles::OpcodeGas;
 use base_execution_payload_builder::{
     BlockStaleTracker, NoopMeteringProvider, ResourceMeteringConfig, ResourceMeteringDimension,
     ResourceMeteringOperation, ResourceMeteringSchedule, ResourceSample,
-    STALE_STORAGE_EPOCH_SECONDS, StaleStorageConfig, StaleStorageMeter, StaleStorageTable,
+    STALE_STORAGE_EPOCH_SECONDS, STALE_STORAGE_TABLE_LOG2, StaleStorageMeter, StaleStorageTable,
 };
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use revm::state::{Account, EvmState, EvmStorageSlot, TransactionId};
@@ -116,13 +116,12 @@ const BLOCK_TIMESTAMP: u64 = 1_800_000_000;
 /// A production-size (one-gibibyte) table with every entry stamped two days before the block, so
 /// probes read resident memory and every probed slot is stale.
 fn filled_meter() -> StaleStorageMeter {
-    let config = StaleStorageConfig::default();
-    let table = StaleStorageTable::new(config.table_log2);
+    let table = StaleStorageTable::new(STALE_STORAGE_TABLE_LOG2);
     let stamped_hour = BLOCK_TIMESTAMP / STALE_STORAGE_EPOCH_SECONDS - 48;
     for key in 0..table.len() as u64 {
         table.stamp(key, stamped_hour);
     }
-    StaleStorageMeter { config, table: Arc::new(table) }
+    StaleStorageMeter { table: Arc::new(table) }
 }
 
 /// One contract with `count` updated pre-existing slots, half of them cleared, as in a batched

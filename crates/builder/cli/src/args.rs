@@ -357,7 +357,7 @@ impl Args {
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
             manifest_precheck_enabled: self.manifest_precheck_enabled,
-            stale_storage: self.stale_storage.meter()?,
+            stale_storage: self.stale_storage.meter(),
         })
     }
 }
@@ -381,6 +381,22 @@ mod tests {
     fn convert(args: Args) -> BuilderConfig {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
         args.into_builder_config(metering_provider).expect("conversion should succeed")
+    }
+
+    #[test]
+    fn stale_storage_metering_is_the_builders_only_stale_storage_flag() {
+        let parsed = CommandParser::try_parse_from(["builder", "--payload.stale-storage-metering"])
+            .expect("metering flag");
+        assert!(parsed.args.stale_storage.enabled);
+        assert!(
+            CommandParser::try_parse_from([
+                "builder",
+                "--payload.stale-storage-metering",
+                "--payload.stale-storage-tx-limit",
+                "20",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

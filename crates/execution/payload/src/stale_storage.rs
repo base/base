@@ -32,7 +32,6 @@ use futures::StreamExt;
 use reth_chain_state::{CanonStateNotification, CanonStateNotifications};
 use reth_primitives_traits::{AlloyBlockHeader, NodePrimitives};
 use revm::{database::BundleState, state::EvmState};
-use thiserror::Error;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{debug, info, warn};
 
@@ -41,102 +40,43 @@ use crate::StaleStorageMetrics;
 /// Seconds per table epoch. Stamps are hourly.
 pub const STALE_STORAGE_EPOCH_SECONDS: u64 = 3_600;
 
-/// Settings for the log-only stale-storage meter.
+/// Base-2 logarithm of the number of 2-byte table entries: `2^29` entries, one gibibyte.
 ///
-/// The meter is off unless a [`StaleStorageMeter`] is configured on
-/// [`crate::config::BaseBuilderConfig::stale_storage`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StaleStorageConfig {
-    /// Base-2 logarithm of the number of 2-byte table entries. `29` is a one-gibibyte table.
-    pub table_log2: u32,
-    /// A pre-existing slot is stale when no canonical block wrote it within this many hours.
-    pub window_hours: u64,
-    /// Stale slots count only in contracts with more than this many distinct changed slots.
-    ///
-    /// The transaction-scope count gates on the transaction's own changed slots. The block-scope
-    /// count gates on the distinct slots the block and the transaction change together, so
-    /// splitting one batch over several transactions hides at most this many slots per contract,
-    /// while many transactions rewriting the same few slots do not pass it. Both skip slots
-    /// created earlier in the block.
-    pub contract_slot_gate: u32,
-    /// Dry-run per-transaction limit once the table holds a full window of history.
-    pub transaction_limit: u64,
-    /// Dry-run cumulative per-block limit once the table holds a full window of history.
-    pub block_limit: u64,
-    /// Dry-run limit while the table holds less than one hour of history.
-    pub first_hour_limit: u64,
-    /// Dry-run limit while the table holds less than one window of history.
-    pub first_day_limit: u64,
-}
+/// Sized so that the roughly 7 x 10^7 distinct slots Base writes per day hide at most about 12%
+/// of stale slots through collisions, which only ever hide staleness. A smaller fixed-budget
+/// cache may replace this table; changing the size needs no other change.
+pub const STALE_STORAGE_TABLE_LOG2: u32 = 29;
 
-impl Default for StaleStorageConfig {
-    fn default() -> Self {
-        Self {
-            table_log2: 29,
-            window_hours: 24,
-            contract_slot_gate: 64,
-            transaction_limit: 200,
-            block_limit: 200,
-            first_hour_limit: 450,
-            first_day_limit: 300,
-        }
-    }
-}
+/// Hours after its last canonical write that a pre-existing slot counts as stale.
+///
+/// One day: long enough that recurring batches stay fresh, short enough that a slot is likely
+/// to have left memory. Must not exceed [`StaleStorageTable::SWEEP_AGE_HOURS`].
+pub const STALE_STORAGE_WINDOW_HOURS: u64 = 24;
 
-/// An invalid [`StaleStorageConfig`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-pub enum StaleStorageConfigError {
-    /// The table size is outside the supported range.
-    #[error(
-        "stale storage table log2 {0} is outside {min}..={max}",
-        min = StaleStorageConfig::MIN_TABLE_LOG2,
-        max = StaleStorageConfig::MAX_TABLE_LOG2
-    )]
-    TableLog2(u32),
-    /// The window is zero or too long for the sweep to keep epochs unambiguous.
-    #[error(
-        "stale storage window of {0} hours is outside 1..={max}",
-        max = StaleStorageTable::SWEEP_AGE_HOURS
-    )]
-    Window(u64),
-}
+/// Stale slots count only in contracts with more than this many distinct changed slots.
+///
+/// The transaction-scope count gates on the transaction's own changed slots. The block-scope
+/// count gates on the distinct slots the block and the transaction change together, so splitting
+/// one batch over several transactions hides at most this many slots per contract, while many
+/// transactions rewriting the same few slots do not pass it. Both skip slots created earlier in
+/// the block. Ordinary token transfers and swaps stay well under 64.
+pub const STALE_STORAGE_CONTRACT_SLOT_GATE: u32 = 64;
 
-impl StaleStorageConfig {
-    /// Smallest supported table, 8 kibibytes.
-    pub const MIN_TABLE_LOG2: u32 = 12;
-    /// Largest supported table, 2 gibibytes.
-    pub const MAX_TABLE_LOG2: u32 = 30;
+/// Dry-run stale-slot limit, per transaction and per block, once the table holds a full window.
+///
+/// About 40 to 80 ms of extra state-root time at measured rates: a 145-claim XEN batch (725
+/// slots) exceeds it and a 40-claim batch does not.
+pub const STALE_STORAGE_LIMIT: u64 = 200;
 
-    /// Checks the table size and window.
-    pub const fn validate(&self) -> Result<(), StaleStorageConfigError> {
-        if self.table_log2 < Self::MIN_TABLE_LOG2 || self.table_log2 > Self::MAX_TABLE_LOG2 {
-            return Err(StaleStorageConfigError::TableLog2(self.table_log2));
-        }
-        if self.window_hours == 0 || self.window_hours > StaleStorageTable::SWEEP_AGE_HOURS {
-            return Err(StaleStorageConfigError::Window(self.window_hours));
-        }
-        Ok(())
-    }
+/// Dry-run limit while the table holds less than a full window of history.
+///
+/// A young table reads every slot it has not seen as stale, so it needs a higher limit.
+pub const STALE_STORAGE_FIRST_DAY_LIMIT: u64 = 300;
 
-    /// Dry-run limits for a table that has recorded `table_age_secs` of history.
-    ///
-    /// An empty or young table reads every slot it has not seen as stale, so it behaves like a
-    /// shorter window and needs a higher limit: `first_hour_limit` under one hour,
-    /// `first_day_limit` under one window, then the plain limits. `None` is an empty table.
-    pub fn limits_at_age(&self, table_age_secs: Option<u64>) -> StaleStorageLimits {
-        let full_window_secs = self.window_hours.saturating_mul(STALE_STORAGE_EPOCH_SECONDS);
-        let young_limit = match table_age_secs {
-            Some(age) if age >= full_window_secs => None,
-            Some(age) if age >= STALE_STORAGE_EPOCH_SECONDS => Some(self.first_day_limit),
-            _ => Some(self.first_hour_limit),
-        };
-        StaleStorageLimits {
-            transaction: young_limit
-                .map_or(self.transaction_limit, |limit| limit.max(self.transaction_limit)),
-            block: young_limit.map_or(self.block_limit, |limit| limit.max(self.block_limit)),
-        }
-    }
-}
+/// Dry-run limit while the table holds less than one hour of history, including an empty table.
+pub const STALE_STORAGE_FIRST_HOUR_LIMIT: u64 = 450;
+
+const _: () = assert!(STALE_STORAGE_WINDOW_HOURS <= StaleStorageTable::SWEEP_AGE_HOURS);
 
 /// Dry-run stale-slot limits in effect for one build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +85,24 @@ pub struct StaleStorageLimits {
     pub transaction: u64,
     /// Limit on the block's cumulative block-scope count.
     pub block: u64,
+}
+
+impl StaleStorageLimits {
+    /// Limits for a table that has recorded `table_age_secs` of history; `None` is an empty
+    /// table.
+    ///
+    /// [`STALE_STORAGE_FIRST_HOUR_LIMIT`] under one hour, [`STALE_STORAGE_FIRST_DAY_LIMIT`] under
+    /// one window, then [`STALE_STORAGE_LIMIT`].
+    pub const fn at_table_age(table_age_secs: Option<u64>) -> Self {
+        let limit = match table_age_secs {
+            Some(age) if age >= STALE_STORAGE_WINDOW_HOURS * STALE_STORAGE_EPOCH_SECONDS => {
+                STALE_STORAGE_LIMIT
+            }
+            Some(age) if age >= STALE_STORAGE_EPOCH_SECONDS => STALE_STORAGE_FIRST_DAY_LIMIT,
+            _ => STALE_STORAGE_FIRST_HOUR_LIMIT,
+        };
+        Self { transaction: limit, block: limit }
+    }
 }
 
 /// Direct-mapped table of the hour each `(contract, slot)` was last written by a canonical block.
@@ -418,7 +376,7 @@ impl StaleAgeBuckets {
     }
 
     /// Slots last written more than 24 hours ago or never recorded. The buckets are fixed, so
-    /// this ignores [`StaleStorageConfig::window_hours`].
+    /// this ignores [`STALE_STORAGE_WINDOW_HOURS`].
     pub const fn older_than_day(&self) -> u64 {
         self.d1_7 + self.gt_7d + self.never
     }
@@ -446,17 +404,15 @@ pub struct CanonicalStaleRecord {
 /// The table and settings shared by the canonical-state recorder and the payload builder.
 #[derive(Debug, Clone)]
 pub struct StaleStorageMeter {
-    /// Meter settings.
-    pub config: StaleStorageConfig,
     /// Shared epoch table.
     pub table: Arc<StaleStorageTable>,
 }
 
 impl StaleStorageMeter {
-    /// Validates `config` and allocates an empty table.
-    pub fn new(config: StaleStorageConfig) -> Result<Self, StaleStorageConfigError> {
-        config.validate()?;
-        Ok(Self { config, table: Arc::new(StaleStorageTable::new(config.table_log2)) })
+    /// Allocates an empty table of `2^table_log2` entries. Production uses
+    /// [`STALE_STORAGE_TABLE_LOG2`]; tests pass smaller tables.
+    pub fn new(table_log2: u32) -> Self {
+        Self { table: Arc::new(StaleStorageTable::new(table_log2)) }
     }
 
     /// Starts per-build tracking for a block at `block_timestamp`.
@@ -464,11 +420,10 @@ impl StaleStorageMeter {
         let table_age_secs = self.table.age_secs(block_timestamp);
         BlockStaleTracker {
             table: Arc::clone(&self.table),
-            config: self.config,
             block_number,
             now_hour: block_timestamp / STALE_STORAGE_EPOCH_SECONDS,
             table_age_secs,
-            limits: self.config.limits_at_age(table_age_secs),
+            limits: StaleStorageLimits::at_table_age(table_age_secs),
             contract_changed_slots: AddressMap::default(),
             changed_slot_keys: HashSet::default(),
             created_slot_keys: HashSet::default(),
@@ -492,7 +447,7 @@ impl StaleStorageMeter {
         timestamp: u64,
     ) -> CanonicalStaleRecord {
         let now_hour = timestamp / STALE_STORAGE_EPOCH_SECONDS;
-        let gate = u64::from(self.config.contract_slot_gate);
+        let gate = u64::from(STALE_STORAGE_CONTRACT_SLOT_GATE);
         let mut record = CanonicalStaleRecord::default();
         for (address, account) in &bundle.state {
             let changed = account.storage.values().filter(|slot| slot.is_changed()).count() as u64;
@@ -711,7 +666,6 @@ impl StaleTxVerdict {
 #[derive(Debug)]
 pub struct BlockStaleTracker {
     table: Arc<StaleStorageTable>,
-    config: StaleStorageConfig,
     block_number: u64,
     now_hour: u64,
     table_age_secs: Option<u64>,
@@ -756,7 +710,7 @@ impl BlockStaleTracker {
         self.pending_changed_keys.clear();
         self.pending_created_keys.clear();
         self.pending_stale_keys.clear();
-        let gate = self.config.contract_slot_gate;
+        let gate = STALE_STORAGE_CONTRACT_SLOT_GATE;
         let mut sample = StaleTxSample::default();
         let mut top_contract_stale = 0;
         for (address, account) in state {
@@ -807,7 +761,7 @@ impl BlockStaleTracker {
                     continue;
                 }
                 sample.gated_cleared_slots += u32::from(cleared);
-                if !self.table.is_stale(key, self.now_hour, self.config.window_hours) {
+                if !self.table.is_stale(key, self.now_hour, STALE_STORAGE_WINDOW_HOURS) {
                     continue;
                 }
                 sample.stale_transaction += u32::from(gated_transaction);
@@ -849,8 +803,8 @@ impl BlockStaleTracker {
             cumulative_stale_block,
             exceeds_transaction_limit: stale_transaction > self.limits.transaction,
             exceeds_block_limit: stale_block > 0 && block_total > self.limits.block,
-            exceeds_plain_transaction_limit: stale_transaction > self.config.transaction_limit,
-            exceeds_plain_block_limit: stale_block > 0 && block_total > self.config.block_limit,
+            exceeds_plain_transaction_limit: stale_transaction > STALE_STORAGE_LIMIT,
+            exceeds_plain_block_limit: stale_block > 0 && block_total > STALE_STORAGE_LIMIT,
         };
 
         let totals = &mut self.totals;
@@ -964,15 +918,8 @@ mod tests {
     const NOW: u64 = 500_000 * HOUR;
     const NOW_HOUR: u64 = NOW / HOUR;
 
-    fn config() -> StaleStorageConfig {
-        StaleStorageConfig { table_log2: 16, ..StaleStorageConfig::default() }
-    }
-
     fn meter() -> StaleStorageMeter {
-        StaleStorageMeter {
-            config: config(),
-            table: Arc::new(StaleStorageTable::with_secret(16, (11, 13))),
-        }
+        StaleStorageMeter { table: Arc::new(StaleStorageTable::with_secret(16, (11, 13))) }
     }
 
     fn contract(byte: u8) -> Address {
@@ -1155,18 +1102,13 @@ mod tests {
     }
 
     #[test]
-    fn config_validation_rejects_bad_sizes_and_windows() {
-        assert!(StaleStorageConfig::default().validate().is_ok());
-        let small = StaleStorageConfig { table_log2: 11, ..StaleStorageConfig::default() };
-        assert_eq!(small.validate(), Err(StaleStorageConfigError::TableLog2(11)));
-        let zero = StaleStorageConfig { window_hours: 0, ..StaleStorageConfig::default() };
-        assert_eq!(zero.validate(), Err(StaleStorageConfigError::Window(0)));
+    fn the_meter_allocates_the_requested_table_size() {
+        assert_eq!(StaleStorageMeter::new(12).table.len(), 1 << 12);
     }
 
     #[test]
     fn limits_are_raised_while_the_table_is_young() {
-        let config = StaleStorageConfig::default();
-        let tiered = |age| config.limits_at_age(age);
+        let tiered = StaleStorageLimits::at_table_age;
         assert_eq!(tiered(None), StaleStorageLimits { transaction: 450, block: 450 });
         assert_eq!(tiered(Some(3_599)), StaleStorageLimits { transaction: 450, block: 450 });
         assert_eq!(tiered(Some(3_600)), StaleStorageLimits { transaction: 300, block: 300 });
