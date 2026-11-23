@@ -1,4 +1,3 @@
-use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     prelude::*,
@@ -9,7 +8,7 @@ use tokio::sync::mpsc;
 use crate::{
     output::{COLOR_ACTIVE_BORDER, COLOR_ROW_SELECTED},
     rpc::TxSummary,
-    tui::{Browser, Toast},
+    tui::{Browser, Clipboard, Toast},
 };
 
 /// Reusable transaction list pane that can be embedded in any block-listing view.
@@ -141,10 +140,9 @@ impl TransactionPane {
             KeyCode::Char('y') => {
                 if let Some(idx) = self.table_state.selected()
                     && let Some(tx_summary) = self.transactions.get(idx)
-                    && let Ok(mut clipboard) = Clipboard::new()
                 {
                     let hash_str = format!("{:#x}", tx_summary.hash);
-                    if clipboard.set_text(&hash_str).is_ok() {
+                    if Clipboard::copy(&hash_str).is_ok() {
                         toast_tx(Toast::info(format!("Copied {hash_str}")));
                     }
                 }

@@ -175,9 +175,10 @@ of the same block. The lanes that straddle stores are indexed incrementally
 the iterator costs those lanes plus each store's own snapshot, not the pool sizes;
 `benches/best_transactions.rs` measures it on a large pool.
 
-A block build takes its iterator with `best_transactions_with_attributes_and_parking`
-and a hold that recognises the validity transactions the builder already found
-unsatisfied. The validity snapshot asks the hold about every transaction that has
+A build using the builder's resting set (the default, or a build that does not
+own the pool's dormancy index) takes its iterator with
+`best_transactions_with_attributes_and_parking` and a hold that recognises the
+validity transactions the builder already found unsatisfied. The validity snapshot asks the hold about every transaction that has
 nothing sequenced around it (a nonce-free transaction, or the only pending member
 of a lane no other store shares) and is priced at or above the base fee, and sets
 a held one aside, so the build never ranks or yields it; the iterator returns it
@@ -196,6 +197,51 @@ Occupancy is published as `txpool.validity.pool_transactions` and
 `txpool.validity.pool_bytes`, evictions as `txpool.validity.evicted`, and
 replacements that crossed a store boundary as
 `txpool.validity.cross_store_replaced{direction}`.
+
+### Dormant validity transactions
+
+The native block builder parks a validity transaction whose predicate fails. Rather than offer
+it to every later build, the validity pool keeps it dormant: out of the builder's
+best-transactions snapshot until a write or a block height can satisfy it, so a build costs the
+ready transactions, not the waiting ones. The build loop still evaluates every predicate before
+inclusion; dormancy only decides what the build sees.
+
+This applies under `--rollup.validity-dormancy pool`. The default, `resting`, keeps the native
+builder's own resting set, which carries parked transactions between the blocks it builds, and the
+pool never hands out its index. A `pool` build that does not get the index, because another build
+owns it, carries the resting set as under `resting`. The resting set is removed once `pool` is
+rolled out.
+
+- **One tip-scoped index.** The validity pool keeps one predicate index of dormant transactions,
+  keyed by the state location that blocks each, and a tip: the last block this node sealed.
+  Every dormant transaction fails its predicate on top of the tip. Only a nonce-free transaction
+  or the root of a lane anchored at canonical state can be dormant.
+- **Only the owning build skips them.** `begin_dormancy_build` hands at most one build at a time a
+  `DormancyBuild`. That build's snapshot leaves out dormant nonce-free transactions and every lane
+  whose root is dormant, with the rest of the lane, without walking them. It still walks the
+  lanes that share a nonce space with a standard store, dormant ones included, to collect the
+  standard transactions bridged behind them; that cost for mixed lanes is a known gap. Every other
+  snapshot offers them: a build started while another owns the index, a build before the Denim
+  network upgrade, and RPC and forwarding readers. Pending and queued counts and lane events do
+  not change.
+- **Park.** A transaction still parked on a failed predicate when the owning build stops
+  selecting becomes dormant when the build seals, under that predicate, and the sealed block
+  becomes the tip.
+- **Wake by state.** A commit in the owning build wakes the dormant transactions whose blocking
+  location it wrote; each rejoins the running build at its priority, followed by the rest of its
+  lane as the pool holds it then, including successors admitted or replaced after the build's
+  snapshot. The writes made before selection (system calls, deposits) wake at build start.
+- **Wake by block number.** A block-number blocker wakes at the first block that satisfies it.
+- **Discard.** Every dormant transaction becomes ready again when a build starts on a parent other
+  than the tip, when the owning build ends without sealing, and on a reorg or a canonical block at
+  or past the tip's height that is not the tip. A reorg onto the tip keeps the index. A discard
+  while a build owns the index only forgets the tip: that build still wakes what it left out, and
+  its seal makes its own parks dormant, not what it carried from before the discard.
+- **Removal.** Removing, replacing, evicting or mining a dormant transaction, or anything else
+  that changes its lane's root, drops it from the index.
+
+`txpool.validity.dormant_transactions` gauges the index after each seal or discard, and
+`txpool.validity.dormancy_discards` counts discards of a non-empty index.
 
 ## Usage
 
