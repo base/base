@@ -32,7 +32,10 @@ use crate::{
     PredicateContext, ValidityDormancyMode, ValidityPoolMetrics, ValidityPredicate,
     WokenTransaction, WrittenLocation,
     best::MergeSource,
-    dormancy::{BuildLocal, Dormancy, DormancyMergeGate, DormantEntry, DormantSlot, WriteFence},
+    dormancy::{
+        BuildLocal, DiscardedIndex, Dormancy, DormancyMergeGate, DormantEntry, DormantSlot,
+        WriteFence,
+    },
 };
 
 /// A finite channel: `(sender, nonce_key)`.
@@ -1329,9 +1332,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Whether snapshots and bridging leave dormant transactions out: only
-    /// with dormancy enforced, unless `offer_dormant`.
+    /// with dormancy enforced, unless `offer_dormant`, and only once every
+    /// transaction a discard set aside is ready again, since until then the
+    /// pending-lane indexes and lane flags may still describe that index.
     const fn leaves_dormant_out(&self, offer_dormant: bool) -> bool {
-        self.dormancy.is_enforced() && !offer_dormant
+        self.dormancy.is_enforced() && !offer_dormant && self.dormancy.is_consistent()
     }
 
     /// Removes the exact transactions by hash without advancing lane state.
@@ -1564,7 +1569,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// build owns it: that build runs without the index, as with dormancy
     /// off. The index is kept only when `parent` is the tip; then the writes
     /// `pre_selection` made and the block's height wake what they may
-    /// satisfy. Otherwise it is discarded.
+    /// satisfy. Otherwise it is discarded, in constant time.
     pub(crate) fn begin_build(
         &mut self,
         parent: B256,
@@ -1763,13 +1768,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
     }
 
-    /// Forgets the tip and the running build and makes every dormant
-    /// transaction ready, so nothing is dormant until the next seal and
-    /// classification.
+    /// Forgets the tip and the running build and sets the index aside, in
+    /// constant time, so nothing is dormant until the next seal and
+    /// classification. Until [`Self::restore_ready`] has made the set-aside
+    /// transactions ready again, snapshots offer every pending lane.
     fn discard_dormancy_now(&mut self, reason: DormancyDiscardReason) {
-        for (hash, entry) in self.dormancy.take_entries() {
-            self.make_ready(hash, entry.slot);
-        }
+        self.dormancy.set_index_aside();
         self.running_build = None;
         self.dormancy.tip = None;
         self.dormancy.building = false;
@@ -1785,6 +1789,41 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             ValidityPoolMetrics::dormant_wakes().record(woken as f64);
         }
         ValidityPoolMetrics::dormant_transactions().set(pool.read().dormant_len() as f64);
+    }
+
+    /// Takes an index a discard set aside, so its transactions can be made
+    /// ready again with [`Self::restore_ready`]; [`Self::finish_restoring`]
+    /// ends it.
+    pub(crate) fn take_discarded_dormancy(&mut self) -> Option<DiscardedIndex> {
+        self.dormancy.take_discarded()
+    }
+
+    /// Makes ready again the transactions among `slots` a discard set aside,
+    /// unless they are dormant in the current index: clears their lanes'
+    /// dormant flags, restores the pending-lane and ready nonce-free indexes,
+    /// and queues them for classification.
+    pub(crate) fn restore_ready(&mut self, slots: &[(TxHash, DormantSlot)]) {
+        for (hash, slot) in slots {
+            let pooled = match *slot {
+                DormantSlot::Lane(_) => true,
+                DormantSlot::NonceFree(replay_id) => {
+                    self.nonce_free.get(&replay_id).is_some_and(|pooled| pooled.hash() == hash)
+                }
+            };
+            if pooled && !self.dormancy.is_dormant(hash) {
+                self.make_ready(*hash, *slot);
+            }
+        }
+    }
+
+    pub(crate) const fn finish_restoring(&mut self) {
+        self.dormancy.finish_restoring();
+    }
+
+    /// Whether the pending-lane indexes describe the current index, so a
+    /// snapshot can walk them instead of every lane.
+    pub(crate) const fn dormancy_is_consistent(&self) -> bool {
+        self.dormancy.is_consistent()
     }
 
     /// Discards the index when canonical `blocks` hold a block at the tip's
@@ -1820,12 +1859,13 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     /// Wakes `hashes`, which a commit of build `build` may satisfy. A woken
     /// transaction counts as dormant at the build's snapshot `snapshot` when
-    /// it was indexed before it. Nothing happens unless `build` owns the
-    /// index.
+    /// the snapshot left dormant transactions out (`filtered`) and it was
+    /// indexed before it. Nothing happens unless `build` owns the index.
     pub(crate) fn wake_for_commit(
         &mut self,
         build: u64,
         snapshot: u64,
+        filtered: bool,
         hashes: &[TxHash],
     ) -> Vec<WokenTransaction<T>> {
         if !self.dormancy.is_running(build) {
@@ -1838,7 +1878,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 let transaction = self.hashes.get(hash)?;
                 Some(WokenTransaction {
                     transaction: Arc::clone(transaction),
-                    dormant_at_snapshot: entry.indexed_at < snapshot,
+                    dormant_at_snapshot: filtered && entry.indexed_at < snapshot,
                 })
             })
             .collect()
@@ -3562,10 +3602,26 @@ mod tests {
         assert_eq!(pool.pending_and_queued_txn_count(), (0, 2));
         assert_eq!(pool.lane_cursor(&lane), Some(LaneCursor::at(0)));
 
+        // The discard only sets the index aside; until its transactions are
+        // ready again, snapshots and bridging offer every pending lane.
         pool.discard_dormancy(DormancyDiscardReason::Reorg);
+        assert!(!pool.dormancy_is_consistent());
+        assert_eq!(pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false).count(), 2);
+        assert_eq!(pool.shared_lanes_pending_end(false).collect::<Vec<_>>(), vec![(lane, 2)]);
+
+        restore_discarded(&mut pool);
+        assert!(pool.dormancy_is_consistent());
         assert_eq!(pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false).count(), 2);
         assert_eq!(pool.shared_lanes_pending_end(false).collect::<Vec<_>>(), vec![(lane, 2)]);
         assert_eq!(pool.pending_and_queued_txn_count(), (2, 0));
+    }
+
+    /// Makes ready again what discards set aside, as canonical maintenance does.
+    fn restore_discarded(pool: &mut TwoDNoncePool<BasePooledTransaction>) {
+        while let Some(discarded) = pool.take_discarded_dormancy() {
+            pool.restore_ready(&discarded.into_slots());
+            pool.finish_restoring();
+        }
     }
 
     /// With dormancy enforced, snapshots and bridging walk an index of the
@@ -3624,6 +3680,8 @@ mod tests {
         assert_eq!(offered(&pool), ready);
 
         pool.discard_dormancy(DormancyDiscardReason::Reorg);
+        assert_eq!(offered(&pool), all);
+        restore_discarded(&mut pool);
         assert_eq!(offered(&pool), all);
         park_all_but_first(&mut pool, 2);
         assert_eq!(offered(&pool), ready);
