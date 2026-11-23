@@ -28,6 +28,7 @@ pub struct SequencerArgs {
 
     /// Start historical EL synchronization at this operator-authenticated `L2BlockInfo` JSON target.
     /// Requires a stopped regular sequencer; supplying the target opts into the startup phase.
+    /// This target is single-use: remove the flag after handoff, before restarting the node.
     #[arg(
         long = "sequencer.historical-el-sync-target",
         requires = "stopped",

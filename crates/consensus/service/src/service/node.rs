@@ -247,8 +247,8 @@ impl RollupNode {
 
         let node_mode = self.mode();
         if self.sequencer_config.historical_el_sync_target.is_some() && node_mode.is_validator() {
-            return Err(crate::EngineClientError::RequestError(
-                "historical execution startup requires regular sequencer mode".into(),
+            return Err(crate::EngineClientError::HistoricalStartupRefused(
+                "historical execution startup requires regular sequencer mode",
             ));
         }
         let checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader> =
