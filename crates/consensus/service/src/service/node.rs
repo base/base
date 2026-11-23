@@ -234,11 +234,11 @@ impl RollupNode {
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
         conductor: Option<Arc<dyn Conductor>>,
         checkpoint_client: CheckpointClient,
-    ) -> (
-        EngineActor<ConfiguredEngineReceiver<E>>,
+    ) -> Result<(
+        EngineActor<impl EngineRequestReceiver + use<E>>,
         EngineRpcProcessor<E>,
         watch::Receiver<EngineState>,
-    ) {
+    ), crate::EngineClientError> {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let sequencer_engine_state_rx = engine_state_rx.clone();
@@ -246,6 +246,11 @@ impl RollupNode {
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
 
         let node_mode = self.mode();
+        if self.sequencer_config.historical_el_sync_target.is_some() && node_mode.is_validator() {
+            return Err(crate::EngineClientError::HistoricalStartupRefused(
+                "historical execution startup requires regular sequencer mode",
+            ));
+        }
         let checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader> =
             Arc::new(checkpoint_client.clone());
         let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
@@ -270,17 +275,21 @@ impl RollupNode {
                 engine_processor,
             ))
         } else {
-            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
+            let mut coordinator = SequencerEngineRequestCoordinator::new(
                 engine_processor,
                 node_mode,
                 conductor,
                 self.sequencer_config.sequencer_stopped,
                 unsafe_head_tx,
-            ))
+            );
+            if let Some(target) = self.sequencer_config.historical_el_sync_target {
+                coordinator.begin_historical_startup(target)?;
+            }
+            ConfiguredEngineReceiver::Sequencer(coordinator)
         };
         let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
 
-        (engine_actor, engine_rpc_processor, sequencer_engine_state_rx)
+        Ok((engine_actor, engine_rpc_processor, sequencer_engine_state_rx))
     }
 
     /// Starts the rollup node service.
@@ -396,7 +405,7 @@ impl RollupNode {
                 unsafe_head_tx,
                 engine_conductor,
                 checkpoint_client,
-            );
+            ).map_err(|error| error.to_string())?;
 
         let derivation = DerivationActor::new(
             QueuedDerivationEngineClient {
@@ -601,5 +610,113 @@ impl RollupNode {
             ]
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{net::{IpAddr, Ipv4Addr}, sync::Arc, time::Duration};
+
+    use alloy_eips::BlockNumberOrTag;
+    use alloy_genesis::ChainConfig;
+    use alloy_primitives::{Address, B256};
+    use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, JwtSecret, PayloadStatus, PayloadStatusEnum};
+    use base_common_genesis::RollupConfig;
+    use base_consensus_disc::LocalNode;
+    use base_consensus_engine::{EngineEndpoint, test_utils::{test_block_info, test_engine_client_builder}};
+    use discv5::enr::k256::ecdsa::SigningKey;
+    use rstest::rstest;
+    use tokio::sync::{mpsc, watch};
+    use tokio_util::sync::CancellationToken;
+    use url::Url;
+
+    use super::RollupNode;
+    use crate::{CheckpointClient, EngineActorRequest, EngineClientError, EngineConfig, L1ConfigBuilder, NetworkConfig, NodeActor, NodeOperatingMode, QueuedEngineDerivationClient, RollupNodeBuilder, SequencerConfig};
+
+    /// Builds lazy node configuration without opening sockets or starting unrelated actors.
+    async fn historical_startup_node(mode: NodeOperatingMode, target: Option<base_protocol::L2BlockInfo>) -> RollupNode {
+        const TRUST_RPC: bool = true;
+        let config = RollupConfig::default();
+        let endpoint = Url::parse("http://127.0.0.1:1").expect("lazy test URL must parse");
+        let discovery = LocalNode::new(
+            SigningKey::from_bytes((&[7_u8; 32]).into()).expect("test discovery key must decode"),
+            IpAddr::V4(Ipv4Addr::LOCALHOST), 0, 0,
+        );
+        let network = NetworkConfig::new(config.clone(), discovery, "/ip4/127.0.0.1/tcp/0".parse().expect("test gossip address must parse"), Address::ZERO);
+        RollupNodeBuilder::new(
+            config.clone(),
+            L1ConfigBuilder {
+                chain_config: ChainConfig::default(), trust_rpc: TRUST_RPC,
+                beacon: endpoint.clone(), rpc_url: endpoint.clone(),
+                rpc_timeout: Duration::from_secs(1), slot_duration_override: None,
+                verifier_l1_confs: 0, da_batcher_sender_override: None,
+            },
+            TRUST_RPC,
+            EngineConfig {
+                config: Arc::new(config), l2_endpoint: EngineEndpoint::Url(endpoint.clone()),
+                l2_jwt_secret: JwtSecret::random(), l1_url: endpoint,
+                l1_rpc_timeout: Duration::from_secs(1), mode,
+            },
+            network, None,
+        ).with_sequencer_config(SequencerConfig {
+            sequencer_stopped: true, historical_el_sync_target: target, ..Default::default()
+        }).build().await.expect("lazy node construction must not require a running RPC server")
+    }
+
+    /// The production constructor must select historical routing only for a configured sequencer.
+    #[rstest]
+    #[case::default_off(NodeOperatingMode::Sequencer, None)]
+    #[case::selected(NodeOperatingMode::Sequencer, Some(test_block_info(100)))]
+    #[case::validator_refused(NodeOperatingMode::Validator, Some(test_block_info(100)))]
+    #[tokio::test]
+    async fn create_engine_actor_historical_startup_wiring(
+        #[case] mode: NodeOperatingMode,
+        #[case] target: Option<base_protocol::L2BlockInfo>,
+    ) {
+        let node = historical_startup_node(mode, target).await;
+        let local_head = test_block_info(1);
+        let client = Arc::new(test_engine_client_builder().with_block_info_by_tag(BlockNumberOrTag::Latest, local_head).build());
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }, payload_id: None }).await;
+        let storage = client.storage();
+        let cancellation = CancellationToken::new();
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let (derivation_tx, _derivation_rx) = mpsc::channel(8);
+        let (unsafe_head_tx, _unsafe_head_rx) = watch::channel(local_head);
+        let (checkpoint_tx, _checkpoint_rx) = mpsc::channel(8);
+        let result = node.create_engine_actor(
+            Arc::clone(&client), cancellation.clone(), request_rx,
+            QueuedEngineDerivationClient::new(derivation_tx), unsafe_head_tx, None,
+            CheckpointClient::new(checkpoint_tx),
+        );
+        if mode.is_validator() {
+            assert!(matches!(result, Err(EngineClientError::HistoricalStartupRefused("historical execution startup requires regular sequencer mode"))), "the actual constructor must reject a validator with a historical target");
+            assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), 0, "validator refusal must precede every engine FCU");
+            return;
+        }
+        let (actor, _rpc, _state) = result.expect("stopped regular sequencer must construct successfully");
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        request_tx.send(EngineActorRequest::PrepareSequencerStart { expected_hash: local_head.block_info.hash, result_tx }).await.expect("activation query must enqueue");
+        let handle = tokio::spawn(actor.start(()));
+        let response = tokio::time::timeout(Duration::from_secs(1), result_rx.recv()).await.expect("constructed actor must answer without waiting for the startup deadline").expect("activation response channel must remain open");
+        if let Some(target) = target {
+            assert!(matches!(response, Err(EngineClientError::HistoricalStartupPending)), "a configured target must select the historical phase at the production wiring point");
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while client.storage().read().await.fork_choice_updated_v3_requests.is_empty() {
+                    tokio::task::yield_now().await;
+                }
+            }).await.expect("the selected phase must issue its immediate target probe");
+            let storage = storage.read().await;
+            assert_eq!(storage.fork_choice_updated_v3_requests.len(), 1, "historical startup must issue exactly one initial probe before the next cadence tick");
+            let (forkchoice, has_attributes) = &storage.fork_choice_updated_v3_requests[0];
+            assert_eq!(*forkchoice, ForkchoiceState { head_block_hash: target.block_info.hash, safe_block_hash: B256::ZERO, finalized_block_hash: B256::ZERO }, "the constructor must preserve the exact configured target FCU with zero safe/finalized hashes");
+            assert!(!has_attributes, "historical startup must not submit payload attributes");
+        } else {
+            assert!(matches!(response, Err(EngineClientError::ELSyncing)), "without a target the stopped follower must retain ordinary bootstrap routing, not historical admission");
+            let storage = storage.read().await;
+            assert_eq!(storage.fork_choice_updated_v3_requests.len(), 1, "default-off construction must retain exactly the ordinary local-head bootstrap FCU");
+            assert_eq!(storage.fork_choice_updated_v3_requests[0].0.head_block_hash, local_head.block_info.hash, "without a target the bootstrap must probe the local head rather than a historical target");
+        }
+        cancellation.cancel();
+        tokio::time::timeout(Duration::from_secs(1), handle).await.expect("constructed actor must stop promptly").expect("constructed actor must not panic").expect("cancellation must shut the actor down cleanly");
     }
 }

@@ -18,6 +18,8 @@ const DEFAULT_CONDUCTOR_RPC_TIMEOUT: Duration = Duration::from_secs(1);
 pub struct SequencerConfig {
     /// Whether or not the sequencer is enabled at startup.
     pub sequencer_stopped: bool,
+    /// Operator-authenticated historical startup target, selected only on stopped regular nodes.
+    pub historical_el_sync_target: Option<base_protocol::L2BlockInfo>,
     /// Whether or not the sequencer is in recovery mode.
     pub sequencer_recovery_mode: bool,
     /// Optional account funding for the first private block of each shadow cycle.
@@ -56,6 +58,7 @@ impl Default for SequencerConfig {
     fn default() -> Self {
         Self {
             sequencer_stopped: false,
+            historical_el_sync_target: None,
             sequencer_recovery_mode: false,
             shadow_funding: None,
             conductor_rpc_url: None,

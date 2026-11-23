@@ -31,6 +31,27 @@ struct Cli {
 }
 ```
 
+## Historical execution startup
+
+A stopped regular sequencer can opt into historical execution-layer synchronization with
+`--sequencer.stopped --sequencer.historical-el-sync-target '<L2BlockInfo JSON>'`. Supply the
+complete `unsafe_l2` object from a trusted node's `optimism_syncStatus` response, including
+its L1 origin and sequence number. This is an operator-authenticated target, not automatic
+discovery or validation of an arbitrary RPC endpoint.
+
+The option is disabled by default and cannot be combined with isolated, shadow, or recovery
+sequencing. A configured conductor must report non-leadership. Startup blocks local builds
+and admin activation until the target is execution-valid and the label/reset handoff succeeds;
+it then resumes normal derivation while leaving sequencing stopped. Start sequencing through
+the normal admin flow only after checking the resulting heads. A failed or timed-out startup
+does not release the gate.
+
+The target is single-use. Remove `--sequencer.historical-el-sync-target` after the handoff,
+before restarting the node. A cold startup refuses the target before sending a target
+forkchoice update if the local execution head is already at or above its height; a missing
+local head also fails closed. This policy does not assume ancestry from height alone.
+The check runs once per selected startup phase, not again as synchronization progresses.
+
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
