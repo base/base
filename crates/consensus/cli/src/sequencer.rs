@@ -26,6 +26,16 @@ pub struct SequencerArgs {
     )]
     pub stopped: bool,
 
+    /// Start historical EL synchronization at this operator-authenticated `L2BlockInfo` JSON target.
+    /// Requires a stopped regular sequencer; supplying the target opts into the startup phase.
+    #[arg(
+        long = "sequencer.historical-el-sync-target",
+        requires = "stopped",
+        conflicts_with_all = ["isolated", "shadow_blocks_per_cycle", "recover"],
+        value_parser = |arg: &str| serde_json::from_str::<base_protocol::L2BlockInfo>(arg)
+    )]
+    pub historical_el_sync_target: Option<base_protocol::L2BlockInfo>,
+
     /// Number of L1 blocks to keep distance from the L1 head as a sequencer when picking an L1
     /// origin.
     #[arg(long = "sequencer.l1-confs", default_value = "4", env = "BASE_NODE_SEQUENCER_L1_CONFS")]
@@ -126,6 +136,7 @@ impl SequencerArgs {
     pub fn config(&self) -> SequencerConfig {
         SequencerConfig {
             sequencer_stopped: self.stopped,
+            historical_el_sync_target: self.historical_el_sync_target,
             sequencer_recovery_mode: self.recover,
             shadow_funding: self.shadow_funding_address.map(|address| {
                 ShadowFunding::new(
@@ -164,6 +175,35 @@ mod tests {
         l1: L1ClientArgs,
         #[command(flatten)]
         sequencer: SequencerArgs,
+    }
+
+    /// Historical startup is opt-in and requires a stopped node and a complete trusted target.
+    #[test]
+    fn historical_el_sync_target_parsing() {
+        let mut target = base_protocol::L2BlockInfo::default();
+        target.block_info.hash = alloy_primitives::B256::repeat_byte(0x11);
+        target.block_info.number = 123;
+        target.block_info.parent_hash = alloy_primitives::B256::repeat_byte(0x22);
+        target.block_info.timestamp = 456;
+        target.l1_origin.hash = alloy_primitives::B256::repeat_byte(0x33);
+        target.l1_origin.number = 42;
+        target.seq_num = 7;
+        let json = serde_json::to_string(&target).expect("target fixture must serialize");
+        let parsed = SequencerArgs::try_parse_from(["base-consensus", "--sequencer.stopped", "--sequencer.historical-el-sync-target", &json]);
+        assert!(parsed.is_ok(), "stopped sequencer must accept the explicit historical target");
+        assert_eq!(parsed.unwrap().config().historical_el_sync_target, Some(target), "CLI must preserve every authenticated target field");
+        assert_eq!(SequencerArgs::default().config().historical_el_sync_target, None, "historical startup must remain disabled by default");
+        assert!(SequencerArgs::try_parse_from(["base-consensus", "--sequencer.historical-el-sync-target", &json]).is_err(), "an active startup must reject historical sync");
+        assert!(SequencerArgs::try_parse_from(["base-consensus", "--sequencer.stopped", "--sequencer.historical-el-sync-target", "{}"]).is_err(), "an incomplete target must fail closed");
+        for conflict in [
+            vec!["--sequencer.isolated"],
+            vec!["--sequencer.shadow-blocks-per-cycle", "1"],
+            vec!["--sequencer.recover"],
+        ] {
+            let mut args = vec!["base-consensus", "--sequencer.stopped", "--sequencer.historical-el-sync-target", &json];
+            args.extend(conflict);
+            assert!(SequencerArgs::try_parse_from(args).is_err(), "historical startup must reject incompatible sequencing modes");
+        }
     }
 
     #[test]

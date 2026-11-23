@@ -234,11 +234,11 @@ impl RollupNode {
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
         conductor: Option<Arc<dyn Conductor>>,
         checkpoint_client: CheckpointClient,
-    ) -> (
-        EngineActor<ConfiguredEngineReceiver<E>>,
+    ) -> Result<(
+        EngineActor<impl EngineRequestReceiver + use<E>>,
         EngineRpcProcessor<E>,
         watch::Receiver<EngineState>,
-    ) {
+    ), crate::EngineClientError> {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let sequencer_engine_state_rx = engine_state_rx.clone();
@@ -246,6 +246,11 @@ impl RollupNode {
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
 
         let node_mode = self.mode();
+        if self.sequencer_config.historical_el_sync_target.is_some() && node_mode.is_validator() {
+            return Err(crate::EngineClientError::RequestError(
+                "historical execution startup requires regular sequencer mode".into(),
+            ));
+        }
         let checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader> =
             Arc::new(checkpoint_client.clone());
         let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
@@ -270,17 +275,21 @@ impl RollupNode {
                 engine_processor,
             ))
         } else {
-            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
+            let mut coordinator = SequencerEngineRequestCoordinator::new(
                 engine_processor,
                 node_mode,
                 conductor,
                 self.sequencer_config.sequencer_stopped,
                 unsafe_head_tx,
-            ))
+            );
+            if let Some(target) = self.sequencer_config.historical_el_sync_target {
+                coordinator.begin_historical_startup(target)?;
+            }
+            ConfiguredEngineReceiver::Sequencer(coordinator)
         };
         let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
 
-        (engine_actor, engine_rpc_processor, sequencer_engine_state_rx)
+        Ok((engine_actor, engine_rpc_processor, sequencer_engine_state_rx))
     }
 
     /// Starts the rollup node service.
@@ -396,7 +405,7 @@ impl RollupNode {
                 unsafe_head_tx,
                 engine_conductor,
                 checkpoint_client,
-            );
+            ).map_err(|error| error.to_string())?;
 
         let derivation = DerivationActor::new(
             QueuedDerivationEngineClient {
