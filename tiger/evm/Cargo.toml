@@ -12,6 +12,10 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# tiger
+base-tiger-precompiles.workspace = true
+base-tiger-precompile-storage.workspace = true
+
 # base
 base-common-flz.workspace = true
 base-common-base-tx.workspace = true
@@ -28,3 +32,6 @@ alloy-trie.workspace = true
 alloy-eips.workspace = true
 alloy-consensus = { workspace = true, features = ["std", "secp256k1"] }
 alloy-primitives.workspace = true
+
+[dev-dependencies]
+alloy-sol-types.workspace = true

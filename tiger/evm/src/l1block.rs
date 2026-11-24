@@ -79,7 +79,8 @@ impl L1BlockInfo {
 
         if spec.is_feature_enabled(BaseFeature::OperatorFee) {
             let word = Self::slot(evm, Self::OPERATOR_FEE_SCALARS_SLOT)?;
-            params.operator_fee_scalar = Some(Self::bytes(word, Self::OPERATOR_FEE_SCALAR_OFFSET, 4));
+            params.operator_fee_scalar =
+                Some(Self::bytes(word, Self::OPERATOR_FEE_SCALAR_OFFSET, 4));
             params.operator_fee_constant =
                 Some(Self::bytes(word, Self::OPERATOR_FEE_CONSTANT_OFFSET, 8));
         }

@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, address};
 use base_common_genesis::BaseFeature;
+use base_tiger_precompiles::NativePrecompiles;
 use evm2::{
     Evm, Precompiles,
     interpreter::{GasTracker, Message},
@@ -10,7 +11,7 @@ use evm2::{
     },
 };
 
-use crate::{BaseEvmTypes, BaseSpecId};
+use crate::{BaseEvmTypes, BasePrecompiles, BaseSpecId, ChainSpec};
 
 // Precompile addresses whose Base variants override the stock Ethereum entries.
 const BN254_PAIR_ADDRESS: Address = address!("0x0000000000000000000000000000000000000008");
@@ -120,9 +121,8 @@ impl BaseEvmTypes {
     /// - **Isthmus** caps the BLS12-381 G1/G2 MSM and pairing (`0x0c`/`0x0e`/`0x0f`) inputs;
     ///   **Jovian** tightens those caps.
     ///
-    /// The Beryl/Cobalt dynamic precompiles (B20 factory, registries, `TxContext`, `NonceManager`)
-    /// remain follow-up work.
-    pub fn precompiles(spec: BaseSpecId) -> Precompiles<Self> {
+    /// The Base native precompiles are layered on by [`Self::precompiles`].
+    pub fn eth_precompiles(spec: BaseSpecId) -> Precompiles<Self> {
         let mut precompiles = Precompiles::base(spec.into());
         let map = precompiles.as_map_mut();
 
@@ -184,6 +184,20 @@ impl BaseEvmTypes {
 
         precompiles
     }
+
+    /// Returns the precompile provider for `spec` on `chain`: the Ethereum set
+    /// ([`Self::eth_precompiles`]) plus the Base native precompiles the fork installs (Beryl:
+    /// activation and policy registries, B-20 factory and tokens; Cobalt: transaction context and
+    /// nonce manager; v2 logic at Cobalt and v3 at Denim). The native precompiles report
+    /// `chain.chain_id` and use `chain.activation_admin` as the activation registry's fallback
+    /// admin, as base-reth does.
+    pub fn precompiles(spec: BaseSpecId, chain: &ChainSpec) -> BasePrecompiles {
+        BasePrecompiles {
+            eth: Self::eth_precompiles(spec),
+            native: NativePrecompiles::new(spec.upgrade(), chain.activation_admin),
+            chain_id: chain.chain_id,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -211,14 +225,14 @@ mod tests {
 
     #[test]
     fn p256_absent_before_fjord() {
-        let mut precompiles = BaseEvmTypes::precompiles(BaseSpecId::new(BaseUpgrade::Ecotone));
+        let mut precompiles = BaseEvmTypes::eth_precompiles(BaseSpecId::new(BaseUpgrade::Ecotone));
         assert!(!precompiles.as_map_mut().contains(&P256_ADDRESS), "no P256 before Fjord");
     }
 
     #[test]
     fn p256_present_from_fjord() {
         for upgrade in [BaseUpgrade::Fjord, BaseUpgrade::Granite, BaseUpgrade::Isthmus] {
-            let mut precompiles = BaseEvmTypes::precompiles(BaseSpecId::new(upgrade));
+            let mut precompiles = BaseEvmTypes::eth_precompiles(BaseSpecId::new(upgrade));
             assert!(
                 precompiles.as_map_mut().contains(&P256_ADDRESS),
                 "P256 present at {upgrade:?}",
@@ -229,7 +243,7 @@ mod tests {
     #[test]
     fn p256_present_at_azul_via_osaka() {
         // Azul maps to Osaka, where `Precompiles::base` already installs the Osaka-priced P256.
-        let mut precompiles = BaseEvmTypes::precompiles(BaseSpecId::new(BaseUpgrade::Azul));
+        let mut precompiles = BaseEvmTypes::eth_precompiles(BaseSpecId::new(BaseUpgrade::Azul));
         assert!(precompiles.as_map_mut().contains(&P256_ADDRESS), "P256 present at Azul");
     }
 
@@ -271,7 +285,7 @@ mod tests {
     #[test]
     fn base_precompiles_install_bn254_and_bls_caps() {
         // Granite installs the bn254 pairing cap; Isthmus additionally installs the BLS caps.
-        let mut isthmus = BaseEvmTypes::precompiles(BaseSpecId::new(BaseUpgrade::Isthmus));
+        let mut isthmus = BaseEvmTypes::eth_precompiles(BaseSpecId::new(BaseUpgrade::Isthmus));
         let map = isthmus.as_map_mut();
         for address in
             [BN254_PAIR_ADDRESS, BLS12_G1_MSM_ADDRESS, BLS12_G2_MSM_ADDRESS, BLS12_PAIRING_ADDRESS]

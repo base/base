@@ -34,10 +34,14 @@ pub use handler::BaseTxHandlerHooks;
 
 mod precompiles;
 
+mod native_precompiles;
+pub use native_precompiles::{BasePrecompiles, CallEnv, EvmStorageProvider};
+
 mod executor;
 pub use executor::{
-    BaseBlockExecutionCtx, BaseBlockExecutor, BlockEnvInput, BlockExecutionResult, BlockGasLimitExceeded,
-    CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError, TxBaseExecutionUnsupported,
+    BaseBlockExecutionCtx, BaseBlockExecutor, BlockEnvInput, BlockExecutionResult,
+    BlockGasLimitExceeded, CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError,
+    TxBaseExecutionUnsupported,
 };
 
 mod registry;

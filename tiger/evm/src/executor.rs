@@ -241,7 +241,7 @@ impl<'a> BaseBlockExecutor<'a> {
             block,
             BaseEvmTypes::tx_registry(spec),
             database,
-            BaseEvmTypes::precompiles(spec),
+            BaseEvmTypes::precompiles(spec, chain),
         );
         let ctx = BaseBlockExecutionCtx {
             parent_hash: env.parent_hash,

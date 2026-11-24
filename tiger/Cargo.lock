@@ -1018,12 +1018,15 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-sol-types",
  "alloy-trie",
  "base-common-base-tx",
  "base-common-consensus",
  "base-common-flz",
  "base-common-genesis",
  "base-common-l1-fees",
+ "base-tiger-precompile-storage",
+ "base-tiger-precompiles",
  "evm2",
 ]
 
