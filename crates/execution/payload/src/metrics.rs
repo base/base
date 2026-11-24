@@ -37,9 +37,13 @@ base_metrics::define_metrics! {
     )]
     predicate_bucket_wakeups: histogram,
     #[describe(
-        "Depth of validity-predicate index buckets, sampled once per build"
+        "Distinct validity-predicate index buckets, sampled once per build"
     )]
-    predicate_bucket_depth: histogram,
+    predicate_bucket_count: histogram,
+    #[describe(
+        "Depth of the deepest validity-predicate index bucket, sampled once per build"
+    )]
+    predicate_bucket_max_depth: histogram,
     #[describe(
         "Accounts read while evaluating validity predicates per block, counting every read"
     )]
@@ -194,12 +198,12 @@ impl ValidityMetrics {
         Self::resting_predicate_sweep_wait_timeouts_total().increment(1);
     }
 
-    /// Records validity-predicate index bucket wakeups and depth distribution for one build.
+    /// Records validity-predicate index bucket wakeups, bucket count, and max depth for one build.
     pub fn record_predicate_index_diagnostics<T>(wakeups: u64, index: &ParkedPredicateIndex<T>) {
+        let (count, max_depth) = index.bucket_stats();
         Self::predicate_bucket_wakeups().record(wakeups as f64);
-        for depth in index.bucket_depths() {
-            Self::predicate_bucket_depth().record(depth as f64);
-        }
+        Self::predicate_bucket_count().record(count as f64);
+        Self::predicate_bucket_max_depth().record(max_depth as f64);
     }
 }
 
@@ -301,7 +305,8 @@ mod tests {
         assert!(rendered.contains("base_builder_predicate_slots_loaded_total_sum 1"));
         assert!(rendered.contains("base_builder_predicate_slots_loaded_unique_sum 1"));
         assert!(rendered.contains("base_builder_predicate_bucket_wakeups_sum 3"));
-        assert!(rendered.contains("base_builder_predicate_bucket_depth_sum 1"));
+        assert!(rendered.contains("base_builder_predicate_bucket_count_sum 1"));
+        assert!(rendered.contains("base_builder_predicate_bucket_max_depth_sum 1"));
     }
 
     #[test]

@@ -320,9 +320,9 @@ impl<T> ParkedPredicateIndex<T> {
         removed.len()
     }
 
-    /// Returns the number of parked transactions blocked on each distinct index bucket.
-    pub fn bucket_depths(&self) -> impl Iterator<Item = usize> + '_ {
-        self.blockers.values().map(PredicateBucket::len)
+    /// Returns the number of distinct index buckets and the depth of the deepest one.
+    pub fn bucket_stats(&self) -> (usize, usize) {
+        (self.blockers.len(), self.blockers.values().map(PredicateBucket::len).max().unwrap_or(0))
     }
 
     fn insert_into_bucket(&mut self, hash: TxHash) {
@@ -1267,7 +1267,7 @@ mod tests {
                 value: U256::MAX,
             },
         );
-        assert_eq!(index.bucket_depths().collect::<Vec<_>>(), vec![1]);
+        assert_eq!(index.bucket_stats(), (1, 1));
         assert!(
             index
                 .affected_by_state(&changed_balance(address, 0, 1))
