@@ -22,6 +22,7 @@ path = "src/main.rs"
 # tiger
 base-tiger-evm.workspace = true
 base-tiger-store.workspace = true
+base-tiger-net.workspace = true
 
 # base
 base-proof-mpt = { path = "../../crates/proof/mpt", default-features = false, features = ["std"] }
@@ -44,9 +45,10 @@ alloy-serde = { version = "2.5.0", default-features = false, features = ["std"] 
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std", "serde"] }
 
-# crypto (Engine API JWT)
+# crypto (Engine API JWT, node key)
 sha2.workspace = true
 hmac.workspace = true
+secp256k1 = { workspace = true, features = ["std"] }
 
 # serialization
 serde = { workspace = true, features = ["std", "derive"] }

@@ -52,6 +52,24 @@ pub enum Version {
     V5 = 5,
 }
 
+/// The outcome of importing one block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Imported {
+    /// The block is valid and now stored.
+    Valid,
+    /// The block was already stored.
+    Known,
+    /// The parent is not stored.
+    MissingParent,
+    /// The block breaks a rule (or descends from a block that does).
+    Invalid {
+        /// The last valid ancestor.
+        latest_valid: Option<B256>,
+        /// Why the block is invalid.
+        error: String,
+    },
+}
+
 /// A block built from payload attributes.
 #[derive(Debug, Clone)]
 struct BuiltPayload {
@@ -279,39 +297,61 @@ impl Node {
             let error = format!("block hash mismatch: want {expected_hash}, got {hash}");
             return Ok(status("INVALID", None, Some(&error)));
         }
+        match self.import_block(&mut engine, header, hash, &block.body.transactions)? {
+            Imported::Valid | Imported::Known => Ok(status("VALID", Some(hash), None)),
+            Imported::MissingParent => {
+                self.request_sync(parent_hash);
+                Ok(status("SYNCING", None, None))
+            }
+            Imported::Invalid { latest_valid, error } => Ok(status("INVALID", latest_valid, Some(&error))),
+        }
+    }
+
+    /// Validates, executes and stores one block whose hash is `hash`.
+    pub fn import_block(
+        &self,
+        engine: &mut EngineState,
+        header: Header,
+        hash: B256,
+        transactions: &[Bytes],
+    ) -> Result<Imported, RpcError> {
+        let parent_hash = header.parent_hash;
         if let Some(invalid) = engine.invalid.get(&hash) {
-            return Ok(status("INVALID", invalid.latest_valid, Some(&invalid.error)));
+            return Ok(Imported::Invalid { latest_valid: invalid.latest_valid, error: invalid.error.clone() });
         }
         if let Some(invalid) = engine.invalid.get(&parent_hash).cloned() {
             engine.reject(hash, invalid.clone());
-            return Ok(status("INVALID", invalid.latest_valid, Some("links to previously rejected block")));
+            return Ok(Imported::Invalid {
+                latest_valid: invalid.latest_valid,
+                error: "links to previously rejected block".into(),
+            });
         }
         let (parent, state) = {
             let chain = self.chain.read().expect("chain lock");
             if chain.block(&hash).is_some() {
-                return Ok(status("VALID", Some(hash), None));
+                return Ok(Imported::Known);
             }
             let Some(parent) = chain.block(&parent_hash) else {
-                return Ok(status("SYNCING", None, None));
+                return Ok(Imported::MissingParent);
             };
             let state = Rc::new(chain.state_after(&parent));
             (parent, state)
         };
         let validated = BlockExecution { chain: &self.spec }
-            .validate(&header, &block.body.transactions, &parent.header, &state)
+            .validate(&header, transactions, &parent.header, &state)
             .map_err(|error| RpcError::internal(format!("state of block {parent_hash}: {error}")))?;
         match (validated.invalid, validated.executed) {
             (None, Some(executed)) => {
                 let mut stored = executed;
                 stored.header = header;
                 self.chain.write().expect("chain lock").insert(hash, &stored).map_err(RpcError::internal)?;
-                Ok(status("VALID", Some(hash), None))
+                Ok(Imported::Valid)
             }
             (invalid, _) => {
                 let error = invalid.unwrap_or_else(|| "block did not execute".into());
                 eprintln!("tiger: invalid block {} {hash}: {error}", header.number);
                 engine.reject(hash, InvalidBlock { latest_valid: Some(parent_hash), error: error.clone() });
-                Ok(status("INVALID", Some(parent_hash), Some(&error)))
+                Ok(Imported::Invalid { latest_valid: Some(parent_hash), error })
             }
         }
     }
@@ -341,6 +381,8 @@ impl Node {
         }
         let mut chain = self.chain.write().expect("chain lock");
         let Some(head_block) = chain.block(&head) else {
+            drop(chain);
+            self.request_sync(head);
             return Ok(json!({ "payloadStatus": status("SYNCING", None, None), "payloadId": null }));
         };
         for hash in [state.safe_block_hash, state.finalized_block_hash] {

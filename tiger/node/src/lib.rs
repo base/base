@@ -19,7 +19,10 @@ mod chain;
 pub use chain::{Chain, Forkchoice, StoredBlock};
 
 mod engine;
-pub use engine::{EngineState, Version as EngineVersion};
+pub use engine::{EngineState, Imported, Version as EngineVersion};
+
+mod sync;
+pub use sync::{BACKFILL_THRESHOLD, Sync};
 
 mod node;
 pub use node::{Node, RpcError};

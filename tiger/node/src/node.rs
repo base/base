@@ -2,7 +2,7 @@
 
 use std::{
     path::Path,
-    sync::{Mutex, RwLock},
+    sync::{Mutex, OnceLock, RwLock},
 };
 
 use base_tiger_evm::ChainSpec;
@@ -60,6 +60,8 @@ pub struct Node {
     pub chain: RwLock<Chain>,
     /// Engine API state; its lock also serializes Engine API calls.
     pub engine: Mutex<EngineState>,
+    /// The network and sync thread, once started.
+    pub sync: OnceLock<crate::sync::Sync>,
 }
 
 impl Node {
@@ -67,7 +69,12 @@ impl Node {
     pub fn open(datadir: &Path, genesis: Genesis) -> Result<Self, String> {
         let spec = genesis.chain.clone();
         let chain = Chain::open(datadir, genesis)?;
-        Ok(Self { spec, chain: RwLock::new(chain), engine: Mutex::new(EngineState::default()) })
+        Ok(Self {
+            spec,
+            chain: RwLock::new(chain),
+            engine: Mutex::new(EngineState::default()),
+            sync: OnceLock::new(),
+        })
     }
 
     /// Answers one JSON-RPC call. `authenticated` calls (the auth port) may use `engine_*`.

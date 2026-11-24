@@ -83,12 +83,20 @@ for how the consensus node drives the execution layer.
   `debug_executionWitness` from a configured upstream base-reth RPC, verifies every node by hash
   against the parent state root (so the upstream can withhold data but not inject state),
   executes, checks the post-state root and receipts, and persists the witness nodes and the
-  values the block touched. The store holds a partial state with a record of which parts are
-  known; a missing account, slot or node is a distinct outcome, never a silent zero: execution
-  treats it as an incomplete witness (refetch or stop), and RPC answers from a verified upstream
-  `eth_getProof` or returns a "state not local yet" error. Snap sync backfills the rest in the
-  background; once the state is complete the upstream is no longer needed. History, receipts and
-  archive queries begin at the start block.
+  values the block touched. State fills in only this way, block by block: there is no background
+  backfill to a complete state (snap is not supported on Base), so a stateless node keeps its
+  upstream. The store holds a partial state with a record of which parts are known; a missing
+  account, slot or node is a distinct outcome, never a silent zero. Execution treats it as an
+  incomplete witness (refetch, then stop). RPC state reads (`eth_getBalance`, `getCode`,
+  `getStorageAt`, `getTransactionCount`, `getProof`, `call`, `estimateGas`, traces) that touch
+  unknown state answer from a verified upstream `eth_getProof` at the same block (each proof
+  checked against tiger's own state root) when one is configured, and otherwise return a JSON-RPC
+  error saying the state is not local. History, receipts and archive queries begin at the start
+  block. A partial datadir is tiger-only.
+- **Archive proofs before Denim**: no endpoint serves witnesses or proofs for Base mainnet before
+  about block 57.11M (Denim), and none is coming. Pre-Denim eras are checked through synthetic
+  pre-state built from traces (the fuzzer's `witness.root`), and a stateless start is only
+  possible from Denim on.
 
 ### Networking and EL sync
 
@@ -96,8 +104,10 @@ Peer-to-peer sync as base-reth does it, so a node catches up much faster than th
 Engine API alone: node discovery (the protocol versions and Base identity base-reth uses),
 RLPx, the eth wire protocol (status with Base's fork id, header, body and receipt download and
 serving, and the transaction announcements the protocol requires, without a mempool), backfill
-of a forkchoice to an unknown head, and snap sync to fill state. Details: the "Networking and EL sync"
-section below.
+of a forkchoice to an unknown head, and execution of the downloaded blocks, as base-reth does
+(pipeline backfill for gaps over 32 blocks, engine-tree downloads below). No snap sync: Base does
+not support it, so tiger neither syncs state over snap nor serves it. Details: the "Networking and
+EL sync" section below.
 
 ### JSON-RPC (HTTP on the RPC port)
 
