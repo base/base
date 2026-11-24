@@ -124,12 +124,20 @@ jobs:
           BIN: target/maxperf/${{ matrix.binary }}
           MAX_GLIBC: "2.35"
         run: |
+          set -euo pipefail
+          # Run objdump on its own so a missing tool or binary fails the step.
+          symbols=$(objdump -T "$BIN")
           # Weak symbols such as pidfd_spawnp do not prevent loading on older glibc.
-          required=$(objdump -T "$BIN" | grep -v ' w ' | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/^GLIBC_//' | sort -uV | tail -1)
-          echo "$BIN requires glibc ${required:-none}"
-          if [ -n "$required" ] && [ "$(printf '%s\n%s\n' "$required" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+          strong=$(grep -v ' w ' <<<"$symbols" || true)
+          required=$(grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' <<<"$strong" | sed 's/^GLIBC_//' | sort -uV | tail -1 || true)
+          if [ -z "$required" ]; then
+            echo "::error::no GLIBC version references found in $BIN; cannot verify compatibility"
+            exit 1
+          fi
+          echo "$BIN requires glibc $required"
+          if [ "$(printf '%s\n%s\n' "$required" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
             echo "::error::$BIN requires glibc $required, newer than the supported $MAX_GLIBC"
-            objdump -T "$BIN" | grep -v ' w ' | grep -E "GLIBC_$required\b" || true
+            grep -F "(GLIBC_$required)" <<<"$strong" || true
             exit 1
           fi
 
