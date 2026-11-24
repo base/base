@@ -59,11 +59,10 @@ impl NodeProcess {
         self.root.join(format!("{}.log", self.name))
     }
 
-    /// The fault line the current run printed before it died, if an injected fault killed it.
+    /// The fault line the current run printed, if an injected fault crashed it. The line comes
+    /// before the abort, so the process may not have exited yet: its requests already fail.
     pub fn injected_crash(&mut self) -> Option<String> {
-        if self.child.is_none() || self.alive() {
-            return None;
-        }
+        self.child.as_ref()?;
         let text = fs::read(self.log_path()).ok()?;
         let since = text.get(self.log_start as usize..)?;
         String::from_utf8_lossy(since)
