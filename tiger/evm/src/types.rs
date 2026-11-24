@@ -1,6 +1,6 @@
 //! Base's EVM2 execution type family.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use base_common_l1_fees::L1FeeParams;
 use evm2::{BaseEvmConfigSelector, Evm, EvmTypesHost};
 
@@ -9,8 +9,7 @@ use crate::{BaseSpecId, BaseTxEnvelope};
 /// Base's EVM2 execution type family.
 ///
 /// Wires Base's transaction envelope ([`BaseTxEnvelope`], including deposits),
-/// L1 fee inputs (the shared engine-neutral [`L1FeeParams`] as the block-env
-/// extension), and L1-fee result data ([`BaseTxResultExt`]) into EVM2's
+/// L1 fee inputs (the engine-neutral [`L1FeeParams`] in the EVM extension), and L1-fee result data ([`BaseTxResultExt`]) into EVM2's
 /// [`EvmTypesHost`]. The spec schedule is driven by the Base fork schedule
 /// ([`BaseSpecId`]), which maps each Base upgrade to the governing EVM2 spec.
 /// Not wired into the node.
@@ -26,7 +25,7 @@ impl EvmTypesHost for BaseEvmTypes {
     type MessageResultExt = ();
     type TxEnvExt = ();
     type TxResultExt = BaseTxResultExt;
-    type BlockEnvExt = L1FeeParams;
+    type BlockEnvExt = ();
     type Host<'a> = Evm<'a, Self>;
 }
 
@@ -45,8 +44,14 @@ pub struct BaseTxResultExt {
 /// record/refund against the exact amounts charged without recomputing them —
 /// keeping the charged and settled fees in lockstep and avoiding a second pass
 /// over the transaction.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BaseEvmExt {
+    /// L1 fee parameters of the block, read from the `L1Block` predeploy before the block's first
+    /// non-deposit transaction (see [`crate::L1BlockInfo`]).
+    pub l1: L1FeeParams,
+    /// `tx.origin` of the transaction currently executing, for native precompiles, which see
+    /// only the EVM and the message. Set at the start of every transaction and system call.
+    pub tx_origin: Address,
     /// L1 data fee charged for the transaction currently executing.
     pub l1_fee: U256,
     /// Operator fee charged upfront (on the gas limit) for the transaction currently executing;

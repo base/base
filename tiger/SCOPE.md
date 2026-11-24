@@ -17,11 +17,13 @@ for how the consensus node drives the execution layer.
 
 - Chains: Base mainnet (8453) and Base Sepolia (84532), plus a custom genesis file (devnets and
   the state fuzzer's synthetic chain).
-- Forks Bedrock through Denim, decided by block number and timestamp exactly as on mainnet.
-  Everest is not scheduled on any chain and is out (see below).
+- Forks Bedrock through Everest, decided by block number and timestamp exactly as on mainnet.
+  Everest follows main's definition (its activation times are wired in when they land on main).
 - EVM: evm2 with the Base spec mapping (`MERGE` .. `OSAKA`).
 - Transactions: legacy, EIP-2930, EIP-1559, EIP-7702 (from Isthmus), deposits (`0x7e`, Regolith
-  rules: mint, nonce, failed deposits, system-tx rejection). Blob transactions are rejected.
+  rules: mint, nonce, failed deposits, system-tx rejection), and from Everest Base transactions
+  (`0x79`) with 2D nonces, EIP-8430 intrinsic gas and gas-limit billing. Blob transactions are
+  rejected.
 - Fees: L1 data fee (Bedrock, Ecotone, Fjord FastLZ), operator fee (Isthmus, Jovian scaling),
   fee vault distribution, Azul transaction gas limit cap.
 - Block rules: deposit gas accounting, Jovian DA footprint (`blobGasUsed`), Isthmus
@@ -33,7 +35,7 @@ for how the consensus node drives the execution layer.
 - Precompiles: the Ethereum set for each spec, RIP-7212 P256 (Fjord, repriced at Azul), the
   Granite/Isthmus/Jovian input caps, and the Base native precompiles: activation registry,
   B20 asset, stablecoin, factory and policy (Beryl, v2 at Cobalt, v3 at Denim), transaction
-  context and nonce manager (Cobalt).
+  context and nonce manager (Cobalt), and Everest's precompile changes (native nonce manager).
 
 ### Block validation and import (Engine API)
 
@@ -56,15 +58,46 @@ for how the consensus node drives the execution layer.
 
 ### State, persistence, reorgs
 
-- Persistent storage written by tiger itself: an on-disk copy-on-write B+tree (one file, atomic
-  commits, crash safe) with tables for headers, bodies, receipts, transaction lookup, flat
-  account/storage/code state, trie nodes, and per-block change sets.
+- base-reth's on-disk format, both ways: tiger opens an existing base-reth datadir or snapshot,
+  and base-reth reads what tiger writes. MDBX tables and their encodings, static files (headers,
+  transactions, receipts, senders, change sets), trie and hashed-state tables, history indices,
+  and the metadata reth checks, matching base/reth at the root workspace's pin
+  (`2b20e42de9c42b51ea0fb56599fda3c2f22640ef`). The reth code this needs (libmdbx bindings and C
+  sources, table definitions, codecs, static-file format) is copied into tiger, never depended
+  on; README.md records each copied file's source and upstream commit.
+- Crash safety is tested, not assumed: an env-driven fault layer under the store's file I/O
+  (torn writes, lost unsynced writes) for the fuzzer's reopen checks.
 - Merkle Patricia trie with stored nodes, updated incrementally per block; the same trie code
   computes roots over a stateless witness (the adapter) and over the database (the node).
 - Side blocks validated against any known parent; forkchoice to a different branch unwinds the
   persisted chain with change sets and applies the new branch; restarts reopen the same state.
 - History: state at any past block for `eth_call`, `eth_getBalance` and friends, and
   `eth_getProof` at past blocks (base-reth's default is an archive node; pruning is out).
+
+### Ways to start a node
+
+- **Genesis**, fed over the Engine API (devnets and the fuzz harness), from a built-in chain or
+  a genesis file whose genesis block may have a nonzero number.
+- **Existing database**: tiger's own datadir, or a base-reth datadir or snapshot (same format).
+- **Stateless start** at a recent block with no state. For each block tiger fetches
+  `debug_executionWitness` from a configured upstream base-reth RPC, verifies every node by hash
+  against the parent state root (so the upstream can withhold data but not inject state),
+  executes, checks the post-state root and receipts, and persists the witness nodes and the
+  values the block touched. The store holds a partial state with a record of which parts are
+  known; a missing account, slot or node is a distinct outcome, never a silent zero: execution
+  treats it as an incomplete witness (refetch or stop), and RPC answers from a verified upstream
+  `eth_getProof` or returns a "state not local yet" error. Snap sync backfills the rest in the
+  background; once the state is complete the upstream is no longer needed. History, receipts and
+  archive queries begin at the start block.
+
+### Networking and EL sync
+
+Peer-to-peer sync as base-reth does it, so a node catches up much faster than through the
+Engine API alone: node discovery (the protocol versions and Base identity base-reth uses),
+RLPx, the eth wire protocol (status with Base's fork id, header, body and receipt download and
+serving, and the transaction announcements the protocol requires, without a mempool), backfill
+of a forkchoice to an unknown head, and snap sync to fill state. Details: the networking section
+below, maintained by the networking work.
 
 ### JSON-RPC (HTTP on the RPC port)
 
@@ -79,6 +112,8 @@ The methods the RPC and state fuzzers compare, with base-reth's answers:
   `getTransactionCount`, `getProof`, `call`, `estimateGas`, `createAccessList`, `simulateV1`,
   `getLogs`, `newFilter`, `newBlockFilter`, `getFilterChanges`, `getFilterLogs`,
   `uninstallFilter`, `config`, `sendRawTransaction` (forwarded to the sequencer).
+- Everest: `eth_getTransactionCount` with a nonce key, `eth_call`/`eth_estimateGas` for Base
+  transactions, `payer_getTerms`, `payer_sendTransaction` (forwarded).
 - Base fields in responses: receipt `l1Fee`/`l1GasPrice`/`l1GasUsed`/scalars/operator fee
   fields/`daFootprintGasScalar`, deposit fields, Denim `timestampMs`.
 - `debug_`: `getRawHeader`, `getRawBlock`, `getRawTransaction`, `getRawReceipts`,
@@ -98,23 +133,17 @@ The methods the RPC and state fuzzers compare, with base-reth's answers:
 
 ## Left out
 
-- **reth's devp2p networking and execution-layer sync.** Base nodes sync through the consensus
-  node. A tiger node starts from genesis (or from an imported state) and is fed blocks over the
-  Engine API, for example by `base-consensus` in follow mode (`--source-l2-rpc`) or as a
-  sequencer/devnet. Consequence: a validator whose EL is far behind the tip cannot rely on the EL
-  syncing itself (base-consensus waits for a `VALID` forkchoice); follow mode covers that.
 - **The mempool.** Peer transaction gossip is off on Base, and RPC nodes forward
   `eth_sendRawTransaction` to the sequencer. Tiger forwards and keeps no pool, so `txpool_*`,
   pending-block contents from local transactions, and builder forwarding
   (`--enable-tx-forwarding`, `base_insertValidatedTransaction`) are out.
 - **Sequencer-side building from a pool**, `miner_*`, flashblocks (removed from base/base).
-- **Everest**: Base transactions (`0x79`), 2D nonces, EIP-8430, gas-limit billing, payer RPC.
-  Not scheduled on mainnet or Sepolia; added when it is.
 - **Optional base-reth extensions**: metering (`base_meter*`), proofs-history ExEx (tiger serves
   `eth_getProof` and `debug_executionWitness` from its own archive state instead), shadow
   indexer, transaction event journal, upgrade-signal contract reading, validity
   (`base_sendRawTransactionValidity`), `base_transactionStatus` (proxied to the sequencer in
   base-reth; can be added as a proxy).
+- **Transaction gossip** (off on Base) beyond what the eth protocol requires.
 - **Pruning**, WebSocket and IPC transports, `eth_subscribe`, `admin_*`, JS tracers, metrics.
 - **Ethereum L1 behavior** that Base never activates (blob transactions, PoW, pre-merge rules).
 
@@ -123,6 +152,7 @@ The methods the RPC and state fuzzers compare, with base-reth's answers:
 evm2 (with evm2-inspectors for tracing), alloy types, RLP and trie primitives, serde/serde_json
 for JSON-RPC, and the engine-neutral base crates whose trees hold no reth or revm
 (`base-common-consensus`, `-genesis`, `-l1-fees`, `-flz`, `-base-tx`, `-rpc-types`,
-`-rpc-types-engine`). No async runtime, HTTP framework, database engine, or CLI framework:
-tiger writes its own small HTTP server, JWT check, storage engine and argument parsing.
+`-rpc-types-engine`), small crypto crates for networking, and reth code copied (not depended
+on) for the database format. No reth crate anywhere. No async runtime, HTTP framework or CLI
+framework: tiger writes its own small HTTP server, JWT check, networking and argument parsing.
 README.md lists every dependency with its reason.

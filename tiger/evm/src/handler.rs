@@ -33,7 +33,7 @@ impl BaseTxHandlerHooks {
             return U256::ZERO;
         };
         let upgrade = host.config_spec_id().upgrade();
-        host.block_env().ext.calculate_tx_l1_cost(enveloped, upgrade)
+        host.ext().l1.calculate_tx_l1_cost(enveloped, upgrade)
     }
 
     /// Returns the Isthmus operator fee for `envelope` over `gas`. Zero for deposits and before
@@ -50,7 +50,7 @@ impl BaseTxHandlerHooks {
         if !upgrade.is_feature_enabled(BaseFeature::OperatorFee) {
             return U256::ZERO;
         }
-        host.block_env().ext.operator_fee_charge(enveloped, U256::from(gas), upgrade)
+        host.ext().l1.operator_fee_charge(enveloped, U256::from(gas), upgrade)
     }
 
     /// Rejects the transaction when `caller` cannot cover the full upfront charge — the maximum
@@ -118,6 +118,7 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         let l1_fee = Self::l1_fee(host, envelope);
         let operator_fee = Self::operator_fee(host, envelope, envelope.gas_limit());
         let ext = host.ext_mut();
+        ext.tx_origin = caller;
         ext.l1_fee = l1_fee;
         ext.operator_fee = operator_fee;
         // `validate_sender` only checks the gas cost and value; the L1 and operator fees are

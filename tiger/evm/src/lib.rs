@@ -5,6 +5,12 @@ pub use base_common_genesis::BaseFeature;
 mod spec;
 pub use spec::BaseSpecId;
 
+mod chain;
+pub use chain::ChainSpec;
+
+mod l1block;
+pub use l1block::L1BlockInfo;
+
 mod canyon;
 pub use canyon::Canyon;
 
@@ -24,7 +30,7 @@ mod precompiles;
 
 mod executor;
 pub use executor::{
-    BaseBlockExecutionCtx, BaseBlockExecutor, BlockExecutionResult, BlockGasLimitExceeded,
+    BaseBlockExecutionCtx, BaseBlockExecutor, BlockEnvInput, BlockExecutionResult, BlockGasLimitExceeded,
     CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError, TxBaseExecutionUnsupported,
 };
 

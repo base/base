@@ -2,19 +2,46 @@
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use alloy_eips::eip2718::Typed2718;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, U256, address};
 use base_common_consensus::{BaseReceiptEnvelope, DepositReceipt};
 use base_common_genesis::BaseFeature;
+use base_common_l1_fees::L1FeeParams;
 use evm2::{
     BlockStateAccumulator, Evm, SpecId,
+    evm::DynDatabase,
+    env::BlockEnv,
     evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SystemTx},
     registry::{HandlerError, HandlerResult},
 };
 
 use crate::{
-    BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, Everest, IntrinsicGas,
-    transaction::BaseTxEnvelope,
+    BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, ChainSpec, Everest, IntrinsicGas,
+    L1BlockInfo, transaction::BaseTxEnvelope,
 };
+
+/// The caller of system calls (EIP-4788, EIP-2935).
+const SYSTEM_ADDRESS: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
+
+/// The header fields of a block that its execution depends on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockEnvInput {
+    /// Block number.
+    pub number: u64,
+    /// Block timestamp in seconds.
+    pub timestamp: u64,
+    /// Fee recipient.
+    pub coinbase: Address,
+    /// `prevRandao` (the header's mix hash).
+    pub prev_randao: B256,
+    /// Block gas limit.
+    pub gas_limit: u64,
+    /// Base fee per gas.
+    pub base_fee: u64,
+    /// Parent block hash.
+    pub parent_hash: B256,
+    /// Parent beacon block root (from Ecotone).
+    pub parent_beacon_block_root: Option<B256>,
+}
 
 /// Error returned when a block's cumulative gas used would overflow `u64`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -169,6 +196,8 @@ pub struct BaseBlockExecutor<'a> {
     receipts: Vec<BaseReceiptEnvelope>,
     gas_used: u64,
     da_footprint_used: u64,
+    /// Whether the block's L1 fee parameters have been read (see [`L1BlockInfo`]).
+    l1_loaded: bool,
 }
 
 impl<'a> BaseBlockExecutor<'a> {
@@ -181,7 +210,42 @@ impl<'a> BaseBlockExecutor<'a> {
             receipts: Vec::new(),
             gas_used: 0,
             da_footprint_used: 0,
+            l1_loaded: false,
         }
+    }
+
+    /// Creates the EVM for a block and a block executor over it, with the block's
+    /// pre-execution system calls and upgrade transitions applied.
+    pub fn for_block(
+        chain: &ChainSpec,
+        env: &BlockEnvInput,
+        database: impl DynDatabase + 'a,
+    ) -> HandlerResult<Self> {
+        let spec = chain.spec_at(env.timestamp);
+        let block = BlockEnv::<BaseEvmTypes> {
+            number: U256::from(env.number),
+            beneficiary: env.coinbase,
+            timestamp: U256::from(env.timestamp),
+            gas_limit: U256::from(env.gas_limit),
+            basefee: U256::from(env.base_fee),
+            prevrandao: env.prev_randao.into(),
+            ..BlockEnv::<BaseEvmTypes>::default()
+        };
+        let evm = Evm::new(
+            spec,
+            block,
+            BaseEvmTypes::tx_registry(spec),
+            database,
+            BaseEvmTypes::precompiles(spec),
+        );
+        let ctx = BaseBlockExecutionCtx {
+            parent_hash: env.parent_hash,
+            parent_beacon_block_root: env.parent_beacon_block_root,
+        };
+        let mut executor = Self::new(evm, ctx);
+        executor.apply_pre_execution()?;
+        executor.apply_transition_hooks(chain)?;
+        Ok(executor)
     }
 
     /// Applies the block-boundary pre-execution system calls, in the reference order: the
@@ -199,6 +263,7 @@ impl<'a> BaseBlockExecutor<'a> {
         let is_genesis = self.evm.block().number.is_zero();
 
         // EIP-2935 block-hashes call (Prague onwards), skipped at genesis.
+        self.evm.ext_mut().tx_origin = SYSTEM_ADDRESS;
         if (spec as u8) >= (SpecId::PRAGUE as u8) && !is_genesis {
             let data = Bytes::copy_from_slice(self.ctx.parent_hash.as_slice());
             let executed = self.evm.system_call(SystemTx::new(HISTORY_STORAGE_ADDRESS, data))?;
@@ -301,7 +366,12 @@ impl<'a> BaseBlockExecutor<'a> {
             && !is_deposit
         {
             let enveloped = tx.enveloped().map(|bytes| bytes.as_ref()).unwrap_or_default();
-            let footprint = self.evm.block().ext.jovian_da_footprint(enveloped);
+            let scalar = L1BlockInfo::da_footprint_gas_scalar(&mut self.evm)?;
+            let footprint = L1FeeParams {
+                da_footprint_gas_scalar: Some(U256::from(scalar)),
+                ..L1FeeParams::default()
+            }
+            .jovian_da_footprint(enveloped);
             let available = block_gas_limit.saturating_sub(self.da_footprint_used);
             if footprint > available {
                 return Err(HandlerError::external(DaFootprintAboveGasLimit {
@@ -316,6 +386,14 @@ impl<'a> BaseBlockExecutor<'a> {
 
         if tx.as_base_tx().is_some() {
             return Err(HandlerError::external(TxBaseExecutionUnsupported));
+        }
+
+        // The L1 fee parameters are read once per block, before the first non-deposit
+        // transaction runs, from the state the deposits before it left.
+        if !is_deposit && !self.l1_loaded {
+            let spec = self.evm.config_spec_id();
+            self.evm.ext_mut().l1 = L1BlockInfo::fetch(&mut self.evm, spec)?;
+            self.l1_loaded = true;
         }
 
         // The deposit receipt records the depositor's nonce *before* the deposit executes (and
