@@ -2,7 +2,7 @@
 //! between its fee history cache and its database path), `eth_maxPriorityFeePerGas` and
 //! `eth_gasPrice` (the OP stack's tip oracle), and `eth_blobBaseFee`.
 
-use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
+use alloy_consensus::{BlockHeader, Transaction};
 use alloy_eips::{BlockNumberOrTag, eip7840::BlobParams};
 use alloy_primitives::{U64, U256};
 use alloy_rpc_types_eth::FeeHistory;

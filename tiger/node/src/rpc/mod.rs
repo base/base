@@ -21,11 +21,14 @@ pub struct RpcConfig {
     pub eth_proof_window: u64,
     /// `--http.api`: the namespaces served over HTTP, which `rpc_modules` lists.
     pub http_api: Vec<String>,
+    /// `--rollup.sequencer` (or `-http`, `-ws`): where `eth_sendRawTransaction` and
+    /// `base_transactionStatus` go.
+    pub sequencer: Option<String>,
 }
 
 impl Default for RpcConfig {
     fn default() -> Self {
-        Self { eth_proof_window: 0, http_api: ["eth", "net", "web3"].map(str::to_owned).to_vec() }
+        Self { eth_proof_window: 0, http_api: ["eth", "net", "web3"].map(str::to_owned).to_vec(), sequencer: None }
     }
 }
 
@@ -88,6 +91,7 @@ mod fees;
 mod filters;
 pub use filters::RpcFilters;
 mod receipts;
+mod sequencer;
 mod shared;
 
 fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result<T, RpcError> {
@@ -98,7 +102,7 @@ fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result
 impl Node {
     /// Answers one non-Engine JSON-RPC method.
     pub fn rpc(&self, method: &str, p: &Value) -> Result<Value, RpcError> {
-        if let Some(result) = self.rpc_blocks(method, p).or_else(|| self.rpc_call(method, p)).or_else(|| self.rpc_filters(method, p)).or_else(|| self.rpc_fees(method, p)) {
+        if let Some(result) = self.rpc_blocks(method, p).or_else(|| self.rpc_call(method, p)).or_else(|| self.rpc_filters(method, p)).or_else(|| self.rpc_fees(method, p)).or_else(|| self.rpc_sequencer(method, p)) {
             return result;
         }
         match method {

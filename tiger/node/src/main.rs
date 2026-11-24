@@ -15,7 +15,7 @@ const USAGE: &str = "usage:
   tiger node --chain <base|base-sepolia|genesis.json> --datadir <dir>
              [--http] [--http.addr <ip>] [--http.port <port>]
              [--authrpc.addr <ip>] [--authrpc.port <port>] [--authrpc.jwtsecret <file>]
-             [--http.api <modules>] [--rpc.eth-proof-window <blocks>]
+             [--http.api <modules>] [--rpc.eth-proof-window <blocks>] [--rollup.sequencer-http <url>]
              [--port <port>] [--discovery.port <port>] [--disable-discovery]
              [--bootnodes <enode,...>] [--trusted-peers <enode,...>] [--p2p-secret-key <file>]
              [--max-outbound-peers <n>] [--max-inbound-peers <n>] [--nat extip:<ip>]
@@ -110,6 +110,9 @@ impl NodeArgs {
                 "--authrpc.port" => auth_port = parse_port(value()?)?,
                 "--authrpc.jwtsecret" => jwt_secret = Some(PathBuf::from(value()?)),
                 "--http.api" => rpc = rpc.with_http_api(&value()?),
+                "--rollup.sequencer" | "--rollup.sequencer-http" | "--rollup.sequencer-ws" => {
+                    rpc.sequencer = Some(value()?);
+                }
                 "--rpc.eth-proof-window" => {
                     let text = value()?;
                     let blocks = text.parse::<u64>().map_err(|error| format!("--rpc.eth-proof-window {text}: {error}"))?;
