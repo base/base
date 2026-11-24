@@ -55,7 +55,7 @@ impl Node {
 
     /// The blob parameters base-reth's chain spec gives a block at `timestamp`: Ethereum's
     /// schedule with Cancun at Ecotone, Prague at Isthmus and Osaka at Azul.
-    fn blob_params(&self, timestamp: u64) -> Option<BlobParams> {
+    pub(super) fn blob_params(&self, timestamp: u64) -> Option<BlobParams> {
         let active = |upgrade| self.spec.is_upgrade_active(upgrade, timestamp);
         if active(BaseUpgrade::Azul) {
             Some(BlobParams::osaka())

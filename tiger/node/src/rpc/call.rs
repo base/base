@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use alloy_consensus::{TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702, TxLegacy};
-use alloy_eips::eip2930::AccessList;
+use alloy_eips::{eip2930::AccessList, eip4844::VERSIONED_HASH_VERSION_KZG};
 use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, TxKind, U64, U256, keccak256};
 use alloy_rpc_types_eth::{BlockOverrides, TransactionRequest, state::StateOverride};
 use base_common_genesis::BaseFeature;
@@ -78,9 +78,45 @@ pub(super) struct CallTx {
     authorizations: Vec<alloy_eips::eip7702::SignedAuthorization>,
     blob_hashes: Vec<B256>,
     max_fee_per_blob_gas: u128,
+    blob_checks: BlobChecks,
+}
+
+/// What revm's blob checks need besides the request.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct BlobChecks {
+    /// The block's blob base fee.
+    pub block_blob_fee: u128,
+    /// The fork's blob limit per transaction; `None` before Cancun (Ecotone).
+    pub max_blobs: Option<u64>,
+    /// Whether the request's chain id (if any) is the chain's.
+    pub chain_id_valid: bool,
 }
 
 impl CallTx {
+    /// revm's validation of a blob request, in its order: chain id, then the blob fee, the blob
+    /// count and the hash versions (`validate_eip4844_tx`).
+    fn check_blob_create(&self) -> Result<(), RpcError> {
+        let Some(max_blobs) = self.blob_checks.max_blobs else {
+            return Err(RpcError::new(-32003, "transaction type not supported"));
+        };
+        if !self.blob_checks.chain_id_valid {
+            return Err(RpcError::new(-32000, "invalid chain ID"));
+        }
+        if self.blob_checks.block_blob_fee > self.max_fee_per_blob_gas {
+            return Err(RpcError::new(-32003, "max fee per blob gas less than block blob gas fee"));
+        }
+        if self.blob_hashes.is_empty() {
+            return Err(RpcError::new(-32003, "blob transaction missing blob hashes"));
+        }
+        if self.blob_hashes.iter().any(|hash| hash[0] != VERSIONED_HASH_VERSION_KZG) {
+            return Err(RpcError::new(-32003, "blob hash version mismatch"));
+        }
+        if self.blob_hashes.len() as u64 > max_blobs {
+            return Err(RpcError::new(-32003, "too many blobs"));
+        }
+        Ok(())
+    }
+
     /// The transaction with `gas` and `nonce`, as the evm2 envelope the registry dispatches.
     pub(super) fn recovered(&self, gas: u64, nonce: u64) -> Result<alloy_consensus::transaction::Recovered<BaseTxEnvelope>, RpcError> {
         let chain_id = self.chain_id;
@@ -116,7 +152,25 @@ impl CallTx {
                 input: self.input.clone(),
             }),
             3 => {
-                let TxKind::Call(to) = self.kind else { unreachable!("blob requests have a callee") };
+                let TxKind::Call(to) = self.kind else {
+                    // evm2's blob transaction always has a callee, but revm runs a blob request
+                    // without one as a create after its blob checks: make those, then run the
+                    // create as an EIP-1559 transaction with the same fees.
+                    self.check_blob_create()?;
+                    let tx = TxEip1559 {
+                        chain_id,
+                        nonce,
+                        gas_limit: gas,
+                        max_fee_per_gas: self.gas_price,
+                        max_priority_fee_per_gas: self.priority_fee.unwrap_or_default(),
+                        to: TxKind::Create,
+                        value: self.value,
+                        access_list: self.access_list.clone(),
+                        input: self.input.clone(),
+                    };
+                    let envelope = BaseTxEnvelope::standard(TxEnvelope::Eip1559(tx), Bytes::from(vec![2]));
+                    return Ok(alloy_consensus::transaction::Recovered::new_unchecked(envelope, self.from));
+                };
                 TxEnvelope::Eip4844(TxEip4844Variant::TxEip4844(TxEip4844 {
                     chain_id,
                     nonce,
@@ -377,6 +431,7 @@ impl Node {
         request: &TransactionRequest,
         base_fee: u128,
         blob_base_fee: u128,
+        max_blobs: Option<u64>,
         from: Address,
     ) -> Result<CallTx, RpcError> {
         let blob_hashes = request.blob_versioned_hashes.as_ref();
@@ -385,8 +440,7 @@ impl Node {
         }
         let ty = if request.authorization_list.is_some() {
             4
-        } else if (blob_hashes.is_some() || request.sidecar.is_some()) && request.to.is_some_and(|to| to.is_call()) {
-            // base-reth runs a blob request without a callee as a plain create.
+        } else if blob_hashes.is_some() || request.sidecar.is_some() {
             3
         } else if request.max_fee_per_gas.is_some() || request.max_priority_fee_per_gas.is_some() {
             2
@@ -456,9 +510,13 @@ impl Node {
             access_list: request.access_list.clone().unwrap_or_default(),
             authorizations: request.authorization_list.clone().unwrap_or_default(),
             blob_hashes: blob_hashes.cloned().unwrap_or_default(),
-            // revm skips the blob fee check with the base fee check off; evm2 always makes it,
-            // and the cap is otherwise unobservable in a call that charges no fees.
-            max_fee_per_blob_gas: request.max_fee_per_blob_gas.unwrap_or_default().max(blob_base_fee),
+            // An absent blob fee cap is the block's blob fee, so it always passes the check.
+            max_fee_per_blob_gas: request.max_fee_per_blob_gas.unwrap_or(blob_base_fee),
+            blob_checks: BlobChecks {
+                block_blob_fee: blob_base_fee,
+                max_blobs,
+                chain_id_valid: request.chain_id.is_none_or(|chain_id| chain_id == self.spec.chain_id),
+            },
         })
     }
 
@@ -539,7 +597,8 @@ impl Node {
         }
         let from = request.from.unwrap_or_default();
         let nonce = Self::account_now(&mut evm, &from)?.nonce;
-        let tx = self.call_tx(request, block.env.basefee.saturating_to(), evm.block().blob_basefee.saturating_to(), from)?;
+        let max_blobs = self.blob_params(block.spec_timestamp).map(|params| params.max_blobs_per_tx);
+        let tx = self.call_tx(request, block.env.basefee.saturating_to(), evm.block().blob_basefee.saturating_to(), max_blobs, from)?;
         let mut gas = tx.gas.map_or(RPC_GAS_CAP, |gas| gas.min(RPC_GAS_CAP));
         if tx.gas_price == 0 {
             let mut env = *evm.block();
@@ -670,7 +729,8 @@ impl Node {
         let mut highest = request.gas.unwrap_or(max_gas_limit).min(max_gas_limit);
         let from = request.from.unwrap_or_default();
         let nonce = Self::account_now(&mut evm, &from)?.nonce;
-        let tx = self.call_tx(&request, evm.block().basefee.saturating_to(), evm.block().blob_basefee.saturating_to(), from)?;
+        let max_blobs = self.blob_params(block.spec_timestamp).map(|params| params.max_blobs_per_tx);
+        let tx = self.call_tx(&request, evm.block().basefee.saturating_to(), evm.block().blob_basefee.saturating_to(), max_blobs, from)?;
         let mut gas = tx.gas.unwrap_or(block_gas_limit);
         let basic_transfer = tx.input.is_empty()
             && match tx.kind {
@@ -869,6 +929,11 @@ mod tests {
         let blob_hashes = json!([format!("0x01{}", "00".repeat(31))]);
         let blob_create = json!({ "input": "0x", "blobVersionedHashes": blob_hashes });
         assert_eq!(call(&node, "eth_call", json!([blob_create]))["result"], json!("0x"));
+        // It still gets revm's blob checks: the blob fee cap first, then the hash versions.
+        let bad_version = json!({ "input": "0x", "blobVersionedHashes": [format!("0x02{}", "00".repeat(31))] });
+        assert_eq!(call(&node, "eth_call", json!([bad_version]))["error"]["code"], json!(-32003));
+        let underpaid = json!({ "input": "0x", "blobVersionedHashes": blob_hashes, "maxFeePerBlobGas": "0x0" });
+        assert_eq!(call(&node, "eth_call", json!([underpaid]))["error"]["code"], json!(-32003));
                 // An unknown block is -32001.
         assert_eq!(call(&node, "eth_call", json!([{ "to": REVERTER }, "0x5"]))["error"]["code"], json!(-32001));
     }
