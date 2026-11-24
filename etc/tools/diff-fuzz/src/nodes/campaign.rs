@@ -434,9 +434,16 @@ impl RpcCampaign {
             .collect();
         let mut replies = replies.to_vec();
         let mut serving = serving.to_vec();
-        let known = Self::known_base_cause(case, &replies, &normalized)
-            .or_else(|| Self::known_base_difference(case, &replies, &normalized))
-            .or_else(|| Self::settled_unfunded_fee(case, &replies, &normalized))
+        // The base/base causes were found against Nethermind as the reference. Without Nethermind,
+        // base is the reference and every node must match it, bugs included.
+        let nethermind = normalized.iter().any(|(name, _)| name == "nethermind");
+        let known = nethermind
+            .then(|| {
+                Self::known_base_cause(case, &replies, &normalized)
+                    .or_else(|| Self::known_base_difference(case, &replies, &normalized))
+                    .or_else(|| Self::settled_unfunded_fee(case, &replies, &normalized))
+            })
+            .flatten()
             .or_else(|| Self::persisted_blockhash(case, head, &normalized));
         if Self::simulate_encoding_only(case, &normalized) {
             *summary
