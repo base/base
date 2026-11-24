@@ -69,6 +69,8 @@ pub struct Node {
     /// The upstream RPC a stateless node reads witnesses (and RPC answers for state it does not
     /// hold) from.
     pub upstream: Option<crate::Upstream>,
+    /// Execution witnesses fetched ahead from the upstream (a stateless node).
+    pub witnesses: Option<crate::Witnesses>,
 }
 
 impl Node {
@@ -85,6 +87,7 @@ impl Node {
             sync: OnceLock::new(),
             filters: crate::RpcFilters::default(),
             rpc_config: crate::RpcConfig::default(),
+            witnesses: upstream.as_ref().map(|(upstream, _)| crate::Witnesses::new(upstream)),
             upstream: upstream.map(|(upstream, _)| upstream),
         })
     }

@@ -22,7 +22,7 @@ mod chain;
 pub use chain::{BLOCK_HASH_WINDOW, Chain, Forkchoice, StatelessStart, StoredBlock, Validation};
 
 mod upstream;
-pub use upstream::{ExecutionWitness, Upstream};
+pub use upstream::{ExecutionWitness, Upstream, Witnesses};
 
 mod engine;
 pub use engine::{EngineState, Imported, Version as EngineVersion};

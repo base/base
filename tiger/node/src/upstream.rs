@@ -6,8 +6,11 @@
 //! own state roots, blocks by hash), so the channel adds no trust.
 
 use std::{
+    collections::{HashMap, HashSet, VecDeque},
     io::{BufRead, BufReader, Read, Write},
     net::{TcpStream, ToSocketAddrs},
+    sync::{Arc, Condvar, Mutex, mpsc},
+    thread,
     time::Duration,
 };
 
@@ -17,6 +20,12 @@ use serde_json::{Value, json};
 
 /// How long one upstream request may take, connect to last byte.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Witness requests in flight at once: generating one takes the upstream seconds for a full
+/// mainnet block, and it serves many in parallel.
+const WITNESS_WORKERS: usize = 16;
+/// Fetched witnesses kept until taken; older ones (of blocks that never came) are dropped.
+const MAX_READY_WITNESSES: usize = 512;
+
 /// The largest upstream response read (a witness of a full mainnet block is a few megabytes).
 const MAX_RESPONSE_BYTES: usize = 256 * 1024 * 1024;
 
@@ -72,13 +81,20 @@ impl Upstream {
         Ok(reply["result"].take())
     }
 
-    /// The execution witness of block `hash` (number `number`): by hash when the upstream
-    /// serves `debug_executionWitnessByBlockHash`, else of its canonical block at `number`, which
-    /// may be another block (the witness then fails verification against tiger's roots).
-    pub fn execution_witness(&self, hash: B256, number: u64) -> Result<ExecutionWitness, String> {
-        let result = match self.call("debug_executionWitnessByBlockHash", json!([hash])) {
-            Ok(result) => result,
-            Err(_) => self.call("debug_executionWitness", json!([format!("{number:#x}")]))?,
+    /// The execution witness of block `hash` (number `number`). By number it is the witness of
+    /// the upstream's canonical block at `number`, which may be another block (it then fails
+    /// verification against tiger's roots); `by_hash` asks for `hash` itself, which base-reth
+    /// serves several times slower (no proofs-history index), falling back to the number when the
+    /// upstream lacks the method.
+    pub fn execution_witness(&self, hash: B256, number: u64, by_hash: bool) -> Result<ExecutionWitness, String> {
+        let by_number = || self.call("debug_executionWitness", json!([format!("{number:#x}")]));
+        let result = match by_hash.then(|| self.call("debug_executionWitnessByBlockHash", json!([hash]))) {
+            None => by_number()?,
+            Some(Ok(result)) => result,
+            // Only an upstream without the method falls back to the block number: one that
+            // lacks the block (a reorged-out branch) would answer for another block.
+            Some(Err(error)) if error.contains("-32601") => by_number()?,
+            Some(Err(error)) => return Err(error),
         };
         serde_json::from_value(result).map_err(|error| format!("upstream debug_executionWitness: {error}"))
     }
@@ -160,5 +176,100 @@ impl Upstream {
             reader.take(MAX_RESPONSE_BYTES as u64).read_to_end(&mut body)?;
         }
         Ok(body)
+    }
+}
+
+/// Execution witnesses fetched ahead from the upstream, many at a time, so a stateless node keeps
+/// up although each witness takes the upstream seconds to generate.
+#[derive(Debug)]
+pub struct Witnesses {
+    jobs: Mutex<mpsc::Sender<(B256, u64, bool)>>,
+    shared: Arc<(Mutex<WitnessSlots>, Condvar)>,
+}
+
+/// Fetched and in-flight witnesses, by block hash.
+#[derive(Debug, Default)]
+struct WitnessSlots {
+    ready: HashMap<B256, Result<ExecutionWitness, String>>,
+    order: VecDeque<B256>,
+    inflight: HashSet<B256>,
+    /// Blocks whose witness by number did not verify: fetched by hash instead.
+    by_hash: HashSet<B256>,
+}
+
+impl Witnesses {
+    /// Starts the fetch workers for `upstream`.
+    pub fn new(upstream: &Upstream) -> Self {
+        let (sender, receiver) = mpsc::channel::<(B256, u64, bool)>();
+        let receiver = Arc::new(Mutex::new(receiver));
+        let shared = Arc::new((Mutex::new(WitnessSlots::default()), Condvar::new()));
+        for _ in 0..WITNESS_WORKERS {
+            let (upstream, receiver, shared) = (upstream.clone(), Arc::clone(&receiver), Arc::clone(&shared));
+            thread::spawn(move || {
+                loop {
+                    let job = receiver.lock().expect("witness jobs").recv();
+                    let Ok((hash, number, by_hash)) = job else { return };
+                    let witness = upstream.execution_witness(hash, number, by_hash);
+                    let (slots, ready) = &*shared;
+                    let mut slots = slots.lock().expect("witness slots");
+                    slots.inflight.remove(&hash);
+                    slots.ready.insert(hash, witness);
+                    slots.order.push_back(hash);
+                    while slots.order.len() > MAX_READY_WITNESSES {
+                        let oldest = slots.order.pop_front().expect("over capacity");
+                        slots.ready.remove(&oldest);
+                    }
+                    ready.notify_all();
+                }
+            });
+        }
+        Self { jobs: Mutex::new(sender), shared }
+    }
+
+    /// Starts fetching the witness of block `hash` (number `number`) unless it is fetched or on
+    /// its way.
+    pub fn request(&self, hash: B256, number: u64) {
+        let mut slots = self.shared.0.lock().expect("witness slots");
+        if slots.ready.contains_key(&hash) || !slots.inflight.insert(hash) {
+            return;
+        }
+        let by_hash = slots.by_hash.contains(&hash);
+        drop(slots);
+        let _ = self.jobs.lock().expect("witness jobs").send((hash, number, by_hash));
+    }
+
+    /// Fetches the witness of block `hash` again, by hash, after the one by number did not
+    /// verify. Returns false when it was already fetched by hash.
+    pub fn retry_by_hash(&self, hash: B256, number: u64) -> bool {
+        if !self.shared.0.lock().expect("witness slots").by_hash.insert(hash) {
+            return false;
+        }
+        self.request(hash, number);
+        true
+    }
+
+    /// The fetched witness of block `hash`, removed, if it has arrived.
+    pub fn take(&self, hash: &B256) -> Option<Result<ExecutionWitness, String>> {
+        let mut slots = self.shared.0.lock().expect("witness slots");
+        let witness = slots.ready.remove(hash)?;
+        slots.order.retain(|other| other != hash);
+        Some(witness)
+    }
+
+    /// Forgets that block `hash` is fetched by hash (once its block is imported or rejected).
+    pub fn forget(&self, hash: &B256) {
+        self.shared.0.lock().expect("witness slots").by_hash.remove(hash);
+    }
+
+    /// Requests the witness of block `hash` and waits until it has arrived (it stays for
+    /// [`Self::take`]), at most `timeout`. Returns whether it arrived.
+    pub fn wait(&self, hash: B256, number: u64, timeout: Duration) -> bool {
+        self.request(hash, number);
+        let (slots, ready) = &*self.shared;
+        let slots = slots.lock().expect("witness slots");
+        let (slots, _) = ready
+            .wait_timeout_while(slots, timeout, |slots| !slots.ready.contains_key(&hash))
+            .expect("witness slots");
+        slots.ready.contains_key(&hash)
     }
 }

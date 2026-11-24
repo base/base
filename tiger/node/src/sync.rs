@@ -2,7 +2,10 @@
 //! forkchoice head or a payload's parent), tiger downloads the missing blocks from peers and
 //! imports them, as base-reth's engine tree does. Gaps above [`BACKFILL_THRESHOLD`] are fetched
 //! forward by number in batches (base-reth's backfill); the last stretch, and any reorg below the
-//! local head, is fetched backward by hash from the target.
+//! local head, is fetched backward by hash from the target. Payloads the consensus node sent that
+//! could not be imported yet (`EngineState::pending`) are imported from there, without a
+//! download. On a stateless node, the execution witnesses of the blocks to import are fetched
+//! ahead, many at a time.
 
 use std::{
     sync::{Arc, Mutex, mpsc},
@@ -24,6 +27,8 @@ pub const BACKFILL_THRESHOLD: u64 = 32;
 const BATCH: u64 = 1024;
 /// Most headers fetched backward from one target before giving up on linking it.
 const MAX_BACKWARD: u64 = 4 * BATCH;
+/// Longest wait for one block's execution witness from the upstream.
+const WITNESS_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The node's network and sync requests.
 #[derive(Debug)]
@@ -80,6 +85,9 @@ impl Node {
     /// Downloads and imports the blocks up to `target`. Returns how many were imported.
     fn sync_to(&self, downloader: &Downloader, target: B256) -> Result<u64, String> {
         let error = |error: base_tiger_net::DownloadError| error.to_string();
+        if let Some(imported) = self.import_pending(target)? {
+            return Ok(imported);
+        }
         eprintln!("tiger: syncing to {target}");
         let top = downloader.headers_back(target, u64::MAX, 1).map_err(error)?.remove(0);
         eprintln!("tiger: sync target is block {}", top.number());
@@ -144,23 +152,76 @@ impl Node {
         Ok(imported)
     }
 
+    /// Imports the buffered payloads from `target` down to a stored block, when they reach one.
+    /// Returns how many were imported, or `None` when they do not link to a stored block.
+    fn import_pending(&self, target: B256) -> Result<Option<u64>, String> {
+        let mut blocks = Vec::new();
+        {
+            let engine = self.engine.lock().expect("engine lock");
+            let chain = self.chain.read().expect("chain lock");
+            let mut at = target;
+            while chain.block(&at).is_none() {
+                let Some((header, transactions)) = engine.pending.get(&at) else { return Ok(None) };
+                blocks.push((header.clone(), at, transactions.clone()));
+                at = header.parent_hash;
+            }
+        }
+        blocks.reverse();
+        self.prefetch_witnesses(blocks.iter().map(|(header, hash, _)| (*hash, header.number)));
+        let mut imported = 0;
+        for (header, hash, transactions) in blocks {
+            imported += self.import_one(header, hash, &transactions)?;
+        }
+        Ok(Some(imported))
+    }
+
+    /// Starts fetching the execution witnesses of blocks about to be imported (stateless nodes).
+    fn prefetch_witnesses(&self, blocks: impl Iterator<Item = (B256, u64)>) {
+        if let Some(witnesses) = &self.witnesses
+            && self.chain.read().expect("chain lock").db.is_partial()
+        {
+            for (hash, number) in blocks {
+                witnesses.request(hash, number);
+            }
+        }
+    }
+
+    /// Imports one block whose parent is stored, waiting (without holding the Engine API lock)
+    /// for its execution witness when it needs one. Returns 1 when it was imported now.
+    fn import_one(&self, header: alloy_consensus::Header, hash: B256, transactions: &[Bytes]) -> Result<u64, String> {
+        let number = header.number;
+        loop {
+            let mut engine = self.engine.lock().expect("engine lock");
+            let outcome =
+                self.import_block(&mut engine, header.clone(), hash, transactions).map_err(|error| error.message)?;
+            if !matches!(outcome, Imported::AwaitingWitness) {
+                engine.pending.remove(&hash);
+            }
+            drop(engine);
+            match outcome {
+                Imported::Valid => return Ok(1),
+                Imported::Known => return Ok(0),
+                Imported::AwaitingWitness => {
+                    let witnesses = self.witnesses.as_ref().expect("only a stateless node awaits witnesses");
+                    if !witnesses.wait(hash, number, WITNESS_TIMEOUT) {
+                        return Err(format!("no execution witness of block {number} {hash} from the upstream"));
+                    }
+                }
+                Imported::MissingParent => return Err(format!("block {hash} has no parent")),
+                Imported::Invalid { error, .. } => {
+                    return Err(format!("block {number} {hash} is invalid: {error}"));
+                }
+            }
+        }
+    }
+
     /// Downloads the bodies of `headers` (ascending, linked) and imports the blocks in order.
     fn import_downloaded(&self, downloader: &Downloader, headers: &[SealedHeader]) -> Result<u64, String> {
+        self.prefetch_witnesses(headers.iter().map(|header| (header.hash, header.number())));
         let bodies = downloader.bodies(headers, &mut |_| {}).map_err(|error| error.to_string())?;
         let mut imported = 0;
         for (header, body) in headers.iter().zip(bodies) {
-            let mut engine = self.engine.lock().expect("engine lock");
-            let outcome = self
-                .import_block(&mut engine, header.header.clone(), header.hash, &body.transactions)
-                .map_err(|error| error.message)?;
-            match outcome {
-                Imported::Valid => imported += 1,
-                Imported::Known => {}
-                Imported::MissingParent => return Err(format!("block {} has no parent", header.hash)),
-                Imported::Invalid { error, .. } => {
-                    return Err(format!("downloaded block {} {} is invalid: {error}", header.number(), header.hash));
-                }
-            }
+            imported += self.import_one(header.header.clone(), header.hash, &body.transactions)?;
         }
         Ok(imported)
     }

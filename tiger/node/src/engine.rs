@@ -40,6 +40,8 @@ use crate::{
 const MAX_PAYLOADS: usize = 16;
 /// Most invalid blocks remembered, so descendants are rejected without execution.
 const MAX_INVALID: usize = 512;
+/// Payloads buffered until they can be imported (about half an hour of 2 s blocks).
+const MAX_PENDING: usize = 1024;
 
 /// Engine API message versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -65,6 +67,9 @@ pub enum Imported {
     Known,
     /// The parent is not stored.
     MissingParent,
+    /// The block reads state the partial datadir does not hold, and its execution witness is
+    /// still being fetched (now requested).
+    AwaitingWitness,
     /// The block breaks a rule (or descends from a block that does).
     Invalid {
         /// The last valid ancestor.
@@ -91,12 +96,26 @@ struct InvalidBlock {
 /// Engine API state beyond the chain: built payloads and rejected blocks.
 #[derive(Debug, Default)]
 pub struct EngineState {
+    /// Payloads that could not be imported yet (unknown parent, or a witness on its way), which
+    /// the sync thread imports once they can be.
+    pub pending: HashMap<B256, (Header, Vec<Bytes>)>,
+    pending_order: VecDeque<B256>,
     payloads: VecDeque<(PayloadId, BuiltPayload)>,
     invalid: HashMap<B256, InvalidBlock>,
     invalid_order: VecDeque<B256>,
 }
 
 impl EngineState {
+    fn keep_pending(&mut self, hash: B256, header: Header, transactions: Vec<Bytes>) {
+        if self.pending.insert(hash, (header, transactions)).is_none() {
+            self.pending_order.push_back(hash);
+        }
+        while self.pending_order.len() > MAX_PENDING {
+            let oldest = self.pending_order.pop_front().expect("over capacity");
+            self.pending.remove(&oldest);
+        }
+    }
+
     fn reject(&mut self, hash: B256, block: InvalidBlock) {
         if self.invalid.insert(hash, block).is_none() {
             self.invalid_order.push_back(hash);
@@ -301,10 +320,14 @@ impl Node {
             let error = format!("block hash mismatch: want {expected_hash}, got {hash}");
             return Ok(status("INVALID", None, Some(&error)));
         }
-        match self.import_block(&mut engine, header, hash, &block.body.transactions)? {
+        match self.import_block(&mut engine, header.clone(), hash, &block.body.transactions)? {
             Imported::Valid | Imported::Known => Ok(status("VALID", Some(hash), None)),
-            Imported::MissingParent => {
-                self.request_sync(parent_hash);
+            Imported::MissingParent | Imported::AwaitingWitness => {
+                // As base-reth buffers a block it cannot validate yet: the sync thread imports it
+                // from here (or downloads it) once its parent and witness are in.
+                engine.keep_pending(hash, header, block.body.transactions);
+                drop(engine);
+                self.request_sync(hash);
                 Ok(status("SYNCING", None, None))
             }
             Imported::Invalid { latest_valid, error } => Ok(status("INVALID", latest_valid, Some(&error))),
@@ -341,10 +364,28 @@ impl Node {
             let state = chain.state_after(&parent).map_err(RpcError::internal)?;
             match (BlockExecution { chain: &self.spec }).validate(&header, transactions, &parent.header, &state) {
                 Ok(validated) => (validated, state.take_prepared().map(|prepared| Validation::Prepared(Box::new(prepared)))),
-                Err(missing) => match &self.upstream {
-                    Some(upstream) if chain.db.is_partial() => {
+                Err(missing) => match &self.witnesses {
+                    Some(witnesses) if chain.db.is_partial() => {
                         drop(state);
-                        self.validate_with_witness(&chain, upstream, &header, hash, transactions, &parent)?
+                        let Some(witness) = witnesses.take(&hash) else {
+                            witnesses.request(hash, header.number);
+                            return Ok(Imported::AwaitingWitness);
+                        };
+                        let witness = witness.map_err(RpcError::internal)?;
+                        match self.validate_with_witness(&chain, witness, &header, hash, transactions, &parent) {
+                            Ok(validated) => {
+                                witnesses.forget(&hash);
+                                validated
+                            }
+                            // The upstream's canonical block at this number may be another one.
+                            Err(_) if witnesses.retry_by_hash(hash, header.number) => {
+                                return Ok(Imported::AwaitingWitness);
+                            }
+                            Err(error) => {
+                                witnesses.forget(&hash);
+                                return Err(error);
+                            }
+                        }
                     }
                     _ => return Err(RpcError::internal(format!("state of block {parent_hash}: {missing}"))),
                 },
@@ -373,13 +414,12 @@ impl Node {
     fn validate_with_witness(
         &self,
         chain: &crate::Chain,
-        upstream: &crate::Upstream,
+        witness: crate::ExecutionWitness,
         header: &Header,
         hash: B256,
         transactions: &[Bytes],
         parent: &crate::StoredBlock,
     ) -> Result<(crate::Validated, Option<Validation>), RpcError> {
-        let witness = upstream.execution_witness(hash, header.number).map_err(RpcError::internal)?;
         let mut hashes = chain.block_hashes(parent);
         // Ancestors below the datadir's first block come from the witness headers, each linked
         // by its hash to the next one up.
