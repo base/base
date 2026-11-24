@@ -13,6 +13,9 @@ build = "build.rs"
 workspace = true
 
 [dependencies]
+# alloy
+alloy-trie = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
 
 [build-dependencies]
 cc.workspace = true
