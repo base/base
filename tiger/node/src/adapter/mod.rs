@@ -60,12 +60,15 @@ impl Outcome {
 #[derive(Debug)]
 pub struct Adapter {
     chain: ChainSpec,
+    /// Whether build-mode responses carry `coverage` (`BASE_DIFF_COVERAGE=1`).
+    coverage: bool,
 }
 
 impl Adapter {
     /// Runs the request loop until stdin closes.
     pub fn run() -> io::Result<()> {
-        let adapter = Self { chain: ChainSpec::base_mainnet() };
+        let coverage = std::env::var_os(protocol::COVERAGE_ENV).is_some_and(|value| value != "0");
+        let adapter = Self { chain: ChainSpec::base_mainnet(), coverage };
         let stdin = io::stdin();
         let mut stdout = io::stdout().lock();
         for line in stdin.lock().lines() {
@@ -184,6 +187,8 @@ impl Adapter {
             parent_hash,
             parent_beacon_block_root: input.parent_beacon_block_root,
         };
+        #[cfg(feature = "edge-coverage")]
+        crate::EdgeCounters::reset();
         let outcome = match request.mode {
             Mode::Build => self.build(request, &env, &state),
             Mode::Validate => self.validate(request, &env, &parent, &state),
@@ -193,6 +198,7 @@ impl Adapter {
             return Err(missing.to_string());
         }
         let outcome = outcome?;
+        let coverage = (self.coverage && request.mode == Mode::Build).then(Self::coverage);
         Ok(Response {
             id: request.id.clone(),
             ok: true,
@@ -204,9 +210,17 @@ impl Adapter {
             computed_base_fee_per_gas: computed_base_fee,
             receipts: outcome.receipts,
             post: outcome.post,
-            coverage: None,
+            coverage,
             system_config: None,
         })
+    }
+
+    /// Edge features hit since the request started (empty without the `edge-coverage` build).
+    fn coverage() -> BTreeMap<String, u64> {
+        #[cfg(feature = "edge-coverage")]
+        return crate::EdgeCounters::with_edges(BTreeMap::new());
+        #[cfg(not(feature = "edge-coverage"))]
+        BTreeMap::new()
     }
 
     /// Builds a block from the template as the payload builder does: transactions that fail

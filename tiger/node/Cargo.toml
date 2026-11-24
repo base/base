@@ -41,3 +41,8 @@ alloy-primitives = { workspace = true, features = ["std", "serde"] }
 # serialization
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std"] }
+
+[features]
+# Edge coverage for guided fuzzing; build with `RUSTC_WRAPPER=etc/tools/diff-adapter/sancov-rustc.sh`
+# and `SANCOV_CRATES` naming the crates to instrument (see README.md).
+edge-coverage = []
