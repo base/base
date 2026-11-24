@@ -824,23 +824,28 @@ impl StaleStorageMeter {
         record
     }
 
-    /// Empties the cache entries for the regions of every changed slot in `bundle`, so writes
-    /// that left the canonical chain no longer make those regions read recent. Returns how many
-    /// entries were emptied. A region the replacement chain also wrote reads stale until that
-    /// chain's segment is recorded.
+    /// Empties the cache entries for the region of every slot any block in `bundle` wrote, so
+    /// writes that left the canonical chain no longer make those regions read recent. Returns
+    /// how many entries were emptied. A region the replacement chain also wrote reads stale until
+    /// that chain's segment is recorded.
+    ///
+    /// The net state alone misses a slot a later block in the segment set back to its original
+    /// value, which reads unchanged there but was stamped when each block was recorded. Such a
+    /// slot stays in the net state, and every block's reverts list it, so both are walked.
     pub fn invalidate_bundle(&self, bundle: &BundleState) -> u64 {
         let mut emptied = 0;
+        let mut invalidate = |address: &Address, slots: &mut dyn Iterator<Item = &U256>| {
+            let mut hashed_address = None;
+            for slot_id in slots {
+                let hashed_address = hashed_address.get_or_insert_with(|| keccak256(address));
+                emptied += self.cache.invalidate(self.cache.region_key(hashed_address, slot_id));
+            }
+        };
         for (address, account) in &bundle.state {
-            if !account.storage.values().any(|slot| slot.is_changed()) {
-                continue;
-            }
-            let hashed_address = keccak256(address);
-            for (slot_id, slot) in &account.storage {
-                if slot.is_changed() {
-                    emptied +=
-                        self.cache.invalidate(self.cache.region_key(&hashed_address, slot_id));
-                }
-            }
+            invalidate(address, &mut account.storage.keys());
+        }
+        for (address, revert) in bundle.reverts.iter().flatten() {
+            invalidate(address, &mut revert.storage.keys());
         }
         emptied
     }
@@ -1376,7 +1381,10 @@ mod tests {
     use reth_execution_types::{Chain, ExecutionOutcome};
     use reth_primitives_traits::RecoveredBlock;
     use revm::{
-        database::{AccountStatus, BundleAccount, states::StorageSlot},
+        database::{
+            AccountStatus, BundleAccount,
+            states::{AccountRevert, RevertToSlot, StorageSlot, reverts::Reverts},
+        },
         state::{Account, EvmStorageSlot, TransactionId},
     };
     use tokio::sync::broadcast;
@@ -2212,6 +2220,46 @@ mod tests {
         assert_eq!(age(5, written), None, "the replaced branch's write");
         assert_eq!(age(5, sibling), None, "a trie sibling of the replaced write");
         assert_eq!(age(6, 1), Some(0), "the replacement branch's write");
+    }
+
+    #[test]
+    fn a_write_undone_later_on_a_replaced_branch_does_not_keep_its_region_recent() {
+        let meter = meter();
+        // The old branch writes A -> B in one block and B -> A in the next.
+        let there = bundle([(contract(5), vec![(1, 1, 2)])]);
+        let back = bundle([(contract(5), vec![(1, 2, 1)])]);
+        meter.record_notification(&CanonStateNotification::Commit {
+            new: chain(1, NOW, there.clone()),
+        });
+        meter.record_notification(&CanonStateNotification::Commit {
+            new: chain(2, NOW, back.clone()),
+        });
+        // The reverted chain's net bundle shows the slot as unchanged.
+        let mut reverted = there;
+        reverted.state_size = reverted.state.values().map(BundleAccount::size_hint).sum();
+        reverted.extend(back);
+        assert!(!reverted.state[&contract(5)].storage[&word(1)].is_changed());
+        meter.record_notification(&CanonStateNotification::Reorg {
+            old: chain(1, NOW, reverted),
+            new: chain(1, NOW, bundle([(contract(6), vec![(1, 1, 2)])])),
+        });
+        let key = meter.cache.region_key(&keccak256(contract(5)), &word(1));
+        assert_eq!(meter.cache.age_hours(key, NOW_HOUR), None);
+    }
+
+    #[test]
+    fn a_slot_listed_only_in_a_reverted_blocks_reverts_is_invalidated() {
+        let meter = meter();
+        meter.record_bundle(&bundle([(contract(5), vec![(1, 1, 2)])]), 1, NOW);
+        let mut revert = AccountRevert::default();
+        revert.storage.insert(word(1), RevertToSlot::Some(word(1)));
+        let reverted = BundleState {
+            reverts: Reverts::new(vec![vec![(contract(5), revert)]]),
+            ..Default::default()
+        };
+        assert_eq!(meter.invalidate_bundle(&reverted), 1);
+        let key = meter.cache.region_key(&keccak256(contract(5)), &word(1));
+        assert_eq!(meter.cache.age_hours(key, NOW_HOUR), None);
     }
 
     #[test]

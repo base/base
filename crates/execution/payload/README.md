@@ -53,8 +53,9 @@ unpredictable even though trie paths are public.
 
 The recorder classifies every slot of a canonical block against the cache as it was before the
 block, then stamps the block's regions, so trie siblings written in the same block do not make
-each other read recent. On a reorg it first empties the entries for every changed slot of the
-reverted blocks, so writes that left the canonical chain cannot keep a region recent; a region
+each other read recent. On a reorg it first empties the entries for every slot any reverted
+block wrote, including a slot a later reverted block set back to its original value, so writes
+that left the canonical chain cannot keep a region recent; a region
 the new chain also wrote reads stale until the new chain is stamped. The recorder never clears
 the cache. It skips a block, counting its changed slots in
 `base_payload_stale_storage_cache_dropped_writes_total`, when the block predates the base hour

@@ -373,13 +373,20 @@ fn typical_block_states() -> Vec<EvmState> {
 }
 
 /// The canonical bundle of `states`: every changed slot once, as the recorder sees the block.
-/// A nonzero `salt` moves every slot to a different trie path, so each salt gives a block whose
-/// slots the cache has not seen.
+/// `salt` is combined by XOR into the first eight bytes of every contract address. A region key
+/// covers one contract's slots under a five-nibble trie prefix, so a contract has only about a
+/// million regions and a fixed contract would soon see its regions again; a fresh address per
+/// salt gives every block regions the cache has not seen. `salt` also goes into the top bytes of
+/// every slot, so no slot hash repeats and keccak is computed even with `keccak-cache-global`.
 fn block_bundle(states: &[EvmState], salt: u64) -> BundleState {
     let mut bundle = BundleState::default();
     for state in states {
         for (address, account) in state {
-            let entry = bundle.state.entry(*address).or_insert_with(|| BundleAccount {
+            let mut bytes = address.0.0;
+            for (byte, salt_byte) in bytes.iter_mut().zip(salt.to_be_bytes()) {
+                *byte ^= salt_byte;
+            }
+            let entry = bundle.state.entry(Address::from(bytes)).or_insert_with(|| BundleAccount {
                 info: None,
                 original_info: None,
                 storage: Default::default(),
@@ -404,9 +411,12 @@ fn block_bundle(states: &[EvmState], salt: u64) -> BundleState {
 /// - `builder_*`: [`BlockStaleTracker::evaluate`] and [`BlockStaleTracker::commit`] for every
 ///   transaction, on the payload builder's commit path.
 /// - `recorder_*`: [`StaleStorageMeter::record_bundle`] for the canonical block, including its
-///   occupancy sample, on the canonical-state task. Each iteration records a block of new slots
-///   (a fresh salt) two seconds after the previous one, up to 20 hours past the fill, so every
-///   probe misses and every write evicts an entry still within the window.
+///   occupancy sample, on the canonical-state task. Each iteration records a block in fresh
+///   contracts (a new salt), so its regions are new. Iterations share one counter across both
+///   block shapes, so timestamps only move forward: two seconds per block, up to 20 hours past
+///   the fill, while the fill is still within the window. Every probe therefore misses and every
+///   write evicts a live entry. The bench asserts that no block is dropped and that at least
+///   99.9% of probes miss, allowing for fingerprint collisions.
 /// - `typical`: [`typical_block_states`]; `xen`: the same plus one 725-slot claim batch.
 fn bench_stale_storage_block(c: &mut Criterion) {
     let meter = filled_meter();
@@ -414,6 +424,7 @@ fn bench_stale_storage_block(c: &mut Criterion) {
     let mut xen = typical.clone();
     xen.push(batch_state(Address::repeat_byte(0x55), 725));
     let mut group = c.benchmark_group("stale_storage_block");
+    let mut round = 0u64;
     for (label, states) in [("typical", &typical), ("xen", &xen)] {
         group.bench_function(BenchmarkId::new("builder", label), |b| {
             b.iter_batched(
@@ -428,7 +439,7 @@ fn bench_stale_storage_block(c: &mut Criterion) {
                 BatchSize::SmallInput,
             );
         });
-        let mut round = 0u64;
+        let (mut probed, mut missed) = (0u64, 0u64);
         group.bench_function(BenchmarkId::new("recorder", label), |b| {
             b.iter_batched(
                 || {
@@ -437,12 +448,17 @@ fn bench_stale_storage_block(c: &mut Criterion) {
                     (block_bundle(states, round), BLOCK_TIMESTAMP + elapsed)
                 },
                 |(bundle, timestamp)| {
-                    black_box(meter.record_bundle(black_box(&bundle), 1, timestamp));
+                    let record = meter.record_bundle(black_box(&bundle), 1, timestamp);
+                    assert_eq!(record.dropped, None, "the recorder bench must not drop blocks");
+                    probed += record.changed_slots;
+                    missed += record.ungated.stale;
+                    black_box(record);
                     bundle
                 },
                 BatchSize::SmallInput,
             );
         });
+        assert!(missed * 1_000 >= probed * 999, "{missed} of {probed} recorder probes missed");
     }
     group.finish();
 }
