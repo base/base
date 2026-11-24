@@ -216,3 +216,61 @@ fn genesis_matches_reths() {
     drop(tiger);
     let _ = std::fs::remove_dir_all(&work);
 }
+
+/// A whole datadir written by tiger from genesis: every block of base-reth's datadir (set
+/// `TIGER_RETH_DATADIR`), read back through tiger's reads, is committed into a new datadir,
+/// which must equal base-reth's. The genesis state comes from `TIGER_RETH_GENESIS_DATADIR`, a
+/// datadir `base-reth-node init` made from the same genesis: base-reth's v2 changesets do not
+/// keep storage that EIP-161 clearing of an empty account wipes, so the genesis state cannot be
+/// read back from a datadir past such a block. Set `TIGER_REBUILD_OUT` to keep the result for
+/// opening with base-reth.
+#[test]
+fn rebuild_from_genesis_reproduces_reths_datadir() {
+    let (Some(source), Some(genesis)) =
+        (std::env::var_os("TIGER_RETH_DATADIR"), std::env::var_os("TIGER_RETH_GENESIS_DATADIR"))
+    else {
+        return;
+    };
+    let reth = StateDb::open(Path::new(&source)).unwrap();
+    let genesis = StateDb::open(Path::new(&genesis)).unwrap();
+    if genesis.datadir.header(0).unwrap().map(|h| h.1) != reth.datadir.header(0).unwrap().map(|h| h.1) {
+        return;
+    }
+    let tip = reth.tip().unwrap().unwrap();
+    let work = std::env::var_os("TIGER_REBUILD_OUT")
+        .map(Into::into)
+        .unwrap_or_else(|| std::env::temp_dir().join(format!("tiger-rebuild-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&work);
+    let tiger = StateDb::open(&work).unwrap();
+    for number in 0..=tip {
+        let block = read_block(if number == 0 { &genesis } else { &reth }, number);
+        let mut w = tiger.write().unwrap();
+        let root = tiger.commit_block(&mut w, number, &block.changes).unwrap();
+        assert_eq!(root, block.header.state_root, "block {number}");
+        w.append_block(&block.header, block.hash, &block.transactions, &block.senders, &block.receipts).unwrap();
+        w.commit().unwrap();
+    }
+    let (finalized, safe) = reth.datadir.chain_state().unwrap().unwrap();
+    let mut w = tiger.write().unwrap();
+    w.set_chain_state(finalized, safe).unwrap();
+    // Code of contracts created and destroyed within one block is in no state the reads see.
+    let dbi = w.db().dbi(Table::Bytecodes);
+    for (hash, code) in table_entries(&reth, Table::Bytecodes) {
+        w.txn().put(dbi, &hash, &code).unwrap();
+    }
+    w.commit().unwrap();
+    drop(tiger);
+    let tiger = StateDb::open(&work).unwrap();
+    let (expected, got) = (snapshot(&reth, tip), snapshot(&tiger, tip));
+    assert_eq!(expected.len(), got.len());
+    for (e, g) in expected.iter().zip(&got) {
+        assert!(e == g, "{} differs", &e[..e.len().min(60)]);
+    }
+    for table in [Table::ChainState, Table::Metadata] {
+        assert_eq!(table_entries(&reth, table), table_entries(&tiger, table), "{table:?}");
+    }
+    drop(tiger);
+    if std::env::var_os("TIGER_REBUILD_OUT").is_none() {
+        let _ = std::fs::remove_dir_all(&work);
+    }
+}
