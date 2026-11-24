@@ -376,5 +376,12 @@ the first block the target serves are absent; that block must stay the same acro
 the report records it with the source's finalized block at launch. The target fills reads
 of state it does not hold from the upstream's verified `eth_getProof`, so a refused account read
 is a mismatch unless it is tiger's "state not local" refusal (code -32020) and the source cannot
-prove that account at that block either; only then is it listed under `partialStateErrors`. A different value is always a mismatch. `latest` cannot pass the first
+prove that account at that block either; only then is it listed under `partialStateErrors`. A different value is always a mismatch.
+
+With `--handoff` the check also covers datadir compatibility between the clients. The target
+starts on a copy of the source's datadir (taken after a clean stop, without its p2p key) and
+continues the chain through the phases. At the end the source's client opens a copy of the
+target's datadir in `<root>/reopen` and must answer as the source did: every block, the receipts
+and transactions of the last blocks, and account reads at the head and 20 and 60 blocks back.
+Warnings in its log about healing, rebuilding, or unwinding are reported as mismatches. `latest` cannot pass the first
 phase: the mid-sync reorg drops the start block.

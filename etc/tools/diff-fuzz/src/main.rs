@@ -488,6 +488,10 @@ enum Command {
         /// below the start are absent on the target.
         #[arg(long)]
         stateless_start: Option<String>,
+        /// Start the target on a copy of the source's datadir, and at the end open a copy of the
+        /// target's datadir with the source's client and compare (datadir compatibility).
+        #[arg(long)]
+        handoff: bool,
         /// Report file.
         #[arg(long, default_value = "sync-report.json")]
         out: PathBuf,
@@ -732,6 +736,7 @@ fn main() -> eyre::Result<()> {
             reorg_after_ms,
             timeout,
             stateless_start,
+            handoff,
             out,
         } => {
             fs::create_dir_all(&root)?;
@@ -758,6 +763,7 @@ fn main() -> eyre::Result<()> {
                 reorg_after: Duration::from_millis(reorg_after_ms),
                 timeout,
                 stateless_start,
+                handoff,
             };
             let report = SyncCheck::new(session, target, proc, config).run()?;
             fs::write(&out, serde_json::to_string_pretty(&report)?)?;

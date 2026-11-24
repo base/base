@@ -30,6 +30,10 @@ pub struct SyncConfig {
     /// Start the target without state at this block or tag of the source (a stateless start
     /// with the source as its witness upstream) instead of from genesis.
     pub stateless_start: Option<String>,
+    /// Hand datadirs over between the clients: the target starts on a copy of the source's
+    /// datadir (and continues the chain), and at the end the source's client opens a copy of
+    /// the target's datadir and must serve what the source served.
+    pub handoff: bool,
 }
 
 /// What one phase of the check saw.
@@ -138,7 +142,17 @@ impl SyncCheck {
             self.proc.stateless = Some(format!("{} {start}", source.http_url));
             self.report.stateless_start = Some(start);
         }
-        self.proc.spawn(true)?;
+        if self.config.handoff {
+            eyre::ensure!(self.config.stateless_start.is_none(), "handoff needs a full target");
+            let source = &mut self.session.procs[0];
+            source.stop(false);
+            Self::copy_datadir(&source.datadir(), &self.proc.datadir())?;
+            source.spawn(false)?;
+            source.wait_ready(&self.session.nodes[0])?;
+            self.proc.spawn(false)?;
+        } else {
+            self.proc.spawn(true)?;
+        }
         self.proc.wait_ready(&self.target)?;
 
         let started = Instant::now();
@@ -172,7 +186,106 @@ impl SyncCheck {
         self.proc.wait_ready(&self.target)?;
         self.phase("killed-restart-gap-50", Instant::now(), Vec::new(), None)?;
         self.proc.stop(false);
+        if self.config.handoff {
+            self.reopen_target_datadir()?;
+        }
         Ok(self.report)
+    }
+
+    /// Copies a datadir without its p2p key, so the copy gets its own node id.
+    fn copy_datadir(from: &std::path::Path, to: &std::path::Path) -> eyre::Result<()> {
+        if to.exists() {
+            std::fs::remove_dir_all(to)?;
+        }
+        let status = std::process::Command::new("cp").arg("-a").arg(from).arg(to).status()?;
+        eyre::ensure!(status.success(), "copying {} to {}", from.display(), to.display());
+        let _ = std::fs::remove_file(to.join("discovery-secret"));
+        Ok(())
+    }
+
+    /// The final handoff: reads what the source serves (every block, the receipts and
+    /// transactions of the last blocks, and account reads at several heights), stops it, starts
+    /// the source's client on a copy of the target's datadir in `<root>/reopen`, and compares.
+    /// Warnings in the reopened node's log about healing, rebuilding, or unwinding are reported
+    /// too.
+    fn reopen_target_datadir(&mut self) -> eyre::Result<()> {
+        let started = Instant::now();
+        let head = self.session.tree.head();
+        let head = (head.number, head.hash);
+        let source = self.session.nodes[0].clone();
+        let mut requests: Vec<(&str, Value)> = Vec::new();
+        for number in 0..=head.0 {
+            requests.push(("eth_getBlockByNumber", json!([format!("{number:#x}"), false])));
+        }
+        let mut addresses = Vec::new();
+        for number in head.0.saturating_sub(10)..=head.0 {
+            let tag = format!("{number:#x}");
+            requests.push(("eth_getBlockReceipts", json!([tag])));
+            let block = source.result("eth_getBlockByNumber", &json!([tag, true]))?;
+            for tx in block["transactions"].as_array().into_iter().flatten() {
+                requests.push(("eth_getTransactionByHash", json!([tx["hash"]])));
+                addresses.extend([tx["from"].clone(), tx["to"].clone()]);
+            }
+        }
+        addresses.retain(|a| !a.is_null());
+        addresses.sort_by_key(Value::to_string);
+        addresses.dedup();
+        for number in [head.0, head.0.saturating_sub(20), head.0.saturating_sub(60)] {
+            for address in addresses.iter().take(30) {
+                for method in ["eth_getBalance", "eth_getTransactionCount", "eth_getCode"] {
+                    requests.push((method, json!([address, format!("{number:#x}")])));
+                }
+            }
+        }
+        let expected: Vec<Reply> = requests.iter().map(|(m, p)| source.call(m, p)).collect();
+        let source_proc = &mut self.session.procs[0];
+        source_proc.stop(false);
+        let root = source_proc.root.join("reopen");
+        std::fs::create_dir_all(&root)?;
+        for file in ["genesis.json", "jwt.hex"] {
+            std::fs::copy(source_proc.root.join(file), root.join(file))?;
+        }
+        let mut reopened =
+            NodeProcess::new(source_proc.name.clone(), source_proc.launch.clone(), root);
+        Self::copy_datadir(&self.proc.datadir(), &reopened.datadir())?;
+        reopened.spawn(false)?;
+        let mut mismatches = Vec::new();
+        match reopened.wait_ready(&source) {
+            Err(error) => mismatches.push(format!("source client did not start: {error:#}")),
+            Ok(_) => {
+                for ((method, params), want) in requests.iter().zip(&expected) {
+                    let got = source.call(method, params);
+                    if &got != want && mismatches.len() < 20 {
+                        mismatches
+                            .push(format!("{method} {params}: source {want:?} reopened {got:?}"));
+                    }
+                }
+            }
+        }
+        reopened.stop(false);
+        let log = std::fs::read_to_string(reopened.log_path()).unwrap_or_default();
+        // base-reth logs "Healing static file inconsistencies." at INFO on every start; a real
+        // repair or rebuild warns.
+        for line in log.lines().filter(|l| {
+            let l = l.to_lowercase();
+            (l.contains("warn") || l.contains("error"))
+                && ["heal", "rebuild", "inconsisten", "unwind"].iter().any(|w| l.contains(w))
+        }) {
+            if mismatches.len() < 40 {
+                mismatches.push(format!("reopened log: {line}"));
+            }
+        }
+        eprintln!("sync: source-client-opens-target-datadir {} mismatches", mismatches.len());
+        self.report.phases.push(SyncPhase {
+            name: "source-client-opens-target-datadir".to_owned(),
+            head,
+            target_height_at_reorg: None,
+            statuses: Vec::new(),
+            millis: started.elapsed().as_millis(),
+            heights: head.0 + 1,
+            mismatches,
+        });
+        Ok(())
     }
 
     fn extend(&mut self, mut blocks: u64) -> eyre::Result<()> {
