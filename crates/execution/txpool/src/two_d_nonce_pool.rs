@@ -559,6 +559,11 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     /// The pending block's base fee, which ranks the candidates in
     /// `eviction_order`. See [`Self::set_base_fee`].
     base_fee: u64,
+    /// Whether lanes and nonce-free transactions are kept ranked in
+    /// `eviction_order`. Only a store given limits ([`Self::with_limits`]) can
+    /// evict; an unlimited store skips the ranking, whose lane walk would make
+    /// building or draining a long lane quadratic for nothing.
+    ranks_evictions: bool,
     /// Lanes whose executable cursor sits past their canonical anchor, with
     /// that anchor. Kept in step with `lanes` so a build never scans them.
     ahead_of_state: HashMap<LaneId, u64>,
@@ -583,6 +588,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             lane_candidates: HashMap::default(),
             nonce_free_candidates: B256Map::default(),
             base_fee: 0,
+            ranks_evictions: false,
             ahead_of_state: HashMap::default(),
             shared_lanes: HashSet::default(),
         }
@@ -592,6 +598,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     #[must_use]
     pub(crate) fn with_limits(mut self, limits: SidecarLimits) -> Self {
         self.limits = limits;
+        self.ranks_evictions = true;
         self
     }
 
@@ -732,7 +739,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         if let Some(previous) = self.nonce_free_candidates.remove(&replay_id) {
             self.remove_candidate(&previous);
         }
-        if let Some(transaction) = self.nonce_free.get(&replay_id) {
+        if self.ranks_evictions
+            && let Some(transaction) = self.nonce_free.get(&replay_id)
+        {
             let key = self.eviction_key(transaction, Bid::of(&transaction.transaction), true);
             self.insert_candidate(&key);
             self.nonce_free_candidates.insert(replay_id, key);
@@ -757,7 +766,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         } else {
             self.ahead_of_state.remove(&lane_id);
         }
-        if let Some((_, tail)) = lane.transactions.last_key_value()
+        if self.ranks_evictions
+            && let Some((_, tail)) = lane.transactions.last_key_value()
             && let Some(bid) = lane.bid()
         {
             let key = self.eviction_key(tail, bid, lane.is_fully_pending());
@@ -2642,6 +2652,25 @@ mod tests {
 
     fn evicted_hashes(pool: &mut TwoDNoncePool<BasePooledTransaction>) -> Vec<TxHash> {
         pool.evict_over_capacity().iter().map(|transaction| *transaction.hash()).collect()
+    }
+
+    #[test]
+    fn an_unlimited_store_keeps_no_eviction_candidates() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        for nonce in 0..4 {
+            let transaction = signed_channel_tx(&signer, U256::from(1), nonce, 1_000);
+            pool.insert_validated(valid_pool_transaction(transaction), 0).unwrap();
+        }
+        let nonce_free = signed_nonce_free_tx(&signer, 1, 10, 1_000);
+        pool.insert_validated(valid_pool_transaction(nonce_free), 0).unwrap();
+        pool.set_base_fee(10);
+
+        assert_eq!(pool.len(), 5);
+        assert!(pool.lane_candidates.is_empty());
+        assert!(pool.nonce_free_candidates.is_empty());
+        assert_eq!(pool.eviction_candidate(), None);
+        assert!(pool.evict_over_capacity().is_empty());
     }
 
     #[test]
