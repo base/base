@@ -8,9 +8,8 @@
 //! tries), `TigerWipes` (`hashed address ++ block`) and `TigerWipedStorage`
 //! (`block ++ hashed address` -> `hashed slot ++ value` duplicates) keep the storage a wipe
 //! removed, which reth's v2 changesets do not, so unwinds and historical roots restore it.
-//! `TigerBlocks` (block number -> the node's block record: header, transactions, senders,
-//! receipts) and `TigerForkchoice` hold the node's canonical blocks and heads until the node
-//! writes reth's static files.
+//! `TigerForkchoice` holds the node's forkchoice heads (reth keeps only the safe and finalized
+//! numbers, in `ChainState`).
 
 use std::{fs, io, path::Path};
 
@@ -79,7 +78,6 @@ tables! {
     TigerNodes: false,
     TigerWipes: false,
     TigerWipedStorage: true,
-    TigerBlocks: false,
     TigerForkchoice: false,
 }
 
