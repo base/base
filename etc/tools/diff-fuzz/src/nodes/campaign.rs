@@ -435,9 +435,17 @@ impl RpcCampaign {
         let mut replies = replies.to_vec();
         let mut serving = serving.to_vec();
         let known = Self::known_base_cause(case, &replies, &normalized)
-            .map(|cause| (cause, 0))
-            .or_else(|| Self::known_nethermind_cause(case, &replies, &normalized));
-        if let Some((cause, index)) = known {
+            .or_else(|| Self::known_base_difference(case, &replies, &normalized))
+            .or_else(|| Self::settled_unfunded_fee(case, &replies, &normalized));
+        if Self::simulate_encoding_only(case, &normalized) {
+            *summary
+                .lock()
+                .expect("lock")
+                .known
+                .entry(Self::KNOWN_SIMULATE_HEADER.into())
+                .or_default() += 1;
+            normalized.iter_mut().for_each(|(_, v)| *v = Self::without_block_encoding(v));
+        } else if let Some((cause, index)) = known {
             *summary.lock().expect("lock").known.entry(cause.into()).or_default() += 1;
             normalized.remove(index);
             replies.remove(index);
@@ -572,20 +580,36 @@ impl RpcCampaign {
     /// nodes only.
     pub const KNOWN_BASE_ID: &str = "base: unreadable id gets no reply";
 
-    /// The known base/base cause, if any, that explains how base answered `case`
-    /// (`replies` and `normalized` reference first). The cause's cases are compared on the other
-    /// nodes only.
+    /// base/base's first poll of a new block filter includes the head at install time (B2).
+    pub const KNOWN_BASE_BLOCK_FILTER: &str = "base: block filter's first poll includes the head";
+    /// base/base answers -32001 or -32003 (EIP-1474) where the others give -32000, and refuses fee
+    /// fields above 2^128 as invalid params (B4).
+    pub const KNOWN_BASE_ERROR_CODES: &str = "base: EIP-1474 codes and 128-bit fee fields";
+    /// base/base answers eth\_getProof at "pending" with -32001, and its eth\_config lists Base
+    /// precompiles (B5).
+    pub const KNOWN_BASE_PROOF_CONFIG: &str = "base: pending proof and eth_config precompiles";
+    /// base/base's callTracer frame for a system deposit after Regolith, which fails before any
+    /// frame starts, has `to` 0x0 and no input; Nethermind builds it from the tx (B11).
+    pub const KNOWN_BASE_FAILED_DEPOSIT_FRAME: &str = "base: failed system deposit frame";
+    /// base/base accepts a JSON number as a call's `type`.
+    pub const KNOWN_BASE_INTEGER_TYPE: &str = "base: integer type accepted";
+
+    /// The known base/base cause, if any, that explains how base answered `case`, with base's
+    /// index. The cause's cases are compared on the other nodes only.
     pub fn known_base_cause(
         case: &RpcCase,
         replies: &[(String, Reply)],
         normalized: &[(String, Value)],
-    ) -> Option<&'static str> {
-        let ((name, reference), others) = normalized.split_first()?;
-        if name != "base" || others.is_empty() {
+    ) -> Option<(&'static str, usize)> {
+        let base = normalized.iter().position(|(n, _)| n == "base")?;
+        let reference = &normalized[base].1;
+        let others: Vec<&(String, Value)> =
+            normalized.iter().enumerate().filter(|(i, _)| *i != base).map(|(_, o)| o).collect();
+        if others.is_empty() {
             return None;
         }
         if Self::base_genesis_bug(case, normalized) {
-            return Some(Self::KNOWN_BASE_GENESIS);
+            return Some((Self::KNOWN_BASE_GENESIS, base));
         }
         // Nethermind names the cause in its message: "too many arguments, want at most N".
         let too_many = replies.iter().any(|(name, reply)| {
@@ -594,7 +618,7 @@ impl RpcCampaign {
                     if body["error"]["message"].as_str().is_some_and(|m| m.starts_with("too many arguments")))
         });
         if too_many && others.iter().all(|(_, v)| v != reference) {
-            return Some(Self::KNOWN_BASE_EXTRA_PARAMS);
+            return Some((Self::KNOWN_BASE_EXTRA_PARAMS, base));
         }
         let id =
             serde_json::from_str::<Value>(&case.body).ok().and_then(|body| body.get("id").cloned());
@@ -607,44 +631,155 @@ impl RpcCampaign {
         if odd_id
             && (reference == &json!({ "empty": true }) || reference["error"]["code"] == -32700)
         {
-            return Some(Self::KNOWN_BASE_ID);
+            return Some((Self::KNOWN_BASE_ID, base));
         }
-        None
+        // The rest need the other nodes agreeing against base.
+        let theirs = &others[0].1;
+        if theirs == reference || others.iter().any(|(_, v)| v != theirs) {
+            return None;
+        }
+        let code = |v: &Value| v["error"]["code"].as_i64();
+        let ok = |v: &Value| v.get("result").is_some();
+        let body: Value = serde_json::from_str(&case.body).unwrap_or_default();
+        let params = &body["params"];
+        let nm_message = replies.iter().find_map(|(name, reply)| match reply {
+            Reply::Body(body) if name == "nethermind" => body["error"]["message"].as_str(),
+            _ => None,
+        });
+        // "invalid argument N" for the last parameter, beyond what the method takes.
+        let last_argument = params.as_array().is_some_and(|p| {
+            p.len() > 1 && nm_message == Some(format!("invalid argument {}", p.len() - 1).as_str())
+        });
+        let wide_fee = Self::any_object(params, &|o| {
+            o.iter().any(|(key, v)| {
+                (key.contains("Fee") || key == "gasPrice")
+                    && v.as_str().is_some_and(|s| s.len() > 34)
+            })
+        });
+        let raw = |name: &str| {
+            replies.iter().find(|(n, _)| n == name).and_then(|(_, reply)| match reply {
+                Reply::Body(body) => Some(body.to_string()),
+                Reply::Transport(_) => None,
+            })
+        };
+        let system_deposit = raw("nethermind")
+            .is_some_and(|b| b.contains("system deposit after Regolith"))
+            && raw("base").is_some_and(|b| {
+                b.contains("\"to\":\"0x0000000000000000000000000000000000000000\"")
+            });
+        let cause = if system_deposit {
+            Self::KNOWN_BASE_FAILED_DEPOSIT_FRAME
+        } else if case.method == "eth_getFilterChanges"
+            && case.body.contains("eth_newBlockFilter")
+            && ok(reference)
+        {
+            Self::KNOWN_BASE_BLOCK_FILTER
+        } else if matches!(code(reference), Some(-32001 | -32003)) && code(theirs) == Some(-32000)
+            || code(reference) == Some(-32602) && wide_fee
+        {
+            Self::KNOWN_BASE_ERROR_CODES
+        } else if case.method == "eth_config"
+            || case.method == "eth_getProof"
+                && Self::strings(params).contains(&"pending")
+                && code(reference) == Some(-32001)
+        {
+            Self::KNOWN_BASE_PROOF_CONFIG
+        } else if code(theirs) == Some(-32602)
+            && Self::any_object(params, &|o| o.get("type").is_some_and(Value::is_number))
+        {
+            Self::KNOWN_BASE_INTEGER_TYPE
+        } else if last_argument && code(reference) != Some(-32602) {
+            Self::KNOWN_BASE_EXTRA_PARAMS
+        } else {
+            return None;
+        };
+        Some((cause, base))
     }
 
-    /// Nethermind accepts EIP-1898-style block parameters where base wants a number or tag (a
-    /// block hash, `""` or `null`) and answers `null` for an index of 2^64 or more.
-    pub const KNOWN_NM_BLOCK_PARAM: &str = "nethermind: lenient block parameter or index";
-    /// Nethermind refuses `0X`-prefixed hashes.
-    pub const KNOWN_NM_UPPER_PREFIX: &str = "nethermind: 0X prefix refused";
-    /// Nethermind accepts odd-length hex data, access-list entries without `storageKeys`, and
-    /// authorizations without `r` or `s`.
-    pub const KNOWN_NM_LENIENT_FIELDS: &str = "nethermind: lenient request fields";
-    /// Nethermind checks `eth_simulateV1` calls in another order, so the first error differs.
-    pub const KNOWN_NM_SIMULATE_ORDER: &str = "nethermind: simulate check order";
-    /// Nethermind (with geth) answers a priced estimate from an unfunded sender with
-    /// "gas required exceeds allowance (0)".
-    pub const KNOWN_NM_ESTIMATE_ALLOWANCE: &str = "nethermind: estimate allowance (0)";
-    /// Nethermind's prestate tracer keeps `codeHash` and lists authorities of invalid EIP-7702
-    /// authorizations, as geth does.
-    pub const KNOWN_NM_PRESTATE: &str = "nethermind: prestate codeHash and invalid authorities";
+    /// base/base refuses EIP-1898-style block parameters that Nethermind accepts (a block hash,
+    /// `""` or `null`) and refuses an index of 2^64 or more that Nethermind answers with `null`.
+    pub const KNOWN_BASE_BLOCK_PARAM: &str = "base: strict block parameter or index";
+    /// base/base accepts `0X`-prefixed hashes, which Nethermind refuses.
+    pub const KNOWN_BASE_UPPER_PREFIX: &str = "base: 0X prefix accepted";
+    /// base/base refuses odd-length hex data, access-list entries without `storageKeys`, and
+    /// authorizations without `r` or `s`, which Nethermind accepts.
+    pub const KNOWN_BASE_STRICT_FIELDS: &str = "base: strict request fields";
+    /// base/base checks `eth_simulateV1` calls in another order than Nethermind, so the first
+    /// error differs.
+    pub const KNOWN_BASE_SIMULATE_ORDER: &str = "base: simulate check order";
+    /// base/base answers a priced estimate from an unfunded sender otherwise than Nethermind's
+    /// (and geth's) "gas required exceeds allowance (0)".
+    pub const KNOWN_BASE_ESTIMATE_ALLOWANCE: &str = "base: estimate without allowance (0)";
+    /// base/base's prestate tracer lists another set of accounts than Nethermind's (which follows
+    /// geth): it drops `codeHash` and the authorities of invalid EIP-7702 authorizations, lists
+    /// the zero-credit fee vaults instead of the coinbase for a fee-free call, and keeps an
+    /// empty sender in a diffMode `pre`, and lists a slot whose SLOAD or SSTORE ran out of gas.
+    /// Only the account and slot sets differ; shared entries agree.
+    pub const KNOWN_BASE_PRESTATE: &str = "base: prestate account set";
+    /// base/base's 4byteTracer (revm-inspectors) counts calls to precompiles, which Nethermind's
+    /// (with geth's) skips.
+    pub const KNOWN_BASE_4BYTE_PRECOMPILES: &str = "base: 4byteTracer counts precompile calls";
 
-    /// Nethermind's 4byteTracer skips calls to precompiles, as geth's does; revm-inspectors'
-    /// counts them.
-    pub const KNOWN_NM_4BYTE_PRECOMPILES: &str = "nethermind: 4byteTracer skips precompile calls";
+    /// base/base accepts call requests of type 0x7e (deposit) and `debug_traceBlockByNumber` at
+    /// "pending", which Nethermind refuses.
+    pub const KNOWN_BASE_DEPOSIT_CALL_PENDING_TRACE: &str =
+        "base: deposit-typed calls and pending traces accepted";
+    /// base/base prices a call with a tip and no fee cap at base fee + tip (alloy's `CallFees`),
+    /// where geth and Nethermind leave the cap at 0 and fail with "max priority fee per gas higher
+    /// than max fee per gas".
+    pub const KNOWN_BASE_TIP_WITHOUT_CAP: &str = "base: tip without fee cap priced";
+    /// base/base's eth\_createAccessList reports a single run without the access list (its list,
+    /// gas and error); geth and Nethermind rerun with the list until it stops changing and report
+    /// the final run.
+    pub const KNOWN_BASE_ACCESS_LIST_GAS: &str = "base: access list from a single run";
+    /// base/base keeps running a precompile whose address has a state override; geth and
+    /// Nethermind turn it into an ordinary account (geth's `override.Apply`).
+    pub const KNOWN_BASE_PRECOMPILE_OVERRIDE: &str = "base: overridden precompile still runs";
+    /// base/base keeps the block's fork rules under a block override of `time`, so an earlier
+    /// time still applies the Prague calldata floor ("intrinsic gas too low"); geth and Nethermind
+    /// take the rules from the overridden time (B12).
+    pub const KNOWN_BASE_OVERRIDE_TIME_RULES: &str = "base: fork rules ignore a time override";
+    /// Settled base/base differences from Nethermind: base accepts `eth_feeHistory` without
+    /// rewardPercentiles, refuses a `null` boolean argument, and refuses tracer names it has no
+    /// native tracer for, which Nethermind runs as JS tracers.
+    pub const KNOWN_BASE_SETTLED: &str = "base: settled (feeHistory, null boolean, JS tracer)";
 
-    /// The known Nethermind difference, if any, that explains Nethermind's answer to `case`,
-    /// with Nethermind's index: base and needlefish answer alike and Nethermind otherwise.
-    /// Nethermind's case is then compared on the other nodes only.
-    pub fn known_nethermind_cause(
+    /// RPC fee handling for unfunded senders is non-geth in all three clients (coordinator's
+    /// call, settled): a priced debug\_traceCall from a sender that can't pay gives "intrinsic gas
+    /// too low" in base/base and needlefish (gas capped by the allowance) and runs in Nethermind
+    /// (no gas charge), where geth refuses it with insufficient funds.
+    pub const SETTLED_UNFUNDED_FEE: &str = "settled: RPC fees for unfunded senders";
+
+    /// Simulated block encoding: Nethermind computes `stateRoot` and `withdrawalsRoot` and uses a
+    /// zero `parentBeaconBlockRoot`, as geth does, where base/base (and needlefish, following it)
+    /// leave both roots zero and copy the parent's beacon root (settled); and base/base gives a
+    /// simulated legacy tx the EIP-155 `v` where geth and Nethermind give 0 (a base difference,
+    /// counted once needlefish matches Nethermind's transactions). Block and tx hashes, roots and
+    /// sizes follow from these. Such cases are compared without those derived fields.
+    pub const KNOWN_SIMULATE_HEADER: &str = "settled: simulated header roots and tx encoding";
+
+    /// Tracer names base/base implements natively.
+    const NATIVE_TRACERS: [&str; 6] = [
+        "callTracer",
+        "prestateTracer",
+        "4byteTracer",
+        "noopTracer",
+        "flatCallTracer",
+        "muxTracer",
+    ];
+
+    /// The known base/base difference from Nethermind, the RPC reference, if any, that explains
+    /// base's answer to `case`, with base's index: needlefish answers like Nethermind and base
+    /// otherwise. base's case is then compared on the other nodes only.
+    pub fn known_base_difference(
         case: &RpcCase,
         replies: &[(String, Reply)],
         normalized: &[(String, Value)],
     ) -> Option<(&'static str, usize)> {
         let get = |name: &str| normalized.iter().position(|(n, _)| n == name);
         let (base, needlefish, nm) = (get("base")?, get("needlefish")?, get("nethermind")?);
-        let (reference, theirs) = (&normalized[base].1, &normalized[nm].1);
-        if reference != &normalized[needlefish].1 || reference == theirs {
+        let (ours, reference) = (&normalized[base].1, &normalized[nm].1);
+        if reference != &normalized[needlefish].1 || reference == ours {
             return None;
         }
         let code = |v: &Value| v["error"]["code"].as_i64();
@@ -653,10 +788,47 @@ impl RpcCampaign {
             Reply::Body(body) => body["error"]["message"].as_str().unwrap_or_default().to_owned(),
             Reply::Transport(_) => return None,
         };
+        let base_message = match &replies[base].1 {
+            Reply::Body(body) => body["error"]["message"].as_str().unwrap_or_default().to_owned(),
+            Reply::Transport(_) => return None,
+        };
         let body: Value = serde_json::from_str(&case.body).ok()?;
         let params = body.get("params").and_then(Value::as_array);
         let strings = Self::strings(&body["params"]);
-        let cause = if ok(theirs) && code(reference) == Some(-32602) {
+        let null_bool = case.method.starts_with("eth_getBlockBy")
+            && params.is_some_and(|p| p.get(1).is_some_and(Value::is_null));
+        let named_tracer = |o: &serde_json::Map<String, Value>| {
+            o.get("tracer")
+                .and_then(Value::as_str)
+                .is_some_and(|t| !Self::NATIVE_TRACERS.contains(&t))
+        };
+        let cause = if message.contains("max priority fee per gas higher than max fee per gas") {
+            Self::KNOWN_BASE_TIP_WITHOUT_CAP
+        } else if case.method == "eth_createAccessList" && ok(ours) && ok(reference) {
+            Self::KNOWN_BASE_ACCESS_LIST_GAS
+        } else if base_message == "intrinsic gas too low"
+            && Self::any_object(&body["params"], &|o| o.contains_key("time"))
+        {
+            Self::KNOWN_BASE_OVERRIDE_TIME_RULES
+        } else if Self::any_object(&body["params"], &|o| {
+            o.iter().any(|(key, value)| value.is_object() && Self::is_precompile(key))
+        }) {
+            Self::KNOWN_BASE_PRECOMPILE_OVERRIDE
+        } else if ok(ours)
+            && code(reference).is_some()
+            && (body["params"].to_string().contains("\"type\":\"0x7e\"")
+                || case.method == "debug_traceBlockByNumber" && strings.contains(&"pending"))
+        {
+            Self::KNOWN_BASE_DEPOSIT_CALL_PENDING_TRACE
+        } else if (case.method == "eth_feeHistory"
+            && params.is_some_and(|p| p.len() == 2)
+            && ok(ours)
+            && code(reference).is_some())
+            || (null_bool && ok(reference) && code(ours) == Some(-32602))
+            || (code(ours) == Some(-32603) && Self::any_object(&body["params"], &named_tracer))
+        {
+            Self::KNOWN_BASE_SETTLED
+        } else if ok(reference) && code(ours) == Some(-32602) {
             let last = params.and_then(|p| p.last());
             let block_like = last.is_some_and(|v| {
                 v.is_null() || v == "" || v.as_str().is_some_and(|s| s.len() == 66)
@@ -680,33 +852,116 @@ impl RpcCampaign {
                         && !(o.contains_key("r") && o.contains_key("s"))
                 });
             if odd_hex || lenient {
-                Self::KNOWN_NM_LENIENT_FIELDS
+                Self::KNOWN_BASE_STRICT_FIELDS
             } else if block_like || big_index {
-                Self::KNOWN_NM_BLOCK_PARAM
+                Self::KNOWN_BASE_BLOCK_PARAM
             } else {
                 return None;
             }
-        } else if code(theirs) == Some(-32602) && ok(reference) && case.body.contains("\"0X") {
-            Self::KNOWN_NM_UPPER_PREFIX
+        } else if code(reference) == Some(-32602) && ok(ours) && case.body.contains("\"0X") {
+            Self::KNOWN_BASE_UPPER_PREFIX
         } else if case.method == "eth_simulateV1"
-            && code(theirs).is_some()
             && code(reference).is_some()
+            && code(ours).is_some()
         {
-            Self::KNOWN_NM_SIMULATE_ORDER
+            Self::KNOWN_BASE_SIMULATE_ORDER
         } else if case.method == "eth_estimateGas"
             && message.starts_with("gas required exceeds allowance (0)")
         {
-            Self::KNOWN_NM_ESTIMATE_ALLOWANCE
-        } else if case.body.contains("4byteTracer") && Self::counts_within(theirs, reference) {
-            Self::KNOWN_NM_4BYTE_PRECOMPILES
+            Self::KNOWN_BASE_ESTIMATE_ALLOWANCE
+        } else if case.body.contains("4byteTracer") && Self::counts_within(reference, ours) {
+            Self::KNOWN_BASE_4BYTE_PRECOMPILES
         } else if case.body.contains("prestateTracer")
-            && Self::without_extra_accounts(theirs, reference) == *reference
+            && Self::without_extra_accounts(reference, ours)
+                == Self::without_extra_accounts(ours, reference)
         {
-            Self::KNOWN_NM_PRESTATE
+            Self::KNOWN_BASE_PRESTATE
         } else {
             return None;
         };
-        Some((cause, nm))
+        Some((cause, base))
+    }
+
+    /// [`Self::SETTLED_UNFUNDED_FEE`] with Nethermind's index, when it explains `case`: a priced
+    /// debug\_traceCall that base/base and needlefish both refuse with "intrinsic gas too low"
+    /// and Nethermind runs.
+    pub fn settled_unfunded_fee(
+        case: &RpcCase,
+        replies: &[(String, Reply)],
+        normalized: &[(String, Value)],
+    ) -> Option<(&'static str, usize)> {
+        let get = |name: &str| normalized.iter().position(|(n, _)| n == name);
+        let (base, needlefish, nm) = (get("base")?, get("needlefish")?, get("nethermind")?);
+        let low = |index: usize| match &replies[index].1 {
+            Reply::Body(body) => body["error"]["message"] == "intrinsic gas too low",
+            Reply::Transport(_) => false,
+        };
+        let body: Value = serde_json::from_str(&case.body).ok()?;
+        let call = &body["params"][0];
+        (case.method == "debug_traceCall"
+            && (call.get("gasPrice").is_some() || call.get("maxFeePerGas").is_some())
+            && normalized[base].1 == normalized[needlefish].1
+            && low(base)
+            && low(needlefish)
+            && normalized[nm].1.get("result").is_some())
+        .then_some((Self::SETTLED_UNFUNDED_FEE, nm))
+    }
+
+    /// Whether `case`'s replies, eth\_simulateV1 blocks, differ only as
+    /// [`Self::KNOWN_SIMULATE_HEADER`] describes: they agree without the fields
+    /// [`Self::without_block_encoding`] drops, and needlefish's transactions match Nethermind's.
+    pub fn simulate_encoding_only(case: &RpcCase, normalized: &[(String, Value)]) -> bool {
+        let get = |name: &str| normalized.iter().find(|(n, _)| n == name).map(|(_, v)| v);
+        let (Some(base), Some(needlefish), Some(nm)) =
+            (get("base"), get("needlefish"), get("nethermind"))
+        else {
+            return false;
+        };
+        let transactions = |v: &Value| {
+            v["result"]
+                .as_array()
+                .map(|blocks| blocks.iter().map(|b| b["transactions"].clone()).collect::<Vec<_>>())
+        };
+        let stripped = Self::without_block_encoding(nm);
+        case.method == "eth_simulateV1"
+            && !(base == nm && needlefish == nm)
+            && transactions(needlefish) == transactions(nm)
+            && Self::without_block_encoding(base) == stripped
+            && Self::without_block_encoding(needlefish) == stripped
+    }
+
+    /// `value`, an eth\_simulateV1 reply, without each block's hash, parent hash, roots, size
+    /// and transactions, and without its logs' block and transaction hashes.
+    pub fn without_block_encoding(value: &Value) -> Value {
+        const DERIVED: [&str; 9] = [
+            "hash",
+            "parentHash",
+            "stateRoot",
+            "withdrawalsRoot",
+            "parentBeaconBlockRoot",
+            "transactionsRoot",
+            "receiptsRoot",
+            "size",
+            "transactions",
+        ];
+        let mut value = value.clone();
+        for block in value.get_mut("result").and_then(Value::as_array_mut).into_iter().flatten() {
+            if let Some(object) = block.as_object_mut() {
+                DERIVED.iter().for_each(|key| {
+                    object.remove(*key);
+                });
+            }
+            for call in block.get_mut("calls").and_then(Value::as_array_mut).into_iter().flatten() {
+                for log in call.get_mut("logs").and_then(Value::as_array_mut).into_iter().flatten()
+                {
+                    if let Some(log) = log.as_object_mut() {
+                        log.remove("blockHash");
+                        log.remove("transactionHash");
+                    }
+                }
+            }
+        }
+        value
     }
 
     /// Whether `value` matches `reference` except that its numeric counts may be lower or
@@ -738,6 +993,16 @@ impl RpcCampaign {
     }
 
     /// Whether any object inside `value` satisfies `test`.
+    /// Whether `address` is a precompile on Base: 0x01 to 0x11, or P256VERIFY at 0x0100.
+    fn is_precompile(address: &str) -> bool {
+        let Some(hex) = address.strip_prefix("0x").filter(|h| h.len() == 40) else {
+            return false;
+        };
+        u64::from_str_radix(&hex[24..], 16).is_ok_and(|n| {
+            hex[..24].bytes().all(|b| b == b'0') && ((1..=0x11).contains(&n) || n == 0x100)
+        })
+    }
+
     fn any_object(value: &Value, test: &dyn Fn(&serde_json::Map<String, Value>) -> bool) -> bool {
         match value {
             Value::Object(object) => {
@@ -748,8 +1013,8 @@ impl RpcCampaign {
         }
     }
 
-    /// `value` without the `codeHash` fields and the account (address-keyed) entries that
-    /// `reference` lacks at the same place.
+    /// `value` without the `codeHash` fields, the account (address-keyed) entries and the storage
+    /// (slot-keyed) entries that `reference` lacks at the same place.
     fn without_extra_accounts(value: &Value, reference: &Value) -> Value {
         match (value, reference) {
             (Value::Object(object), Value::Object(theirs)) => Value::Object(
@@ -758,7 +1023,7 @@ impl RpcCampaign {
                     .filter(|(key, _)| {
                         theirs.contains_key(*key)
                             || !(key.as_str() == "codeHash"
-                                || (key.len() == 42 && RpcCompare::is_hex(key)))
+                                || ([42, 66].contains(&key.len()) && RpcCompare::is_hex(key)))
                     })
                     .map(|(key, v)| {
                         let reference = theirs.get(key).unwrap_or(&Value::Null);
@@ -784,10 +1049,12 @@ impl RpcCampaign {
     /// sender-and-nonce lookup, while every other node answered it with a result (`null` included:
     /// a sender-and-nonce lookup of a nonce never used is `null`).
     pub fn base_genesis_bug(case: &RpcCase, normalized: &[(String, Value)]) -> bool {
-        let Some(((name, reference), others)) = normalized.split_first() else { return false };
+        let Some(base) = normalized.iter().position(|(n, _)| n == "base") else { return false };
+        let reference = &normalized[base].1;
+        let others: Vec<&(String, Value)> =
+            normalized.iter().enumerate().filter(|(i, _)| *i != base).map(|(_, o)| o).collect();
         let failed = |v: &Value| v.get("error").is_some() || v.get("result") == Some(&Value::Null);
-        name == "base"
-            && !others.is_empty()
+        !others.is_empty()
             && failed(reference)
             && (others.iter().all(|(_, v)| v.get("result").is_some())
                 // Base cannot find the block ("block not found: earliest", -32001 or -32000) where the others
@@ -1036,11 +1303,12 @@ mod tests {
         let latest = RpcCase::new("state", "eth_getBalance", json!(["0x01", "latest"]));
         let err = json!({"id":1,"error":{"code":-32001}});
         let ok = json!({"id":1,"result":"0x1"});
+        // Nethermind, the RPC reference, comes first.
         let replies = |base: &Value, other: &Value| {
             vec![
+                ("nethermind".to_owned(), other.clone()),
                 ("base".to_owned(), base.clone()),
                 ("needlefish".to_owned(), other.clone()),
-                ("nethermind".to_owned(), other.clone()),
             ]
         };
         assert!(RpcCampaign::base_genesis_bug(&earliest, &replies(&err, &ok)));
@@ -1061,16 +1329,21 @@ mod tests {
         // Extra parameters: known only when Nethermind names them and base answers otherwise.
         let raw = |base: &Value, message: &str| {
             vec![
-                ("base".to_owned(), Reply::Body(base.clone())),
-                ("needlefish".to_owned(), Reply::Body(invalid.clone())),
                 (
                     "nethermind".to_owned(),
                     Reply::Body(json!({"id":1,"error":{"code":-32602,"message":message}})),
                 ),
+                ("base".to_owned(), Reply::Body(base.clone())),
+                ("needlefish".to_owned(), Reply::Body(invalid.clone())),
             ]
         };
         let known = |case: &RpcCase, base: &Value, message: &str| {
-            RpcCampaign::known_base_cause(case, &raw(base, message), &replies(base, &invalid))
+            RpcCampaign::known_base_cause(case, &raw(base, message), &replies(base, &invalid)).map(
+                |(cause, index)| {
+                    assert_eq!(index, 1, "base's index");
+                    cause
+                },
+            )
         };
         assert_eq!(
             known(&latest, &ok, "too many arguments, want at most 2"),
@@ -1093,35 +1366,223 @@ mod tests {
         let parse = json!({"id":null,"error":{"code":-32700}});
         assert_eq!(known(&with_id(json!(1.5)), &parse, ""), Some(RpcCampaign::KNOWN_BASE_ID));
         assert_eq!(known(&with_id(json!(1)), &empty, ""), None);
+
+        // Tracked base differences: needlefish and Nethermind agree against base.
+        let classify = |case: &RpcCase, base: Value, other: Value, message: &str| {
+            let mut nm = other.clone();
+            if let Some(error) = nm.get_mut("error") {
+                error["message"] = json!(message);
+            }
+            let raw = vec![
+                ("nethermind".to_owned(), Reply::Body(nm)),
+                ("base".to_owned(), Reply::Body(base.clone())),
+                ("needlefish".to_owned(), Reply::Body(other.clone())),
+            ];
+            RpcCampaign::known_base_cause(case, &raw, &replies(&base, &other)).map(|(c, _)| c)
+        };
+        let server = json!({"id":1,"error":{"code":-32000}});
+        let not_found = json!({"id":1,"error":{"code":-32001}});
+        assert_eq!(
+            classify(&latest, not_found.clone(), server, ""),
+            Some(RpcCampaign::KNOWN_BASE_ERROR_CODES)
+        );
+        assert_eq!(classify(&latest, not_found, invalid.clone(), ""), None);
+        let typed = RpcCase::new("call", "eth_call", json!([{"type": 0}, "latest"]));
+        assert_eq!(
+            classify(&typed, ok.clone(), invalid.clone(), "invalid argument 0"),
+            Some(RpcCampaign::KNOWN_BASE_INTEGER_TYPE)
+        );
+        let extra = RpcCase::new("call", "eth_createAccessList", json!([{}, "safe", {}, {}]));
+        assert_eq!(
+            classify(&extra, ok.clone(), invalid.clone(), "invalid argument 3"),
+            Some(RpcCampaign::KNOWN_BASE_EXTRA_PARAMS)
+        );
+        assert_eq!(classify(&extra, ok, invalid, "invalid argument 0"), None);
+        let trace = RpcCase::new(
+            "trace",
+            "debug_traceTransaction",
+            json!(["0x01", {"tracer": "callTracer"}]),
+        );
+        let zero = json!({"id":1,"result":{"type":"CALL","to":"0x0000000000000000000000000000000000000000","input":"0x"}});
+        let real = json!({"id":1,"result":{"type":"CALL","to":"0x00000000000000000000000000000000000000aa","input":"0x","error":"failed deposit: system deposit after Regolith"}});
+        let raw = vec![
+            ("nethermind".to_owned(), Reply::Body(real.clone())),
+            ("base".to_owned(), Reply::Body(zero.clone())),
+            ("needlefish".to_owned(), Reply::Body(real.clone())),
+        ];
+        assert_eq!(
+            RpcCampaign::known_base_cause(&trace, &raw, &replies(&zero, &real)).map(|(c, _)| c),
+            Some(RpcCampaign::KNOWN_BASE_FAILED_DEPOSIT_FRAME)
+        );
     }
 
     #[test]
-    fn known_nethermind_causes_need_base_and_needlefish_agreeing() {
+    fn known_base_differences_need_needlefish_agreeing_with_nethermind() {
+        // Nethermind, the RPC reference, comes first. Returns the cause and the dropped node.
         let classify = |case: &RpcCase, base: Value, needlefish: Value, nm: Value| {
             let replies = vec![
+                ("nethermind".to_owned(), Reply::Body(nm)),
                 ("base".to_owned(), Reply::Body(base)),
                 ("needlefish".to_owned(), Reply::Body(needlefish)),
-                ("nethermind".to_owned(), Reply::Body(nm)),
             ];
             let normalized: Vec<(String, Value)> = replies
                 .iter()
                 .map(|(n, r)| (n.clone(), RpcCompare::normalize(&case.method, r)))
                 .collect();
-            RpcCampaign::known_nethermind_cause(case, &replies, &normalized).map(|(c, _)| c)
+            if RpcCampaign::simulate_encoding_only(case, &normalized) {
+                return Some((RpcCampaign::KNOWN_SIMULATE_HEADER, "all".to_owned()));
+            }
+            RpcCampaign::known_base_difference(case, &replies, &normalized)
+                .or_else(|| RpcCampaign::settled_unfunded_fee(case, &replies, &normalized))
+                .map(|(cause, index)| (cause, replies[index].0.clone()))
         };
+        let base_cause = |cause| Some((cause, "base".to_owned()));
         let invalid = json!({"id":1,"error":{"code":-32602,"message":"invalid params"}});
         let ok = json!({"id":1,"result":"0x1"});
         let hash = format!("0x{}", "ab".repeat(32));
         let by_hash = RpcCase::new("state", "eth_getBalance", json!(["0x01", hash]));
         assert_eq!(
-            classify(&by_hash, invalid.clone(), invalid.clone(), ok.clone()),
-            Some(RpcCampaign::KNOWN_NM_BLOCK_PARAM)
+            classify(&by_hash, invalid.clone(), ok.clone(), ok.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_BLOCK_PARAM)
         );
-        // Not when needlefish sides with Nethermind, nor for a block number.
-        assert_eq!(classify(&by_hash, invalid.clone(), ok.clone(), ok.clone()), None);
+        // Not while needlefish sides with base (a needlefish finding), nor for a block number.
+        assert_eq!(classify(&by_hash, invalid.clone(), invalid.clone(), ok.clone()), None);
         let by_number = RpcCase::new("state", "eth_getBalance", json!(["0x01", "0x10"]));
-        assert_eq!(classify(&by_number, invalid.clone(), invalid, ok), None);
-        // Prestate: extra accounts and codeHash only on Nethermind are known; another value is not.
+        assert_eq!(classify(&by_number, invalid.clone(), ok.clone(), ok.clone()), None);
+        // Deposit-typed calls and settled items: known when needlefish answers like Nethermind.
+        let deposit = RpcCase::new("call", "eth_call", json!([{"type": "0x7e"}, "latest"]));
+        assert_eq!(
+            classify(&deposit, ok.clone(), invalid.clone(), invalid.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_DEPOSIT_CALL_PENDING_TRACE)
+        );
+        let fee = RpcCase::new("fees", "eth_feeHistory", json!(["0x1", "latest"]));
+        assert_eq!(
+            classify(&fee, ok.clone(), invalid.clone(), invalid),
+            base_cause(RpcCampaign::KNOWN_BASE_SETTLED)
+        );
+        let js = RpcCase::new("trace", "debug_traceTransaction", json!(["0x01", {"tracer": "x"}]));
+        let internal = json!({"id":1,"error":{"code":-32603,"message":"JS Tracer is not enabled"}});
+        assert_eq!(
+            classify(&js, internal.clone(), ok.clone(), ok.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_SETTLED)
+        );
+        let named = RpcCase::new(
+            "trace",
+            "debug_traceTransaction",
+            json!(["0x01", {"tracer": "callTracer"}]),
+        );
+        assert_eq!(classify(&named, internal, ok.clone(), ok), None);
+        // A tip without a fee cap and access-list gas: known when needlefish matches Nethermind.
+        let tip = RpcCase::new("call", "eth_estimateGas", json!([{"maxPriorityFeePerGas": "0x1"}]));
+        let funds = json!({"id":1,"error":{"code":-32003,"message":"insufficient funds"}});
+        let above = json!({"id":1,"error":{"code":-32000,"message":"failed with 50000000 gas: max priority fee per gas higher than max fee per gas"}});
+        assert_eq!(
+            classify(&tip, funds.clone(), above.clone(), above.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_TIP_WITHOUT_CAP)
+        );
+        assert_eq!(classify(&tip, funds.clone(), funds, above), None);
+        let list = RpcCase::new("call", "eth_createAccessList", json!([{}]));
+        let gas = |g: &str| json!({"id":1,"result":{"accessList":[],"gasUsed":g}});
+        assert_eq!(
+            classify(&list, gas("0x655c"), gas("0x6df4"), gas("0x6df4")),
+            base_cause(RpcCampaign::KNOWN_BASE_ACCESS_LIST_GAS)
+        );
+        // A time override that moves the call before Prague (B12).
+        let early = RpcCase::new(
+            "call",
+            "eth_call",
+            json!([{"gas": "0x5e00"}, "latest", {}, {"time": "0x0"}]),
+        );
+        let floor = json!({"id":1,"error":{"code":-32000,"message":"intrinsic gas too low"}});
+        let runs = json!({"id":1,"result":"0x"});
+        assert_eq!(
+            classify(&early, floor.clone(), runs.clone(), runs.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_OVERRIDE_TIME_RULES)
+        );
+        let late = RpcCase::new("call", "eth_call", json!([{"gas": "0x5e00"}, "latest"]));
+        assert_eq!(classify(&late, floor, runs.clone(), runs), None);
+        // A state override on a precompile's address.
+        let precompile = RpcCase::new(
+            "trace",
+            "debug_traceCall",
+            json!([{"to": "0x0000000000000000000000000000000000000011"}, "latest",
+                {"stateOverrides": {"0x0000000000000000000000000000000000000011": {"code": "0x00"}}}]),
+        );
+        let failed = json!({"id":1,"result":{"gasUsed":"0x2faf080","error":"precompile failed"}});
+        let ran = json!({"id":1,"result":{"gasUsed":"0xa962"}});
+        assert_eq!(
+            classify(&precompile, failed.clone(), ran.clone(), ran.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_PRECOMPILE_OVERRIDE)
+        );
+        let ordinary = RpcCase::new(
+            "trace",
+            "debug_traceCall",
+            json!([{"to": "0x0000000000000000000000000000000000000012"}, "latest",
+                {"stateOverrides": {"0x0000000000000000000000000000000000000012": {"code": "0x00"}}}]),
+        );
+        assert_eq!(classify(&ordinary, failed, ran.clone(), ran), None);
+        // A priced traceCall from an unfunded sender: settled, Nethermind's side set aside.
+        let unfunded = RpcCase::new(
+            "trace",
+            "debug_traceCall",
+            json!([{"to": "0x00000000000000000000000000000000000000aa", "gasPrice": "0x1"}, "latest"]),
+        );
+        let low = json!({"id":1,"error":{"code":-32000,"message":"intrinsic gas too low"}});
+        let trace = json!({"id":1,"result":{"gas":21000,"failed":false}});
+        assert_eq!(
+            classify(&unfunded, low.clone(), low.clone(), trace.clone()),
+            Some((RpcCampaign::SETTLED_UNFUNDED_FEE, "nethermind".to_owned()))
+        );
+        let free = RpcCase::new(
+            "trace",
+            "debug_traceCall",
+            json!([{"to": "0x00000000000000000000000000000000000000aa"}, "latest"]),
+        );
+        assert_eq!(classify(&free, low.clone(), low, trace), None);
+        // The list itself differs too when a later run touches more (or the runs run out of gas).
+        let listed = json!({"id":1,"result":{"accessList":[{"address":"0x01","storageKeys":[]}],"gasUsed":"0x7e34"}});
+        assert_eq!(
+            classify(&list, gas("0x7e34"), listed.clone(), listed.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_ACCESS_LIST_GAS)
+        );
+        let converge =
+            json!({"id":1,"error":{"code":-32000,"message":"access list did not converge"}});
+        assert_eq!(classify(&list, converge, listed.clone(), listed), None);
+        // Batch replies are JSON arrays: classified like any other difference, without panicking.
+        let batch = |g: &str| json!([{"id":1,"result":{"gasUsed":g}}]);
+        assert_eq!(classify(&list, batch("0x1"), batch("0x2"), batch("0x2")), None);
+        // Simulated header roots, and base's legacy `v` once needlefish's transactions match
+        // Nethermind's, are compared without the derived fields; another field is not.
+        let simulate = RpcCase::new("call", "eth_simulateV1", json!([{"blockStateCalls": []}]));
+        let block = |root: &str, hash: &str, tx: &str, gas: &str| {
+            json!({"id":1,"result":[{"hash": hash, "stateRoot": root, "gasUsed": gas,
+                "transactions": [tx], "calls":[{"logs":[{"blockHash": hash, "transactionHash": tx}]}]}]})
+        };
+        let header = |c, b, f, n| classify(&simulate, b, f, n).map(|(cause, _)| cause) == c;
+        let known = Some(RpcCampaign::KNOWN_SIMULATE_HEADER);
+        assert!(header(None, batch("0x1"), batch("0x2"), batch("0x2")));
+        // Header roots only.
+        let base_block = block("0x00", "0xb1", "0x01", "0x5208");
+        assert!(header(
+            known,
+            base_block.clone(),
+            base_block.clone(),
+            block("0x83", "0xc2", "0x01", "0x5208")
+        ));
+        // base's legacy v after needlefish aligned: known; before it aligned: a finding.
+        let aligned = block("0x00", "0xf1", "0x02", "0x5208");
+        let nm = block("0x83", "0xc2", "0x02", "0x5208");
+        assert!(header(known, base_block.clone(), aligned, nm.clone()));
+        assert!(header(None, base_block.clone(), base_block.clone(), nm));
+        // Another field differs.
+        assert!(header(
+            None,
+            base_block.clone(),
+            base_block,
+            block("0x83", "0xc2", "0x01", "0x5209")
+        ));
+        // Prestate: Nethermind's extra accounts and codeHash missing on base are known; another
+        // value is not.
         let trace = RpcCase::new(
             "trace",
             "debug_traceTransaction",
@@ -1130,26 +1591,42 @@ mod tests {
         let a = "0x00000000000000000000000000000000000000aa";
         let b = "0x00000000000000000000000000000000000000bb";
         let base = json!({"id":1,"result":{a:{"balance":"0x1"}}});
-        let extra =
+        let full =
             json!({"id":1,"result":{a:{"balance":"0x1","codeHash":"0x00"},b:{"balance":"0x2"}}});
         let other = json!({"id":1,"result":{a:{"balance":"0x2"}}});
         assert_eq!(
-            classify(&trace, base.clone(), base.clone(), extra),
-            Some(RpcCampaign::KNOWN_NM_PRESTATE)
+            classify(&trace, base, full.clone(), full.clone()),
+            base_cause(RpcCampaign::KNOWN_BASE_PRESTATE)
         );
-        assert_eq!(classify(&trace, base.clone(), base, other), None);
-        // 4byteTracer: fewer or missing counts on Nethermind are known; a higher count is not.
+        assert_eq!(classify(&trace, other, full.clone(), full.clone()), None);
+        // A slot only base lists (its SSTORE ran out of gas) is known too.
+        let slot = format!("0x{}", "00".repeat(31) + "bb");
+        let with_slot = json!({"id":1,"result":{a:{"balance":"0x1","storage":{&slot:"0x00"}}}});
+        let without = json!({"id":1,"result":{a:{"balance":"0x1","storage":{}}}});
+        assert_eq!(
+            classify(&trace, with_slot, without.clone(), without),
+            base_cause(RpcCampaign::KNOWN_BASE_PRESTATE)
+        );
+        // Accounts only base lists (zero-credit fee vaults, an empty diffMode sender) are known too.
+        let c = "0x00000000000000000000000000000000000000cc";
+        let base_more = json!({"id":1,"result":{a:{"balance":"0x1"},c:{"balance":"0x0"}}});
+        assert_eq!(
+            classify(&trace, base_more, full.clone(), full),
+            base_cause(RpcCampaign::KNOWN_BASE_PRESTATE)
+        );
+        // 4byteTracer: extra or higher counts on base are known; a lower count is not.
         let four = RpcCase::new(
             "trace",
             "debug_traceTransaction",
             json!(["0x01", {"tracer": "4byteTracer"}]),
         );
         let counts = |c: Value| json!({"id":1,"result":c});
-        let base = counts(json!({"0x00000000-33":10,"0xa9059cbb-68":1}));
+        let nm = counts(json!({"0xa9059cbb-68":1}));
         assert_eq!(
-            classify(&four, base.clone(), base.clone(), counts(json!({"0xa9059cbb-68":1}))),
-            Some(RpcCampaign::KNOWN_NM_4BYTE_PRECOMPILES)
+            classify(&four, counts(json!({"0x00000000-33":10,"0xa9059cbb-68":1})), nm.clone(), nm),
+            base_cause(RpcCampaign::KNOWN_BASE_4BYTE_PRECOMPILES)
         );
-        assert_eq!(classify(&four, base.clone(), base, counts(json!({"0xa9059cbb-68":2}))), None);
+        let fewer = counts(json!({"0xa9059cbb-68":2}));
+        assert_eq!(classify(&four, counts(json!({})), fewer.clone(), fewer), None);
     }
 }
