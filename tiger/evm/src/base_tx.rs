@@ -29,7 +29,7 @@
 //! [`TxBaseExecutor::simulate`] is the read-only `eth_call` / `eth_estimateGas` path: no
 //! signature checks, no fee settlement, nothing committed.
 
-use alloy_eips::eip2718::Typed2718;
+use alloy_eips::eip2718::{Encodable2718, Typed2718};
 use alloy_primitives::{Address, B256, Bytes, U256, address};
 use base_common_base_tx::{IntrinsicGas, TxBaseGasSchedule};
 use base_common_consensus::{
@@ -39,8 +39,9 @@ use base_common_genesis::BaseFeature;
 use evm2::{
     Evm, EvmFeatures, TxResult,
     bytecode::Bytecode,
-    env::TxEnvExt,
-    interpreter::{Host, InstrStop, Message, MessageKind},
+    env::{TxEnv, TxEnvExt},
+    inspector::Inspector,
+    interpreter::{GasTracker, Host, InstrStop, Interpreter, Message, MessageKind, MessageResult},
     registry::{HandlerError, HandlerResult, TxRequest},
 };
 
@@ -318,13 +319,23 @@ impl TxBaseExecutor {
         let prepay = if fee_charge { Self::prepay(evm, &outcome, enveloped)? } else { U256::ZERO };
         Self::warm_pre_call_accounts(evm, &outcome)?;
 
-        let calls = Self::execute_calls(evm, tx, &outcome, outcome.execution_gas_available)?;
-
+        let root = Self::open_trace_root(evm, &outcome, || enveloped.clone());
+        let calls = Self::execute_calls(evm, tx, &outcome, outcome.execution_gas_available)
+            .inspect_err(|_| Self::close_trace_root(evm, root.as_ref(), None, &outcome, 0))?;
         let (gas_used, l1_fee) = if fee_charge {
-            Self::settle_fees(evm, &outcome, &calls, prepay, enveloped)?
+            Self::settle_fees(evm, &outcome, &calls, prepay, enveloped).inspect_err(|_| {
+                Self::close_trace_root(
+                    evm,
+                    root.as_ref(),
+                    Some(&calls),
+                    &outcome,
+                    outcome.gas_limit,
+                )
+            })?
         } else {
             (outcome.metered_gas_used(&calls), U256::ZERO)
         };
+        Self::close_trace_root(evm, root.as_ref(), Some(&calls), &outcome, gas_used);
         assert!(calls.committed_phases <= tx.calls.len() as u64);
         assert_eq!(calls.reverted, calls.committed_phases < tx.calls.len() as u64);
 
@@ -361,45 +372,11 @@ impl TxBaseExecutor {
         let outcome = Self::simulate_resolve(evm, signed, from, base_fee)?;
         Self::consume_sender_nonce(evm, &outcome)?;
         Self::warm_pre_call_accounts(evm, &outcome)?;
-        let ceiling_pool = outcome.execution_gas_available;
 
-        let (calls, gas) = match mode {
-            TxBaseSimulation::Call => {
-                let calls = Self::execute_calls(evm, tx, &outcome, ceiling_pool)?;
-                let gas = outcome
-                    .metered_gas(outcome.sender_intrinsic.saturating_add(calls.call_gas_spent));
-                (calls, gas)
-            }
-            TxBaseSimulation::Estimate => {
-                // Refunds never rejoin the pool and EIP-150 forwarding keeps 1/64 per level, so
-                // the limit that succeeds can exceed one run's spend: search the minimum pool.
-                let ceiling = Self::probe_calls(evm, tx, &outcome, ceiling_pool)?;
-                if ceiling.reverted {
-                    let calls = Self::execute_calls(evm, tx, &outcome, ceiling_pool)?;
-                    let gas = outcome
-                        .metered_gas(outcome.sender_intrinsic.saturating_add(calls.call_gas_spent));
-                    (calls, gas)
-                } else {
-                    let pool = Self::search_estimate_pool(
-                        evm,
-                        tx,
-                        &outcome,
-                        ceiling.call_gas_spent,
-                        ceiling_pool,
-                    )?;
-                    let calls = Self::execute_calls(evm, tx, &outcome, pool)?;
-                    let sender_budget =
-                        outcome.floored_sender_gas(outcome.sender_intrinsic.saturating_add(pool));
-                    let gas =
-                        if evm.config_spec_id().is_feature_enabled(BaseFeature::GasLimitBilling) {
-                            sender_budget
-                        } else {
-                            sender_budget.saturating_add(outcome.payer_auth_cost)
-                        };
-                    (calls, gas)
-                }
-            }
-        };
+        let root = Self::open_trace_root(evm, &outcome, || signed.encoded_2718().into());
+        let (calls, gas) = Self::simulate_calls(evm, tx, &outcome, mode)
+            .inspect_err(|_| Self::close_trace_root(evm, root.as_ref(), None, &outcome, 0))?;
+        Self::close_trace_root(evm, root.as_ref(), Some(&calls), &outcome, gas);
         Ok(TxResult::<BaseEvmTypes> {
             status: !calls.reverted,
             total_gas_spent: gas,
@@ -409,6 +386,61 @@ impl TxBaseExecutor {
             ext: BaseTxResultExt { l1_fee: U256::ZERO, committed_phases: calls.committed_phases },
             ..Default::default()
         })
+    }
+
+    /// Runs the simulation's calls for `mode` once more after any estimate search, and returns
+    /// that final run with the gas the simulation reports.
+    fn simulate_calls(
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        tx: &TxBase,
+        outcome: &Outcome,
+        mode: TxBaseSimulation,
+    ) -> HandlerResult<(CallsResult, u64)> {
+        let ceiling_pool = outcome.execution_gas_available;
+        let pool = match mode {
+            TxBaseSimulation::Call => None,
+            TxBaseSimulation::Estimate => {
+                // The search's probes are not user-visible executions: detach the inspector so a
+                // trace records only the final run.
+                let inspector = evm.clear_inspector();
+                let searched = Self::estimate_pool(evm, tx, outcome, ceiling_pool);
+                if let Some(inspector) = inspector {
+                    evm.set_boxed_inspector(inspector);
+                }
+                searched?
+            }
+        };
+        let calls = Self::execute_calls(evm, tx, outcome, pool.unwrap_or(ceiling_pool))?;
+        let Some(pool) = pool else {
+            let gas =
+                outcome.metered_gas(outcome.sender_intrinsic.saturating_add(calls.call_gas_spent));
+            return Ok((calls, gas));
+        };
+        let sender_budget =
+            outcome.floored_sender_gas(outcome.sender_intrinsic.saturating_add(pool));
+        let gas = if evm.config_spec_id().is_feature_enabled(BaseFeature::GasLimitBilling) {
+            sender_budget
+        } else {
+            sender_budget.saturating_add(outcome.payer_auth_cost)
+        };
+        Ok((calls, gas))
+    }
+
+    /// The estimate's call pool, or `None` when the calls fail even at `ceiling_pool` (a genuine
+    /// failure the search cannot fix, reported from one run at the full pool). Refunds never
+    /// rejoin the pool and EIP-150 forwarding keeps 1/64 per level, so the pool that succeeds
+    /// can exceed one run's spend: search the minimum.
+    fn estimate_pool(
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        tx: &TxBase,
+        outcome: &Outcome,
+        ceiling_pool: u64,
+    ) -> HandlerResult<Option<u64>> {
+        let ceiling = Self::probe_calls(evm, tx, outcome, ceiling_pool)?;
+        if ceiling.reverted {
+            return Ok(None);
+        }
+        Self::search_estimate_pool(evm, tx, outcome, ceiling.call_gas_spent, ceiling_pool).map(Some)
     }
 
     /// Runs the calls at `pool` and rolls back every write and log they made.
@@ -825,12 +857,7 @@ impl TxBaseExecutor {
         outcome: &Outcome,
         pool: u64,
     ) -> HandlerResult<CallsResult> {
-        let tx_env = TxEnvExt {
-            origin: outcome.sender,
-            gas_price: U256::from(outcome.effective),
-            chain_id: U256::from(evm.version().chain_id),
-            ..TxEnvExt::default()
-        };
+        let tx_env = Self::tx_env(evm, outcome);
         let mut remaining = pool;
         let mut refund: i64 = 0;
         let mut committed_phases: u64 = 0;
@@ -957,6 +984,98 @@ impl TxBaseExecutor {
         let balance =
             evm.state_mut().account(&sender, false).map_err(HandlerError::Fatal)?.balance();
         Ok(balance >= value)
+    }
+
+    /// The transaction environment the calls run in: the resolved sender is `tx.origin`.
+    fn tx_env(evm: &Evm<'_, BaseEvmTypes>, outcome: &Outcome) -> TxEnv<BaseEvmTypes> {
+        TxEnvExt {
+            origin: outcome.sender,
+            gas_price: U256::from(outcome.effective),
+            chain_id: U256::from(evm.version().chain_id),
+            ..TxEnvExt::default()
+        }
+    }
+
+    /// Opens the synthetic trace root when an inspector is installed: one call frame from the
+    /// sender to itself with the enveloped transaction as input and the sender's gas limit, so
+    /// the root calls the executor dispatches attach to one connected call tree, as in the
+    /// reference (`start_inspection`). Returns the root message to close with
+    /// [`Self::close_trace_root`]; `None` without an inspector, so `enveloped` is not built.
+    fn open_trace_root(
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        outcome: &Outcome,
+        enveloped: impl FnOnce() -> Bytes,
+    ) -> Option<Message<BaseEvmTypes>> {
+        evm.inspector()?;
+        let mut message = Message::<BaseEvmTypes> {
+            kind: MessageKind::Call,
+            depth: 0,
+            gas_limit: outcome.gas_limit,
+            reservoir: 0,
+            destination: outcome.sender,
+            caller: outcome.sender,
+            input: enveloped(),
+            value: U256::ZERO,
+            code: Bytecode::new(),
+            code_address: outcome.sender,
+            disable_precompiles: false,
+            caller_is_static: false,
+            salt: B256::ZERO,
+            ext: (),
+            _non_exhaustive: (),
+        };
+        // The root runs no code, so a hook's override result is ignored, as in the reference.
+        Self::with_root_frame(evm, outcome, &message.clone(), |inspector, frame| {
+            let _ = inspector.call(frame, &mut message);
+        });
+        Some(message)
+    }
+
+    /// Closes the synthetic trace root opened by [`Self::open_trace_root`] (a no-op for `None`).
+    /// `calls` is the final run, or `None` when execution failed, which closes the root as a
+    /// revert with all of its gas spent. The root reports `gas_used`, the gas the receipt or
+    /// simulation reports, widened past the sender's limit when gas-limit billing adds payer
+    /// authentication on top (the reference `end_inspection`).
+    fn close_trace_root(
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        root: Option<&Message<BaseEvmTypes>>,
+        calls: Option<&CallsResult>,
+        outcome: &Outcome,
+        gas_used: u64,
+    ) {
+        let Some(message) = root else { return };
+        let (reverted, output, gas_used) = match calls {
+            Some(calls) => (calls.reverted, calls.output.clone(), gas_used),
+            None => (true, Bytes::new(), outcome.gas_limit),
+        };
+        let mut result = MessageResult::<BaseEvmTypes> {
+            stop: if reverted { InstrStop::Revert } else { InstrStop::Return },
+            gas: GasTracker::new_used_gas(outcome.gas_limit.max(gas_used), gas_used, 0),
+            output,
+            ..Default::default()
+        };
+        Self::with_root_frame(evm, outcome, message, |inspector, frame| {
+            inspector.call_end(frame, message, &mut result);
+        });
+    }
+
+    /// Runs `hook` with the EVM's inspector and a top-level frame initialized with the root
+    /// `message`, the parent frame evm2 hands the inspector for any top-level message. The
+    /// inspector is detached for the hook's duration, so the frame can point at the EVM.
+    fn with_root_frame(
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        outcome: &Outcome,
+        message: &Message<BaseEvmTypes>,
+        hook: impl FnOnce(&mut dyn Inspector<BaseEvmTypes>, &mut Interpreter<'_, '_, BaseEvmTypes>),
+    ) {
+        let mut inspector = evm.clear_inspector().expect("the trace root needs an inspector");
+        let tx_env = Self::tx_env(evm, outcome);
+        let version = *evm.version();
+        let mut frame = Interpreter::new(&tx_env, message);
+        frame.prepare_run(evm.spec_id(), &version, evm);
+        hook(inspector.as_mut(), &mut frame);
+        drop(frame);
+        evm.set_boxed_inspector(inspector);
     }
 
     /// Builds the top-level call frame for one protocol call: `caller` sends `value` to `to` with
@@ -1559,6 +1678,174 @@ mod tests {
         // Inclusion sees the same advanced nonce.
         let result = transact(&mut evm, &signed).expect("Base tx executes");
         assert!(result.status, "inclusion must observe nonce {}", current_nonce + 1);
+    }
+
+    /// Records the call tree an inspector sees: `(depth, caller, destination, input, gas limit)`
+    /// on `call`, and `(stop, gas spent)` on `call_end`, in hook order.
+    #[derive(Debug, Default)]
+    struct CallTree {
+        events: Vec<CallEvent>,
+        open: usize,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum CallEvent {
+        Call { depth: usize, caller: Address, to: Address, input: Bytes, gas_limit: u64 },
+        End { depth: usize, stop: InstrStop, gas_spent: u64 },
+    }
+
+    impl Inspector<BaseEvmTypes> for CallTree {
+        fn call(
+            &mut self,
+            _: &mut Interpreter<'_, '_, BaseEvmTypes>,
+            message: &mut Message<BaseEvmTypes>,
+        ) -> Option<MessageResult<BaseEvmTypes>> {
+            self.events.push(CallEvent::Call {
+                depth: self.open,
+                caller: message.caller,
+                to: message.destination,
+                input: message.input.clone(),
+                gas_limit: message.gas_limit,
+            });
+            self.open += 1;
+            None
+        }
+
+        fn call_end(
+            &mut self,
+            _: &mut Interpreter<'_, '_, BaseEvmTypes>,
+            _: &Message<BaseEvmTypes>,
+            result: &mut MessageResult<BaseEvmTypes>,
+        ) {
+            self.open -= 1;
+            self.events.push(CallEvent::End {
+                depth: self.open,
+                stop: result.stop,
+                gas_spent: result.gas.limit() - result.gas.remaining(),
+            });
+        }
+    }
+
+    fn traced(evm: &mut Evm<'static, BaseEvmTypes>) -> Vec<CallEvent> {
+        let tree = evm.clear_inspector_as::<CallTree>().expect("the CallTree inspector");
+        assert_eq!(tree.open, 0, "every opened frame closes");
+        tree.events
+    }
+
+    /// With an inspector installed, a Base transaction is one synthetic root frame (sender to
+    /// itself, the enveloped transaction as input, the sender's gas limit) whose children are
+    /// the root calls; the root closes with the receipt's status and gas.
+    #[test]
+    fn inspected_base_tx_is_one_trace_root_over_its_calls() {
+        let key = signing_key(0x61);
+        let sender = eoa_address(&key);
+        let first = address!("0x00000000000000000000000000000000000000f1");
+        let second = address!("0x00000000000000000000000000000000000000f2");
+        let reverter = address!("0x00000000000000000000000000000000000000f3");
+        let mut tx = base_tx();
+        tx.calls = vec![vec![call(first), call(second)], vec![call(reverter)]];
+        let gas_limit = tx.gas_limit;
+        let signed = eoa_signed(tx, &key);
+        let contracts =
+            [(first, bytes!("00")), (second, bytes!("00")), (reverter, bytes!("60006000fd"))];
+        let fixture = Fixture::new(sender, eth(), &contracts);
+
+        // The same transaction without an inspector: inspection must not change execution.
+        let plain = transact(&mut fixture.evm(), &signed).unwrap();
+        let mut evm = fixture.evm();
+        evm.set_inspector(CallTree::default());
+        let result = transact(&mut evm, &signed).unwrap();
+        assert!(!result.status);
+        assert_eq!(result.tx_gas_used(), plain.tx_gas_used());
+        assert_eq!(result.ext.committed_phases, 1);
+
+        let events = traced(&mut evm);
+        assert_eq!(events.len(), 8, "{events:#?}");
+        assert_eq!(
+            events[0],
+            CallEvent::Call {
+                depth: 0,
+                caller: sender,
+                to: sender,
+                input: envelope(&signed).inner().enveloped().unwrap().clone(),
+                gas_limit,
+            }
+        );
+        for (event, target) in [(&events[1], first), (&events[3], second), (&events[5], reverter)] {
+            let CallEvent::Call { depth, caller, to, .. } = event else {
+                panic!("expected a root call, got {event:?}");
+            };
+            assert_eq!((*depth, *caller, *to), (1, sender, target));
+        }
+        assert!(matches!(events[6], CallEvent::End { depth: 1, stop: InstrStop::Revert, .. }));
+        assert_eq!(
+            events[7],
+            CallEvent::End { depth: 0, stop: InstrStop::Revert, gas_spent: result.tx_gas_used() }
+        );
+    }
+
+    /// Under gas-limit billing a sponsored transaction settles `gas_limit + payer_auth_cost`,
+    /// more than the sender's `gas_limit`. The trace root reports that billed gas, as the
+    /// receipt does, instead of capping it at `gas_limit`.
+    #[test]
+    fn gas_limit_billing_trace_root_reports_the_billed_gas_of_a_sponsored_tx() {
+        let key = signing_key(0x3c);
+        let sender = eoa_address(&key);
+        let payer_key = signing_key(0x3d);
+        let payer = eoa_address(&payer_key);
+        let target = address!("0x00000000000000000000000000000000000000cc");
+        let tx = TxBase {
+            payer: Some(TxBaseConstants::OPEN_PAYER),
+            calls: vec![vec![call(target)]],
+            ..base_tx()
+        };
+        let gas_limit = tx.gas_limit;
+        let signed = open_payer_signed(tx, &key, &payer_key);
+        let payer_auth_cost = IntrinsicGas::compute(&signed, sender).payer_auth_cost;
+        assert!(payer_auth_cost > 0, "a sponsored transaction reserves payer authentication");
+
+        let mut evm = settlement_fixture(payer, &[(target, bytes!("00"))]).evm();
+        evm.set_inspector(CallTree::default());
+        let result = transact(&mut evm, &signed).unwrap();
+        assert!(result.status);
+        assert_eq!(result.tx_gas_used(), gas_limit + payer_auth_cost);
+        let events = traced(&mut evm);
+        assert_eq!(
+            events.last(),
+            Some(&CallEvent::End {
+                depth: 0,
+                stop: InstrStop::Return,
+                gas_spent: gas_limit + payer_auth_cost
+            }),
+            "the trace root must report the billed gas, not the sender's gas limit"
+        );
+    }
+
+    /// An inspected estimate traces only its final run, not the search's probes, and the root
+    /// reports the estimate.
+    #[test]
+    fn inspected_estimate_traces_only_the_final_run() {
+        let key = signing_key(0x62);
+        let sender = eoa_address(&key);
+        let mut tx = base_tx();
+        tx.calls = vec![vec![call(FLOOR_BURNER)]];
+        let signed = eoa_signed(tx, &key);
+        let fixture = Fixture::new(sender, eth(), &[(FLOOR_BURNER, floor_burner_code())]);
+
+        let plain = simulate(&mut fixture.evm(), &signed, sender, TxBaseSimulation::Estimate)
+            .unwrap()
+            .tx_gas_used();
+        let mut evm = fixture.evm();
+        evm.set_inspector(CallTree::default());
+        let estimate = simulate(&mut evm, &signed, sender, TxBaseSimulation::Estimate).unwrap();
+        assert_eq!(estimate.tx_gas_used(), plain);
+
+        let events = traced(&mut evm);
+        assert_eq!(events.len(), 4, "the root and one burner run: {events:#?}");
+        assert_eq!(
+            events[3],
+            CallEvent::End { depth: 0, stop: InstrStop::Return, gas_spent: plain }
+        );
     }
 
     #[test]
