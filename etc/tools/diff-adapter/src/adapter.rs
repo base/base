@@ -183,18 +183,22 @@ impl DiffAdapter {
             .into_iter()
             .flatten()
             .map(|number| (number, B256::ZERO));
+        // A synthetic pre-state carries its own root, and the parent's withdrawals root does not
+        // describe its message passer storage.
+        let synthetic = request.witness.root;
         let state = WitnessState::new(
-            parent.state_root,
+            synthetic.unwrap_or(parent.state_root),
             &request.witness.state,
             &request.witness.codes,
             ancestors.iter().map(|header| (header.number, header.hash())).chain(before_genesis),
             parent
                 .withdrawals_root
                 .filter(|_| {
-                    self.chain_spec.is_feature_active_at_timestamp(
-                        BaseFeature::L2ToL1MessageRoot,
-                        parent.timestamp,
-                    )
+                    synthetic.is_none()
+                        && self.chain_spec.is_feature_active_at_timestamp(
+                            BaseFeature::L2ToL1MessageRoot,
+                            parent.timestamp,
+                        )
                 })
                 .map(|root| (Predeploys::L2_TO_L1_MESSAGE_PASSER, root)),
         );

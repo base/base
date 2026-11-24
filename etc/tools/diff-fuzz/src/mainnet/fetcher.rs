@@ -21,7 +21,7 @@ use base_common_rpc_types::BaseBlockResponse;
 use eyre::{Context, bail, ensure, eyre};
 use serde_json::json;
 
-use super::{ProofWitness, RpcClient, Touched};
+use super::{PrestateWitness, ProofWitness, RpcClient, Touched};
 use crate::{Adapter, AdapterSpec, HeaderResults, Mode, Request, RequestHeader, Witness};
 
 /// Turns Base mainnet block numbers into complete validate-mode [`Request`]s.
@@ -56,6 +56,10 @@ pub struct MainnetFetcher {
     /// and `eth_getProof` on the proof endpoints (see [`ProofWitness`]) instead of
     /// `debug_executionWitness`.
     pub witness_from_proofs: bool,
+    /// When set, blocks get a synthetic pre-state built from `prestateTracer` traces on the
+    /// witness endpoints (see [`PrestateWitness`]) and become build-mode requests whose
+    /// `header.results` hold the canonical header, for eras with no real witness source.
+    pub witness_from_prestate: bool,
 }
 
 impl MainnetFetcher {
@@ -83,6 +87,8 @@ impl MainnetFetcher {
     pub const COMPLETE_ROUNDS: usize = 48;
     /// Environment variable that, set to `1`, rebuilds witnesses from proofs.
     pub const WITNESS_FROM_PROOFS_ENV: &str = "BASE_DIFF_WITNESS_FROM_PROOFS";
+    /// Environment variable that, set to `1`, builds synthetic pre-states from prestate traces.
+    pub const WITNESS_FROM_PRESTATE_ENV: &str = "BASE_DIFF_WITNESS_FROM_PRESTATE";
     /// Environment variable overriding the block endpoints (comma-separated URLs).
     pub const BLOCK_RPC_ENV: &str = "BASE_DIFF_BLOCK_RPC";
 
@@ -100,6 +106,7 @@ impl MainnetFetcher {
             proofs: RpcClient::new(proof_urls)?,
             offline: false,
             witness_from_proofs: false,
+            witness_from_prestate: false,
         })
     }
 
@@ -122,6 +129,8 @@ impl MainnetFetcher {
         )?;
         fetcher.witness_from_proofs =
             env::var(Self::WITNESS_FROM_PROOFS_ENV).is_ok_and(|v| v == "1");
+        fetcher.witness_from_prestate =
+            env::var(Self::WITNESS_FROM_PRESTATE_ENV).is_ok_and(|v| v == "1");
         Ok(fetcher)
     }
 
@@ -181,16 +190,22 @@ impl MainnetFetcher {
         results
     }
 
-    /// Checks a validate-mode request for internal consistency with the canonical chain.
+    /// Checks a validate-mode request, or a build-mode request with a synthetic pre-state
+    /// ([`Witness::root`]) and the canonical header in `header.results`, for internal
+    /// consistency with the canonical chain.
     ///
     /// - the transactions hash to `transactionsRoot`;
     /// - the ancestors decode as contiguous headers, newest first, starting at the parent, at
     ///   most [`Self::MAX_ANCESTORS`] of them;
     /// - the full header rebuilt from the request fields (with `parentHash` = hash of
     ///   `ancestors[0]` and the post-merge constants) hashes to `hash`;
-    /// - the witness contains the parent state root node.
+    /// - the witness contains the parent state root node (or the synthetic root node).
     pub fn validate(request: &Request) -> eyre::Result<()> {
-        ensure!(request.mode == Mode::Validate, "not a validate-mode request");
+        ensure!(
+            request.mode == Mode::Validate
+                || (request.mode == Mode::Build && request.witness.root.is_some()),
+            "not a validate-mode or synthetic pre-state request"
+        );
         let header = &request.header;
         let results = header.results.as_ref().ok_or_else(|| eyre!("missing header results"))?;
 
@@ -261,10 +276,10 @@ impl MainnetFetcher {
             results.hash
         );
 
+        let root = request.witness.root.unwrap_or(parent.state_root);
         ensure!(
-            request.witness.state.iter().any(|node| keccak256(node) == parent.state_root),
-            "witness lacks the parent state root node {}",
-            parent.state_root
+            request.witness.state.iter().any(|node| keccak256(node) == root),
+            "witness lacks its root node {root}"
         );
         Ok(())
     }
@@ -297,6 +312,10 @@ impl MainnetFetcher {
         );
         ensure!(header.hash_slow() == canonical_hash, "header does not re-encode to its RLP");
 
+        if self.witness_from_prestate {
+            return self.download_prestate(&header, transactions, canonical_hash);
+        }
+
         // Some gateway backends answer with an empty witness; ask again.
         let mut witness = ExecutionWitness::default();
         if self.witness_from_proofs {
@@ -328,37 +347,14 @@ impl MainnetFetcher {
                 .extend(proof.into_iter().filter(|node| !known.contains(&keccak256(node))));
         }
 
-        let base_fee_per_gas =
-            header.base_fee_per_gas.ok_or_else(|| eyre!("header has no base fee"))?;
         let request = Request {
             id: format!("mainnet-{number}"),
             chain: Self::CHAIN.to_string(),
             mode: Mode::Validate,
             ancestors,
-            header: RequestHeader {
-                number,
-                timestamp: header.timestamp,
-                coinbase: header.beneficiary,
-                prev_randao: header.mix_hash,
-                gas_limit: header.gas_limit,
-                base_fee_per_gas,
-                extra_data: header.extra_data.clone(),
-                parent_beacon_block_root: header.parent_beacon_block_root,
-                excess_blob_gas: header.excess_blob_gas,
-                results: Some(HeaderResults {
-                    state_root: header.state_root,
-                    receipts_root: header.receipts_root,
-                    transactions_root: header.transactions_root,
-                    logs_bloom: header.logs_bloom,
-                    gas_used: header.gas_used,
-                    blob_gas_used: header.blob_gas_used,
-                    withdrawals_root: header.withdrawals_root,
-                    requests_hash: header.requests_hash,
-                    hash: canonical_hash,
-                }),
-            },
+            header: Self::request_header(&header, canonical_hash)?,
             transactions,
-            witness: Witness { state: witness.state, codes: witness.codes },
+            witness: Witness { state: witness.state, codes: witness.codes, root: None },
             trace: None,
             system_config: None,
         };
@@ -375,6 +371,79 @@ impl MainnetFetcher {
             self.complete(&mut request, &command)?;
         }
         Ok(request)
+    }
+
+    /// Finishes [`Self::download`] for a synthetic pre-state: the witness comes from
+    /// [`PrestateWitness`], the ancestors are the [`Self::MAX_ANCESTORS`] headers before the
+    /// block (fetched in one batch), and the request is in build mode with the canonical header
+    /// kept in `header.results` for the replay's canonical checks.
+    fn download_prestate(
+        &self,
+        header: &Header,
+        transactions: Vec<Bytes>,
+        canonical_hash: B256,
+    ) -> eyre::Result<Request> {
+        let number = header.number;
+        let (_, witness) = PrestateWitness { trace: self.witness.clone() }.build(number)?;
+        let oldest = number.saturating_sub(Self::MAX_ANCESTORS as u64);
+        let calls: Vec<(&str, serde_json::Value)> = (oldest..number)
+            .rev()
+            .map(|n| ("eth_getBlockByNumber", json!([format!("{n:#x}"), false])))
+            .collect();
+        let ancestors = self
+            .blocks
+            .batch(&calls)?
+            .into_iter()
+            .map(|block| {
+                let block: BaseBlockResponse = serde_json::from_value(block)?;
+                Ok(Bytes::from(alloy_rlp::encode(&block.header.inner.inner)))
+            })
+            .collect::<eyre::Result<Vec<_>>>()?;
+        ensure!(
+            ancestors.first().is_some_and(|parent| keccak256(parent) == header.parent_hash),
+            "fetched parent does not hash to the block's parent hash"
+        );
+        let request = Request {
+            id: format!("mainnet-{number}"),
+            chain: Self::CHAIN.to_string(),
+            mode: Mode::Build,
+            ancestors,
+            header: Self::request_header(header, canonical_hash)?,
+            transactions,
+            witness,
+            trace: None,
+            system_config: None,
+        };
+        Self::validate(&request)?;
+        Ok(request)
+    }
+
+    /// The request header of a canonical block, with its results.
+    fn request_header(header: &Header, hash: B256) -> eyre::Result<RequestHeader> {
+        Ok(RequestHeader {
+            number: header.number,
+            timestamp: header.timestamp,
+            coinbase: header.beneficiary,
+            prev_randao: header.mix_hash,
+            gas_limit: header.gas_limit,
+            base_fee_per_gas: header
+                .base_fee_per_gas
+                .ok_or_else(|| eyre!("header has no base fee"))?,
+            extra_data: header.extra_data.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root,
+            excess_blob_gas: header.excess_blob_gas,
+            results: Some(HeaderResults {
+                state_root: header.state_root,
+                receipts_root: header.receipts_root,
+                transactions_root: header.transactions_root,
+                logs_bloom: header.logs_bloom,
+                gas_used: header.gas_used,
+                blob_gas_used: header.blob_gas_used,
+                withdrawals_root: header.withdrawals_root,
+                requests_hash: header.requests_hash,
+                hash,
+            }),
+        })
     }
 
     /// Fills a proof-built witness with what an adapter reports missing: native precompiles

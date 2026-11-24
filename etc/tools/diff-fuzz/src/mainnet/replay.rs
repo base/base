@@ -33,6 +33,10 @@ pub struct BlockResult {
     /// Differing fields, adapter failures, or the reason the block was skipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Whether the block ran on a synthetic pre-state (see [`super::PrestateWitness`]), where
+    /// the state root, withdrawals root and hash are only compared between clients.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prestate: bool,
 }
 
 /// Per-era counts of replayed blocks.
@@ -175,17 +179,37 @@ impl MainnetReplay {
                     transactions: 0,
                     verdict: "skipped".to_owned(),
                     detail: Some(format!("{error:#}").chars().take(300).collect()),
+                    prestate: self.fetcher.witness_from_prestate,
                 };
             }
         };
-        let line = serde_json::to_string(&request).expect("requests serialize");
+        // A synthetic pre-state request runs in build mode without the canonical header; the
+        // canonical values that depend on the real parent state (state root, withdrawals root,
+        // hash) are then taken from the first client, so they are only compared between clients.
+        let prestate = request.witness.root.is_some();
+        let mut sent = request.clone();
+        if prestate {
+            sent.header.results = None;
+        }
+        let line = serde_json::to_string(&sent).expect("requests serialize");
         let results: Vec<_> = adapters
             .iter_mut()
             .map(|adapter| (adapter.spec.name.clone(), adapter.call_line(&request.id, &line)))
             .collect();
-        let verdict = Verdict::of(&request, &results);
+        let mut compared = request.clone();
+        if prestate
+            && let Some(canonical) = compared.header.results.as_mut()
+            && let Some(Ok(computed)) =
+                results.first().map(|(_, r)| r.as_ref().map(|r| r.header.clone()))
+            && let Some(computed) = computed
+        {
+            canonical.state_root = computed.state_root;
+            canonical.withdrawals_root = computed.withdrawals_root;
+            canonical.hash = computed.hash;
+        }
+        let verdict = Verdict::of(&compared, &results);
         if verdict != Verdict::Agree
-            && let Err(error) = campaign.record(&request, &line, &results, &verdict)
+            && let Err(error) = campaign.record(&sent, &line, &results, &verdict)
         {
             eprintln!("recording block {block}: {error:#}");
         }
@@ -200,6 +224,7 @@ impl MainnetReplay {
             transactions: request.transactions.len() as u64,
             verdict: name.to_owned(),
             detail,
+            prestate,
         }
     }
 

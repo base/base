@@ -119,7 +119,14 @@ shows, so `BASE_DIFF_WITNESS_COMPLETER` can name an adapter command whose errors
 account and slot (needlefish's do); the fetcher adds those proofs until the adapter runs the block.
 A cleared slot that collapses a storage branch needs the remaining sibling node, which is fetched by
 proving a searched slot whose hashed key leads into it; deletions in the account trie are not
-covered, so such blocks fail with a missing node. `--tip N` takes the last N blocks before the head,
+covered, so such blocks fail with a missing node. For eras no endpoint serves witnesses or proofs
+for, `BASE_DIFF_WITNESS_FROM_PRESTATE=1` builds a synthetic pre-state instead (`PrestateWitness` in
+`src/mainnet/prestate.rs`, "Synthetic pre-state" in `PROTOCOL.md`): the touched accounts and slots
+from archive `prestateTracer` traces on the witness endpoints, as a full trie sent as a build-mode
+request with `witness.root`. Receipts, bloom and gas are checked against the canonical block; the
+state root, withdrawals root and hash only between clients, and results carry `"prestate": true`.
+The 256 ancestor headers come in one batch call, so the block endpoints must allow large batches
+(blastapi does; drpc's free plan allows 3). Keep these blocks in their own cache directory. `--tip N` takes the last N blocks before the head,
 `--per-era N` samples N blocks evenly from every era plus each activation block and its successor.
 Every block's verdict is appended to `<out>/results.jsonl` (a rerun skips blocks that already agreed
 and reruns the rest), and `<out>/eras.json` holds blocks, agreeing blocks, and their transactions

@@ -25,3 +25,6 @@ pub use transplant::{RealState, Transplant, TransplantItem};
 
 mod mainfuzz;
 pub use mainfuzz::{MainCase, MainFindingGroup, MainFuzzConfig, MainFuzzStats, MainFuzzer};
+
+mod prestate;
+pub use prestate::PrestateWitness;

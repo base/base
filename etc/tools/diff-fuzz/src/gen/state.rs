@@ -111,7 +111,7 @@ impl WorldState {
         }
         let root = builder.build(leaves);
         let codes = code_hashes.iter().filter_map(|hash| self.codes.get(hash).cloned()).collect();
-        (root, Witness { state: builder.nodes, codes })
+        (root, Witness { state: builder.nodes, codes, root: None })
     }
 
     /// Applies a response's post-state diff.

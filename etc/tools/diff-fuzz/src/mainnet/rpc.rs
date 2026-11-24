@@ -35,7 +35,10 @@ impl RpcClient {
         if urls.is_empty() {
             bail!("no RPC endpoints configured");
         }
-        let http = reqwest::blocking::Client::builder().timeout(Self::REQUEST_TIMEOUT).build()?;
+        let http = reqwest::blocking::Client::builder()
+            .timeout(Self::REQUEST_TIMEOUT)
+            .user_agent("base-diff-fuzz")
+            .build()?;
         Ok(Self { urls, max_attempts: Self::DEFAULT_MAX_ATTEMPTS, http })
     }
 
@@ -70,6 +73,63 @@ impl RpcClient {
             }
         }
         Err(eyre!("{method}: no result after {} attempts: {last_error}", self.max_attempts))
+    }
+
+    /// Sends `calls` as one JSON-RPC batch and returns their results in order, retrying the
+    /// whole batch across endpoints (with [`Self::call`]'s backoff) until every call has a
+    /// non-null result.
+    pub fn batch(&self, calls: &[(&str, Value)]) -> eyre::Result<Vec<Value>> {
+        let body = Value::Array(
+            calls
+                .iter()
+                .enumerate()
+                .map(|(id, (method, params))| {
+                    json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
+                })
+                .collect(),
+        );
+        let mut backoff = Self::INITIAL_BACKOFF;
+        let mut last_error = String::new();
+        for attempt in 0..self.max_attempts {
+            let url = &self.urls[attempt as usize % self.urls.len()];
+            match self.batch_once(url, &body, calls.len()) {
+                Ok(results) => return Ok(results),
+                Err(error) => last_error = format!("{url}: {error}"),
+            }
+            thread::sleep(backoff);
+            backoff = (backoff * 2).min(Self::MAX_BACKOFF);
+        }
+        Err(eyre!(
+            "batch of {}: no result after {} attempts: {last_error}",
+            calls.len(),
+            self.max_attempts
+        ))
+    }
+
+    fn batch_once(&self, url: &str, body: &Value, len: usize) -> Result<Vec<Value>, String> {
+        let response = self
+            .http
+            .post(url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.to_string())
+            .send()
+            .map_err(|e| e.to_string())?;
+        let text = response.text().map_err(|e| e.to_string())?;
+        let replies: Vec<Value> = serde_json::from_str(&text).map_err(|_| {
+            format!("not a batch reply: {}", text.chars().take(200).collect::<String>())
+        })?;
+        let mut results = vec![Value::Null; len];
+        for mut reply in replies {
+            let id = reply.get("id").and_then(Value::as_u64).ok_or("reply without id")? as usize;
+            match reply.get_mut("result").map(Value::take) {
+                Some(result) if !result.is_null() && id < len => results[id] = result,
+                _ => return Err(format!("call {id}: {}", reply.get("error").unwrap_or(&reply))),
+            }
+        }
+        if results.iter().any(Value::is_null) {
+            return Err("batch reply is missing calls".to_owned());
+        }
+        Ok(results)
     }
 
     /// One request to one endpoint; the error is a short description of what came back.

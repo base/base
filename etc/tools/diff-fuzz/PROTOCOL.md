@@ -92,6 +92,18 @@ so the witness is complete; for mainnet blocks it is the `debug_executionWitness
 | `witness.state` | Trie node preimages for the parent state: account trie and storage trie nodes, in any order, possibly with extras. |
 | `witness.codes` | Contract bytecodes the block may load, in any order, possibly with extras. |
 
+### Synthetic pre-state
+
+`witness.root` is optional and only sent in build mode. When present, the witness is a complete
+trie rooted at `witness.root`, and the adapter uses it as the parent state instead of
+`ancestors[0]`'s state root; everything else still comes from the ancestors (`BLOCKHASH`, base
+fee, system calls). Since its storage is not the parent's, the parent's withdrawals root does not
+describe the `L2ToL1MessagePasser` storage either: read that account from the witness like any
+other. The harness uses this for mainnet blocks with no real witness source: the pre-state of the
+accounts and slots the block touches, taken from archive `prestateTracer` traces. It then checks
+receipts, logs bloom, gas used and rejected transactions against the canonical block, and compares
+the state root, withdrawals root and hash only between clients.
+
 ### Build mode semantics
 
 The adapter executes the block on the same code path its node uses to build or import a block

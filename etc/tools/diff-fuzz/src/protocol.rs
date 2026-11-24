@@ -85,13 +85,18 @@ pub struct HeaderResults {
     pub hash: B256,
 }
 
-/// Stateless pre-state rooted at the parent's state root.
+/// Stateless pre-state rooted at the parent's state root, or at `root` when set.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Witness {
     /// RLP trie node preimages.
     pub state: Vec<Bytes>,
     /// Contract bytecodes.
     pub codes: Vec<Bytes>,
+    /// Root of a synthetic pre-state that replaces the parent's state root (build mode only),
+    /// for mainnet blocks whose real witness is unavailable (see "Synthetic pre-state" in
+    /// `PROTOCOL.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<B256>,
 }
 
 /// One execution request.
