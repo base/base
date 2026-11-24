@@ -78,7 +78,6 @@ pub(super) struct CallTx {
     authorizations: Vec<alloy_eips::eip7702::SignedAuthorization>,
     blob_hashes: Vec<B256>,
     max_fee_per_blob_gas: u128,
-    chain_id_valid: bool,
 }
 
 impl CallTx {
@@ -117,13 +116,7 @@ impl CallTx {
                 input: self.input.clone(),
             }),
             3 => {
-                let TxKind::Call(to) = self.kind else {
-                    // revm checks the chain id before the blob transaction's shape.
-                    if !self.chain_id_valid {
-                        return Err(RpcError::new(-32000, "invalid chain ID"));
-                    }
-                    return Err(RpcError::new(-32003, "blob transaction is a create transaction"));
-                };
+                let TxKind::Call(to) = self.kind else { unreachable!("blob requests have a callee") };
                 TxEnvelope::Eip4844(TxEip4844Variant::TxEip4844(TxEip4844 {
                     chain_id,
                     nonce,
@@ -392,7 +385,8 @@ impl Node {
         }
         let ty = if request.authorization_list.is_some() {
             4
-        } else if blob_hashes.is_some() || request.sidecar.is_some() {
+        } else if (blob_hashes.is_some() || request.sidecar.is_some()) && request.to.is_some_and(|to| to.is_call()) {
+            // base-reth runs a blob request without a callee as a plain create.
             3
         } else if request.max_fee_per_gas.is_some() || request.max_priority_fee_per_gas.is_some() {
             2
@@ -465,7 +459,6 @@ impl Node {
             // revm skips the blob fee check with the base fee check off; evm2 always makes it,
             // and the cap is otherwise unobservable in a call that charges no fees.
             max_fee_per_blob_gas: request.max_fee_per_blob_gas.unwrap_or_default().max(blob_base_fee),
-            chain_id_valid: request.chain_id.is_none_or(|chain_id| chain_id == self.spec.chain_id),
         })
     }
 
@@ -872,7 +865,11 @@ mod tests {
         assert_eq!(call(&node, "eth_call", json!([underpriced]))["error"]["code"], json!(3));
         let underpriced = json!({ "to": REVERTER, "maxFeePerGas": "0x0", "maxPriorityFeePerGas": "0x0", "gasPrice": "0x1" });
         assert_eq!(call(&node, "eth_call", json!([underpriced]))["error"]["code"], json!(-32602));
-        // An unknown block is -32001.
+        // A blob request without a callee runs as a plain create.
+        let blob_hashes = json!([format!("0x01{}", "00".repeat(31))]);
+        let blob_create = json!({ "input": "0x", "blobVersionedHashes": blob_hashes });
+        assert_eq!(call(&node, "eth_call", json!([blob_create]))["result"], json!("0x"));
+                // An unknown block is -32001.
         assert_eq!(call(&node, "eth_call", json!([{ "to": REVERTER }, "0x5"]))["error"]["code"], json!(-32001));
     }
 }

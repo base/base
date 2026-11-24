@@ -21,7 +21,7 @@ use crate::{Node, RpcError, chain::StoredBlock};
 const MAX_BLOCKS_PER_FILTER: u64 = 100_000;
 /// reth's `--rpc.max-logs-per-response` default.
 const MAX_LOGS_PER_RESPONSE: usize = 20_000;
-/// Headers reth's log scan reads at a time.
+/// reth's log scan step: each window covers this many blocks after its first.
 const HEADER_WINDOW: u64 = 1_000;
 /// reth drops a filter this long after its last poll (checked as often), so 5 to 10 minutes.
 const STALE_FILTER_TTL: Duration = Duration::from_secs(5 * 60);
@@ -154,12 +154,13 @@ impl Node {
                 "query exceeds max block range {MAX_BLOCKS_PER_FILTER}"
             )));
         }
-        // reth reads headers in windows; a window yields the blocks from its start up to the
-        // first one it does not have, so a window starting below genesis yields none.
+        // reth reads headers in windows of `HEADER_WINDOW + 1` blocks (its range iterator's end
+        // is inclusive); a window yields the blocks from its start up to the first one it does
+        // not have, so a window starting below the first stored block yields none.
         let mut logs = Vec::new();
         let mut window_start = range.from;
         while window_start <= range.to {
-            let window_end = range.to.min(window_start.saturating_add(HEADER_WINDOW - 1));
+            let window_end = range.to.min(window_start.saturating_add(HEADER_WINDOW));
             for number in window_start..=window_end {
                 let block = self.chain.read().expect("chain lock").canonical_block(number);
                 let Some(block) = block else { break };
