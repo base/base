@@ -98,9 +98,6 @@ jobs:
           git -C "$RUNNER_TEMP/source" fetch --depth=1 --no-tags "https://github.com/$GITHUB_REPOSITORY.git" "$SHA"
           git -C "$RUNNER_TEMP/source" -c advice.detachedHead=false checkout --detach "$SHA"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-
       - name: Prepare build container
         run: |
           set -euo pipefail
@@ -119,18 +116,23 @@ jobs:
           TRIPLE: ${{ matrix.target.triple }}
         run: |
           set -euo pipefail
-          toolchain=$(dirname "$(dirname "$(rustup which --toolchain stable cargo)")")
+          rustup_bin=$(command -v rustup)
           archive="${BIN}-${TAG}-${TRIPLE}.tar.gz"
           # Do not pass the runner environment, checkout credentials, or writable
           # host mounts to Cargo. Only the archive bytes come back to the runner.
           docker run --rm --interactive --user "$(id -u):$(id -g)" \
             --cap-drop=ALL --security-opt=no-new-privileges \
             --mount "type=bind,src=$RUNNER_TEMP/source,dst=/source,readonly" \
-            --mount "type=bind,src=$toolchain,dst=/toolchain,readonly" \
+            --mount "type=bind,src=$rustup_bin,dst=/usr/local/bin/rustup,readonly" \
             --env HOME=/tmp --env CARGO_TARGET_DIR=/tmp/target \
             --workdir /source base-dev-builder bash -se -- "$BIN" "$TRIPLE" > "$archive" <<'BUILD'
           set -euo pipefail
-          export PATH="/toolchain/bin:$PATH"
+          # Use rustup's proxies so Cargo honors the checked-out rust-toolchain.toml.
+          # Any toolchain installation and branch-controlled overrides stay in the container.
+          mkdir -p "$HOME/.cargo/bin"
+          ln -s /usr/local/bin/rustup "$HOME/.cargo/bin/cargo"
+          ln -s /usr/local/bin/rustup "$HOME/.cargo/bin/rustc"
+          export PATH="$HOME/.cargo/bin:$PATH"
           bin=$1
           triple=$2
           case "$triple:$bin" in

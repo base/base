@@ -109,7 +109,7 @@ gh workflow run build-dev.yml --ref main -f ref=my-feature-branch
 - Rerunning it for the same commit reuses the tag and replaces the binaries
 - Dev binaries are not GPG-signed or attested, and no Docker images are published
 
-Cargo runs branch build scripts and proc-macros inside a container with read-only source and toolchain mounts. The container does not receive runner credentials or writable host mounts. A separate job that runs no branch code checks the archive names and checksums and publishes them.
+Cargo runs branch build scripts and proc-macros inside a container with read-only source and rustup mounts. Rustup selects the toolchain from the build ref’s `rust-toolchain.toml`. The container does not receive runner credentials or writable host mounts. A separate job that runs no branch code checks the archive names and checksums and publishes them.
 
 Dev builds are for development environments only. Do not run them on a public network.
 
