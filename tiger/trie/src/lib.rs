@@ -30,4 +30,4 @@ mod write;
 pub use write::StateWriter;
 
 mod state_db;
-pub use state_db::{AccountInfo, BlockChanges, StateDb, StateView};
+pub use state_db::{AccountInfo, BlockChanges, PreparedRoot, StateDb, StateView};

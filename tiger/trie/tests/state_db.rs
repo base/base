@@ -276,3 +276,49 @@ fn randomized_blocks_unwinds_reopens_and_history() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// A root prepared while validating is reused at commit only while it still applies: a commit in
+/// between (here an unwind and a different block at the same height) forces a recompute.
+#[test]
+fn prepared_roots_apply_only_to_the_state_they_were_computed_on() {
+    let dir = temp("prepared");
+    let mut rng = Rng(77);
+    let addresses: Vec<Address> = (0..24u64).map(|i| Address::from_word(keccak256(i.to_be_bytes()))).collect();
+    let slots: Vec<U256> = (0..12u64).map(U256::from).collect();
+    let db = StateDb::open(&dir).unwrap();
+    let mut model = Model::new();
+    let commit = |number: u64, changes: &BlockChanges, prepared| {
+        let mut w = db.write().unwrap();
+        let root = db.commit_prepared(&mut w, number, changes, prepared).unwrap();
+        w.commit().unwrap();
+        root
+    };
+    let genesis = random_block(&mut rng, &mut model, &addresses, &slots);
+    commit(0, &genesis, None);
+    for number in 1..8u64 {
+        let changes = random_block(&mut rng, &mut model, &addresses, &slots);
+        let prepared = db.view(number - 1, Vec::new()).unwrap().prepare_root(&changes).unwrap();
+        assert_eq!(prepared.root, root(&model));
+        assert_eq!(commit(number, &changes, Some(prepared)), root(&model), "block {number}");
+    }
+    // Prepare block 8 on block 7, then replace block 7 by another block.
+    let mut stale_model = model.clone();
+    let next = random_block(&mut rng, &mut stale_model, &addresses, &slots);
+    let prepared = db.view(7, Vec::new()).unwrap().prepare_root(&next).unwrap();
+    db.unwind_to(6).unwrap();
+    let mut other_model = Model::new();
+    for address in &addresses {
+        let view = db.view(6, Vec::new()).unwrap();
+        if let Some(info) = view.account(*address).unwrap() {
+            let storage = slots.iter().map(|s| (*s, view.storage(*address, *s).unwrap())).filter(|(_, v)| !v.is_zero()).collect();
+            other_model.insert(*address, (info, storage));
+        }
+    }
+    let other = random_block(&mut rng, &mut other_model, &addresses, &slots);
+    commit(7, &other, None);
+    let expected = db.view(7, Vec::new()).unwrap().state_root(Some(&next)).unwrap();
+    assert_eq!(commit(8, &next, Some(prepared)), expected);
+    assert_eq!(db.view(8, Vec::new()).unwrap().state_root(None).unwrap(), expected);
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}

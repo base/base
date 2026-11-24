@@ -26,7 +26,7 @@ use alloy_rlp::Decodable;
 
 use crate::{
     AccountProof, DbNodes, EMPTY_ROOT, HashedState, HashedStorage, PARTIAL_ROOT_KEY, ProofNodes, Recording, SparseTrie,
-    PartialState, StateTries, StateWriter, TrieError, TrieView, hash_key,
+    PartialState, StateTries, StateWriter, TrieError, TrieUpdates, TrieView, hash_key,
 };
 
 /// An account's fields as the state database takes them.
@@ -165,6 +165,28 @@ fn wiped_slot(value: &[u8]) -> Result<Option<(B256, U256)>, TrieError> {
     Ok(Some((slot, reader.compact_u256(rest)?)))
 }
 
+/// Trie changes computed on a view, kept for the commit.
+#[derive(Debug)]
+enum PreparedTrie {
+    Full(B256, TrieUpdates),
+    Partial(StateTries),
+}
+
+/// A block's state root computed while validating it ([`StateView::prepare_root`]), with the trie
+/// changes [`StateDb::commit_prepared`] reuses so a committed block's root is computed once.
+#[derive(Debug)]
+pub struct PreparedRoot {
+    /// The state root after the block.
+    pub root: B256,
+    state: HashedState,
+    /// The read snapshot the changes were computed on.
+    txn_id: u64,
+    /// The stored block the changes apply on.
+    block: u64,
+    /// `None` when the view was not the stored tip.
+    trie: Option<PreparedTrie>,
+}
+
 /// The state database over a datadir.
 ///
 /// A datadir holds either the full state in reth's layout, or a partial state (see
@@ -293,6 +315,19 @@ impl StateDb {
     /// history and every stage checkpoint. Blocks are committed in order from genesis (any block
     /// number, its allocations as changes). Returns the state root after the block.
     pub fn commit_block(&self, w: &mut WriteTxn<'_>, number: u64, changes: &BlockChanges) -> Result<B256, TrieError> {
+        self.commit_prepared(w, number, changes, None)
+    }
+
+    /// [`Self::commit_block`] reusing the trie changes `prepared` computed while validating the
+    /// block, when they still apply: the view was the stored tip without overlays, nothing was
+    /// committed since, and `changes` are the ones prepared. Otherwise the root is recomputed.
+    pub fn commit_prepared(
+        &self,
+        w: &mut WriteTxn<'_>,
+        number: u64,
+        changes: &BlockChanges,
+        prepared: Option<PreparedRoot>,
+    ) -> Result<B256, TrieError> {
         let datadir = w.datadir;
         let db = &datadir.db;
         // The first block (genesis) may have any number; later blocks follow the tip.
@@ -353,7 +388,21 @@ impl StateDb {
         }
         // Trie and flat state.
         let state = changes.hashed();
-        let root = self.write_trie(txn, &state)?;
+        let reusable = match prepared {
+            Some(p) if p.state == state && txn.id() == p.txn_id + 1 && Datadir::tip_in(txn, db)? == Some(p.block) => p.trie,
+            _ => None,
+        };
+        let root = match reusable {
+            Some(PreparedTrie::Full(root, updates)) => {
+                StateWriter::write_trie_updates(txn, db, &updates)?;
+                root
+            }
+            Some(PreparedTrie::Partial(tries)) => {
+                tries.write(txn, db)?;
+                tries.root
+            }
+            None => self.write_trie(txn, &state)?,
+        };
         StateWriter::write_hashed_state(txn, db, &state)?;
         for (hash, code) in &changes.codes {
             txn.put(db.dbi(Table::Bytecodes), hash.as_slice(), &BytecodeCodec::encode(code))?;
@@ -660,6 +709,27 @@ impl StateView<'_> {
             return Ok(StateTries::apply(&self.nodes(), root, state)?.root);
         }
         Ok(TrieView::new(&self.txn, self.dbs(), state).state_root(false)?.0)
+    }
+
+    /// The state root after `extra` with the trie changes that produce it, for
+    /// [`StateDb::commit_prepared`] to reuse when the block is committed on this view's block.
+    pub fn prepare_root(&self, extra: &BlockChanges) -> Result<PreparedRoot, TrieError> {
+        let changes = extra.hashed();
+        let reusable = self.block == self.tip && self.overlays.is_empty();
+        if !reusable {
+            return Ok(PreparedRoot { root: self.state_root(Some(extra))?, state: changes, txn_id: 0, block: 0, trie: None });
+        }
+        let (root, trie) = match self.db.partial_root(&self.txn)? {
+            Some(root) => {
+                let tries = StateTries::apply(&self.nodes(), root, &changes)?;
+                (tries.root, PreparedTrie::Partial(tries))
+            }
+            None => {
+                let (root, updates) = TrieView::new(&self.txn, self.dbs(), &changes).state_root(true)?;
+                (root, PreparedTrie::Full(root, updates))
+            }
+        };
+        Ok(PreparedRoot { root, state: changes, txn_id: self.txn.id(), block: self.block, trie: Some(trie) })
     }
 
     fn nodes(&self) -> DbNodes<'_, Ro> {
