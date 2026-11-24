@@ -37,8 +37,10 @@ const BLOCK_HASH_WINDOW: u64 = 256;
 const TRANSFER_GAS: u64 = 21_000;
 /// reth stops the estimation search when the range is below this fraction of the upper bound.
 const ESTIMATE_GAS_ERROR_RATIO: f64 = 0.015;
-/// How many blocks below the head reth can hold in memory without persisting them: it persists
-/// once more than `DEFAULT_PERSISTENCE_THRESHOLD` (50) are, down to 5 below the head.
+/// How many blocks below the head tiger takes reth to hold in memory, unpersisted. reth starts
+/// persisting once more than `DEFAULT_PERSISTENCE_THRESHOLD` (50) are, down to 5 below the head,
+/// but a lagging persistence lets the window run past 51: this is a middle guess, and answers
+/// that depend on it can differ from base-reth's.
 const RETH_MAX_UNPERSISTED_BLOCKS: u64 = 51;
 
 /// Gas kept for a callee's stipend in the optimistic estimate.
