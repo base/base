@@ -7,7 +7,8 @@ run-name: Build Dev ${{ inputs.ref }}
 #
 # The branch is unreviewed code, and cargo runs its build scripts and proc-macros. The build job
 # therefore has a read-only token, persists no credentials, and uses no OIDC, attestations,
-# signing keys or caches. Only the publish job can write, and it never runs branch code.
+# signing keys. Cargo runs inside a container without access to the runner's
+# Actions cache credentials. Only the publish job can write to the repository.
 on:
   workflow_dispatch:
     inputs:
@@ -87,45 +88,59 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.resolve.outputs.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install system dependencies
+      - name: Fetch build source
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libclang-dev pkg-config
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init -q "$RUNNER_TEMP/source"
+          git -C "$RUNNER_TEMP/source" fetch --depth=1 --no-tags "https://github.com/$GITHUB_REPOSITORY.git" "$SHA"
+          git -C "$RUNNER_TEMP/source" -c advice.detachedHead=false checkout --detach "$SHA"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
-      - name: Build binary
-        env:
-          BIN: ${{ matrix.binary }}
-          TRIPLE: ${{ matrix.target.triple }}
+      - name: Prepare build container
         run: |
           set -euo pipefail
-          if [[ "$TRIPLE" == aarch64-unknown-linux-gnu ]]; then
-            case "$BIN" in
-              base|base-consensus|basectl)
-                cargo rustc --locked --profile maxperf -p "$BIN" --bin "$BIN" -- -C link-arg=-lblst
-                exit
-            esac
-          fi
-          cargo build --locked --profile maxperf --bin "$BIN"
+          mkdir "$RUNNER_TEMP/build-image"
+          docker build --tag base-dev-builder --file - "$RUNNER_TEMP/build-image" <<'DOCKERFILE'
+          FROM ubuntu:22.04@sha256:b000e69a50ff940390233025e7a337fb8469b509e2334fa4d018ac30f3e18cdb
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              build-essential ca-certificates clang git libclang-dev pkg-config \
+              && rm -rf /var/lib/apt/lists/*
+          DOCKERFILE
 
-      - name: Package binary
+      - name: Build and package binary in container
         env:
           BIN: ${{ matrix.binary }}
           TAG: ${{ needs.resolve.outputs.tag }}
           TRIPLE: ${{ matrix.target.triple }}
         run: |
           set -euo pipefail
+          toolchain=$(dirname "$(dirname "$(rustup which --toolchain stable cargo)")")
           archive="${BIN}-${TAG}-${TRIPLE}.tar.gz"
-          tar -czf "$archive" -C target/maxperf "$BIN"
+          # Do not pass the runner environment, checkout credentials, or writable
+          # host mounts to Cargo. Only the archive bytes come back to the runner.
+          docker run --rm --interactive --user "$(id -u):$(id -g)" \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,src=$RUNNER_TEMP/source,dst=/source,readonly" \
+            --mount "type=bind,src=$toolchain,dst=/toolchain,readonly" \
+            --env HOME=/tmp --env CARGO_TARGET_DIR=/tmp/target \
+            --workdir /source base-dev-builder bash -se -- "$BIN" "$TRIPLE" > "$archive" <<'BUILD'
+          set -euo pipefail
+          export PATH="/toolchain/bin:$PATH"
+          bin=$1
+          triple=$2
+          case "$triple:$bin" in
+            aarch64-unknown-linux-gnu:base|aarch64-unknown-linux-gnu:base-consensus|aarch64-unknown-linux-gnu:basectl)
+              cargo rustc --locked --profile maxperf -p "$bin" --bin "$bin" -- -C link-arg=-lblst >&2
+              ;;
+            *) cargo build --locked --profile maxperf --bin "$bin" >&2 ;;
+          esac
+          tar -czf - -C "$CARGO_TARGET_DIR/maxperf" "$bin"
+          BUILD
           sha256sum "$archive" > "${archive}.sha256"
 
       - name: Upload artifacts
