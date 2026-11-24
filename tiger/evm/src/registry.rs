@@ -1,7 +1,8 @@
 //! Base transaction registry.
 
 use alloy_primitives::U256;
-use base_common_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+use base_common_consensus::{BASE_TX_TYPE_ID, DEPOSIT_TX_TYPE_ID, TxDeposit};
+use base_common_genesis::BaseFeature;
 use evm2::{
     Evm, SpecId, TxResult,
     env::TxEnvExt,
@@ -57,6 +58,11 @@ impl BaseEvmTypes {
                 |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip7702),
                 eip7702::handle_with_hooks::<Self, BaseTxHandlerHooks>,
             );
+        }
+        // Base transactions (EIP-8430) activate with Everest. Before it the type is unregistered,
+        // so a block carrying one is invalid, as the reference rejects it before Everest.
+        if spec.is_feature_enabled(BaseFeature::TxBase) {
+            registry.register(BASE_TX_TYPE_ID, BaseTxEnvelope::as_base_tx, Self::handle_base_tx);
         }
         registry
     }

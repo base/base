@@ -41,7 +41,6 @@ mod executor;
 pub use executor::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BlockEnvInput, BlockExecutionResult,
     BlockGasLimitExceeded, CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError,
-    TxBaseExecutionUnsupported,
 };
 
 mod registry;
@@ -49,7 +48,10 @@ mod registry;
 pub use base_common_base_tx::{IntrinsicGas, TxBaseGasSchedule};
 
 mod nonce_manager;
-pub use nonce_manager::{NonceManager, NonceOverflow};
+pub use nonce_manager::{ExpiringNonceError, NonceManager, NonceOverflow};
+
+mod base_tx;
+pub use base_tx::{TX_CONTEXT_ADDRESS, TxBaseError, TxBaseExecutor, TxBaseSimulation};
 
 mod transition;
 pub use transition::{BaseForkActivations, IrregularStateChange};

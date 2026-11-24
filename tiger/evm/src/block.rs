@@ -56,7 +56,7 @@ impl Transactions {
                 raw,
             ),
             SignedTx::Deposit(tx) => BaseTxEnvelope::Deposit(tx.inner().clone()),
-            SignedTx::Base(tx) => BaseTxEnvelope::Base(tx.clone()),
+            SignedTx::Base(tx) => BaseTxEnvelope::base(tx.clone(), raw),
         }
     }
 }

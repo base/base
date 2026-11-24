@@ -21,17 +21,15 @@ pub enum BaseTxEnvelope {
         /// which `TxEnvelope` alone cannot reproduce.
         enveloped: Bytes,
     },
-    /// An enshrined Base transaction (type `0x79`, Everest onwards). Its enshrined execution path
-    /// is layered on with the Base transaction track; this variant carries the signed transaction
-    /// so the envelope and receipts can already represent it.
-    ///
-    /// TODO(base-tx-execution): carry the EIP-2718 serialized bytes here (as [`Self::Standard`]
-    /// does) before the `0x79` execution handler is registered. Until then [`Self::enveloped`]
-    /// returns `None` for this variant, which the executor's Jovian DA-footprint metering treats
-    /// as an empty payload — hitting the minimum-tx-size floor and undercounting the true DA cost.
-    /// Inert today (no `0x79` handler is registered, so a Base transaction tx never reaches DA
-    /// accumulation), but it must be fixed together with the handler.
-    Base(TxBaseSigned),
+    /// An enshrined Base transaction (type `0x79`, Everest onwards), executed by
+    /// [`TxBaseExecutor`](crate::TxBaseExecutor).
+    Base {
+        /// The signed Base transaction.
+        tx: TxBaseSigned,
+        /// The EIP-2718 encoded bytes, which price the L1 data fee, the operator fee, and the
+        /// Jovian DA footprint.
+        enveloped: Bytes,
+    },
 }
 
 impl BaseTxEnvelope {
@@ -46,11 +44,19 @@ impl BaseTxEnvelope {
         Self::Standard { tx, enveloped }
     }
 
+    /// Builds a Base-transaction envelope from a signed Base transaction and its EIP-2718
+    /// encoded bytes.
+    pub fn base(tx: TxBaseSigned, enveloped: Bytes) -> Self {
+        assert!(!enveloped.is_empty(), "Base tx must carry non-empty enveloped bytes");
+        assert_eq!(enveloped[0], tx.ty(), "Base tx envelope must start with its type byte");
+        Self::Base { tx, enveloped }
+    }
+
     /// Returns the deposit transaction, if this envelope is a deposit.
     pub const fn as_deposit(&self) -> Option<&TxDeposit> {
         match self {
             Self::Deposit(tx) => Some(tx),
-            Self::Standard { .. } | Self::Base(_) => None,
+            Self::Standard { .. } | Self::Base { .. } => None,
         }
     }
 
@@ -62,7 +68,7 @@ impl BaseTxEnvelope {
     /// Returns the Base transaction, if this envelope is one.
     pub const fn as_base_tx(&self) -> Option<&TxBaseSigned> {
         match self {
-            Self::Base(tx) => Some(tx),
+            Self::Base { tx, .. } => Some(tx),
             Self::Deposit(_) | Self::Standard { .. } => None,
         }
     }
@@ -72,7 +78,7 @@ impl BaseTxEnvelope {
         match self {
             Self::Standard { tx, .. } => tx.gas_limit(),
             Self::Deposit(tx) => tx.gas_limit,
-            Self::Base(tx) => tx.gas_limit(),
+            Self::Base { tx, .. } => tx.gas_limit(),
         }
     }
 
@@ -80,16 +86,16 @@ impl BaseTxEnvelope {
     pub const fn as_standard(&self) -> Option<&TxEnvelope> {
         match self {
             Self::Standard { tx, .. } => Some(tx),
-            Self::Deposit(_) | Self::Base(_) => None,
+            Self::Deposit(_) | Self::Base { .. } => None,
         }
     }
 
-    /// Returns the standard transaction's EIP-2718 encoded bytes, if this envelope is a standard
-    /// transaction.
+    /// Returns the EIP-2718 encoded bytes of a standard or Base transaction. Deposits carry none:
+    /// they pay no L1 fee and have no DA footprint.
     pub const fn enveloped(&self) -> Option<&Bytes> {
         match self {
-            Self::Standard { enveloped, .. } => Some(enveloped),
-            Self::Deposit(_) | Self::Base(_) => None,
+            Self::Standard { enveloped, .. } | Self::Base { enveloped, .. } => Some(enveloped),
+            Self::Deposit(_) => None,
         }
     }
 }
@@ -99,7 +105,7 @@ impl Typed2718 for BaseTxEnvelope {
         match self {
             Self::Deposit(tx) => tx.ty(),
             Self::Standard { tx, .. } => tx.ty(),
-            Self::Base(tx) => tx.ty(),
+            Self::Base { tx, .. } => tx.ty(),
         }
     }
 }
@@ -107,12 +113,6 @@ impl Typed2718 for BaseTxEnvelope {
 impl From<TxDeposit> for BaseTxEnvelope {
     fn from(tx: TxDeposit) -> Self {
         Self::Deposit(tx)
-    }
-}
-
-impl From<TxBaseSigned> for BaseTxEnvelope {
-    fn from(tx: TxBaseSigned) -> Self {
-        Self::Base(tx)
     }
 }
 
@@ -147,13 +147,13 @@ mod tests {
             Bytes::new(),
             Bytes::new(),
         );
-        let envelope = BaseTxEnvelope::from(tx);
+        let envelope = BaseTxEnvelope::base(tx, Bytes::from_static(&[BASE_TX_TYPE_ID, 0xc0]));
         assert_eq!(envelope.ty(), BASE_TX_TYPE_ID);
         assert!(envelope.as_base_tx().is_some());
         assert_eq!(envelope.gas_limit(), 250_000);
         // A Base transaction tx is neither a deposit nor a standard transaction.
         assert!(!envelope.is_deposit());
         assert!(envelope.as_standard().is_none());
-        assert!(envelope.enveloped().is_none());
+        assert_eq!(envelope.enveloped().map(|bytes| bytes[0]), Some(BASE_TX_TYPE_ID));
     }
 }

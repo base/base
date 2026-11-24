@@ -3,7 +3,7 @@
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{Address, B256, Bytes, U256, address};
-use base_common_consensus::{BaseReceiptEnvelope, DepositReceipt};
+use base_common_consensus::{BASE_TX_TYPE_ID, BaseReceiptEnvelope, DepositReceipt, TxBaseReceipt};
 use base_common_genesis::BaseFeature;
 use base_common_l1_fees::L1FeeParams;
 use evm2::{
@@ -137,23 +137,6 @@ impl core::fmt::Display for DaFootprintAboveGasLimit {
 }
 
 impl core::error::Error for DaFootprintAboveGasLimit {}
-
-/// Error returned for a Base transaction, whose enshrined execution path this engine does not
-/// implement yet.
-///
-/// The `0x79` receipt commits to the number of call phases that committed, which only the
-/// enshrined execution path can produce, so the transaction is rejected before execution rather
-/// than included with a receipt that disagrees with the reference executor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TxBaseExecutionUnsupported;
-
-impl core::fmt::Display for TxBaseExecutionUnsupported {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("Base transaction execution is not supported by this engine")
-    }
-}
-
-impl core::error::Error for TxBaseExecutionUnsupported {}
 
 /// Block-boundary context for pre-execution system calls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -389,10 +372,6 @@ impl<'a> BaseBlockExecutor<'a> {
             0
         };
 
-        if tx.as_base_tx().is_some() {
-            return Err(HandlerError::external(TxBaseExecutionUnsupported));
-        }
-
         // The L1 fee parameters are read once per block, before the first non-deposit
         // transaction runs, from the state the deposits before it left.
         if !is_deposit && !self.l1_loaded {
@@ -420,6 +399,7 @@ impl<'a> BaseBlockExecutor<'a> {
         let result = executed.result();
         let success = result.status;
         let logs = result.logs.clone();
+        let committed_phases = result.ext.committed_phases;
         // Fail on overflow rather than silently saturating, which would corrupt this and every
         // later receipt's cumulative gas. Practically unreachable given the block-gas pre-check
         // above, but kept as a hard guard against a corrupted cumulative total.
@@ -450,6 +430,9 @@ impl<'a> BaseBlockExecutor<'a> {
                 1 => BaseReceiptEnvelope::Eip2930(receipt),
                 2 => BaseReceiptEnvelope::Eip1559(receipt),
                 4 => BaseReceiptEnvelope::Eip7702(receipt),
+                BASE_TX_TYPE_ID => BaseReceiptEnvelope::Base(
+                    receipt.map_receipt(|inner| TxBaseReceipt::new(inner, committed_phases)),
+                ),
                 // Legacy (type 0) uses the legacy receipt shape. These type bytes mirror the
                 // handlers registered in tx_registry(); the assert flags any registered type that
                 // gains a handler but not a receipt arm here (which would mis-type its receipt).

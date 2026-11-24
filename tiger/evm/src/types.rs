@@ -34,6 +34,9 @@ impl EvmTypesHost for BaseEvmTypes {
 pub struct BaseTxResultExt {
     /// L1 data fee charged for this transaction (zero for deposits).
     pub l1_fee: U256,
+    /// Number of leading call phases that committed, for a Base transaction (`0x79`); zero for
+    /// every other type. Carried into the Base transaction receipt (`committedPhases`).
+    pub committed_phases: u64,
 }
 
 /// EVM instance-wide extension state for Base transactions.

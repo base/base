@@ -135,8 +135,19 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
     fn settle_transaction(
         host: &mut Evm<'_, BaseEvmTypes>,
         envelope: &BaseTxEnvelope,
-        gas: GasSettlement<BaseEvmTypes>,
+        mut gas: GasSettlement<BaseEvmTypes>,
     ) -> HandlerResult<TxResult<BaseEvmTypes>> {
+        // Gas-limit billing (Everest): the transaction is billed, and reported, for its whole gas
+        // limit. Spending the remaining gas and dropping the refund before settlement makes the
+        // result gas, the EIP-7623 floor, the caller refund, the operator-fee refund and the
+        // vault and coinbase credits all observe `gas_used == gas_limit`, as in the reference's
+        // `post_execution`. Fee-charge-disabled simulation keeps metered gas.
+        if host.config_spec_id().is_feature_enabled(BaseFeature::GasLimitBilling)
+            && host.feature(EvmFeatures::FEE_CHARGE)
+        {
+            gas.result.gas.spend_all();
+            gas.result.gas.set_refunded(0);
+        }
         let caller = gas.caller;
         let basefee = host.block_env().basefee;
         let l1_fee = host.ext().l1_fee;
