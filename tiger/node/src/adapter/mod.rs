@@ -37,6 +37,9 @@ use crate::{
 /// The only chain the protocol defines today.
 const BASE_MAINNET: &str = "base-mainnet";
 
+/// Sets the Everest activation timestamp of the adapter's Base mainnet chain.
+const EVEREST_TIMESTAMP_ENV: &str = "BASE_DIFF_EVEREST_TIMESTAMP";
+
 /// Base mainnet's L1 system config contract, which emits `ConfigUpdate` logs.
 const L1_SYSTEM_CONFIG: Address =
     alloy_primitives::address!("73a79fab69143498ed3712e519a88a918e1f4072");
@@ -69,7 +72,16 @@ impl Adapter {
     /// Runs the request loop until stdin closes.
     pub fn run() -> io::Result<()> {
         let coverage = std::env::var_os(protocol::COVERAGE_ENV).is_some_and(|value| value != "0");
-        let adapter = Self { chain: ChainSpec::base_mainnet(), coverage };
+        let mut chain = ChainSpec::base_mainnet();
+        // Everest is not scheduled on mainnet yet; fuzz runs place it with this variable.
+        if let Some(value) = std::env::var_os(EVEREST_TIMESTAMP_ENV) {
+            let text = value.to_string_lossy();
+            let timestamp = text.parse::<u64>().map_err(|error| {
+                io::Error::new(io::ErrorKind::InvalidInput, format!("{EVEREST_TIMESTAMP_ENV}={text}: {error}"))
+            })?;
+            chain.upgrades.base.everest = Some(timestamp);
+        }
+        let adapter = Self { chain, coverage };
         let stdin = io::stdin();
         let mut stdout = io::stdout().lock();
         for line in stdin.lock().lines() {
