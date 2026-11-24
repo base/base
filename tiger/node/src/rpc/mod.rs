@@ -14,14 +14,58 @@ use serde_json::{Value, json};
 use crate::{Node, RpcError, chain::StoredBlock};
 
 /// JSON-RPC options, named and defaulted as base-reth's flags.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone)]
 pub struct RpcConfig {
     /// `--rpc.eth-proof-window`: how many blocks below the head `eth_getProof` serves (reth's
     /// default 0: the head only).
     pub eth_proof_window: u64,
+    /// `--http.api`: the namespaces served over HTTP, which `rpc_modules` lists.
+    pub http_api: Vec<String>,
+}
+
+impl Default for RpcConfig {
+    fn default() -> Self {
+        Self { eth_proof_window: 0, http_api: ["eth", "net", "web3"].map(str::to_owned).to_vec() }
+    }
 }
 
 impl RpcConfig {
+    /// reth's standard modules, which `--http.api all` selects.
+    const ALL_MODULES: [&str; 14] = [
+        "admin", "debug", "eth", "net", "trace", "txpool", "web3", "rpc", "reth", "ots", "flashbots", "miner",
+        "mev", "testing",
+    ];
+
+    /// Sets `--http.api` as reth parses an `RpcModuleSelection`: `all` or `none` (any case) as
+    /// the first entry, otherwise a comma-separated list of case-sensitive names.
+    pub fn with_http_api(self, selection: &str) -> Self {
+        if selection.is_empty() {
+            return Self { http_api: Vec::new(), ..self };
+        }
+        let mut modules = selection.split(',').map(str::trim).peekable();
+        let http_api = match modules.peek().map(|first| first.to_lowercase()).as_deref() {
+            Some("all") => Self::ALL_MODULES.map(str::to_owned).to_vec(),
+            Some("none") => Vec::new(),
+            _ => {
+                let mut selected: Vec<String> = Vec::new();
+                for module in modules {
+                    if !selected.iter().any(|known| known == module) {
+                        selected.push(module.to_owned());
+                    }
+                }
+                selected
+            }
+        };
+        Self { http_api, ..self }
+    }
+
+    /// Whether HTTP serves `method`: its namespace is selected, or it is one base-reth always
+    /// registers (`base_*`) or tiger's own fuzzing hook.
+    pub fn serves(&self, method: &str) -> bool {
+        let namespace = method.split_once('_').map_or(method, |(namespace, _)| namespace);
+        matches!(namespace, "base" | "fuzz") || self.http_api.iter().any(|module| module == namespace)
+    }
+
     /// reth's `MAX_ETH_PROOF_WINDOW`: 28 days of 2-second blocks.
     pub const MAX_ETH_PROOF_WINDOW: u64 = 28 * 24 * 60 * 60 / 2;
 
@@ -58,9 +102,9 @@ impl Node {
             return result;
         }
         match method {
-            "rpc_modules" => Ok(json!({
-                "debug": "1.0", "web3": "1.0", "rpc": "1.0", "txpool": "1.0", "trace": "1.0", "net": "1.0", "eth": "1.0"
-            })),
+            "rpc_modules" => Ok(Value::Object(
+                self.rpc_config.http_api.iter().map(|module| (module.clone(), json!("1.0"))).collect(),
+            )),
             "eth_chainId" => Ok(json!(U64::from(self.spec.chain_id))),
             "net_version" => Ok(json!(self.spec.chain_id.to_string())),
             "web3_clientVersion" => Ok(json!(concat!("tiger/v", env!("CARGO_PKG_VERSION")))),
@@ -339,5 +383,33 @@ pub(super) mod test_utils {
     /// The node's reply to `body`.
     pub(crate) fn reply(node: &Node, body: &str) -> Option<Value> {
         node.handle_body(body.as_bytes(), false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{RpcConfig, test_utils::{node, reply}};
+
+    #[test]
+    fn http_api_selects_namespaces_as_reth() {
+        let mut node = node();
+        let modules = r#"{"jsonrpc":"2.0","id":1,"method":"rpc_modules","params":[]}"#;
+        let raw_header = r#"{"jsonrpc":"2.0","id":1,"method":"debug_getRawHeader","params":["latest"]}"#;
+        // reth's default selection serves neither `rpc_` nor `debug_`.
+        assert_eq!(reply(&node, modules).unwrap()["error"]["code"], json!(-32601));
+        assert_eq!(reply(&node, raw_header).unwrap()["error"]["code"], json!(-32601));
+        node.rpc_config = RpcConfig::default().with_http_api("eth,net,web3,debug,admin,rpc");
+        assert!(reply(&node, raw_header).unwrap()["result"].is_string());
+        let listed = reply(&node, modules).unwrap()["result"].clone();
+        assert_eq!(
+            listed,
+            json!({ "eth": "1.0", "net": "1.0", "web3": "1.0", "debug": "1.0", "admin": "1.0", "rpc": "1.0" })
+        );
+        assert_eq!(RpcConfig::default().with_http_api("ALL").http_api.len(), 14);
+        assert!(RpcConfig::default().with_http_api("none").http_api.is_empty());
+        assert!(RpcConfig::default().with_http_api("Eth").serves("base_transactionStatus"));
+        assert!(!RpcConfig::default().with_http_api("Eth").serves("eth_chainId"), "names are case-sensitive");
     }
 }

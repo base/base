@@ -15,7 +15,7 @@ const USAGE: &str = "usage:
   tiger node --chain <base|base-sepolia|genesis.json> --datadir <dir>
              [--http] [--http.addr <ip>] [--http.port <port>]
              [--authrpc.addr <ip>] [--authrpc.port <port>] [--authrpc.jwtsecret <file>]
-             [--rpc.eth-proof-window <blocks>]
+             [--http.api <modules>] [--rpc.eth-proof-window <blocks>]
              [--port <port>] [--discovery.port <port>] [--disable-discovery]
              [--bootnodes <enode,...>] [--trusted-peers <enode,...>] [--p2p-secret-key <file>]
              [--max-outbound-peers <n>] [--max-inbound-peers <n>] [--nat extip:<ip>]
@@ -51,7 +51,6 @@ impl NodeArgs {
     /// base-reth flags tiger accepts and ignores: what they configure does not exist in tiger
     /// (metrics, logging, pruning, the transaction pool, peering it does not do yet).
     const IGNORED_WITH_VALUE: &'static [&'static str] = &[
-        "--http.api",
         "--http.corsdomain",
         "--ws.api",
         "--metrics",
@@ -110,6 +109,7 @@ impl NodeArgs {
                 "--authrpc.addr" => auth_addr = parse_ip(value()?)?,
                 "--authrpc.port" => auth_port = parse_port(value()?)?,
                 "--authrpc.jwtsecret" => jwt_secret = Some(PathBuf::from(value()?)),
+                "--http.api" => rpc = rpc.with_http_api(&value()?),
                 "--rpc.eth-proof-window" => {
                     let text = value()?;
                     let blocks = text.parse::<u64>().map_err(|error| format!("--rpc.eth-proof-window {text}: {error}"))?;

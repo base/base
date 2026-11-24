@@ -102,6 +102,9 @@ impl Node {
     /// Checks the parameter list's shape as jsonrpsee's generated code does, then runs the
     /// method (catching a panic as an internal error).
     fn dispatch(&self, method: &str, params: &Value, authenticated: bool) -> Result<Value, RpcError> {
+        if !authenticated && !self.rpc_config.serves(method) {
+            return Err(RpcError::method_not_found(method));
+        }
         let params = match (Self::arity(method), params) {
             // A method without parameters never looks at them.
             (Some((0, _)), _) => Value::Array(Vec::new()),
