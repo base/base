@@ -81,9 +81,11 @@ impl<H, T> BaseTxResult<H, T> {
         };
         let gas_limit = U256::from(tx.gas_limit());
         let l1_fee = credit(Predeploys::L1_FEE_VAULT)?;
-        // The operator fee is linear in gas with a non-negative constant, so scaling the fee
-        // charged for the gas used up to the gas limit bounds the fee for the gas limit.
+        // The operator fee is `floor(gas * scalar / 1e6) + constant` before Jovian and
+        // `gas * scalar * 100 + constant` after, so `fee(limit) < (fee(used) + 1) * limit / used`:
+        // scaling the credit plus one up to the gas limit bounds the fee for the gas limit.
         let operator_fee = credit(Predeploys::OPERATOR_FEE_VAULT)?
+            .checked_add(U256::from(1))?
             .checked_mul(gas_limit)?
             .div_ceil(U256::from(Self::MIN_REFUNDED_GAS_USED));
         let required = gas_limit
@@ -138,8 +140,9 @@ mod tests {
     /// Also the most the transfer can cost in gas, at a gas price of one and no value.
     const GAS_LIMIT: u64 = 100_000;
     const L1_FEE: u64 = 1_000;
-    /// Operator fee charged for the gas used; scaled up to the gas limit it is bounded by 1,000.
-    const OPERATOR_FEE: u64 = 168;
+    /// Operator fee charged for the gas used; plus one, scaled up to the gas limit it bounds the
+    /// fee at 1,000. Without an operator fee the bound is 6.
+    const OPERATOR_FEE: u64 = 167;
 
     fn transfer() -> BaseTxEnvelope {
         BaseTxEnvelope::Legacy(
@@ -193,8 +196,8 @@ mod tests {
     #[rstest]
     #[case::covers_every_fee(GAS_LIMIT + L1_FEE + 1_000, OPERATOR_FEE, true)]
     #[case::misses_operator_fee_bound(GAS_LIMIT + L1_FEE + 999, OPERATOR_FEE, false)]
-    #[case::covers_gas_and_l1_fee(GAS_LIMIT + L1_FEE, 0, true)]
-    #[case::misses_l1_fee(GAS_LIMIT + L1_FEE - 1, 0, false)]
+    #[case::covers_gas_and_l1_fee(GAS_LIMIT + L1_FEE + 6, 0, true)]
+    #[case::short_by_one_wei(GAS_LIMIT + L1_FEE + 5, 0, false)]
     fn reuses_only_affordable_results(
         #[case] balance: u64,
         #[case] operator_fee: u64,

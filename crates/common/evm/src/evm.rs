@@ -435,7 +435,17 @@ where
                 )));
             }
         }
-        if self.inspect { InspectEvm::inspect_tx(self, tx) } else { ExecuteEvm::transact(self, tx) }
+        if self.inspect {
+            // An inspected EVM may record each transaction's reads, as engine prewarm reuse does,
+            // and runs many transactions, the first possibly against state from before the L1
+            // attributes deposit. Reloading the L1 block info for every transaction makes its
+            // reads part of each transaction's own. Uninspected execution, such as payload
+            // building, keeps the per-block cache.
+            self.inner.ctx.chain.invalidate();
+            InspectEvm::inspect_tx(self, tx)
+        } else {
+            ExecuteEvm::transact(self, tx)
+        }
     }
 
     fn transact_system_call(

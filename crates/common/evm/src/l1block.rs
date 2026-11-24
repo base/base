@@ -266,15 +266,8 @@ impl L1BlockInfo {
         self.tx_l1_cost = None;
     }
 
-    /// Clears the cached L1 cost and marks the info stale, so the next transaction reloads it.
-    ///
-    /// Reloading for every transaction records each transaction's L1 block reads in the database
-    /// it runs on. Engine validation relies on this to reuse speculative prewarm results: a
-    /// prewarm EVM runs many transactions, the first possibly against state from before the L1
-    /// attributes deposit, so info cached across transactions would be an unrecorded and
-    /// possibly stale input to the later ones.
-    pub const fn reset_for_next_tx(&mut self) {
-        self.tx_l1_cost = None;
+    /// Marks the info stale, so the next transaction reloads it from the database.
+    pub const fn invalidate(&mut self) {
         self.l2_block = None;
     }
 

@@ -716,9 +716,6 @@ mod tests {
         assert!(result.blob_gas_used > result.gas_used);
     }
 
-    /// Builds a signed Base transaction with the given `gas_limit`. When
-    /// `with_payer` is set, a distinct payer is named with a resolvable k1 payer
-    /// auth blob (`K1_AUTHENTICATOR || sig`), so `payer_auth` is non-zero.
     /// Committing a transaction's prewarm result instead of executing it gives the block the
     /// same DA footprint, and a DA footprint above the block limit rejects the block either way.
     #[rstest::rstest]
@@ -782,6 +779,9 @@ mod tests {
         assert_eq!(executed.is_some(), da_footprint_gas_scalar != u16::MAX);
     }
 
+    /// Builds a signed Base transaction with the given `gas_limit`. When
+    /// `with_payer` is set, a distinct payer is named with a resolvable k1 payer
+    /// auth blob (`K1_AUTHENTICATOR || sig`), so `payer_auth` is non-zero.
     fn signed_base_tx(gas_limit: u64, with_payer: bool) -> TxBaseSigned {
         let payer_auth = if with_payer {
             let mut blob = vec![];

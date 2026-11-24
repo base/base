@@ -398,7 +398,7 @@ impl TxBaseExecutor {
         let logs = ctx.journal_mut().take_logs();
 
         ctx.journal_mut().commit_tx();
-        ctx.chain_mut().reset_for_next_tx();
+        ctx.chain_mut().clear_tx_l1_cost();
 
         // Parity with the mainnet handler's post-commit cleanup: reclaim the
         // `LocalContext` shared-memory buffer and drain the frame stack so no
@@ -1652,7 +1652,7 @@ impl TxBaseExecutor {
     ///
     /// Used both after execution failures and to roll back successful read-only
     /// simulations. Mirrors the mainnet handler's `catch_error` cleanup by
-    /// discarding the transaction, resetting the cached L1 block info, and draining the
+    /// discarding the transaction, clearing the cached L1 cost, and draining the
     /// frame stack and local context. A database error raised inside a nested
     /// subcall surfaces while the parent frame is still on the stack, so draining
     /// both prevents stale frame/local state from leaking into the next
@@ -1666,7 +1666,7 @@ impl TxBaseExecutor {
     {
         let ctx = evm.ctx_mut();
         ctx.journal_mut().discard_tx();
-        ctx.chain_mut().reset_for_next_tx();
+        ctx.chain_mut().clear_tx_l1_cost();
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
     }

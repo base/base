@@ -216,8 +216,9 @@ where
         })
     }
 
-    /// Base meets the reuse contract with three adjustments: the L1 block info is reloaded for
-    /// every transaction so its reads are recorded, [`BaseTxResult::from_prewarm`] rejects the
+    /// Base meets the reuse contract with three adjustments: an inspected EVM, as prewarm reuse
+    /// uses, reloads the L1 block info for every transaction so its reads are recorded,
+    /// [`BaseTxResult::from_prewarm`] rejects the
     /// results the block executor would handle beyond `transact`, and the executor applies the
     /// DA footprint limit of reused results when the block finishes. Reuse still needs
     /// `--engine.prewarm-reuse`.
