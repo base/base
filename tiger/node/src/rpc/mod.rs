@@ -5,6 +5,7 @@ use std::sync::Arc;
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U64, U256};
+use alloy_serde::JsonStorageKey;
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_consensus::{BaseTransactionInfo, DepositInfo};
 use base_common_base_tx::NonceManagerSlots;
@@ -84,11 +85,16 @@ impl Node {
             }
             "eth_getProof" => {
                 let address: Address = param(p, 0)?;
-                let slots: Vec<U256> = param(p, 1)?;
+                // Keys echo back in the form given: a 32-byte hash or a number.
+                let keys: Vec<JsonStorageKey> = param(p, 1)?;
                 // reth checks the window on the block's number before looking a numbered block up.
                 let target = match p.get(2).map(|tag| serde_json::from_value::<BlockId>(tag.clone())) {
                     Some(Ok(BlockId::Number(BlockNumberOrTag::Number(number)))) => number,
                     Some(Ok(BlockId::Number(BlockNumberOrTag::Earliest))) => 0,
+                    // The provider has no pending block.
+                    Some(Ok(BlockId::Number(BlockNumberOrTag::Pending))) => {
+                        return Err(RpcError::new(-32001, "block not found: pending"));
+                    }
                     _ => self.state_block(p.get(2))?.number(),
                 };
                 let head = self.chain.read().expect("chain lock").head().number();
@@ -98,7 +104,7 @@ impl Node {
                     ));
                 }
                 let block = self.state_block(p.get(2))?;
-                self.proof(&block, address, &slots)
+                self.proof(&block, address, &keys)
             }
             "eth_getTransactionByHash" => {
                 let hash: B256 = param(p, 0)?;
@@ -190,14 +196,15 @@ impl Node {
     }
 
     /// `eth_getProof` at the post-state of `block`.
-    fn proof(&self, block: &StoredBlock, address: Address, slots: &[U256]) -> Result<Value, RpcError> {
+    fn proof(&self, block: &StoredBlock, address: Address, keys: &[JsonStorageKey]) -> Result<Value, RpcError> {
         let chain = self.chain.read().expect("chain lock");
         let state = chain.state_after(block).map_err(RpcError::internal)?;
-        let proof = state.proof(address, slots).map_err(RpcError::internal)?;
-        let storage_proof: Vec<Value> = slots
+        let slots: Vec<U256> = keys.iter().map(|key| U256::from_be_bytes(key.as_b256().0)).collect();
+        let proof = state.proof(address, &slots).map_err(RpcError::internal)?;
+        let storage_proof: Vec<Value> = keys
             .iter()
             .zip(&proof.storage)
-            .map(|(slot, storage)| json!({ "key": B256::from(*slot), "value": storage.value, "proof": storage.proof }))
+            .map(|(key, storage)| json!({ "key": key, "value": storage.value, "proof": storage.proof }))
             .collect();
         let account = proof.account;
         Ok(json!({
