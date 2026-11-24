@@ -418,6 +418,149 @@ impl BlockBodyIndices {
     }
 }
 
+/// reth's `Compact` encoding of a block header (reth-codecs `alloy/header.rs`): a 4-byte flags
+/// header, the fixed-size fields raw, the integers compact, optional hashes raw, optional
+/// integers length-prefixed, the extension fields length-prefixed, and the extra data last.
+#[derive(Debug)]
+pub struct HeaderCodec;
+
+fn put_opt_u64(out: &mut Vec<u8>, flags: &mut Flags, value: Option<u64>) {
+    flags.put(1, u64::from(value.is_some()));
+    if let Some(value) = value {
+        let mut tmp = Vec::with_capacity(8);
+        let len = put_compact_u64(&mut tmp, value);
+        put_varuint(out, len as usize);
+        out.extend_from_slice(&tmp);
+    }
+}
+
+fn put_opt_b256(out: &mut Vec<u8>, flags: &mut Flags, value: Option<B256>) {
+    flags.put(1, u64::from(value.is_some()));
+    if let Some(value) = value {
+        out.extend_from_slice(value.as_slice());
+    }
+}
+
+fn get_opt_u64(reader: &mut Reader<'_>, present: bool) -> Decoded<Option<u64>> {
+    if !present {
+        return Ok(None);
+    }
+    let len = reader.varuint()?;
+    Ok(Some(reader.compact_u64(len)?))
+}
+
+fn get_opt_b256(reader: &mut Reader<'_>, present: bool) -> Decoded<Option<B256>> {
+    if present { Ok(Some(reader.b256()?)) } else { Ok(None) }
+}
+
+impl HeaderCodec {
+    /// Encodes `header`.
+    pub fn encode(header: &alloy_consensus::Header) -> Vec<u8> {
+        let mut body = Vec::with_capacity(600);
+        let mut flags = Flags::default();
+        body.extend_from_slice(header.parent_hash.as_slice());
+        body.extend_from_slice(header.ommers_hash.as_slice());
+        body.extend_from_slice(header.beneficiary.as_slice());
+        body.extend_from_slice(header.state_root.as_slice());
+        body.extend_from_slice(header.transactions_root.as_slice());
+        body.extend_from_slice(header.receipts_root.as_slice());
+        put_opt_b256(&mut body, &mut flags, header.withdrawals_root);
+        body.extend_from_slice(header.logs_bloom.as_slice());
+        flags.put(6, put_compact_u256(&mut body, header.difficulty));
+        flags.put(4, put_compact_u64(&mut body, header.number));
+        flags.put(4, put_compact_u64(&mut body, header.gas_limit));
+        flags.put(4, put_compact_u64(&mut body, header.gas_used));
+        flags.put(4, put_compact_u64(&mut body, header.timestamp));
+        body.extend_from_slice(header.mix_hash.as_slice());
+        flags.put(4, put_compact_u64(&mut body, u64::from_be_bytes(header.nonce.0)));
+        put_opt_u64(&mut body, &mut flags, header.base_fee_per_gas);
+        put_opt_u64(&mut body, &mut flags, header.blob_gas_used);
+        put_opt_u64(&mut body, &mut flags, header.excess_blob_gas);
+        put_opt_b256(&mut body, &mut flags, header.parent_beacon_block_root);
+        let has_ext = header.requests_hash.is_some() || header.block_access_list_hash.is_some() || header.slot_number.is_some();
+        flags.put(1, u64::from(has_ext));
+        if has_ext {
+            let mut ext = Vec::with_capacity(80);
+            let mut ext_flags = Flags::default();
+            put_opt_b256(&mut ext, &mut ext_flags, header.requests_hash);
+            put_opt_b256(&mut ext, &mut ext_flags, header.block_access_list_hash);
+            put_opt_u64(&mut ext, &mut ext_flags, header.slot_number);
+            let mut encoded = Vec::with_capacity(ext.len() + 1);
+            ext_flags.write(&mut encoded);
+            encoded.extend_from_slice(&ext);
+            put_varuint(&mut body, encoded.len());
+            body.extend_from_slice(&encoded);
+        }
+        body.extend_from_slice(&header.extra_data);
+        let mut out = Vec::with_capacity(body.len() + 4);
+        assert_eq!(flags.used, 32);
+        flags.write(&mut out);
+        out.extend_from_slice(&body);
+        out
+    }
+
+    /// Decodes a whole value.
+    pub fn decode(bytes: &[u8]) -> Decoded<alloy_consensus::Header> {
+        let mut r = Reader::new(bytes);
+        let mut f = r.flags(4)?;
+        let parent_hash = r.b256()?;
+        let ommers_hash = r.b256()?;
+        let beneficiary = r.address()?;
+        let state_root = r.b256()?;
+        let transactions_root = r.b256()?;
+        let receipts_root = r.b256()?;
+        let withdrawals_root = get_opt_b256(&mut r, f.get(1) == 1)?;
+        let logs_bloom = alloy_primitives::Bloom::from_slice(r.take(256)?);
+        let difficulty = r.compact_u256(f.get(6) as usize)?;
+        let number = r.compact_u64(f.get(4) as usize)?;
+        let gas_limit = r.compact_u64(f.get(4) as usize)?;
+        let gas_used = r.compact_u64(f.get(4) as usize)?;
+        let timestamp = r.compact_u64(f.get(4) as usize)?;
+        let mix_hash = r.b256()?;
+        let nonce = r.compact_u64(f.get(4) as usize)?;
+        let base_fee_per_gas = get_opt_u64(&mut r, f.get(1) == 1)?;
+        let blob_gas_used = get_opt_u64(&mut r, f.get(1) == 1)?;
+        let excess_blob_gas = get_opt_u64(&mut r, f.get(1) == 1)?;
+        let parent_beacon_block_root = get_opt_b256(&mut r, f.get(1) == 1)?;
+        let (mut requests_hash, mut block_access_list_hash, mut slot_number) = (None, None, None);
+        if f.get(1) == 1 {
+            let len = r.varuint()?;
+            let mut e = Reader::new(r.take(len)?);
+            let mut ef = e.flags(1)?;
+            requests_hash = get_opt_b256(&mut e, ef.get(1) == 1)?;
+            block_access_list_hash = get_opt_b256(&mut e, ef.get(1) == 1)?;
+            slot_number = get_opt_u64(&mut e, ef.get(1) == 1)?;
+            e.finish()?;
+        }
+        let extra_data = alloy_primitives::Bytes::copy_from_slice(r.rest);
+        Ok(alloy_consensus::Header {
+            parent_hash,
+            ommers_hash,
+            beneficiary,
+            state_root,
+            transactions_root,
+            receipts_root,
+            logs_bloom,
+            difficulty,
+            number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            extra_data,
+            mix_hash,
+            nonce: nonce.to_be_bytes().into(),
+            base_fee_per_gas,
+            withdrawals_root,
+            blob_gas_used,
+            excess_blob_gas,
+            parent_beacon_block_root,
+            requests_hash,
+            block_access_list_hash,
+            slot_number,
+        })
+    }
+}
+
 /// Trie node encodings: `BranchNodeCompact` values and the packed nibble keys of storage v2.
 #[derive(Debug)]
 pub struct TrieCodec;

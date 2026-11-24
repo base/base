@@ -1160,8 +1160,10 @@ mod tests {
         let last = sf.last_block(Segment::Headers).unwrap();
         for block in 0..=last {
             let [header, _, hash] = sf.header(block).unwrap().unwrap();
-            assert!(!header.is_empty());
-            assert_eq!(hash.len(), 32);
+            let decoded = crate::HeaderCodec::decode(&header).unwrap();
+            assert_eq!(decoded.number, block);
+            assert_eq!(crate::HeaderCodec::encode(&decoded), header, "header {block} re-encodes");
+            assert_eq!(decoded.hash_slow().as_slice(), &hash[..], "header {block} hash");
         }
         let changes = sf.changeset(Segment::AccountChangeSets, 0).unwrap().unwrap();
         assert!(!changes.is_empty(), "genesis allocations are block 0 changes");
