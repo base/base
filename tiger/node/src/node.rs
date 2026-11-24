@@ -64,6 +64,8 @@ pub struct Node {
     pub sync: OnceLock<crate::sync::Sync>,
     /// JSON-RPC filters installed with `eth_newFilter` and `eth_newBlockFilter`.
     pub filters: crate::RpcFilters,
+    /// JSON-RPC options from the command line.
+    pub rpc_config: crate::RpcConfig,
 }
 
 impl Node {
@@ -77,6 +79,7 @@ impl Node {
             engine: Mutex::new(EngineState::default()),
             sync: OnceLock::new(),
             filters: crate::RpcFilters::default(),
+            rpc_config: crate::RpcConfig::default(),
         })
     }
 

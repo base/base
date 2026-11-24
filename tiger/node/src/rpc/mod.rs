@@ -13,8 +13,29 @@ use serde_json::{Value, json};
 
 use crate::{Node, RpcError, chain::StoredBlock};
 
-/// reth's default `--rpc.eth-proof-window`: proofs only at the head.
-const ETH_PROOF_WINDOW: u64 = 0;
+/// JSON-RPC options, named and defaulted as base-reth's flags.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RpcConfig {
+    /// `--rpc.eth-proof-window`: how many blocks below the head `eth_getProof` serves (reth's
+    /// default 0: the head only).
+    pub eth_proof_window: u64,
+}
+
+impl RpcConfig {
+    /// reth's `MAX_ETH_PROOF_WINDOW`: 28 days of 2-second blocks.
+    pub const MAX_ETH_PROOF_WINDOW: u64 = 28 * 24 * 60 * 60 / 2;
+
+    /// Sets `--rpc.eth-proof-window`, rejecting values above reth's maximum as reth does.
+    pub fn with_eth_proof_window(self, blocks: u64) -> Result<Self, String> {
+        if blocks > Self::MAX_ETH_PROOF_WINDOW {
+            return Err(format!(
+                "--rpc.eth-proof-window {blocks}: value cannot be greater than {}",
+                Self::MAX_ETH_PROOF_WINDOW
+            ));
+        }
+        Ok(Self { eth_proof_window: blocks, ..self })
+    }
+}
 
 mod blocks;
 mod call;
@@ -101,7 +122,7 @@ impl Node {
                     _ => self.state_block(p.get(2))?.number(),
                 };
                 let head = self.chain.read().expect("chain lock").head().number();
-                if head.saturating_sub(target) > ETH_PROOF_WINDOW {
+                if head.saturating_sub(target) > self.rpc_config.eth_proof_window {
                     return Err(RpcError::invalid_params(
                         "distance to target block exceeds maximum proof window".into(),
                     ));
