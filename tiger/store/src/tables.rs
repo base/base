@@ -5,7 +5,8 @@
 //! client opens a datadir the other made. The `Tiger*` tables are tiger's own (reth opens tables
 //! by name and ignores others): `TigerNodes` holds a partial state's trie nodes as RLP by
 //! path (`0 ++ packed path` for the account trie, `1 ++ hashed address ++ packed path` for storage
-//! tries), `TigerWipes` (`hashed address ++ block`) and `TigerWipedStorage`
+//! tries) and `TigerNodeJournal` (block -> `TigerNodes` rows that block's commit replaced, so an
+//! unwind restores them), `TigerWipes` (`hashed address ++ block`) and `TigerWipedStorage`
 //! (`block ++ hashed address` -> `hashed slot ++ value` duplicates) keep the storage a wipe
 //! removed, which reth's v2 changesets do not, so unwinds and historical roots restore it.
 //! `TigerForkchoice` holds the node's forkchoice heads (reth keeps only the safe and finalized
@@ -78,6 +79,7 @@ tables! {
     TigerNodes: false,
     TigerWipes: false,
     TigerWipedStorage: true,
+    TigerNodeJournal: true,
     TigerForkchoice: false,
 }
 

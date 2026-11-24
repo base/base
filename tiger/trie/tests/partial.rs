@@ -136,6 +136,10 @@ fn partial_state_from_witnesses_matches_the_full_state() {
                 roots.truncate((target - genesis) as usize + 1);
                 all_changes.truncate((target - genesis) as usize + 1);
                 assert_eq!(expected, roots[(target - genesis) as usize]);
+                let (fv, pv) = (full.view(target, Vec::new()).unwrap(), partial.view(target, Vec::new()).unwrap());
+                assert_eq!(pv.state_root(None).unwrap(), expected);
+                compare_reads(&fv, &pv, &addresses, &slots);
+                drop((fv, pv));
                 // The model follows the full database.
                 let view = full.view(target, Vec::new()).unwrap();
                 model.clear();
@@ -277,6 +281,81 @@ fn proofs_from_an_older_root_fill_unchanged_subtrees() {
     partial.absorb_proofs(&mut w, &old.proof, &[], &keys).unwrap();
     w.commit().unwrap();
     assert_eq!(partial.view(1, Vec::new()).unwrap().account(unchanged).unwrap(), Some(info(1)));
+    drop((full, partial));
+    let _ = std::fs::remove_dir_all(&full_dir);
+    let _ = std::fs::remove_dir_all(&partial_dir);
+}
+
+/// An unwind whose reverse is a deletion collapsing into a sibling the partial state never held.
+/// Block 1 inserts a slot beside a one-nibble extension, splitting it so the branch below the
+/// extension (never loaded) becomes a child of a new branch. Unwinding deletes the slot again,
+/// which collapses that new branch into the unknown one: recomputing needs its node, while the
+/// node journal restores the rows block 1 replaced.
+#[test]
+fn partial_unwind_restores_a_collapse_into_an_unknown_sibling() {
+    let (full_dir, partial_dir) = (temp("collapse-full"), temp("collapse-partial"));
+    let nib = |slot: u64, i: usize| {
+        let h = keccak256(U256::from(slot).to_be_bytes::<32>());
+        (h[i / 2] >> (4 * (1 - i % 2))) & 0xf
+    };
+    // a and b share their first two nibbles and differ in the third (the branch below the
+    // extension); c shares only the first; d starts elsewhere so the root is a branch.
+    let mut found = None;
+    'search: for a in 0..4000u64 {
+        for b in a + 1..4000 {
+            if nib(a, 0) == nib(b, 0) && nib(a, 1) == nib(b, 1) && nib(a, 2) != nib(b, 2) {
+                let c = (0..4000).find(|c| nib(*c, 0) == nib(a, 0) && nib(*c, 1) != nib(a, 1)).unwrap();
+                let d = (0..4000).find(|d| nib(*d, 0) != nib(a, 0)).unwrap();
+                found = Some((a, b, c, d));
+                break 'search;
+            }
+        }
+    }
+    let (a, b, c, d) = found.unwrap();
+    let address = Address::with_last_byte(9);
+    let info = AccountInfo { nonce: 1, balance: U256::from(5), code_hash: KECCAK_EMPTY };
+    let mut genesis = BlockChanges::default();
+    genesis.accounts.push((address, Some(info)));
+    for slot in [a, b, d] {
+        genesis.storage.push((address, U256::from(slot), U256::from(1_000 + slot)));
+    }
+    let full = StateDb::open(&full_dir).unwrap();
+    let mut w = full.write().unwrap();
+    let genesis_root = full.commit_block(&mut w, 0, &genesis).unwrap();
+    w.commit().unwrap();
+    let mut block = BlockChanges::default();
+    block.storage.push((address, U256::from(c), U256::from(7)));
+    let witness = full.view(0, Vec::new()).unwrap().trie_witness(&block).unwrap();
+    let mut w = full.write().unwrap();
+    let root = full.commit_block(&mut w, 1, &block).unwrap();
+    w.commit().unwrap();
+
+    let partial = StateDb::open_partial(&partial_dir, 0, genesis_root).unwrap();
+    let mut w = partial.write().unwrap();
+    partial.absorb_witness(&mut w, &witness, &[]).unwrap();
+    assert_eq!(partial.commit_block(&mut w, 1, &block).unwrap(), root);
+    w.commit().unwrap();
+    // The branch below the extension was never held.
+    let view = partial.view(1, Vec::new()).unwrap();
+    assert!(view.storage(address, U256::from(a)).unwrap_err().is_unknown());
+    drop(view);
+
+    assert_eq!(partial.unwind_to(0).unwrap(), genesis_root);
+    let view = partial.view(0, Vec::new()).unwrap();
+    assert_eq!(view.state_root(None).unwrap(), genesis_root);
+    assert_eq!(view.storage(address, U256::from(c)).unwrap(), U256::ZERO);
+    assert!(view.storage(address, U256::from(a)).unwrap_err().is_unknown());
+    drop(view);
+    // The block commits again on the restored nodes.
+    let mut w = partial.write().unwrap();
+    assert_eq!(partial.commit_block(&mut w, 1, &block).unwrap(), root);
+    w.commit().unwrap();
+
+    // Without the journal (pruned through block 1) the unwind recomputes and fails as unknown.
+    let mut w = partial.write().unwrap();
+    partial.prune_unwind_journal(&mut w, 1).unwrap();
+    w.commit().unwrap();
+    assert!(partial.unwind_to(0).unwrap_err().is_unknown());
     drop((full, partial));
     let _ = std::fs::remove_dir_all(&full_dir);
     let _ = std::fs::remove_dir_all(&partial_dir);

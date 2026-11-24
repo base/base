@@ -303,12 +303,24 @@ impl StateDb {
         PartialState::absorb_proofs(w.txn(), db, root, nodes, codes, keys)
     }
 
+    /// Drops a partial state's unwind journal of blocks up to `through`, normally the finalized
+    /// block; unwinding to below a block whose journal is gone recomputes the trie and may then
+    /// fail as unknown. Does nothing for a full state.
+    pub fn prune_unwind_journal(&self, w: &mut WriteTxn<'_>, through: u64) -> Result<(), TrieError> {
+        if !self.partial {
+            return Ok(());
+        }
+        let db = &w.datadir.db;
+        PartialState::prune_journal(w.txn(), db, through)
+    }
+
     /// The new state root after hashed `state`, writing the trie changes into `txn`.
-    fn write_trie(&self, txn: &mut Txn<Rw>, state: &HashedState) -> Result<B256, TrieError> {
+    /// A partial state journals the node rows it replaces under block `journal`.
+    fn write_trie(&self, txn: &mut Txn<Rw>, state: &HashedState, journal: Option<u64>) -> Result<B256, TrieError> {
         let db = &self.datadir.db;
         if let Some(root) = self.partial_root(txn)? {
             let tries = StateTries::apply(&DbNodes { txn, db }, root, state)?;
-            tries.write(txn, db)?;
+            tries.write(txn, db, journal)?;
             return Ok(tries.root);
         }
         let (root, updates) = TrieView::new(txn, db, state).state_root(true)?;
@@ -413,10 +425,10 @@ impl StateDb {
                 root
             }
             Some(PreparedTrie::Partial(tries)) => {
-                tries.write(txn, db)?;
+                tries.write(txn, db, Some(number))?;
                 tries.root
             }
-            None => self.write_trie(txn, &state)?,
+            None => self.write_trie(txn, &state, Some(number))?,
         };
         StateWriter::write_hashed_state(txn, db, &state)?;
         for (hash, code) in &changes.codes {
@@ -444,7 +456,7 @@ impl StateDb {
         let db = &w.datadir.db;
         w.set_label(number);
         let txn = w.txn();
-        let root = self.write_trie(txn, state)?;
+        let root = self.write_trie(txn, state, Some(number))?;
         StateWriter::write_hashed_state(txn, db, state)?;
         w.set_checkpoints(number)?;
         Ok(root)
@@ -524,7 +536,21 @@ impl StateDb {
             self.reverts(txn, number + 1, tip)?
         };
         let txn = w.txn();
-        let root = self.write_trie(txn, &state)?;
+        // A partial state puts back the node rows each block's commit replaced: recomputing the
+        // reverse may need nodes it never held (a deletion collapsing into an unknown sibling).
+        let journaled = self.partial
+            && (number + 1..=tip).try_fold(true, |all, block| Ok::<_, TrieError>(all && PartialState::has_journal(txn, db, block)?))?;
+        let root = if journaled {
+            for block in (number + 1..=tip).rev() {
+                PartialState::restore(txn, db, block)?;
+            }
+            self.partial_root(txn)?.expect("partial")
+        } else {
+            self.write_trie(txn, &state, None)?
+        };
+        if self.partial {
+            PartialState::prune_journal_above(txn, db, number)?;
+        }
         StateWriter::write_hashed_state(txn, db, &state)?;
         // Drop wipe records above `number`.
         let mut stale = Vec::new();

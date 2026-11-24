@@ -6,6 +6,9 @@
 //! resolved by walking the stored nodes: the walk ends at the leaf or proves the key absent
 //! (known), or meets an unstored hash ([`TrieError::MissingNode`], unknown). Roots, updates and
 //! proofs run [`SparseTrie`]s over the stored nodes, so a block needs only the paths it touches.
+//! Each commit journals the `TigerNodes` rows it replaces (`TigerNodeJournal`), and an unwind puts
+//! them back instead of recomputing the reverse, which can need a node never held (a deletion
+//! collapsing into an unknown sibling). The node prunes the journal up to the finalized block.
 //! Such a datadir keeps reth's flat, changeset and history tables but not its `AccountsTrie` /
 //! `StoragesTrie`, so only tiger opens it.
 
@@ -183,50 +186,77 @@ impl StateTries {
         Ok(out)
     }
 
-    /// Writes the node changes to `TigerNodes` and the new root to `Metadata`.
-    pub fn write(&self, txn: &mut Txn<Rw>, db: &Db) -> Result<(), TrieError> {
+    /// Writes the node changes to `TigerNodes` and the new root to `Metadata`. With
+    /// `journal: Some(block)`, the rows it replaces (and the previous root) are recorded under
+    /// `block` in `TigerNodeJournal`, for [`PartialState::restore`].
+    pub fn write(&self, txn: &mut Txn<Rw>, db: &Db, journal: Option<u64>) -> Result<(), TrieError> {
         let nodes = db.dbi(Table::TigerNodes);
-        let put = |txn: &mut Txn<Rw>, owner: Option<B256>, changes: &SparseChanges| -> Result<(), TrieError> {
-            for path in &changes.deletes {
-                txn.delete(nodes, &PartialState::node_key(owner, path), None)?;
-            }
-            for (path, node) in &changes.writes {
-                txn.put(nodes, &PartialState::node_key(owner, path), node)?;
+        // Previous value of every row this write touches, by `TigerNodes` key (empty: the root).
+        let mut prior: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
+        prior.insert(Vec::new(), txn.get(db.dbi(Table::Metadata), PARTIAL_ROOT_KEY)?.map(<[u8]>::to_vec));
+        let mut record = |txn: &Txn<Rw>, key: &[u8]| -> Result<(), TrieError> {
+            if journal.is_some() && !prior.contains_key(key) {
+                prior.insert(key.to_vec(), txn.get(nodes, key)?.map(<[u8]>::to_vec));
             }
             Ok(())
         };
-        for (key, (wiped, trie)) in &self.storages {
-            if *wiped {
-                Self::delete_owner(txn, db, *key)?;
+        let mut apply = |txn: &mut Txn<Rw>, key: Vec<u8>, node: Option<&[u8]>| -> Result<(), TrieError> {
+            record(txn, &key)?;
+            match node {
+                Some(node) => txn.put(nodes, &key, node)?,
+                None => {
+                    txn.delete(nodes, &key, None)?;
+                }
             }
-            put(txn, Some(*key), &trie.changes())?;
+            Ok(())
+        };
+        for (owner, (wiped, trie)) in &self.storages {
+            if *wiped {
+                for key in Self::owner_keys(txn, db, *owner)? {
+                    apply(txn, key, None)?;
+                }
+            }
+            let changes = trie.changes();
+            for path in &changes.deletes {
+                apply(txn, PartialState::node_key(Some(*owner), path), None)?;
+            }
+            for (path, node) in &changes.writes {
+                apply(txn, PartialState::node_key(Some(*owner), path), Some(node))?;
+            }
         }
-        put(txn, None, &self.accounts.changes())?;
+        let changes: SparseChanges = self.accounts.changes();
+        for path in &changes.deletes {
+            apply(txn, PartialState::node_key(None, path), None)?;
+        }
+        for (path, node) in &changes.writes {
+            apply(txn, PartialState::node_key(None, path), Some(node))?;
+        }
         if self.root == EMPTY_ROOT_HASH {
-            txn.delete(nodes, &PartialState::node_key(None, &Nibbles::new()), None)?;
+            apply(txn, PartialState::node_key(None, &Nibbles::new()), None)?;
         }
         txn.put(db.dbi(Table::Metadata), PARTIAL_ROOT_KEY, self.root.as_slice())?;
+        if let Some(block) = journal {
+            let dbi = db.dbi(Table::TigerNodeJournal);
+            txn.delete(dbi, &block.to_be_bytes(), None)?;
+            for (key, value) in &prior {
+                txn.put(dbi, &block.to_be_bytes(), &PartialState::journal_entry(key, value.as_deref()))?;
+            }
+        }
         Ok(())
     }
 
-    /// Deletes every stored node of `owner`'s storage trie.
-    fn delete_owner(txn: &mut Txn<Rw>, db: &Db, owner: B256) -> Result<(), TrieError> {
-        let dbi = db.dbi(Table::TigerNodes);
+    /// The `TigerNodes` keys of every stored node of `owner`'s storage trie.
+    fn owner_keys(txn: &Txn<Rw>, db: &Db, owner: B256) -> Result<Vec<Vec<u8>>, TrieError> {
         let prefix = [&[1u8][..], owner.as_slice()].concat();
         let mut keys = Vec::new();
-        {
-            let mut cursor = txn.cursor(dbi)?;
-            let mut entry = cursor.seek(&prefix)?.map(|(k, _)| k.to_vec());
-            while let Some(key) = entry.filter(|k| k.starts_with(&prefix)) {
-                assert!(keys.len() < MAX_WITNESS_NODES, "storage trie of {owner} has too many nodes");
-                keys.push(key);
-                entry = cursor.next()?.map(|(k, _)| k.to_vec());
-            }
+        let mut cursor = txn.cursor(db.dbi(Table::TigerNodes))?;
+        let mut entry = cursor.seek(&prefix)?.map(|(k, _)| k.to_vec());
+        while let Some(key) = entry.filter(|k| k.starts_with(&prefix)) {
+            assert!(keys.len() < MAX_WITNESS_NODES, "storage trie of {owner} has too many nodes");
+            keys.push(key);
+            entry = cursor.next()?.map(|(k, _)| k.to_vec());
         }
-        for key in &keys {
-            txn.delete(dbi, key, None)?;
-        }
-        Ok(())
+        Ok(keys)
     }
 }
 
@@ -367,6 +397,104 @@ impl PartialState {
         }
         for code in codes {
             txn.put(db.dbi(Table::Bytecodes), keccak256(code).as_slice(), &BytecodeCodec::encode(code))?;
+        }
+        Ok(())
+    }
+
+    /// A `TigerNodeJournal` value: the row key (empty for the root in `Metadata`) and its value
+    /// before the block, absent or present.
+    pub fn journal_entry(key: &[u8], prior: Option<&[u8]>) -> Vec<u8> {
+        let len = u16::try_from(key.len()).expect("node keys are short");
+        let mut out = Vec::with_capacity(3 + key.len() + prior.map_or(0, <[u8]>::len));
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(key);
+        match prior {
+            Some(prior) => {
+                out.push(1);
+                out.extend_from_slice(prior);
+            }
+            None => out.push(0),
+        }
+        out
+    }
+
+    /// Whether block `block`'s commit left a journal.
+    pub fn has_journal<K>(txn: &Txn<K>, db: &Db, block: u64) -> Result<bool, TrieError> {
+        Ok(txn.get(db.dbi(Table::TigerNodeJournal), &block.to_be_bytes())?.is_some())
+    }
+
+    /// Puts back the `TigerNodes` rows and root that block `block`'s commit replaced, and drops its
+    /// journal: the stored nodes become those held before the block, so an unwind needs no node
+    /// the partial state never held.
+    pub fn restore(txn: &mut Txn<Rw>, db: &Db, block: u64) -> Result<(), TrieError> {
+        let (journal, nodes) = (db.dbi(Table::TigerNodeJournal), db.dbi(Table::TigerNodes));
+        let mut entries = Vec::new();
+        {
+            let mut cursor = txn.cursor(journal)?;
+            let mut entry = cursor.seek_exact(&block.to_be_bytes())?.map(|(_, v)| v.to_vec());
+            while let Some(value) = entry {
+                entries.push(value);
+                entry = cursor.next_dup()?.map(|(_, v)| v.to_vec());
+            }
+        }
+        let bad = || TrieError::Corrupt(format!("node journal of block {block}"));
+        for value in &entries {
+            let len = usize::from(u16::from_be_bytes(value.get(..2).ok_or_else(bad)?.try_into().expect("2 bytes")));
+            let key = value.get(2..2 + len).ok_or_else(bad)?;
+            let prior = match value.get(2 + len).ok_or_else(bad)? {
+                0 => None,
+                1 => Some(&value[3 + len..]),
+                _ => return Err(bad()),
+            };
+            match (key.is_empty(), prior) {
+                (true, Some(root)) => txn.put(db.dbi(Table::Metadata), PARTIAL_ROOT_KEY, root)?,
+                (true, None) => return Err(bad()),
+                (false, Some(node)) => txn.put(nodes, key, node)?,
+                (false, None) => {
+                    txn.delete(nodes, key, None)?;
+                }
+            }
+        }
+        txn.delete(journal, &block.to_be_bytes(), None)?;
+        Ok(())
+    }
+
+    /// Drops the journals of blocks after `number` (left by an unwind that recomputed instead).
+    pub fn prune_journal_above(txn: &mut Txn<Rw>, db: &Db, number: u64) -> Result<(), TrieError> {
+        let dbi = db.dbi(Table::TigerNodeJournal);
+        let mut keys = Vec::new();
+        {
+            let mut cursor = txn.cursor(dbi)?;
+            let mut entry = cursor.seek(&(number + 1).to_be_bytes())?.map(|(k, _)| k.to_vec());
+            while let Some(key) = entry {
+                keys.push(key);
+                entry = cursor.next_key()?.map(|(k, _)| k.to_vec());
+            }
+        }
+        for key in &keys {
+            txn.delete(dbi, key, None)?;
+        }
+        Ok(())
+    }
+
+    /// Drops the journals of blocks up to `through` (finalized blocks are never unwound).
+    pub fn prune_journal(txn: &mut Txn<Rw>, db: &Db, through: u64) -> Result<(), TrieError> {
+        let dbi = db.dbi(Table::TigerNodeJournal);
+        let mut blocks = Vec::new();
+        {
+            let mut cursor = txn.cursor(dbi)?;
+            let mut entry = cursor.first()?.map(|(k, _)| k.to_vec());
+            while let Some(key) = entry {
+                let block = u64::from_be_bytes(key.as_slice().try_into().map_err(|_| TrieError::Corrupt("journal key".into()))?);
+                if block > through {
+                    break;
+                }
+                blocks.push(key);
+                entry = cursor.next_key()?.map(|(k, _)| k.to_vec());
+            }
+        }
+        for key in &blocks {
+            txn.delete(dbi, key, None)?;
         }
         Ok(())
     }
