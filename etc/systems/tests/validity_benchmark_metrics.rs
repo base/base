@@ -202,7 +202,7 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
         "reth_base_builder_predicate_slots_loaded_total_avg",
         "reth_base_builder_predicate_slots_loaded_unique_avg",
         "reth_base_builder_resting_predicate_carried_avg",
-        "reth_base_builder_predicate_bucket_count_avg",
+        "reth_base_builder_predicate_buckets_avg",
         "reth_base_builder_predicate_bucket_max_depth_avg",
     ];
     for key in present {
