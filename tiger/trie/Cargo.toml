@@ -1,0 +1,21 @@
+[package]
+name = "base-tiger-trie"
+description = "Merkle Patricia trie and state database of the tiger client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# tiger
+base-tiger-store.workspace = true
+
+# alloy
+alloy-rlp.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }

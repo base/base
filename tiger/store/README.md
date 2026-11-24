@@ -1,0 +1,12 @@
+# `base-tiger-store`
+
+The tiger client's storage layer, which reads and writes base-reth's on-disk datadir format so
+tiger can start from a base-reth datadir or snapshot and base-reth can open what tiger writes:
+MDBX tables (libmdbx, vendored C sources), static files, and the RocksDB history indices of
+reth's storage v2 layout. It also holds the fault-injection layer used to prove crash safety
+(`TIGER_FAULT`, see `src/fault.rs`).
+
+`libmdbx/` holds libmdbx 0.13.12 (`mdbx.c`, `mdbx.h`, licenses) as vendored by reth's
+`reth-mdbx-sys`, with one tiger patch: hooks before every `pwrite` and after every `fsync`
+(search `tiger` in `mdbx.c`). `src/mdbx_sys.rs` holds bindings pre-generated with bindgen 0.72.1
+using reth's `reth-mdbx-sys` build script settings.

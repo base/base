@@ -813,6 +813,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-tiger-store"
+version = "0.0.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "base-tiger-trie"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-trie",
+ "base-tiger-store",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,18 @@
+[package]
+name = "base-tiger-store"
+description = "The tiger client's storage: base-reth's on-disk format (MDBX tables, static files, RocksDB indices)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[build-dependencies]
+cc.workspace = true
