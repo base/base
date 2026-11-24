@@ -66,13 +66,18 @@ pub struct Node {
     pub filters: crate::RpcFilters,
     /// JSON-RPC options from the command line.
     pub rpc_config: crate::RpcConfig,
+    /// The upstream RPC a stateless node reads witnesses (and RPC answers for state it does not
+    /// hold) from.
+    pub upstream: Option<crate::Upstream>,
 }
 
 impl Node {
-    /// Opens the node's datadir.
-    pub fn open(datadir: &Path, genesis: Genesis) -> Result<Self, String> {
+    /// Opens the node's datadir. With `upstream`, a new datadir starts stateless at the
+    /// upstream's block `start` (a number or tag), and missing state is read from the upstream.
+    pub fn open(datadir: &Path, genesis: Genesis, upstream: Option<(crate::Upstream, String)>) -> Result<Self, String> {
         let spec = genesis.chain.clone();
-        let chain = Chain::open(datadir, genesis)?;
+        let stateless = upstream.as_ref().map(|(upstream, block)| crate::StatelessStart { upstream, block });
+        let chain = Chain::open(datadir, genesis, stateless)?;
         Ok(Self {
             spec,
             chain: RwLock::new(chain),
@@ -80,6 +85,7 @@ impl Node {
             sync: OnceLock::new(),
             filters: crate::RpcFilters::default(),
             rpc_config: crate::RpcConfig::default(),
+            upstream: upstream.map(|(upstream, _)| upstream),
         })
     }
 

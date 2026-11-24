@@ -76,7 +76,12 @@ impl BlockExecution<'_> {
         let database = state.database();
         let mut executor = match BaseBlockExecutor::for_block(self.chain, env, database) {
             Ok(executor) => executor,
-            Err(error) => return Ok(invalid(format!("pre-execution changes: {error}"))),
+            Err(error) => {
+                if let Some(missing) = state.missing() {
+                    return Err(missing);
+                }
+                return Ok(invalid(format!("pre-execution changes: {error}")));
+            }
         };
         let mut rejected = Vec::new();
         let mut transactions = Vec::new();
@@ -96,6 +101,9 @@ impl BlockExecution<'_> {
                     transactions.push(signed);
                 }
                 Err(HandlerError::Fatal(code)) => {
+                    if let Some(missing) = state.missing() {
+                        return Err(missing);
+                    }
                     return Ok(invalid(format!("transaction {index}: fatal {code:?}")));
                 }
                 Err(error) if skip_invalid => rejected.push((index, error.to_string())),
@@ -171,6 +179,9 @@ impl BlockExecution<'_> {
         let mut executor = match BaseBlockExecutor::for_block(self.chain, &env, database) {
             Ok(executor) => executor,
             Err(error) => {
+                if let Some(missing) = state.missing() {
+                    return Err(missing);
+                }
                 let invalid = invalid.unwrap_or_else(|| format!("execution: pre-execution: {error}"));
                 return Ok(Validated { invalid: Some(invalid), executed: None });
             }

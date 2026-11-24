@@ -382,7 +382,7 @@ pub(super) mod test_utils {
             }
         });
         let genesis = Genesis::parse(&genesis.to_string()).expect("test genesis parses");
-        Node::open(&dir, genesis).expect("test node opens")
+        Node::open(&dir, genesis, None).expect("test node opens")
     }
 
     /// The node's reply to `body`.

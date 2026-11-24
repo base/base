@@ -16,6 +16,7 @@ const USAGE: &str = "usage:
              [--http] [--http.addr <ip>] [--http.port <port>]
              [--authrpc.addr <ip>] [--authrpc.port <port>] [--authrpc.jwtsecret <file>]
              [--http.api <modules>] [--rpc.eth-proof-window <blocks>] [--rollup.sequencer-http <url>]
+             [--stateless.upstream <http-url>] [--stateless.start <block|tag>]
              [--port <port>] [--discovery.port <port>] [--disable-discovery]
              [--bootnodes <enode,...>] [--trusted-peers <enode,...>] [--p2p-secret-key <file>]
              [--max-outbound-peers <n>] [--max-inbound-peers <n>] [--nat extip:<ip>]
@@ -31,6 +32,8 @@ struct NodeArgs {
     jwt_secret: Option<PathBuf>,
     rpc: base_tiger::RpcConfig,
     net: NetArgs,
+    /// `--stateless.upstream` and `--stateless.start`.
+    stateless: Option<(base_tiger::Upstream, String)>,
 }
 
 /// Peer-to-peer options, named as base-reth names them.
@@ -68,6 +71,7 @@ impl NodeArgs {
     fn parse(args: &[String]) -> Result<Self, String> {
         let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let (mut chain, mut datadir, mut jwt_secret) = (None, None, None);
+        let (mut upstream, mut start) = (None, "finalized".to_owned());
         let mut rpc = base_tiger::RpcConfig::default();
         let (mut http_addr, mut http_port) = (localhost, 8545u16);
         let (mut auth_addr, mut auth_port) = (localhost, 8551u16);
@@ -118,6 +122,8 @@ impl NodeArgs {
                     let blocks = text.parse::<u64>().map_err(|error| format!("--rpc.eth-proof-window {text}: {error}"))?;
                     rpc = rpc.with_eth_proof_window(blocks)?;
                 }
+                "--stateless.upstream" => upstream = Some(base_tiger::Upstream::new(&value()?)?),
+                "--stateless.start" => start = value()?,
                 "--port" => net.port = parse_port(value()?)?,
                 "--discovery.port" | "--discovery.v5.port" => net.discovery_port = Some(parse_port(value()?)?),
                 "--disable-discovery" => net.disable_discovery = true,
@@ -154,6 +160,7 @@ impl NodeArgs {
             jwt_secret,
             rpc,
             net,
+            stateless: upstream.map(|upstream| (upstream, start)),
         })
     }
 
@@ -165,7 +172,7 @@ impl NodeArgs {
         );
         let jwt_path = self.jwt_secret.unwrap_or_else(|| self.datadir.join("jwt.hex"));
         let jwt = JwtSecret::load_or_create(&jwt_path)?;
-        let mut node = Node::open(&self.datadir, genesis)?;
+        let mut node = Node::open(&self.datadir, genesis, self.stateless)?;
         node.rpc_config = self.rpc;
         let node = Arc::new(node);
         {

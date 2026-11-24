@@ -7,7 +7,11 @@
 //! JSON-RPC errors (`-32602`, `-38002` invalid forkchoice state, `-38003` invalid payload
 //! attributes, `-38005` unsupported fork, `-38001` unknown payload).
 
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    rc::Rc,
+    sync::Arc,
+};
 
 use alloy_consensus::{Block, BlockBody, Header};
 use alloy_eips::{eip7685::Requests, eip4895::Withdrawals};
@@ -17,7 +21,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadFieldV2, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV3,
     ForkchoiceState, PayloadId, PraguePayloadFields,
 };
-use base_common_consensus::BaseTxEnvelope as SignedTx;
+use base_common_consensus::{BaseTxEnvelope as SignedTx, Predeploys};
 use base_common_genesis::BaseFeature;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4,
@@ -25,10 +29,12 @@ use base_common_rpc_types_engine::{
     BasePayloadAttributes,
 };
 use base_tiger_evm::{BlockEnvInput, BlockRules};
-use base_tiger_trie::PreparedRoot;
 use serde_json::{Value, json};
 
-use crate::{BlockExecution, Executed, Node, RpcError, chain::Forkchoice};
+use crate::{
+    BLOCK_HASH_WINDOW, BlockExecution, Executed, Node, RpcError, Validation, WitnessNodes, WitnessState,
+    chain::Forkchoice,
+};
 
 /// Most built payloads kept for `engine_getPayload`.
 const MAX_PAYLOADS: usize = 16;
@@ -333,10 +339,16 @@ impl Node {
                 return Ok(Imported::MissingParent);
             };
             let state = chain.state_after(&parent).map_err(RpcError::internal)?;
-            let validated = BlockExecution { chain: &self.spec }
-                .validate(&header, transactions, &parent.header, &state)
-                .map_err(|error| RpcError::internal(format!("state of block {parent_hash}: {error}")))?;
-            (validated, state.take_prepared())
+            match (BlockExecution { chain: &self.spec }).validate(&header, transactions, &parent.header, &state) {
+                Ok(validated) => (validated, state.take_prepared().map(|prepared| Validation::Prepared(Box::new(prepared)))),
+                Err(missing) => match &self.upstream {
+                    Some(upstream) if chain.db.is_partial() => {
+                        drop(state);
+                        self.validate_with_witness(&chain, upstream, &header, hash, transactions, &parent)?
+                    }
+                    _ => return Err(RpcError::internal(format!("state of block {parent_hash}: {missing}"))),
+                },
+            }
         };
         let (validated, prepared) = validated;
         match (validated.invalid, validated.executed) {
@@ -353,6 +365,64 @@ impl Node {
                 Ok(Imported::Invalid { latest_valid: Some(parent_hash), error })
             }
         }
+    }
+
+    /// Validates block `hash` on a partial state over the upstream's execution witness, which
+    /// is verified node by node against the parent's state root and header by header against
+    /// the parent's ancestry.
+    fn validate_with_witness(
+        &self,
+        chain: &crate::Chain,
+        upstream: &crate::Upstream,
+        header: &Header,
+        hash: B256,
+        transactions: &[Bytes],
+        parent: &crate::StoredBlock,
+    ) -> Result<(crate::Validated, Option<Validation>), RpcError> {
+        let witness = upstream.execution_witness(hash, header.number).map_err(RpcError::internal)?;
+        let mut hashes = chain.block_hashes(parent);
+        // Ancestors below the datadir's first block come from the witness headers, each linked
+        // by its hash to the next one up.
+        let low = parent.number().saturating_sub(BLOCK_HASH_WINDOW - 1);
+        let mut lowest = parent.number();
+        while lowest > low && hashes.contains_key(&(lowest - 1)) {
+            lowest -= 1;
+        }
+        if lowest > low {
+            let headers: HashMap<B256, Header> = witness
+                .headers
+                .iter()
+                .filter_map(|rlp| alloy_rlp::decode_exact::<Header>(rlp).ok())
+                .map(|header| (header.hash_slow(), header))
+                .collect();
+            let mut next = chain.block(&hashes[&lowest]).map(|block| block.header.parent_hash);
+            let mut number = lowest - 1;
+            while let Some(ancestor) = next {
+                hashes.insert(number, ancestor);
+                if number == low {
+                    break;
+                }
+                next = headers.get(&ancestor).map(|header| header.parent_hash);
+                number -= 1;
+            }
+        }
+        let message_passer_root = parent
+            .header
+            .withdrawals_root
+            .filter(|_| self.spec.is_active(BaseFeature::L2ToL1MessageRoot, parent.header.timestamp))
+            .map(|root| (Predeploys::L2_TO_L1_MESSAGE_PASSER, root));
+        let state = Rc::new(WitnessState::new(
+            parent.header.state_root,
+            Arc::new(WitnessNodes::new(&witness.state, &witness.codes)),
+            hashes,
+            message_passer_root,
+        ));
+        let validated = BlockExecution { chain: &self.spec }
+            .validate(header, transactions, &parent.header, &state)
+            .map_err(|missing| {
+                RpcError::internal(format!("the upstream witness of block {} {hash} is incomplete: {missing}", header.number))
+            })?;
+        Ok((validated, Some(Validation::Witness(witness))))
     }
 
     fn forkchoice_updated(&self, version: Version, p: &Value) -> Result<Value, RpcError> {
@@ -427,7 +497,7 @@ impl Node {
         if !engine.payloads.iter().any(|(existing, _)| *existing == id) {
             let built = {
                 let state = chain.state_after(&head_block).map_err(RpcError::internal)?;
-                (self.build(&head_block.header, &attributes, &state)?, state.take_prepared())
+                (self.build(&head_block.header, &attributes, &state)?, state.take_prepared().map(|prepared| Validation::Prepared(Box::new(prepared))))
             };
             drop(chain);
             let built = self.store_built(built.0, built.1)?;
@@ -511,7 +581,7 @@ impl Node {
 
     /// Stores a built payload's block: the consensus node inserts the payload with newPayload,
     /// and storing it now makes that a no-op, as base-reth's built blocks are already in its tree.
-    fn store_built(&self, built: BuiltPayload, prepared: Option<PreparedRoot>) -> Result<BuiltPayload, RpcError> {
+    fn store_built(&self, built: BuiltPayload, prepared: Option<Validation>) -> Result<BuiltPayload, RpcError> {
         self.chain.write().expect("chain lock").insert(built.hash, &built.executed, prepared).map_err(RpcError::internal)?;
         Ok(built)
     }

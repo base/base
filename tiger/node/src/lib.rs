@@ -19,7 +19,10 @@ mod state;
 pub use state::{NodeDb, NodeState, ParentState, StateReadError, block_changes};
 
 mod chain;
-pub use chain::{Chain, Forkchoice, StoredBlock};
+pub use chain::{BLOCK_HASH_WINDOW, Chain, Forkchoice, StatelessStart, StoredBlock, Validation};
+
+mod upstream;
+pub use upstream::{ExecutionWitness, Upstream};
 
 mod engine;
 pub use engine::{EngineState, Imported, Version as EngineVersion};

@@ -11,26 +11,56 @@
 //! they are within `MEMORY_DEPTH` of the head, so a shallow reorg back onto an unwound branch
 //! needs no download; older and never-canonical blocks are not persisted, and after a restart
 //! the consensus node sends them again.
+//!
+//! A stateless node (`Chain::open` with a [`StatelessStart`]) starts from a recent block with
+//! none of its state: the datadir holds a partial state (base-tiger-trie) and blocks from the
+//! start block on. A block whose execution reads state that is not local is validated over an
+//! execution witness from the upstream instead, verified node by node against the parent's state
+//! root, and the witness is stored with the block when it commits.
 
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use alloy_consensus::{Header, TxReceipt};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, B256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, BaseTxEnvelope as SignedTx};
 use base_tiger_store::{Fault, Table, WriteTxn};
 use base_tiger_trie::{BlockChanges, PreparedRoot, StateDb};
+use serde_json::json;
 
-use crate::{Executed, Genesis, NodeState, block_changes, genesis::genesis_changes};
+use crate::{
+    ExecutionWitness, Executed, Genesis, NodeState, Upstream, block_changes, genesis::genesis_changes,
+};
 
 /// Blocks `BLOCKHASH` can reach.
-const BLOCK_HASH_WINDOW: u64 = 256;
+pub const BLOCK_HASH_WINDOW: u64 = 256;
 /// Blocks this far below the head or deeper leave memory (base-reth's engine tree keeps a
 /// similar window of executed blocks in memory).
 const MEMORY_DEPTH: u64 = 64;
 /// The `TigerForkchoice` key of the forkchoice heads.
 const FORKCHOICE_KEY: &[u8] = b"forkchoice";
+/// The `TigerForkchoice` key of a stateless datadir's start block number (big-endian).
+const START_KEY: &[u8] = b"stateless-start";
+
+/// Where a stateless node starts: the upstream it reads from and the block to start at (a
+/// number or a tag such as `finalized`).
+#[derive(Debug, Clone, Copy)]
+pub struct StatelessStart<'a> {
+    /// The upstream base-reth RPC.
+    pub upstream: &'a Upstream,
+    /// The start block, as `debug_getRawBlock` takes it.
+    pub block: &'a str,
+}
+
+/// What validating a block leaves for its commit.
+#[derive(Debug)]
+pub enum Validation {
+    /// The trie changes of its state root, computed over the database.
+    Prepared(Box<PreparedRoot>),
+    /// The verified execution witness it was validated over (a partial state), stored with it.
+    Witness(ExecutionWitness),
+}
 
 /// One block with its execution results.
 #[derive(Debug, Clone)]
@@ -100,17 +130,37 @@ pub struct Chain {
     pub db: StateDb,
     /// Executed blocks within `MEMORY_DEPTH` of the head, canonical or not, with their changes.
     blocks: HashMap<B256, Arc<StoredBlock>>,
-    /// Trie changes computed while validating in-memory blocks, reused when they are committed.
-    prepared: HashMap<B256, PreparedRoot>,
+    /// What validating in-memory blocks left for their commit.
+    validations: HashMap<B256, Validation>,
+    /// The first block the datadir holds: the genesis block, or a stateless start block.
+    first: u64,
     head: Arc<StoredBlock>,
     forkchoice: Forkchoice,
 }
 
 impl Chain {
-    /// Opens (or initializes) the chain in the datadir `datadir`.
-    pub fn open(datadir: &Path, genesis: Genesis) -> Result<Self, String> {
+    /// Opens (or initializes) the chain in the datadir `datadir`. A new datadir starts at the
+    /// genesis block, or, with `stateless`, at the upstream's start block with no state.
+    pub fn open(datadir: &Path, genesis: Genesis, stateless: Option<StatelessStart<'_>>) -> Result<Self, String> {
         Fault::init();
-        let db = StateDb::open(datadir).map_err(|error| format!("opening {}: {error}", datadir.display()))?;
+        let open_error = |error: base_tiger_trie::TrieError| format!("opening {}: {error}", datadir.display());
+        let mut db = StateDb::open(datadir).map_err(open_error)?;
+        if let Some(start) = stateless
+            && db.tip().map_err(|error| error.to_string())?.is_none()
+        {
+            drop(db);
+            let block = Self::fetch_start(start, &genesis)?;
+            db = StateDb::open_partial(datadir, block.number(), block.header.state_root).map_err(open_error)?;
+            let mut w = db.write().map_err(|error| error.to_string())?;
+            block.append(&mut w)?;
+            w.set_chain_state(block.number(), block.number()).map_err(|error| error.to_string())?;
+            let heads = Forkchoice { head: block.hash, safe: block.hash, finalized: block.hash };
+            Self::put_forkchoice(&mut w, heads)?;
+            let dbi = w.db().dbi(Table::TigerForkchoice);
+            w.txn().put(dbi, START_KEY, &block.number().to_be_bytes()).map_err(|error| error.to_string())?;
+            w.commit().map_err(|error| error.to_string())?;
+            eprintln!("tiger: stateless start at block {} {}", block.number(), block.hash);
+        }
         let genesis_block = Arc::new(StoredBlock::new(
             genesis.header.clone(),
             genesis.hash,
@@ -122,7 +172,8 @@ impl Chain {
         let mut chain = Self {
             db,
             blocks: HashMap::new(),
-            prepared: HashMap::new(),
+            validations: HashMap::new(),
+            first: genesis.header.number,
             head: Arc::clone(&genesis_block),
             forkchoice: Forkchoice { head: genesis.hash, safe: genesis.hash, finalized: genesis.hash },
             genesis,
@@ -147,10 +198,25 @@ impl Chain {
             w.commit().map_err(|error| error.to_string())?;
             return Ok(chain);
         };
-        match chain.db.datadir.header(genesis_number).map_err(|error| error.to_string())? {
-            Some((_, hash)) if hash == chain.genesis.hash => {}
-            Some((_, hash)) => return Err(format!("datadir holds another chain (genesis {hash})")),
-            None => return Err(format!("datadir has no genesis block {genesis_number}")),
+        {
+            let txn = chain.db.datadir.db.read().map_err(|error| error.to_string())?;
+            if let Some(bytes) = txn
+                .get(chain.db.datadir.db.dbi(Table::TigerForkchoice), START_KEY)
+                .map_err(|error| error.to_string())?
+            {
+                let bytes: [u8; 8] = bytes.try_into().map_err(|_| "stateless start record".to_owned())?;
+                chain.first = u64::from_be_bytes(bytes);
+            }
+        }
+        if chain.db.is_partial() != (chain.first != genesis_number) {
+            return Err("the datadir's partial state and its start block record disagree".into());
+        }
+        if !chain.db.is_partial() {
+            match chain.db.datadir.header(genesis_number).map_err(|error| error.to_string())? {
+                Some((_, hash)) if hash == chain.genesis.hash => {}
+                Some((_, hash)) => return Err(format!("datadir holds another chain (genesis {hash})")),
+                None => return Err(format!("datadir has no genesis block {genesis_number}")),
+            }
         }
         chain.head = Arc::new(chain.load(tip)?.ok_or_else(|| format!("datadir has state up to block {tip} but no block {tip}"))?);
         {
@@ -167,6 +233,45 @@ impl Chain {
             return Err(format!("forkchoice head {} is not the stored tip {}", chain.forkchoice.head, chain.head.hash));
         }
         Ok(chain)
+    }
+
+    /// Fetches the stateless start block from the upstream and checks it: the chain id, the
+    /// block's hash, and its transactions and receipts against its header.
+    fn fetch_start(start: StatelessStart<'_>, genesis: &Genesis) -> Result<StoredBlock, String> {
+        let chain_id = start.upstream.call("eth_chainId", json!([]))?;
+        if chain_id != json!(format!("{:#x}", genesis.chain.chain_id)) {
+            return Err(format!("the upstream serves chain {chain_id}, not {}", genesis.chain.chain_id));
+        }
+        let (block_rlp, raw_receipts) = start.upstream.raw_block(start.block)?;
+        let block: alloy_consensus::Block<SignedTx> =
+            alloy_rlp::decode_exact(&block_rlp).map_err(|error| format!("upstream start block: {error}"))?;
+        let header = block.header;
+        if header.number <= genesis.header.number {
+            return Err(format!("stateless start block {} is not above the genesis block", header.number));
+        }
+        let mut transactions = Vec::with_capacity(block.body.transactions.len());
+        let mut senders = Vec::with_capacity(block.body.transactions.len());
+        for tx in &block.body.transactions {
+            let (signed, recovered) = base_tiger_evm::Transactions::decode(&tx.encoded_2718().into())
+                .map_err(|error| format!("upstream start block transaction: {error}"))?;
+            senders.push(recovered.signer());
+            transactions.push(signed);
+        }
+        if alloy_consensus::proofs::calculate_transaction_root(&transactions) != header.transactions_root {
+            return Err("upstream start block: transactions do not match its header".into());
+        }
+        let receipts = raw_receipts
+            .iter()
+            .map(|raw| BaseReceiptEnvelope::decode_2718_exact(raw))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("upstream start block receipt: {error}"))?;
+        if receipts.len() != transactions.len()
+            || base_tiger_evm::receipts_root(&genesis.chain, header.timestamp, &receipts) != header.receipts_root
+        {
+            return Err("upstream start block: receipts do not match its header".into());
+        }
+        let hash = header.hash_slow();
+        Ok(StoredBlock::new(header, hash, transactions, senders, receipts, None))
     }
 
     /// Reads canonical block `number` from the datadir.
@@ -210,9 +315,14 @@ impl Chain {
         Some(self.load_canonical(number))
     }
 
+    /// The first block the datadir holds: the genesis block, or a stateless start block.
+    pub const fn first(&self) -> u64 {
+        self.first
+    }
+
     /// The canonical block hash at `number`.
     pub fn canonical_hash(&self, number: u64) -> Option<B256> {
-        if number < self.genesis.header.number || number > self.head.number() {
+        if number < self.first || number > self.head.number() {
             return None;
         }
         if number == self.head.number() {
@@ -282,7 +392,8 @@ impl Chain {
     }
 
     /// The hashes of `block` and its ancestors in the `BLOCKHASH` window, zero below genesis.
-    fn block_hashes(&self, block: &StoredBlock) -> HashMap<u64, B256> {
+    /// Ancestors below a stateless start block are left out (unknown).
+    pub fn block_hashes(&self, block: &StoredBlock) -> HashMap<u64, B256> {
         let first = block.number().saturating_sub(BLOCK_HASH_WINDOW - 1);
         let mut hashes = HashMap::with_capacity(BLOCK_HASH_WINDOW as usize);
         let mut number = block.number();
@@ -307,18 +418,22 @@ impl Chain {
             }
         }
         for below in first..number {
-            hashes.insert(below, self.canonical_hash(below).unwrap_or(B256::ZERO));
+            if below < self.genesis.header.number {
+                hashes.insert(below, B256::ZERO);
+            } else if let Some(hash) = self.canonical_hash(below) {
+                hashes.insert(below, hash);
+            }
         }
         hashes
     }
 
-    /// Keeps a validated block in memory until it becomes canonical, with the trie changes its
-    /// state root came from (`NodeState::take_prepared`).
+    /// Keeps a validated block in memory until it becomes canonical, with what its validation
+    /// leaves for the commit.
     pub fn insert(
         &mut self,
         hash: B256,
         executed: &Executed,
-        prepared: Option<PreparedRoot>,
+        validation: Option<Validation>,
     ) -> Result<Arc<StoredBlock>, String> {
         if let Some(block) = self.blocks.get(&hash) {
             return Ok(Arc::clone(block));
@@ -333,8 +448,8 @@ impl Chain {
             Some(Arc::new(block_changes(&executed.changes))),
         ));
         self.blocks.insert(hash, Arc::clone(&block));
-        if let Some(prepared) = prepared {
-            self.prepared.insert(hash, prepared);
+        if let Some(validation) = validation {
+            self.validations.insert(hash, validation);
         }
         Ok(block)
     }
@@ -374,7 +489,14 @@ impl Chain {
         let mut w = self.db.write().map_err(|error| error.to_string())?;
         for block in &branch {
             let changes = block.changes.as_ref().ok_or_else(|| format!("state of block {} is gone", block.hash))?;
-            let prepared = self.prepared.remove(&block.hash);
+            let prepared = match self.validations.remove(&block.hash) {
+                Some(Validation::Prepared(prepared)) => Some(*prepared),
+                Some(Validation::Witness(witness)) => {
+                    self.db.absorb_witness(&mut w, &witness.state, &witness.codes).map_err(|error| error.to_string())?;
+                    None
+                }
+                None => None,
+            };
             let root =
                 self.db.commit_prepared(&mut w, block.number(), changes, prepared).map_err(|error| error.to_string())?;
             if root != block.header.state_root {
@@ -414,7 +536,7 @@ impl Chain {
         }
         self.blocks = reachable;
         let blocks = &self.blocks;
-        self.prepared.retain(|hash, _| blocks.contains_key(hash));
+        self.validations.retain(|hash, _| blocks.contains_key(hash));
     }
 
     /// Applies a forkchoice update whose blocks are all stored, and persists it. `safe` and

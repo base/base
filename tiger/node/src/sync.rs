@@ -109,10 +109,13 @@ impl Node {
         // The last stretch (and reorgs): backward by hash from the target to a stored block.
         let mut headers: Vec<SealedHeader> = Vec::new();
         let mut from = target;
-        let floor = self.chain.read().expect("chain lock").genesis.header.number;
+        let floor = self.chain.read().expect("chain lock").first();
         loop {
             let known = |hash: &B256| self.chain.read().expect("chain lock").block(hash).is_some();
             let top_number = headers.last().map_or(top.number(), |lowest| lowest.number() - 1);
+            if top_number < floor {
+                return Err(format!("{target} does not descend from the first stored block {floor}"));
+            }
             let stop_at = top_number.saturating_sub(BATCH - 1).max(floor);
             let batch = downloader.headers_back(from, stop_at, BATCH).map_err(error)?;
             let mut done = false;
