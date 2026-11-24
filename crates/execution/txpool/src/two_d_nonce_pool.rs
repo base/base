@@ -981,6 +981,27 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .map_or_else(Vec::new, |hashes| hashes.iter().copied().collect())
     }
 
+    /// Returns the hashes of the transactions whose sender's balance in
+    /// `balances` no longer covers their `cost()`. Base transactions are
+    /// skipped; the mempool guard tracks their payers' balances.
+    pub(crate) fn unaffordable_transactions(
+        &self,
+        balances: impl IntoIterator<Item = (Address, U256)>,
+    ) -> Vec<TxHash> {
+        balances
+            .into_iter()
+            .flat_map(|(sender, balance)| {
+                self.usage.sender_hashes.get(&sender).into_iter().flatten().filter(move |hash| {
+                    self.hashes.get(*hash).is_some_and(|transaction| {
+                        transaction.transaction.as_base_tx().is_none()
+                            && *transaction.transaction.cost() > balance
+                    })
+                })
+            })
+            .copied()
+            .collect()
+    }
+
     /// Returns the lanes holding `sender`'s transactions, from the per-sender
     /// index rather than a pool scan.
     pub(crate) fn sender_lanes(&self, sender: &Address) -> HashSet<LaneId> {
