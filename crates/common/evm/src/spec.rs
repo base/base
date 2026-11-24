@@ -101,7 +101,6 @@ mod tests {
 
     #[test]
     fn test_base_spec_id_eth_spec_compatibility() {
-        // Define test cases: (BaseUpgrade, enabled in ETH specs, enabled in Base upgrades)
         let test_cases = [
             (
                 BaseUpgrade::Bedrock,
@@ -254,7 +253,6 @@ mod tests {
         for (base_upgrade, eth_tests, base_tests) in test_cases {
             let base_spec = BaseSpecId::new(base_upgrade);
 
-            // Test ETH spec compatibility
             for (eth_spec, expected) in eth_tests {
                 assert_eq!(
                     base_spec.into_eth_spec().is_enabled_in(eth_spec),
@@ -264,7 +262,6 @@ mod tests {
                 );
             }
 
-            // Test Base upgrade compatibility
             for (other_base_upgrade, expected) in base_tests {
                 assert_eq!(
                     base_spec.is_enabled_in(other_base_upgrade),

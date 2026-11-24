@@ -99,7 +99,6 @@ impl L1BlockInfo {
             .storage(Predeploys::L1_BLOCK_INFO, Self::DA_FOOTPRINT_GAS_SCALAR_SLOT)?
             .to_be_bytes::<32>();
 
-        // Extract the first 2 bytes directly as a u16 in big-endian format
         let bytes = [
             da_footprint_gas_scalar_slot[Self::DA_FOOTPRINT_GAS_SCALAR_OFFSET],
             da_footprint_gas_scalar_slot[Self::DA_FOOTPRINT_GAS_SCALAR_OFFSET + 1],
@@ -116,7 +115,6 @@ impl L1BlockInfo {
 
     /// Try to fetch the L1 block info from the database, post-Isthmus.
     fn try_fetch_isthmus<DB: Database>(&mut self, db: &mut DB) -> Result<(), DB::Error> {
-        // Post-isthmus L1 block info
         let operator_fee_scalars = db
             .storage(Predeploys::L1_BLOCK_INFO, Self::OPERATOR_FEE_SCALARS_SLOT)?
             .to_be_bytes::<32>();
@@ -178,7 +176,6 @@ impl L1BlockInfo {
         l2_block: U256,
         spec_id: BaseSpecId,
     ) -> Result<Self, DB::Error> {
-        // Ensure the L1 Block account is loaded into the cache.
         let _ = db.basic(Predeploys::L1_BLOCK_INFO)?;
 
         let mut out = Self {
@@ -187,7 +184,6 @@ impl L1BlockInfo {
             ..Default::default()
         };
 
-        // Post-Ecotone
         if !spec_id.is_feature_enabled(BaseFeature::BlobAwareL1Fees) {
             out.l1_base_fee_scalar = db.storage(Predeploys::L1_BLOCK_INFO, Self::L1_SCALAR_SLOT)?;
             out.l1_fee_overhead =
@@ -198,12 +194,10 @@ impl L1BlockInfo {
 
         out.try_fetch_ecotone(db)?;
 
-        // Post-Isthmus L1 block info
         if spec_id.is_feature_enabled(BaseFeature::OperatorFee) {
             out.try_fetch_isthmus(db)?;
         }
 
-        // Pre-Jovian
         if spec_id.is_feature_enabled(BaseFeature::DaFootprint) {
             out.try_fetch_jovian(db)?;
         }
@@ -270,7 +264,6 @@ impl L1BlockInfo {
     ///
     /// Internally calls [`L1BlockInfo::tx_cost`].
     pub fn tx_cost_with_tx(&mut self, tx: impl BaseTxTr, spec: BaseSpecId) -> Option<U256> {
-        // account for additional cost of l1 fee and operator fee
         let enveloped_tx = tx.enveloped_tx()?;
         let gas_limit = U256::from(tx.gas_limit());
         // Fill the per-transaction L1 cost cache first so a FastLZ size the transaction already
@@ -286,10 +279,8 @@ impl L1BlockInfo {
     /// Calculate additional transaction cost.
     #[inline]
     pub fn tx_cost(&mut self, enveloped_tx: &[u8], gas_limit: U256, spec: BaseSpecId) -> U256 {
-        // compute L1 cost
         let mut additional_cost = self.calculate_tx_l1_cost(enveloped_tx, spec);
 
-        // compute operator fee
         if spec.is_feature_enabled(BaseFeature::OperatorFee) {
             let operator_fee_charge = self.operator_fee_charge(enveloped_tx, gas_limit, spec);
             additional_cost = additional_cost.saturating_add(operator_fee_charge);
@@ -453,7 +444,6 @@ mod tests {
         assert_eq!(gas_cost, U256::from(1048));
         l1_block_info.clear_tx_l1_cost();
 
-        // Zero rollup data gas cost should result in zero
         let input = bytes!("");
         let gas_cost =
             l1_block_info.calculate_tx_l1_cost(&input, BaseSpecId::new(BaseUpgrade::Regolith));
@@ -487,7 +477,6 @@ mod tests {
         assert_eq!(gas_cost, U256::from(51));
         l1_block_info.clear_tx_l1_cost();
 
-        // Zero rollup data gas cost should result in zero
         let input = bytes!("");
         let gas_cost =
             l1_block_info.calculate_tx_l1_cost(&input, BaseSpecId::new(BaseUpgrade::Ecotone));
@@ -511,8 +500,6 @@ mod tests {
 
     #[test]
     fn calculate_tx_l1_cost_ecotone() {
-        // rig
-
         // L1 block info from a legacy Ecotone compatibility fixture, block 118024092.
         // 1710374401 (ecotone timestamp)
         // 1711603765 (block 118024092 timestamp)
@@ -543,8 +530,6 @@ mod tests {
         let expected_l1_fee = U256::from_be_bytes(hex!(
             "000000000000000000000000000000000000000000000000000006a510bd7431" // 7306020222001 wei
         ));
-
-        // test
 
         let gas_used = l1_block_info.data_gas(TX, BaseSpecId::new(BaseUpgrade::Ecotone));
 
@@ -597,7 +582,6 @@ mod tests {
         assert_eq!(gas_cost, U256::from(2148));
         l1_block_info.clear_tx_l1_cost();
 
-        // Zero rollup data gas cost should result in zero
         let input = bytes!("");
         let gas_cost =
             l1_block_info.calculate_tx_l1_cost(&input, BaseSpecId::new(BaseUpgrade::Fjord));
@@ -613,8 +597,6 @@ mod tests {
 
     #[test]
     fn calculate_tx_l1_cost_fjord() {
-        // rig
-
         // L1 block info from a legacy Fjord compatibility fixture, block 124665056.
         // <https://optimistic.etherscan.io/block/124665056>
         let l1_block_info = L1BlockInfo {
@@ -637,8 +619,6 @@ mod tests {
         let expected_l1_fee = U256::from_be_bytes(hex!(
             "00000000000000000000000000000000000000000000000000000005bf1ab43d"
         ));
-
-        // test
 
         let data_gas = l1_block_info.data_gas(TX, BaseSpecId::new(BaseUpgrade::Fjord));
 

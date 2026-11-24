@@ -12,12 +12,10 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
 base-retry.workspace = true
 base-metrics.workspace = true
 base-common-genesis = { workspace = true, features = ["std"] }
 
-# alloy
 alloy-json-rpc.workspace = true
 alloy-provider.workspace = true
 alloy-transport.workspace = true
@@ -26,7 +24,6 @@ alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
-# general
 url.workspace = true
 eyre.workspace = true
 backon.workspace = true

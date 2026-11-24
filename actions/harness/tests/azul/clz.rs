@@ -42,15 +42,12 @@ async fn azul_clz_op_code() {
     let mut env = AzulTestEnv::new();
     let contract_addr = env.first_contract_address();
 
-    // ── Block 1 (ts=2, pre-fork): deploy CLZ probe contract ──────────
     let deploy_tx =
         env.create_tx(TxKind::Create, Bytes::from_static(&CLZ_INIT_CODE), U256::ZERO, 100_000);
     let block1 = env.sequencer.build_next_block_with_transactions(vec![deploy_tx]).await;
 
-    // Verify the contract code was deployed.
     assert!(env.sequencer.has_code(contract_addr), "deployed contract must have non-empty code");
 
-    // ── Block 2 (ts=4, pre-fork): call CLZ(1) — must abort ──────────
     let call_pre = env.create_tx(
         TxKind::Call(contract_addr),
         Bytes::from_static(&CLZ_INPUT_ONE),
@@ -66,7 +63,6 @@ async fn azul_clz_op_code() {
         "sentinel must be zero: CLZ should abort as invalid opcode pre-fork"
     );
 
-    // ── Block 3 (ts=6, post-fork): call CLZ(1) — must succeed ───────
     let call_one = env.create_tx(
         TxKind::Call(contract_addr),
         Bytes::from_static(&CLZ_INPUT_ONE),
@@ -75,7 +71,6 @@ async fn azul_clz_op_code() {
     );
     let block3 = env.sequencer.build_next_block_with_transactions(vec![call_one]).await;
 
-    // Sentinel must now be 1 (CLZ completed), result slot must be 255.
     {
         let sentinel = env.sequencer.storage_at(contract_addr, CLZ_SENTINEL_SLOT);
         let result = env.sequencer.storage_at(contract_addr, CLZ_RESULT_SLOT);
@@ -89,7 +84,6 @@ async fn azul_clz_op_code() {
         );
     }
 
-    // ── Block 4 (ts=8, post-fork): call CLZ(0x8000…0) — result = 0 ──
     let call_high = env.create_tx(
         TxKind::Call(contract_addr),
         Bytes::from_static(&CLZ_INPUT_HIGH_BIT),
@@ -111,6 +105,5 @@ async fn azul_clz_op_code() {
         );
     }
 
-    // ── Batch and derive all 4 blocks ────────────────────────────────
     env.derive_blocks([(block1, 1), (block2, 2), (block3, 3), (block4, 4)], 4, "Base V1").await;
 }

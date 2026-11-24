@@ -29,7 +29,6 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
         .base_fee_per_gas
         .expect("Base fee should be present in the latest block");
 
-    // generate transactions with randomized tips
     let txs = join_all(accounts.iter().map(|signer| {
         driver
             .create_transaction()
@@ -46,7 +45,6 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
 
     driver.build_new_block().await?;
 
-    // verify all transactions are included in the block
     assert!(
         stream::iter(txs.iter())
             .all(|tx_hash| async {
@@ -62,7 +60,6 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
         "not all transactions included in the block"
     );
 
-    // verify user transactions are fee-ordered within the block
     let tips_in_block_order = driver
         .latest_full()
         .await?
@@ -323,13 +320,9 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
             .collect::<Vec<_>>()
     };
 
-    // `first` is evaluated within budget and included immediately at its natural priority
-    // position. `deferred` has higher priority than `ordinary` but is skipped by the exhausted
-    // budget, so only `ordinary` (unaffected by the cutoff) joins it in this block.
     let block = driver.build_new_block().await?;
     assert_eq!(included(block), [first_hash, ordinary_hash]);
 
-    // The next build starts with a fresh budget and includes the deferred transaction.
     let block = driver.build_new_block().await?;
     assert_eq!(included(block), [deferred_hash]);
 

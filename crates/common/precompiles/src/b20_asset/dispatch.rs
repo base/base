@@ -63,7 +63,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
-        // Ensure the token has been deployed (has bytecode at its address).
         match version.implementation().is_initialized(self) {
             Ok(true) => {}
             Ok(false) => {
@@ -152,7 +151,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         let logic = version.implementation();
         let caller = ctx.caller();
         let encoded: Bytes = match call {
-            // --- Pure reads (routed to the active version) ---
             C::name(_) => logic.name(self)?.abi_encode().into(),
             C::symbol(_) => logic.symbol(self)?.abi_encode().into(),
             C::decimals(_) => U256::from(logic.decimals(self)?).abi_encode().into(),
@@ -163,7 +161,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             C::nonces(c) => logic.nonce(self, c.owner)?.abi_encode().into(),
             C::contractURI(_) => logic.contract_uri(self)?.abi_encode().into(),
 
-            // --- Role identifiers (invariant across versions) ---
             C::DEFAULT_ADMIN_ROLE(_) => B20TokenRole::DefaultAdmin.id().abi_encode().into(),
             C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
             C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
@@ -173,7 +170,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             C::UNPAUSE_ROLE(_) => B20TokenRole::Unpause.id().abi_encode().into(),
             C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
 
-            // --- Policy type identifiers (invariant across versions) ---
             C::TRANSFER_SENDER_POLICY(_) => B20PolicyType::TransferSender.id().abi_encode().into(),
             C::TRANSFER_RECEIVER_POLICY(_) => {
                 B20PolicyType::TransferReceiver.id().abi_encode().into()
@@ -185,18 +181,14 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             C::SEIZE_EXEMPT_POLICY(_) => B20PolicyType::SeizeExempt.id().abi_encode().into(),
             C::SEIZE_RECEIVER_POLICY(_) => B20PolicyType::SeizeReceiver.id().abi_encode().into(),
 
-            // --- Role reads ---
             C::hasRole(c) => logic.has_role(self, c.role, c.account)?.abi_encode().into(),
             C::getRoleAdmin(c) => logic.role_admin(self, c.role)?.abi_encode().into(),
 
-            // --- Pause reads ---
             C::pausedFeatures(_) => logic.paused_features(self)?.abi_encode().into(),
             C::isPaused(c) => logic.is_paused(self, c.feature)?.abi_encode().into(),
 
-            // --- Policy reads ---
             C::policyId(c) => logic.policy_id(self, c.policyScope)?.abi_encode().into(),
 
-            // --- Domain reads ---
             C::DOMAIN_SEPARATOR(_) => {
                 logic.domain_separator(self, ctx.chain_id())?.abi_encode().into()
             }
@@ -215,7 +207,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 .into()
             }
 
-            // --- ERC-20 mutating ---
             C::transfer(c) => {
                 logic.transfer(self, caller, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
@@ -239,7 +230,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 true.abi_encode().into()
             }
 
-            // --- Mint ---
             C::mint(c) => {
                 logic.mint(self, caller, c.to, c.amount, privileged)?;
                 Bytes::new()
@@ -250,7 +240,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
 
-            // --- Burn ---
             // Self-burn operations are never factory-privileged: during init the caller is the
             // factory, not a token holder.
             C::burn(c) => {
@@ -267,13 +256,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
 
-            // --- Seize ---
             C::seizeWithMemo(c) => {
                 logic.seize_with_memo(self, caller, c.from, c.to, c.amount, c.memo)?;
                 Bytes::new()
             }
 
-            // --- Pause ---
             C::pause(c) => {
                 logic.pause(self, caller, c.features, privileged)?;
                 Bytes::new()
@@ -283,7 +270,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
 
-            // --- Admin ---
             C::updateSupplyCap(c) => {
                 logic.update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
                 Bytes::new()
@@ -301,7 +287,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
 
-            // --- Role mutations ---
             C::grantRole(c) => {
                 logic.grant_role(self, caller, c.role, c.account, privileged)?;
                 Bytes::new()
@@ -325,13 +310,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
 
-            // --- Policy mutations ---
             C::updatePolicy(c) => {
                 logic.update_policy(self, caller, c.policyScope, c.newPolicyId, privileged)?;
                 Bytes::new()
             }
 
-            // --- Permit ---
             C::permit(c) => {
                 logic.permit(
                     self,
@@ -371,7 +354,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
             SC::MAX_UI_MULTIPLIER(_) => logic.max_ui_multiplier()?.abi_encode().into(),
 
-            // --- Multiplier reads ---
             SC::multiplier(_) => logic.multiplier(self)?.abi_encode().into(),
             SC::uiMultiplier(_) => logic.ui_multiplier(self)?.abi_encode().into(),
             SC::newUIMultiplier(_) => logic.new_ui_multiplier(self)?.abi_encode().into(),
@@ -387,20 +369,16 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             SC::balanceOfUI(c) => logic.balance_of_ui(self, c.account)?.abi_encode().into(),
             SC::totalSupplyUI(_) => logic.total_supply_ui(self)?.abi_encode().into(),
 
-            // --- ERC-165 ---
             SC::supportsInterface(c) => {
                 logic.supports_interface(c.interfaceId)?.abi_encode().into()
             }
 
-            // --- Announcement reads ---
             SC::isAnnouncementIdUsed(c) => {
                 logic.is_announcement_id_used(self, c.id.as_str())?.abi_encode().into()
             }
 
-            // --- Extra metadata reads ---
             SC::extraMetadata(c) => logic.extra_metadata(self, c.key.as_str())?.abi_encode().into(),
 
-            // --- Multiplier mutations ---
             SC::updateMultiplier(c) => {
                 logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
                 Bytes::new()
@@ -420,7 +398,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
 
-            // --- Announcement ---
             // Bounded safety net. Every accepted `announce` takes the borrowed fast path in `route`
             // (identical accept-set to this owned decode). If that invariant broke, this arm still
             // executes correctly by feeding the owned call into the same runner via
@@ -436,7 +413,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
 
-            // --- Batched mint ---
             SC::batchMint(c) => {
                 observer.record_batch_items(
                     &PrecompileAuxiliaryMetrics::b20("asset", "batchMint"),
@@ -446,7 +422,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
 
-            // --- Extra metadata mutations ---
             SC::updateExtraMetadata(c) => {
                 logic.update_extra_metadata(self, caller, c.key, c.value, privileged)?;
                 Bytes::new()
@@ -966,8 +941,6 @@ mod tests {
         assert!(out.is_revert());
         assert_eq!(out.bytes, Bytes::from(IB20::NonPayable {}.abi_encode()));
     }
-
-    // --- Cantina #16: aliased-`bytes[]` announce borrowed decode -------------------------------
 
     /// Builds `announce` calldata where `n` `bytes[]` element offsets all alias one shared `tail`.
     ///

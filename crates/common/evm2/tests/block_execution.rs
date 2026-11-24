@@ -94,7 +94,6 @@ fn executes_block_of_deposit_then_standard_tx() {
 
     let (mut evm, result, _block_state) = executor.finish();
 
-    // Two receipts, in order, of the expected variants.
     assert_eq!(result.receipts.len(), 2);
     match &result.receipts[0] {
         BaseReceiptEnvelope::Deposit(r) => {
@@ -110,11 +109,9 @@ fn executes_block_of_deposit_then_standard_tx() {
         "second receipt is EIP-1559"
     );
 
-    // Cumulative gas is monotonic and the block gas equals the last receipt's cumulative gas.
     assert!(cumulative_gas(&result.receipts[0]) < cumulative_gas(&result.receipts[1]));
     assert_eq!(result.gas_used, cumulative_gas(&result.receipts[1]));
 
-    // Both transactions bumped the sender nonce (deposit → 1, standard → 2).
     assert_eq!(nonce(&mut evm, SENDER), 2);
     // The standard transaction's L1 data fee was collected into the vault (the deposit is exempt).
     assert!(balance(&mut evm, Predeploys::L1_FEE_VAULT) > U256::ZERO);

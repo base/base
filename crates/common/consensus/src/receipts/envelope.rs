@@ -404,7 +404,6 @@ mod tests {
 
         receipt.network_encode(&mut data);
 
-        // check that the rlp length equals the length of the expected rlp
         assert_eq!(receipt.length(), expected.len());
         assert_eq!(data, expected);
     }

@@ -56,7 +56,6 @@ impl DaEgress {
                 release_due |= channel.deadline_due(l1_head);
             }
 
-            // Open output, or a closed tail that does not fit, stops the walk.
             if !channel_complete {
                 break;
             }
@@ -77,7 +76,6 @@ impl DaEgress {
         let mut available = channel.available_output();
         let mut terminal_pending = channel.terminal_pending();
 
-        // Every emitted data frame consumes a stable compressed prefix.
         while available > 0 && *remaining > Frame::ENCODED_OVERHEAD {
             let data_capacity =
                 (*remaining - Frame::ENCODED_OVERHEAD).min(channel.max_frame_data());
@@ -214,19 +212,16 @@ impl DaEgress {
         let channel = channels.iter().find(|channel| !channel.framing_complete())?;
         let available = channel.available_output();
 
-        // Full frames may stream before the channel closes.
         if available >= channel.max_frame_data() {
             let data_len = channel.max_frame_data();
             let is_last = data_len == available && channel.terminal_pending();
             return Some((channel.id(), data_len, is_last));
         }
 
-        // A closed channel releases its final, possibly empty, frame.
         if channel.terminal_pending() {
             return Some((channel.id(), available, true));
         }
 
-        // Partial output from an open channel remains buffered.
         None
     }
 

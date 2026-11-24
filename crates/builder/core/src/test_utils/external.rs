@@ -73,12 +73,10 @@ impl ExternalNode {
         std::fs::write(tempdir.join("genesis.json"), include_str!("./artifacts/genesis.json.tmpl"))
             .map_err(|_| eyre::eyre!("Failed to write genesis file"))?;
 
-        // Create Docker container with reth EL client
         let container = create_container(&tempdir, &docker, version_tag).await?;
 
         docker.start_container(&container.id, None::<StartContainerOptions>).await?;
 
-        // Wait for the container to be ready and IPCs to be created
         await_ipc_readiness(&docker, &container.id).await?;
 
         // IPC files created by the container have restrictive permissions,
@@ -86,13 +84,11 @@ impl ExternalNode {
         relax_permissions(&docker, &container.id, AUTH_CONTAINER_IPC_PATH).await?;
         relax_permissions(&docker, &container.id, RPC_CONTAINER_IPC_PATH).await?;
 
-        // Connect to the IPCs
         let engine_api = EngineApi::with_ipc(&auth_ipc);
         let provider = ProviderBuilder::<Identity, Identity, Base>::default()
             .connect_ipc(rpc_ipc.into())
             .await?;
 
-        // spin up a task that will clean up the container on ctrl-c
         tokio::spawn({
             let docker = docker.clone();
             let container_id = container.id.clone();
@@ -133,19 +129,15 @@ impl ExternalNode {
     /// This method will fail if this node is ahead of the provided chain or they do not
     /// share the same genesis block.
     pub async fn catch_up_with(&self, chain: &RootProvider<Base>) -> eyre::Result<()> {
-        // check if we need to catch up
         let (latest_hash, latest_number) = chain.latest_block_hash_and_number().await?;
         let (our_latest_hash, our_latest_number) =
             self.provider.latest_block_hash_and_number().await?;
 
-        // check if we can sync in the first place
         match (our_latest_number, latest_number) {
             (we, them) if we == them && our_latest_hash == latest_hash => {
-                // we are already caught up and in sync with the provided chain
                 return Ok(());
             }
             (we, them) if we == them && our_latest_hash != latest_hash => {
-                // divergent histories, can't sync
                 return Err(eyre::eyre!(
                     "External node is at the same height but has a different latest block hash: \
                     {we} == {them}, {our_latest_hash} != {latest_hash}",
@@ -163,7 +155,6 @@ impl ExternalNode {
                     "external node is behind the local chain, catching up"
                 );
 
-                // make sure that we share common history with the provided chain
                 let hash_at_height = chain.hash_at_height(we).await?;
                 if hash_at_height != our_latest_hash {
                     return Err(eyre::eyre!(
@@ -177,7 +168,6 @@ impl ExternalNode {
             _ => {}
         };
 
-        // we are behind, let's catch up
         let mut our_current_height = our_latest_number + 1;
 
         while our_current_height <= latest_number {
@@ -203,7 +193,6 @@ impl ExternalNode {
             our_current_height += 1;
         }
 
-        // sync complete, double check that we are in sync
         let (final_hash, final_number) = self.provider().latest_block_hash_and_number().await?;
 
         if final_hash != latest_hash || final_number != latest_number {
@@ -250,7 +239,6 @@ impl ExternalNode {
 
 impl Drop for ExternalNode {
     fn drop(&mut self) {
-        // Block on cleaning up the container
         let docker = self.docker.clone();
         let container_id = self.container_id.clone();
         let tempdir = self.tempdir.clone();
@@ -271,7 +259,6 @@ async fn create_container(
         ..Default::default()
     };
 
-    // first pull the image locally
     let mut pull_stream = docker.create_image(
         Some(
             CreateImageOptionsBuilder::default()
@@ -369,7 +356,6 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
     let mut rpc_ipc_started = false;
     let mut auth_ipc_started = false;
 
-    // wait for the node to start and signal that IPCs are ready
     while let Some(Ok(output)) = attach_stream.output.next().await {
         match output {
             LogOutput::StdOut { message } | LogOutput::StdErr { message } => {
@@ -402,15 +388,12 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
 }
 
 async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
-    // This is a no-op function that will be spawned to clean up the container on ctrl-c
-    // or Drop.
     debug!(tempdir = %tempdir.display(), container_id = %container_id, "Cleaning up external node resources");
 
     if !tempdir.exists() {
-        return; // If the tempdir does not exist, there's nothing to clean up.
+        return;
     }
 
-    // Block on cleaning up the container
     if let Err(e) = docker.stop_container(&container_id, None::<StopContainerOptions>).await {
         warn!(container_id = %container_id, error = %e, "Failed to stop container");
     }
@@ -425,7 +408,6 @@ async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
         warn!(container_id = %container_id, error = %e, "Failed to remove container");
     }
 
-    // Clean up the temporary directory
     std::fs::remove_dir_all(&tempdir).expect("Failed to remove temporary directory");
 }
 
@@ -467,11 +449,9 @@ impl BaseProviderExt for RootProvider<Base> {
 
         let withdrawals = block.withdrawals.unwrap_or_default();
 
-        // Calculate the withdrawals root properly
         let withdrawals_root = if withdrawals.is_empty() {
             EMPTY_WITHDRAWALS
         } else {
-            // Calculate the Merkle Patricia Trie root of the withdrawals
             let mut buf = Vec::new();
             withdrawals.encode(&mut buf);
             keccak256(&buf)

@@ -12,13 +12,11 @@ use crate::BaseUpgrade;
 /// Complete configuration for a Base chain
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainConfig {
-    // Identity
     /// L2 chain ID.
     pub chain_id: u64,
     /// L1 chain ID.
     pub l1_chain_id: u64,
 
-    // Block timing
     /// L2 block time in seconds.
     pub block_time: u64,
     /// Sequencer window size in blocks.
@@ -28,7 +26,6 @@ pub struct ChainConfig {
     /// Channel timeout in L1 blocks.
     pub channel_timeout: u64,
 
-    // Hardfork schedule
     /// Bedrock activation block.
     pub bedrock_block: u64,
     /// Regolith activation timestamp.
@@ -62,7 +59,6 @@ pub struct ChainConfig {
     /// Everest activation timestamp (optional).
     pub everest_timestamp: Option<u64>,
 
-    // Genesis
     /// L1 genesis block hash.
     pub genesis_l1_hash: B256,
     /// L1 genesis block number.
@@ -82,7 +78,6 @@ pub struct ChainConfig {
     /// Genesis gas limit.
     pub genesis_gas_limit: u64,
 
-    // Base fee params
     /// EIP-1559 elasticity multiplier.
     pub eip1559_elasticity: u64,
     /// EIP-1559 denominator (pre-Canyon).
@@ -90,7 +85,6 @@ pub struct ChainConfig {
     /// EIP-1559 denominator (Canyon and later).
     pub eip1559_denominator_canyon: u64,
 
-    // Contract addresses
     /// Batch inbox address on L1.
     pub batch_inbox_address: Address,
     /// Deposit contract (`OptimismPortal`) address on L1.
@@ -100,19 +94,15 @@ pub struct ChainConfig {
     /// Protocol versions address on L1.
     pub protocol_versions_address: Address,
 
-    // Roles
     /// Unsafe block signer address.
     pub unsafe_block_signer: Option<Address>,
 
-    // Pruning
     /// Maximum number of entries deleted per execution-layer pruning batch.
     pub prune_delete_limit: usize,
 
-    // Networking
     /// Bootnodes for peer discovery, split by stack layer.
     pub bootnodes: Bootnodes,
 
-    // Execution genesis
     /// Embedded genesis JSON for reth alloc tables.
     pub genesis_json: &'static str,
 }
@@ -818,7 +808,6 @@ mod tests {
 
     #[test]
     fn base_chain_selector_is_inverse_of_from_base_chain() {
-        // Every selector round-trips through `from_base_chain`.
         for selector in ["mainnet", "sepolia", "zeronet", "dev"] {
             let config = ChainConfig::from_base_chain(selector).unwrap();
             assert_eq!(config.base_chain_selector(), Some(selector));

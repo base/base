@@ -158,7 +158,6 @@ pub fn compare_sets(label: &str, local_items: &[Bytes], rpc_items: &[Bytes]) -> 
 /// the local witness file, printing a human-readable diff of diverging trie nodes,
 /// bytecodes, and account state.
 pub async fn run(local: PathBuf, rpc_url: String, block: u64) -> Result<()> {
-    // 1. Read local witness.
     println!("Reading local witness from: {}", local.display());
     let local_json = fs::read_to_string(&local)?;
     let local_witness: Witness = serde_json::from_str(&local_json)?;
@@ -170,7 +169,6 @@ pub async fn run(local: PathBuf, rpc_url: String, block: u64) -> Result<()> {
         local_witness.keys.len()
     );
 
-    // 2. Fetch RPC witness.
     println!("Fetching RPC witness for block #{block} from {rpc_url}");
     let url = rpc_url.parse()?;
     let http = Http::<Client>::new(url);
@@ -187,24 +185,20 @@ pub async fn run(local: PathBuf, rpc_url: String, block: u64) -> Result<()> {
         rpc_witness.keys.len()
     );
 
-    // 3. High-level comparison.
     println!("\n=== Overview ===");
     let state_diffs = compare_sets("state", &local_witness.state, &rpc_witness.state);
     let code_diffs = compare_sets("codes", &local_witness.codes, &rpc_witness.codes);
     let key_diffs = compare_sets("keys", &local_witness.keys, &rpc_witness.keys);
 
-    // Merge both key sets for address lookups by chaining iterators — no clone needed.
     let address_lookup =
         build_address_lookup(local_witness.keys.iter().chain(rpc_witness.keys.iter()));
     let nibble_lookup = build_nibble_address_lookup(&address_lookup);
 
     println!("  address preimages available: {}", address_lookup.len());
 
-    // 4. Extract leaves once — reused for both diff analysis and one-sided leaf counts.
     let local_leaves = extract_leaves(&local_witness.state);
     let rpc_leaves = extract_leaves(&rpc_witness.state);
 
-    // 5. Find differing leaf nodes — this is the core analysis.
     println!("\n=== Differing Leaf Nodes ===");
     let leaf_pairs = find_differing_leaf_pairs(&local_leaves, &rpc_leaves);
 
@@ -276,7 +270,6 @@ pub async fn run(local: PathBuf, rpc_url: String, block: u64) -> Result<()> {
         );
     }
 
-    // 6. Count leaves only in one side (created/deleted accounts or storage slots).
     let rpc_prefixes: HashSet<&Nibbles> = rpc_leaves.iter().map(|l| &l.prefix).collect();
     let local_prefixes: HashSet<&Nibbles> = local_leaves.iter().map(|l| &l.prefix).collect();
 
@@ -331,7 +324,6 @@ pub async fn run(local: PathBuf, rpc_url: String, block: u64) -> Result<()> {
         println!();
     }
 
-    // 7. Summary.
     println!("=== SUMMARY ===");
     println!("State node diffs:     {state_diffs}");
     println!("Code diffs:           {code_diffs}");

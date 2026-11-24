@@ -6,8 +6,6 @@ use quote::quote;
 pub(crate) const RUST_INT_SIZES: &[usize] = &[8, 16, 32, 64, 128];
 pub(crate) const ALLOY_INT_SIZES: &[usize] = &[8, 16, 32, 64, 96, 128, 256];
 
-// -- CONFIGURATION TYPES ------------------------------------------------------
-
 #[derive(Debug, Clone)]
 enum StorableConversionStrategy {
     UnsignedRust,
@@ -32,8 +30,6 @@ struct TypeConfig {
     storable_strategy: StorableConversionStrategy,
     storage_key_strategy: StorageKeyStrategy,
 }
-
-// -- IMPLEMENTATION GENERATORS ------------------------------------------------
 
 fn gen_storable_layout_impl(type_path: &TokenStream, byte_count: usize) -> TokenStream {
     quote! {
@@ -276,8 +272,6 @@ pub(crate) fn gen_storable_alloy_ints() -> TokenStream {
     quote! { #(#impls)* }
 }
 
-// -- ARRAY IMPLEMENTATIONS ----------------------------------------------------
-
 #[derive(Debug, Clone)]
 struct ArrayConfig {
     elem_type: TokenStream,
@@ -497,8 +491,6 @@ pub(crate) fn gen_nested_arrays() -> TokenStream {
 
     quote! { #(#all_impls)* }
 }
-
-// -- STRUCT ARRAY IMPLEMENTATIONS ---------------------------------------------
 
 pub(crate) fn gen_struct_arrays(struct_type: TokenStream, array_sizes: &[usize]) -> TokenStream {
     let impls: Vec<_> =

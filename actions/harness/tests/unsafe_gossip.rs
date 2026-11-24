@@ -96,7 +96,6 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
-    // --- Phase 1: Build L2 blocks with the sequencer. ---
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let mut blocks = Vec::with_capacity(L2_BLOCK_COUNT as usize);
@@ -110,9 +109,6 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    // --- Phase 2 (setup): Batch + mine so the node can later derive. ---
-    // All 5 blocks are encoded into one batcher transaction and mined into
-    // a single L1 block before the node is used for derivation.
     let mut source = ActionL2Source::new();
     for block in &blocks {
         source.push(block.clone());
@@ -122,7 +118,6 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     chain.push(h.l1.tip().clone());
     node.initialize().await;
 
-    // --- Phase 2: Gossip each block into the node. ---
     for block in &blocks {
         node.act_l2_unsafe_gossip_receive(block);
     }
@@ -134,7 +129,6 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     );
     assert_eq!(node.l2_safe_number(), 0, "safe_head should still be at genesis before derivation");
 
-    // --- Phase 3+4: Signal L1 head and run derivation. ---
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} L2 blocks derived");
@@ -175,7 +169,6 @@ async fn test_out_of_order_gossip_is_dropped() {
     );
     node.initialize().await;
 
-    // Inject block 3 first — gap-jump; must be dropped.
     node.act_l2_unsafe_gossip_receive(&block3);
     assert_eq!(
         node.l2_unsafe_number(),
@@ -183,7 +176,6 @@ async fn test_out_of_order_gossip_is_dropped() {
         "unsafe_head must not advance when block 3 arrives before blocks 1 and 2"
     );
 
-    // Inject block 1 — sequential; must advance.
     node.act_l2_unsafe_gossip_receive(&block1);
     assert_eq!(
         node.l2_unsafe_number(),
@@ -191,7 +183,6 @@ async fn test_out_of_order_gossip_is_dropped() {
         "unsafe_head should advance to 1 after sequential gossip of block 1"
     );
 
-    // Inject block 3 again — still a gap (unsafe_head=1, next expected=2); must be dropped.
     node.act_l2_unsafe_gossip_receive(&block3);
     assert_eq!(
         node.l2_unsafe_number(),

@@ -93,7 +93,6 @@ impl TryIntoSimTx<BaseTxEnvelope> for BaseTransactionRequest {
             .build_typed_tx()
             .map_err(|request| ValueError::new(request, "Required fields missing"))?;
 
-        // Create an empty signature for the transaction.
         let signature = Signature::new(Default::default(), Default::default(), false);
 
         Ok(tx.into_signed(signature).into())

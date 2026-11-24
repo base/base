@@ -38,7 +38,6 @@ impl<T: Compress> Compress for MaybeDeleted<T> {
                 // Empty = deleted, write nothing
             }
             Some(value) => {
-                // Compress the inner value to the buffer
                 value.compress_to_buf(buf);
             }
         }
@@ -89,9 +88,7 @@ impl<T: Compress> Compress for VersionedValue<T> {
     type Compressed = Vec<u8>;
 
     fn compress_to_buf<B: BufMut + AsMut<[u8]>>(&self, buf: &mut B) {
-        // Encode block number first (8 bytes, big-endian)
         buf.put_u64(self.block_number);
-        // Then encode the value
         self.value.compress_to_buf(buf);
     }
 }

@@ -23,7 +23,6 @@ benchmark_workloads:
       - weight: 100
         type: b20
 
-  # High-concurrency fresh-recipient transfer profile.
   - workload: eth-new
     transaction_payload: eth-transfer-fresh
     sender_count: 1000

@@ -13,18 +13,14 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
 alloy-evm.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
-# revm
 revm.workspace = true
 
-# base
 base-precompile-macros.workspace = true
 
-# misc
 thiserror.workspace = true
 tracing.workspace = true
 derive_more = { workspace = true, features = ["from", "try_into"] }

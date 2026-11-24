@@ -11,7 +11,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# reth
 alloy-rlp.workspace = true
 reth-discv5.workspace = true
 reth-evm.workspace = true
@@ -33,10 +32,8 @@ reth-payload-builder.workspace = true
 reth-transaction-pool.workspace = true
 reth-rpc-server-types.workspace = true
 reth-payload-primitives.workspace = true
-## ensure secp256k1 recovery with rayon support is activated
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 
-# op-reth
 base-protocol.workspace = true
 base-execution-rpc.workspace = true
 base-execution-txpool.workspace = true
@@ -56,7 +53,6 @@ revm = { workspace = true, features = [
 	"memory_limit",
 ] }
 
-# ethereum
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 base-common-chains.workspace = true
@@ -67,17 +63,14 @@ alloy-rpc-types-engine.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
 
-# async
 tokio.workspace = true
 tokio-stream.workspace = true
 
-# misc
 clap.workspace = true
 eyre.workspace = true
 serde.workspace = true
 humantime.workspace = true
 
-# test-utils dependencies
 serde_json = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, optional = true }
 reth-e2e-test-utils = { workspace = true, optional = true }

@@ -42,7 +42,6 @@ impl BaseNodeExtension for TxPoolExtension {
         let logs_enabled = config.tracing_logs_enabled;
         let node_role = config.transaction_event_node_role;
 
-        // Start tracing subscription if enabled
         if !tracing_enabled {
             return builder;
         }

@@ -48,7 +48,6 @@ impl<P: L1HeadPolling> HybridL1HeadSource<P> {
 impl<P: L1HeadPolling> L1HeadSource for HybridL1HeadSource<P> {
     async fn next(&mut self) -> u64 {
         loop {
-            // Take the next head from whichever of the stream and the poller answers first.
             let head = tokio::select! {
                 next = self.sub.next() => match next {
                     Some(head) => head,
@@ -67,7 +66,6 @@ impl<P: L1HeadPolling> L1HeadSource for HybridL1HeadSource<P> {
                 },
             };
 
-            // Report it only if it is newer than the last one.
             if self.last_head.is_some_and(|last| last >= head) {
                 tracing::debug!(head, "stale or duplicate L1 head, skipping");
                 continue;
@@ -89,7 +87,6 @@ mod tests {
     #[test]
     fn hybrid_l1_skips_stale_and_duplicate_heads() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            // The poller always fails, so only the stream produces heads.
             let mut poller = MockL1HeadPolling::new();
             poller
                 .expect_latest_head()
@@ -99,7 +96,6 @@ mod tests {
                 HybridL1HeadSource::new(ctx, stream.boxed(), poller, Duration::from_secs(100));
 
             assert_eq!(source.next().await, 10);
-            // 9 is stale and the second 10 a duplicate, so the next head is 11.
             assert_eq!(source.next().await, 11);
         });
     }

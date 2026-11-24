@@ -466,7 +466,6 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     where
         CheckpointReader: ForkchoiceCheckpointReader + ?Sized,
     {
-        // Clear any outstanding tasks to prepare for the reset.
         self.clear();
 
         let mut start = find_starting_forkchoice_with_checkpoint_reader(
@@ -476,7 +475,6 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         )
         .await?;
 
-        // Retry to synchronize the engine until we succeeds or a critical error occurs.
         while let Err(err) = SynchronizeTask::new(
             Arc::clone(&client),
             Arc::clone(&config),
@@ -576,19 +574,15 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     /// to popping, mirroring the success path so watch consumers (e.g. the RPC state view) stay
     /// in sync.
     pub async fn drain(&mut self) -> Result<(), EngineTaskErrors> {
-        // Drain tasks in order of priority, halting on errors for a retry to be attempted.
         while let Some((task, _)) = self.tasks.peek() {
-            // Execute the task.
             let outcome = match task.execute(&mut self.state).await {
                 Ok(()) => Ok(()),
                 Err(err) if err.severity() == EngineTaskErrorSeverity::Flush => Err(err),
                 Err(err) => return Err(err),
             };
 
-            // Update the state and notify the engine actor.
             self.state_sender.send_replace(self.state);
 
-            // Pop the task from the queue now that it's been executed.
             self.tasks.pop();
 
             self.task_queue_length.send_replace(self.tasks.len());

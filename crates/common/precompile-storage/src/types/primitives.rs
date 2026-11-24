@@ -11,14 +11,9 @@ use crate::{
     types::Slot,
 };
 
-// Rust integers: (u)int8, (u)int16, (u)int32, (u)int64, (u)int128
 base_precompile_macros::storable_rust_ints!();
-// Alloy integers: U8, I8, U16, I16, U32, I32, U64, I64, U128, I128, U256, I256
 base_precompile_macros::storable_alloy_ints!();
-// Alloy fixed bytes: FixedBytes<1> .. FixedBytes<32>
 base_precompile_macros::storable_alloy_bytes!();
-
-// -- BOOL ---------------------------------------------------------------------
 
 impl StorableType for bool {
     const LAYOUT: Layout = Layout::Bytes(1);
@@ -58,8 +53,6 @@ impl StorageKey for bool {
     }
 }
 
-// -- ADDRESS ------------------------------------------------------------------
-
 impl StorableType for Address {
     const LAYOUT: Layout = Layout::Bytes(20);
     type Handler<'a> = Slot<'a, Self>;
@@ -94,7 +87,6 @@ impl FromWord for Address {
 impl StorageKey for Address {
     #[inline]
     fn as_storage_bytes(&self) -> impl AsRef<[u8]> {
-        // Return the raw bytes as a fixed-size array (no unsized dereference)
         let mut arr = [0u8; 20];
         arr.copy_from_slice(self.as_slice());
         arr
@@ -125,7 +117,6 @@ mod tests {
         any::<[u8; 20]>().prop_map(Address::from)
     }
 
-    // Generate property tests for all primitive storage types
     base_precompile_macros::gen_storable_tests!();
 
     #[test]

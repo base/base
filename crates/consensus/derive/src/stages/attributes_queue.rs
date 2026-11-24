@@ -82,7 +82,6 @@ where
             }
         };
 
-        // Construct the payload attributes from the loaded batch.
         let mut timer = base_metrics::timed!(Metrics::pipeline_attributes_build_duration());
         let attributes = match self.create_next_attributes(batch, parent).await {
             Ok(attributes) => attributes,
@@ -95,7 +94,6 @@ where
             AttributesWithParent::new(attributes, parent, Some(origin), self.is_last_in_span);
         timer.stop();
 
-        // Clear out the local state once payload attributes are prepared.
         self.batch = None;
         self.is_last_in_span = false;
         Ok(populated_attributes)
@@ -108,12 +106,10 @@ where
         batch: SingleBatch,
         parent: L2BlockInfo,
     ) -> PipelineResult<BasePayloadAttributes> {
-        // Sanity check parent hash
         if batch.parent_hash != parent.block_info.hash {
             return Err(ResetError::BadParentHash(batch.parent_hash, parent.block_info.hash).into());
         }
 
-        // Prepare the payload attributes
         let tx_count = batch.transactions.len();
         let mut attributes = self.builder.prepare_payload_attributes(parent, batch.epoch()).await?;
         attributes.no_tx_pool = Some(true);
@@ -197,7 +193,6 @@ where
     }
 
     async fn flush_channel(&mut self) -> PipelineResult<()> {
-        // Clear batch first, then propagate.
         self.batch = None;
         self.prev.flush_channel().await
     }
@@ -338,7 +333,6 @@ mod tests {
         let txs = vec![Bytes::default(), Bytes::default()];
         let batch = SingleBatch { transactions: txs.clone(), ..Default::default() };
         let attributes = aq.create_next_attributes(batch, parent).await.unwrap();
-        // update the expected attributes
         payload_attributes.no_tx_pool = Some(true);
         match payload_attributes.transactions {
             Some(ref mut t) => t.extend(txs),
@@ -364,13 +358,9 @@ mod tests {
         let mock_builder =
             TestAttributesBuilder { attributes: vec![Ok(pa.clone())], ..Default::default() };
         let mut aq = AttributesQueue::new(Arc::new(cfg), mock, mock_builder);
-        // If we load the batch, we should get the last in span.
-        // But it won't take it so it will be available in the next_attributes call.
         let _ = aq.load_batch(L2BlockInfo::default()).await.unwrap();
         assert!(aq.is_last_in_span);
         assert!(aq.batch.is_some());
-        // This should successfully construct the next payload attributes.
-        // It should also reset the last in span flag and clear the batch.
         let attributes = aq.next_attributes(L2BlockInfo::default()).await.unwrap();
         pa.no_tx_pool = Some(true);
         let populated_attributes = AttributesWithParent {

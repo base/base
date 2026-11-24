@@ -106,7 +106,6 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
     async fn advance_origin(&mut self) -> PipelineResult<()> {
         let mut timer = base_metrics::timed!(Metrics::pipeline_origin_advance());
 
-        // Pull the next block or return EOF.
         // PipelineError::EOF has special handling further up the pipeline.
         let block = match self.block {
             Some(block) => block,
@@ -118,12 +117,10 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
         let next_l1_origin =
             self.data_source.block_info_by_number(block.number + 1).await.map_err(Into::into)?;
 
-        // Check block hashes for reorgs.
         if block.hash != next_l1_origin.parent_hash {
             return Err(ResetError::ReorgDetected(block.hash, next_l1_origin.parent_hash).into());
         }
 
-        // Fetch receipts for the next l1 block and update the system config.
         let receipts =
             self.data_source.receipts_by_hash(next_l1_origin.hash).await.map_err(Into::into)?;
 
@@ -147,7 +144,6 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
             next_l1_origin.timestamp,
         );
 
-        // Update the block origin regardless of if a holocene activation is required.
         self.update_origin(next_l1_origin);
 
         timer.stop();
@@ -231,7 +227,6 @@ pub(super) mod tests {
         let cfg = traversal.system_config;
         traversal.done = true;
         assert!(traversal.activate().await.is_ok());
-        // activate() is a no-op — origin and done flag remain unchanged.
         assert_eq!(traversal.origin(), Some(BlockInfo::default()));
         assert_eq!(traversal.system_config, cfg);
         assert!(traversal.done);
@@ -302,7 +297,6 @@ pub(super) mod tests {
         let receipts = TraversalTestHelper::new_receipts();
         let mut traversal = TraversalTestHelper::new_from_blocks(blocks, receipts);
         assert!(traversal.advance_origin().await.is_ok());
-        // System config update failure is non-fatal — pipeline continues.
         assert!(traversal.advance_origin().await.is_ok());
     }
 

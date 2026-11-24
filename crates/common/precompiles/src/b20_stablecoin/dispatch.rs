@@ -61,7 +61,6 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
-        // Ensure the token has been deployed (has bytecode at its address).
         match version.implementation().is_initialized(self) {
             Ok(true) => {}
             Ok(false) => {
@@ -128,7 +127,6 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
 
         observer.observe(label, || {
             let encoded: Bytes = match call {
-                // --- Pure reads: direct to accounting ---
                 C::name(_) => logic.name(self)?.abi_encode().into(),
                 C::symbol(_) => logic.symbol(self)?.abi_encode().into(),
                 // Stablecoin precision is fixed at 6 by the protocol spec; never read from
@@ -174,7 +172,6 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 C::pausedFeatures(_) => logic.paused_features(self)?.abi_encode().into(),
                 C::policyId(c) => logic.policy_id(self, c.policyScope)?.abi_encode().into(),
 
-                // --- Computed reads: routed to the active version's logic ---
                 C::isPaused(c) => logic.is_paused(self, c.feature)?.abi_encode().into(),
                 C::DOMAIN_SEPARATOR(_) => {
                     logic.domain_separator(self, ctx.chain_id())?.abi_encode().into()
@@ -194,7 +191,6 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                     .into()
                 }
 
-                // --- Mutating operations: routed to the active version's logic ---
                 C::transfer(c) => {
                     let caller = ctx.caller();
                     logic.transfer(self, caller, c.to, c.amount, privileged)?;

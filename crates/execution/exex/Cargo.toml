@@ -12,22 +12,18 @@ description = "Execution extensions for Base"
 workspace = true
 
 [dependencies]
-# reth
 reth-exex.workspace = true
 reth-trie.workspace = true
 reth-provider.workspace = true
 reth-node-api.workspace = true
 reth-execution-types.workspace = true
 
-# op-reth
 # proofs exex handles `TrieUpdates` in notifications
 base-execution-trie = { workspace = true, features = ["serde-bincode-compat"] }
 
-# alloy
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 
-# misc
 eyre.workspace = true
 tokio.workspace = true
 tracing.workspace = true

@@ -131,7 +131,6 @@ impl BootStore {
         debug!(target: "bootstore", enr = %enr, "Adding enr to the boot store");
         self.peers.push_back(enr);
 
-        // Prune the oldest peer if we exceed the maximum number of peers.
         if self.peers.len() > MAX_PEERS {
             debug!(target: "bootstore", "Boot store exceeded maximum peers, removing oldest peer");
             self.peers.pop_front();
@@ -175,7 +174,6 @@ impl BootStore {
     /// Syncs the [`BootStore`] with the contents on disk.
     pub fn sync(&mut self) -> Result<(), std::io::Error> {
         if let Some(file) = &mut self.file {
-            // Reset the file pointer and truncate so the write overwrites the old contents.
             file.seek(SeekFrom::Start(0))?;
             file.set_len(0)?;
 

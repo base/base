@@ -50,7 +50,6 @@ pub(crate) enum TestNetworkError {
 
 impl TestNetwork {
     pub(super) async fn peer_info(&self) -> Result<PeerInfo, TestNetworkError> {
-        // Try to get the peer info. Send a peer info request to the network actor.
         let (peer_info_tx, peer_info_rx) = oneshot::channel();
         let peer_info_request = P2pRpcRequest::PeerInfo(peer_info_tx);
         self.inbound_data
@@ -92,7 +91,6 @@ impl TestNetwork {
     ) -> Result<(), TestNetworkError> {
         (async || self.is_connected_to(other).await)
             .retry(ExponentialBuilder::default().with_total_delay(Some(Duration::from_secs(360))))
-            // When to retry
             .when(|e| matches!(e, TestNetworkError::PeerNotConnected))
             .notify(|e, duration| info!(target: "network", error = ?e, duration = ?duration, "Retrying connection"))
             .await
@@ -100,7 +98,6 @@ impl TestNetwork {
 
     pub(super) async fn peer_enr(&self) -> Result<Enr, TestNetworkError> {
         let enr = self.peer_info().await?.enr.ok_or(TestNetworkError::PeerInfoMissingEnr)?;
-        // Parse the ENR
         let enr = Enr::from_str(&enr).map_err(TestNetworkError::InvalidEnr)?;
         Ok(enr)
     }

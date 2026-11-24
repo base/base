@@ -201,16 +201,12 @@ impl SystemConfig {
         log: &Log,
         ecotone_active: bool,
     ) -> Result<SystemConfigUpdateKind, SystemConfigUpdateError> {
-        // Construct the system config log from the log.
         let log = SystemConfigLog::new(log.clone(), ecotone_active);
 
-        // Construct the update type from the log.
         let update = log.build()?;
 
-        // Apply the update to the system config.
         update.apply(self);
 
-        // Return the update type.
         Ok(update.kind())
     }
 }
@@ -568,9 +564,7 @@ mod tests {
             system_config.update_with_receipts(&[receipt], l1_system_config_address, false);
         assert_eq!(updates, vec![SystemConfigUpdateKind::GasLimit]);
         assert_eq!(errors.len(), 1);
-        // Malformed batcher update was skipped — address unchanged.
         assert_eq!(system_config.batcher_address, Address::ZERO);
-        // Valid gas limit update was still applied.
         assert_eq!(system_config.gas_limit, 0xbeef_u64);
     }
 }

@@ -84,7 +84,6 @@ impl BasePayloadAttributes {
                     // we have to just hash the bytes here because otherwise we would need to decode
                     // the transactions here which really isn't ideal
                     let tx_hash = keccak256(tx);
-                    // maybe we can try just taking the hash and not decoding
                     hasher.update(tx_hash)
                 }
             }

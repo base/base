@@ -9,8 +9,6 @@ use base_common_precompiles::{
 use base_precompile_storage::HashMapStorageProvider;
 use k256::ecdsa::SigningKey;
 
-// --- shared fixtures --------------------------------------------------------
-
 pub const CHAIN_ID: u64 = 8453;
 pub const ADMIN: Address = Address::repeat_byte(0xAD);
 pub const ALICE: Address = Address::repeat_byte(0xA1);
@@ -38,8 +36,6 @@ pub const POLICY_ID_2: u64 = (1u64 << 56) | 8;
 pub const PRIVATE_KEY: [u8; 32] =
     hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-// --- small value helpers ----------------------------------------------------
-
 /// `U256` from a small literal.
 pub fn u(n: u64) -> U256 {
     U256::from(n)
@@ -49,8 +45,6 @@ pub fn u(n: u64) -> U256 {
 pub fn ok_true() -> Bytes {
     Bytes::from(true.abi_encode())
 }
-
-// --- token harness ----------------------------------------------------------
 
 /// Empty provider on [`CHAIN_ID`] with the storage features active at `upgrade`.
 pub fn storage_at(upgrade: BaseUpgrade) -> HashMapStorageProvider {
@@ -245,8 +239,6 @@ macro_rules! unprivileged_revert_gas_harness {
     };
 }
 
-// --- permit signing ---------------------------------------------------------
-
 /// Recovers the anvil account-0 address from [`PRIVATE_KEY`].
 pub fn anvil_owner() -> Address {
     let key = SigningKey::from_slice(&PRIVATE_KEY).unwrap();
@@ -282,8 +274,6 @@ pub fn signed_permit(
         s: args.s,
     }
 }
-
-// --- golden hashing / blessing ----------------------------------------------
 
 /// Deterministic keccak hash of a single token's per-case snapshot: the token's emitted
 /// events (topics + data) followed by every sorted `(address, slot, value)` storage triple.

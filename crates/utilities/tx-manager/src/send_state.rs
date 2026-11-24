@@ -196,8 +196,6 @@ mod tests {
 
     use super::*;
 
-    // ── Constructor validation ──────────────────────────────────────────
-
     #[test]
     fn constructor_rejects_zero_threshold() {
         assert_eq!(
@@ -214,8 +212,6 @@ mod tests {
         let state = SendState::new(count).unwrap();
         assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
-
-    // ── Fresh state ─────────────────────────────────────────────────────
 
     #[test]
     fn fresh_state_has_no_critical_error() {
@@ -234,8 +230,6 @@ mod tests {
         let state = SendState::new(3).unwrap();
         assert!(!state.has_published());
     }
-
-    // ── Nonce-too-low threshold ─────────────────────────────────────────
 
     #[test]
     fn nonce_too_low_below_threshold_no_abort() {
@@ -266,13 +260,10 @@ mod tests {
         assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
 
-    // ── Mined tx suppression ────────────────────────────────────────────
-
     #[test]
     fn mined_tx_suppresses_nonce_too_low_abort() {
         let state = SendState::new(3).unwrap();
         state.record_publish();
-        // Accumulate errors past threshold.
         for _ in 0..5 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
@@ -295,8 +286,6 @@ mod tests {
         assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
-    // ── tx_not_mined reset ──────────────────────────────────────────────
-
     #[test]
     fn tx_not_mined_resets_nonce_count_when_empty() {
         let state = SendState::new(3).unwrap();
@@ -305,25 +294,19 @@ mod tests {
         let tx = B256::with_last_byte(1);
         state.tx_mined(tx);
 
-        // Accumulate errors while mined.
         for _ in 0..5 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
-        // Still suppressed by mined tx.
         assert!(state.critical_error_at(Duration::ZERO).is_none());
 
-        // Un-mine: counter should reset.
         state.tx_not_mined(tx);
         assert!(state.critical_error_at(Duration::ZERO).is_none());
 
-        // Need fresh errors to re-trigger.
         for _ in 0..3 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
         assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
-
-    // ── Multiple mined txs ──────────────────────────────────────────────
 
     #[test]
     fn removing_one_of_multiple_mined_txs_does_not_reset() {
@@ -339,7 +322,6 @@ mod tests {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
 
-        // Remove one — still has another mined tx, no reset.
         state.tx_not_mined(tx1);
         assert!(state.critical_error_at(Duration::ZERO).is_none());
         assert!(state.is_waiting_for_confirmation());
@@ -355,8 +337,6 @@ mod tests {
         }
         assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
 
-        // Removing a hash that was never mined is a no-op — the counter
-        // is preserved and the abort remains valid.
         state.tx_not_mined(B256::with_last_byte(99));
         assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
@@ -378,11 +358,8 @@ mod tests {
         state.tx_not_mined(tx1);
         state.tx_not_mined(tx2);
 
-        // Counter was reset — no abort yet.
         assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
-
-    // ── Mempool deadline ────────────────────────────────────────────────
 
     #[test]
     fn expired_mempool_deadline_triggers_abort() {
@@ -431,36 +408,27 @@ mod tests {
         );
     }
 
-    // ── Pre-publish immediate abort ─────────────────────────────────────
-
     #[test]
     fn pre_publish_nonce_too_low_triggers_immediate_abort() {
         let state = SendState::new(3).unwrap();
-        // No successful publish recorded.
         state.process_send_error(&TxManagerError::NonceTooLow);
         assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
-
-    // ── Post-publish gradual abort ──────────────────────────────────────
 
     #[test]
     fn post_publish_nonce_too_low_requires_threshold() {
         let state = SendState::new(3).unwrap();
         state.record_publish();
 
-        // Single nonce-too-low should NOT abort after a successful publish.
         state.process_send_error(&TxManagerError::NonceTooLow);
         assert!(state.critical_error_at(Duration::ZERO).is_none());
 
-        // Need to reach the threshold.
         state.process_send_error(&TxManagerError::NonceTooLow);
         assert!(state.critical_error_at(Duration::ZERO).is_none());
 
         state.process_send_error(&TxManagerError::NonceTooLow);
         assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
-
-    // ── NonceTooHigh ───────────────────────────────────────────────────
 
     #[test]
     fn nonce_too_high_is_transient() {
@@ -469,33 +437,24 @@ mod tests {
         assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
-    // ── Priority ordering ────────────────────────────────────────────────
-
     #[test]
     fn pre_publish_nonce_too_low_takes_priority_over_expired_deadline() {
         let state = SendState::new(3).unwrap();
-        // No successful publish.
         state.process_send_error(&TxManagerError::NonceTooLow);
         state.set_runtime_mempool_deadline(Duration::ZERO);
 
-        // Pre-publish NonceTooLow (priority 2) wins over
-        // MempoolDeadlineExpired (priority 4).
         assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
-
-    // ── tx_mined idempotency ──────────────────────────────────────────────
 
     #[test]
     fn tx_mined_is_idempotent() {
         let state = SendState::new(3).unwrap();
         let tx = B256::with_last_byte(1);
 
-        // Mining the same hash twice should not double-count.
         state.tx_mined(tx);
         state.tx_mined(tx);
         assert!(state.is_waiting_for_confirmation());
 
-        // A single tx_not_mined clears it.
         state.tx_not_mined(tx);
         assert!(!state.is_waiting_for_confirmation());
     }
@@ -507,8 +466,6 @@ mod tests {
         assert_eq!(state.record_fee_bump(), 2);
     }
 
-    // ── has_published ───────────────────────────────────────────────────
-
     #[test]
     fn has_published_tracks_publication() {
         let state = SendState::new(3).unwrap();
@@ -517,12 +474,9 @@ mod tests {
         state.record_publish();
         assert!(state.has_published());
 
-        // Idempotent.
         state.record_publish();
         assert!(state.has_published());
     }
-
-    // ── is_waiting_for_confirmation ─────────────────────────────────────
 
     #[test]
     fn is_waiting_for_confirmation_reflects_mined_txs() {
@@ -536,8 +490,6 @@ mod tests {
         state.tx_not_mined(tx);
         assert!(!state.is_waiting_for_confirmation());
     }
-
-    // ── Send + Sync ─────────────────────────────────────────────────────
 
     #[test]
     fn send_state_is_send_and_sync() {

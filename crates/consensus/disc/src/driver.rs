@@ -133,7 +133,6 @@ impl Discv5Driver {
         chain_id: u64,
         disc: &Discv5,
     ) -> BootStore {
-        // Note: if the bootstore file cannot be created, we use a default bootstore.
         let mut store = bootstore
             .map_or_else(BootStore::default, |bootstore| bootstore.try_into().unwrap_or_default());
 
@@ -190,7 +189,6 @@ impl Discv5Driver {
             let mut interval = tokio::time::interval(self.interval);
             let mut store_interval = tokio::time::interval(self.store_interval);
 
-            // Step 1: Start the discovery service.
             let Ok(s) = self.init().await else {
                 error!(target: "discovery", "Failed to start discovery service");
                 return;
@@ -198,28 +196,24 @@ impl Discv5Driver {
             self = s;
             trace!(target: "discovery", "Discv5 Initialized");
 
-            // Step 2: Bootstrap the discovery table with bootnodes.
             let mut store =
                 Self::bootstrap_peers(self.bootstore, self.bootnodes, chain_id, &self.disc).await;
 
             let enrs = self.disc.table_entries_enr();
             info!(target: "discovery", count = enrs.len(), "Discv5 Started");
 
-            // Step 3: Forward ENRs in the bootstore to the enr receiver.
             if self.forward {
                 for enr in store.valid_peers_with_chain_id(self.chain_id) {
                     try_forward_enr(&enr_sender, enr.clone());
                 }
             }
 
-            // Continuously attempt to start the event stream with a retry limit and shutdown
-            // signal.
             let mut retries = 0;
-            let max_retries = 10; // Maximum number of retries before giving up.
+            let max_retries = 10;
             let mut event_stream = loop {
                 if retries >= max_retries {
                     error!(target: "discovery", "Exceeded maximum retries for event stream startup. Aborting...");
-                    return; // Exit the task if the retry limit is reached.
+                    return;
                 }
                 match self.disc.event_stream().await {
                     Ok(event_stream) => {
@@ -234,7 +228,6 @@ impl Discv5Driver {
                 }
             };
 
-            // Step 4: Run the core driver loop.
             loop {
                 tokio::select! {
                     msg = req_recv.recv() => {
@@ -487,8 +480,6 @@ mod tests {
 
         discovery = discovery.init().await.expect("Failed to initialize discovery service");
 
-        // There are no ENRs for Base Sepolia in the bootstore.
-        // If an ENR is added, this check will fail.
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,
             discovery.bootnodes,
@@ -499,7 +490,6 @@ mod tests {
         let enrs = discovery.disc.table_entries_enr();
         assert!(enrs.len() >= 2, "Discovery table should have at least 2 ENRs");
 
-        // Filter out testnet ENRs that are not valid.
         let testnet = BootNodes::testnet();
         let testnet: Vec<CombinedPublicKey> = testnet
             .iter()
@@ -518,10 +508,8 @@ mod tests {
             })
             .collect();
 
-        // `BootNodes::testnet()` returns CL bootnodes only — 2 raw ENRs.
         assert_eq!(testnet.len(), 2);
 
-        // Those ENRs should be in the testnet bootnodes.
         for enr in &enrs {
             assert!(
                 testnet.iter().any(|pub_key| pub_key == &enr.public_key()),
@@ -539,7 +527,6 @@ mod tests {
         let file = tempdir().unwrap();
         let file = file.path().join("bootstore.json");
 
-        // Filter out ENRs that are not valid.
         let mainnet = BootNodes::mainnet();
         let mainnet: Vec<CombinedPublicKey> = mainnet
             .iter()
@@ -558,7 +545,6 @@ mod tests {
             })
             .collect();
 
-        // `BootNodes::mainnet()` returns CL bootnodes only — 5 raw ENRs.
         assert_eq!(mainnet.len(), 5);
 
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
@@ -579,8 +565,6 @@ mod tests {
 
         discovery = discovery.init().await.expect("Failed to initialize discovery service");
 
-        // There are no Base mainnet ENRs in the bootstore.
-        // If an ENR is added, this check will fail.
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,
             discovery.bootnodes,
@@ -594,7 +578,6 @@ mod tests {
             "Discovery table should have at least 5 ENRs"
         );
 
-        // Those ENRs should be in the mainnet bootnodes.
         let disc_enrs = discovery.disc.table_entries_enr();
         for enr in disc_enrs {
             assert!(

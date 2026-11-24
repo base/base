@@ -43,26 +43,20 @@ pub struct NetworkHandler {
 
 impl NetworkHandler {
     pub(super) async fn handle_peer_monitoring(&mut self) {
-        // Inspect peer scores and ban peers that are below the threshold.
         let Some(ban_peers) = self.gossip.peer_monitoring.as_ref() else {
             return;
         };
 
-        // We iterate over all connected peers and check their scores.
-        // We collect a list of peers to remove
         let peers_to_remove = self
             .gossip
             .swarm
             .connected_peers()
             .filter_map(|peer_id| {
-                // If the score is not available, we use a default value of 0.
                 let score =
                     self.gossip.swarm.behaviour().gossipsub.peer_score(peer_id).unwrap_or_default();
 
-                // Record the peer score in the metrics.
                 Metrics::peer_scores().record(score);
 
-                // Protected peers (including trusted peers) are never banned for their score.
                 if score < ban_peers.ban_threshold
                     && !self.gossip.connection_gate.protected_peers.contains(peer_id)
                 {
@@ -73,18 +67,13 @@ impl NetworkHandler {
             })
             .collect::<Vec<_>>();
 
-        // We remove the addresses from the gossip layer.
         let addrs_to_ban = peers_to_remove
             .into_iter()
             .filter_map(|peer_to_remove| {
-                // In that case, we ban the peer. This means...
-                // 1. We remove the peer from the network gossip.
-                // 2. We ban the peer from the discv5 service.
                 if self.gossip.swarm.disconnect_peer_id(peer_to_remove).is_err() {
                     warn!(peer = ?peer_to_remove, "Trying to disconnect a non-existing peer from the gossip driver.");
                 }
 
-                        // Record the duration of the peer connection.
                         if let Some(start_time) = self.gossip.peer_connection_start.remove(&peer_to_remove) {
                             Metrics::gossip_peer_connection_duration_seconds()
                                 .record(start_time.elapsed().as_secs_f64());
@@ -102,7 +91,6 @@ impl NetworkHandler {
             .flatten()
             .collect::<HashSet<_>>();
 
-        // We send a request to the discovery handler to ban the set of addresses.
         if let Err(send_err) = self
             .discovery
             .sender

@@ -42,7 +42,6 @@ impl Batch {
             return Err(BatchDecodingError::EmptyBuffer);
         }
 
-        // Read the batch type
         let batch_type = BatchType::try_from(r[0])?;
         r.advance(1);
 

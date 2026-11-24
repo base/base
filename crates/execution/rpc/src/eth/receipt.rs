@@ -155,22 +155,18 @@ pub struct ReceiptFieldsBuilder {
     pub l1_data_gas: Option<u128>,
     /// L1 fee scalar.
     pub l1_fee_scalar: Option<f64>,
-    /* ---------------------------------------- Bedrock ---------------------------------------- */
     /// The base fee of the L1 origin block.
     pub l1_base_fee: Option<u128>,
-    /* ---------------------------------------- Ecotone ---------------------------------------- */
     /// The current L1 fee scalar.
     pub l1_base_fee_scalar: Option<u128>,
     /// The current L1 blob base fee.
     pub l1_blob_base_fee: Option<u128>,
     /// The current L1 blob base fee scalar.
     pub l1_blob_base_fee_scalar: Option<u128>,
-    /* ---------------------------------------- Isthmus ---------------------------------------- */
     /// The current operator fee scalar.
     pub operator_fee_scalar: Option<u128>,
     /// The current operator fee constant.
     pub operator_fee_constant: Option<u128>,
-    /* ---------------------------------------- Jovian ----------------------------------------- */
     /// The current DA footprint gas scalar.
     pub da_footprint_gas_scalar: Option<u16>,
 }
@@ -228,7 +224,6 @@ impl ReceiptFieldsBuilder {
         self.l1_blob_base_fee_scalar =
             l1_block_info.l1_blob_base_fee_scalar.map(|scalar| scalar.saturating_to());
 
-        // If the operator fee params are both set to 0, we don't add them to the receipt.
         let operator_fee_scalar_has_non_zero_value: bool =
             l1_block_info.operator_fee_scalar.is_some_and(|scalar| !scalar.is_zero());
 
@@ -385,11 +380,7 @@ impl BaseReceiptBuilder {
 
         // In jovian, we're using the blob gas used field to store the current da
         // footprint's value.
-        // We're computing the jovian blob gas used before building the receipt since the inputs get
-        // consumed by the `build_receipt` function.
         chain_spec.is_feature_active_at_timestamp(BaseFeature::DaFootprint, timestamp).then(|| {
-            // Estimate the size of the transaction in bytes and multiply by the DA
-            // footprint gas scalar.
             // Jovian specs: `https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit`
             let da_size = estimate_tx_compressed_size(tx_signed.encoded_2718().as_slice())
                 .saturating_div(FJORD_TX_SIZE_SCALE)
@@ -479,7 +470,6 @@ mod tests {
 
     #[test]
     fn base_receipt_fields_from_block_and_tx() {
-        // rig
         let tx_0 = BaseTransactionSigned::decode_2718(
             &mut TX_SET_L1_BLOCK_OP_MAINNET_BLOCK_124665056.as_slice(),
         )
@@ -497,7 +487,6 @@ mod tests {
         let mut l1_block_info =
             base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
 
-        // test
         let base_mainnet = BaseChainSpec::mainnet();
         assert!(Upgrades::is_fjord_active_at_timestamp(&base_mainnet, BLOCK_124665056_TIMESTAMP));
 

@@ -175,7 +175,6 @@ fn test_stalled_channel_resets_pipeline_and_source() {
         ctx.cancel();
 
         assert!(handle.await.unwrap().is_ok());
-        // Reconciliation runs once, the reset follows, and the shutdown flush ends the log.
         assert_eq!(
             recorded.lock().unwrap().calls,
             [

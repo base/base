@@ -12,17 +12,14 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# base
 base-proof-worker.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
 
-# async
 tokio-util.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
 
-# misc
 chrono.workspace = true
 tracing.workspace = true
 thiserror.workspace = true

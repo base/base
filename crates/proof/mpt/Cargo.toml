@@ -11,26 +11,21 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-# General
 thiserror.workspace = true
 serde = { workspace = true, optional = true, features = ["derive", "alloc"] }
 
-# Revm + Alloy
 alloy-rlp.workspace = true
 alloy-trie.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
-# Base Alloy
 base-common-rpc-types-engine.workspace = true
 
 [dev-dependencies]
-# Alloy
 alloy-consensus.workspace = true
 alloy-transport-http.workspace = true
 alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-rpc-types = { workspace = true, features = ["eth", "debug"] }
 
-# General
 rand.workspace = true
 reqwest.workspace = true
 proptest.workspace = true

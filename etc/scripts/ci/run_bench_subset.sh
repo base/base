@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Runs the curated advisory benchmark subset in the current working directory,
-# saving each result under the criterion baseline named by the first argument
-# (default: `current`) for base-vs-head comparison.
-#
 # Usage: run_bench_subset.sh [BASELINE]
 #
 # bench-pr.yml invokes this twice from a single checkout — once per commit — after

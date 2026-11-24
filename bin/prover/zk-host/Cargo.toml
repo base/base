@@ -16,25 +16,20 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-# Workspace – Prover
 base-proof-worker.workspace = true
 base-proof-zk-host.workspace = true
 base-prover-service-client.workspace = true
 base-proof-zk-backend = { workspace = true, features = ["metrics"] }
 
-# CLI / errors
 eyre.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
 reth-node-core = { workspace = true, features = ["otlp"] }
 base-cli-utils = { workspace = true, features = ["otlp"] }
 
-# Async
 tokio-util.workspace = true
 
-# URL / identifiers
 url.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
-# Tracing
 tracing.workspace = true

@@ -118,7 +118,6 @@ impl Default for RollupConfig {
 
 impl EthereumHardforks for RollupConfig {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        // Helper: cascade through the Base upgrade chain, returning the first set timestamp.
         let cascade = |starting: &[Option<u64>]| -> ForkCondition {
             if let Some(ts) = starting.iter().flatten().next() {
                 return ForkCondition::Timestamp(*ts);
@@ -813,67 +812,54 @@ mod tests {
             ..Default::default()
         };
 
-        // Regolith
         assert!(!cfg.is_first_regolith_block(8, 6));
         assert!(cfg.is_first_regolith_block(10, 8));
         assert!(!cfg.is_first_regolith_block(12, 10));
 
-        // Canyon
         assert!(!cfg.is_first_canyon_block(18, 16));
         assert!(cfg.is_first_canyon_block(20, 18));
         assert!(!cfg.is_first_canyon_block(22, 20));
 
-        // Delta
         assert!(!cfg.is_first_delta_block(28, 26));
         assert!(cfg.is_first_delta_block(30, 28));
         assert!(!cfg.is_first_delta_block(32, 30));
 
-        // Ecotone
         assert!(!cfg.is_first_ecotone_block(38, 36));
         assert!(cfg.is_first_ecotone_block(40, 38));
         assert!(!cfg.is_first_ecotone_block(42, 40));
 
-        // Fjord
         assert!(!cfg.is_first_fjord_block(48, 46));
         assert!(cfg.is_first_fjord_block(50, 48));
         assert!(!cfg.is_first_fjord_block(52, 50));
 
-        // Granite
         assert!(!cfg.is_first_granite_block(58, 56));
         assert!(cfg.is_first_granite_block(60, 58));
         assert!(!cfg.is_first_granite_block(62, 60));
 
-        // Holocene
         assert!(!cfg.is_first_holocene_block(68, 66));
         assert!(cfg.is_first_holocene_block(70, 68));
         assert!(!cfg.is_first_holocene_block(72, 70));
 
-        // Pectra blob schedule
         assert!(!cfg.is_first_pectra_blob_schedule_block(78, 76));
         assert!(cfg.is_first_pectra_blob_schedule_block(80, 78));
         assert!(!cfg.is_first_pectra_blob_schedule_block(82, 80));
 
-        // Isthmus
         assert!(!cfg.is_first_isthmus_block(88, 86));
         assert!(cfg.is_first_isthmus_block(90, 88));
         assert!(!cfg.is_first_isthmus_block(92, 90));
 
-        // Jovian
         assert!(!cfg.is_first_jovian_block(98, 96));
         assert!(cfg.is_first_jovian_block(100, 98));
         assert!(!cfg.is_first_jovian_block(102, 100));
 
-        // Base Azul
         assert!(!cfg.is_first_base_azul_block(108, 106));
         assert!(cfg.is_first_base_azul_block(110, 108));
         assert!(!cfg.is_first_base_azul_block(112, 110));
 
-        // Beryl
         assert!(!cfg.is_first_beryl_block(118, 116));
         assert!(cfg.is_first_beryl_block(120, 118));
         assert!(!cfg.is_first_beryl_block(122, 120));
 
-        // Cobalt
         assert!(!cfg.is_first_cobalt_block(128, 126));
         assert!(cfg.is_first_cobalt_block(130, 128));
         assert!(!cfg.is_first_cobalt_block(132, 130));
@@ -1096,7 +1082,6 @@ mod tests {
         );
         assert_eq!(json["l2_chain_id"], 84532u64);
 
-        // Round-trip: deserializing from a numeric l2_chain_id must also work.
         let round_tripped: RollupConfig = serde_json::from_value(json).unwrap();
         assert_eq!(round_tripped.l2_chain_id.id(), 84532);
     }

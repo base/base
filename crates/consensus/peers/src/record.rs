@@ -56,7 +56,6 @@ impl fmt::Display for NodeRecord {
                 ip.fmt(f)?;
             }
             IpAddr::V6(ip) => {
-                // encapsulate with brackets
                 f.write_char('[')?;
                 ip.fmt(f)?;
                 f.write_char(']')?;

@@ -27,7 +27,6 @@ pub const ERC8056_INTERFACE_IDS: [FixedBytes<4>; 4] = [
 sol! {
     #[derive(Debug, PartialEq, Eq)]
     interface IB20Asset {
-        // ── Errors ───────────────────────────────────────────────────────────
 
         /// `id` has previously been consumed by `announce`. Each id may be used at most once.
         error AnnouncementIdAlreadyUsed(string id);
@@ -66,7 +65,6 @@ sol! {
         /// An `internalCalls` entry reverted during its inner dispatch.
         error InternalCallFailed(bytes call);
 
-        // ── Events ───────────────────────────────────────────────────────────
 
         /// Deprecated V1 event. `AssetV2`'s instant setter (`updateMultiplier`) emits this alongside
         /// `UIMultiplierUpdated` for backward compatibility with indexers on the legacy topic; the
@@ -89,7 +87,6 @@ sol! {
         /// Emitted at the end of `announce` after all `internalCalls` have executed.
         event EndAnnouncement(string id);
 
-        // ── Role / precision identifiers ─────────────────────────────────────
 
         /// `keccak256("OPERATOR_ROLE")` — required for `announce` and `updateMultiplier`.
         function OPERATOR_ROLE() external view returns (bytes32);
@@ -102,7 +99,6 @@ sol! {
         function MAX_UI_MULTIPLIER() external view returns (uint256);
 
 
-        // ── Announcements ────────────────────────────────────────────────────
 
         /// Posts a holder-impacting announcement and atomically executes `internalCalls`.
         function announce(
@@ -115,7 +111,6 @@ sol! {
         /// Returns true if `id` has been consumed by `announce`.
         function isAnnouncementIdUsed(string calldata id) external view returns (bool);
 
-        // ── Multiplier ────────────────────────────────────────────────────────
 
         /// The current multiplier, scaled to `WAD_PRECISION`.
         function multiplier() external view returns (uint256);
@@ -173,12 +168,10 @@ sol! {
         /// [V2] ERC-165 interface detection.
         function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
-        // ── Batched issuance and clawback ────────────────────────────────────
 
         /// Mints `amounts[i]` to `recipients[i]`. Requires `MINT_ROLE`. All-or-nothing.
         function batchMint(address[] calldata recipients, uint256[] calldata amounts) external;
 
-        // ── Extra metadata ────────────────────────────────────────────────
 
         /// Returns the value of the named metadata entry (e.g. `"category"`, `"region"`). Empty string if not set.
         function extraMetadata(string calldata key) external view returns (string);

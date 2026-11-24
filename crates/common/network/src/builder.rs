@@ -100,7 +100,6 @@ mod tests {
     #[case::eip7702(OpTxType::Eip7702)]
     fn complete_type_delegates_for_eth_types(#[case] ty: OpTxType) {
         let req = BaseTransactionRequest::default();
-        // Should not panic — returns Ok or missing-fields Err from the inner request.
         let _ = req.complete_type(ty);
     }
 

@@ -106,7 +106,6 @@ mod tests {
         cache.insert(1, 100).await;
         cache.insert(2, 200).await;
 
-        // Both should be present
         assert_eq!(cache.get(&1).await, Some(100));
         assert_eq!(cache.get(&2).await, Some(200));
     }

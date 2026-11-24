@@ -131,8 +131,8 @@ impl PeerScoreLevel {
                 decay_interval: slot,
                 decay_to_zero: Self::DECAY_TO_ZERO,
                 retain_score: one_hundred_epochs,
-                slow_peer_weight: -0.2,   // default
-                slow_peer_threshold: 0.0, // default
+                slow_peer_weight: -0.2,
+                slow_peer_threshold: 0.0,
                 slow_peer_decay: 0.2,
             }),
         }

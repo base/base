@@ -23,7 +23,6 @@ async fn calldata_then_blob_batches_derive_in_order() {
         ..BatcherConfig::default()
     };
 
-    // Blocks 1-3: submit as calldata.
     let calldata_batcher =
         Batcher::new(ActionL2Source::new(), &h.rollup_config, calldata_cfg.clone());
     for _ in 1..=3u64 {
@@ -31,10 +30,9 @@ async fn calldata_then_blob_batches_derive_in_order() {
         calldata_batcher.advance(&mut h.l1).await;
     }
 
-    // Blocks 4-6: submit as blobs, from a second batcher that starts after block 3.
     let blob_cfg = BatcherConfig {
         initial_safe_head: Some(sequencer.head().block_info),
-        ..BatcherConfig::default() // DaType::Blob by default
+        ..BatcherConfig::default()
     };
     let blob_batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, blob_cfg);
     for _ in 4..=6u64 {

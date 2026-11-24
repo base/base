@@ -154,9 +154,7 @@ mod tests {
 
     #[test]
     fn effective_gas_price_is_capped_by_fee_cap() {
-        // base + tip below the cap -> base + tip.
         assert_eq!(FeeCheck::effective_gas_price(100, 5, 80), 85);
-        // base + tip above the cap -> capped at max_fee.
         assert_eq!(FeeCheck::effective_gas_price(100, 50, 80), 100);
     }
 
@@ -175,15 +173,12 @@ mod tests {
 
     #[test]
     fn max_fee_charge_includes_payer_auth_on_top_of_gas_limit() {
-        // self-pay: gas_limit * max_fee.
         assert_eq!(FeeCheck::max_fee_charge(21_000, 0, 2), U256::from(42_000u64));
-        // sponsored: (gas_limit + payer_auth_cost) * max_fee.
         assert_eq!(FeeCheck::max_fee_charge(21_000, 5_100, 2), U256::from(52_200u64));
     }
 
     #[test]
     fn validate_balance_rules() {
-        // required = 21_000 * 2 = 42_000.
         assert_eq!(FeeCheck::validate_balance(U256::from(42_000u64), 21_000, 0, 2), Ok(()));
         assert_eq!(
             FeeCheck::validate_balance(U256::from(41_999u64), 21_000, 0, 2),
@@ -196,7 +191,6 @@ mod tests {
 
     #[test]
     fn self_pay_requires_prepay_plus_tip_from_one_balance() {
-        // prepay = 42_000; tip = 1_000; required = 43_000.
         let prepay = U256::from(42_000u64);
         let tip = U256::from(1_000u64);
         let funded = U256::from(43_000u64);

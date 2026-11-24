@@ -13,19 +13,16 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
 alloy-evm.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
-# base
 base-common-chains.workspace = true
 base-common-genesis.workspace = true
 base-common-base-tx.workspace = true
 base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
 
-# revm
 revm.workspace = true
 
 [dev-dependencies]

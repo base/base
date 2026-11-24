@@ -103,7 +103,6 @@ where
         &mut self,
         attrs: BasePayloadAttributes,
     ) -> ExecutorResult<BlockBuildingOutcome> {
-        // Step 1. Set up the execution environment.
         let (base_fee_params, min_base_fee) = Self::active_base_fee_params(
             self.config,
             self.trie_db.parent_block_header(),
@@ -137,7 +136,6 @@ where
             "Beginning block building."
         );
 
-        // Step 2. Create the executor, using the trie database.
         let mut state =
             State::builder().with_database(&mut self.trie_db).with_bundle_update().build();
         let evm = self.factory.evm_factory().create_evm(&mut state, evm_env);
@@ -149,7 +147,6 @@ where
         };
         let executor = self.factory.create_executor(evm, ctx);
 
-        // Step 3. Execute the block containing the transactions within the payload attributes.
         let transactions = attrs
             .recovered_transactions_with_encoded()
             .collect::<Result<Vec<_>, RecoveryError>>()
@@ -163,7 +160,6 @@ where
             "Finished block building. Beginning sealing job."
         );
 
-        // Step 4. Merge state transitions and seal the block.
         state.merge_transitions(BundleRetention::Reverts);
         let bundle = state.take_bundle();
         let header = self.seal_block(&attrs, parent_hash, &block_env, &ex_result, bundle)?;
@@ -178,7 +174,6 @@ where
             "Sealed new block",
         );
 
-        // Update the parent block hash in the state database, preparing for the next block.
         self.trie_db.set_parent_block_header(header.clone());
         Ok((header, ex_result).into())
     }

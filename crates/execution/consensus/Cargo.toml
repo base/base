@@ -12,7 +12,6 @@ exclude = [".github/"]
 workspace = true
 
 [dependencies]
-# reth
 reth-consensus.workspace = true
 reth-storage-api.workspace = true
 reth-trie-common.workspace = true
@@ -21,19 +20,16 @@ reth-execution-types.workspace = true
 reth-consensus-common.workspace = true
 reth-primitives-traits.workspace = true
 
-# base
 base-protocol.workspace = true
 base-common-chains.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 
-# ethereum
 revm.workspace = true
 alloy-trie.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
-# misc
 tracing.workspace = true
 thiserror.workspace = true
 base-execution-chainspec.workspace = true

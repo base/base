@@ -318,7 +318,6 @@ impl Channel {
             }));
         }
 
-        // Worst-case compressed size of the finished channel, including this batch.
         let max_compressed_bytes = compressor.max_output_size(next_input_bytes as usize);
         let max_frame_count = max_compressed_bytes.div_ceil(max_frame_data);
 
@@ -333,7 +332,6 @@ impl Channel {
             .saturating_add(max_total_frames.saturating_mul(Frame::OVERHEAD))
             as u64;
 
-        // Reject against projected limits before mutating the stream.
         if max_total_frames > Self::MAX_FRAMES {
             return Ok(ChannelAddOutcome::Rejected(ChannelLimit::FrameCount {
                 required: max_total_frames,
@@ -347,7 +345,6 @@ impl Channel {
             }));
         }
 
-        // Commit once. Newly stable bytes go into the FIFO.
         let output = compressor.append(&self.candidate_scratch)?;
         let total_output = compressor.output_size();
 

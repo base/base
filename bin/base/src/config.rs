@@ -226,8 +226,6 @@ mod tests {
 
     #[test]
     fn from_str_normalizes_legacy_names_to_selectors() {
-        // Legacy namespaced names (the former `base-reth-node` `--chain` surface)
-        // normalize to the Base-centric selectors.
         assert_eq!("base".parse::<ChainArg>().unwrap(), ChainArg::BuiltIn("mainnet".to_owned()));
         assert_eq!(
             "base-sepolia".parse::<ChainArg>().unwrap(),
@@ -238,13 +236,10 @@ mod tests {
             ChainArg::BuiltIn("zeronet".to_owned())
         );
 
-        // Base-centric selectors keep resolving as before.
         assert_eq!("mainnet".parse::<ChainArg>().unwrap(), ChainArg::BuiltIn("mainnet".to_owned()));
 
-        // Matching is case-insensitive.
         assert_eq!("BASE".parse::<ChainArg>().unwrap(), ChainArg::BuiltIn("mainnet".to_owned()));
 
-        // Unrecognized values are still treated as TOML file paths.
         assert_eq!(
             "./chain.toml".parse::<ChainArg>().unwrap(),
             ChainArg::File(PathBuf::from("./chain.toml"))

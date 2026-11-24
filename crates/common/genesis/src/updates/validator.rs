@@ -74,7 +74,6 @@ impl UpdateDataValidator {
     pub fn validate(
         data: &alloy_primitives::Bytes,
     ) -> Result<ValidatedUpdateData<'_>, ValidationError> {
-        // Validate total data length
         if data.len() != Self::STANDARD_UPDATE_DATA_LEN {
             return Err(ValidationError::InvalidDataLen(
                 Self::STANDARD_UPDATE_DATA_LEN,
@@ -82,14 +81,12 @@ impl UpdateDataValidator {
             ));
         }
 
-        // Decode and validate pointer
         let pointer = <sol!(uint64)>::abi_decode_validate(&data[0..32])
             .map_err(|_| ValidationError::PointerDecodingError)?;
         if pointer != Self::EXPECTED_POINTER {
             return Err(ValidationError::InvalidDataPointer(pointer));
         }
 
-        // Decode and validate length
         let length = <sol!(uint64)>::abi_decode_validate(&data[32..64])
             .map_err(|_| ValidationError::LengthDecodingError)?;
         if length != Self::EXPECTED_DATA_LENGTH {

@@ -56,12 +56,6 @@ pub fn extract_l1_info_from_tx<T: Transaction>(
 /// # Panics
 /// If the input is shorter than 4 bytes.
 pub fn parse_l1_info(input: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionError> {
-    // Parse the L1 info transaction into an L1BlockInfo struct, depending on the function selector.
-    // There are currently 4 variants:
-    // - Jovian
-    // - Isthmus
-    // - Ecotone
-    // - Bedrock
     if input[0..4] == L1_BLOCK_JOVIAN_SELECTOR {
         parse_l1_info_tx_jovian(input[4..].as_ref())
     } else if input[0..4] == L1_BLOCK_ISTHMUS_SELECTOR {
@@ -402,8 +396,6 @@ mod tests {
 
     #[test]
     fn sanity_l1_block_ecotone() {
-        // rig
-
         // Legacy Ecotone compatibility fixture, block 118024092.
         // <https://optimistic.etherscan.io/block/118024092>
         const TIMESTAMP: u64 = 1711603765;
@@ -422,7 +414,6 @@ mod tests {
             ..Default::default()
         };
 
-        // expected l1 block info
         let expected_l1_base_fee = U256::from_be_bytes(hex!(
             "0000000000000000000000000000000000000000000000000000000af39ac327" // 47036678951
         ));
@@ -431,8 +422,6 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000d5ea528d2" // 57422457042
         ));
         let expected_l1_blob_base_fee_scalar = U256::from(810949);
-
-        // test
 
         let l1_block_info: L1BlockInfo = extract_l1_info(&block.body).unwrap();
 
@@ -444,8 +433,6 @@ mod tests {
 
     #[test]
     fn parse_l1_info_fjord() {
-        // rig
-
         // L1 block info from a legacy compatibility fixture, block 124665056.
         // (stored in input of tx at index 0).
         //
@@ -463,8 +450,6 @@ mod tests {
         let l1_blob_base_fee = Some(U256::from(1));
         let l1_blob_base_fee_scalar = Some(U256::from(1014213));
 
-        // test
-
         let l1_block_info = parse_l1_info(DATA).unwrap();
 
         assert_eq!(l1_block_info.l1_base_fee, l1_base_fee);
@@ -475,8 +460,6 @@ mod tests {
 
     #[test]
     fn parse_l1_info_isthmus() {
-        // rig
-
         // L1 block info from a devnet with Isthmus activated
         const DATA: &[u8] = &hex!(
             "098999be00000558000c5fc500000000000000030000000067a9f765000000000000002900000000000000000000000000000000000000000000000000000000006a6d09000000000000000000000000000000000000000000000000000000000000000172fcc8e8886636bdbe96ba0e4baab67ea7e7811633f52b52e8cf7a5123213b6f000000000000000000000000d3f2c5afb2d76f5579f326b0cd7da5f5a4126c3500004e2000000000000001f4"
@@ -489,8 +472,6 @@ mod tests {
         let l1_blob_base_fee_scalar = Some(U256::from(810949));
         let operator_fee_scalar = Some(U256::from(20000));
         let operator_fee_constant = Some(U256::from(500));
-
-        // test
 
         let l1_block_info = parse_l1_info(DATA).unwrap();
 
@@ -517,8 +498,6 @@ mod tests {
         let operator_fee_scalar = Some(U256::from(20000));
         let operator_fee_constant = Some(U256::from(500));
         let da_footprint_gas_scalar: Option<u16> = Some(U16::from(0xdead).to());
-
-        // test
 
         let l1_block_info = parse_l1_info(DATA).unwrap();
 

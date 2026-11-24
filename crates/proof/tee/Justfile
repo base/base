@@ -52,8 +52,6 @@ build-enclave *args="":
     cd ../../..
     DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ args }} -f etc/docker/Dockerfile.nitro-enclave -t base-prover-nitro-enclave .
 
-# --- Inline build recipes (no docker build) ----------------------------------
-#
 # These recipes do not invoke `docker build` and are intended to be run from a
 # pre-configured build environment (locally or from a downstream Dockerfile that
 # only clones the public base/base repo and invokes the recipes). Together they
@@ -115,7 +113,6 @@ build-enclave-binary-and-ramdisks BOOTSTRAP_DIR OUT_DIR:
         exit 1
     fi
 
-    # 1. Compile the static enclave binary.
     cargo build --release --locked --target x86_64-unknown-linux-musl \
         --package base-prover-nitro-enclave --bin base-prover-nitro-enclave
     cp target/x86_64-unknown-linux-musl/release/base-prover-nitro-enclave "$OUT_DIR/"
@@ -199,7 +196,6 @@ build-enclave-eif-and-cli STAGE1_DIR BOOTSTRAP_DIR OUT_DIR:
     cp bootstrap/nitro-cli-config "$OUT_DIR/"
     cp bootstrap/nitro-enclaves-allocator "$OUT_DIR/"
 
-    # 4. Stage runtime config + entrypoint.
     cp "$REPO_ROOT/etc/docker/nitro-enclave/allocator.yaml" "$OUT_DIR/"
     cp "$REPO_ROOT/etc/docker/nitro-enclave/entrypoint-enclave.sh" "$OUT_DIR/entrypoint.sh"
 
@@ -323,8 +319,6 @@ clean-eif:
     rm -f "{{ eif_output }}" eif-first.bin eif-second.bin
     docker rmi {{ eif_describe_image }} {{ eif_describe_image }}:first {{ eif_describe_image }}:second 2>/dev/null || true
     @echo "EIF artifacts cleaned"
-
-# --- Private helpers ---
 
 [private]
 sha256 file:

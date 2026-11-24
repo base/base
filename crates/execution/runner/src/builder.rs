@@ -95,7 +95,6 @@ impl NodeHooks {
     {
         let Self { rpc_hooks, node_started_hooks, exex_hooks, add_ons_hooks } = self;
 
-        // Install ExEx hooks
         for (id, factory) in exex_hooks {
             builder =
                 builder.install_exex(id, move |ctx: ExExContext<BaseNodeAdapter>| factory(ctx));
@@ -105,7 +104,6 @@ impl NodeHooks {
             builder = builder.map_add_ons(hook);
         }
 
-        // Install RPC hooks
         if !rpc_hooks.is_empty() {
             builder = builder.extend_rpc_modules(move |mut ctx: BaseRpcContext<'_>| {
                 for hook in rpc_hooks {
@@ -115,7 +113,6 @@ impl NodeHooks {
             });
         }
 
-        // Install node-started hooks
         if !node_started_hooks.is_empty() {
             builder = builder.on_node_started(move |full_node: BaseFullNode| {
                 for hook in node_started_hooks {

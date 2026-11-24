@@ -380,7 +380,6 @@ impl GameScanner {
             None => return Ok(None),
         };
 
-        // Fetch remaining fields only for actionable games.
         let (info, starting_block_number, l1_head) = tokio::try_join!(
             self.verifier_client.game_info(factory.proxy),
             self.verifier_client.starting_block_number(factory.proxy),
@@ -429,7 +428,6 @@ impl GameScanner {
         debug_assert!(has_tee || has_zk, "classify must not be called for fully-nullified games");
 
         match (has_tee, has_zk, countered_index) {
-            // Path 1: TEE-proposed, unchallenged.
             (true, false, 0) => Some(GameCategory::InvalidTeeProposal),
 
             // Unreachable: `ci > 0` requires `challenge()` (which sets `zkProver`),
@@ -453,13 +451,11 @@ impl GameScanner {
                 Some(GameCategory::InvalidDualProposal)
             }
 
-            // Path 2: TEE-proposed and challenged by ZK.
             (true, true, ci) => {
                 debug_assert!(ci > 0, "ci == 0 should be handled by (true, true, 0) arm");
                 Some(GameCategory::FraudulentZkChallenge { challenged_index: ci - 1 })
             }
 
-            // Path 3: ZK-proposed, unchallenged.
             (false, true, 0) => Some(GameCategory::InvalidZkProposal),
 
             // Only reachable after a global `TEE_VERIFIER.nullify()` drops the
@@ -475,7 +471,6 @@ impl GameScanner {
                 None
             }
 
-            // Caller is responsible for filtering out fully-nullified games.
             (false, false, _) => {
                 warn!(index = index, "fully-nullified game reached classifier");
                 None
@@ -566,11 +561,6 @@ mod tests {
     /// Happy path: mixed games, only `IN_PROGRESS` / non-nullified returned.
     #[tokio::test]
     async fn test_scan_happy_path() {
-        // Game 0: type 1, IN_PROGRESS, TEE only -> candidate (InvalidTeeProposal)
-        // Game 1: type 99, IN_PROGRESS, TEE only -> candidate (all types scanned)
-        // Game 2: type 1, status=1 (not in progress) -> skipped
-        // Game 3: type 1, IN_PROGRESS, TEE + ZK (dual proof) -> candidate (InvalidDualProposal)
-        // Game 4: type 1, IN_PROGRESS, TEE only -> candidate (InvalidTeeProposal)
         let factory = Arc::new(MockDisputeGameFactory::new(vec![
             factory_game(0, 1),
             factory_game(1, 99),
@@ -597,11 +587,6 @@ mod tests {
 
         let candidates = scanner.scan().await.unwrap();
 
-        // start = max(0, 5-1000) = 0, so games 0..=4 scanned
-        // Game 0: TEE only -> candidate. Game 1: TEE only -> candidate.
-        // Game 2: status != 0 -> skipped.
-        // Game 3: dual proof (TEE+ZK, no challenge) -> candidate.
-        // Game 4: TEE only -> candidate.
         assert_eq!(candidates.len(), 4);
         assert_eq!(candidates[0].index, 0);
         assert_eq!(candidates[0].factory.game_type, 1);
@@ -633,11 +618,8 @@ mod tests {
         ]));
 
         let mut verifier_games = HashMap::new();
-        // Game 0: TEE + ZK (dual proof, no challenge) -> candidate (InvalidDualProposal)
         verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, zk_addr, 100));
-        // Game 1: TEE only -> candidate (InvalidTeeProposal)
         verifier_games.insert(addr(1), mock_state(GameStatus::InProgress, Address::ZERO, 200));
-        // Game 2: TEE + ZK (dual proof, no challenge) -> candidate (InvalidDualProposal)
         verifier_games.insert(addr(2), mock_state(GameStatus::InProgress, zk_addr, 300));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
@@ -671,7 +653,6 @@ mod tests {
     /// Anchor lower bound: only games after the current anchor game are scanned.
     #[tokio::test]
     async fn test_scan_starts_after_anchor_game() {
-        // Factory with 100 games and anchor at index 96 -> scan indices 97, 98, 99.
         let mut games = Vec::new();
         let mut verifier_games = HashMap::new();
 
@@ -785,7 +766,6 @@ mod tests {
     /// range is always evaluated.
     #[tokio::test]
     async fn test_scan_skips_errored_games() {
-        // 3 games: index 1 will error, indices 0 and 2 are valid candidates
         let factory = Arc::new(RecordingDisputeGameFactory::new(
             vec![factory_game(0, 1), factory_game(1, 1), factory_game(2, 1)],
             vec![1],
@@ -800,7 +780,6 @@ mod tests {
 
         let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
-        // Index 0 -> candidate. Index 1 errors -> skipped. Index 2 -> candidate.
         let candidates = scanner.scan().await.unwrap();
 
         assert_eq!(candidates.len(), 2);
@@ -821,12 +800,10 @@ mod tests {
             Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1), factory_game(1, 1)]));
 
         let mut verifier_games = HashMap::new();
-        // Game 0: IN_PROGRESS, no ZK prover, has a TEE prover -> candidate
         verifier_games.insert(
             addr(0),
             mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 100),
         );
-        // Game 1: IN_PROGRESS, no ZK prover, has default TEE prover -> candidate
         verifier_games.insert(addr(1), mock_state(GameStatus::InProgress, Address::ZERO, 200));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
@@ -896,7 +873,6 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
 
         let mut verifier_games = HashMap::new();
-        // tee_prover == ZERO, zk_prover != ZERO, countered_index == 0
         verifier_games.insert(
             addr(0),
             mock_state_with_tee(GameStatus::InProgress, zk_addr, Address::ZERO, 100),
@@ -966,17 +942,14 @@ mod tests {
         ]));
 
         let mut verifier_games = HashMap::new();
-        // Game 0: both provers zeroed (nullified) → filtered out
         verifier_games.insert(
             addr(0),
             mock_state_with_tee(GameStatus::InProgress, Address::ZERO, Address::ZERO, 100),
         );
-        // Game 1: TEE prover active, ZK prover zero → candidate
         verifier_games.insert(
             addr(1),
             mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 200),
         );
-        // Game 2: both provers zeroed (nullified) → filtered out
         verifier_games.insert(
             addr(2),
             mock_state_with_tee(GameStatus::InProgress, Address::ZERO, Address::ZERO, 300),
@@ -999,7 +972,6 @@ mod tests {
         let tee_addr = Address::repeat_byte(0xEE);
         let zk_addr = Address::repeat_byte(0xCC);
 
-        // Initial state: 3 games after the starting anchor.
         let factory = Arc::new(MockDisputeGameFactory::new(vec![
             factory_game(0, 1),
             factory_game(1, 1),
@@ -1027,7 +999,6 @@ mod tests {
             mock_anchor_registry(Address::ZERO),
         );
 
-        // First tick: all three games are post-anchor and discovered.
         let initial = scanner.scan().await.unwrap();
         assert_eq!(initial.len(), 3, "all three initial games are actionable");
         assert!(initial.iter().any(|c| c.index == 0));
@@ -1047,7 +1018,6 @@ mod tests {
             );
         }
 
-        // Second tick on the same scanner: game 0 is still post-anchor and must be returned.
         let late = scanner.scan().await.unwrap();
         let game_zero = late
             .iter()

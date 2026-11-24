@@ -66,17 +66,14 @@ impl InMemoryStorageInner {
     ) -> WriteCounts {
         let mut result = WriteCounts::default();
 
-        // Store account branch nodes
         for (path, branch) in block_state_diff.sorted_trie_updates.account_nodes_ref() {
             self.account_branches.insert((block_number, *path), branch.clone());
             result.account_trie_updates_written_total += 1;
         }
 
-        // Store storage branch nodes and removals
         for (address, storage_trie_updates) in
             block_state_diff.sorted_trie_updates.storage_tries_ref()
         {
-            // Store storage branch nodes
             for (path, branch) in storage_trie_updates.storage_nodes_ref() {
                 self.storage_branches.insert((block_number, *address, *path), branch.clone());
                 result.storage_trie_updates_written_total += 1;
@@ -207,7 +204,6 @@ impl InMemoryTrieCursor {
 
         let storage = self.inner.try_read().ok_or(BaseProofsStorageError::TryLockError)?;
 
-        // Common logic: collect latest values for each path
         let mut path_to_latest: std::collections::BTreeMap<
             Nibbles,
             (u64, Option<BranchNodeCompact>),
@@ -215,7 +211,6 @@ impl InMemoryTrieCursor {
 
         let mut collected_entries: Vec<(Nibbles, BranchNodeCompact)> =
             if let Some(addr) = self.hashed_address {
-                // Storage trie cursor
                 for ((block, address, path), branch) in &storage.storage_branches {
                     if *block <= self.max_block_number && *address == addr {
                         if let Some((existing_block, _)) = path_to_latest.get(path) {
@@ -233,7 +228,6 @@ impl InMemoryTrieCursor {
                     .filter_map(|(path, (_, branch))| branch.map(|b| (path, b)))
                     .collect()
             } else {
-                // Account trie cursor
                 for ((block, path), branch) in &storage.account_branches {
                     if *block <= self.max_block_number {
                         if let Some((existing_block, _)) = path_to_latest.get(path) {
@@ -252,7 +246,6 @@ impl InMemoryTrieCursor {
                     .collect()
             };
 
-        // Sort by path for consistent ordering
         collected_entries.sort_by_key(|(a, _)| *a);
         self.entries = collected_entries;
         self.is_populated = true;
@@ -366,7 +359,6 @@ impl InMemoryStorageCursor {
 
         let storage = self.inner.try_read().ok_or(BaseProofsStorageError::TryLockError)?;
 
-        // Collect latest values for each slot
         let mut slot_to_latest: std::collections::BTreeMap<B256, (u64, U256)> =
             std::collections::BTreeMap::new();
 
@@ -453,7 +445,6 @@ pub struct InMemoryAccountCursor {
 
 impl InMemoryAccountCursor {
     fn new(storage: &InMemoryStorageInner, max_block_number: u64) -> Self {
-        // Collect latest accounts for each address
         let mut addr_to_latest: std::collections::BTreeMap<B256, (u64, Option<Account>)> =
             std::collections::BTreeMap::new();
 
@@ -501,9 +492,7 @@ impl HashedCursor for InMemoryAccountCursor {
         }
     }
 
-    fn reset(&mut self) {
-        // no reset needed
-    }
+    fn reset(&mut self) {}
 }
 
 impl BaseProofsStore for InMemoryProofsStorage {
@@ -523,7 +512,6 @@ impl BaseProofsStore for InMemoryProofsStorage {
 
     fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         let inner = self.inner.read();
-        // Find the latest block number from trie_updates
         let latest_block = inner.trie_updates.keys().max().copied();
         Ok(latest_block.map_or(inner.earliest_block, |block| Some((block, B256::ZERO))))
     }
@@ -674,8 +662,6 @@ impl BaseProofsStore for InMemoryProofsStorage {
         let mut inner = self.inner.write();
         let new_earliest = new_earliest_block_ref.block.number;
 
-        // 1. Account Branches
-        // Identify keys to move (blocks <= new_earliest but > 0)
         let account_keys: Vec<_> = inner
             .account_branches
             .keys()
@@ -685,7 +671,6 @@ impl BaseProofsStore for InMemoryProofsStorage {
 
         for key in account_keys {
             if let Some(branch) = inner.account_branches.remove(&key) {
-                // Determine if we should update the base state (block 0)
                 // In a simpler model without diff calculation, we just overwrite block 0
                 // with the latest version found in the pruned range.
                 // Since keys are sorted by block, this logic naturally keeps the latest if we
@@ -696,7 +681,6 @@ impl BaseProofsStore for InMemoryProofsStorage {
             }
         }
 
-        // 2. Storage Branches
         let storage_keys: Vec<_> = inner
             .storage_branches
             .keys()
@@ -711,7 +695,6 @@ impl BaseProofsStore for InMemoryProofsStorage {
             }
         }
 
-        // 3. Hashed Accounts
         let acc_keys: Vec<_> = inner
             .hashed_accounts
             .keys()
@@ -726,7 +709,6 @@ impl BaseProofsStore for InMemoryProofsStorage {
             }
         }
 
-        // 4. Hashed Storages
         let stor_keys: Vec<_> = inner
             .hashed_storages
             .keys()
@@ -741,12 +723,10 @@ impl BaseProofsStore for InMemoryProofsStorage {
             }
         }
 
-        // Update earliest block pointer
         if let Some((_, hash)) = inner.earliest_block {
             inner.earliest_block = Some((new_earliest, hash));
         }
 
-        // 5. Cleanup Metadata
         inner.trie_updates.retain(|block, _| *block > new_earliest);
         inner.post_states.retain(|block, _| *block > new_earliest);
 
@@ -757,7 +737,6 @@ impl BaseProofsStore for InMemoryProofsStorage {
         let mut inner = self.inner.write();
         let unwind_upto_block_number = unwind_upto_block.block.number - 1;
 
-        // Remove all updates after unwind_upto_block_number
         inner.trie_updates.retain(|block, _| *block <= unwind_upto_block_number);
         inner.post_states.retain(|block, _| *block <= unwind_upto_block_number);
         inner.account_branches.retain(|(block, _), _| *block <= unwind_upto_block_number);
@@ -776,7 +755,6 @@ impl BaseProofsStore for InMemoryProofsStorage {
         let mut inner = self.inner.write();
         let latest_common_block_number = latest_common_block.number;
 
-        // Remove all updates after latest_common_block_number
         inner.trie_updates.retain(|block, _| *block <= latest_common_block_number);
         inner.post_states.retain(|block, _| *block <= latest_common_block_number);
         inner.account_branches.retain(|(block, _), _| *block <= latest_common_block_number);

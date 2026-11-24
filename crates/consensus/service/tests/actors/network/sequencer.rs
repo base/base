@@ -63,19 +63,16 @@ async fn test_sequencer_network_propagation() -> anyhow::Result<()> {
         validator_networks.push(network);
     }
 
-    // Check that all networks are connected to the sequencer.
     for network in &validator_networks {
         network.is_connected_to_with_retries(&sequencer_network).await?;
     }
 
-    // Send a block to the sequencer.
     let mut seed_generator = SEED_GENERATOR_BUILDER.next_generator();
 
     let envelope = seed_generator.random_valid_payload(PayloadVersion::V1)?;
 
     sequencer_network.inbound_data.gossip_payload_tx.send(envelope.clone()).await?;
 
-    // Check that the block propagates to all networks.
     for network in &mut validator_networks {
         let forwarded_block =
             network.blocks_rx.recv().await.ok_or_else(|| anyhow::anyhow!("No block received"))?;

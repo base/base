@@ -17,20 +17,16 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-# alloy
 alloy-eips.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
 alloy-primitives = { workspace = true, features = ["map"] }
 
-# base
 base-common-genesis.workspace = true
 
-# revm
 revm.workspace = true
 
-# misc
 spin.workspace = true
 auto_impl.workspace = true
 

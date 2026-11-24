@@ -38,9 +38,7 @@ mod tests {
     fn default_run_base() {
         let ctx = Context::base();
         let mut evm = ctx.build_with_inspector(NoOpInspector {});
-        // execute without inspector
         let _ = evm.transact(BaseTransaction::builder().build_fill());
-        // execute with inspector callbacks
         let _ = evm.inspect_one_tx(BaseTransaction::builder().build_fill());
     }
 }

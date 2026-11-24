@@ -957,7 +957,6 @@ mod tests {
             },
         };
 
-        // iter() yields entries in CONTRACT_VARIANTS order with each variant's activation time.
         let expected: Vec<(BaseUpgrade, Option<u64>)> = BaseUpgrade::CONTRACT_VARIANTS
             .iter()
             .enumerate()

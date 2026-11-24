@@ -13,7 +13,6 @@ async fn tx_size_limit() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
-    // Set (max_tx_da_size, max_block_da_size), with this case block won't fit any transaction
     let call = driver
         .provider()
         .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (1, 0))
@@ -23,7 +22,6 @@ async fn tx_size_limit() -> eyre::Result<()> {
     let unfit_tx = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
     let block = driver.build_new_block().await?;
 
-    // tx should not be included because we set the tx_size_limit to 1
     assert!(!block.includes(unfit_tx.tx_hash()), "transaction should not be included in the block");
 
     // The tx DA limit is a runtime throttle: once it is lifted, the transaction must still be
@@ -50,7 +48,6 @@ async fn block_size_limit() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
-    // Set block da size to be small, so it won't include tx
     let call = driver
         .provider()
         .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 1))
@@ -59,7 +56,6 @@ async fn block_size_limit() -> eyre::Result<()> {
 
     let (unfit_tx, block) = driver.build_new_block_with_valid_transaction().await?;
 
-    // tx should not be included because we set the tx_size_limit to 1
     assert!(!block.includes(&unfit_tx), "transaction should not be included in the block");
 
     Ok(())
@@ -81,7 +77,6 @@ async fn block_fill() -> eyre::Result<()> {
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
 
-    // Send transactions - some should fit within the DA limit and one should not
     let fit_tx_1 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
     let fit_tx_2 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
     let fit_tx_3 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
@@ -89,7 +84,6 @@ async fn block_fill() -> eyre::Result<()> {
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
-    // Only the transactions that fit within the block DA quota are included.
     assert!(block.includes(fit_tx_1.tx_hash()), "tx 1 should be in block");
     assert!(block.includes(fit_tx_2.tx_hash()), "tx 2 should be in block");
     assert!(block.includes(fit_tx_3.tx_hash()), "tx 3 should be in block");
@@ -138,7 +132,6 @@ async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
 
     let mut tx_hashes = Vec::new();
     for _ in 0..12 {
-        // Send more transactions to ensure some don't fit
         let tx = driver
             .create_transaction()
             .random_valid_transfer()
@@ -150,24 +143,19 @@ async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
-    // Verify that blob_gas_used (DA footprint) is set and respects limits
     assert!(block.header.blob_gas_used.is_some(), "blob_gas_used should be set in Jovian");
 
     let blob_gas = block.header.blob_gas_used.unwrap();
 
-    // The DA footprint must not exceed the block gas limit
     assert!(
         blob_gas == gas_limit,
         "DA footprint (blob_gas_used={blob_gas}) must not exceed block gas limit ({gas_limit})"
     );
 
-    // Verify the block fills up to the DA footprint limit
-    // With more capacity now (no builder tx), more txs can fit
     for (i, tx_hash) in tx_hashes.iter().enumerate().take(9) {
         assert!(block.includes(tx_hash), "tx {i} should be included in the block");
     }
 
-    // Verify some txs don't fit due to DA footprint limit
     assert!(
         !block.includes(&tx_hashes[11]),
         "tx 11 should not fit in the block due to DA footprint limit"

@@ -356,7 +356,6 @@ mod tests {
         .await?;
         let driver = backend.driver().await?;
 
-        // The builder node's genesis hash must match the harness-derived genesis hash.
         let genesis_block = driver
             .get_block(BlockNumberOrTag::Number(0))
             .await?
@@ -366,7 +365,6 @@ mod tests {
             "builder node genesis hash must match the harness-derived genesis",
         );
 
-        // The real payload builder must produce a first block that builds on that genesis.
         let block = driver.build_new_block().await?;
         assert_eq!(block.header.number, 1, "first built block must be block 1");
         assert_eq!(

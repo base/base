@@ -153,7 +153,6 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         let operator_fee_refund = operator_fee_charged.saturating_sub(operator_fee_used);
         Self::credit(host, caller, operator_fee_refund)?;
 
-        // Distribute the collected OP-stack fees to their vaults.
         Self::credit(host, Predeploys::L1_FEE_VAULT, l1_fee)?;
         Self::credit(
             host,

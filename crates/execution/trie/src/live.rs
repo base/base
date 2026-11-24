@@ -58,7 +58,6 @@ where
         let mut operation_durations = OperationDurations::default();
 
         let start = Instant::now();
-        // ensure that we have the state of the parent block
         let (Some((earliest, _)), Some((latest, _))) =
             (self.storage.get_earliest_block_number()?, self.storage.get_latest_block_number()?)
         else {

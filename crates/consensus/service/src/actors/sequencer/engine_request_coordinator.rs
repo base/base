@@ -572,8 +572,6 @@ where
                 let _iter_timer =
                     base_metrics::timed!(EngineMetrics::engine_processor_iteration_duration());
 
-                // Attempt to drain all outstanding tasks from the engine queue before adding new
-                // ones.
                 let drain_outcome = base_metrics::time!(
                     EngineMetrics::engine_processor_drain_duration_seconds(),
                     {
@@ -597,7 +595,6 @@ where
 
                 let more_catchup_pending = self.advance_canonical_catchup().await?;
 
-                // If the unsafe head has updated, propagate it to the outbound channels.
                 self.unsafe_head_tx.send_if_modified(|val| {
                     let new_head = self.processor.engine_state().sync_state.unsafe_head();
                     if *val == new_head {
@@ -607,7 +604,6 @@ where
                     true
                 });
 
-                // Wait for the next processing request.
                 let recv_wait_timer = base_metrics::timed!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds()
                 );
@@ -757,7 +753,6 @@ where
                             gate.buffer_finalized(*finalized_l2_block_number);
                             continue;
                         }
-                        // Finalize the L2 block at the provided block number.
                         let task = EngineTask::Finalize(Box::new(FinalizeTask::new(
                             Arc::clone(self.processor.client()),
                             Arc::clone(self.processor.rollup()),

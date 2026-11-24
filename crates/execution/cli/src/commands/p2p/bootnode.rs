@@ -48,7 +48,6 @@ impl Command {
     pub async fn execute(self) -> eyre::Result<()> {
         info!(v4_addr = %self.v4_addr, v5_addr = %self.v5_addr, nat = %self.nat, v5 = self.v5, "Bootnode starting");
 
-        // discv4
         let sk = self.network_secret()?;
         let v4_node_record = NodeRecord::from_secret_key(self.v4_addr, &sk);
         let config = self.discv4_config();
@@ -59,7 +58,6 @@ impl Command {
         let mut discv4_updates = discv4_service.update_stream();
         discv4_service.spawn();
 
-        // discv5
         let mut discv5_updates = None;
         let mut _discv5 = None;
 

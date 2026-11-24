@@ -7,7 +7,6 @@ use alloy_sol_types::sol;
 sol! {
     #[derive(Debug, PartialEq, Eq)]
     interface IB20Factory {
-        // ── Structs ─────────────────────────────────────────────────────────
 
         enum B20Variant {
             /// Asset B-20 token variant.
@@ -32,7 +31,6 @@ sol! {
             uint8 decimals;
         }
 
-        // ── Errors ───────────────────────────────────────────────────────────
 
         /// ETH was sent to a nonpayable factory function.
         error NonPayable();
@@ -59,7 +57,6 @@ sol! {
         /// One of the post-creation init calls failed.
         error InitCallFailed(uint256 index);
 
-        // ── Events ───────────────────────────────────────────────────────────
 
         event B20Created(
             address indexed token,
@@ -77,7 +74,6 @@ sol! {
             string currency;
         }
 
-        // ── Functions ────────────────────────────────────────────────────────
 
         /// Creates a B-20 token of the requested variant at a deterministic address.
         ///

@@ -59,10 +59,8 @@ unnameable-types = "warn"
 all = "warn"
 
 [workspace.lints.clippy]
-# Baseline - enable all default clippy lints
 all = { level = "warn", priority = -1 }
 
-# === Performance & Cloning ===
 missing-const-for-fn = "warn"
 redundant-clone = "warn"
 clone-on-ref-ptr = "warn"
@@ -72,7 +70,6 @@ flat-map-option = "warn"
 implicit-clone = "warn"
 or-fun-call = "warn"
 
-# === Code Style ===
 wildcard-imports = "warn"
 use-self = "warn"
 option-if-let-else = "warn"
@@ -82,14 +79,11 @@ single-char-pattern = "warn"
 redundant-else = "warn"
 match-same-arms = "warn"
 
-# === Safety & Documentation ===
 undocumented-unsafe-blocks = "warn"
 doc-markdown = "warn"
 
-# === Debugging Artifacts ===
 dbg-macro = "warn"
 
-# === Code Quality ===
 branches-sharing-code = "warn"
 derive-partial-eq-without-eq = "warn"
 explicit-into-iter-loop = "warn"
@@ -149,14 +143,12 @@ lto = false
 debug = "line-tables-only"
 strip = "none"
 
-# CI profile: optimized for fast GHA builds and minimal disk usage
 [profile.ci]
 inherits = "dev"
 debug = false
 incremental = false
 
 [workspace.dependencies]
-# Base Primitives
 base-bundles = { path = "crates/common/bundles" }
 base-common-signer = { path = "crates/common/signer" }
 base-common-chains = { path = "crates/common/chains" }
@@ -176,12 +168,10 @@ base-precompile-storage = { path = "crates/common/precompile-storage", default-f
 base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
 base-observability-events = { path = "crates/common/observability-events", default-features = false }
 
-# Builder
 base-builder-cli = { path = "crates/builder/cli" }
 base-builder-core = { path = "crates/builder/core" }
 base-builder-metering = { path = "crates/builder/metering" }
 
-# Consensus
 base-consensus-cli = { path = "crates/consensus/cli" }
 base-consensus-rpc = { path = "crates/consensus/rpc" }
 base-consensus-safedb = { path = "crates/consensus/safedb" }
@@ -196,7 +186,6 @@ base-consensus-sources = { path = "crates/consensus/sources", default-features =
 base-consensus-upgrades = { path = "crates/consensus/upgrades", default-features = false }
 base-consensus-providers = { path = "crates/consensus/providers", default-features = false }
 
-# Execution
 base-node-core = { path = "crates/execution/node" }
 base-execution-cli = { path = "crates/execution/cli" }
 base-execution-evm = { path = "crates/execution/evm" }
@@ -220,7 +209,6 @@ base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db" }
 base-execution-base-tx-rpc-node = { path = "crates/execution/base-tx-rpc-node" }
 base-execution-base-tx = { path = "crates/execution/base-tx", default-features = false }
 
-# Infra
 base-acceptance = { path = "acceptance" }
 base-roxy = { path = "crates/infra/roxy" }
 basectl-cli = { path = "crates/infra/basectl" }
@@ -237,7 +225,6 @@ base-shadow-metrics = { path = "crates/infra/shadow-metrics" }
 base-challenger-e2e = { path = "crates/infra/challenger-e2e" }
 base-zk-fork-dispute = { path = "crates/infra/zk-fork-dispute" }
 
-# Proof
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
 base-proof-worker = { path = "crates/proof/worker" }
@@ -265,10 +252,8 @@ base-proof-preimage = { path = "crates/proof/preimage", default-features = false
 base-proof-zk-backend = { path = "crates/proof/zk/backend", default-features = false }
 base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
 
-# Succinct (OP Succinct / SP1 proving)
 base-proof-succinct-elfs = { path = "crates/proof/zk/backend/elfs" }
 
-# Batcher
 base-batcher-cli = { path = "crates/batcher/cli" }
 base-batcher-core = { path = "crates/batcher/core" }
 base-batcher-admin = { path = "crates/batcher/admin" }
@@ -277,7 +262,6 @@ base-batcher-encoder = { path = "crates/batcher/encoder" }
 base-batcher-service = { path = "crates/batcher/service" }
 base-comp = { path = "crates/batcher/comp", default-features = false }
 
-# Utilities
 base-jwt = { path = "crates/utilities/jwt" }
 base-retry = { path = "crates/utilities/retry" }
 base-health = { path = "crates/utilities/health" }
@@ -293,15 +277,12 @@ base-balance-monitor = { path = "crates/utilities/balance-monitor" }
 base-metrics = { path = "crates/utilities/metrics", default-features = false }
 base-runtime = { path = "crates/utilities/runtime", default-features = false }
 
-# revm
 revm = { version = "43.0.3", default-features = false }
 revm-bytecode = { version = "43.0.0", default-features = false }
 revm-precompile = { version = "43.0.3", default-features = false }
 
-# evm2
 evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "9b037449c846515624ff6afde739f2b764851446", default-features = false }
 
-# alloy
 alloy-signer = "2.5.0"
 alloy-pubsub = "2.3.0"
 alloy-network = "2.5.0"
@@ -336,7 +317,6 @@ alloy-rpc-types-txpool = { version = "2.5.0", default-features = false }
 alloy-rpc-types-engine = { version = "2.5.0", default-features = false }
 alloy-network-primitives = { version = "2.3.0", default-features = false }
 
-# reth
 reth-zstd-compressors = { version = "0.8.2", default-features = false }
 reth-primitives-traits = { version = "0.8.2", default-features = false }
 reth-db = { git = "https://github.com/base/reth", rev = "2b20e42de9c42b51ea0fb56599fda3c2f22640ef" }
@@ -410,46 +390,38 @@ reth-storage-errors = { git = "https://github.com/base/reth", rev = "2b20e42de9c
 reth-ethereum-forks = { git = "https://github.com/base/reth", rev = "2b20e42de9c42b51ea0fb56599fda3c2f22640ef", default-features = false }
 reth-consensus-common = { git = "https://github.com/base/reth", rev = "2b20e42de9c42b51ea0fb56599fda3c2f22640ef", default-features = false }
 
-# tokio
 tokio = "1.53.1"
 tokio-util = "0.7.19"
 tokio-stream = "0.1.17"
 # Match Reth's websocket stack instead of resolving a second incompatible version.
 tokio-tungstenite = "0.29.0"
 
-# async
 futures = "0.3.31"
 reqwest = "0.13.1"
 async-stream = "0.3"
 async-channel = "2.5"
 async-trait = "0.1.83"
 
-# grpc
 tonic = "0.14"
 
-# rpc
 jsonrpsee = "0.26.0"
 jsonrpsee-core = "0.26.0"
 jsonrpsee-types = "0.26.0"
 
-# cli
 clap = "4.6.5"
 ratatui = "0.30.0"
 indicatif = "0.18"
 crossterm = "0.29"
 tracing-indicatif = "0.3"
 
-# tracing
 tracing-appender = "0.2.5"
 tracing-subscriber = "0.3.22"
 tracing = { version = "0.1.43", default-features = false }
 
-# OpenTelemetry
 opentelemetry = "0.32"
 opentelemetry_sdk = { version = "0.32", default-features = false }
 opentelemetry-http = { version = "0.32", default-features = false }
 
-# metrics
 cadence = "1.5"
 ordered-float = "5"
 metrics = { version = "0.24.3", default-features = false }
@@ -457,7 +429,6 @@ metrics-util = { version = "0.20.3", default-features = false }
 metrics-process = { version = "2.4.3", default-features = false }
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 
-# aws
 aws-nitro-enclaves-nsm-api = "0.4"
 aws-config = { version = "1.1.7", default-features = false }
 aws-sdk-s3 = { version = "1.106.0", default-features = false }
@@ -465,14 +436,12 @@ aws-sdk-ec2 = { version = "1.217.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
 aws-sdk-elasticloadbalancingv2 = { version = "1.109.0", default-features = false }
 
-# SP1 v6.10.0 (Hypercube) — used by crates/proof/zk
 sp1-prover-types = "=6.10.0"
 sp1-sdk = { version = "=6.10.0" }
 sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.9.0" }
 sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.9.0" }
 sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.9.0" }
 
-# crypto
 sha3 = "0.10"
 k256 = "0.13"
 p256 = "0.13"
@@ -491,7 +460,6 @@ coins-bip32 = { version = "0.12", default-features = false }
 coins-bip39 = { version = "0.12", default-features = false }
 ark-bls12-381 = { version = "0.6.0", default-features = false }
 
-# http
 url = "2.5"
 http = "1.4"
 hyper = "1.9"
@@ -502,7 +470,6 @@ http-body-util = "0.1.3"
 axum = { version = "0.8.9", default-features = false }
 tower-http = { version = "0.6", features = ["limit", "timeout"] }
 
-# p2p
 ipnet = "2.11"
 discv5 = { git = "https://github.com/sigp/discv5", rev = "7663c00" }
 libp2p = "0.56.0"
@@ -510,7 +477,6 @@ multihash = "0.19"
 libp2p-identity = "0.2.12"
 unsigned-varint = { version = "0.8", default-features = false }
 
-# serde
 rkyv = "0.8"
 bincode = "2"
 ciborium = "0.2"
@@ -525,7 +491,6 @@ toml = { version = "1.0", default-features = false }
 serde = { version = "1.0.228", default-features = false }
 serde_json = { version = "1.0.151", default-features = false }
 
-# testing
 arbtest = "0.3"
 mockall = "0.14"
 tempfile = "3.27"
@@ -540,28 +505,23 @@ arbitrary = { version = "1", default-features = false }
 testcontainers = { version = "0.25", default-features = false }
 testcontainers-modules = { version = "0.13", default-features = false }
 
-# docker
 bollard = "0.19.4"
 
-# compression
 snap = "1"
 zstd = "0.13"
 tar = "0.4.46"
 miniz_oxide = "0.9.0"
 brotli = { version = "8.0.2", default-features = false }
 
-# database
 redb = "2"
 sqlx = { version = "0.8", default-features = false }
 rocksdb = { version = "0.24", default-features = false }
 
-# errors
 eyre = "0.6"
 anyhow = "1.0"
 backtrace = "0.3"
 thiserror = { version = "2.0", default-features = false }
 
-# collections and concurrency
 lru = "0.16"
 moka = "0.12"
 rayon = "1.11"
@@ -570,30 +530,24 @@ parking_lot = "0.12.3"
 crossbeam-channel = "0.5.13"
 either = { version = "1.16.0", default-features = false }
 
-# configuration
 dirs = "6.0.0"
 dotenvy = { version = "0.15.7", default-features = false }
 figment = { version = "0.10.19", default-features = false }
 
-# encoding
 hex = "0.4"
 base64 = "0.22"
 bytes = "1.12.1"
 
-# identifiers and randomness
 rand = "0.9"
 uuid = "1.24"
 rand_08 = { package = "rand", version = "0.8" }
 
-# time
 chrono = "0.4.42"
 humantime = "2.3"
 
-# retry
 backon = "1.6"
 backoff = "0.4.0"
 
-# macros and code generation
 quote = "1"
 ctor = "0.6"
 proc-macro2 = "1"
@@ -605,20 +559,16 @@ strum = { version = "0.27", default-features = false }
 syn = { version = "2", features = ["full", "extra-traits"] }
 derive_more = { version = "2.1.0", default-features = false }
 
-# no_std
 spin = "0.10"
 cfg-if = "1.0"
 alloc-no-stdlib = "2.0"
 
-# system
 libc = "0.2"
 rlimit = "0.11"
 hostname = "0.4.0"
 tokio-vsock = "0.7"
 tikv-jemallocator = "0.6"
 
-# tooling
 notify = "8.2"
 
-# rate limiting
 governor = "0.7"

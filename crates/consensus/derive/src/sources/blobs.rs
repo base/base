@@ -111,7 +111,6 @@ where
 
         let (mut data, blob_hashes) = self.extract_blob_data(info.1, batcher_address);
 
-        // If there are no hashes, set the calldata and return.
         if blob_hashes.is_empty() {
             self.open = true;
             self.data = data;
@@ -148,7 +147,6 @@ where
             }
         })?;
 
-        // Fill the blob pointers.
         let mut blob_index = 0;
         for blob in &mut data {
             match blob.fill(&blobs, blob_index) {
@@ -163,7 +161,6 @@ where
             }
         }
 
-        // Check for over-fill: ensure all blobs were consumed.
         if blob_index < blobs.len() {
             return Err(ResetError::BlobsOverFill(blob_index, blobs.len()).into());
         }
@@ -203,8 +200,6 @@ where
             return Ok(c);
         }
 
-        // Decode the blob data to raw bytes.
-        // Otherwise, ignore blob and recurse next.
         match next_data.decode() {
             Ok(d) => Ok(d),
             Err(_) => {
@@ -296,7 +291,7 @@ pub(super) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         source.chain_provider.insert_block_with_transactions(0, block_info, Vec::new());
-        assert!(!source.open); // Source is not open by default.
+        assert!(!source.open);
         assert!(source.load_blobs(&BlockInfo::default(), Address::ZERO).await.is_ok());
         assert!(source.data.is_empty());
         assert!(source.open);
@@ -540,16 +535,12 @@ pub(super) mod tests {
     /// 2. Correct batch inbox address → all 5 blobs from the batcher transaction are captured.
     #[test]
     fn test_extract_blob_data_non_batcher_blobs_excluded() {
-        // Case 1: source.batcher_address = Address::ZERO does not match the tx's batch inbox
-        // address from `ChainConfig::MAINNET`, so the transaction is skipped and no
-        // blobs are captured.
-        let source = default_test_blob_source(); // batch_inbox_address = Address::ZERO
+        let source = default_test_blob_source();
         let batcher_address = valid_blob_batcher_address();
         let (data, hashes) = source.extract_blob_data(valid_blob_txs(), batcher_address);
         assert!(data.is_empty(), "non-batcher blobs must not be captured (data)");
         assert!(hashes.is_empty(), "non-batcher blob hashes must not be captured");
 
-        // Case 2: correct batch inbox address → all 5 blobs from the batcher transaction captured.
         let mut source2 = default_test_blob_source();
         let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source2.batcher_address = batch_inbox_address;

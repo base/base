@@ -9,7 +9,6 @@ docs/
 .claude/
 .config/
 
-# Config/docs not needed in build context
 Justfile
 LICENSE
 /README.md
@@ -26,7 +25,6 @@ etc/docker/
 !etc/docker/nitro-enclave/
 !etc/docker/nitro-host/
 
-# Devnet tooling not needed in container builds
 etc/scripts/devnet/grafana/
 etc/scripts/devnet/load/
 etc/scripts/devnet/prometheus.yml

@@ -63,8 +63,6 @@ where
     pub fn attempt_update(&mut self) -> PipelineResult<()> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         if let Some(prev) = self.prev.take() {
-            // On the first call to `attempt_update`, we need to determine the active stage to
-            // initialize the mux with.
             if self.cfg.is_feature_active_cascading(
                 BaseFeature::StrictDerivationOrdering,
                 origin.timestamp,
@@ -81,8 +79,6 @@ where
                 origin.timestamp,
             )
         {
-            // If the batch queue is active and Holocene is also active, transition to the batch
-            // validator.
             let batch_queue = self.batch_queue.take().expect("Must have batch queue");
             let mut bv =
                 BatchValidator::new(Arc::clone(&self.cfg), batch_queue.prev, self.provider.clone());
@@ -391,13 +387,11 @@ mod tests {
 
         batch_provider.attempt_update().unwrap();
 
-        // Update the L1 origin to Holocene activation.
         let Some(ref mut stage) = batch_provider.batch_queue else {
             panic!("Expected BatchQueue");
         };
         stage.prev.origin = Some(BlockInfo { number: 1, timestamp: 2, ..Default::default() });
 
-        // Transition to the BatchValidator stage.
         batch_provider.attempt_update().unwrap();
         assert!(batch_provider.batch_queue.is_none());
         assert!(batch_provider.batch_validator.is_some());
@@ -417,22 +411,18 @@ mod tests {
 
         batch_provider.attempt_update().unwrap();
 
-        // Set origin and l1_blocks on the BatchQueue before the transition.
         let Some(ref mut stage) = batch_provider.batch_queue else {
             panic!("Expected BatchQueue");
         };
         stage.origin = Some(BlockInfo { number: 5, timestamp: 3, ..Default::default() });
         stage.l1_blocks = vec![BlockInfo { number: 5, timestamp: 3, ..Default::default() }];
 
-        // Update the L1 origin to Holocene activation.
         stage.prev.origin = Some(BlockInfo { number: 1, timestamp: 10, ..Default::default() });
 
-        // Transition to the BatchValidator stage.
         batch_provider.attempt_update().unwrap();
         assert!(batch_provider.batch_queue.is_none());
         assert!(batch_provider.batch_validator.is_some());
 
-        // Assert that origin was transferred.
         let bv = batch_provider.batch_validator.as_ref().unwrap();
         assert_eq!(bv.origin, Some(BlockInfo { number: 5, timestamp: 3, ..Default::default() }));
         assert_eq!(bv.l1_blocks, vec![BlockInfo { number: 5, timestamp: 3, ..Default::default() }]);
@@ -450,13 +440,11 @@ mod tests {
 
         batch_provider.attempt_update().unwrap();
 
-        // Update the L1 origin to Holocene activation.
         let Some(ref mut stage) = batch_provider.batch_queue else {
             panic!("Expected BatchQueue");
         };
         stage.prev.origin = Some(BlockInfo { number: 1, timestamp: 2, ..Default::default() });
 
-        // Transition to the BatchValidator stage.
         batch_provider.attempt_update().unwrap();
         assert!(batch_provider.batch_queue.is_none());
         assert!(batch_provider.batch_validator.is_some());
@@ -479,7 +467,6 @@ mod tests {
         let cfg = Arc::new(RollupConfig::default());
         let mut batch_provider = BatchProvider::new(cfg, provider, l2_provider);
 
-        // Reset the batch provider.
         batch_provider.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
 
         let Some(bq) = batch_provider.batch_queue else {
@@ -498,7 +485,6 @@ mod tests {
         });
         let mut batch_provider = BatchProvider::new(cfg, provider, l2_provider);
 
-        // Reset the batch provider.
         batch_provider.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
 
         let Some(bv) = batch_provider.batch_validator else {

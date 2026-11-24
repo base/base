@@ -10,18 +10,14 @@ repository.workspace = true
 [dependencies]
 rkyv.workspace = true
 
-# base-consensus / base-proof
 # Cobalt guests stay no_std. `evm-std` (Base transactions without Tokio) waits for Everest.
 base-proof.workspace = true
 
-# sp1
 sp1-zkvm.workspace = true
 
-# base-succinct
 base-proof-zk-utils.workspace = true
 base-proof-succinct-range-utils.workspace = true
 
-# `tracing-subscriber` feature dependencies
 tracing-subscriber = { workspace = true, optional = true }
 
 [features]

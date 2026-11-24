@@ -49,12 +49,9 @@ pub enum NetworkDriverError {
 impl NetworkDriver {
     /// Starts the network.
     pub async fn start(mut self) -> Result<NetworkHandler, NetworkDriverError> {
-        // Start the libp2p Swarm
         let gossip_listen_addr = self.gossip.start().await?;
 
         if self.enr_update {
-            // Update the local ENR socket to the gossip listen address.
-            // Parse the multiaddr to a socket address.
             let ip_address = gossip_listen_addr
                 .iter()
                 .find_map(|p| match p {
@@ -78,10 +75,8 @@ impl NetworkDriver {
             self.discovery.disc.update_local_enr_socket(SocketAddr::new(ip_address, port), true);
         }
 
-        // Start the discovery service.
         let (handler, enr_receiver) = self.discovery.start();
 
-        // We are checking the peer scores every [`PEER_SCORE_INSPECT_FREQUENCY`] seconds.
         let peer_score_inspector = tokio::time::interval(PEER_SCORE_INSPECT_FREQUENCY);
 
         let mut gater_pruner = tokio::time::interval(GATER_PRUNE_INTERVAL);
@@ -97,7 +92,6 @@ impl NetworkDriver {
         );
         trusted_peer_redialer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-        // Start the block signer if it is configured.
         let signer =
             OptionFuture::from(self.signer.map(async |s| s.start().await)).await.transpose()?;
 

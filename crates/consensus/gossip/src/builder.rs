@@ -175,7 +175,6 @@ impl GossipDriverBuilder {
         (GossipDriver<crate::ConnectionGater>, watch::Sender<Address>),
         GossipDriverBuilderError,
     > {
-        // Extract builder arguments
         let timeout = self.timeout.take().unwrap_or(Duration::from_secs(60));
         let keypair = self.keypair;
         let addr = self.gossip_addr;
@@ -185,10 +184,8 @@ impl GossipDriverBuilder {
 
         let (signer_tx, signer_rx) = watch::channel(signer_recv);
 
-        // Block Handler setup
         let handler = BlockHandler::new(rollup_config, signer_rx);
 
-        // Construct the gossip behaviour
         let config = self.config.unwrap_or_else(crate::default_config);
         info!(
             target: "gossip",
@@ -230,7 +227,6 @@ impl GossipDriverBuilder {
             connection_limits_config,
         )?;
 
-        // If peer scoring is configured, set it on the behaviour.
         match self.scoring {
             None => info!(target: "scoring", "Peer scoring not enabled"),
             Some(PeerScoreLevel::Off) => {
@@ -247,7 +243,6 @@ impl GossipDriverBuilder {
             }
         }
 
-        // Build the swarm with DNS+TCP transport.
         // Note: with_dns() must be called after with_tcp() to wrap TCP with DNS resolution.
         debug!(target: "gossip", peer_id = %keypair.public().to_peer_id(), "Building Swarm");
         let swarm = SwarmBuilder::with_existing_identity(keypair)

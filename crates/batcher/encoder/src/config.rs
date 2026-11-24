@@ -128,8 +128,6 @@ impl EncoderConfig {
             });
         }
 
-        // Channel and transaction targets are independently configurable, but
-        // neither accepts a zero-sized unit of work.
         if self.compressed_size_target == Some(0) {
             return Err(EncoderConfigError::CompressedTargetZero);
         }

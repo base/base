@@ -48,12 +48,10 @@ where
     /// Hydrates the [`OrderedListWalker`]'s iterator with the leaves of the derivable list. If
     /// `Self::inner` is [Some], this function will fail fast.
     pub fn hydrate(&mut self, fetcher: &F) -> OrderedListWalkerResult<()> {
-        // Do not allow for re-hydration if `inner` is `Some` and still contains elements.
         if self.inner.is_some() && self.inner.as_ref().map(|s| s.len()).unwrap_or_default() > 0 {
             return Err(OrderedListWalkerError::AlreadyHydrated);
         }
 
-        // Get the preimage to the root node.
         let root_trie_node = Self::get_trie_node(self.root, fetcher)?;
 
         // With small lists the iterator seems to use 0x80 (RLP empty string, unlike the others)
@@ -94,15 +92,11 @@ where
                 for item in stack {
                     match item {
                         TrieNode::Blinded { commitment } => {
-                            // If the string is a hash, we need to grab the preimage for it and
-                            // continue recursing.
                             let trie_node = Self::get_trie_node(commitment.as_ref(), fetcher)?;
                             leaf_values.append(&mut Self::fetch_leaves(&trie_node, fetcher)?);
                         }
-                        TrieNode::Empty => { /* Skip over empty nodes, we're looking for values. */
-                        }
+                        TrieNode::Empty => {}
                         item => {
-                            // If the item is already retrieved, recurse on it.
                             leaf_values.append(&mut Self::fetch_leaves(item, fetcher)?);
                         }
                     }
@@ -112,17 +106,13 @@ where
             TrieNode::Leaf { prefix, value } => {
                 Ok(vec![(prefix.to_vec().into(), value.clone())].into())
             }
-            TrieNode::Extension { node, .. } => {
-                // If the node is a hash, we need to grab the preimage for it and continue
-                // recursing. If it is already retrieved, recurse on it.
-                match node.as_ref() {
-                    TrieNode::Blinded { commitment } => {
-                        let trie_node = Self::get_trie_node(commitment.as_ref(), fetcher)?;
-                        Ok(Self::fetch_leaves(&trie_node, fetcher)?)
-                    }
-                    node => Ok(Self::fetch_leaves(node, fetcher)?),
+            TrieNode::Extension { node, .. } => match node.as_ref() {
+                TrieNode::Blinded { commitment } => {
+                    let trie_node = Self::get_trie_node(commitment.as_ref(), fetcher)?;
+                    Ok(Self::fetch_leaves(&trie_node, fetcher)?)
                 }
-            }
+                node => Ok(Self::fetch_leaves(node, fetcher)?),
+            },
             TrieNode::Empty => Ok(VecDeque::new()),
             _ => Err(TrieNodeError::InvalidNodeType.into()),
         }

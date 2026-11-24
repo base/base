@@ -45,11 +45,9 @@ ALLOWED_DEPS=(
   "base-execution-base-tx"
 )
 
-# Build a jq filter string for allowed deps
 ALLOWED_FILTER=$(printf '"%s",' "${ALLOWED_DEPS[@]}")
 ALLOWED_FILTER="[${ALLOWED_FILTER%,}]"
 
-# Fetch cargo metadata once, ensuring Cargo.lock is in sync
 METADATA=$(cargo metadata --format-version 1 --no-deps --locked)
 
 FOUND_VIOLATIONS=false

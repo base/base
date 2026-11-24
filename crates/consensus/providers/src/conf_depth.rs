@@ -120,7 +120,6 @@ mod tests {
     #[tokio::test]
     async fn block_beyond_conf_depth_is_rejected() {
         let mut p = provider_with_head(100, 4);
-        // number (97) + conf_depth (4) = 101 > 100 → rejected
         let err = p.block_info_by_number(97).await.unwrap_err();
         assert!(matches!(err, AlloyChainProviderError::BlockNotFound(_)));
     }
@@ -140,7 +139,6 @@ mod tests {
     #[tokio::test]
     async fn unknown_l1_head_passes_through() {
         let mut p = provider_with_head(0, 4);
-        // L1 head is 0 (not yet known) → no gating
         let err = p.block_info_by_number(200).await.unwrap_err();
         assert!(
             !matches!(err, AlloyChainProviderError::BlockNotFound(_)),

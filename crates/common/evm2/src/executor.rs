@@ -345,7 +345,6 @@ impl<'a> BaseBlockExecutor<'a> {
             .checked_add(result.tx_gas_used())
             .ok_or_else(|| HandlerError::external(CumulativeGasOverflow))?;
         let cumulative_gas_used = self.gas_used;
-        // Accumulate the DA footprint metered above (zero for deposits and before Jovian).
         self.da_footprint_used = self.da_footprint_used.saturating_add(tx_da_footprint);
         let _ = executed.commit_to(&mut self.block_state);
 

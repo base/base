@@ -12,24 +12,19 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
 alloy-provider.workspace = true
 alloy-contract.workspace = true
 alloy-transport.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
-# Async
 futures.workspace = true
 async-trait.workspace = true
 
-# Tracing
 tracing.workspace = true
 
-# Error handling
 thiserror.workspace = true
 
-# Misc
 url.workspace = true
 
 [dev-dependencies]

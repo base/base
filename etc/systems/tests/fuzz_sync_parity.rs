@@ -71,7 +71,6 @@ async fn fuzz_sync_parity() -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
     let seed = seed_from_env();
 
-    // 1. Boot the devnet: sequencer (builder) + gossip-following validator (client).
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
@@ -80,7 +79,6 @@ async fn fuzz_sync_parity() -> Result<()> {
     let sequencer = system.l2_builder_provider()?;
     let validator = system.l2_client_provider()?;
 
-    // 2. Submit a seeded, fuzzed transaction stream to the sequencer.
     let mut generator = FuzzTxGenerator::new(seed);
     let submitted =
         submit_fuzzed_txs(&sequencer, &validator, &mut generator, NUM_TXS, seed).await?;
@@ -93,7 +91,6 @@ async fn fuzz_sync_parity() -> Result<()> {
         "too few transactions accepted (seed={seed:#x}): {submitted}/{NUM_TXS}; parity would pass vacuously"
     );
 
-    // 3. Oracle: the validator must follow the sequencer to a shared head.
     assert_sync_parity(&sequencer, &validator, seed).await?;
     info!(seed, "validator stayed in sync with sequencer");
 
@@ -169,7 +166,6 @@ async fn submit_fuzzed_txs(
     count: u64,
     seed: u64,
 ) -> Result<u64> {
-    // Prepare a signer and starting nonce for each sender.
     let sender_accounts = senders();
     let mut signers = Vec::new();
     for account in sender_accounts {
@@ -266,7 +262,6 @@ async fn assert_sync_parity(
             let seq_head = sequencer.get_block_number().await?;
             let val_head = validator.get_block_number().await?;
 
-            // Height both nodes should have; used to compare hashes.
             let shared = seq_head.saturating_sub(MAX_LAG);
             let (seq_hash, val_hash) = if val_head >= shared && val_head > 0 {
                 (block_hash(sequencer, shared).await?, block_hash(validator, shared).await.ok())
@@ -364,11 +359,8 @@ mod tests {
 
     #[test]
     fn lagging_when_validator_falls_behind() {
-        // Divergence: sequencer advances, validator stalls.
         assert_eq!(classify_parity(50, 10, H1, Some(H1), MAX_LAG), Parity::Lagging);
-        // Validator has not started following yet.
         assert_eq!(classify_parity(10, 0, H1, None, MAX_LAG), Parity::Lagging);
-        // Caught up in height but missing the shared block.
         assert_eq!(classify_parity(10, 9, H1, None, MAX_LAG), Parity::Lagging);
     }
 

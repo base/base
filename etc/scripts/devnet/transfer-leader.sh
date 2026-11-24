@@ -1,8 +1,4 @@
 #!/bin/bash
-# Simulates a sequencer failover: stops the active sequencer on the current
-# raft leader's unified sequencer node via admin_stopSequencer, then transfers raft leadership
-# via op-conductor, and waits to confirm the new leader.
-#
 # Usage:
 #   transfer-leader.sh          # transfer to any available node
 #   transfer-leader.sh 0        # transfer to op-conductor-0 (base-builder)
@@ -46,7 +42,6 @@ if [ -n "$TARGET" ] && ! [[ "$TARGET" =~ ^[0-2]$ ]]; then
   exit 1
 fi
 
-# ─── Find current leader ──────────────────────────────────────────────────────
 
 LEADER_IDX=""
 for i in 0 1 2; do
@@ -77,7 +72,6 @@ if [ -n "$TARGET" ] && [ "$TARGET" = "$LEADER_IDX" ]; then
   exit 0
 fi
 
-# ─── Transfer raft leadership ─────────────────────────────────────────────────
 # The conductor stops its own sequencer internally when it loses leadership,
 # keeping its active state correctly tracked. Externally calling
 # admin_stopSequencer before conductor_transferLeader breaks that state machine.
@@ -100,7 +94,6 @@ else
     "http://localhost:$LEADER_CONDUCTOR_PORT" >/dev/null
 fi
 
-# ─── Wait for new leader ──────────────────────────────────────────────────────
 
 echo -n "Waiting for new leader"
 for _ in $(seq 1 30); do

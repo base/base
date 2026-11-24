@@ -127,7 +127,6 @@ impl std::fmt::Debug for L2Client {
 impl L2Client {
     /// Creates a new L2 client from the given configuration.
     pub fn new(config: L2ClientConfig) -> RpcResult<Self> {
-        // Create reqwest Client with timeout
         let mut builder = Client::builder().timeout(config.timeout);
 
         if config.skip_tls_verify {
@@ -139,7 +138,6 @@ impl L2Client {
             .build()
             .map_err(|e| RpcError::Connection(format!("Failed to build HTTP client: {e}")))?;
 
-        // Create HTTP transport with custom client
         let http = Http::with_client(client, config.endpoint);
         let rpc_client = RpcClient::new(http, false);
 
@@ -232,7 +230,6 @@ impl L2Provider for L2Client {
         })
         .await?;
 
-        // Cache the result
         self.proofs_cache.insert(cache_key, proof.clone()).await;
 
         Ok(proof)
@@ -256,7 +253,6 @@ impl L2Provider for L2Client {
 
         let header = block.header;
 
-        // Cache by hash
         self.headers_cache.insert(header.hash, header.clone()).await;
 
         Ok(header)
@@ -278,7 +274,6 @@ impl L2Provider for L2Client {
         .await?
         .ok_or_else(|| RpcError::BlockNotFound(format!("Block not found for {block_id:?}")))?;
 
-        // Cache by hash
         self.blocks_cache.insert(block.header.hash, block.clone()).await;
         self.headers_cache.insert(block.header.hash, block.header.clone()).await;
 
@@ -286,7 +281,6 @@ impl L2Provider for L2Client {
     }
 
     async fn block_by_hash(&self, hash: B256) -> RpcResult<BaseBlock> {
-        // Check cache first
         if let Some(block) = self.blocks_cache.get(&hash).await {
             return Ok(block);
         }
@@ -304,7 +298,6 @@ impl L2Provider for L2Client {
         .await?
         .ok_or_else(|| RpcError::BlockNotFound(format!("Block not found for hash {hash}")))?;
 
-        // Cache the result
         self.blocks_cache.insert(hash, block.clone()).await;
         self.headers_cache.insert(hash, block.header.clone()).await;
 

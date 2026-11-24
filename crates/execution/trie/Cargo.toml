@@ -12,7 +12,6 @@ description = "Trie node storage for serving proofs in FP window fast"
 workspace = true
 
 [dependencies]
-# reth
 reth-evm.workspace = true
 reth-tasks.workspace = true
 reth-provider.workspace = true
@@ -30,23 +29,18 @@ reth-trie-db.workspace = true
 # breaking compilation. Adding it as an optional dep lets us enable both features together.
 reth-ethereum-primitives = { workspace = true, optional = true }
 
-# `metrics` feature
 base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
 
-# ethereum
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 
-# async
 tokio = { workspace = true, features = ["sync"] }
 
-# codec
 serde.workspace = true
 bytes.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 
-# misc
 tracing.workspace = true
 rayon.workspace = true
 dashmap.workspace = true
@@ -82,7 +76,6 @@ reth-db-api = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"] }
 
-# misc
 serial_test.workspace = true
 criterion = { workspace = true, features = ["html_reports"] }
 

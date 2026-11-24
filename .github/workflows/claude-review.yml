@@ -10,8 +10,6 @@ concurrency:
 
 permissions:
   contents: read
-  # This allows posting comments and reviews
-  # It does not allow pushing any commits or modifying any files in the repo
   pull-requests: write
 
 jobs:
@@ -81,14 +79,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           path_to_claude_code_executable: ${{ steps.install-claude.outputs.claude_path }}
 
-          # When track_progress is enabled:
-          # - Creates a tracking comment with progress checkboxes
-          # - Includes all PR context (comments, attachments, images)
-          # - Updates progress as the review proceeds
-          # - Marks as completed when done
           track_progress: false
 
-          # review instructions
           prompt: |
             You are reviewing a Pull Request for Base Reth Node — a Rust Ethereum L2 node built on Reth.
 

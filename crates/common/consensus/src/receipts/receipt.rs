@@ -343,12 +343,10 @@ impl<T: Decodable> RlpDecodableReceipt for BaseReceipt<T> {
         let header_buf = &mut &**buf;
         let header = Header::decode(header_buf)?;
 
-        // Legacy receipt, reuse initial buffer without advancing
         if header.list {
             return Self::rlp_decode_inner(buf, OpTxType::Legacy);
         }
 
-        // Otherwise, advance the buffer and try decoding type flag followed by receipt
         *buf = *header_buf;
 
         let remaining = buf.len();
@@ -614,7 +612,6 @@ pub(super) mod serde_bincode_compat {
                 receipt: BaseReceipt::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap(),
             };
             let success = data.receipt.as_receipt_mut().status.coerce_status();
-            // // ensure we don't have an invalid poststate variant
             data.receipt.as_receipt_mut().status = success.into();
 
             let encoded = bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap();
@@ -680,7 +677,6 @@ mod tests {
 
         receipt.encode(&mut data);
 
-        // check that the rlp length equals the length of the expected rlp
         assert_eq!(receipt.length(), expected.len());
         assert_eq!(data, expected);
     }
@@ -692,7 +688,6 @@ mod tests {
             "f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff"
         );
 
-        // EIP658Receipt
         let expected = ReceiptWithBloom {
             receipt: BaseReceipt::Legacy(Receipt {
                 status: Eip658Value::Eip658(false),
@@ -719,7 +714,6 @@ mod tests {
             "b901107ef9010c0182b741b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0833d3bbf"
         );
 
-        // Deposit Receipt (post-regolith)
         let expected: ReceiptWithBloom<BaseReceipt> = ReceiptWithBloom {
             receipt: BaseReceipt::Deposit(DepositReceipt {
                 inner: Receipt {
@@ -747,7 +741,6 @@ mod tests {
             "b901117ef9010d0182b741b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0833d3bbf01"
         );
 
-        // Deposit Receipt (post-canyon)
         let expected: ReceiptWithBloom<BaseReceipt> = ReceiptWithBloom {
             receipt: BaseReceipt::Deposit(DepositReceipt {
                 inner: Receipt {
@@ -787,7 +780,6 @@ mod tests {
             "Encoded length should match the actual encoded data length"
         );
 
-        // Test for legacy receipt as well
         let legacy_receipt: ReceiptWithBloom<BaseReceipt> = ReceiptWithBloom {
             receipt: BaseReceipt::Legacy(Receipt {
                 status: Eip658Value::Eip658(true),

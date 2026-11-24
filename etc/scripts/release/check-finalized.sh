@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# check-finalized.sh - Fail if a release branch already has a final release tag
-#
 # Usage: ./check-finalized.sh <release_branch>
 # Example: ./check-finalized.sh releases/v1.0.0
 

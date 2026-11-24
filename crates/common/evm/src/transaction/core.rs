@@ -123,7 +123,6 @@ impl<T: Transaction> Transaction for BaseTransaction<T> {
         T: 'a;
 
     fn tx_type(&self) -> u8 {
-        // If this is a deposit transaction (has source_hash set), return deposit type
         if self.deposit.source_hash != B256::ZERO {
             DEPOSIT_TRANSACTION_TYPE
         } else if self.base_tx.is_some() {
@@ -209,7 +208,6 @@ impl<T: Transaction> Transaction for BaseTransaction<T> {
     }
 
     fn effective_gas_price(&self, base_fee: u128) -> u128 {
-        // Deposit transactions use gas_price directly
         if self.tx_type() == DEPOSIT_TRANSACTION_TYPE {
             return self.gas_price();
         }
@@ -422,12 +420,8 @@ mod tests {
             .source_hash(B256::from([1u8; 32]))
             .build()
             .unwrap();
-        // Verify transaction type (deposit transactions should have tx_type based on BaseSpecId)
-        // The tx_type is derived from the transaction structure, not set manually
-        // Verify common fields access
         assert_eq!(base_tx.gas_limit(), 10);
         assert_eq!(base_tx.kind(), revm::primitives::TxKind::Call(Address::ZERO));
-        // Verify gas related calculations - deposit transactions use gas_price for effective gas price
         assert_eq!(base_tx.effective_gas_price(90), 100);
         assert_eq!(base_tx.max_fee_per_gas(), 100);
     }

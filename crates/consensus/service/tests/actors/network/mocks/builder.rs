@@ -95,7 +95,6 @@ impl TestNetworkBuilder {
         let node_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 
         let discovery_config = ConfigBuilder::new(ListenConfig::from_ip(node_addr, 0))
-            // Only allow loopback addresses.
             .table_filter(|enr| {
                 let Some(ip) = enr.ip4() else {
                     return false;
@@ -108,9 +107,7 @@ impl TestNetworkBuilder {
         let mut gossip_multiaddr = Multiaddr::from(node_addr);
         gossip_multiaddr.push(Protocol::Tcp(0));
 
-        // Create a new network actor. No external connections
         let mut builder = NetworkBuilder::new(
-            // Create a new rollup config. We don't need to specify any of the fields.
             self.rollup_config(),
             self.unsafe_block_signer,
             gossip_multiaddr,

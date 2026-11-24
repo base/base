@@ -62,9 +62,6 @@ impl InProcessBatcher {
             l1_rpc_url: config.l1_rpc_url,
             sequencer_urls: vec![config.sequencer_url],
             signer: Some(SignerConfig::local(signer)),
-            // SystemTestStack defaults come from the shared batcher config:
-            // poll_interval: 1s, num_confirmations: 1, resubmission_timeout: 48s —
-            // all set by BatcherConfig::default().
             ..BatcherConfig::default()
         };
         if config.force_batch_submission {

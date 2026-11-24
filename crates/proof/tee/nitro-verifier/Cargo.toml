@@ -12,21 +12,17 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Parsing
 ciborium.workspace = true
 serde_bytes.workspace = true
 x509-parser.workspace = true
 serde = { workspace = true, features = ["derive"] }
 
-# Crypto
 sha2.workspace = true
 p384 = { workspace = true, features = ["ecdsa"] }
 
-# Types
 alloy-sol-types.workspace = true
 alloy-primitives = { workspace = true, default-features = false }
 
-# Error
 thiserror.workspace = true
 
 [dev-dependencies]

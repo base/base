@@ -526,7 +526,6 @@ mod tests {
         let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
 
         assert_eq!(p.set_code(Address::ZERO, code), Err(BasePrecompileError::StaticCallViolation),);
-        // No state gas must have been charged.
         assert_eq!(p.state_gas_used(), 0);
     }
 
@@ -555,10 +554,8 @@ mod tests {
     #[test]
     fn sstore_clearing_slot_generates_refund() {
         let mut p = HashMapStorageProvider::new(1);
-        // Write a non-zero value first.
         p.sstore(ADDR, KEY, U256::from(42u64)).unwrap();
         assert_eq!(p.gas_refunded(), 0, "writing non-zero to zero slot earns no refund");
-        // Clear it — should earn EIP-3529 refund.
         p.sstore(ADDR, KEY, U256::ZERO).unwrap();
         assert!(p.gas_refunded() > 0, "clearing a non-zero slot must earn a refund");
     }

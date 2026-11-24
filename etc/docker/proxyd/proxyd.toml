@@ -21,10 +21,8 @@ backends = ["builder"]
 backends = ["client"]
 
 [rpc_method_mappings]
-# Transaction submission routed to builder.
 eth_sendRawTransaction = "builder"
 
-# All other methods routed to client
 eth_getBlockByHash = "client"
 eth_getBlockByNumber = "client"
 eth_getBlockTransactionCountByHash = "client"
@@ -74,7 +72,6 @@ debug_getRawTransaction = "client"
 debug_getRawReceipts = "client"
 debug_getBadBlocks = "client"
 
-# Base-specific RPC methods
 base_transactionStatus = "client"
 base_meterBundle = "client"
 base_meterBlockByHash = "client"

@@ -34,18 +34,14 @@ where
         timestamp,
         timestamp.saturating_sub(2),
     ) {
-        // Load the create2 deployer account from the cache.
         let mut acc_info = db.basic(CREATE_2_DEPLOYER_ADDR)?.unwrap_or_default();
 
-        // Update the account info with the create2 deployer codehash and bytecode.
         acc_info.code_hash = CREATE_2_DEPLOYER_CODEHASH;
         acc_info.code = Some(Bytecode::new_raw(Bytes::from_static(&CREATE_2_DEPLOYER_BYTECODE)));
 
-        // Convert the cache account back into a revm account and mark it as touched.
         let mut revm_acc: revm::state::Account = acc_info.into();
         revm_acc.mark_touch();
 
-        // Commit the create2 deployer account to the database.
         db.commit(HashMap::from_iter([(CREATE_2_DEPLOYER_ADDR, revm_acc)]));
         return Ok(());
     }

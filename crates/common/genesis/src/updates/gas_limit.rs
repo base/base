@@ -47,7 +47,6 @@ impl TryFrom<&SystemConfigLog> for GasLimitUpdate {
             return Err(GasLimitUpdateError::GasLimitDecodingError);
         };
 
-        // Prevent overflows here.
         let max = U256::from(u64::MAX as u128);
         if gas_limit > max {
             return Err(GasLimitUpdateError::GasLimitDecodingError);

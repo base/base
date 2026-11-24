@@ -19,8 +19,6 @@ const GAS_LIMIT: u64 = 10_000_000;
 /// Transfer amount used across all policy gating tests.
 const TRANSFER_AMOUNT: u64 = 1_000;
 
-// --- ALLOWLIST ---
-
 #[tokio::test]
 async fn allowlist_policy_gates_b20_transfers() {
     let allowlist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
@@ -30,7 +28,6 @@ async fn allowlist_policy_gates_b20_transfers() {
     )
     .await;
 
-    // Non-member: transfer must revert because Alice is not yet in the allowlist.
     let blocked = scenario.env.transfer_b20_tx(
         scenario.token,
         BerylTestEnv::bob(),
@@ -44,7 +41,6 @@ async fn allowlist_policy_gates_b20_transfers() {
     scenario.assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY);
     scenario.assert_balance(BerylTestEnv::bob(), 0);
 
-    // Add Alice to the allowlist.
     let add_alice = scenario.policy_tx(IPolicyRegistry::updateAllowlistCall {
         policyId: allowlist_id,
         allowed: true,
@@ -53,7 +49,6 @@ async fn allowlist_policy_gates_b20_transfers() {
     let block = scenario.build_block_with_transactions(vec![add_alice]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updateAllowlist() must succeed");
 
-    // Allowlist member: transfer must succeed.
     let allowed = scenario.env.transfer_b20_tx(
         scenario.token,
         BerylTestEnv::bob(),
@@ -68,7 +63,6 @@ async fn allowlist_policy_gates_b20_transfers() {
         .assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY - TRANSFER_AMOUNT);
     scenario.assert_balance(BerylTestEnv::bob(), TRANSFER_AMOUNT);
 
-    // Remove Alice from the allowlist.
     let remove_alice = scenario.policy_tx(IPolicyRegistry::updateAllowlistCall {
         policyId: allowlist_id,
         allowed: false,
@@ -77,7 +71,6 @@ async fn allowlist_policy_gates_b20_transfers() {
     let block = scenario.build_block_with_transactions(vec![remove_alice]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updateAllowlist(remove) must succeed");
 
-    // Re-blocked: transfer must revert once Alice is removed from the allowlist.
     let re_blocked = scenario.env.transfer_b20_tx(
         scenario.token,
         BerylTestEnv::bob(),
@@ -92,8 +85,6 @@ async fn allowlist_policy_gates_b20_transfers() {
     scenario.derive().await;
 }
 
-// --- BLOCKLIST ---
-
 #[tokio::test]
 async fn blocklist_policy_gates_b20_transfers() {
     let blocklist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 2);
@@ -103,7 +94,6 @@ async fn blocklist_policy_gates_b20_transfers() {
     )
     .await;
 
-    // Non-blocked sender: transfer must succeed.
     let allowed = scenario.env.transfer_b20_tx(
         scenario.token,
         BerylTestEnv::bob(),
@@ -118,7 +108,6 @@ async fn blocklist_policy_gates_b20_transfers() {
         .assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY - TRANSFER_AMOUNT);
     scenario.assert_balance(BerylTestEnv::bob(), TRANSFER_AMOUNT);
 
-    // Block Alice.
     let block_alice = scenario.policy_tx(IPolicyRegistry::updateBlocklistCall {
         policyId: blocklist_id,
         blocked: true,
@@ -127,7 +116,6 @@ async fn blocklist_policy_gates_b20_transfers() {
     let block = scenario.build_block_with_transactions(vec![block_alice]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updateBlocklist() must succeed");
 
-    // Blocked sender: transfer must revert.
     let blocked = scenario.env.transfer_b20_tx(
         scenario.token,
         BerylTestEnv::carol(),
@@ -139,7 +127,6 @@ async fn blocklist_policy_gates_b20_transfers() {
         .assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY - TRANSFER_AMOUNT);
     scenario.assert_balance(BerylTestEnv::carol(), 0);
 
-    // Unblock Alice.
     let unblock_alice = scenario.policy_tx(IPolicyRegistry::updateBlocklistCall {
         policyId: blocklist_id,
         blocked: false,
@@ -148,7 +135,6 @@ async fn blocklist_policy_gates_b20_transfers() {
     let block = scenario.build_block_with_transactions(vec![unblock_alice]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updateBlocklist(unblock) must succeed");
 
-    // Unblocked sender: transfer must succeed again.
     let unblocked = scenario.env.transfer_b20_tx(
         scenario.token,
         BerylTestEnv::carol(),
@@ -168,8 +154,6 @@ async fn blocklist_policy_gates_b20_transfers() {
 
     scenario.derive().await;
 }
-
-// --- ALWAYS_ALLOW (built-in id = 0) ---
 
 #[tokio::test]
 async fn always_allow_policy_never_blocks_b20_transfers() {
@@ -194,11 +178,8 @@ async fn always_allow_policy_never_blocks_b20_transfers() {
     scenario.derive().await;
 }
 
-// --- ALWAYS_BLOCK (built-in id = 1) ---
-
 #[tokio::test]
 async fn always_block_policy_always_blocks_b20_transfers() {
-    // ALWAYS_BLOCK_ID = 1; set via updatePolicy init call.
     let mut scenario =
         PolicyTransferScenario::new_with_builtin_policy(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
             .await;
@@ -219,10 +200,6 @@ async fn always_block_policy_always_blocks_b20_transfers() {
     scenario.derive().await;
 }
 
-// ---------------------------------------------------------------------------
-// Scenario helpers
-// ---------------------------------------------------------------------------
-
 /// Test fixture: a funded B-20 token whose `TRANSFER_SENDER_POLICY` is pre-configured.
 struct PolicyTransferScenario {
     env: BerylTestEnv,
@@ -242,11 +219,9 @@ impl PolicyTransferScenario {
         let token = env.b20_token_address();
         let mut scenario = Self { env, token, blocks: Vec::new() };
 
-        // Empty block to cross the Beryl activation boundary.
         let beryl_boundary = scenario.env.sequencer.build_empty_block().await;
         scenario.push_block(beryl_boundary);
 
-        // Activate both features in one block.
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let activate_registry =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
@@ -274,7 +249,6 @@ impl PolicyTransferScenario {
         let block = scenario.build_block_with_transactions(vec![create_policy]).await;
         assert!(scenario.env.user_tx_succeeded(&block, 0), "createPolicy() must succeed");
 
-        // Deploy the B-20 token with the TRANSFER_SENDER_POLICY wired to the custom policy.
         let create_token = scenario.create_token_tx(Some(policy_id));
         let block = scenario.build_block_with_transactions(vec![create_token]).await;
         assert!(

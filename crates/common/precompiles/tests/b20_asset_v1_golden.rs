@@ -40,8 +40,6 @@ use common::{
     signed_permit, storage_at, u,
 };
 
-// --- fixtures ---------------------------------------------------------------
-
 const NAME: &str = "Base Asset";
 const SYMBOL: &str = "bASSET";
 const DECIMALS: u8 = 6;
@@ -124,8 +122,6 @@ const ROOT_METADATA_REMOVE: B256 =
 const ROOT_ANNOUNCE: B256 =
     b256!("bc541cb4aecf8c93e8bc0b495eb7d1011c614fcb65704b848a961bb7207dcb83");
 
-// --- harness ----------------------------------------------------------------
-
 /// Fresh provider with an initialized `Base Asset` at [`TOKEN`], matching the factory
 /// bootstrap: the multiplier slot is left physically zero and the getter normalizes it to WAD.
 fn fresh() -> HashMapStorageProvider {
@@ -170,10 +166,6 @@ fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
         LOGIC.domain_separator(&token, CHAIN_ID).unwrap()
     })
 }
-
-// ============================================================================
-// Version resolver
-// ============================================================================
 
 #[test]
 fn resolver_maps_forks_to_versions() {
@@ -274,10 +266,6 @@ fn golden_policy_id_rejects_seize_scopes_at_v1() {
         );
     }
 }
-
-// ============================================================================
-// transfer
-// ============================================================================
 
 #[test]
 fn golden_transfer_privileged() {
@@ -515,10 +503,6 @@ fn golden_burn_with_memo_emits_transfer_then_memo() {
     );
 }
 
-// ============================================================================
-// transferFrom
-// ============================================================================
-
 #[test]
 fn golden_transfer_from_finite_allowance_decrements() {
     let mut s = fresh();
@@ -613,10 +597,6 @@ fn golden_transfer_from_unprivileged_enforces_executor_policy() {
     );
 }
 
-// ============================================================================
-// approve
-// ============================================================================
-
 #[test]
 fn golden_approve_sets_allowance_and_emits() {
     let mut s = fresh();
@@ -647,10 +627,6 @@ fn golden_approve_reverts_zero_spender() {
     assert_eq!(err, BasePrecompileError::revert(IB20::InvalidSpender { spender: Address::ZERO }));
 }
 
-// ============================================================================
-// mint
-// ============================================================================
-
 #[test]
 fn golden_mint_privileged_still_enforces_receiver_policy() {
     let mut s = fresh();
@@ -676,7 +652,6 @@ fn golden_mint_privileged_still_enforces_receiver_policy() {
 #[test]
 fn golden_mint_unprivileged_requires_role_and_policy() {
     let mut s = fresh();
-    // Missing MINT_ROLE => unauthorized.
     let mut policy = FakePolicyAccounting::new();
     policy.allow(0, BOB);
     let err = op(&mut s, ALICE, policy, IB20::mintCall { to: BOB, amount: u(1) }.abi_encode())
@@ -689,7 +664,6 @@ fn golden_mint_unprivileged_requires_role_and_policy() {
         })
     );
 
-    // With MINT_ROLE + authorized receiver => succeeds.
     seed(&mut s, |t| give_role(t, B20TokenRole::Mint.id(), ALICE));
     let mut policy = FakePolicyAccounting::new();
     policy.allow(0, BOB);
@@ -719,10 +693,6 @@ fn golden_mint_reverts_over_supply_cap() {
         BasePrecompileError::revert(IB20::SupplyCapExceeded { cap: u(50), attempted: u(100) })
     );
 }
-
-// ============================================================================
-// burn / burnBlocked
-// ============================================================================
 
 #[test]
 fn golden_burn_requires_role_then_reduces_supply() {
@@ -803,10 +773,6 @@ fn golden_burn_blocked_reverts_when_not_blocked() {
     .unwrap_err();
     assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE }));
 }
-
-// ============================================================================
-// pause / unpause
-// ============================================================================
 
 #[test]
 fn golden_pause_sets_feature_bit() {
@@ -901,10 +867,6 @@ fn golden_pause_unprivileged_requires_role() {
     );
 }
 
-// ============================================================================
-// config / metadata
-// ============================================================================
-
 #[test]
 fn golden_update_supply_cap() {
     let mut s = fresh();
@@ -994,10 +956,6 @@ fn golden_update_contract_uri() {
     assert_eq!(last_topic0(&s), IB20::ContractURIUpdated::SIGNATURE_HASH);
     assert_root("update_contract_uri", s, ROOT_UPDATE_CONTRACT_URI);
 }
-
-// ============================================================================
-// roles
-// ============================================================================
 
 #[test]
 fn golden_grant_role() {
@@ -1135,10 +1093,6 @@ fn golden_set_role_admin() {
     assert_root("set_role_admin", s, ROOT_SET_ROLE_ADMIN);
 }
 
-// ============================================================================
-// policy
-// ============================================================================
-
 #[test]
 fn golden_update_policy() {
     let mut s = fresh();
@@ -1172,10 +1126,6 @@ fn golden_update_policy_reverts_missing_policy() {
     .unwrap_err();
     assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
 }
-
-// ============================================================================
-// permit
-// ============================================================================
 
 #[test]
 fn golden_permit_sets_allowance_and_increments_nonce() {
@@ -1229,10 +1179,6 @@ fn golden_permit_charges_no_recovery_gas() {
     .expect("permit must succeed");
     assert_eq!(s.gas_deducted(), 0, "V1 permit must not charge any recovery gas (unmetered)");
 }
-
-// ============================================================================
-// computed reads
-// ============================================================================
 
 #[test]
 fn golden_read_is_paused_and_paused_features() {
@@ -1320,10 +1266,6 @@ fn golden_read_eip712_domain() {
     assert_eq!(decoded.fields, alloy_primitives::FixedBytes::<1>::from([0x0f]));
 }
 
-// ============================================================================
-// direct + constant reads
-// ============================================================================
-
 #[test]
 fn golden_read_metadata_and_supply() {
     let mut s = fresh();
@@ -1378,10 +1320,6 @@ fn golden_read_role_and_policy_constants() {
     }
     assert_root("read_constants", s, ROOT_FRESH);
 }
-
-// ============================================================================
-// dispatch envelope (full path: nonpayable / uninitialized / pre-Beryl)
-// ============================================================================
 
 #[test]
 fn dispatch_rejects_nonzero_value() {
@@ -1451,14 +1389,9 @@ fn dispatch_reverts_when_uninitialized() {
     assert!(out.bytes.is_empty());
 }
 
-// ============================================================================
-// additional branch coverage: unprivileged auth guards + revert edges
-// ============================================================================
-
 #[test]
 fn golden_transfer_reverts_zero_sender() {
     let mut s = fresh();
-    // caller (the sender) is the zero address.
     let err = op_privileged(
         &mut s,
         Address::ZERO,
@@ -1498,7 +1431,6 @@ fn golden_transfer_from_reverts_zero_sender() {
 #[test]
 fn golden_approve_reverts_zero_approver() {
     let mut s = fresh();
-    // caller (the approver) is the zero address.
     let err = op(
         &mut s,
         Address::ZERO,
@@ -1655,7 +1587,6 @@ fn golden_update_policy_unprivileged_requires_role() {
 
 #[test]
 fn golden_grant_role_unprivileged_no_admin_reverts() {
-    // No admin exists yet → the admin-availability guard reverts.
     let mut s = fresh();
     let err = op(
         &mut s,
@@ -1675,7 +1606,6 @@ fn golden_grant_role_unprivileged_no_admin_reverts() {
 
 #[test]
 fn golden_grant_role_unprivileged_non_admin_caller_reverts() {
-    // An admin exists, but ALICE is not the role's admin → the role check reverts.
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN));
     let err = op(
@@ -1781,7 +1711,6 @@ fn golden_grant_role_idempotent_when_already_held() {
         give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN);
         give_role(t, B20TokenRole::Mint.id(), ALICE);
     });
-    // ALICE already holds MINT_ROLE → grant is a no-op (no event, count unchanged).
     let out = op_privileged(
         &mut s,
         ADMIN,
@@ -1791,7 +1720,6 @@ fn golden_grant_role_idempotent_when_already_held() {
     .unwrap();
 
     assert!(out.is_empty());
-    // ALICE still holds MINT_ROLE; the grant emitted nothing (early return).
     read(&mut s, |t| assert!(t.has_role(B20TokenRole::Mint.id(), ALICE).unwrap()));
     assert_root("grant_idempotent", s, ROOT_GRANT_IDEMPOTENT);
 }
@@ -1799,7 +1727,6 @@ fn golden_grant_role_idempotent_when_already_held() {
 #[test]
 fn golden_revoke_role_noop_when_not_held() {
     let mut s = fresh();
-    // ALICE does not hold MINT_ROLE → revoke is a no-op; state stays at fresh.
     let out = op_privileged(
         &mut s,
         ADMIN,
@@ -1813,13 +1740,8 @@ fn golden_revoke_role_noop_when_not_held() {
     assert_root("revoke_noop", s, ROOT_FRESH);
 }
 
-// ============================================================================
-// dispatch harness wrappers (no-observer dispatch, version-resolver gating, factory bootstrap)
-// ============================================================================
-
 #[test]
 fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
-    // Exercises the no-observer `dispatch()` wrapper + the is_initialized=false gate.
     let mut s = storage_at(BaseUpgrade::Beryl);
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
@@ -1878,10 +1800,6 @@ fn golden_grant_role_unchecked_bootstraps_first_admin() {
     assert_eq!(last_topic0(&s), IB20::RoleGranted::SIGNATURE_HASH);
     assert_root("grant_unchecked", s, ROOT_GRANT_UNCHECKED);
 }
-
-// ============================================================================
-// asset reads: OPERATOR_ROLE / WAD / multiplier / scaled balances / metadata
-// ============================================================================
 
 #[test]
 fn golden_read_operator_role_and_wad() {
@@ -1996,18 +1914,14 @@ fn golden_read_extra_metadata() {
     assert_root("read_extra_metadata", s, ROOT_EXTRA_METADATA_READ);
 }
 
-// ============================================================================
-// updateMultiplier
-// ============================================================================
-
 // Guards `fresh()` against drifting back to a physical-WAD prestate: a factory-bootstrapped
 // token leaves the multiplier slot physically zero, and the getter normalizes it to WAD.
 #[test]
 fn golden_fresh_multiplier_slot_is_physical_zero() {
     let mut s = fresh();
     read(&mut s, |t| {
-        assert_eq!(t.asset.multiplier.read().unwrap(), U256::ZERO); // raw slot
-        assert_eq!(t.multiplier().unwrap(), B20AssetStorage::WAD); // normalized getter
+        assert_eq!(t.asset.multiplier.read().unwrap(), U256::ZERO);
+        assert_eq!(t.multiplier().unwrap(), B20AssetStorage::WAD);
     });
 }
 
@@ -2052,10 +1966,6 @@ fn golden_update_multiplier_unprivileged_requires_role() {
         operator_role(),
     );
 }
-
-// ============================================================================
-// batchMint
-// ============================================================================
 
 #[test]
 fn golden_batch_mint() {
@@ -2145,10 +2055,6 @@ fn golden_batch_mint_unprivileged_requires_role() {
     );
 }
 
-// ============================================================================
-// updateExtraMetadata
-// ============================================================================
-
 #[test]
 fn golden_update_extra_metadata_set() {
     let mut s = fresh();
@@ -2218,10 +2124,6 @@ fn golden_update_extra_metadata_unprivileged_requires_role() {
         B20TokenRole::Metadata.id(),
     );
 }
-
-// ============================================================================
-// announce (posts announcement, atomically runs internalCalls)
-// ============================================================================
 
 #[test]
 fn golden_announce_emits_and_runs_internal_calls() {
@@ -2413,9 +2315,6 @@ fn golden_announce_unprivileged_requires_role() {
     );
 }
 
-// ============================================================================
-// gas: storage-access footprint per op
-// ============================================================================
 //
 // `gas_deducted` is 0 under the test gas schedule, so we pin the deterministic,
 // schedule-independent signal instead: the SLOAD / SSTORE / KECCAK256 op counts a
@@ -2692,10 +2591,6 @@ fn golden_gas_footprints() {
     bless_or_assert_gas(&actual, expected);
 }
 
-// ============================================================================
-// meta: op coverage checklist
-// ============================================================================
-
 /// Compile-time coverage checklist — never called; it exists only for its two
 /// exhaustive `match`es (no `_` arm), each arm naming the golden `#[test]` fn(s) that
 /// pin the op via [`covered`].
@@ -2718,7 +2613,6 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
     fn covered(_goldens: &[fn()]) {}
 
     match call {
-        // ERC-20 core
         C::transfer(_) => covered(&[
             golden_transfer_privileged,
             golden_transfer_unprivileged_allowed,
@@ -2748,7 +2642,6 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         C::mintWithMemo(_) => covered(&[golden_mint_with_memo_emits_transfer_then_memo]),
         C::burnWithMemo(_) => covered(&[golden_burn_with_memo_emits_transfer_then_memo]),
 
-        // mint / burn
         C::mint(_) => covered(&[
             golden_mint_privileged_still_enforces_receiver_policy,
             golden_mint_unprivileged_requires_role_and_policy,
@@ -2769,7 +2662,6 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         | C::SEIZE_EXEMPT_POLICY(_)
         | C::SEIZE_RECEIVER_POLICY(_) => covered(&[golden_seize_selectors_unknown_at_v1]),
 
-        // pause / config / roles / policy / permit
         C::pause(_) => covered(&[
             golden_pause_sets_feature_bit,
             golden_pause_reverts_empty_feature_set,
@@ -2834,7 +2726,6 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_permit_reverts_when_expired,
         ]),
 
-        // computed reads
         C::isPaused(_) | C::pausedFeatures(_) => covered(&[
             golden_read_is_paused_and_paused_features,
             golden_seize_pause_feature_unknown_at_v1,
@@ -2846,7 +2737,6 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         C::DOMAIN_SEPARATOR(_) => covered(&[golden_read_domain_separator]),
         C::eip712Domain(_) => covered(&[golden_read_eip712_domain]),
 
-        // direct reads
         C::name(_)
         | C::symbol(_)
         | C::decimals(_)
@@ -2859,7 +2749,6 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         | C::hasRole(_)
         | C::getRoleAdmin(_) => covered(&[golden_read_metadata_and_supply]),
 
-        // role / policy-id constants
         C::DEFAULT_ADMIN_ROLE(_)
         | C::MINT_ROLE(_)
         | C::BURN_ROLE(_)
@@ -2874,7 +2763,6 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
     }
 
     match ext {
-        // asset-specific reads
         SC::OPERATOR_ROLE(_) | SC::WAD_PRECISION(_) => {
             covered(&[golden_read_operator_role_and_wad])
         }
@@ -2885,7 +2773,6 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         SC::isAnnouncementIdUsed(_) => covered(&[golden_read_is_announcement_id_used]),
         SC::extraMetadata(_) => covered(&[golden_read_extra_metadata]),
 
-        // asset-specific mutations
         SC::updateMultiplier(_) => covered(&[
             golden_update_multiplier,
             golden_update_multiplier_reverts_zero,

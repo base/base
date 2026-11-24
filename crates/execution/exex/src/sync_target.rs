@@ -55,7 +55,6 @@ pub enum SyncTargetState {
 impl SyncTargetState {
     const fn apply_next(&mut self, new: Self) {
         *self = match (&*self, new) {
-            // If we are just syncing to tip already, replace with the new state.
             (Self::SyncUpTo { .. }, new) => new,
 
             // A new revert supersedes any pending sync, but retain the earliest revert target.
@@ -72,8 +71,6 @@ impl SyncTargetState {
                 Self::RevertThenSync { revert_to: new, sync_to },
             ) => Self::RevertThenSync { revert_to: earliest_revert(current, new), sync_to },
 
-            // If we're currently reverting, replace the sync to value with the new
-            // state.
             (
                 Self::RevertThenSync { revert_to, .. } | Self::Revert { revert_to },
                 Self::SyncUpTo { to },
@@ -281,8 +278,6 @@ mod tests {
         }
     }
 
-    // ---- SyncTargetState::apply_next tests ----
-
     #[test]
     fn apply_next_sync_replaced_by_sync() {
         let mut state = SyncTargetState::SyncUpTo { to: 10 };
@@ -376,8 +371,6 @@ mod tests {
         ));
     }
 
-    // ---- SyncTarget state management tests ----
-
     #[test]
     fn new_sync_target_has_no_state() {
         let target = SyncTarget::new();
@@ -415,8 +408,6 @@ mod tests {
             if revert_to.block.number == 5
         ));
     }
-
-    // ---- mark_revert_complete tests ----
 
     #[test]
     fn mark_revert_complete_clears_covered_revert() {
@@ -497,8 +488,6 @@ mod tests {
         assert!(!target.has_pending_state());
     }
 
-    // ---- Cache tests ----
-
     #[test]
     fn insert_and_take_cached_data() {
         let target = SyncTarget::new();
@@ -508,7 +497,6 @@ mod tests {
         assert!(taken.is_some());
         assert_eq!(taken.unwrap().block_with_parent.block.number, 42);
 
-        // Second take returns None (was removed)
         assert!(target.take(42).is_none());
     }
 
@@ -527,11 +515,9 @@ mod tests {
 
         target.clear_from(6);
 
-        // Blocks 1..=5 remain
         for n in 1..=5 {
             assert!(target.take(n).is_some(), "block {n} should still be cached");
         }
-        // Blocks 6..=10 removed
         for n in 6..=10 {
             assert!(target.take(n).is_none(), "block {n} should have been cleared");
         }
@@ -565,17 +551,14 @@ mod tests {
     fn cache_evicts_oldest_when_full() {
         let target = SyncTarget::new();
 
-        // Fill to capacity + 10
         for n in 1..=(CACHE_CAPACITY as u64 + 10) {
             target.insert(n, dummy_cached_data(n));
         }
 
-        // Oldest 10 blocks should have been evicted
         for n in 1..=10 {
             assert!(target.take(n).is_none(), "block {n} should have been evicted");
         }
 
-        // Block 11 onward should still be present
         assert!(target.take(11).is_some());
         assert!(target.take(CACHE_CAPACITY as u64 + 10).is_some());
     }
@@ -603,7 +586,6 @@ mod tests {
         let target = Arc::new(SyncTarget::new());
         let target_clone = Arc::clone(&target);
 
-        // Spawn a task that waits for notification
         let handle = tokio::spawn(async move {
             target_clone.notified().await;
             target_clone.take_state()

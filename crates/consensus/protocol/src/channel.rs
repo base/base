@@ -94,7 +94,6 @@ impl Channel {
         frame: Frame,
         l1_inclusion_block: BlockInfo,
     ) -> Result<(), ChannelError> {
-        // Ensure that the frame ID is equal to the channel ID.
         if frame.id != self.id {
             return Err(ChannelError::FrameIdMismatch);
         }
@@ -108,13 +107,10 @@ impl Channel {
             return Err(ChannelError::FrameBeyondEndFrame(frame.number as usize));
         }
 
-        // Guaranteed to succeed at this point. Update the channel state.
         if frame.is_last {
             self.last_frame_number = frame.number;
             self.closed = true;
 
-            // Prune frames with a higher number than the last frame number when we receive a
-            // closing frame.
             if self.last_frame_number < self.highest_frame_number {
                 self.inputs.retain(|id, frame| {
                     if *id < self.last_frame_number {
@@ -128,7 +124,6 @@ impl Channel {
             }
         }
 
-        // Update the highest frame number.
         if frame.number > self.highest_frame_number {
             self.highest_frame_number = frame.number;
         }
@@ -154,17 +149,14 @@ impl Channel {
 
     /// Returns `true` if the channel is ready to be read.
     pub fn is_ready(&self) -> bool {
-        // Must have buffered the last frame before the channel is ready.
         if !self.closed {
             return false;
         }
 
-        // Must have the possibility of contiguous frames.
         if self.inputs.len() != (self.last_frame_number + 1) as usize {
             return false;
         }
 
-        // Check for contiguous frames.
         for i in 0..=self.last_frame_number {
             if !self.inputs.contains_key(&i) {
                 return false;
@@ -213,9 +205,6 @@ mod tests {
     }
 
     fn run_frame_validity_test(test_case: FrameValidityTestCase) {
-        // #[cfg(feature = "std")]
-        // println!("Running test: {}", test_case.name);
-
         let id = [0xFF; 16];
         let block = BlockInfo::default();
         let mut channel = Channel::new(id, block);

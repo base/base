@@ -36,11 +36,9 @@ mod tests {
         );
         let response = r#"{"source_hash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","mint":52,"is_system_transaction":false}"#;
 
-        // serialize
         let json = serde_json::to_string(&parts).unwrap();
         assert_eq!(json.as_str(), response);
 
-        // deserialize
         let deposit_tx_parts: DepositTransactionParts = serde_json::from_str(response).unwrap();
         assert_eq!(deposit_tx_parts, parts);
     }

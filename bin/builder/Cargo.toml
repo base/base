@@ -16,7 +16,6 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-# workspace
 base-cli-utils.workspace = true
 base-txpool-rpc.workspace = true
 base-node-runner.workspace = true
@@ -26,12 +25,10 @@ base-shadow-indexer.workspace = true
 base-builder-metering.workspace = true
 base-observability-events.workspace = true
 
-# reth
 base-reth-cli.workspace = true
 reth-cli-util.workspace = true
 base-execution-cli = { workspace = true, features = ["otlp"] }
 
-# cli
 clap.workspace = true
 
 [features]

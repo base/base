@@ -28,13 +28,10 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 
     const SAMPLE_SIZE: usize = 10;
 
-    // ensure that each block has the deposit transaction when
-    // no user transactions are sent.
     for _ in 0..SAMPLE_SIZE {
         let block = driver.build_new_block_with_current_timestamp(None).await?;
         let transactions = block.transactions;
 
-        // Only the deposit transaction should be present
         assert_eq!(
             transactions.len(),
             1,
@@ -42,8 +39,6 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
         );
     }
 
-    // ensure that transactions are included in blocks and each block has all the transactions
-    // sent to it during its block time plus the deposit transaction
     for _ in 0..SAMPLE_SIZE {
         let count = rand::random_range(1..8);
         let mut tx_hashes = HashSet::<TxHash>::default();
@@ -62,7 +57,6 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 
         let txs = block.transactions;
 
-        // Each block contains the deposit transaction plus user transactions
         assert_eq!(txs.len(), 1 + count, "Block should have {} transactions", 1 + count);
 
         for tx_hash in tx_hashes {
@@ -86,12 +80,10 @@ async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
 
     let (populate, produce) = join!(
         async {
-            // Keep the builder busy with new transactions.
             loop {
                 match driver.create_transaction().random_valid_transfer().send().await {
                     Ok(_) => {}
                     Err(e) if e.to_string().contains("txpool is full") => {
-                        // If the txpool is full, give it a short break
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                     Err(e) => return Err(e),
@@ -110,10 +102,7 @@ async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
             // and fill up the txpool.
             tokio::time::sleep(Duration::from_secs(1)).await;
 
-            // Now, start producing blocks under load.
             for _ in 0..10 {
-                // Ensure that the builder can still produce blocks under
-                // heavy load of incoming transactions.
                 let block = tokio::time::timeout(
                     ChainDriver::<Ipc>::BLOCK_TIME + Duration::from_millis(1500),
                     driver.build_new_block_with_current_timestamp(None),
@@ -127,8 +116,6 @@ async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
                 yield_now().await;
             }
 
-            // we're happy with one block produced under load
-            // set the done flag to true to stop the transaction population
             done.store(true, Ordering::Relaxed);
             info!("All blocks produced under load");
 
@@ -138,7 +125,6 @@ async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
 
     populate.unwrap();
 
-    //assert!(populate.is_ok(), "Failed to populate transactions");
     assert!(produce.is_ok(), "Failed to produce block under load");
 
     Ok(())
@@ -149,10 +135,8 @@ async fn test_no_tx_pool() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
-    // make sure we can build a couple of blocks first
     let _ = driver.build_new_block().await?;
 
-    // now lets try to build a block with no transactions
     let _ = driver.build_new_block_with_no_tx_pool().await?;
 
     Ok(())
@@ -166,7 +150,6 @@ async fn chain_produces_big_tx() -> eyre::Result<()> {
     #[cfg(target_os = "linux")]
     let driver = driver.with_validation_node(ExternalNode::reth().await?).await?;
 
-    // insert txn with gas usage but there is no limit
     let tx = driver
         .create_transaction()
         .random_big_transaction()
@@ -177,11 +160,9 @@ async fn chain_produces_big_tx() -> eyre::Result<()> {
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     let txs = block.transactions;
 
-    // assert we included the tx
     let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
     assert!(inclusion_result.is_some());
 
-    // deposit + big tx (no gas limit to exclude it)
     assert_eq!(txs.len(), 2, "Should have 2 transactions (deposit + big tx)");
 
     Ok(())

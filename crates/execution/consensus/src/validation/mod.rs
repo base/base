@@ -187,7 +187,6 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
         }
     }
 
-    // Check if gas used matches the value set in header.
     let cumulative_gas_used =
         receipts.last().map(|receipt| receipt.cumulative_gas_used()).unwrap_or(0);
     if header.gas_used() != cumulative_gas_used {
@@ -208,11 +207,9 @@ fn verify_receipts<R: DepositReceiptExt>(
     chain_spec: impl Upgrades,
     timestamp: u64,
 ) -> Result<(), ConsensusError> {
-    // Calculate receipts root.
     let receipts_with_bloom = receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
     let receipts_root = calculate_receipt_root(&receipts_with_bloom, chain_spec, timestamp);
 
-    // Calculate header logs bloom.
     let logs_bloom = receipts_with_bloom.iter().fold(Bloom::ZERO, |bloom, r| bloom | r.bloom_ref());
 
     compare_receipts_root_and_logs_bloom(

@@ -190,7 +190,6 @@ where
         &mut self,
         l2_safe_head: L2BlockInfo,
     ) -> Result<(), EngineError> {
-        // Signal the derivation actor to reset.
         let signal = ResetSignal { l2_safe_head };
         match self.derivation_client.send_signal(signal.signal()).await {
             Ok(_) => info!(target: "engine", "Sent reset signal to derivation actor"),
@@ -498,10 +497,8 @@ where
     ) -> Result<ResetOutcome, EngineError> {
         self.el_sync_complete = true;
 
-        // Reset the engine if the sync state does not already know about a finalized block.
         let reset_outcome =
             if self.engine.state().sync_state.finalized_head() == L2BlockInfo::default() {
-                // If the sync status is finished, we can reset the engine and start derivation.
                 info!(target: "engine", "Performing initial engine reset");
                 self.reset().await?;
                 ResetOutcome::InitialELSyncReset
@@ -526,7 +523,6 @@ where
         if engine_safe_head == self.last_safe_head_sent {
             info!(target: "engine", safe_head = engine_safe_head.block_info.number, "Safe head unchanged");
             debug!(target: "engine", safe_head = ?engine_safe_head, "unchanged safe head");
-            // This was already sent, so do not send it.
             return Ok(());
         }
 
@@ -1273,7 +1269,6 @@ mod tests {
             .await
             .expect("state channel closed before el_sync_finished was set");
 
-        // Drop sender to cleanly terminate the spawned task.
         drop(req_tx);
         let result = handle.await.expect("task panicked");
         assert!(
@@ -1311,7 +1306,6 @@ mod tests {
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
 
-        // Sequencer mode (unsafe_head_tx = Some). No conductor → standalone sequencer → active.
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
 
         let processor = EngineProcessor::new(
@@ -1339,7 +1333,6 @@ mod tests {
             .await
             .expect("state channel closed before seed_state published");
 
-        // Send a Reset — the ELSyncing guard must fire and return ELSyncing.
         let (result_tx, mut result_rx) = mpsc::channel(1);
         req_tx
             .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
@@ -1422,7 +1415,6 @@ mod tests {
             .await
             .expect("conductor follower must set el_sync_finished from bootstrap probe");
 
-        // Safe/finalized should be zeroed — the probe used zeroed values.
         let state = state_rx.borrow();
         assert_eq!(
             state.sync_state.safe_head(),
@@ -1747,7 +1739,6 @@ mod tests {
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
 
-        // Validator mode: unsafe_head_tx = None.
         let processor = EngineProcessor::new(
             Arc::clone(&client),
             Arc::new(RollupConfig::default()),
@@ -1758,7 +1749,6 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = ValidatorEngineRequestHandler::new(processor).start(req_rx);
 
-        // Close the channel so the task exits after bootstrap + one drain.
         drop(req_tx);
         let _ = handle.await;
 
@@ -1820,7 +1810,6 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = ValidatorEngineRequestHandler::new(processor).start(req_rx);
 
-        // Close the channel so the task exits after bootstrap + one drain.
         drop(req_tx);
         let _ = handle.await;
 
@@ -1846,8 +1835,6 @@ mod tests {
             "finalized head must remain zeroed"
         );
     }
-
-    // ── existing bootstrap integration tests ────────────────────────────────────────────
 
     /// Regression test: demonstrates that a validator node at genesis was incorrectly calling
     /// `engine.reset()`, which sends a FCU to the EL and — when reth responds Valid — sets
@@ -1883,16 +1870,12 @@ mod tests {
         let client = Arc::new(
             test_engine_client_builder()
                 .with_config(Arc::clone(&cfg))
-                // Bootstrap at_genesis check (l2_block_info_by_label path).
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, genesis_l2_info)
-                // L2ForkchoiceState::current: Finalized and Latest L2 blocks (get_l2_block path).
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Finalized), genesis_block.clone())
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), genesis_block.clone())
                 // find_starting_forkchoice unsafe-head loop: L1 origin of genesis is B256::ZERO.
                 .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::default())
-                // SynchronizeTask inside engine.reset() sends FCU v3.
                 .with_fork_choice_updated_v3_response(valid_fcu())
-                // Post-FCU: L1 origin block at number 0 and L2 safe block by genesis hash.
                 .with_l1_block(BlockId::from(0u64), RpcBlock::default())
                 .with_l2_block(BlockId::from(genesis_hash), genesis_block.clone())
                 .build(),
@@ -1909,7 +1892,6 @@ mod tests {
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
 
-        // Validator mode: unsafe_head_tx = None.
         let processor =
             EngineProcessor::new(Arc::clone(&client), Arc::clone(&cfg), mock_derivation, engine);
 

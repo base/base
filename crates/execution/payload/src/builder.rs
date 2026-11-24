@@ -285,7 +285,6 @@ where
         if ctx.attributes().no_tx_pool() {
             builder.build(state, proof_provider.as_ref(), state_root_handle, ctx)
         } else {
-            // sequencer mode we can reuse cachedreads from previous runs
             builder.build(
                 cached_reads.as_db_mut(state),
                 proof_provider.as_ref(),
@@ -552,16 +551,13 @@ impl<Txs> Builder<'_, Txs> {
             builder.evm_mut().db_mut().set_state_hook(Some(Box::new(task.take_state_hook())));
         }
 
-        // 1. apply pre-execution changes
         builder.apply_pre_execution_changes().map_err(|err| {
             warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
             PayloadBuilderError::Internal(err.into())
         })?;
 
-        // 2. execute sequencer transactions
         let mut info = ctx.execute_sequencer_transactions(&mut builder)?;
 
-        // 3. if mem pool transactions are requested we execute them
         let mut resting = None;
         let mut dormancy = None;
         if !ctx.attributes().no_tx_pool() {
@@ -630,9 +626,7 @@ impl<Txs> Builder<'_, Txs> {
                 return Ok(BuildOutcomeKind::Cancelled);
             }
 
-            // check if the new payload is even more valuable
             if !ctx.is_one_shot_building_active() && !ctx.is_better_payload(info.total_fees) {
-                // can skip building the block
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
         }
@@ -689,7 +683,6 @@ impl<Txs> Builder<'_, Txs> {
         let execution_outcome =
             BlockExecutionOutput { state: db.take_bundle(), result: execution_result };
 
-        // create the executed block data
         let executed: BuiltPayloadExecutedBlock<N> = BuiltPayloadExecutedBlock {
             recovered_block: Arc::new(block),
             execution_output: Arc::new(execution_outcome),
@@ -1047,8 +1040,6 @@ where
 
             let tx_uncompressed_size = sequencer_tx.encoded_bytes().len() as u64;
 
-            // Convert the transaction to a [RecoveredTx]. This is
-            // purely for the purposes of utilizing the `evm_config.tx_env`` function.
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
             // will just pull in its `from` address.
             let sequencer_tx = sequencer_tx.value().try_clone_into_recovered().map_err(|_| {
@@ -1144,8 +1135,6 @@ where
         <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
     {
         let gas_limit = builder.evm_mut().block().gas_limit();
-        // If a gas limit is configured, use that limit as target if it's smaller, otherwise use
-        // the block's actual gas limit.
         let block_gas_limit = self
             .builder_config
             .gas_limit_config

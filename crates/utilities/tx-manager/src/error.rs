@@ -45,7 +45,6 @@ impl std::fmt::Display for RevertDisplay<'_> {
 /// (retryable via fee bumps), and infrastructure (retryable/transient) errors.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TxManagerError {
-    // ── Critical errors (non-retryable) ──────────────────────────────────
     /// Nonce already consumed onchain.
     #[error("nonce too low")]
     NonceTooLow,
@@ -157,7 +156,6 @@ pub enum TxManagerError {
     #[error("wallet construction failed: {0}")]
     WalletConstruction(String),
 
-    // ── Fee / replacement errors (retryable) ─────────────────────────────
     /// Fee too low to enter the mempool.
     #[error("transaction underpriced")]
     Underpriced,
@@ -174,7 +172,6 @@ pub enum TxManagerError {
     #[error("max fee per gas less than block base fee")]
     MaxFeePerGasTooLow,
 
-    // ── Infrastructure / transient errors (retryable) ────────────────────
     /// Transaction already present in the mempool (benign on resubmission).
     #[error("transaction already known")]
     AlreadyKnown,
@@ -429,8 +426,6 @@ mod tests {
         })
     }
 
-    // ── classify_rpc_error ───────────────────────────────────────────────
-
     #[rstest]
     #[case::replacement_underpriced(
         "replacement transaction underpriced",
@@ -485,8 +480,6 @@ mod tests {
         assert_eq!(classified, TxManagerError::Rpc("transport request failed".to_string()));
     }
 
-    // ── is_unanswered ───────────────────────────────────────────────────
-
     #[rstest]
     #[case::connection_lost(TransportErrorKind::custom_str("connection reset"), true)]
     #[case::backend_gone(RpcError::Transport(TransportErrorKind::BackendGone), true)]
@@ -514,8 +507,6 @@ mod tests {
 
         assert!(!RpcErrorClassifier::is_unanswered(&TransportErrorKind::custom(error)));
     }
-
-    // ── is_retryable ────────────────────────────────────────────────────
 
     #[rstest]
     #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
@@ -545,8 +536,6 @@ mod tests {
         assert_eq!(error.is_retryable(), expected);
     }
 
-    // ── is_fee_rejection ────────────────────────────────────────────────
-
     #[rstest]
     #[case::underpriced(TxManagerError::Underpriced, true)]
     #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
@@ -559,8 +548,6 @@ mod tests {
         assert_eq!(error.is_fee_rejection(), expected);
     }
 
-    // ── is_already_known ────────────────────────────────────────────────
-
     #[rstest]
     #[case::already_known(TxManagerError::AlreadyKnown, true)]
     #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
@@ -572,8 +559,6 @@ mod tests {
         assert_eq!(error.is_already_known(), expected);
     }
 
-    // ── is_rpc_error ─────────────────────────────────────────────────────
-
     #[rstest]
     #[case::rpc(TxManagerError::Rpc("any error".to_string()), true)]
     #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
@@ -583,8 +568,6 @@ mod tests {
     fn is_rpc_error(#[case] error: TxManagerError, #[case] expected: bool) {
         assert_eq!(error.is_rpc_error(), expected);
     }
-
-    // ── Display output ──────────────────────────────────────────────────
 
     #[rstest]
     #[case::nonce_too_low(TxManagerError::NonceTooLow, "nonce too low")]
@@ -632,8 +615,6 @@ mod tests {
         assert_eq!(error.to_string(), expected);
     }
 
-    // ── err_string_contains_any ─────────────────────────────────────────
-
     #[rstest]
     #[case::positive_match("nonce too low", &["nonce too low", "insufficient funds"], true)]
     #[case::no_match("something else", &["nonce too low", "insufficient funds"], false)]
@@ -647,8 +628,6 @@ mod tests {
     ) {
         assert_eq!(RpcErrorClassifier::err_string_contains_any(input, substrings), expected);
     }
-
-    // ── revert data extraction via ErrorPayload ─────────────────────────
 
     #[test]
     fn classify_execution_reverted_with_structured_data() {

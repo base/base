@@ -728,8 +728,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
         self.approve(token, args.owner, args.spender, args.value)
     }
 
-    // --- Asset-specific mutations ---
-
     /// Instantaneous failsafe. Writes the current multiplier immediately, clearing any pending
     /// update and (for a still-live schedule) emitting `UIMultiplierUpdateCancelled`. Emits BOTH
     /// the deprecated V1 `MultiplierUpdated` event (kept for backward compatibility with existing
@@ -850,8 +848,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
         token.accounting_mut().emit_event(IB20Asset::EndAnnouncement { id }.encode_log_data())
     }
 
-    // --- Computed reads ---
-
     fn is_paused(
         &self,
         token: &B20AssetToken<S, A>,
@@ -929,8 +925,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
     fn operator_role(&self) -> B256 {
         Self::OPERATOR_ROLE
     }
-
-    // --- ERC-8056 scheduled multiplier (introduced at AssetV2, Cobalt) ---
 
     /// Lazy current multiplier: flips to a matured pending target once `now >= effectiveAt`.
     fn multiplier(&self, token: &B20AssetToken<S, A>) -> Result<U256> {
@@ -1180,14 +1174,10 @@ mod tests {
         args
     }
 
-    // --- role identifiers ---
-
     #[test]
     fn operator_role_matches_solidity_hash() {
         assert_eq!(AssetV3::OPERATOR_ROLE, keccak256("OPERATOR_ROLE"));
     }
-
-    // --- transfer ---
 
     #[test]
     fn transfer_moves_balance_and_emits_transfer() {
@@ -1299,8 +1289,6 @@ mod tests {
         );
     }
 
-    // --- transfer_from ---
-
     #[test]
     fn transfer_from_decrements_finite_allowance() {
         let mut tok = token();
@@ -1346,8 +1334,6 @@ mod tests {
         );
     }
 
-    // --- approve ---
-
     #[test]
     fn approve_sets_allowance_and_emits() {
         let mut tok = token();
@@ -1355,8 +1341,6 @@ mod tests {
         assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
         assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
     }
-
-    // --- mint ---
 
     #[test]
     fn mint_privileged_increases_supply_and_balance() {
@@ -1416,8 +1400,6 @@ mod tests {
         assert_eq!(tok.accounting().total_supply().unwrap(), U256::ZERO);
     }
 
-    // --- burn ---
-
     #[test]
     fn burn_requires_role_then_decreases_supply() {
         let mut tok = token();
@@ -1450,8 +1432,6 @@ mod tests {
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
         assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
     }
-
-    // --- seize ---
 
     /// Points `SEIZE_EXEMPT_POLICY` at the always-block policy, making every account seizable.
     fn make_seizable(tok: &mut Tok) {
@@ -1731,8 +1711,6 @@ mod tests {
         );
     }
 
-    // --- pause ---
-
     #[test]
     fn pause_and_unpause_toggle_feature_bit() {
         let mut tok = token();
@@ -1749,8 +1727,6 @@ mod tests {
         let features = LOGIC.paused_features(&tok).unwrap();
         assert_eq!(features, vec![IB20::PausableFeature::SEIZE]);
     }
-
-    // --- roles ---
 
     #[test]
     fn grant_role_privileged_grants_and_emits() {
@@ -1783,8 +1759,6 @@ mod tests {
         );
     }
 
-    // --- policy ---
-
     #[test]
     fn update_policy_sets_new_id() {
         let mut tok = token();
@@ -1803,8 +1777,6 @@ mod tests {
             BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope })
         );
     }
-
-    // --- permit ---
 
     #[test]
     fn permit_sets_allowance_and_increments_nonce() {
@@ -1872,8 +1844,6 @@ mod tests {
         );
     }
 
-    // --- asset: multiplier ---
-
     #[test]
     fn to_scaled_balance_one_to_one_multiplier() {
         let tok = token();
@@ -1940,8 +1910,6 @@ mod tests {
         );
         assert_eq!(last_event_sig(&tok), IB20Asset::UIMultiplierUpdated::SIGNATURE_HASH);
     }
-
-    // --- asset: batch mint ---
 
     #[test]
     fn batch_mint_increases_balances() {
@@ -2056,8 +2024,6 @@ mod tests {
         );
     }
 
-    // --- asset: extra metadata ---
-
     #[test]
     fn update_extra_metadata_roundtrip_and_clear() {
         let mut tok = token();
@@ -2073,7 +2039,6 @@ mod tests {
             .unwrap();
         assert_eq!(LOGIC.extra_metadata(&tok, "category").unwrap(), "real-world-asset");
         assert_eq!(last_event_sig(&tok), IB20Asset::ExtraMetadataUpdated::SIGNATURE_HASH);
-        // Empty value clears the entry.
         LOGIC
             .update_extra_metadata(&mut tok, ADMIN, "category".to_string(), String::new(), false)
             .unwrap();
@@ -2103,8 +2068,6 @@ mod tests {
             })
         );
     }
-
-    // --- asset: announcements ---
 
     #[test]
     fn begin_announce_marks_id_and_emits() {
@@ -2151,8 +2114,6 @@ mod tests {
         assert_eq!(last_event_sig(&tok), IB20Asset::EndAnnouncement::SIGNATURE_HASH);
     }
 
-    // --- reads ---
-
     #[test]
     fn decimals_reads_storage() {
         let mut tok = token();
@@ -2169,8 +2130,6 @@ mod tests {
         assert!(!LOGIC.is_initialized(&tok).unwrap());
     }
 
-    // --- ERC-8056 scheduled multiplier (V2 divergences) ---
-
     #[test]
     fn multiplier_defaults_to_wad() {
         let tok = token();
@@ -2185,16 +2144,12 @@ mod tests {
         set_now(&mut tok, U256::from(10u64));
         LOGIC.update_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
 
-        // T-1: still the old (current) multiplier.
         set_now(&mut tok, U256::from(99u64));
         assert_eq!(LOGIC.multiplier(&tok).unwrap(), wad());
-        // T: flips to the pending target.
         set_now(&mut tok, U256::from(100u64));
         assert_eq!(LOGIC.multiplier(&tok).unwrap(), target);
-        // T+1: stays flipped.
         set_now(&mut tok, U256::from(101u64));
         assert_eq!(LOGIC.multiplier(&tok).unwrap(), target);
-        // ui_multiplier is an alias.
         assert_eq!(LOGIC.ui_multiplier(&tok).unwrap(), target);
     }
 
@@ -2233,7 +2188,6 @@ mod tests {
                 neededRole: AssetV3::OPERATOR_ROLE,
             })
         );
-        // Once granted, the same call succeeds.
         grant(&mut tok, AssetV3::OPERATOR_ROLE, ALICE);
         LOGIC.update_ui_multiplier(&mut tok, ALICE, wad(), U256::from(2u64), false).unwrap();
     }
@@ -2517,14 +2471,12 @@ mod tests {
         set_now(&mut tok, U256::from(1u64));
         LOGIC.update_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
 
-        // Before maturity: 1:1.
         set_now(&mut tok, U256::from(50u64));
         assert_eq!(LOGIC.to_scaled_balance(&tok, U256::from(10u64)).unwrap(), U256::from(10u64));
         assert_eq!(LOGIC.scaled_balance_of(&tok, ALICE).unwrap(), U256::from(100u64));
         assert_eq!(LOGIC.balance_of_ui(&tok, ALICE).unwrap(), U256::from(100u64));
         assert_eq!(LOGIC.total_supply_ui(&tok).unwrap(), U256::from(100u64));
 
-        // After maturity: doubled.
         set_now(&mut tok, U256::from(100u64));
         assert_eq!(LOGIC.to_scaled_balance(&tok, U256::from(10u64)).unwrap(), U256::from(20u64));
         assert_eq!(LOGIC.to_raw_balance(&tok, U256::from(20u64)).unwrap(), U256::from(10u64));
@@ -2552,7 +2504,6 @@ mod tests {
                 .unwrap()
             );
         }
-        // An arbitrary id is not advertised.
         for id in [[0xde, 0xad, 0xbe, 0xef], [0xff, 0xff, 0xff, 0xff]] {
             assert!(
                 !<AssetV3 as Asset<InMemoryTokenAccounting, FakePolicyAccounting>>::supports_interface(

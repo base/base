@@ -58,7 +58,6 @@ impl BlobDecoder {
             return Err(BlobDecodeError::InvalidEncodingVersion { version });
         }
 
-        // Decode 3-byte big-endian length.
         let length = u32::from_be_bytes([0, data[2], data[3], data[4]]) as usize;
         if length > BlobEncoder::BLOB_MAX_DATA_SIZE {
             return Err(BlobDecodeError::InvalidLength { length });
@@ -66,7 +65,6 @@ impl BlobDecoder {
 
         let mut output = vec![0u8; BlobEncoder::BLOB_MAX_DATA_SIZE];
 
-        // --- Round 0 ---
         // FE0 payload: 27 bytes from data[5..32].
         output[0..27].copy_from_slice(&data[5..32]);
 
@@ -75,7 +73,6 @@ impl BlobDecoder {
         let mut encoded_byte = [0u8; 4];
         encoded_byte[0] = data[0];
 
-        // Decode field elements 1..3, validating high-order bits.
         for b in encoded_byte.iter_mut().skip(1) {
             let (enc, opos, ipos) =
                 Self::decode_field_element(data, output_pos, input_pos, &mut output)?;
@@ -87,7 +84,6 @@ impl BlobDecoder {
         // Reassemble the 4 x 6-bit encoded chunks into 3 bytes of output.
         output_pos = Self::reassemble_bytes(output_pos, &encoded_byte, &mut output);
 
-        // --- Rounds 1..1024 ---
         for _ in 1..BlobEncoder::BLOB_ENCODING_ROUNDS {
             if output_pos >= length {
                 break;
@@ -103,14 +99,12 @@ impl BlobDecoder {
             output_pos = Self::reassemble_bytes(output_pos, &encoded_byte, &mut output);
         }
 
-        // Validate that all output bytes past the declared length are zero.
         for (i, byte) in output.iter().enumerate().skip(length) {
             if *byte != 0 {
                 return Err(BlobDecodeError::NonZeroPadding { offset: i });
             }
         }
 
-        // Validate that all remaining input bytes are zero.
         for (i, byte) in data.iter().enumerate().skip(input_pos) {
             if *byte != 0 {
                 return Err(BlobDecodeError::NonZeroPadding { offset: i });
@@ -176,7 +170,6 @@ mod tests {
     fn invalid_encoding_version() {
         let mut blob = Box::new(Blob::ZERO);
         let data: &mut [u8; BYTES_PER_BLOB] = blob.as_mut();
-        // Set version to 1 instead of 0.
         data[VERSIONED_HASH_VERSION_KZG as usize] = 1;
         let err = BlobDecoder::decode(&blob).unwrap_err();
         assert_eq!(err, BlobDecodeError::InvalidEncodingVersion { version: 1 });
@@ -187,7 +180,6 @@ mod tests {
         let mut blob = Box::new(Blob::ZERO);
         let data: &mut [u8; BYTES_PER_BLOB] = blob.as_mut();
         data[VERSIONED_HASH_VERSION_KZG as usize] = 0;
-        // Set length to 0xFF_FF_FF which exceeds BLOB_MAX_DATA_SIZE.
         data[2] = 0xFF;
         data[3] = 0xFF;
         data[4] = 0xFF;
@@ -200,9 +192,7 @@ mod tests {
         let mut blob = Box::new(Blob::ZERO);
         let data: &mut [u8; BYTES_PER_BLOB] = blob.as_mut();
         data[VERSIONED_HASH_VERSION_KZG as usize] = 0;
-        // Set a valid short length.
         data[4] = 1;
-        // Set high bits on field element 1 (byte offset 32).
         data[32] = 0b1100_0000;
         let err = BlobDecoder::decode(&blob).unwrap_err();
         assert_eq!(err, BlobDecodeError::InvalidFieldElement { offset: 32 });

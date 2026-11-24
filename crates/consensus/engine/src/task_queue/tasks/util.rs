@@ -50,7 +50,6 @@ pub(in crate::task_queue) async fn build_and_seal<EngineClient_: EngineClient>(
     )
     .await?;
 
-    // Execute the seal task with the payload ID from the build
     SealTask::new(engine, cfg, payload_id, attributes, payload_safety, None).execute(state).await?;
 
     Ok(())

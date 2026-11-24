@@ -860,8 +860,6 @@ mod tests {
         args
     }
 
-    // --- transfer ---
-
     #[test]
     fn transfer_moves_balance_and_emits_transfer() {
         let mut tok = token();
@@ -1004,8 +1002,6 @@ mod tests {
         );
     }
 
-    // --- transfer_from ---
-
     #[test]
     fn transfer_from_decrements_finite_allowance() {
         let mut tok = token();
@@ -1053,8 +1049,6 @@ mod tests {
         );
     }
 
-    // --- approve ---
-
     #[test]
     fn approve_sets_allowance_and_emits() {
         let mut tok = token();
@@ -1072,8 +1066,6 @@ mod tests {
             BasePrecompileError::revert(IB20::InvalidSpender { spender: Address::ZERO })
         );
     }
-
-    // --- mint ---
 
     #[test]
     fn mint_privileged_increases_supply_and_balance() {
@@ -1122,8 +1114,6 @@ mod tests {
         assert_eq!(tok.accounting().total_supply().unwrap(), U256::ZERO);
     }
 
-    // --- burn / burn_blocked ---
-
     #[test]
     fn burn_requires_role_then_decreases_supply() {
         let mut tok = token();
@@ -1167,8 +1157,6 @@ mod tests {
         let err = LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(1u64), true).unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE }));
     }
-
-    // --- seize ---
 
     /// Points `SEIZE_EXEMPT_POLICY` at the always-block policy, making every account seizable.
     fn make_seizable(tok: &mut Tok) {
@@ -1431,7 +1419,6 @@ mod tests {
         );
     }
 
-    // --- pause ---
     #[test]
     fn pause_and_unpause_toggle_feature_bit() {
         let mut tok = token();
@@ -1470,8 +1457,6 @@ mod tests {
         assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::SEIZE).unwrap());
     }
 
-    // --- config / metadata ---
-
     #[test]
     fn update_supply_cap_sets_and_emits() {
         let mut tok = token();
@@ -1503,8 +1488,6 @@ mod tests {
         assert_eq!(events[events.len() - 2].topics()[0], IB20::NameUpdated::SIGNATURE_HASH);
         assert_eq!(events[events.len() - 1].topics()[0], IB20::EIP712DomainChanged::SIGNATURE_HASH);
     }
-
-    // --- roles ---
 
     #[test]
     fn grant_role_privileged_grants_and_emits() {
@@ -1546,8 +1529,6 @@ mod tests {
         );
     }
 
-    // --- policy ---
-
     #[test]
     fn update_policy_sets_new_id() {
         let mut tok = token();
@@ -1575,8 +1556,6 @@ mod tests {
             BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope })
         );
     }
-
-    // --- permit ---
 
     #[test]
     fn permit_sets_allowance_and_increments_nonce() {
@@ -1653,8 +1632,6 @@ mod tests {
             PermitArgs::RECOVER_GAS * ITERATIONS
         );
     }
-
-    // --- reads ---
 
     #[test]
     fn currency_reads_storage() {

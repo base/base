@@ -35,8 +35,6 @@ use common::{
     ACTIVATION_ADMIN, ADMIN, ALICE, CHAIN_ID, bless_or_assert_gas, bless_or_assert_root, u,
 };
 
-// --- fixtures ---------------------------------------------------------------
-
 const CREATOR: Address = Address::repeat_byte(0xC0);
 const SALT: B256 = B256::repeat_byte(0x51);
 const NAME: &str = "Base Asset";
@@ -58,8 +56,6 @@ const ROOT_CREATE_ZERO_ADMIN: B256 =
     b256!("483e93df226ac4cf92969a48bfd2d6b67f49e2ab63322c58c3abd95d98b58289");
 const ROOT_CREATE_SC_WITH_INIT_CALLS: B256 =
     b256!("f757f7ed634e58fac4ff7c8fbb82fad003287185337ccb067d5564c8776b2cf2");
-
-// --- harness ----------------------------------------------------------------
 
 /// The factory precompile's singleton address.
 const fn factory() -> Address {
@@ -203,10 +199,6 @@ fn assert_root(
     bless_or_assert_root(label, hash_state(storage, event_addrs), expected);
 }
 
-// ============================================================================
-// Version resolver
-// ============================================================================
-
 #[test]
 fn resolver_maps_forks_to_versions() {
     assert_eq!(FactoryVersions::from_base_upgrade(BaseUpgrade::Azul), None);
@@ -227,10 +219,6 @@ fn dispatch_reverts_before_beryl() {
     assert!(rev);
     assert!(bytes.is_empty());
 }
-
-// ============================================================================
-// getB20Address (deterministic address derivation)
-// ============================================================================
 
 #[test]
 fn golden_get_b20_address() {
@@ -269,10 +257,6 @@ fn golden_get_b20_address() {
         )))
     );
 }
-
-// ============================================================================
-// isB20 / isB20Initialized
-// ============================================================================
 
 #[test]
 fn golden_is_b20() {
@@ -323,10 +307,6 @@ fn golden_is_b20_initialized() {
     assert!(!rev);
     assert_eq!(bytes, Bytes::from(IB20Factory::isB20InitializedCall::abi_encode_returns(&true)));
 }
-
-// ============================================================================
-// createB20 — asset
-// ============================================================================
 
 #[test]
 fn golden_create_asset() {
@@ -460,10 +440,6 @@ fn golden_create_zero_admin_skips_grant() {
     });
     assert_root("create_zero_admin", s, &[factory(), token], ROOT_CREATE_ZERO_ADMIN);
 }
-
-// ============================================================================
-// createB20 — reverts
-// ============================================================================
 
 #[test]
 fn golden_create_reverts_token_already_exists() {
@@ -674,10 +650,6 @@ fn golden_create_reverts_when_not_activated() {
     );
 }
 
-// ============================================================================
-// createB20 — test correct base upgrade logic is used when creating
-// ============================================================================
-
 /// Drives one factory call through `dispatch` at `upgrade`, returning `(is_revert, bytes)`.
 fn call_factory_at(
     storage: &mut HashMapStorageProvider,
@@ -860,10 +832,6 @@ fn golden_beryl_bootstrap_rejects_stablecoin_seize_exempt_policy_init_call() {
     );
 }
 
-// ============================================================================
-// gas: storage-access footprint per op
-// ============================================================================
-
 /// Runs `calldata` as `caller` on a fresh activated factory, returning `(sload, sstore, keccak256)`.
 fn gas(caller: Address, calldata: Vec<u8>) -> (u64, u64, u64) {
     let mut s = fresh();
@@ -939,10 +907,6 @@ fn golden_gas_footprints() {
 
     bless_or_assert_gas(&actual, expected);
 }
-
-// ============================================================================
-// meta: op coverage checklist
-// ============================================================================
 
 /// Compile-time coverage checklist — never called; its exhaustive `match` (no `_` arm) names the
 /// golden `#[test]` fn(s) pinning each op. Adding an ABI op fails the build until a golden is added.

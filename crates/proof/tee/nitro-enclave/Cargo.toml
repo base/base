@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# base
 base-common-evm.workspace = true
 base-common-chains.workspace = true
 base-proof = { workspace = true, features = ["std"] }
@@ -21,29 +20,23 @@ base-proof-preimage = { workspace = true, features = ["serde"] }
 base-proof-primitives = { workspace = true, features = ["serde"] }
 base-common-genesis = { workspace = true, features = ["serde"] }
 
-# alloy
 alloy-chains.workspace = true
 alloy-signer.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 alloy-eips = { workspace = true, features = ["serde"] }
 
-# crypto
 sha2.workspace = true
 k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
 
-# nsm
 aws-nitro-enclaves-nsm-api.workspace = true
 
-# encoding
 serde = { workspace = true, features = ["derive"] }
 bincode = { workspace = true, features = ["serde"] }
 
-# async
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "macros", "io-util"] }
 
-# misc
 tracing.workspace = true
 rand_08.workspace = true
 thiserror.workspace = true

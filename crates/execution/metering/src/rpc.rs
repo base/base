@@ -135,7 +135,6 @@ where
             )
         })?;
 
-        // Calculate average gas price
         let bundle_gas_price = if output.total_gas_used > 0 {
             output.total_gas_fees / U256::from(output.total_gas_used)
         } else {

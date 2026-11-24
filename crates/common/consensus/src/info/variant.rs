@@ -69,8 +69,6 @@ impl L1BlockInfoTx {
             )));
         }
 
-        // --- Post-Ecotone Operations ---
-
         let scalar = system_config.scalar.to_be_bytes::<32>();
         let blob_base_fee_scalar = (scalar[0] == L1BlockInfoEcotone::L1_SCALAR)
             .then(|| {
@@ -84,9 +82,6 @@ impl L1BlockInfoTx {
             scalar[28..32].try_into().map_err(|_| BlockInfoError::BaseFeeScalar)?,
         );
 
-        // Determine the blob fee configuration based on the timestamp.
-        // We start with the scheduled blob fee parameters, and then check for the osaka and prague
-        // parameters.
         let blob_fee_params = l1_config.blob_schedule_blob_params();
 
         let blob_fee_config = match blob_fee_params

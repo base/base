@@ -177,7 +177,6 @@ mod tests {
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
 
-        // Each transaction has gas limit of 21000
         assert_eq!(parsed.gas_limit(), 42000);
     }
 
@@ -193,7 +192,6 @@ mod tests {
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
 
-        // DA size should be > 0 for any transaction
         assert!(parsed.da_size() > 0);
     }
 
@@ -211,7 +209,6 @@ mod tests {
         let parsed: ParsedBundle = bundle.try_into().unwrap();
         let accepted = AcceptedBundle::new(parsed.clone(), create_test_meter_bundle_response());
 
-        // Both should have the same bundle hash
         assert_eq!(parsed.bundle_hash(), accepted.bundle_hash());
         assert_eq!(parsed.txn_hashes(), accepted.txn_hashes());
         assert_eq!(parsed.senders(), accepted.senders());

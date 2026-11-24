@@ -24,7 +24,6 @@ pub fn check_deployment_code(
     let ctx = Context::base()
         .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)))
         .modify_tx_chained(|tx| {
-            // Deposit + Base metadata.
             tx.deposit = DepositTransactionParts {
                 source_hash: deployment_tx.source_hash,
                 mint: Some(deployment_tx.mint),
@@ -32,7 +31,6 @@ pub fn check_deployment_code(
             };
             tx.enveloped_tx = Some(deployment_tx.encoded_2718().into());
 
-            // Base meta
             tx.base.tx_type = OpTxType::Deposit as u8;
             tx.base.caller = deployment_tx.from;
             tx.base.kind = deployment_tx.to;

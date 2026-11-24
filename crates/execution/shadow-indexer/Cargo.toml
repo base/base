@@ -12,16 +12,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
 alloy-eips.workspace = true
 
-# workspace
 base-metrics.workspace = true
 base-node-runner.workspace = true
 base-shadow-indexer-db = { path = "../shadow-indexer-db" }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
-# reth
 reth-exex.workspace = true
 reth-execution-types.workspace = true
 reth-node-api.workspace = true
@@ -29,13 +26,10 @@ reth-network-api.workspace = true
 reth-primitives-traits.workspace = true
 reth-tasks.workspace = true
 
-# tokio
 tokio.workspace = true
 
-# tracing
 tracing = { workspace = true, features = ["std"] }
 
-# misc
 anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true

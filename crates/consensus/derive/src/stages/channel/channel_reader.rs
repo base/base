@@ -132,7 +132,6 @@ where
             });
         match decompress_result {
             Ok(()) => {
-                // Record the decompressed size and type.
                 let size = next_batch.decompressed.len() as f64;
                 let ty = if next_batch.brotli_used {
                     BatchReader::CHANNEL_VERSION_BROTLI
@@ -149,7 +148,6 @@ where
             }
         }
 
-        // Read the next batch from the reader's decompressed data
         let batch_result =
             base_metrics::time!(Metrics::pipeline_batch_decode_duration_seconds(), {
                 next_batch.next_batch(self.cfg.as_ref())

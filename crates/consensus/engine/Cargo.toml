@@ -11,13 +11,11 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
 base-metrics.workspace = true
 base-common-genesis.workspace = true
 base-consensus-providers.workspace = true
 base-protocol = {workspace = true, features = ["serde", "std"]}
 
-# alloy
 alloy-json-rpc.workspace = true
 alloy-network.workspace = true
 alloy-pubsub.workspace = true
@@ -31,13 +29,11 @@ alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] 
 alloy-transport-ws.workspace = true
 alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest", "reqwest-rustls-tls", "engine-api"] }
 
-# base-alloy
 base-common-network.workspace = true
 base-common-rpc-types.workspace = true
 base-common-consensus = { workspace = true, features = ["std"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 
-# general
 url.workspace = true
 tokio.workspace = true
 tower.workspace = true
@@ -51,7 +47,6 @@ serde_json = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
 
-# metrics
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]

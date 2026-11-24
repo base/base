@@ -42,19 +42,16 @@ where
         header.number
     } % HISTORY_SERVE_WINDOW;
 
-    // Send a hint to fetch the storage slot proof prior to traversing the state / account tries.
     hinter
         .hint_storage_proof(HISTORY_STORAGE_ADDRESS, U256::from(slot), header.number)
         .map_err(|e| PreimageOracleError::Other(e.to_string()))?;
 
-    // Fetch the trie account for the history accumulator.
     let mut state_trie = TrieNode::new_blinded(header.state_root);
     let account_key = Nibbles::unpack(HASHED_HISTORY_STORAGE_ADDRESS);
     let raw_account = state_trie.open(&account_key, provider)?.ok_or(TrieNodeError::KeyNotFound)?;
     let account =
         TrieAccount::decode(&mut raw_account.as_ref()).map_err(OracleProviderError::Rlp)?;
 
-    // Fetch the storage slot value from the account.
     let mut storage_trie = TrieNode::new_blinded(account.storage_root);
     let slot_key = Nibbles::unpack(keccak256(U256::from(slot).to_be_bytes::<32>()));
     let slot_value = storage_trie.open(&slot_key, provider)?.ok_or(TrieNodeError::KeyNotFound)?;
@@ -75,7 +72,6 @@ mod tests {
 
     use super::*;
 
-    // Mock TrieProvider implementation for testing EIP-2935 history lookup
     #[derive(Default, Clone)]
     struct MockTrieProvider {
         pub(crate) state_root: B256,

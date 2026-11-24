@@ -6,11 +6,9 @@ use core::future::Future;
 /// This function blocks on a future in place until it is ready.
 #[cfg(feature = "std")]
 pub fn block_on<T>(f: impl Future<Output = T>) -> T {
-    // When running with Tokio, use the appropriate blocking mechanism
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
         tokio::task::block_in_place(|| runtime.block_on(f))
     } else {
-        // Fallback to tokio's block_on if we're not in a runtime
         tokio::runtime::Runtime::new().unwrap().block_on(f)
     }
 }
@@ -24,7 +22,6 @@ pub fn block_on<T>(f: impl Future<Output = T>) -> T {
 
     let mut f = Box::pin(f);
 
-    // Construct a no-op waker.
     fn noop_clone(_: *const ()) -> RawWaker {
         noop_raw_waker()
     }

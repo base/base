@@ -12,12 +12,10 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
 base-bundles.workspace = true
 base-node-runner.workspace = true
 base-observability-events.workspace = true
 
-# reth
 reth-db.workspace = true
 reth-cli.workspace = true
 reth-evm.workspace = true
@@ -57,10 +55,8 @@ reth-payload-builder-primitives.workspace = true
 reth-node-core = { workspace = true, features = ["otlp"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
 
-# revm
 revm.workspace = true
 
-# alloy
 alloy-evm.workspace = true
 alloy-signer.workspace = true
 alloy-network.workspace = true
@@ -79,7 +75,6 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
 
-# base-common
 base-common-flz.workspace = true
 base-common-chains.workspace = true
 base-common-network.workspace = true
@@ -89,30 +84,23 @@ base-common-rpc-types-engine.workspace = true
 base-common-evm = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
-# tokio
 tokio.workspace = true
 tokio-util.workspace = true
 
-# async
 futures.workspace = true
 async-trait.workspace = true
 
-# rpc
 jsonrpsee.workspace = true
 jsonrpsee-core.workspace = true
 jsonrpsee-types.workspace = true
 
-# cli
 clap.workspace = true
 
-# tracing
 tracing = { workspace = true, features = ["std"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 
-# metrics
 metrics = { workspace = true, optional = true }
 
-# misc
 url.workspace = true
 hex.workspace = true
 k256.workspace = true
@@ -145,31 +133,24 @@ uuid = { workspace = true, features = ["serde", "v5", "v4"] }
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
-# workspace
 base-protocol.workspace = true
 base-test-utils.workspace = true
 base-txpool-rpc.workspace = true
 base-builder-core = { path = ".", features = ["test-utils"] }
 
-# reth
 reth-ipc.workspace = true
 reth-testing-utils.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
-# trie
 reth-trie-common.workspace = true
 base-execution-trie.workspace = true
 
-# metrics
 metrics-exporter-prometheus.workspace = true
 
-# alloy
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }
 
-# rpc
 jsonrpsee = { workspace = true, features = ["server"] }
 
-# misc
 ctor.workspace = true
 hyper.workspace = true
 rlimit.workspace = true

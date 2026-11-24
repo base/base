@@ -280,8 +280,6 @@ pub struct BaseBuiltPayload<N: NodePrimitives = BasePrimitives> {
     pub(crate) fees: U256,
 }
 
-// === impl BuiltPayload ===
-
 impl<N: NodePrimitives> BaseBuiltPayload<N> {
     /// Initializes the payload with the given initial block.
     pub const fn new(
@@ -356,7 +354,6 @@ where
     }
 }
 
-// V1 engine_getPayloadV1 response
 impl<T, N> From<BaseBuiltPayload<N>> for ExecutionPayloadV1
 where
     T: SignedTransaction,
@@ -370,7 +367,6 @@ where
     }
 }
 
-// V2 engine_getPayloadV2 response
 impl<T, N> From<BaseBuiltPayload<N>> for ExecutionPayloadEnvelopeV2
 where
     T: SignedTransaction,
@@ -610,8 +606,7 @@ mod tests {
 
     #[test]
     fn test_payload_id_parity_op_geth() {
-        // INFO rollup_boost::server:received fork_choice_updated_v3 from builder and l2_client
-        // payload_id_builder="0x6ef26ca02318dcf9" payload_id_l2="0x03d2dae446d2a86a"
+        // Expected op-geth payload ID observed as rollup-boost's `payload_id_l2`.
         let expected =
             PayloadId::new(FixedBytes::<8>::from_str("0x03d2dae446d2a86a").unwrap().into());
         let attrs = BasePayloadAttributes {
@@ -631,7 +626,6 @@ mod tests {
             min_base_fee: None,
         };
 
-        // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
         assert_eq!(
             expected,
             attrs.payload_id(
@@ -663,7 +657,6 @@ mod tests {
             min_base_fee: Some(100),
         };
 
-        // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
         assert_eq!(
             expected,
             attrs.payload_id(

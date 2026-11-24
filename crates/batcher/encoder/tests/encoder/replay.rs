@@ -138,7 +138,6 @@ fn replay_discards_every_later_channel() {
     let mut encoder = fixture.encoder();
     let blocks = BlockFixture::chain(3, MULTI_BLOB_PAYLOAD);
 
-    // The first channel lands in time.
     encoder.add_block(blocks[0].clone()).unwrap();
     for submission in encoder.encode_and_drain().unwrap() {
         encoder.confirm(submission.id, 1);

@@ -207,7 +207,6 @@ impl InProcessClient {
             rpc_args.auth_port = port;
         }
 
-        // Configure rollup args with sequencer URL
         let rollup_args =
             RollupArgs { sequencer: Some(config.builder_rpc_url.clone()), ..Default::default() };
 
@@ -398,12 +397,10 @@ impl InProcessClient {
     fn build_extensions(config: &InProcessClientConfig) -> Vec<Box<dyn BaseNodeExtension>> {
         let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Vec::new();
 
-        // TxPool RPC extension (management + status APIs)
         let txpool_rpc_config =
             TxPoolRpcConfig { sequencer_rpc: Some(config.builder_rpc_url.clone()) };
         extensions.push(Box::new(TxPoolRpcExtension::from_config(txpool_rpc_config)));
 
-        // TxPool tracing extension (tracing disabled for client)
         let txpool_config = TxpoolConfig {
             tracing_enabled: false,
             tracing_logs_enabled: false,
@@ -411,7 +408,6 @@ impl InProcessClient {
         };
         extensions.push(Box::new(TxPoolExtension::new(txpool_config)));
 
-        // TxForwarding extension (optional - forwards txs to builder RPC)
         if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
             if tx_fwd_config.enabled && !tx_fwd_config.builder_urls.is_empty() {
                 extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(
@@ -424,7 +420,6 @@ impl InProcessClient {
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
         }
 
-        // Upgrade signal runtime extension (optional - live L1 schedule polling)
         if let Some(ref signal_config) = config.upgrade_signal {
             extensions.push(Box::new(ExecutionUpgradeSignalRuntimeExtension::from_config(
                 signal_config.clone(),

@@ -298,7 +298,6 @@ mod tests {
 
         let sig = signer.sign_transaction(&mut tx).await.expect("signing should succeed");
 
-        // Verify the signature recovers to the expected address.
         let hash = tx.signature_hash();
         let recovered = sig.recover_address_from_prehash(&hash).expect("should recover address");
         assert_eq!(recovered, address);
@@ -308,7 +307,6 @@ mod tests {
     fn ethereum_wallet_from_remote_signer() {
         let signer = test_signer(Address::repeat_byte(0x01));
 
-        // Verify that RemoteSigner can be used with EthereumWallet.
         let _wallet = EthereumWallet::from(signer);
     }
 

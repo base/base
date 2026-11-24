@@ -14,30 +14,24 @@ workspace = true
 normal = ["getrandom"]
 
 [dependencies]
-# Workspace
 base-protocol.workspace = true
 base-proof-mpt.workspace = true
 base-common-genesis.workspace = true
 
-# Alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-trie.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
-# Base Alloy
 base-common-consensus.workspace = true
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
 
-# revm
 revm.workspace = true
 
-# alloy-evm
 alloy-evm.workspace = true
 base-common-evm.workspace = true
 
-# General
 tracing.workspace = true
 thiserror.workspace = true
 

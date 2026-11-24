@@ -63,7 +63,6 @@ where
     P: Pipeline + SignalReceiver + Send + Sync + Debug,
 {
     loop {
-        // Check if we have reached the target block number.
         let pipeline_cursor = driver.cursor.read();
         let tip_cursor = pipeline_cursor.tip();
         if let Some(tb) = target
@@ -129,7 +128,6 @@ where
                     return Err(DriverError::Executor(e));
                 }
 
-                // Retry with a deposit-only block.
                 warn!(target: "client", "Flushing current channel and retrying deposit only block");
 
                 // Flush the current batch and channel - if a block was replaced with a
@@ -138,14 +136,12 @@ where
                 // invalidated.
                 driver.pipeline.signal(Signal::FlushChannel).await?;
 
-                // Strip out all transactions that are not deposits.
                 attributes.transactions = attributes.transactions.map(|txs: Vec<Bytes>| {
                     txs.into_iter()
                         .filter(|tx| !tx.is_empty() && tx[0] == OpTxType::Deposit as u8)
                         .collect::<Vec<_>>()
                 });
 
-                // Retry the execution.
                 driver.executor.update_safe_head(tip_cursor.l2_safe_head_header.clone());
                 match driver.executor.execute_payload(attributes.clone()).await {
                     Ok(header) => header,
@@ -163,7 +159,6 @@ where
         #[cfg(target_os = "zkvm")]
         println!("cycle-tracker-report-end: block-execution");
 
-        // Get the pipeline origin and update the tip cursor.
         let origin = driver.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         let l2_info = L2BlockInfo::from_header_and_first_tx(
             &outcome.header,
@@ -174,7 +169,6 @@ where
         intermediate_roots.push(output_root);
         let tip_cursor = TipCursor::new(l2_info, outcome.header, output_root);
 
-        // Advance the derivation pipeline cursor
         drop(pipeline_cursor);
         driver.cursor.write().advance(origin, tip_cursor);
     }

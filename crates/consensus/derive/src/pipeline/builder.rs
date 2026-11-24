@@ -123,14 +123,12 @@ where
     D: DataAvailabilityProvider + Send + Sync + Debug,
 {
     fn from(builder: PipelineBuilder<B, P, T, D>) -> Self {
-        // Extract the builder fields.
         let rollup_config = builder.rollup_config.expect("rollup_config must be set");
         let chain_provider = builder.chain_provider.expect("chain_provider must be set");
         let l2_chain_provider = builder.l2_chain_provider.expect("chain_provider must be set");
         let dap_source = builder.dap_source.expect("dap_source must be set");
         let attributes_builder = builder.builder.expect("builder must be set");
 
-        // Compose the stage stack.
         let mut l1_traversal = PollingTraversal::new(chain_provider, Arc::clone(&rollup_config));
         l1_traversal.block = Some(builder.origin.expect("origin must be set"));
         if let Some(system_config) = rollup_config.genesis.system_config {
@@ -148,7 +146,6 @@ where
         let attributes =
             AttributesQueue::new(Arc::clone(&rollup_config), batch_provider, attributes_builder);
 
-        // Create the pipeline.
         Self::new(attributes, rollup_config, l2_chain_provider)
     }
 }

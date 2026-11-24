@@ -788,10 +788,8 @@ mod tests {
     fn deduct_calldata_cost_gas_formula() {
         type Recorder = PrecompileCallRecorder<NoopPrecompileCallObserver>;
 
-        // 32 bytes = 1 word => CALLDATA_WORD_GAS
         assert_eq!(Recorder::calldata_gas_cost(&[0u8; 32]), CALLDATA_WORD_GAS);
 
-        // 36 bytes (4-byte selector + 32-byte arg) = ceil(36/32) = 2 words => 2 * CALLDATA_WORD_GAS
         assert_eq!(Recorder::calldata_gas_cost(&[0u8; 36]), 2 * CALLDATA_WORD_GAS);
     }
 

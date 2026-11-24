@@ -56,10 +56,8 @@ impl<T: CommsClient> OracleL2ChainProvider<T> {
     /// Returns a [Header] corresponding to the given L2 block number, by walking back from the
     /// L2 safe head.
     async fn header_by_number(&self, block_number: u64) -> Result<Header, OracleProviderError> {
-        // Fetch the starting block header.
         let mut header = self.header_by_hash(self.l2_safe_head().await?)?;
 
-        // Check if the block number is in range. If not, we can fail early.
         if block_number > header.number {
             return Err(OracleProviderError::BlockNumberPastHead(block_number, header.number));
         }
@@ -78,8 +76,6 @@ impl<T: CommsClient> OracleL2ChainProvider<T> {
                     match eip_2935_history_lookup(&header, block_number, self, self).await {
                         Ok(hash) => hash,
                         Err(_) => {
-                            // If the EIP-2935 lookup fails for any reason, attempt fallback to
-                            // linear walk back.
                             linear_fallback = true;
                             continue;
                         }
@@ -87,7 +83,6 @@ impl<T: CommsClient> OracleL2ChainProvider<T> {
 
                 header = self.header_by_hash(block_hash)?;
             } else {
-                // Walk back the block headers one-by-one until the desired block number is reached.
                 header = self.header_by_hash(header.parent_hash)?;
             }
         }
@@ -101,10 +96,8 @@ impl<T: CommsClient + Send + Sync> BatchValidationProvider for OracleL2ChainProv
     type Error = OracleProviderError;
 
     async fn l2_block_info_by_number(&mut self, number: u64) -> Result<L2BlockInfo, Self::Error> {
-        // Get the block at the given number.
         let block = self.block_by_number(number).await?;
 
-        // Construct the system config from the payload.
         L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
             .map_err(OracleProviderError::BlockInfo)
     }
@@ -116,7 +109,6 @@ impl<T: CommsClient + Send + Sync> BatchValidationProvider for OracleL2ChainProv
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
-        // Fetch the header for the given block number.
         let header = self.header_by_number(number).await?;
         let header_hash = header.hash_slow();
         self.block_from_header(header, header_hash).await
@@ -135,7 +127,6 @@ impl<T: CommsClient + Send + Sync> OracleL2ChainProvider<T> {
     ) -> Result<BaseBlock, OracleProviderError> {
         let Header { transactions_root, timestamp, .. } = header;
 
-        // Fetch the transactions in the block.
         HintType::L2Transactions
             .with_data(&[header_hash.as_ref()])
             .send(self.oracle.as_ref())
@@ -143,7 +134,6 @@ impl<T: CommsClient + Send + Sync> OracleL2ChainProvider<T> {
         let trie_walker = OrderedListWalker::try_new_hydrated(transactions_root, self)
             .map_err(OracleProviderError::TrieWalker)?;
 
-        // Decode the transactions within the transactions trie.
         let transactions = trie_walker
             .into_iter()
             .map(|(_, rlp)| {
@@ -181,7 +171,6 @@ impl<T: CommsClient + Send + Sync> L2ChainProvider for OracleL2ChainProvider<T> 
         // lookup by number requires.
         let block = self.block_from_header(self.header_by_hash(hash)?, hash).await?;
 
-        // Construct the system config from the payload.
         to_system_config(&block, rollup_config.as_ref())
             .map_err(OracleProviderError::BaseBlockConversion)
     }
@@ -209,7 +198,6 @@ impl<T: CommsClient> TrieProvider for OracleL2ChainProvider<T> {
 
 impl<T: CommsClient> TrieDBProvider for OracleL2ChainProvider<T> {
     fn bytecode_by_hash(&self, hash: B256) -> Result<Bytes, OracleProviderError> {
-        // Fetch the bytecode preimage from the caching oracle.
         crate::block_on(async move {
             HintType::L2Code.with_data(&[hash.as_slice()]).send(self.oracle.as_ref()).await?;
             self.oracle
@@ -221,7 +209,6 @@ impl<T: CommsClient> TrieDBProvider for OracleL2ChainProvider<T> {
     }
 
     fn header_by_hash(&self, hash: B256) -> Result<Header, OracleProviderError> {
-        // Fetch the header from the caching oracle.
         crate::block_on(async move {
             HintType::L2BlockHeader
                 .with_data(&[hash.as_slice()])

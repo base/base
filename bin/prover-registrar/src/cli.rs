@@ -12,7 +12,6 @@ use clap::Parser;
 use reth_node_core::args::TraceArgs;
 use url::Url;
 
-// Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
 base_cli_utils::define_cli_env!("BASE_REGISTRAR");
 base_cli_utils::define_log_args!("BASE_REGISTRAR");
 base_cli_utils::define_metrics_args!("BASE_REGISTRAR", 7300);

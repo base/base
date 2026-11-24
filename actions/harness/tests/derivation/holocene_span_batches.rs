@@ -367,24 +367,23 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     // Build 4 L2 blocks. build_next_block_with_single_transaction() includes a user transaction in
     // every block. Block 3 (ts=6) is the first Jovian block, which must be
     // deposit-only. Including a user tx here is the deliberate error.
-    let block1 = builder.build_next_block_with_single_transaction().await; // ts=2
-    let block2 = builder.build_next_block_with_single_transaction().await; // ts=4
-    let block3_invalid = builder.build_next_block_with_single_transaction().await; // ts=6
-    let block4 = builder.build_next_block_with_single_transaction().await; // ts=8
+    let block1 = builder.build_next_block_with_single_transaction().await;
+    let block2 = builder.build_next_block_with_single_transaction().await;
+    let block3_invalid = builder.build_next_block_with_single_transaction().await;
+    let block4 = builder.build_next_block_with_single_transaction().await;
 
     let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    // --- Phase 1: submit all 4 blocks as one span fixture (block 3 has user txs) ---
     h.submit_span_batch_brotli_calldata(
         &batcher_cfg,
         &[block1.clone(), block2.clone(), block3_invalid, block4.clone()],
         0,
     )
     .expect("span fixture submission");
-    chain.push(h.l1.tip().clone()); // L1 block 1: span batch with invalid block 3
+    chain.push(h.l1.tip().clone());
 
     // The sequencer registered state roots for blocks 3 and 4 that will not match
     // what derivation produces (block 3 becomes deposit-only and block 4 has a different
@@ -405,8 +404,6 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         "blocks 1 and 2 should derive before span batch fails on block 3"
     );
 
-    // --- Phase 2: resubmit blocks 3–4 with block 3 correctly empty ---
-    //
     // The primary builder is now at block 4, so build_empty_block() on it would
     // produce block 5 (wrong timestamp). Instead, create a fresh sequencer
     // starting from genesis, advance it to block 2's state, then build the
@@ -426,7 +423,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         h.submit_span_batch_brotli_calldata(&batcher_cfg, &[block3_empty, block4_recovery], 100)
             .expect("recovery span fixture submission");
     }
-    chain.push(h.l1.tip().clone()); // L1 block 2: recovery span batch (blocks 3–4)
+    chain.push(h.l1.tip().clone());
 
     node.run_until_idle().await;
 

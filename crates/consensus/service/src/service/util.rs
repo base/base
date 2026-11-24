@@ -18,7 +18,6 @@ macro_rules! spawn_and_wait {
         use tracing::{error, info};
         let mut task_handles = tokio::task::JoinSet::new();
 
-        // Check if the actor is present, and spawn it if it is.
         $(
             if let Some((actor, context)) = $actor {
                 let cancellation = $cancellation.clone();
@@ -39,7 +38,6 @@ macro_rules! spawn_and_wait {
             }
         )*
 
-        // Create the shutdown signal future
         let shutdown = $crate::ShutdownSignal::wait();
         tokio::pin!(shutdown);
 
@@ -52,22 +50,19 @@ macro_rules! spawn_and_wait {
                 }
                 result = task_handles.join_next() => {
                     match result {
-                        Some(Ok(Ok(()))) => { /* Actor completed successfully */ }
+                        Some(Ok(Ok(()))) => {}
                         Some(Ok(Err(e))) => {
                             error!(target: "rollup_node", error = %e, "Critical error in sub-routine");
-                            // Cancel all tasks and gracefully shutdown.
                             $cancellation.cancel();
                             return Err(e);
                         }
                         Some(Err(e)) => {
                             let error_msg = format!("Task join error: {e}");
-                            // Log the error and cancel all tasks.
                             error!(target: "rollup_node", error = %e, "Task join error");
-                            // Cancel all tasks and gracefully shutdown.
                             $cancellation.cancel();
                             return Err(error_msg);
                         }
-                        None => break, // All tasks completed
+                        None => break,
                     }
                 }
             }
@@ -75,7 +70,6 @@ macro_rules! spawn_and_wait {
     };
 }
 
-// Export the `spawn_and_wait` macro for use in other modules.
 pub(crate) use spawn_and_wait;
 
 /// Listens for OS shutdown signals (SIGTERM, SIGINT)

@@ -229,8 +229,6 @@ impl ThrottleController {
             return None;
         }
 
-        // The linear factor goes from 0 at the start threshold to 1 at the full threshold, and
-        // stays at 1 above it.
         let excess = da_backlog_bytes - self.config.start_threshold_bytes;
         let range = self.config.full_threshold_bytes - self.config.start_threshold_bytes;
         let linear_factor = (excess as f64 / range as f64).min(1.0);
@@ -243,7 +241,6 @@ impl ThrottleController {
         };
         let intensity = intensity_factor * self.config.max_intensity;
 
-        // A zero intensity is no throttling, as below the start threshold.
         if intensity == 0.0 {
             return None;
         }

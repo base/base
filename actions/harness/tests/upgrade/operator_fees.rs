@@ -8,19 +8,6 @@ use base_action_harness::{
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_protocol::L1BlockInfoTx;
 
-// ---------------------------------------------------------------------------
-// Section 1: L1 info format and operator fee encoding
-//
-// These tests inspect the L1 info deposit transaction embedded in each built
-// [`BaseBlock`] to verify that:
-// - The correct calldata format (Ecotone / Isthmus / Jovian) is selected for
-//   the active upgrade.
-// - `operator_fee_scalar` and `operator_fee_constant` are zero when Isthmus is
-//   inactive and match the [`SystemConfig`] once Isthmus is active.
-//
-// No L2 derivation is performed — the tests drive only the [`L2Sequencer`].
-// ---------------------------------------------------------------------------
-
 /// Pre-Isthmus L2 blocks carry an `Ecotone`-format L1 info deposit.
 ///
 /// Because Isthmus has not activated, the `operator_fee_scalar` and
@@ -44,7 +31,6 @@ async fn operator_fee_not_encoded_before_isthmus() {
                 let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
                 let mut builder = h.create_l2_sequencer(l1_chain);
 
-                // Build one block and verify it uses the Ecotone format with zero operator fees.
                 let block = builder.build_next_block_with_single_transaction().await;
                 let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
@@ -100,8 +86,6 @@ async fn operator_fee_encoded_in_l1_info_from_isthmus_onward() {
                 let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
                 let mut builder = h.create_l2_sequencer(l1_chain);
 
-                // Build one block and verify it uses the active post-Isthmus format with
-                // the configured operator fee params.
                 let block = builder.build_next_block_with_single_transaction().await;
                 let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
@@ -164,7 +148,6 @@ async fn l1_info_format_transitions_at_isthmus_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    // Stage 1: Blocks 1-2 (ts=2, 4) — pre-Isthmus → Ecotone format, zero operator fees.
     for i in 1u64..=2 {
         let block = builder.build_next_block_with_single_transaction().await;
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
@@ -202,7 +185,6 @@ async fn l1_info_format_transitions_at_isthmus_boundary() {
         );
     }
 
-    // Stage 3: Block 4 (ts=8) — second Isthmus block, Isthmus format, fees active.
     {
         let block = builder.build_next_block_with_single_transaction().await;
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
@@ -265,7 +247,6 @@ async fn l1_info_format_transitions_at_jovian_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    // Stage 1: Blocks 1-2 (ts=2, 4) — Isthmus active, Jovian not yet → Isthmus format.
     for i in 1u64..=2 {
         let block = builder.build_next_block_with_single_transaction().await;
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
@@ -294,7 +275,6 @@ async fn l1_info_format_transitions_at_jovian_boundary() {
         assert_eq!(l1_info.operator_fee_constant(), OPERATOR_FEE_CONSTANT);
     }
 
-    // Stage 3: Block 4 (ts=8) — second Jovian block, Jovian format.
     // The operator fee scalar and constant are unchanged; only the EVM formula
     // differs (gas * scalar * 100 vs gas * scalar / 1_000_000 for Isthmus).
     {
@@ -317,14 +297,6 @@ async fn l1_info_format_transitions_at_jovian_boundary() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Section 2: Derivation tests — pipeline behaviour at operator fee boundaries
-//
-// These tests run the full derivation pipeline through the Isthmus operator
-// fee activation boundary and verify that the pipeline accepts blocks without
-// errors.
-// ---------------------------------------------------------------------------
 
 /// The derivation pipeline accepts blocks with user transactions across the
 /// Isthmus operator fee activation boundary.
@@ -513,7 +485,6 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
         "safe head must advance past block 3 after force-inclusion"
     );
 
-    // Verify per-block user tx counts via the node's tracking field.
     let counts = node.derived_user_tx_counts();
     let find = |n: u64| counts.iter().find(|(bn, _)| *bn == n).map(|(_, c)| *c);
 
@@ -525,17 +496,6 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
         "block 3: batch dropped (NonEmptyTransitionBlock) → deposit-only, 0 user txs"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Section 3: SystemConfig update propagation
-//
-// These tests verify that operator fee changes committed to L1 via
-// `ConfigUpdate` logs are reflected in the L1 info deposit transactions of
-// subsequently derived L2 blocks. The derivation pipeline's traversal stage
-// reads `ConfigUpdate` logs from L1 receipts and updates its internal
-// `SystemConfig`; the `StatefulAttributesBuilder` uses the updated config to
-// generate the L1 info deposit for each new L2 block.
-// ---------------------------------------------------------------------------
 
 /// Build a `ConfigUpdate` log encoding an `OperatorFee` (type 5) change.
 ///
@@ -599,14 +559,13 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     // Pre-mine L1 block 1 (ts=12) with the OperatorFee update so the sequencer
     // can reference epoch 1 when it builds L2 block 6.
     h.l1.enqueue_operator_fee_update(l1_sys_cfg_addr, NEW_SCALAR, NEW_CONSTANT);
-    h.l1.mine_block(); // L1 block 1, ts=12
+    h.l1.mine_block();
 
     // Snapshot the chain (blocks 0 and 1) before building L2 blocks. The sequencer
     // needs L1 block 1 in its chain to advance the epoch at L2 block 6.
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    // L2 blocks 1–5 (ts=2,4,6,8,10): epoch 0, OLD config.
     let mut epoch0_blocks: Vec<base_common_consensus::BaseBlock> = Vec::new();
     for _ in 0..5 {
         let block = sequencer.build_next_block_with_single_transaction().await;
@@ -621,25 +580,22 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
         ..batcher_cfg
     };
 
-    // Batch all epoch-0 blocks into L1 block 2 (one Batcher with all 5 blocks).
     {
         let mut source = ActionL2Source::new();
         for block in epoch0_blocks {
             source.push(block);
         }
         let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await; // L1 block 2, ts=24
+        batcher.advance(&mut h.l1).await;
     }
 
-    // Batch block 6 into L1 block 3.
     {
         let mut source = ActionL2Source::new();
         source.push(block6);
         let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await; // L1 block 3, ts=36
+        batcher.advance(&mut h.l1).await;
     }
 
-    // Node snapshot includes all L1 blocks 0–3.
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
@@ -655,7 +611,6 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     let infos = node.derived_l1_info_txs();
     let find = |n: u64| infos.iter().find(|(bn, _)| *bn == n).map(|(_, tx)| tx);
 
-    // Blocks 1–5 (epoch 0, no receipt update) carry OLD fee params.
     for n in 1u64..=5 {
         let info = find(n).unwrap_or_else(|| panic!("L1 info tx for block {n} must be recorded"));
         assert_eq!(

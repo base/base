@@ -20,7 +20,6 @@ pub(crate) struct TestTrieProviderError(&'static str);
 /// Grabs a live merkleized receipts list within a block header.
 pub(crate) async fn get_live_derivable_receipts_list()
 -> Result<(B256, BTreeMap<B256, Bytes>, Vec<ReceiptEnvelope>), TestTrieProviderError> {
-    // Initialize the provider.
     let provider =
         ProviderBuilder::new().connect_http(Url::parse(RPC_URL).expect("invalid rpc url"));
 
@@ -64,17 +63,14 @@ pub(crate) async fn get_live_derivable_receipts_list()
         })
         .collect::<Vec<_>>();
 
-    // Compute the derivable list
     let mut list =
         ordered_trie_with_encoder(consensus_receipts.as_ref(), |rlp: &ReceiptEnvelope, buf| {
             rlp.encode_2718(buf)
         });
     let root = list.root();
 
-    // Sanity check receipts root is correct
     assert_eq!(block.header.receipts_root, root);
 
-    // Construct the mapping of hashed intermediates -> raw intermediates
     let preimages = list.take_proof_nodes().into_inner().into_iter().fold(
         BTreeMap::default(),
         |mut acc, (_, value)| {
@@ -89,7 +85,6 @@ pub(crate) async fn get_live_derivable_receipts_list()
 /// Grabs a live merkleized transactions list within a block header.
 pub(crate) async fn get_live_derivable_transactions_list()
 -> Result<(B256, BTreeMap<B256, Bytes>, Vec<TxEnvelope>), TestTrieProviderError> {
-    // Initialize the provider.
     let provider =
         ProviderBuilder::new().connect_http(Url::parse(RPC_URL).expect("invalid rpc url"));
 
@@ -105,16 +100,13 @@ pub(crate) async fn get_live_derivable_transactions_list()
     };
     let consensus_txs = txs.into_iter().map(TxEnvelope::from).collect::<Vec<_>>();
 
-    // Compute the derivable list
     let mut list = ordered_trie_with_encoder(consensus_txs.as_ref(), |rlp: &TxEnvelope, buf| {
         rlp.encode_2718(buf)
     });
     let root = list.root();
 
-    // Sanity check transaction root is correct
     assert_eq!(block.header.transactions_root, root);
 
-    // Construct the mapping of hashed intermediates -> raw intermediates
     let preimages = list.take_proof_nodes().into_inner().into_iter().fold(
         BTreeMap::default(),
         |mut acc, (_, value)| {

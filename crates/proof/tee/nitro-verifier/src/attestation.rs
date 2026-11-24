@@ -56,7 +56,6 @@ impl CoseSign1 {
 
         let mut iter = array.into_iter();
         let protected = Self::extract_bytes(iter.next().unwrap(), "protected")?;
-        // Skip unprotected header (element 1) — we don't use it.
         let _unprotected = iter.next().unwrap();
         let payload = Self::extract_bytes(iter.next().unwrap(), "payload")?;
         let signature = Self::extract_bytes(iter.next().unwrap(), "signature")?;
@@ -174,7 +173,6 @@ mod tests {
 
     #[test]
     fn cose_from_bytes_rejects_wrong_length_array() {
-        // CBOR array of 3 byte strings
         let mut buf = Vec::new();
         ciborium::ser::into_writer(
             &CborValue::Array(vec![
@@ -238,7 +236,6 @@ mod tests {
         let mut buf = Vec::new();
         ciborium::ser::into_writer(&tagged, &mut buf).unwrap();
 
-        // Tag 99 is neither Array nor Tag(18, ...) — rejected.
         assert!(CoseSign1::from_bytes(&buf).is_err());
     }
 
@@ -251,7 +248,6 @@ mod tests {
         };
 
         let tbs = cose.sig_structure().unwrap();
-        // Should be a valid CBOR array
         let decoded: CborValue = ciborium::de::from_reader(tbs.as_slice()).unwrap();
         match decoded {
             CborValue::Array(elems) => {

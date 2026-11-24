@@ -11,11 +11,9 @@ use crate::BaseConsensusError;
 /// Canyon.
 #[inline]
 pub fn ensure_empty_withdrawals_root<H: BlockHeader>(header: &H) -> Result<(), ConsensusError> {
-    // Shanghai rule
     let header_withdrawals_root =
         &header.withdrawals_root().ok_or(ConsensusError::WithdrawalsRootMissing)?;
 
-    //  Canyon rules
     if *header_withdrawals_root != EMPTY_ROOT_HASH {
         return Err(ConsensusError::BodyWithdrawalsRootDiff(
             GotExpected { got: *header_withdrawals_root, expected: EMPTY_ROOT_HASH }.into(),
@@ -29,10 +27,8 @@ pub fn ensure_empty_withdrawals_root<H: BlockHeader>(header: &H) -> Result<(), C
 /// <https://specs.base.org/protocol/consensus/p2p#block-validation>
 #[inline]
 pub fn ensure_empty_shanghai_withdrawals<T: BlockBody>(body: &T) -> Result<(), BaseConsensusError> {
-    // Shanghai rule
     let withdrawals = body.withdrawals().ok_or(ConsensusError::BodyWithdrawalsMissing)?;
 
-    //  Canyon rule
     if !withdrawals.as_ref().is_empty() {
         return Err(BaseConsensusError::WithdrawalsNonEmpty);
     }

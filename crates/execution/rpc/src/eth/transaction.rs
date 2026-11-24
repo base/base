@@ -190,7 +190,6 @@ where
         &self,
         hash: B256,
     ) -> Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, Self::Error> {
-        // 1. Try to find the transaction on disk (historical blocks)
         if let Some((tx, meta)) = self
             .spawn_blocking_io(move |this| {
                 this.provider()
@@ -213,7 +212,6 @@ where
             }));
         }
 
-        // 2. check local pool
         if let Some(tx) = self.pool().get(&hash).map(|tx| tx.transaction.clone_into_consensus()) {
             return Ok(Some(TransactionSource::Pool(tx)));
         }

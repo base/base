@@ -108,7 +108,6 @@ impl std::fmt::Debug for L1Client {
 impl L1Client {
     /// Creates a new L1 client from the given configuration.
     pub fn new(config: L1ClientConfig) -> RpcResult<Self> {
-        // Create reqwest Client with timeout
         let mut builder = Client::builder().timeout(config.timeout);
 
         if config.skip_tls_verify {
@@ -120,7 +119,6 @@ impl L1Client {
             .build()
             .map_err(|e| RpcError::Connection(format!("Failed to build HTTP client: {e}")))?;
 
-        // Create HTTP transport with custom client
         let http = Http::with_client(client, config.endpoint);
         let rpc_client = RpcClient::new(http, false);
 
@@ -180,14 +178,12 @@ impl L1Provider for L1Client {
 
         let header = block.header;
 
-        // Cache the header by its hash
         self.headers_cache.insert(header.hash, header.clone()).await;
 
         Ok(header)
     }
 
     async fn header_by_hash(&self, hash: B256) -> RpcResult<Header> {
-        // Check cache first
         if let Some(header) = self.headers_cache.get(&hash).await {
             return Ok(header);
         }
@@ -207,14 +203,12 @@ impl L1Provider for L1Client {
 
         let header = block.header;
 
-        // Cache the result
         self.headers_cache.insert(hash, header.clone()).await;
 
         Ok(header)
     }
 
     async fn block_receipts(&self, hash: B256) -> RpcResult<Vec<TransactionReceipt>> {
-        // Check cache first
         if let Some(receipts) = self.receipts_cache.get(&hash).await {
             return Ok(receipts);
         }
@@ -237,7 +231,6 @@ impl L1Provider for L1Client {
             RpcError::BlockNotFound(format!("Block receipts not found for hash {hash}"))
         })?;
 
-        // Cache the result
         self.receipts_cache.insert(hash, receipts.clone()).await;
 
         Ok(receipts)

@@ -95,10 +95,8 @@ where
     pub fn state_root(&mut self, bundle: &BundleState) -> TrieDBResult<B256> {
         debug!(target: "client_executor", "Recomputing state root");
 
-        // Update the accounts in the trie with the changeset.
         self.update_accounts(bundle)?;
 
-        // Recompute the root hash of the trie.
         let root = self.root_node.blind();
 
         debug!(
@@ -106,7 +104,6 @@ where
             "Recomputed state root: {root}",
         );
 
-        // Extract the new state root from the root node.
         Ok(root)
     }
 
@@ -124,19 +121,16 @@ where
         address: &Address,
         block_number: u64,
     ) -> TrieDBResult<Option<TrieAccount>> {
-        // Send a hint to the host to fetch the account proof.
         self.hinter
             .hint_account_proof(*address, block_number)
             .map_err(|e| TrieDBError::Provider(e.to_string()))?;
 
-        // Fetch the account from the trie.
         let hashed_address_nibbles = Nibbles::unpack(keccak256(address.as_slice()));
         let Some(trie_account_rlp) = self.root_node.open(&hashed_address_nibbles, &self.fetcher)?
         else {
             return Ok(None);
         };
 
-        // Decode the trie account from the RLP bytes.
         TrieAccount::decode(&mut trie_account_rlp.as_ref())
             .map_err(TrieNodeError::RLPError)
             .map_err(Into::into)
@@ -163,7 +157,6 @@ where
                 continue;
             }
 
-            // Compute the path to the account in the trie.
             let account_path = Nibbles::unpack(hashed_address.as_slice());
 
             // If the account was destroyed, delete it from the trie and wipe its storage.
@@ -190,7 +183,6 @@ where
                 ..Default::default()
             };
 
-            // Update the account's storage root
             let acc_storage_root = self
                 .storage_roots
                 .entry(*address)
@@ -209,15 +201,12 @@ where
                 Self::change_storage(acc_storage_root, hashed_key, value, &self.fetcher)
             })?;
 
-            // Recompute the account storage root.
             let root = acc_storage_root.blind();
             trie_account.storage_root = root;
 
-            // RLP encode the trie account for insertion.
             let mut account_buf = Vec::with_capacity(trie_account.length());
             trie_account.encode(&mut account_buf);
 
-            // Insert or update the account in the trie.
             self.root_node.insert(&account_path, account_buf.into(), &self.fetcher)?;
         }
 
@@ -244,7 +233,6 @@ where
                 Err(e) => return Err(e.into()),
             }
         } else {
-            // RLP encode the storage slot value and update the trie.
             let mut rlp_buf = Vec::with_capacity(value.present_value.length());
             value.present_value.encode(&mut rlp_buf);
             storage_root.insert(&hashed_slot_key, rlp_buf.into(), fetcher)?;
@@ -262,15 +250,12 @@ where
     type Error = TrieDBError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        // Fetch the account from the trie.
         let Some(trie_account) =
             self.get_trie_account(&address, self.parent_block_header.number)?
         else {
-            // If the account does not exist in the trie, return `Ok(None)`.
             return Ok(None);
         };
 
-        // Insert the account's storage root into the cache.
         self.storage_roots.insert(address, TrieNode::new_blinded(trie_account.storage_root));
 
         // Return a partial DB account. The storage and code are not loaded out-right, and are
@@ -292,7 +277,6 @@ where
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        // Send a hint to the host to fetch the storage proof.
         self.hinter
             .hint_storage_proof(address, index, self.parent_block_header.number)
             .map_err(|e| TrieDBError::Provider(e.to_string()))?;
@@ -301,41 +285,30 @@ where
         // account should have been loaded into the cache by the `basic` method. If the account was
         // non-existing, the storage root will not be present.
         match self.storage_roots.get_mut(&address) {
-            None => {
-                // If the storage root for the account does not exist, return zero.
-                Ok(U256::ZERO)
-            }
+            None => Ok(U256::ZERO),
             Some(storage_root) => {
-                // Fetch the storage slot from the trie.
                 let hashed_slot_key = keccak256(index.to_be_bytes::<32>().as_slice());
                 match storage_root.open(&Nibbles::unpack(hashed_slot_key), &self.fetcher)? {
                     Some(slot_value) => {
-                        // Decode the storage slot value.
                         let int_slot = U256::decode(&mut slot_value.as_ref())
                             .map_err(TrieNodeError::RLPError)?;
                         Ok(int_slot)
                     }
-                    None => {
-                        // If the storage slot does not exist, return zero.
-                        Ok(U256::ZERO)
-                    }
+                    None => Ok(U256::ZERO),
                 }
             }
         }
     }
 
     fn block_hash(&mut self, block_number: u64) -> Result<B256, Self::Error> {
-        // Copy the current header
         let mut header = self.parent_block_header.inner().clone();
 
-        // Check if the block number is in range. If not, we can fail early.
         if block_number > header.number
             || header.number.saturating_sub(block_number) > BLOCK_HASH_HISTORY
         {
             return Ok(B256::default());
         }
 
-        // Walk back the block headers to the desired block number.
         while header.number > block_number {
             header = self
                 .fetcher
@@ -416,8 +389,6 @@ mod tests {
         db.state_root(&bundle_with_account(address, account)).unwrap();
     }
 
-    // A destroyed account (info = None) that already lived in the parent trie must be
-    // removed from the state root for every revm status that maps to "account is gone".
     #[test]
     fn test_destroyed_accounts_removed_from_trie() {
         for status in [AccountStatus::Destroyed, AccountStatus::DestroyedAgain] {
@@ -440,8 +411,6 @@ mod tests {
         }
     }
 
-    // A DestroyedChanged account (destroyed then given a new balance) must appear in the state
-    // root with its new state.
     #[test]
     fn test_destroyed_changed_account_reinserted() {
         let mut db = new_test_db();
@@ -464,16 +433,12 @@ mod tests {
         assert_ne!(root, EMPTY_ROOT_HASH, "DestroyedChanged account must be re-inserted into trie");
     }
 
-    // A DestroyedChanged account with new storage slots must have those slots present in the
-    // trie — this exercises the or_insert_with(EMPTY_ROOT_HASH) + storage loop path and
-    // confirms the old storage is wiped and only new slots survive.
     #[test]
     fn test_destroyed_changed_account_storage_wiped_and_reinserted() {
         let mut db = new_test_db();
         let address = Address::repeat_byte(0x04);
         insert_account(&mut db, address);
 
-        // Re-create the account with one new storage slot.
         let mut storage = revm::primitives::HashMap::default();
         let slot_key = U256::from(1u64);
         storage.insert(slot_key, RvmStorageSlot::new_changed(U256::ZERO, U256::from(42u64)));

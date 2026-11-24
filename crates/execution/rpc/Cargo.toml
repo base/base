@@ -12,7 +12,6 @@ description = "Ethereum RPC implementation for Base."
 workspace = true
 
 [dependencies]
-# reth
 reth-evm.workspace = true
 reth-rpc.workspace = true
 reth-revm.workspace = true
@@ -36,7 +35,6 @@ reth-primitives-traits.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-tasks = { workspace = true, features = ["rayon"] }
 
-# op-reth
 base-protocol.workspace = true
 base-common-evm.workspace = true
 base-execution-chainspec.workspace = true
@@ -46,7 +44,6 @@ base-execution-txpool.workspace = true
 base-observability-events.workspace = true
 base-execution-payload-builder.workspace = true
 
-# ethereum
 revm.workspace = true
 alloy-evm.workspace = true
 alloy-eips.workspace = true
@@ -68,14 +65,12 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
 
-# async
 serde.workspace = true
 tokio.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 opentelemetry.workspace = true
 
-# rpc
 http.workspace = true
 tower.workspace = true
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
@@ -83,14 +78,12 @@ jsonrpsee-core.workspace = true
 jsonrpsee-types.workspace = true
 opentelemetry-http.workspace = true
 
-# misc
 lru.workspace = true
 eyre.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 derive_more = { workspace = true, features = ["constructor"] }
 
-# metrics
 base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
 

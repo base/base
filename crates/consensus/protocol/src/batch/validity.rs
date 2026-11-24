@@ -7,13 +7,11 @@
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatchDropReason {
-    // === Timestamp-related drops ===
     /// Batch timestamp is in the future (Holocene active).
     FutureTimestampHolocene,
     /// Batch timestamp is in the past (Holocene inactive).
     PastTimestampPreHolocene,
 
-    // === Parent/origin validation drops ===
     /// Parent hash does not match the L2 safe head.
     ParentHashMismatch,
     /// Batch was included too late (outside sequencer window).
@@ -27,7 +25,6 @@ pub enum BatchDropReason {
     /// Batch changes L1 origin within a whole second after Denim activation.
     SameSecondOriginChange,
 
-    // === Timestamp/origin relationship drops ===
     /// Batch timestamp is before the L1 origin timestamp.
     TimestampBeforeL1Origin,
     /// Sequencer drift overflow (`checked_add` failed).
@@ -37,7 +34,6 @@ pub enum BatchDropReason {
     /// Empty batch could have adopted next L1 origin but didn't.
     SequencerDriftNotAdoptedNextOrigin,
 
-    // === Transaction validation drops ===
     /// Batch contains an empty transaction.
     EmptyTransaction,
     /// Batch contains a deposit transaction (not allowed in batch data).
@@ -49,7 +45,6 @@ pub enum BatchDropReason {
     /// Non-empty batch in Jovian transition block.
     NonEmptyTransitionBlock,
 
-    // === Span batch specific drops ===
     /// Span batch received before Delta upgrade.
     SpanBatchPreDelta,
     /// Span batch would produce a block after Denim activation.

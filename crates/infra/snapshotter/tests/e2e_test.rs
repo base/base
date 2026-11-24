@@ -405,7 +405,6 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let s3 = &harness.storage_client;
     let bucket = &harness.bucket_name;
 
-    // Verify always-upload files go to {prefix}/{date}/
     let state_body = get_object_bytes(s3, bucket, "mainnet/1700000000/state.tar.zst").await?;
     assert_eq!(state_body, b"fake-state-archive", "state should be in date dir");
 
@@ -445,7 +444,6 @@ async fn upload_artifacts_to_minio() -> Result<()> {
         "headers chunk_files should split finalized and tip paths"
     );
 
-    // Verify finalized chunks are shared while the latest chunk stays beside the manifest.
     for component in ["headers", "transactions", "receipts"] {
         let finalized_key = format!("mainnet/static_files/{component}-0-499999.tar.zst");
         let finalized_body = get_object_bytes(s3, bucket, &finalized_key).await?;
@@ -826,8 +824,6 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
         ))
         .await?;
 
-    // Verify: matching finalized chunks were not overwritten, while the latest chunks
-    // were written to the timestamped run directory.
     for &component in DIFF_TEST_COMPONENTS {
         let finalized_key = format!("diff-match/static_files/{component}-0-499999.tar.zst");
         let finalized_body = get_object_bytes(s3, bucket, &finalized_key).await?;
@@ -1016,8 +1012,6 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
         ))
         .await?;
 
-    // Verify finalized chunks are re-uploaded on a BLAKE3 mismatch, while latest chunks
-    // are isolated in the timestamped run directory.
     for &component in DIFF_TEST_COMPONENTS {
         let finalized_key = format!("diff-mismatch/static_files/{component}-0-499999.tar.zst");
         let finalized_body = get_object_bytes(s3, bucket, &finalized_key).await?;
@@ -1173,7 +1167,6 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         .filter_map(|f| f.file_name().map(|n| n.to_string_lossy().to_string()))
         .collect();
 
-    // Every finalized range should be skipped when its complete component set exists remotely.
     for component in chunk_components {
         for chunk_idx in 0..3u64 {
             let start = chunk_idx * 500_000;
@@ -1185,7 +1178,6 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         }
     }
 
-    // Only the final chunk should be compressed for every component.
     for component in chunk_components {
         assert!(
             filenames.contains(&format!("{component}-1500000-1999999.tar.zst")),
@@ -1193,11 +1185,9 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         );
     }
 
-    // Always-upload: state + manifest.
     assert!(filenames.contains(&"state.tar.zst".to_string()), "state should always be produced");
     assert!(filenames.contains(&"manifest.json".to_string()), "manifest should always be produced");
 
-    // Verify latest archive is a valid compressed file (not empty).
     let tip_path = output.path().join("headers-1500000-1999999.tar.zst");
     assert!(std::fs::metadata(&tip_path)?.len() > 0, "latest archive should not be empty");
 
@@ -1324,7 +1314,6 @@ async fn always_upload_overwrites_existing_state_rocksdb_and_proofs() -> Result<
             .await?;
     }
 
-    // New snapshot
     let tmp = tempfile::tempdir()?;
     let output_dir = tmp.path().join("output");
     std::fs::create_dir_all(&output_dir)?;
@@ -1355,22 +1344,18 @@ async fn always_upload_overwrites_existing_state_rocksdb_and_proofs() -> Result<
         .await?;
     assert_eq!(upload_prefix, "overwrite-test/1700000000");
 
-    // Verify new state in new date dir
     let state_body =
         get_object_bytes(s3, bucket, "overwrite-test/1700000000/state.tar.zst").await?;
     assert_eq!(state_body, b"fresh-mdbx-state", "state should be in new date dir");
 
-    // Verify new rocksdb in new date dir
     let rocksdb_body =
         get_object_bytes(s3, bucket, "overwrite-test/1700000000/rocksdb_indices.tar.zst").await?;
     assert_eq!(rocksdb_body, b"fresh-rocksdb", "rocksdb should be in new date dir");
 
-    // Verify new proofs in new date dir
     let proofs_body =
         get_object_bytes(s3, bucket, "overwrite-test/1700000000/proofs.tar.zst").await?;
     assert_eq!(proofs_body, b"fresh-proofs", "proofs should be in new date dir");
 
-    // Verify previous run's files are untouched
     let old_state = get_object_bytes(s3, bucket, "overwrite-test/1699000000/state.tar.zst").await?;
     assert_eq!(
         old_state.as_slice(),

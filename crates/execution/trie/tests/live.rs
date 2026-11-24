@@ -197,7 +197,6 @@ where
         requests: vec![execution_output.requests.clone()],
     };
 
-    // Calculate hashed state from execution result
     let state_provider = provider_factory.provider()?;
     let hashed_state = HashedPostStateProvider::hashed_post_state(
         &LatestStateProviderRef::new(&state_provider),
@@ -233,7 +232,6 @@ where
     let mut last_block_hash = genesis_hash;
     let mut last_block_number = 0u64;
 
-    // Execute blocks before initialization
     for (idx, block_spec) in scenario.blocks_before_initialization.iter().enumerate() {
         let block_number = idx as u64 + 1;
         let mut block = create_block_from_spec(
@@ -264,7 +262,6 @@ where
         initialization_job.run(last_block_number, last_block_hash)?;
     }
 
-    // Execute blocks after initialization using live collector
     let evm_config = EthEvmConfig::ethereum(Arc::clone(&chain_spec));
 
     for (idx, block_spec) in scenario.blocks_after_initialization.iter().enumerate() {
@@ -278,7 +275,6 @@ where
             &mut nonce_counter,
         );
 
-        // Execute the block to get the correct state root
         let execution_output = execute_block(&mut block, &provider_factory, &chain_spec)?;
 
         // Create a fresh blockchain provider to ensure it sees all committed blocks
@@ -286,10 +282,8 @@ where
         let live_trie_collector =
             LiveTrieCollector::new(evm_config.clone(), blockchain_db, &storage);
 
-        // Use the live collector to execute and store trie updates
         live_trie_collector.execute_and_store_block_updates(&block)?;
 
-        // Commit the block to the database so subsequent blocks can build on it
         commit_block_to_database(&block, &execution_output, &provider_factory)?;
 
         last_block_hash = block.hash();
@@ -308,24 +302,16 @@ fn test_execute_and_store_block_updates() {
     let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
         Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
 
-    // Create a keypair for signing transactions
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
     let sender = public_key_to_address(key_pair.public_key());
 
-    // Create chain spec with the sender address funded in genesis
     let chain_spec = chain_spec_with_address(sender);
 
-    // Create test database and provider factory
     let provider_factory = create_test_provider_factory_with_chain_spec(Arc::clone(&chain_spec));
 
-    // Insert genesis state into the database
     init_genesis(&provider_factory).unwrap();
 
-    // Define the test scenario:
-    // - No blocks before initialization
-    // - Initialization to genesis (block 0)
-    // - Execute one block with a single transaction after initialization
     let recipient = Address::repeat_byte(0x42);
     let scenario = TestScenario::new(
         vec![],
@@ -349,10 +335,8 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
     let provider_factory = create_test_provider_factory_with_chain_spec(Arc::clone(&chain_spec));
     init_genesis(&provider_factory).unwrap();
 
-    // No blocks before initialization; initialization only inserts genesis.
     let scenario = TestScenario::new(vec![], vec![]);
 
-    // Run initialization (block 0 only)
     run_test_scenario(
         scenario,
         provider_factory.clone(),
@@ -362,7 +346,6 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
     )
     .unwrap();
 
-    // Create a block whose parent block number is missing.
     let incorrect_block_number = 2;
     let incorrect_parent_hash = B256::repeat_byte(0x11);
 
@@ -383,7 +366,6 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
         &storage,
     );
 
-    // EXPECT: MissingParentBlock
     let err = collector.execute_and_store_block_updates(&incorrect_block).unwrap_err();
 
     assert!(matches!(err, BaseProofsStorageError::MissingParentBlock { .. }));
@@ -403,7 +385,6 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
     let provider_factory = create_test_provider_factory_with_chain_spec(Arc::clone(&chain_spec));
     init_genesis(&provider_factory).unwrap();
 
-    // Run normal scenario: no blocks before initialization, one block after.
     let recipient = Address::repeat_byte(0x42);
     let scenario = TestScenario::new(
         vec![],
@@ -419,7 +400,6 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
     )
     .unwrap();
 
-    // Generate a second block normally
     let blockchain_db = BlockchainProvider::new(provider_factory.clone()).unwrap();
     let collector = LiveTrieCollector::new(
         EthEvmConfig::ethereum(Arc::clone(&chain_spec)),
@@ -427,7 +407,6 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
         &storage,
     );
 
-    // Create the next block
     let mut nonce_counter = 0;
     let last_block_hash = provider_factory.block_hash(1).unwrap().expect("block 1 committed");
     let next_number = 2;
@@ -441,13 +420,10 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
         &mut nonce_counter,
     );
 
-    // Execute it to compute a correct state root
     let _ = execute_block(&mut block, &provider_factory, &chain_spec).unwrap();
 
-    // Change the state root to induce the error
     block.header_mut().state_root = B256::repeat_byte(0xAA);
 
-    // EXPECT: StateRootMismatch
     let err = collector.execute_and_store_block_updates(&block).unwrap_err();
 
     assert!(matches!(err, BaseProofsStorageError::StateRootMismatch { .. }));
@@ -468,10 +444,6 @@ fn test_multiple_blocks_before_and_after_initialization() {
     let provider_factory = create_test_provider_factory_with_chain_spec(Arc::clone(&chain_spec));
     init_genesis(&provider_factory).unwrap();
 
-    // Define the test scenario:
-    // - Execute 3 blocks before initialization (will be committed to db)
-    // - Initialization to block 3
-    // - Execute 2 more blocks using the live collector
     let recipient1 = Address::repeat_byte(0x42);
     let recipient2 = Address::repeat_byte(0x43);
     let recipient3 = Address::repeat_byte(0x44);
@@ -510,7 +482,6 @@ fn test_blocks_with_multiple_transactions() {
     let recipient2 = Address::repeat_byte(0x43);
     let recipient3 = Address::repeat_byte(0x44);
 
-    // Block with 3 transactions
     let scenario = TestScenario::new(
         vec![],
         vec![BlockSpec::new(vec![

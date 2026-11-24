@@ -23,7 +23,6 @@ async fn pending_pool_limit() -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(50, ONE_ETH).await?;
 
-    // send 50 txs from different addrs
     let accs_no_priority = accounts.clone();
     let accs_with_priority = accounts.into_iter().take(10).collect::<Vec<_>>();
 
@@ -39,7 +38,6 @@ async fn pending_pool_limit() -> eyre::Result<()> {
         rbuilder.pool().pending_count()
     );
 
-    // Send 10 txs that should be included in the block
     let mut txs = Vec::new();
     for i in 0..10 {
         let acc_with_priority = accs_with_priority.get(i).unwrap();
@@ -59,10 +57,8 @@ async fn pending_pool_limit() -> eyre::Result<()> {
         rbuilder.pool().pending_count()
     );
 
-    // After we try building block our reverting tx would be removed and other tx will move to queue pool
     let block = driver.build_new_block().await?;
 
-    // Ensure that 10 extra txs got included
     assert!(block.includes(&txs));
 
     Ok(())

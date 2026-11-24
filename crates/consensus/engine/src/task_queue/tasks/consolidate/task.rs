@@ -152,7 +152,6 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
     pub async fn consolidate(&self, state: &mut EngineState) -> Result<(), ConsolidateTaskError> {
         let global_start = Instant::now();
 
-        // Fetch the unsafe L2 block
         let block_num = self.attributes.block_number();
         let fetch_start = Instant::now();
         let block = match self.client.l2_block_by_label(block_num.into()).await {
@@ -187,7 +186,6 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 Ok(block_info) if !self.attributes.is_last_in_span => {
                     let total_duration = global_start.elapsed();
 
-                    // Apply a transient update to the safe head.
                     state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
                         local_safe_head: Some(block_info),
                         safe_head: Some(block_info),
@@ -240,7 +238,6 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                     return Ok(());
                 }
                 Err(e) => {
-                    // Continue on to build the block since we failed to construct the block info.
                     warn!(target: "engine", error = ?e, "Failed to construct L2BlockInfo, proceeding to build task");
                 }
             }

@@ -90,13 +90,13 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
         for address in addresses {
             let deposit = TxDeposit {
                 source_hash: B256::default(),
-                from: address, // Set the sender to the address of the account to seed
+                from: address,
                 to: TxKind::Create,
-                mint: amount, // Amount to deposit
+                mint: amount,
                 value: U256::default(),
                 gas_limit: 210000,
                 is_system_transaction: false,
-                input: Default::default(), // No input data for the deposit
+                input: Default::default(),
             };
 
             let signer = PrivateKeySigner::random();
@@ -111,13 +111,13 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
     async fn fund(&self, address: Address, amount: u128) -> eyre::Result<BlockHash> {
         let deposit = TxDeposit {
             source_hash: B256::default(),
-            from: address, // Set the sender to the address of the account to seed
+            from: address,
             to: TxKind::Create,
-            mint: amount, // Amount to deposit
+            mint: amount,
             value: U256::default(),
             gas_limit: 210000,
             is_system_transaction: false,
-            input: Default::default(), // No input data for the deposit
+            input: Default::default(),
         };
 
         let signer = PrivateKeySigner::random();

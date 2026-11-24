@@ -42,20 +42,16 @@ where
     let block_number = block.header().number();
     let transactions = block.body().transactions();
 
-    // Get parent header
     let parent_hash = block.header().parent_hash();
     let parent_header = provider
         .sealed_header_by_hash(parent_hash)?
         .ok_or_else(|| eyre!("Parent header not found: {}", parent_hash))?;
 
-    // Get state provider at parent block
     let state_provider = provider.state_by_block_hash(parent_hash)?;
 
-    // Create state database from parent state
     let state_db = StateProviderDatabase::new((&state_provider).into_evm_state_provider());
     let mut db = State::builder().with_database(state_db).with_bundle_update().build();
 
-    // Set up block attributes from the actual block header
     let attributes = BaseNextBlockEnvAttributes {
         timestamp: block.header().timestamp(),
         suggested_fee_recipient: block.header().beneficiary(),
@@ -65,7 +61,6 @@ where
         extra_data: block.header().extra_data().clone(),
     };
 
-    // Recover signers first (this can be parallelized in production)
     let signer_recovery_start = Instant::now();
     let recovered_transactions: Vec<_> = transactions
         .map(|tx| {
@@ -79,7 +74,6 @@ where
     let tx_count = recovered_transactions.len();
     let signer_recovery_time = signer_recovery_start.elapsed().as_micros();
 
-    // Execute transactions and measure time
     let mut transaction_times = Vec::with_capacity(tx_count);
 
     let evm_start = Instant::now();
@@ -209,7 +203,6 @@ mod tests {
         let to_1 = Address::random();
         let to_2 = Address::random();
 
-        // Create first transaction from Alice
         let tx_1 = TestSupport::sign(
             TransactionBuilder::default()
                 .signer(Account::Alice.signer_b256())
@@ -223,7 +216,6 @@ mod tests {
         );
         let tx_hash_1 = tx_1.tx_hash();
 
-        // Create second transaction from Bob
         let tx_2 = TestSupport::sign(
             TransactionBuilder::default()
                 .signer(Account::Bob.signer_b256())
@@ -245,19 +237,16 @@ mod tests {
         assert_eq!(response.block_number, block.header().number());
         assert_eq!(response.transactions.len(), 2);
 
-        // Check first transaction
         let metered_tx_1 = &response.transactions[0];
         assert_eq!(metered_tx_1.tx_hash, tx_hash_1);
         assert_eq!(metered_tx_1.gas_used, 21_000);
         assert!(metered_tx_1.execution_time_us > 0);
 
-        // Check second transaction
         let metered_tx_2 = &response.transactions[1];
         assert_eq!(metered_tx_2.tx_hash, tx_hash_2);
         assert_eq!(metered_tx_2.gas_used, 21_000);
         assert!(metered_tx_2.execution_time_us > 0);
 
-        // Check aggregate times
         assert!(response.signer_recovery_time_us > 0, "signer recovery should take time");
         assert!(response.execution_time_us > 0);
         assert_eq!(
@@ -265,7 +254,6 @@ mod tests {
             response.signer_recovery_time_us + response.execution_time_us
         );
 
-        // Ensure individual transaction times are consistent with total
         let individual_times: u128 =
             response.transactions.iter().map(|t| t.execution_time_us).sum();
         assert!(
@@ -280,7 +268,6 @@ mod tests {
     async fn meter_block_timing_consistency() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
 
-        // Create a block with one transaction
         let tx = TestSupport::sign(
             TransactionBuilder::default()
                 .signer(Account::Alice.signer_b256())
@@ -297,7 +284,6 @@ mod tests {
 
         let response = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block)?;
 
-        // Verify timing invariants
         assert!(response.signer_recovery_time_us > 0, "signer recovery time must be positive");
         assert!(response.execution_time_us > 0, "execution time must be positive");
         assert_eq!(
@@ -309,14 +295,9 @@ mod tests {
         Ok(())
     }
 
-    // ============================================================================
-    // Error Path Tests
-    // ============================================================================
-
     #[tokio::test]
     async fn meter_block_parent_header_not_found() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        // Create a block that references a non-existent parent
         let mut block = TestSupport::child_block(&harness, vec![]);
         block.header.parent_hash = B256::random();
 
@@ -337,7 +318,6 @@ mod tests {
     async fn meter_block_invalid_transaction_signature() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
 
-        // Create a transaction with an invalid signature
         let tx = TxEip1559 {
             chain_id: harness.chain_id(),
             nonce: 0,

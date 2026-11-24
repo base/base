@@ -69,7 +69,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
         );
         proofs_history_db.ensure_storage_path_matches(&storage_path)?;
 
-        // Initialize the environment with read-only access
         let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RO, runtime)?;
 
         match proofs_history_db {
@@ -106,12 +105,10 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
         S: BaseProofsStore + 'static,
         P: BlockReader,
     {
-        // Validate that the target block is within a valid range for unwinding
         if !Self::validate_unwind_range(target, &storage)? {
             return Ok(());
         }
 
-        // Get the target block from the main database
         let block = provider_factory
             .recovered_block(target.into(), TransactionVariant::NoHash)?
             .ok_or_else(|| eyre::eyre!("Target block {} not found in the main database", target))?;

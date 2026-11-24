@@ -39,8 +39,6 @@ use common::{
     ACTIVATION_ADMIN, ADMIN, ALICE, BOB, CHAIN_ID, bless_or_assert_gas, bless_or_assert_root,
 };
 
-// --- fixtures ---------------------------------------------------------------
-
 const ADMIN2: Address = Address::repeat_byte(0xA2);
 const OUTSIDER: Address = Address::repeat_byte(0x0F);
 
@@ -69,8 +67,6 @@ const ROOT_STAGE_FINALIZE_ADMIN: B256 =
     b256!("8af193788c98e688ce3bb069b241f1fea51bd8dc6d9aa95995bcd956071a111d");
 const ROOT_RENOUNCE_ADMIN: B256 =
     b256!("5d31ed7e17637df947521d71d43d5d9b93e75b070e6ffeee6e442ac9a2ce0e5b");
-
-// --- harness ----------------------------------------------------------------
 
 /// The policy registry precompile's singleton address.
 const fn registry() -> Address {
@@ -169,10 +165,6 @@ fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
     bless_or_assert_root(label, hash_state(storage), expected);
 }
 
-// ============================================================================
-// Version resolver
-// ============================================================================
-
 #[test]
 fn resolver_maps_forks_to_versions() {
     assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Azul), None);
@@ -194,14 +186,9 @@ fn dispatch_reverts_before_beryl() {
     assert!(bytes.is_empty());
 }
 
-// ============================================================================
-// evaluation reads (isAuthorized / built-ins / empty policies)
-// ============================================================================
-
 #[test]
 fn golden_is_authorized_builtins_and_malformed() {
     let mut s = fresh();
-    // ALWAYS_ALLOW (0) authorizes everyone; ALWAYS_BLOCK rejects everyone.
     assert!(is_authorized(&mut s, PolicyRegistryStorage::ALWAYS_ALLOW_ID, ALICE));
     assert!(!is_authorized(&mut s, PolicyRegistryStorage::ALWAYS_BLOCK_ID, ALICE));
     // Malformed id (type byte > 1) is unauthorized, never reverts.
@@ -211,7 +198,6 @@ fn golden_is_authorized_builtins_and_malformed() {
 #[test]
 fn golden_is_authorized_empty_policies() {
     let mut s = fresh();
-    // Empty BLOCKLIST authorizes everyone; empty ALLOWLIST rejects everyone.
     let block = create(&mut s, ADMIN, ADMIN, PolicyType::BLOCKLIST);
     let allow = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
     assert!(is_authorized(&mut s, block, ALICE));
@@ -221,7 +207,6 @@ fn golden_is_authorized_empty_policies() {
 #[test]
 fn golden_reads_for_nonexistent_and_builtins() {
     let mut s = fresh();
-    // policyExists: false for unknown custom id, true for built-ins.
     let (_, bytes) = call_policy(
         &mut s,
         OUTSIDER,
@@ -235,7 +220,6 @@ fn golden_reads_for_nonexistent_and_builtins() {
             .abi_encode(),
     );
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::policyExistsCall::abi_encode_returns(&true)));
-    // policyAdmin / pendingPolicyAdmin: zero for nonexistent, never revert.
     let (_, bytes) = call_policy(
         &mut s,
         OUTSIDER,
@@ -255,10 +239,6 @@ fn golden_reads_for_nonexistent_and_builtins() {
         Bytes::from(IPolicyRegistry::pendingPolicyAdminCall::abi_encode_returns(&Address::ZERO))
     );
 }
-
-// ============================================================================
-// createPolicy
-// ============================================================================
 
 #[test]
 fn golden_create_blocklist() {
@@ -280,7 +260,6 @@ fn golden_create_blocklist() {
         IPolicyRegistry::policyExistsCall { policyId: BLOCKLIST_ID }.abi_encode(),
     );
     assert_eq!(exists, Bytes::from(IPolicyRegistry::policyExistsCall::abi_encode_returns(&true)));
-    // createPolicy emits PolicyCreated then PolicyAdminUpdated (0 -> admin).
     let events = s.get_events(registry());
     assert_eq!(
         events[events.len() - 2].topics()[0],
@@ -340,10 +319,6 @@ fn golden_create_reverts_zero_admin() {
     assert!(rev);
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::ZeroAddress {}.abi_encode()));
 }
-
-// ============================================================================
-// composite policies (V2 ABI; unknown to V1)
-// ============================================================================
 
 #[test]
 fn golden_create_composite_selector_unknown_in_v1() {
@@ -599,7 +574,6 @@ fn golden_create_with_accounts_blocklist() {
     assert!(!rev);
     let id = IPolicyRegistry::createPolicyWithAccountsCall::abi_decode_returns(&bytes).unwrap();
     assert_eq!(id, BLOCKLIST_ID);
-    // Blocked account rejected; everyone else authorized (empty-blocklist default).
     assert!(!is_authorized(&mut s, id, ALICE));
     assert!(is_authorized(&mut s, id, BOB));
     assert_eq!(
@@ -609,15 +583,10 @@ fn golden_create_with_accounts_blocklist() {
     assert_root("create_with_accounts_blocklist", s, ROOT_CREATE_WITH_ACCOUNTS_BLOCKLIST);
 }
 
-// ============================================================================
-// updateAllowlist / updateBlocklist
-// ============================================================================
-
 #[test]
 fn golden_update_allowlist() {
     let mut s = fresh();
     let id = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
-    // Add ALICE.
     let (rev, _) = call_policy(
         &mut s,
         ADMIN,
@@ -638,7 +607,6 @@ fn golden_update_allowlist() {
 fn golden_update_allowlist_remove() {
     let mut s = fresh();
     let id = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
-    // Add then remove ALICE (exercises the membership-delete path).
     let (rev, _) = call_policy(
         &mut s,
         ADMIN,
@@ -673,7 +641,6 @@ fn golden_update_blocklist() {
             .abi_encode(),
     );
     assert!(!rev);
-    // Blocked account rejected; others still authorized (empty-blocklist default).
     assert!(!is_authorized(&mut s, id, ALICE));
     assert!(is_authorized(&mut s, id, BOB));
     assert_eq!(
@@ -767,15 +734,10 @@ fn golden_update_blocklist_reverts_batch_too_large() {
     );
 }
 
-// ============================================================================
-// admin lifecycle (stage / finalize / renounce)
-// ============================================================================
-
 #[test]
 fn golden_stage_and_finalize_update_admin() {
     let mut s = fresh();
     let id = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
-    // Stage ADMIN2 as pending.
     let (rev, _) = call_policy(
         &mut s,
         ADMIN,
@@ -795,7 +757,6 @@ fn golden_stage_and_finalize_update_admin() {
         s.get_events(registry()).last().unwrap().topics()[0],
         IPolicyRegistry::PolicyAdminStaged::SIGNATURE_HASH
     );
-    // Finalize by the pending admin.
     let (rev, _) = call_policy(
         &mut s,
         ADMIN2,
@@ -851,7 +812,6 @@ fn golden_finalize_reverts_unauthorized() {
         IPolicyRegistry::stageUpdateAdminCall { policyId: id, newAdmin: ADMIN2 }.abi_encode(),
     );
     assert!(!rev, "setup: staging pending admin must succeed");
-    // A caller who is neither admin nor the pending admin.
     let (rev, bytes) = call_policy(
         &mut s,
         OUTSIDER,
@@ -900,10 +860,6 @@ fn golden_renounce_admin_reverts_unauthorized() {
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::Unauthorized {}.abi_encode()));
 }
 
-// ============================================================================
-// dispatch envelope
-// ============================================================================
-
 #[test]
 fn golden_reverts_nonzero_value() {
     let mut s = fresh();
@@ -921,7 +877,6 @@ fn golden_reverts_nonzero_value() {
 
 #[test]
 fn golden_write_reverts_when_not_activated() {
-    // No activation: a write op must revert; a read op still works.
     let mut s = HashMapStorageProvider::new_with_storage_features(
         CHAIN_ID,
         UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
@@ -933,7 +888,6 @@ fn golden_write_reverts_when_not_activated() {
             .abi_encode(),
     );
     assert!(rev);
-    // Reads bypass the activation gate.
     let (rev, bytes) = call_policy(
         &mut s,
         OUTSIDER,
@@ -942,10 +896,6 @@ fn golden_write_reverts_when_not_activated() {
     assert!(!rev);
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::isAuthorizedCall::abi_encode_returns(&true)));
 }
-
-// ============================================================================
-// gas: storage-access footprint per op
-// ============================================================================
 
 /// Runs `calldata` as `caller` after `setup`, returning `(sload, sstore, keccak256)` counts.
 fn gas(
@@ -1016,10 +966,6 @@ fn golden_gas_footprints() {
 
     bless_or_assert_gas(&actual, expected);
 }
-
-// ============================================================================
-// meta: op coverage checklist
-// ============================================================================
 
 /// Compile-time coverage checklist — never called; its exhaustive `match` (no `_` arm) names the
 /// golden `#[test]` fn(s) pinning each op. Adding an ABI op fails the build until a golden is added.

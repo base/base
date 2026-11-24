@@ -36,7 +36,6 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
     let max_fee = txn.max_fee_per_gas().saturating_mul(txn.gas_limit() as u128);
     let txn_cost = txn.value().saturating_add(U256::from(max_fee));
 
-    // Return error if execution cost exceeds balance
     if txn_cost > account.balance {
         return Err(TxValidationError::InsufficientFundsForTransfer(txn_cost, account.balance));
     }

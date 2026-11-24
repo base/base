@@ -80,23 +80,17 @@ impl BaseTransactionBuilder {
         let tx_type = self.base.get_tx_type();
         if tx_type.is_some() {
             if tx_type == Some(DEPOSIT_TRANSACTION_TYPE) {
-                // source hash is required for deposit transactions
                 if self.deposit.source_hash == B256::ZERO {
                     self.deposit.source_hash = B256::from([1u8; 32]);
                 }
-                // deposit transactions should not carry enveloped bytes
                 self.enveloped_tx = None;
             } else {
-                // enveloped is required for non-deposit transactions
                 self.enveloped_tx = Some(vec![0x00].into());
             }
         } else if self.deposit.source_hash != B256::ZERO {
-            // if type is not set and source hash is set, set the transaction type to deposit
             self.base = self.base.tx_type(Some(DEPOSIT_TRANSACTION_TYPE));
-            // deposit transactions should not carry enveloped bytes
             self.enveloped_tx = None;
         } else if self.enveloped_tx.is_none() {
-            // if type is not set and source hash is not set, set the enveloped transaction to something.
             self.enveloped_tx = Some(vec![0x00].into());
         }
 
@@ -117,19 +111,15 @@ impl BaseTransactionBuilder {
         let tx_type = self.base.get_tx_type();
         if tx_type.is_some() {
             if Some(DEPOSIT_TRANSACTION_TYPE) == tx_type {
-                // if tx type is deposit, check if source hash is set
                 if self.deposit.source_hash == B256::ZERO {
                     return Err(BuildError::MissingSourceHashForDeposit);
                 }
             } else if self.enveloped_tx.is_none() {
-                // enveloped is required for non-deposit transactions
                 return Err(BuildError::MissingEnvelopedTxBytes);
             }
         } else if self.deposit.source_hash != B256::ZERO {
-            // if type is not set and source hash is set, set the transaction type to deposit
             self.base = self.base.tx_type(Some(DEPOSIT_TRANSACTION_TYPE));
         } else if self.enveloped_tx.is_none() {
-            // tx is not deposit and enveloped is required
             return Err(BuildError::MissingEnvelopedTxBytes);
         }
 

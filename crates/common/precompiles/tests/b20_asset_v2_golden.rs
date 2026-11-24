@@ -48,8 +48,6 @@ use common::{
     seize_receiver_policy, signed_permit, storage_at, u,
 };
 
-// --- fixtures ---------------------------------------------------------------
-
 const NAME: &str = "Base Asset";
 const SYMBOL: &str = "bASSET";
 const DECIMALS: u8 = 6;
@@ -148,8 +146,6 @@ const ROOT_SEIZE: B256 = b256!("1aba53dba437cfde3f7938c1d4c02cce8c3df5b629dfa496
 const ROOT_ANNOUNCE_V2: B256 =
     b256!("5b3ea1fe17f441ce9e5d82f0764ce177f818fad8118cd1358fe74cbfafcde5e1");
 
-// --- harness ----------------------------------------------------------------
-
 /// Fresh provider with an initialized `Base Asset` at [`TOKEN`], matching the factory
 /// bootstrap: the multiplier slot is left physically zero and the getter normalizes it to WAD.
 fn fresh() -> HashMapStorageProvider {
@@ -222,10 +218,6 @@ fn assert_unprivileged_requires_role(calldata: Vec<u8>, role: B256) {
     );
 }
 
-// ============================================================================
-// version resolver / dispatch envelope
-// ============================================================================
-
 #[test]
 fn resolver_resolves_v2_at_cobalt() {
     assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
@@ -278,7 +270,6 @@ fn dispatch_reverts_when_uninitialized() {
 
 #[test]
 fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
-    // Exercises the no-observer `dispatch()` wrapper + the is_initialized=false gate.
     let mut s = storage_at(BaseUpgrade::Cobalt);
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
@@ -293,10 +284,6 @@ fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
 }
-
-// ============================================================================
-// transfer (behavior-preserving: V1 roots reused)
-// ============================================================================
 
 #[test]
 fn golden_transfer_privileged() {
@@ -458,10 +445,6 @@ fn golden_transfer_with_memo_emits_transfer_then_memo() {
     assert_root("transfer_with_memo", s, ROOT_TRANSFER_WITH_MEMO);
 }
 
-// ============================================================================
-// transferFrom (behavior-preserving: V1 roots reused)
-// ============================================================================
-
 #[test]
 fn golden_transfer_from_finite_allowance_decrements() {
     let mut s = fresh();
@@ -604,10 +587,6 @@ fn golden_transfer_from_reverts_zero_sender() {
     assert_eq!(err, BasePrecompileError::revert(IB20::InvalidSender { sender: Address::ZERO }));
 }
 
-// ============================================================================
-// approve (behavior-preserving: V1 roots reused)
-// ============================================================================
-
 #[test]
 fn golden_approve_sets_allowance_and_emits() {
     let mut s = fresh();
@@ -650,10 +629,6 @@ fn golden_approve_reverts_zero_approver() {
     .unwrap_err();
     assert_eq!(err, BasePrecompileError::revert(IB20::InvalidApprover { approver: Address::ZERO }));
 }
-
-// ============================================================================
-// mint (behavior-preserving: V1 roots reused)
-// ============================================================================
 
 #[test]
 fn golden_mint_privileged_still_enforces_receiver_policy() {
@@ -754,10 +729,6 @@ fn golden_mint_with_memo() {
     assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
     assert_root("mint_with_memo", s, ROOT_MINT_WITH_MEMO);
 }
-
-// ============================================================================
-// burn / burnBlocked (behavior-preserving: V1 roots reused)
-// ============================================================================
 
 #[test]
 fn golden_burn_requires_role_then_reduces_supply() {
@@ -902,10 +873,6 @@ fn golden_burn_blocked_unprivileged_requires_role() {
         })
     );
 }
-
-// ============================================================================
-// seizeWithMemo (new at V2)
-// ============================================================================
 
 #[test]
 fn golden_seize_moves_balance_emits_transfer_memo_seized() {
@@ -1136,10 +1103,6 @@ fn golden_read_seize_role_and_policy_constants() {
     assert_root("read_seize_constants", s, ROOT_FRESH);
 }
 
-// ============================================================================
-// pause / unpause (behavior-preserving: V1 roots reused)
-// ============================================================================
-
 #[test]
 fn golden_pause_sets_feature_bit() {
     let mut s = fresh();
@@ -1269,10 +1232,6 @@ fn golden_read_is_paused_and_paused_features_includes_seize() {
     assert_eq!(features, Bytes::from(vec![IB20::PausableFeature::SEIZE].abi_encode()));
 }
 
-// ============================================================================
-// config / metadata (behavior-preserving: V1 roots reused)
-// ============================================================================
-
 #[test]
 fn golden_update_supply_cap() {
     let mut s = fresh();
@@ -1395,10 +1354,6 @@ fn golden_update_contract_uri_unprivileged_requires_role() {
     );
 }
 
-// ============================================================================
-// roles (behavior-preserving: V1 roots reused)
-// ============================================================================
-
 #[test]
 fn golden_grant_role() {
     let mut s = fresh();
@@ -1418,7 +1373,6 @@ fn golden_grant_role() {
 
 #[test]
 fn golden_grant_role_unprivileged_no_admin_reverts() {
-    // No admin exists yet => the admin-availability guard reverts.
     let mut s = fresh();
     let err = op(
         &mut s,
@@ -1438,7 +1392,6 @@ fn golden_grant_role_unprivileged_no_admin_reverts() {
 
 #[test]
 fn golden_grant_role_unprivileged_non_admin_caller_reverts() {
-    // An admin exists, but ALICE is not the role's admin => the role check reverts.
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN));
     let err = op(
@@ -1485,7 +1438,6 @@ fn golden_grant_role_idempotent_when_already_held() {
         give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN);
         give_role(t, B20TokenRole::Mint.id(), ALICE);
     });
-    // ALICE already holds MINT_ROLE => grant is a no-op (no event, count unchanged).
     let out = op_privileged(
         &mut s,
         ADMIN,
@@ -1540,7 +1492,6 @@ fn golden_revoke_role_unprivileged_non_admin_caller_reverts() {
 #[test]
 fn golden_revoke_role_noop_when_not_held() {
     let mut s = fresh();
-    // ALICE does not hold MINT_ROLE => revoke is a no-op; state stays at fresh.
     let out = op_privileged(
         &mut s,
         ADMIN,
@@ -1694,10 +1645,6 @@ fn golden_set_role_admin_unprivileged_non_admin_caller_reverts() {
     );
 }
 
-// ============================================================================
-// policy (behavior-preserving: V1 roots reused)
-// ============================================================================
-
 #[test]
 fn golden_update_policy() {
     let mut s = fresh();
@@ -1740,10 +1687,6 @@ fn golden_update_policy_unprivileged_requires_role() {
         B20TokenRole::DefaultAdmin.id(),
     );
 }
-
-// ============================================================================
-// permit (behavior-preserving: V1 roots reused)
-// ============================================================================
 
 #[test]
 fn golden_permit_sets_allowance_and_increments_nonce() {
@@ -1798,10 +1741,6 @@ fn golden_permit_charges_recovery_gas() {
     .expect("permit must succeed");
     assert_eq!(s.gas_deducted(), 3000, "V2 permit must charge the fixed ECRECOVER-equivalent cost");
 }
-
-// ============================================================================
-// computed + direct + constant reads (behavior-preserving: V1 roots reused)
-// ============================================================================
 
 #[test]
 fn golden_read_policy_id_and_unsupported_scope() {
@@ -2021,10 +1960,6 @@ fn golden_read_extra_metadata() {
     assert_root("read_extra_metadata", s, ROOT_EXTRA_METADATA_READ);
 }
 
-// ============================================================================
-// batchMint / updateExtraMetadata (behavior-preserving: V1 roots reused)
-// ============================================================================
-
 #[test]
 fn golden_batch_mint() {
     let mut s = fresh();
@@ -2178,18 +2113,14 @@ fn golden_update_extra_metadata_unprivileged_requires_role() {
     );
 }
 
-// ============================================================================
-// updateMultiplier (V2 semantics: emits UIMultiplierUpdated; clears a live pending)
-// ============================================================================
-
 // Guards `fresh()` against drifting back to a physical-WAD prestate: a factory-bootstrapped
 // token leaves the multiplier slot physically zero, and the getter normalizes it to WAD.
 #[test]
 fn golden_fresh_multiplier_slot_is_physical_zero() {
     let mut s = fresh();
     read(&mut s, |t| {
-        assert_eq!(t.asset.multiplier.read().unwrap(), U256::ZERO); // raw slot
-        assert_eq!(t.multiplier().unwrap(), B20AssetStorage::WAD); // normalized getter
+        assert_eq!(t.asset.multiplier.read().unwrap(), U256::ZERO);
+        assert_eq!(t.multiplier().unwrap(), B20AssetStorage::WAD);
     });
 }
 
@@ -2307,10 +2238,6 @@ fn golden_update_multiplier_clears_live_pending_and_emits_cancellation() {
     );
     assert_root("update_multiplier_clears_pending", s, ROOT_UPDATE_MULTIPLIER_CLEARS_PENDING);
 }
-
-// ============================================================================
-// updateUIMultiplier / cancelUIMultiplierUpdate / lazy multiplier reads (new at V2)
-// ============================================================================
 
 #[test]
 fn golden_update_ui_multiplier_schedules_pending() {
@@ -2755,10 +2682,6 @@ fn golden_cancel_ui_multiplier_update_unprivileged_requires_role() {
     );
 }
 
-// ============================================================================
-// supportsInterface (ERC-165 / ERC-8056, new at V2)
-// ============================================================================
-
 #[test]
 fn golden_supports_interface_true_for_erc165_and_erc8056_ids() {
     let mut s = fresh();
@@ -2809,15 +2732,12 @@ fn golden_supports_interface_true_for_conversion_extension_id() {
     assert_eq!(out, Bytes::from(true.abi_encode()));
 }
 
-// ============================================================================
 // Interface-review additions (BOP-495): toUIAmount / fromUIAmount aliases route
 // to the same logic as their legacy counterparts; MAX_UI_MULTIPLIER exposes the
 // setter bound.
-// ============================================================================
 
 #[test]
 fn golden_to_ui_amount_and_from_ui_amount_alias_conversions() {
-    // The ERC-8056 Conversion aliases behave exactly like toScaledBalance / toRawBalance.
     let mut s = fresh();
     seed(&mut s, |t| {
         fund(t, ALICE, u(100));
@@ -2854,10 +2774,6 @@ fn golden_max_ui_multiplier_returns_uint128_max() {
     .unwrap();
     assert_eq!(out, Bytes::from(U256::from(u128::MAX).abi_encode()));
 }
-
-// ============================================================================
-// announce (V2 semantics: inner updateMultiplier now emits UIMultiplierUpdated)
-// ============================================================================
 
 #[test]
 fn golden_announce_emits_and_runs_internal_calls() {
@@ -3068,9 +2984,6 @@ fn golden_announce_unprivileged_requires_role() {
     );
 }
 
-// ============================================================================
-// gas: storage-access footprint per op
-// ============================================================================
 //
 // `gas_deducted` is 0 under the test gas schedule, so we pin the deterministic,
 // schedule-independent signal instead: the SLOAD / SSTORE / KECCAK256 op counts a
@@ -3407,10 +3320,6 @@ fn golden_gas_footprints() {
     bless_or_assert_gas(&actual, expected);
 }
 
-// ============================================================================
-// meta: op coverage checklist
-// ============================================================================
-
 /// Compile-time coverage checklist — never called; it exists only for its two
 /// exhaustive `match`es (no `_` arm), each arm naming the golden `#[test]` fn(s) that
 /// pin the op via [`covered`].
@@ -3432,7 +3341,6 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
     fn covered(_goldens: &[fn()]) {}
 
     match call {
-        // ERC-20 core
         C::transfer(_) => covered(&[
             golden_transfer_privileged,
             golden_transfer_unprivileged_allowed,
@@ -3459,7 +3367,6 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         C::transferWithMemo(_) => covered(&[golden_transfer_with_memo_emits_transfer_then_memo]),
         C::transferFromWithMemo(_) => covered(&[golden_transfer_from_with_memo]),
 
-        // mint / burn
         C::mint(_) => covered(&[
             golden_mint_privileged_still_enforces_receiver_policy,
             golden_mint_unprivileged_requires_role_and_policy,
@@ -3478,7 +3385,6 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_burn_blocked_unprivileged_requires_role,
         ]),
 
-        // seize (new at V2)
         C::seizeWithMemo(_) => covered(&[
             golden_seize_moves_balance_emits_transfer_memo_seized,
             golden_seize_reverts_missing_role,
@@ -3493,7 +3399,6 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             covered(&[golden_read_seize_role_and_policy_constants])
         }
 
-        // pause / config / roles / policy / permit
         C::pause(_) => covered(&[
             golden_pause_sets_feature_bit,
             golden_pause_reverts_empty_feature_set,
@@ -3555,7 +3460,6 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_permit_reverts_when_expired,
         ]),
 
-        // computed reads
         C::isPaused(_) | C::pausedFeatures(_) => {
             covered(&[golden_read_is_paused_and_paused_features_includes_seize])
         }
@@ -3563,7 +3467,6 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         C::DOMAIN_SEPARATOR(_) => covered(&[golden_read_domain_separator]),
         C::eip712Domain(_) => covered(&[golden_read_eip712_domain]),
 
-        // direct reads
         C::name(_)
         | C::symbol(_)
         | C::decimals(_)
@@ -3576,7 +3479,6 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         | C::hasRole(_)
         | C::getRoleAdmin(_) => covered(&[golden_read_metadata_and_supply]),
 
-        // role / policy-id constants
         C::DEFAULT_ADMIN_ROLE(_)
         | C::MINT_ROLE(_)
         | C::BURN_ROLE(_)
@@ -3591,7 +3493,6 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
     }
 
     match ext {
-        // asset-specific reads
         SC::OPERATOR_ROLE(_) | SC::WAD_PRECISION(_) => {
             covered(&[golden_read_operator_role_and_wad])
         }
@@ -3607,7 +3508,6 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         SC::isAnnouncementIdUsed(_) => covered(&[golden_read_is_announcement_id_used]),
         SC::extraMetadata(_) => covered(&[golden_read_extra_metadata]),
 
-        // asset-specific mutations
         SC::updateMultiplier(_) => covered(&[
             golden_update_multiplier_emits_ui_multiplier_updated,
             golden_update_multiplier_reverts_zero,

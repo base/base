@@ -43,7 +43,6 @@ pub struct LocalNode {
 
 impl Drop for LocalNode {
     fn drop(&mut self) {
-        // Clean up the temporary database directory
         let _ = std::fs::remove_dir_all(&self._db_path);
     }
 }

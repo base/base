@@ -120,7 +120,6 @@ impl BaseTime {
             }));
         }
 
-        // Install the implementation runtime at its code-namespace address.
         let code = Bytecode::new_raw(Self::implementation_bytecode());
         let code_hash = code.hash_slow();
         let implementation_original = evm
@@ -136,7 +135,6 @@ impl BaseTime {
         )
         .apply(evm, block_state);
 
-        // Link the existing proxy's EIP-1967 implementation slot to the implementation address.
         IrregularStateChange::new(
             Predeploys::BASE_TIME,
             Some(proxy_info.clone()),

@@ -1159,7 +1159,6 @@ impl RocksdbProofsStorage {
                 let (raw_key, raw_value) = item.map_err(rocksdb_error)?;
                 let block_number = decode_block_number(&raw_key)?;
                 if !block_range.contains(&block_number) {
-                    // break
                     return Ok(None);
                 }
 

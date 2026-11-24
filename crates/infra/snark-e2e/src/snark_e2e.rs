@@ -160,8 +160,6 @@ impl SnarkE2e {
     pub async fn run() -> Result<()> {
         let l2_rpc = std::env::var("L2_NODE_ADDRESS").context("L2_NODE_ADDRESS must be set")?;
 
-        // -- 1. Query L2 safe head -----------------------------------------------
-        //
         // Use the "safe" block tag instead of `latest - 1000`.  The safe head
         // is the highest L2 block that the node has derived from L1 data, so
         // its state and batch data are guaranteed to be available for witness
@@ -178,7 +176,6 @@ impl SnarkE2e {
             .context("L2 safe block not available")?;
         let safe_head_number = safe_block.header.number;
 
-        // Prove 1 block: start_block_number = safe_head - 1, target = safe_head
         let mut target_block = safe_head_number;
         let mut safe_head = target_block - 1;
         info!(
@@ -186,8 +183,6 @@ impl SnarkE2e {
             safe_head_number, target_block, safe_head, "fetched L2 block numbers (using safe head)"
         );
 
-        // -- 1b. Ensure L1 has finalized far enough ------------------------------
-        //
         // The server computes l1_head = min(l1_origin + sequence_window,
         // finalized_l1). When SafeDB is unavailable this is the only path, and
         // if finalized_l1 is too low the effective buffer gets truncated, causing
@@ -213,8 +208,6 @@ impl SnarkE2e {
             .header
             .number;
 
-        // -- 1c. The chain must accept this build's proofs ----------------------
-        //
         // Computed now rather than after the proof: the keys are needed for the
         // verify step anyway, and a mismatch makes the proof pointless.
         info!("computing range and aggregation verifying keys (LightProver — VK only)");
@@ -269,8 +262,6 @@ impl SnarkE2e {
             safe_head = target_block - 1;
         };
 
-        // -- 2. Submit proveBlockRange (SnarkPlonk) -----------------------------
-        //
         // l1_head is omitted -- the prover service calculates it server-side
         // using SafeDB (optimism_safeHeadAtL1Block) with a sequence_window
         // fallback, which is more robust than the client-side l1_origin + 50
@@ -318,7 +309,6 @@ impl SnarkE2e {
             "proveBlockRange submitted"
         );
 
-        // -- 3. Poll getProof until Succeeded or timeout --------------------------
         let start = std::time::Instant::now();
         let snark_receipt_bytes = loop {
             if start.elapsed().as_secs() > POLL_TIMEOUT_SECS {
@@ -402,7 +392,6 @@ impl SnarkE2e {
             "SNARK proof completed"
         );
 
-        // -- 4. Deserialize SNARK receipt -----------------------------------------
         let (snark_proof, _): (SP1ProofWithPublicValues, _) =
             bincode::serde::decode_from_slice(&snark_receipt_bytes, bincode::config::standard())
                 .with_context(|| {
@@ -415,7 +404,6 @@ impl SnarkE2e {
 
         info!("SNARK proof deserialized successfully");
 
-        // -- 5. Verify SNARK proof ------------------------------------------------
         Self::verify_snark_proof(snark_proof, agg_vk)
             .await
             .with_context(|| format!("failed to verify SNARK proof for session_id={session_id}"))?;

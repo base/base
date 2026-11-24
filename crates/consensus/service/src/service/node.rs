@@ -199,7 +199,6 @@ impl RollupNode {
         &self,
         l1_head_number: base_consensus_providers::L1HeadNumber,
     ) -> OnlinePipeline {
-        // Create the caching L1/L2 EL providers for derivation.
         let l1_derivation_provider = AlloyChainProvider::new_with_trust(
             self.l1_config.engine_provider.clone(),
             DERIVATION_PROVIDER_CACHE_SIZE,
@@ -334,7 +333,6 @@ impl RollupNode {
             self.upgrade_signal_config.as_ref().map(|config| config.config.mode),
         );
 
-        // Build the safe head DB pair. Both actors share the same underlying DB via Arc.
         let (safe_head_listener, safe_db_reader): (
             Arc<dyn SafeHeadListener>,
             Arc<dyn SafeDBReader>,
@@ -409,7 +407,6 @@ impl RollupNode {
             derivation_origin_tx,
         );
 
-        // Create the p2p actor.
         let (
             NetworkInboundData {
                 signer,
@@ -428,9 +425,6 @@ impl RollupNode {
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
 
-        // Create the L1 Watcher actor
-
-        // A channel to send queries about the state of L1.
         let (l1_query_tx, l1_query_rx) = mpsc::channel(1024);
 
         let head_stream = BlockStream::new_as_stream(
@@ -451,7 +445,6 @@ impl RollupNode {
         let (l1_safe_tx, l1_safe_rx) = watch::channel(None);
         let (l1_finalized_tx, l1_finalized_rx) = watch::channel(None);
 
-        // Create the [`L1WatcherActor`]. Previously known as the DA watcher actor.
         let l1_watcher = L1WatcherActor::new(
             Arc::clone(&self.config),
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
@@ -487,7 +480,6 @@ impl RollupNode {
             .as_ref()
             .map(|c| c.metrics_actor(upgrade_signal_refresher.clone(), cancellation.clone()));
         let node_mode = self.mode();
-        // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
             let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
                 self.sequencer_l1_provider.clone(),
@@ -504,7 +496,6 @@ impl RollupNode {
                 engine_state_rx: sequencer_engine_state_rx,
             };
 
-            // Create the admin API channel
             let (sequencer_admin_api_tx, sequencer_admin_api_rx) = mpsc::channel(1024);
             let queued_gossip_client = if node_mode.is_isolated() {
                 QueuedUnsafePayloadGossipClient::private()
@@ -549,7 +540,6 @@ impl RollupNode {
             (None, None)
         };
 
-        // Create the RPC server actor.
         let rpc_builder = self.rpc_builder();
         let engine_rpc_actor = rpc_builder
             .as_ref()

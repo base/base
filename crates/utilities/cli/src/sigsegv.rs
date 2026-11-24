@@ -127,6 +127,7 @@ mod unix_impl {
     /// Signal handler installed for SIGSEGV.
     extern "C" fn print_stack_trace(_: libc::c_int) {
         const MAX_FRAMES: usize = 256;
+        const STACK_OVERFLOW_DEPTH_HINT: usize = 128;
         let mut stack_trace: [*mut libc::c_void; MAX_FRAMES] = [ptr::null_mut(); MAX_FRAMES];
         let mut depth = 0usize;
 
@@ -151,11 +152,9 @@ mod unix_impl {
 
         let stack = &stack_trace[..depth];
 
-        // Just a stack trace is cryptic. Explain what we're doing.
         raw_errln!("error: process interrupted by SIGSEGV, printing backtrace\n");
         let mut written = 1;
         let mut consumed = 0;
-        // Begin elaborating return addrs into symbols and writing them directly to stderr
         // Most backtraces are stack overflow, most stack overflows are from recursion
         // Check for cycles before writing 250 lines of the same ~5 symbols
         let cycled = |(runner, walker)| runner == walker;
@@ -191,11 +190,7 @@ mod unix_impl {
         raw_errln!("");
         written += rem.len() + 1;
 
-        let random_depth = || 8 * 16; // chosen by random diceroll (2d20)
-        if cyclic || stack.len() > random_depth() {
-            // technically speculation, but assert it with confidence anyway.
-            // We only arrived in this signal handler because bad things happened
-            // and this message is for explaining it's not the programmer's fault
+        if cyclic || stack.len() > STACK_OVERFLOW_DEPTH_HINT {
             raw_errln!("note: process unexpectedly overflowed its stack! this is a bug");
             written += 1;
         }

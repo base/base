@@ -145,7 +145,6 @@ impl BatchEncoder {
             "closed channel"
         );
 
-        // Close metrics.
         BatcherMetrics::channel_closed_total(close_reason.metric_label()).increment(1);
         BatcherMetrics::channel_duration_blocks().record(duration_blocks as f64);
         BatcherMetrics::l2_blocks_per_channel().record(blocks_added as f64);
@@ -384,7 +383,6 @@ impl BatchEncoder {
                 .set(self.egress.artifacts().ready_frame_count() as f64);
         }
 
-        // Remove the safe block prefix and rebase every remaining block-relative offset.
         self.blocks.drain(..prune_count);
         self.rebase_after_block_prune(prune_count);
         if self.blocks.is_empty() {
@@ -451,7 +449,6 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn step(&mut self) -> Result<StepResult, StepError> {
-        // One transition: deferred error, timeout close, or one queued block.
         if let Some(error) = self.deferred_step_error.take() {
             return Err(error);
         }
@@ -501,7 +498,6 @@ impl BatchPipeline for BatchEncoder {
                     });
                 }
 
-                // Close what we have; next step retries this block in a new channel.
                 debug!(%limit, "channel reached a protocol size limit, closing");
                 self.close_current_channel(ChannelCloseReason::ProtocolLimit)?;
                 Ok(StepResult::ChannelClosed)
@@ -615,7 +611,6 @@ impl BatchPipeline for BatchEncoder {
         // Keep `next_id` monotonic across reset so stale confirms cannot collide.
         self.rng = SmallRng::from_os_rng();
 
-        // Zero out state gauges — all buffered data has been discarded.
         BatcherMetrics::pending_blocks().set(0.0);
         BatcherMetrics::pending_frames().set(0.0);
     }

@@ -45,13 +45,10 @@ impl SeedGenerator {
     }
 
     fn valid_block(&mut self) -> Block<BaseTxEnvelope> {
-        // Simulate some random data
         let data = self.random_bytes(1024 * 1024);
 
-        // Create unstructured data with the random bytes
         let u = Unstructured::new(&data);
 
-        // Generate a random instance of MyStruct
         let mut block: Block<BaseTxEnvelope> = Block::arbitrary_take_rest(u).unwrap();
 
         let transactions: Vec<Bytes> =

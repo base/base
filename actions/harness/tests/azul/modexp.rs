@@ -4,18 +4,6 @@ use alloy_primitives::{Bytes, TxKind, U256, hex};
 
 use crate::env::AzulTestEnv;
 
-// ─── MODEXP probe contract ──────────────────────────────────────────
-//
-// Deploys runtime that:
-//  1. Copies calldata into memory (the raw MODEXP precompile input).
-//  2. Records `GAS` before the `STATICCALL`.
-//  3. `STATICCALL(gas, 0x05, 0, calldatasize, calldatasize, 32)` — forwards
-//     calldata to the MODEXP precompile.
-//  4. Records `GAS` after the `STATICCALL`.
-//  5. `SSTORE(slot 0, success)` — 1 if the call succeeded, 0 otherwise.
-//  6. `SSTORE(slot 1, gas_before − gas_after)` — total gas delta.
-//  7. `SSTORE(slot 2, 1)` — sentinel proving execution completed.
-
 /// MODEXP probe-contract init code (12 bytes init + 33 bytes runtime).
 ///
 /// Runtime bytecode:
@@ -74,7 +62,6 @@ async fn azul_modexp_upper_bound() {
     let mut env = AzulTestEnv::new();
     let contract_addr = env.first_contract_address();
 
-    // ── Block 1 (ts=2, pre-fork): deploy MODEXP probe contract ──────
     let deploy_tx =
         env.create_tx(TxKind::Create, Bytes::from_static(&MODEXP_INIT_CODE), U256::ZERO, 100_000);
     let block1 = env.sequencer.build_next_block_with_transactions(vec![deploy_tx]).await;
@@ -84,7 +71,6 @@ async fn azul_modexp_upper_bound() {
     // Oversized input: base_len = 1025 (> 1024-byte EIP-7823 limit).
     let oversized_input = ModexpInput::build(&vec![0u8; 1025], &[], &[2]);
 
-    // ── Block 2 (ts=4, pre-fork): call MODEXP with oversized input ───
     let call_pre = env.create_tx(
         TxKind::Call(contract_addr),
         Bytes::from(oversized_input.clone()),
@@ -93,7 +79,6 @@ async fn azul_modexp_upper_bound() {
     );
     let block2 = env.sequencer.build_next_block_with_transactions(vec![call_pre]).await;
 
-    // Pre-fork: oversized MODEXP succeeds.
     {
         let sentinel = env.sequencer.storage_at(contract_addr, MODEXP_SENTINEL_SLOT);
         let success = env.sequencer.storage_at(contract_addr, MODEXP_SUCCESS_SLOT);
@@ -101,7 +86,6 @@ async fn azul_modexp_upper_bound() {
         assert_eq!(success, U256::from(1), "MODEXP with oversized input must succeed pre-fork");
     }
 
-    // ── Block 3 (ts=6, post-fork): call MODEXP with oversized input ──
     let call_post = env.create_tx(
         TxKind::Call(contract_addr),
         Bytes::from(oversized_input),
@@ -120,7 +104,6 @@ async fn azul_modexp_upper_bound() {
         );
     }
 
-    // ── Batch and derive ─────────────────────────────────────────────
     env.derive_blocks([(block1, 1), (block2, 2), (block3, 3)], 3, "Base Azul").await;
 }
 
@@ -130,17 +113,14 @@ async fn azul_modexp_gas_cost_increase() {
     let mut env = AzulTestEnv::new();
     let contract_addr = env.first_contract_address();
 
-    // ── Block 1 (ts=2, pre-fork): deploy MODEXP probe contract ──────
     let deploy_tx =
         env.create_tx(TxKind::Create, Bytes::from_static(&MODEXP_INIT_CODE), U256::ZERO, 100_000);
     let block1 = env.sequencer.build_next_block_with_transactions(vec![deploy_tx]).await;
 
     assert!(env.sequencer.has_code(contract_addr), "deployed contract must have non-empty code");
 
-    // Small valid input: 2^3 mod 5 (= 3).
     let small_input = ModexpInput::build(&[2], &[3], &[5]);
 
-    // ── Block 2 (ts=4, pre-fork): call MODEXP ────────────────────────
     let call_pre = env.create_tx(
         TxKind::Call(contract_addr),
         Bytes::from(small_input.clone()),
@@ -158,7 +138,6 @@ async fn azul_modexp_gas_cost_increase() {
         assert_eq!(success, U256::from(1), "MODEXP must succeed pre-fork");
     }
 
-    // ── Block 3 (ts=6, post-fork): call MODEXP with same input ───────
     let call_post =
         env.create_tx(TxKind::Call(contract_addr), Bytes::from(small_input), U256::ZERO, 100_000);
     let block3 = env.sequencer.build_next_block_with_transactions(vec![call_post]).await;
@@ -178,6 +157,5 @@ async fn azul_modexp_gas_cost_increase() {
          ({gas_delta_pre}) due to EIP-7883 cost increase"
     );
 
-    // ── Batch and derive ─────────────────────────────────────────────
     env.derive_blocks([(block1, 1), (block2, 2), (block3, 3)], 3, "Base V1").await;
 }

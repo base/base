@@ -166,7 +166,6 @@ fn missing_beacon_root_is_rejected_post_cancun() {
         err.external_ref::<PreExecutionError>(),
         Some(&PreExecutionError::MissingParentBeaconBlockRoot)
     );
-    // The beacon-roots call never ran, so its slot is untouched.
     let (mut evm, _, _) = executor.finish();
     assert_eq!(slot0(&mut evm, BEACON_ROOTS_ADDRESS), U256::ZERO);
 }

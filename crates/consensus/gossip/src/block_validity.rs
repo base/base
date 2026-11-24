@@ -82,7 +82,6 @@ pub enum BlockInvalidError {
 
 impl From<BlockInvalidError> for MessageAcceptance {
     fn from(value: BlockInvalidError) -> Self {
-        // We only want to ignore blocks that we have already seen.
         match value {
             BlockInvalidError::BlockSeen { block_hash: _ } => Self::Ignore,
             _ => Self::Reject,
@@ -117,10 +116,8 @@ impl BlockHandler {
         &mut self,
         envelope: &NetworkPayloadEnvelope,
     ) -> Result<(), BlockInvalidError> {
-        // Record total validation attempts
         Metrics::block_validation_total().increment(1);
 
-        // Record block version distribution
         let version = match &envelope.payload {
             BaseExecutionPayload::V1(_) => "v1",
             BaseExecutionPayload::V2(_) => "v2",
@@ -134,7 +131,6 @@ impl BlockHandler {
                 self.validate_block_internal(envelope)
             });
 
-        // Record success/failure metrics
         match &validation_result {
             Ok(()) => {
                 Metrics::block_validation_success().increment(1);
@@ -172,13 +168,10 @@ impl BlockHandler {
         let current_timestamp =
             SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
 
-        // The timestamp is at most 5 seconds in the future.
         let is_future = envelope.payload.timestamp() > current_timestamp + 5;
-        // The timestamp is at most 60 seconds in the past.
         let is_past =
             envelope.payload.timestamp() < current_timestamp.saturating_sub(Self::MAX_BLOCK_AGE);
 
-        // CHECK: The timestamp is not too far in the future or past.
         if is_future || is_past {
             return Err(BlockInvalidError::Timestamp {
                 current: current_timestamp,
@@ -190,21 +183,17 @@ impl BlockHandler {
         let msg = envelope.payload_hash.signature_message(self.rollup_config.l2_chain_id.id());
         let block_signer = *self.signer_recv.borrow();
 
-        // The block has a valid signature.
         let Ok(msg_signer) = envelope.signature.recover_address_from_prehash(&msg) else {
             return Err(BlockInvalidError::Signature);
         };
 
-        // The block is signed by the expected signer (the unsafe block signer).
         if msg_signer != block_signer {
             return Err(BlockInvalidError::Signer { expected: block_signer, received: msg_signer });
         }
 
-        // CHECK: Ensure the block hash is valid.
         let expected = envelope.payload.block_hash();
         let mut block: Block<BaseTxEnvelope> = envelope.payload.clone().try_into_block()?;
         block.header.parent_beacon_block_root = envelope.parent_beacon_block_root;
-        // If isthmus is active, set the requests hash to the empty hash.
         if self.rollup_config.is_feature_active_cascading(
             BaseFeature::EmptyRequestsHash,
             envelope.payload.timestamp(),
@@ -216,7 +205,6 @@ impl BlockHandler {
             return Err(BlockInvalidError::BlockHash { expected, received });
         }
 
-        // CHECK: The payload is valid for the specific version of this block.
         self.validate_version_specific_payload(envelope)?;
 
         // Reject invalid schedules before gossip acceptance, forwarding, or recording as seen.
@@ -230,15 +218,12 @@ impl BlockHandler {
         if let Some(seen_hashes_at_height) =
             self.seen_hashes.get_mut(&envelope.payload.block_number())
         {
-            // CHECK: If [`Self::MAX_BLOCKS_TO_KEEP`] different blocks have already been received
-            // for the same height, reject the block.
             if seen_hashes_at_height.len() >= Self::MAX_BLOCKS_TO_KEEP {
                 return Err(BlockInvalidError::TooManyBlocks {
                     height: envelope.payload.block_number(),
                 });
             }
 
-            // CHECK: If the block has already been seen, ignore it.
             if seen_hashes_at_height.contains(&envelope.payload.block_hash()) {
                 return Err(BlockInvalidError::BlockSeen {
                     block_hash: envelope.payload.block_hash(),
@@ -251,7 +236,6 @@ impl BlockHandler {
             .or_default()
             .insert(envelope.payload.block_hash());
 
-        // Mark the block as seen.
         if self.seen_hashes.len() >= Self::SEEN_HASH_CACHE_SIZE {
             self.seen_hashes.pop_first();
         }
@@ -346,15 +330,12 @@ pub(crate) mod tests {
     use super::*;
 
     fn valid_block() -> Block<BaseTxEnvelope> {
-        // Simulate some random data
         let mut data = vec![0; 1024 * 1024];
         let mut rng = rand::rng();
         rand::Rng::fill(&mut rng, &mut data[..]);
 
-        // Create unstructured data with the random bytes
         let u = Unstructured::new(&data);
 
-        // Generate a random instance of MyStruct
         let mut block: Block<BaseTxEnvelope> = Block::arbitrary_take_rest(u).unwrap();
 
         let transactions: Vec<Bytes> =
@@ -556,7 +537,6 @@ pub(crate) mod tests {
         let next_payloads = (0..BlockHandler::MAX_BLOCKS_TO_KEEP)
             .map(|_| {
                 let mut block = v1_valid_block();
-                // The blocks have the same height
                 block.header.number = initial_height;
 
                 let v1 = ExecutionPayloadV1::from_block_slow(&block);
@@ -575,7 +555,6 @@ pub(crate) mod tests {
             assert!(handler.block_valid(envelope).is_ok());
         }
 
-        // The last envelope should fail
         assert!(matches!(
             handler.block_valid(next_payloads.last().unwrap()),
             Err(BlockInvalidError::TooManyBlocks { .. })
@@ -770,12 +749,10 @@ pub(crate) mod tests {
             unsafe_signer,
         );
 
-        // Test successful validation metrics
         assert!(handler.block_valid(&envelope).is_ok());
 
-        // Test failed validation metrics
         let mut invalid_block = v1_valid_block();
-        invalid_block.header.timestamp = 0; // Invalid timestamp
+        invalid_block.header.timestamp = 0;
 
         let v1_invalid = ExecutionPayloadV1::from_block_slow(&invalid_block);
         let payload_invalid = BaseExecutionPayload::V1(v1_invalid);
@@ -786,7 +763,6 @@ pub(crate) mod tests {
             parent_beacon_block_root: None,
         };
 
-        // This should increment failure metrics
         assert!(handler.block_valid(&envelope_invalid).is_err());
     }
 }

@@ -87,13 +87,11 @@ fn revm_code_hash(db: &mut RevmDb, addr: Address) -> B256 {
 
 #[test]
 fn canyon_create2_deployer_matches_revm() {
-    // evm2.
     let mut executor = evm2_executor(BaseUpgrade::Canyon, InMemoryDB::default());
     executor.apply_transition_hooks(&evm2_schedule(BaseUpgrade::Canyon)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
     let evm2_hash = evm2_code_hash(&mut evm, CREATE2_DEPLOYER);
 
-    // revm reference.
     let mut db = RevmDb::default();
     ensure_create2_deployer(revm_schedule(BaseUpgrade::Canyon), ACTIVATION_TS, &mut db)
         .expect("reference applies");
@@ -113,7 +111,6 @@ fn everest_system_account_stub_matches_revm() {
     let (mut evm, _, _) = executor.finish();
     let evm2_hash = evm2_code_hash(&mut evm, NONCE_MANAGER);
 
-    // revm reference.
     let mut db = RevmDb::default();
     ensure_base_tx_system_accounts(revm_schedule(BaseUpgrade::Everest), ACTIVATION_TS, &mut db)
         .expect("reference applies");
@@ -125,7 +122,6 @@ fn everest_system_account_stub_matches_revm() {
 
 #[test]
 fn base_time_predeploy_matches_revm() {
-    // evm2 side: seed a valid proxy, then run the hooks.
     let mut executor = evm2_executor(BaseUpgrade::Denim, evm2_db_with_valid_base_time_proxy());
     executor.apply_transition_hooks(&evm2_schedule(BaseUpgrade::Denim)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
@@ -135,7 +131,6 @@ fn base_time_predeploy_matches_revm() {
         .storage_slot_untracked(&Predeploys::BASE_TIME, &IMPLEMENTATION_SLOT)
         .unwrap();
 
-    // revm side: seed the equivalent proxy, then run the reference.
     let mut db = RevmDb::default();
     let proxy_code = Bytes::from_static(&[0x60, 0x00]);
     let revm_proxy = RevmBytecode::new_raw(proxy_code);

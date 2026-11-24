@@ -277,7 +277,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             block.header.timestamp,
         )?;
 
-        // Insert the new payload.
         let insert_time_start = Instant::now();
         let response = match execution_payload {
             BaseExecutionPayload::V1(payload) => {
@@ -300,7 +299,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             }
         };
 
-        // Check the `engine_newPayload` response.
         let response = match response {
             Ok(resp) => resp,
             Err(e) => {
@@ -320,7 +318,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         let insert_duration = insert_time_start.elapsed();
 
         let advances_safe_head = self.payload_safety.advances_safe_head();
-        // Send a FCU to canonicalize the imported block.
         let state_update = EngineSyncStateUpdate {
             unsafe_head: Some(new_block_ref),
             local_safe_head: advances_safe_head.then_some(new_block_ref),

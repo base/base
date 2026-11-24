@@ -120,13 +120,10 @@ mod tests {
         let replay_id = B256::repeat_byte(0x42);
         let slot = NonceManagerSlots::expiring_nonce_seen_slot(replay_id);
         let mut db = InMemoryDB::default();
-        // Recorded expiry of 5_000 ms.
         db.insert_account_storage(&NonceManagerSlots::ADDRESS, &slot, &U256::from(5_000u64));
         let mut evm = evm(db);
-        // Seen while now < expiry; not seen once now >= expiry (the entry has lapsed).
         assert!(NonceManager::is_expiring_nonce_seen(&mut evm, replay_id, 4_999).unwrap());
         assert!(!NonceManager::is_expiring_nonce_seen(&mut evm, replay_id, 5_000).unwrap());
-        // An unrecorded id is never seen.
         assert!(
             !NonceManager::is_expiring_nonce_seen(&mut evm, B256::repeat_byte(0x99), 0).unwrap()
         );
@@ -161,7 +158,6 @@ mod tests {
     fn increment_nonce_advances_the_channel() {
         let slot = NonceManagerSlots::nonce_slot(ACCOUNT, KEY).expect("channel key has a slot");
         let mut evm = evm(InMemoryDB::default());
-        // Two increments from zero advance the channel to 1 then 2, each reflected in storage.
         assert_eq!(NonceManager::increment_nonce(&mut evm, ACCOUNT, KEY).unwrap(), Some(1));
         assert_eq!(NonceManager::increment_nonce(&mut evm, ACCOUNT, KEY).unwrap(), Some(2));
         let stored = evm

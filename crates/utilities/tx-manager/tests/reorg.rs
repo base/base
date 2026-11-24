@@ -16,8 +16,6 @@ use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::{NoopTxMetrics, SendState, SimpleTxManager, TxManagerConfig};
 use common::{mine_block, publish_simple_tx, setup_with_config};
 
-// ── Helpers ────────────────────────────────────────────────────────────
-
 const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Creates a [`SimpleTxManager`] from an existing Anvil instance, needed
@@ -76,8 +74,6 @@ async fn query(
     .await
     .expect("query should not error")
 }
-
-// ── Tests ──────────────────────────────────────────────────────────────
 
 /// Receipt disappears after a reorg removes the tx's block.
 #[tokio::test]

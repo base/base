@@ -622,7 +622,6 @@ mod tests {
         let id = create_allowlist_policy(&mut storage);
         let new_admin = address!("0x3000000000000000000000000000000000000003");
 
-        // stage
         storage.set_caller(ADMIN);
         let stage_calldata =
             IPolicyRegistry::stageUpdateAdminCall { policyId: id, newAdmin: new_admin }
@@ -630,14 +629,12 @@ mod tests {
         let out = run(&mut storage, &stage_calldata);
         assert!(!out.is_revert());
 
-        // finalize
         storage.set_caller(new_admin);
         let finalize_calldata =
             IPolicyRegistry::finalizeUpdateAdminCall { policyId: id }.abi_encode();
         let out = run(&mut storage, &finalize_calldata);
         assert!(!out.is_revert());
 
-        // confirm admin changed
         let admin_calldata = IPolicyRegistry::policyAdminCall { policyId: id }.abi_encode();
         let out = run(&mut storage, &admin_calldata);
         let admin = IPolicyRegistry::policyAdminCall::abi_decode_returns(&out.bytes).unwrap();
@@ -756,7 +753,6 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
 
-        // Create a blocklist policy while the registry is active.
         storage.set_caller(ADMIN);
         let policy_id = {
             let calldata = IPolicyRegistry::createPolicyCall {
@@ -769,7 +765,6 @@ mod tests {
             IPolicyRegistry::createPolicyCall::abi_decode_returns(&out.bytes).unwrap()
         };
 
-        // Add Alice to the blocklist.
         storage.set_caller(ADMIN);
         {
             let calldata = IPolicyRegistry::updateBlocklistCall {
@@ -782,7 +777,6 @@ mod tests {
             assert!(!out.is_revert());
         }
 
-        // Deactivate the registry.
         deactivate_policy_registry(&mut storage);
 
         // View calls must still return current state after deactivation.

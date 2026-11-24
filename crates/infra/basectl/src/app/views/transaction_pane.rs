@@ -211,7 +211,6 @@ impl TransactionPane {
 
         let selected_row = self.table_state.selected();
 
-        // Use proportional widths so hex columns expand with available space.
         let widths = [
             Constraint::Fill(3),    // Tx Hash (widest)
             Constraint::Fill(2),    // From
@@ -219,7 +218,6 @@ impl TransactionPane {
             Constraint::Length(16), // Tip / gas
         ];
 
-        // Pre-compute actual column widths so we can truncate intelligently.
         let col_rects = Layout::horizontal(widths).split(inner);
         let hash_w = col_rects[0].width as usize;
         let from_w = col_rects[1].width as usize;

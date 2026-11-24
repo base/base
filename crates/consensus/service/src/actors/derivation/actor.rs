@@ -122,14 +122,11 @@ where
     async fn signal(&mut self, signal: Signal) {
         if let Signal::Reset(ResetSignal { l2_safe_head: _reset_safe_head }) = signal {
             Metrics::derivation_l1_origin().absolute(_reset_safe_head.l1_origin.number);
-            // Clear the finalization queue on reset.
             self.finalizer.clear();
             // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion
             // block is never recorded for a post-reset safe head confirmation.
             self.pending_derived_from = None;
 
-            // Reset the SafeDB on pipeline reset.
-            //
             // On the very first reset (before any block is confirmed),
             // `last_confirmed_safe_head()` returns `L2BlockInfo::default()` (genesis / all
             // zeros), which causes the DB to wipe all entries and re-anchor at L1=0. This
@@ -171,7 +168,9 @@ where
                         .await
                 });
             match step_result {
-                StepResult::PreparedAttributes => { /* continue; attributes will be sent off. */ }
+                StepResult::PreparedAttributes => {
+                    // Fall through to retrieve the prepared attributes below.
+                }
                 StepResult::AdvancedOrigin => {
                     let origin =
                         self.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?;
@@ -246,7 +245,6 @@ where
                 }
             }
 
-            // If there are any new attributes, send them to the execution actor.
             if let Some(attrs) = self.pipeline.next() {
                 return Ok(attrs);
             }
@@ -377,14 +375,12 @@ where
             Box::new(payload_attributes.clone()),
         ))?;
 
-        // Enqueue the payload attributes for finalization tracking.
         self.finalizer.enqueue_for_finalization(&payload_attributes);
 
         // Remember the L1 inclusion block so that when the engine confirms this safe head we
         // can key the SafeDB entry by inclusion block rather than epoch origin.
         self.pending_derived_from = payload_attributes.derived_from;
 
-        // Send payload attributes out for processing.
         self.engine_client
             .send_derived_attributes(payload_attributes)
             .await

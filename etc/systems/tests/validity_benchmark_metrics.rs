@@ -140,7 +140,6 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     let shutdown = stack.shutdown().await;
     shutdown?;
 
-    // The load tester routed every sender through the validity endpoint and they landed.
     let validity = summary
         .by_cohort
         .iter()
@@ -183,7 +182,6 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
         "reth_base_builder_resting_predicate_parked_total",
         "reth_base_builder_resting_predicate_carry_released_total_reason_block_number",
         "reth_base_builder_validity_predicate_evaluations_total_outcome_matched",
-        // Evaluation volume, pool admission and inclusion.
         "reth_base_builder_validity_predicate_candidates_evaluated_per_build_avg",
         "reth_txpool_validity_admitted_outcome_added",
         "reth_base_builder_txs_included_per_block_flow_validity_avg",
@@ -208,7 +206,6 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
         assert!(PrometheusBlockCollector::is_visualizer_metric(key), "{key} is not allowlisted");
         assert!(totals.contains_key(key), "{key} missing from scrape");
     }
-    // Nothing expired within the 300-block window.
     assert_eq!(
         totals.get("reth_base_builder_validity_predicate_evaluations_total_outcome_expired"),
         None,

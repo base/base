@@ -260,13 +260,11 @@ mod tests {
         .build()
         .unwrap();
 
-        // Driver Assertions
         let id = 8453;
         assert_eq!(driver.gossip.addr, gossip_addr);
         assert_eq!(driver.discovery.chain_id, id);
         assert_eq!(driver.discovery.disc.local_enr().tcp4().unwrap(), 9098);
 
-        // Block Handler Assertions
         assert_eq!(driver.gossip.handler.rollup_config.l2_chain_id, id);
         let v1 = IdentTopic::new(format!("/optimism/{id}/0/blocks"));
         assert_eq!(driver.gossip.handler.blocks_v1_topic.hash(), v1.hash());

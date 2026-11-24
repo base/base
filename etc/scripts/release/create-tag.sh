@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# create-tag.sh - Create and push a release tag (RC or final)
-#
 # Usage: ./create-tag.sh <release_branch> <release_type>
 # Example: ./create-tag.sh releases/v1.0.0 rc
 #          ./create-tag.sh releases/v1.0.0 final

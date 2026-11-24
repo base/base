@@ -50,14 +50,12 @@ impl Deposits {
             return Err(DepositDecodeError::UnalignedData(log.data.data.len()));
         }
 
-        // Validate the `from` address.
         let mut from_bytes = [0u8; 20];
         from_bytes.copy_from_slice(&topics[1].as_slice()[12..]);
         if topics[1].iter().take(12).any(|&b| b != 0) {
             return Err(DepositDecodeError::FromDecode(topics[1]));
         }
 
-        // Validate the `to` address.
         let mut to_bytes = [0u8; 20];
         to_bytes.copy_from_slice(&topics[2].as_slice()[12..]);
         if topics[2].iter().take(12).any(|&b| b != 0) {
@@ -145,7 +143,6 @@ impl Deposits {
 
         Self::unmarshal_v0(&mut deposit_tx, to, opaque_data)?;
 
-        // Re-encode the deposit transaction
         let mut buffer = Vec::with_capacity(deposit_tx.eip2718_encoded_length());
         deposit_tx.encode_2718(&mut buffer);
         Ok(Bytes::from(buffer))
@@ -235,18 +232,15 @@ impl Deposits {
         tx.mint = u128::from_be_bytes(raw_mint);
         offset += 32;
 
-        // uint256 value
         tx.value = U256::from_be_slice(&data[offset..offset + 32]);
         offset += 32;
 
-        // uint64 gas
         let raw_gas: [u8; 8] = data[offset..offset + 8].try_into().map_err(|_| {
             DepositDecodeError::GasDecode(Bytes::copy_from_slice(&data[offset..offset + 8]))
         })?;
         tx.gas_limit = u64::from_be_bytes(raw_gas);
         offset += 8;
 
-        // uint8 isCreation
         // isCreation: If the boolean byte is 1 then dep.To will stay nil,
         // and it will create a contract using L2 account nonce to determine the created address.
         if data[offset] == 0 {
@@ -260,7 +254,6 @@ impl Deposits {
         // The data may be padded to a multiple of 32 bytes
         let tx_data_len = data.len() - offset;
 
-        // Remaining bytes fill the data
         tx.input = Bytes::copy_from_slice(&data[offset..offset + tx_data_len]);
 
         Ok(())

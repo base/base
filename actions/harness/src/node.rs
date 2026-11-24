@@ -646,7 +646,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         let timestamp = attrs.attributes.payload_attributes.timestamp;
         let raw_txs: Vec<Bytes> = attrs.attributes.transactions.as_deref().unwrap_or(&[]).to_vec();
 
-        // Record per-block metadata before submitting to the engine.
         let tx_count = raw_txs.len();
         let user_tx_count = raw_txs.iter().filter(|tx| !tx.starts_with(&[0x7E])).count();
         self.derived_tx_counts.push((block_number, tx_count));
@@ -663,7 +662,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             .execute_from_attrs(parent_hash, block_number, attrs.attributes.clone())
             .expect("TestRollupNode: execute_from_attrs failed");
 
-        // Advance the safe head using the block hash returned by the engine.
         let derived_from = attrs.derived_from;
         let l1_origin = self
             .l1_origin_from_attrs(&attrs)
@@ -702,12 +700,10 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             .await
             .expect("TestRollupNode: safe_db update failed");
 
-        // If derivation caught up to or past the unsafe head, align them.
         if self.safe_head.block_info.number >= self.unsafe_head.block_info.number {
             self.unsafe_head = self.safe_head;
         }
 
-        // Commit the new safe head to the engine via fork_choice_updated.
         let fcu = ForkchoiceState {
             head_block_hash: block_hash,
             safe_block_hash: block_hash,

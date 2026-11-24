@@ -59,12 +59,10 @@ impl BootNode {
 
     /// Helper method to parse a bootnode from a string.
     pub fn parse_bootnode(raw: &str) -> Result<Self, BootNodeParseError> {
-        // If the string starts with "enr:" it is an ENR record.
         if raw.starts_with("enr:") {
             let enr = Enr::from_str(raw).map_err(BootNodeParseError::Enr)?;
             return Ok(Self::from(enr));
         }
-        // Otherwise, attempt to use the Node Record format.
         let record =
             NodeRecord::from_str(raw).map_err(|e| BootNodeParseError::NodeRecord(e.to_string()))?;
         Ok(Self::from_unsigned(record)?)
@@ -90,7 +88,6 @@ mod tests {
         let node_record = NodeRecord::from_str(hardcoded_enode).unwrap();
         let boot_node = BootNode::from_unsigned(node_record).unwrap();
 
-        // Get the substring from hardcoded_enode between the second / and before the @
         let peer_id = hardcoded_enode
             [hardcoded_enode.find('/').unwrap() + 2..hardcoded_enode.find('@').unwrap()]
             .to_string();
@@ -116,11 +113,8 @@ mod tests {
 
         let node_contact = NodeContact::try_from_multiaddr(multiaddr).unwrap();
 
-        // The public key contained in the NodeContact is used to connect to the
-        // bootnode.
         let contact_pkey = node_contact.public_key();
 
-        // We get the expected public key from the enode information.
         let peer_id = hardcoded_enode
             [hardcoded_enode.find('/').unwrap() + 2..hardcoded_enode.find('@').unwrap()]
             .to_string();
@@ -137,7 +131,6 @@ mod tests {
         let expected_pkey: CombinedPublicKey =
             k256::ecdsa::VerifyingKey::from_sec1_bytes(&p2p_public_key.to_bytes()).unwrap().into();
 
-        // These two keys should be equal.
         assert_eq!(contact_pkey, expected_pkey);
     }
 

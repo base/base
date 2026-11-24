@@ -89,7 +89,6 @@ impl<P: Protocol> EngineApi<P> {
     }
 }
 
-// http specific
 impl EngineApi<Http> {
     /// Creates an HTTP [`EngineApi`] client from a URL string.
     pub fn with_http(url: &str) -> Self {
@@ -136,7 +135,6 @@ impl EngineApi<Http> {
     }
 }
 
-// ipc specific
 impl EngineApi<Ipc> {
     /// Creates an IPC [`EngineApi`] client from a socket path.
     pub fn with_ipc(path: &str) -> Self {
@@ -232,20 +230,15 @@ pub trait BlockApi {
 
 /// Generates a genesis JSON file from the embedded template, stamped with the current time.
 pub fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
-    // Read the template file
     let template = include_str!("artifacts/genesis.json.tmpl");
 
-    // Parse the JSON
     let mut genesis: Value = serde_json::from_str(template)?;
 
-    // Update the timestamp field - example using current timestamp
     let timestamp = chrono::Utc::now().timestamp();
     if let Some(config) = genesis.as_object_mut() {
-        // Assuming timestamp is at the root level - adjust path as needed
         config["timestamp"] = Value::String(format!("0x{timestamp:x}"));
     }
 
-    // Write the result to the output file
     if let Some(output) = output {
         std::fs::write(&output, serde_json::to_string_pretty(&genesis)?)?;
         info!(output = %output, "Generated genesis file at");

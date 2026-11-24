@@ -8,7 +8,6 @@
 transaction_submission_rpcs:
   - "http://localhost:7545"
 
-# RPC endpoint for reads and balance checks
 query_rpc: "http://localhost:8545"
 
 # Optional txpool admin nodes to clear for all sender addresses before startup.
@@ -16,7 +15,6 @@ txpool_nodes:
   - "http://localhost:7545"
   - "http://localhost:8545"
 
-# Number of sender accounts
 sender_count: 100
 block_time: "2s"
 
@@ -28,7 +26,6 @@ target_gps: 20000000
 in_flight_per_sender: 96
 batch_size: 20
 
-# Test duration
 duration: "30s"
 
 # Fixed seed for reproducible account generation
@@ -45,7 +42,6 @@ funding_amount: "10000000000000000"
 # Only used when B-20 transaction types are configured.
 # b20_mint_amount: "1000000000000000000000"
 
-# Transaction mix
 transactions:
   - weight: 70
     type: transfer

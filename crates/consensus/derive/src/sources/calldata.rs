@@ -185,7 +185,7 @@ mod tests {
         let mut source = default_test_calldata_source();
         let block_info = BlockInfo::default();
         source.chain_provider.insert_block_with_transactions(0, block_info, Vec::new());
-        assert!(!source.open); // Source is not open by default.
+        assert!(!source.open);
         assert!(source.load_calldata(&BlockInfo::default(), Address::ZERO).await.is_ok());
         assert!(source.calldata.is_empty());
         assert!(source.open);
@@ -198,7 +198,7 @@ mod tests {
         let block_info = BlockInfo::default();
         let tx = test_legacy_tx(batch_inbox_address);
         source.chain_provider.insert_block_with_transactions(0, block_info, vec![tx]);
-        assert!(!source.open); // Source is not open by default.
+        assert!(!source.open);
         assert!(source.load_calldata(&BlockInfo::default(), Address::ZERO).await.is_ok());
         assert!(source.calldata.is_empty());
         assert!(source.open);
@@ -212,7 +212,7 @@ mod tests {
         let block_info = BlockInfo::default();
         let tx = test_legacy_tx(batch_inbox_address);
         source.chain_provider.insert_block_with_transactions(0, block_info, vec![tx]);
-        assert!(!source.open); // Source is not open by default.
+        assert!(!source.open);
         assert!(source.load_calldata(&BlockInfo::default(), Address::ZERO).await.is_ok());
         assert!(source.calldata.is_empty());
         assert!(source.open);
@@ -226,11 +226,11 @@ mod tests {
         let tx = test_legacy_tx(batch_inbox_address);
         let block_info = BlockInfo::default();
         source.chain_provider.insert_block_with_transactions(0, block_info, vec![tx.clone()]);
-        assert!(!source.open); // Source is not open by default.
+        assert!(!source.open);
         assert!(
             source.load_calldata(&BlockInfo::default(), tx.recover_signer().unwrap()).await.is_ok()
         );
-        assert!(!source.calldata.is_empty()); // Calldata is NOT empty.
+        assert!(!source.calldata.is_empty());
         assert!(source.open);
     }
 
@@ -242,11 +242,11 @@ mod tests {
         let tx = test_eip2930_tx(batch_inbox_address);
         let block_info = BlockInfo::default();
         source.chain_provider.insert_block_with_transactions(0, block_info, vec![tx.clone()]);
-        assert!(!source.open); // Source is not open by default.
+        assert!(!source.open);
         assert!(
             source.load_calldata(&BlockInfo::default(), tx.recover_signer().unwrap()).await.is_ok()
         );
-        assert!(!source.calldata.is_empty()); // Calldata is NOT empty.
+        assert!(!source.calldata.is_empty());
         assert!(source.open);
     }
 
@@ -261,7 +261,7 @@ mod tests {
         let tx = test_blob_tx(batch_inbox_address);
         let block_info = BlockInfo::default();
         source.chain_provider.insert_block_with_transactions(0, block_info, vec![tx.clone()]);
-        assert!(!source.open); // Source is not open by default.
+        assert!(!source.open);
         assert!(
             source.load_calldata(&BlockInfo::default(), tx.recover_signer().unwrap()).await.is_ok()
         );
@@ -277,7 +277,7 @@ mod tests {
         let tx = test_eip7702_tx(batch_inbox_address);
         let block_info = BlockInfo::default();
         source.chain_provider.insert_block_with_transactions(0, block_info, vec![tx.clone()]);
-        assert!(!source.open); // Source is not open by default.
+        assert!(!source.open);
         assert!(
             source.load_calldata(&BlockInfo::default(), tx.recover_signer().unwrap()).await.is_ok()
         );
@@ -309,15 +309,12 @@ mod tests {
         let block_info = BlockInfo::default();
         source.chain_provider.insert_block_with_transactions(0, block_info, vec![tx.clone()]);
 
-        // With the original batcher address, calldata is accepted.
         assert!(source.load_calldata(&block_info, original_batcher).await.is_ok());
         assert!(!source.calldata.is_empty());
 
-        // Simulate batcher rotation: clear source state and use a new batcher address.
         source.clear();
         let rotated_batcher = address!("00000000000000000000000000000000DeaDBeef");
         assert!(source.load_calldata(&block_info, rotated_batcher).await.is_ok());
-        // The same transaction is now rejected because the signer does not match.
         assert!(source.calldata.is_empty());
     }
 }

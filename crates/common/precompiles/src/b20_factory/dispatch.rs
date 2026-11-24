@@ -53,7 +53,6 @@ impl<'a> B20FactoryStorage<'a> {
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
-        // Gate by hardfork: resolve the active version once.
         let Some(version) = FactoryVersions::from_base_upgrade(upgrade) else {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));

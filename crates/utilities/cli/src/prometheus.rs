@@ -56,7 +56,6 @@ impl MetricsConfig {
         builder.install()?;
         base_metrics::initialize_registered_metrics();
 
-        // Initialise collector for system metrics e.g. CPU, memory, etc.
         let collector = Collector::default();
         collector.describe();
 

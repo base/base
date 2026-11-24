@@ -118,7 +118,6 @@ pub struct ValidatorNodeStatus {
     /// Human-readable binary/process description shown in the TUI.
     pub binary: Option<String>,
 
-    // ── CL (consensus layer) ─────────────────────────────────────────────
     /// Unsafe L2 block number from `optimism_syncStatus`.
     pub unsafe_l2_block: Option<u64>,
     /// Unsafe L2 block hash from `optimism_syncStatus`.
@@ -136,7 +135,6 @@ pub struct ValidatorNodeStatus {
     /// Number of connected CL libp2p peers from `opp2p_peerStats`.
     pub cl_peer_count: Option<u32>,
 
-    // ── EL (execution layer) ─────────────────────────────────────────────
     /// Latest block number from `eth_blockNumber`. `None` if `el_rpc` not configured.
     pub el_block: Option<u64>,
     /// Whether the EL is snap-syncing. `None` if not configured.
@@ -240,10 +238,6 @@ pub async fn run_validator_poller(
         }
     }
 }
-
-// =============================================================================
-// Proof system contract interfaces
-// =============================================================================
 
 sol! {
     #[sol(rpc)]
@@ -357,7 +351,6 @@ async fn fetch_proofs_snapshot<P: Provider + Clone>(
     l1_provider: &P,
     l2_provider: &impl Provider,
 ) -> ProofsSnapshot {
-    // Fetch chain state and contract state concurrently.
     let (chain, anchor, game_type, paused, game_count) = tokio::join!(
         fetch_chain_heads(l1_provider, l2_provider),
         async { asr.getAnchorRoot().call().await.ok() },
@@ -371,7 +364,6 @@ async fn fetch_proofs_snapshot<P: Provider + Clone>(
     let total_games: Option<u64> = game_count.and_then(|c| c.try_into().ok());
     let respected_type = game_type;
 
-    // Find and query the latest proposal for the respected game type.
     let latest_proposal =
         find_latest_proposal(factory, l1_provider, respected_type, total_games).await;
 
@@ -431,7 +423,6 @@ async fn find_latest_proposal<P: Provider + Clone>(
     let game_type = respected_type?;
     let count = total_games.filter(|&c| c > 0)?;
 
-    // Scan backwards from the most recent game (max 50 games).
     let scan_start = count - 1;
     let scan_end = count.saturating_sub(50);
 
@@ -444,7 +435,6 @@ async fn find_latest_proposal<P: Provider + Clone>(
             continue;
         }
 
-        // Found a matching game — query its details.
         let verifier = IAggregateVerifier::new(game.proxy, l1_provider);
 
         let (root_claim, l2_seq, status) = tokio::join!(

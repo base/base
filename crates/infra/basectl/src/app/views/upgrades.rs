@@ -37,8 +37,6 @@ use crate::{
     tui::Keybinding,
 };
 
-// ── Segment display (7-char wide × 7-row tall per digit) ─────────────────────
-
 const SEG: [[&str; 7]; 10] = [
     [" ═════ ", "║     ║", "║     ║", "       ", "║     ║", "║     ║", " ═════ "], // 0
     ["       ", "      ║", "      ║", "       ", "      ║", "      ║", "       "], // 1
@@ -60,8 +58,6 @@ const SEP_W: usize = 3;
 const fn colon_row(r: usize) -> &'static str {
     if r == 2 || r == 4 { " ▪ " } else { "   " }
 }
-
-// ── Upgrade data ──────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
 struct UpgradeSpec {
@@ -262,8 +258,6 @@ fn loaded_name_is_devnet_alias(loaded_name: &str) -> bool {
     const DEVNET_ALIASES: &[&str] = &["devnet", "vibenet", "local-devnet", "local-vibenet"];
     DEVNET_ALIASES.iter().any(|alias| loaded_name.eq_ignore_ascii_case(alias))
 }
-
-// ── Check types ───────────────────────────────────────────────────────────────
 
 /// Expected Azul checks, in execution order.
 const AZUL_CHECKS: &[(&str, &str)] = &[
@@ -664,8 +658,6 @@ impl AdminActivityWatcher {
     }
 }
 
-// ── Color zones ───────────────────────────────────────────────────────────────
-
 const SECS_PER_MINUTE: u64 = 60;
 const SECS_PER_HOUR: u64 = 60 * SECS_PER_MINUTE;
 const SECS_PER_DAY: u64 = 24 * SECS_PER_HOUR;
@@ -703,8 +695,6 @@ const CYCLE_COLORS: &[Color] =
 
 const CONFETTI: &[&str] =
     &["✦", "✧", "✨", "⚡", "★", "☆", "◆", "◇", "▲", "△", "●", "○", "♦", "♢", "❋", "✿", "❊", "✺"];
-
-// ── Time helpers ──────────────────────────────────────────────────────────────
 
 fn now_unix() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
@@ -754,8 +744,6 @@ const fn countdown_progress_tenths(start_ts: u64, target_ts: u64, now: u64) -> u
 fn fmt_progress_percent(tenths: u16) -> String {
     format!("{}.{:01}%", tenths / 10, tenths % 10)
 }
-
-// ── View ──────────────────────────────────────────────────────────────────────
 
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "←/→", description: "Switch chain" },
@@ -1074,8 +1062,6 @@ impl View for UpgradesView {
         render_footer(frame, outer[3], self.checks.running, self.auto_refresh);
     }
 }
-
-// ── Rendering helpers ─────────────────────────────────────────────────────────
 
 fn render_chain_tabs(frame: &mut Frame<'_>, area: Rect, chains: &[ChainUpgrades], selected: usize) {
     let block =
@@ -1641,8 +1627,6 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, checks_running: bool, auto_r
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-// ── 7-segment clock ───────────────────────────────────────────────────────────
-
 fn clock_lines(
     days: u64,
     hours: u64,
@@ -2042,8 +2026,6 @@ async fn run_admin_activity_streaming(
     }
 }
 
-// ── Activation checks ─────────────────────────────────────────────────────────
-
 /// Route to the correct upgrade's streaming check function.
 async fn run_checks_streaming(
     upgrade: &'static str,
@@ -2153,8 +2135,6 @@ async fn run_denim_checks_streaming(
         }
     }
 }
-
-// ── Beryl activation checks ───────────────────────────────────────────────────
 
 fn activation_registry_address() -> String {
     ActivationRegistryStorage::ADDRESS.to_string()
@@ -2355,8 +2335,6 @@ async fn run_beryl_checks_streaming(
     }
 }
 
-// ── Jovian activation checks ──────────────────────────────────────────────────
-
 /// bn256Pairing precompile address (EIP-197).
 const BN256PAIRING_ADDR: &str = "0x0000000000000000000000000000000000000008";
 /// `GasPriceOracle` predeploy proxy address.
@@ -2457,7 +2435,6 @@ async fn run_jovian_checks_streaming(
     };
     send_result!("bn256Pairing limit", bn256_check);
 
-    // ── Extra data version byte (0 → 1 at Jovian) ─────────────────────────────
     send_start!("extra data v1");
     let extra_check = match eth_get_block_by_number_latest(client).await {
         Err(e) => CheckResult { passed: Some(false), detail: format!("RPC error: {e}") },
@@ -2486,7 +2463,6 @@ async fn run_jovian_checks_streaming(
     };
     send_result!("extra data v1", extra_check);
 
-    // ── GasPriceOracle EIP-1967 implementation slot ───────────────────────────
     send_start!("GPO implementation");
     let gpo_check = match eth_get_storage_at(client, GAS_PRICE_ORACLE_ADDR, EIP1967_IMPL_SLOT).await
     {
@@ -2521,8 +2497,6 @@ async fn run_jovian_checks_streaming(
     };
     send_result!("GPO implementation", gpo_check);
 }
-
-// ── Azul activation checks ────────────────────────────────────────────────────
 
 const CLZ_PROBE_ADDR: &str = "0x000000000000000000000000000000000000001e";
 const CLZ_RUNTIME: &str = "0x6000351e60005260206000f3";
@@ -2680,7 +2654,6 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
         }
     };
 
-    // ── CLZ opcode (0x1e) ─────────────────────────────────────────────────────
     let clz_cases: &[(&str, &str, &str)] = &[
         ("CLZ zero", CLZ_ZERO_INPUT, CLZ_ZERO_RES),
         ("CLZ one", CLZ_ONE_INPUT, CLZ_ONE_RES),
@@ -2694,7 +2667,6 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
         send_result!(name, evaluate_opcode_check(name, &r, expected));
     }
 
-    // ── MODEXP size limit ──────────────────────────────────────────────────────
     send_start!("MODEXP size limit");
     let r = eth_call(client, MODEXP_ADDR, MODEXP_OVERSIZED).await;
     let modexp_size = r.map_or_else(
@@ -2730,7 +2702,6 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
     .await;
     send_result!("P256VERIFY gas", evaluate_gas_probe(&r, "5000-gas", "cost=6900"));
 
-    // ── eth_config RPC method ──────────────────────────────────────────────────
     send_start!("eth_config");
     let cfg_result: Result<serde_json::Value, String> =
         ClientT::request::<serde_json::Value, _>(client, "eth_config", rpc_params![])

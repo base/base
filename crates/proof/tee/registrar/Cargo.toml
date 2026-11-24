@@ -11,70 +11,52 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
 alloy-signer.workspace = true
 alloy-provider.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
-# AWS
 aws-sdk-ec2.workspace = true
 aws-sdk-elasticloadbalancingv2.workspace = true
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 
-# Crypto
 sha2.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 p384 = { workspace = true, features = ["ecdsa", "expose-field"] }
 
-# X.509 / CRL
 x509-parser.workspace = true
 
-# CBOR (attestation document decode after strict COSE parse)
 ciborium.workspace = true
 
-# HTTP (CRL fetching)
 reqwest.workspace = true
 
-# Contracts
 base-proof-contracts.workspace = true
 
-# Attestation parsing and validation
 base-proof-tee-nitro-verifier.workspace = true
 
-# Transaction management
 base-tx-manager.workspace = true
 
-# RPC
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
-# Async
 futures.workspace = true
 tokio-util.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
 
-# Error
 thiserror.workspace = true
 
-# CLI
 base-cli-utils.workspace = true
 
-# Metrics
 base-metrics.workspace = true
 base-balance-monitor.workspace = true
 metrics = { workspace = true, optional = true }
 
-# TLS
 rustls = { workspace = true, features = ["ring"] }
 
-# Health
 base-health = { workspace = true, features = ["axum-server"] }
 
-# Tracing
 tracing.workspace = true
 
-# Misc
 url.workspace = true
 hex.workspace = true
 

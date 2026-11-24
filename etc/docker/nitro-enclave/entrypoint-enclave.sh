@@ -32,7 +32,6 @@ echo "Enclave is running"
 ENCLAVE_ID=$(./nitro-cli describe-enclaves | grep -o '"EnclaveID": "[^"]*"' | head -1 | cut -d'"' -f4)
 echo "Enclave ID: $ENCLAVE_ID"
 
-# Poll until enclave exits
 while true; do
     DESC=$(./nitro-cli describe-enclaves)
     if ! echo "$DESC" | grep -q '"State": "RUNNING"'; then

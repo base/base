@@ -12,20 +12,15 @@ repository.workspace = true
 base-prover-service-db.workspace = true
 base-prover-service-protocol.workspace = true
 
-# RPC
 jsonrpsee = { workspace = true, optional = true }
 
-# Async
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 
-# Serialization
 serde_json.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
-# Error handling
 anyhow.workspace = true
 
-# Observability
 metrics.workspace = true
 tracing.workspace = true
 

@@ -109,7 +109,6 @@ async fn builder_backed_sequencer_selects_pool_transaction() -> eyre::Result<()>
     let block = sequencer.build_next_block_with_single_transaction().await;
 
     assert_eq!(block.header.number, 1, "block 1 must be produced");
-    // The block must contain the L1-info deposit plus the pool-selected user transaction.
     assert!(
         block.body.transactions.len() >= 2,
         "expected the pool-selected user tx alongside the L1-info deposit, got {} tx(s)",
@@ -146,7 +145,6 @@ async fn builder_block_round_trips_through_derivation() -> eyre::Result<()> {
     let block = sequencer.build_empty_block().await;
     assert_eq!(block.header.number, 1, "block 1 must be produced by the real builder");
 
-    // Batch block 1 to L1.
     let mut source = ActionL2Source::new();
     source.push(block);
     Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;

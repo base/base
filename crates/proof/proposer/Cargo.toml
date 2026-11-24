@@ -12,22 +12,17 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
 alloy-eips.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 
-# Tx Manager
 base-tx-manager.workspace = true
 
-# Retry
 base-retry.workspace = true
 
-# Balance Monitor
 base-balance-monitor.workspace = true
 
-# Proof
 base-proof-rpc.workspace = true
 base-optimism-rpc.workspace = true
 base-proof-contracts.workspace = true
@@ -36,40 +31,30 @@ base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
-# JSON-RPC
 jsonrpsee = { workspace = true, features = ["server"] }
 
-# Async
 tokio.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
 
-# Tracing
 tracing.workspace = true
 
-# Serialization
 serde.workspace = true
 
-# Error handling
 eyre.workspace = true
 thiserror.workspace = true
 
-# CLI
 base-cli-utils.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 
-# Metrics
 base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
 
-# TLS
 rustls = { workspace = true, features = ["ring"] }
 
-# Health
 base-health = { workspace = true, features = ["axum-server"] }
 
-# Misc
 url.workspace = true
 humantime.workspace = true
 

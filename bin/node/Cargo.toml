@@ -16,15 +16,12 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-# workspace
 base-cli-utils.workspace = true
 
-# reth
 base-reth-cli.workspace = true
 reth-cli-util.workspace = true
 base-execution-cli = { workspace = true, features = ["otlp"] }
 
-# cli
 clap.workspace = true
 
 [features]

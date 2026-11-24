@@ -104,7 +104,7 @@ class IaiCompare:
 
     def is_notable(self, row: Delta) -> bool:
         """A row worth surfacing: a threshold-crossing change or lost coverage."""
-        if row.head is None:  # present on base, gone on head — a coverage regression
+        if row.head is None:
             return True
         delta = row.delta_pct
         return delta is not None and abs(delta) >= self.threshold_pct
@@ -195,11 +195,9 @@ class IaiCompare:
             body = [MARKER, "", *gate, f"⚠️ No iai-callgrind results were produced. {lead}"]
             return "\n".join(body) + "\n"
 
-        # Happy path: nothing crossed the threshold. One line, table collapsed.
         if not notable:
             compared = len(rows) - len(new)
             if new and compared == 0:
-                # Introducing PR: nothing on the base branch to compare against yet.
                 summary = (
                     f"📊 {len(new)} benchmark(s) added — baselines recorded (deterministic "
                     "instruction counts under Valgrind). Per-change deltas will appear on "
@@ -223,7 +221,6 @@ class IaiCompare:
             ]
             return "\n".join(body) + "\n"
 
-        # Something changed: surface the offenders, keep the quiet ones collapsed.
         regressions = [r for r in notable if (r.delta_pct or 0) >= self.threshold_pct]
         collapsed = within + new
         body = [

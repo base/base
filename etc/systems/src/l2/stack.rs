@@ -213,7 +213,6 @@ impl L2Stack {
             InProcessBuilderConfig::chain_spec_from_genesis_json(&config.l2_genesis)
                 .wrap_err("Failed to parse builder L2 chain spec")?;
 
-        // 1. Start the builder (in-process EL).
         let builder_config = InProcessBuilderConfig {
             runtime: InProcessNodeRuntime::SystemTest,
             engine_sharing: Default::default(),
@@ -237,10 +236,9 @@ impl L2Stack {
             .await
             .wrap_err("Failed to start in-process builder")?;
 
-        // 2. Start builder consensus (in-process CL, Sequencer mode).
-        //    The sequencer starts in stopped mode so that blocks are not produced until the
-        //    validator is connected via P2P — otherwise the first blocks would be lost via gossip
-        //    and the validator's EL would be unable to validate later blocks (missing parent).
+        // The sequencer starts in stopped mode so that blocks are not produced until the
+        // validator is connected via P2P — otherwise the first blocks would be lost via gossip
+        // and the validator's EL would be unable to validate later blocks (missing parent).
         let builder_consensus_config = InProcessConsensusConfig {
             rollup_config: rollup_config.clone(),
             l1_chain_config: l1_chain_config.clone(),
@@ -267,8 +265,8 @@ impl L2Stack {
             .await
             .wrap_err("Failed to start builder consensus")?;
 
-        // 3. Start the normal batcher immediately. Delayed-shadow tests instead start a
-        // short-lived, deterministic batcher after producing their historical prefix.
+        // Normal tests start batching immediately; delayed-shadow tests use a short-lived,
+        // deterministic batcher only after producing their historical prefix.
         let delayed_shadow =
             config.shadow_sequencers.as_ref().is_some_and(|c| c.start_block.is_some());
         let mut batcher = if delayed_shadow {
@@ -286,11 +284,7 @@ impl L2Stack {
             )
         };
 
-        // 4. Start the client (in-process EL).
-        // If tx forwarding is enabled, configure it with the builder's RPC URL
         let tx_forwarding_config = if let Some(mut cfg) = config.tx_forwarding_config {
-            // Add the builder's RPC URL to the forwarding config
-            // The config may have empty builder_urls which we need to populate
             if cfg.builder_urls.is_empty() {
                 cfg.builder_urls = vec![builder.rpc_url()?];
             }
@@ -323,7 +317,6 @@ impl L2Stack {
             .await
             .wrap_err("Failed to start in-process client")?;
 
-        // 5. Start client consensus.
         let client_consensus = match config.client_consensus_mode {
             L2ClientConsensusMode::Validator => {
                 let client_consensus_config = InProcessConsensusConfig {
@@ -351,7 +344,6 @@ impl L2Stack {
                     .await
                     .wrap_err("Failed to start client consensus")?;
 
-                // Connect the client consensus to the builder consensus via P2P.
                 let builder_p2p_addr = builder_consensus.p2p_addr();
                 client_consensus
                     .connect_peer(&builder_p2p_addr)
@@ -380,7 +372,7 @@ impl L2Stack {
             }
         };
 
-        // 6. Unless late startup was requested, shadows join the gossip mesh before active
+        // Unless late startup was requested, shadows join the gossip mesh before active
         // sequencing begins. Preserve that ordering because it is the normal production path.
         if let Some(start_block) = config.shadow_sequencers.as_ref().and_then(|c| c.start_block) {
             let provider = RootProvider::<Base>::new_http(builder.rpc_url()?);
@@ -527,7 +519,6 @@ impl L2Stack {
             }
         }
 
-        // 7. In the default path, start active sequencing only after every shadow connected.
         if !delayed_shadow {
             builder_consensus
                 .start_sequencer()

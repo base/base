@@ -572,9 +572,7 @@ mod tests {
         let config = L2BlockParityMonitorConfig::new(7, Duration::from_secs(1));
         let monitor = L2BlockParityMonitor::new(provider(9, []), provider(9, []), config);
 
-        // Blocks 7, 8 and 9 are comparable and none has been compared yet.
         assert_eq!(monitor.verification_backlog(9), 3);
-        // Once caught up, the cursor sits one past the comparable head.
         assert_eq!(monitor.verification_backlog(6), 0);
         // A comparable head below the cursor is a validator that has not caught up,
         // not backlog.

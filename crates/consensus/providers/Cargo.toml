@@ -13,13 +13,11 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-# consensus
 base-metrics.workspace = true
 base-protocol.workspace = true
 base-consensus-derive.workspace = true
 base-common-genesis.workspace = true
 
-# Alloy
 alloy-genesis.workspace = true
 alloy-json-rpc.workspace = true
 alloy-transport.workspace = true
@@ -33,11 +31,9 @@ alloy-rpc-types-engine = { workspace = true, features = ["jwt", "jwt-aws-lc-rs",
 alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest"] }
 alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls"] }
 
-# Base Alloy
 base-common-network.workspace = true
 base-common-consensus.workspace = true
 
-# Misc
 lru.workspace = true
 url.workspace = true
 tower.workspace = true
@@ -51,7 +47,6 @@ tokio = { workspace = true, features = ["time"] }
 c-kzg.workspace = true
 tracing.workspace = true
 
-# `metrics` feature
 metrics = { workspace = true, optional = true }
 
 [features]

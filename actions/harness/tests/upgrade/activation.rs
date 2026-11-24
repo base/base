@@ -7,19 +7,6 @@ use base_action_harness::{
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_genesis::UpgradeConfig;
 
-// ---------------------------------------------------------------------------
-// Section 1: Base mainnet config — upgrade boundary tests
-//
-// These tests use the real Base mainnet rollup config from the chain registry
-// and fast-forward through timestamps to verify that each fork activates at
-// exactly the right moment and that protocol parameters change as specified.
-//
-// No L2 blocks are built here. The upgrade activation functions act as a
-// virtual clock: querying is_X_active(timestamp ± 1) and the dynamic
-// parameter methods at the exact fork boundary is sufficient to verify
-// correct activation semantics.
-// ---------------------------------------------------------------------------
-
 /// Every upgrade activates at its recorded mainnet timestamp and is inactive
 /// one second before that timestamp.
 ///
@@ -40,52 +27,43 @@ fn each_upgrade_activates_at_its_mainnet_timestamp() {
     let jovian_time = rc.upgrades.jovian_time.expect("jovian_time must be set on mainnet");
     let base_azul_time = rc.upgrades.base.azul.expect("azul_time must be set on mainnet");
 
-    // Canyon
     assert!(!rc.is_canyon_active(canyon_time - 1), "Canyon must be inactive before its timestamp");
     assert!(rc.is_canyon_active(canyon_time), "Canyon must be active at its timestamp");
 
-    // Delta: only Canyon is active at delta_time - 1 (Delta cascade doesn't reach backward).
     assert!(rc.is_canyon_active(delta_time - 1), "Canyon must remain active before Delta");
     assert!(!rc.is_delta_active(delta_time - 1), "Delta must be inactive before its timestamp");
     assert!(rc.is_delta_active(delta_time), "Delta must be active at its timestamp");
 
-    // Ecotone
     assert!(
         !rc.is_ecotone_active(ecotone_time - 1),
         "Ecotone must be inactive before its timestamp"
     );
     assert!(rc.is_ecotone_active(ecotone_time), "Ecotone must be active at its timestamp");
 
-    // Fjord
     assert!(!rc.is_fjord_active(fjord_time - 1), "Fjord must be inactive before its timestamp");
     assert!(rc.is_fjord_active(fjord_time), "Fjord must be active at its timestamp");
 
-    // Granite
     assert!(
         !rc.is_granite_active(granite_time - 1),
         "Granite must be inactive before its timestamp"
     );
     assert!(rc.is_granite_active(granite_time), "Granite must be active at its timestamp");
 
-    // Holocene
     assert!(
         !rc.is_holocene_active(holocene_time - 1),
         "Holocene must be inactive before its timestamp"
     );
     assert!(rc.is_holocene_active(holocene_time), "Holocene must be active at its timestamp");
 
-    // Isthmus
     assert!(
         !rc.is_isthmus_active(isthmus_time - 1),
         "Isthmus must be inactive before its timestamp"
     );
     assert!(rc.is_isthmus_active(isthmus_time), "Isthmus must be active at its timestamp");
 
-    // Jovian
     assert!(!rc.is_jovian_active(jovian_time - 1), "Jovian must be inactive before its timestamp");
     assert!(rc.is_jovian_active(jovian_time), "Jovian must be active at its timestamp");
 
-    // Azul
     assert!(
         !rc.is_base_azul_active(base_azul_time - 1),
         "Azul must be inactive before its timestamp"
@@ -132,24 +110,20 @@ fn cascade_implies_all_preceding_forks_and_no_later_forks() {
     let granite_time = rc.upgrades.granite_time.expect("granite_time");
     let jovian_time = rc.upgrades.jovian_time.expect("jovian_time");
 
-    // At delta_time: Canyon is implied; Ecotone and later are not yet active.
     assert!(rc.is_canyon_active(delta_time), "Canyon must be implied at Delta");
     assert!(rc.is_delta_active(delta_time));
     assert!(!rc.is_ecotone_active(delta_time), "Ecotone must not be implied by Delta");
 
-    // At fjord_time: Canyon through Fjord are implied; Granite and later are not.
     assert!(rc.is_canyon_active(fjord_time));
     assert!(rc.is_delta_active(fjord_time));
     assert!(rc.is_ecotone_active(fjord_time));
     assert!(rc.is_fjord_active(fjord_time));
     assert!(!rc.is_granite_active(fjord_time), "Granite must not be implied by Fjord");
 
-    // At granite_time: Canyon through Granite are implied; Holocene and later are not.
     assert!(rc.is_fjord_active(granite_time));
     assert!(rc.is_granite_active(granite_time));
     assert!(!rc.is_holocene_active(granite_time), "Holocene must not be implied by Granite");
 
-    // At jovian_time: all inherited rollup upgrades are implied.
     assert!(rc.is_canyon_active(jovian_time));
     assert!(rc.is_delta_active(jovian_time));
     assert!(rc.is_ecotone_active(jovian_time));
@@ -159,9 +133,7 @@ fn cascade_implies_all_preceding_forks_and_no_later_forks() {
     assert!(rc.is_isthmus_active(jovian_time));
     assert!(rc.is_jovian_active(jovian_time));
 
-    // Azul is a standalone Base-specific fork; Jovian does NOT imply it.
     assert!(!rc.is_base_azul_active(jovian_time), "Azul must not be implied by Jovian");
-    // And setting only Azul does not imply Jovian (tested in base_azul_is_standalone).
 }
 
 /// Fjord changes `max_sequencer_drift` from the per-chain configured value
@@ -172,14 +144,12 @@ fn fjord_changes_max_sequencer_drift_at_mainnet_timestamp() {
     let rc = TestRollupConfigBuilder::mainnet();
     let fjord_time = rc.upgrades.fjord_time.expect("fjord_time");
 
-    // One second before Fjord: the rollup config field is used.
     assert_eq!(
         rc.max_sequencer_drift(fjord_time - 1),
         rc.max_sequencer_drift,
         "max_sequencer_drift must use the config field before Fjord"
     );
 
-    // At Fjord activation: protocol constant 1800 (FJORD_MAX_SEQUENCER_DRIFT) overrides.
     assert_eq!(
         rc.max_sequencer_drift(fjord_time),
         1800,
@@ -199,14 +169,12 @@ fn granite_changes_channel_timeout_at_mainnet_timestamp() {
     let rc = TestRollupConfigBuilder::mainnet();
     let granite_time = rc.upgrades.granite_time.expect("granite_time");
 
-    // One second before Granite: the base channel_timeout field is used.
     assert_eq!(
         rc.channel_timeout(granite_time - 1),
         rc.channel_timeout,
         "channel_timeout must use the config field before Granite"
     );
 
-    // At Granite activation: granite_channel_timeout overrides.
     assert_eq!(
         rc.channel_timeout(granite_time),
         rc.granite_channel_timeout,
@@ -232,9 +200,6 @@ fn base_azul_is_standalone_from_jovian() {
     assert!(rc.is_base_azul_active(base_azul_time), "Azul must activate at its own timestamp");
 }
 
-// ---------------------------------------------------------------------------
-// Section 2: Derivation tests — pipeline behaviour at upgrade boundaries
-//
 // These tests exercise the full derivation pipeline with synthetic rollup
 // configs. A synthetic config is necessary because the L1 miner starts at
 // timestamp 0: using real mainnet timestamps (e.g. delta_time ≈ 1.7 × 10⁹)
@@ -249,8 +214,6 @@ fn base_azul_is_standalone_from_jovian() {
 // *earlier* than that fork are set to Some(0) so they are active from
 // genesis and do not activate again at T. Only the fork under test
 // activates at T, keeping the upgrade-transaction injection isolated.
-// ---------------------------------------------------------------------------
-
 /// With only Canyon active (Delta NOT active), a zlib-compressed Span batch
 /// submitted by the derivation fixture must NOT be derived.
 ///

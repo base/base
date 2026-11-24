@@ -32,9 +32,7 @@ impl Encode for StorageTrieKey {
 
     fn encode(self) -> Self::Encoded {
         let mut buf = Vec::with_capacity(32 + self.path.0.len());
-        // First encode the address (32 bytes)
         buf.extend_from_slice(self.hashed_address.as_slice());
-        // Then encode the path
         buf.extend_from_slice(&self.path.encode());
         buf
     }
@@ -46,10 +44,8 @@ impl Decode for StorageTrieKey {
             return Err(DatabaseError::Decode);
         }
 
-        // First 32 bytes are the address
         let hashed_address = B256::from_slice(&value[..32]);
 
-        // Remaining bytes are the path
         let path = StoredNibbles::decode(&value[32..])?;
 
         Ok(Self { hashed_address, path })
@@ -80,9 +76,7 @@ impl Encode for HashedStorageKey {
 
     fn encode(self) -> Self::Encoded {
         let mut buf = [0u8; 64];
-        // First 32 bytes: address
         buf[..32].copy_from_slice(self.hashed_address.as_slice());
-        // Next 32 bytes: storage key
         buf[32..].copy_from_slice(self.hashed_storage_key.as_slice());
         buf
     }

@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
 base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
 base-consensus-safedb.workspace = true
@@ -20,14 +19,11 @@ base-upgrade-signal.workspace = true
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 
-# Base Alloy
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 
-# Alloy
 alloy-eips = { workspace = true, features = ["serde", "std"] }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"] }
 
-# Misc
 url.workspace = true
 ipnet.workspace = true
 backon.workspace = true
@@ -38,7 +34,6 @@ tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 
-# RPC
 getrandom = { workspace = true, features = ["wasm_js"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 

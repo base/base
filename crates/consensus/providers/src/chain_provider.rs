@@ -173,7 +173,6 @@ impl ChainProvider for AlloyChainProvider {
         .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))?;
         let header = block.header.into_consensus();
 
-        // Verify the header hash matches what we requested
         self.verify_header_hash(&header, hash)?;
 
         self.header_by_hash_cache.put(hash, header.clone());
@@ -258,7 +257,6 @@ impl ChainProvider for AlloyChainProvider {
         .into_consensus()
         .map_transactions(|t| t.inner.into_inner());
 
-        // Verify the block hash matches what we requested
         self.verify_header_hash(&block.header, hash)?;
 
         let block_info = BlockInfo {

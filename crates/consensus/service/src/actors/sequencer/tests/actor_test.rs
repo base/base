@@ -610,8 +610,6 @@ async fn shadow_cycle_reconciles_after_configured_private_block_count() {
     actor.start(()).await.unwrap();
 }
 
-// --- try_seal_handle tests ---
-
 #[tokio::test]
 async fn test_try_seal_handle_current_head_equals_parent_seals() {
     // head.number == parent.number AND head.hash == parent.hash → not stale; seal proceeds.
@@ -632,7 +630,6 @@ async fn test_try_seal_handle_current_head_equals_parent_seals() {
 
 #[tokio::test]
 async fn test_try_seal_handle_current_head_ahead_of_parent_discards() {
-    // head > parent → stale; seal_payload must NOT be called.
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(|| Ok(head_at(6)));
     client.expect_get_sealed_payload().times(0);
@@ -647,7 +644,6 @@ async fn test_try_seal_handle_current_head_ahead_of_parent_discards() {
 
 #[tokio::test]
 async fn test_try_seal_handle_same_height_reorg_discards() {
-    // head.number == parent.number but head.hash != parent.hash → same-height reorg; discard.
     let parent_hash = B256::from([0xaa; 32]);
     let reorged_hash = B256::from([0xbb; 32]);
 
@@ -685,7 +681,6 @@ async fn test_try_seal_handle_get_unsafe_head_error_propagates() {
 
 #[tokio::test]
 async fn test_try_seal_handle_fatal_seal_error_cancels_and_propagates() {
-    // A fatal seal error must cancel the token and return Err.
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(|| Ok(head_at(5)));
     client.expect_get_sealed_payload().times(1).return_once(|_, _| {
@@ -703,7 +698,6 @@ async fn test_try_seal_handle_fatal_seal_error_cancels_and_propagates() {
 
 #[tokio::test]
 async fn test_try_seal_handle_non_fatal_seal_error_returns_none() {
-    // A non-fatal seal error must return Ok(None) and leave the token uncancelled.
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(|| Ok(head_at(5)));
     client
@@ -788,8 +782,6 @@ async fn test_build_retries_are_paced_after_immediate_budget(
     cancellation_token.cancel();
     actor_task.await.unwrap().unwrap();
 }
-
-// --- build tests ---
 
 #[tokio::test]
 async fn shadow_funding_is_included_in_payload_attributes() {
@@ -932,8 +924,6 @@ async fn test_build_unsealed_payload_prepare_payload_attributes_error(
     }
 }
 
-// --- seal_payload tests ---
-
 #[tokio::test]
 async fn test_seal_payload_success_returns_sealer() {
     let envelope = dummy_envelope();
@@ -1026,8 +1016,6 @@ async fn test_seal_payload_failure_propagates() {
 
     assert!(result.is_err());
 }
-
-// --- PayloadSealer::step tests ---
 
 #[tokio::test]
 async fn test_private_sealer_only_inserts() {

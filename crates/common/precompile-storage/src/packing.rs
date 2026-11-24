@@ -235,8 +235,6 @@ mod tests {
         types::Slot,
     };
 
-    // -- HELPER FUNCTION TESTS ----------------------------------------------------
-
     #[test]
     fn test_calc_element_slot() {
         assert_eq!(calc_element_slot(0, 1), 0);

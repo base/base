@@ -62,13 +62,10 @@ where
                             if matches!(e, ResetError::HoloceneActivation) {
                                 self.signal(ActivationSignal { l2_safe_head }.signal()).await?;
                             } else {
-                                // Flushes cache if a reorg is detected.
                                 if matches!(e, ResetError::ReorgDetected(_, _)) {
                                     self.flush();
                                 }
 
-                                // Reset the pipeline to the initial L2 safe head and L1 origin,
-                                // and try again.
                                 self.signal(ResetSignal { l2_safe_head }.signal()).await?;
                             }
                         }

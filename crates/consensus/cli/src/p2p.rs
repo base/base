@@ -307,8 +307,6 @@ pub struct P2PNetworkArgs {
 
 impl Default for P2PNetworkArgs {
     fn default() -> Self {
-        // Construct default values using the clap parser.
-        // This works since none of the cli flags are required.
         Self::parse_from::<[_; 0], &str>([])
     }
 }
@@ -328,8 +326,6 @@ pub struct P2PArgs {
 
 impl Default for P2PArgs {
     fn default() -> Self {
-        // Construct default values using the clap parser.
-        // This works since none of the cli flags are required.
         Self::parse_from::<[_; 0], &str>([])
     }
 }
@@ -352,8 +348,6 @@ pub struct EmbeddedP2PArgs {
 
 impl Default for EmbeddedP2PArgs {
     fn default() -> Self {
-        // Construct default values using the clap parser.
-        // This works since none of the cli flags are required.
         Self::parse_from::<[_; 0], &str>([])
     }
 }
@@ -550,7 +544,6 @@ impl P2PArgs {
             })
             .await?;
 
-            // Convert the unsafe block signer address to the correct type.
             let signer = alloy_primitives::Address::from_slice(
                 &unsafe_block_signer_address.to_be_bytes_vec()[12..],
             );
@@ -570,7 +563,6 @@ impl P2PArgs {
             );
         }
 
-        // Otherwise use the genesis signer or the configured unsafe block signer.
         genesis_signer.or(self.unsafe_block_signer).ok_or_else(|| {
             eyre::eyre!(
                 "Unsafe block signer not provided for chain ID {}. \
@@ -602,13 +594,10 @@ impl P2PArgs {
         // Note: the advertised address is contained in the ENR for external peers from the
         // discovery layer to use.
 
-        // Fallback to the listen ip if the advertise ip is not specified
         let advertise_ip = self.advertise_ip.unwrap_or(self.listen_ip);
 
-        // If the advertise ip is set, we will disable the dynamic ENR updates.
         let static_ip = self.advertise_ip.is_some();
 
-        // If an advertised port is unset or zero, use the corresponding listen port.
         let advertise_tcp_port = match self.advertise_tcp_port {
             None | Some(0) => self.listen_tcp_port,
             Some(port) => port,
@@ -723,7 +712,6 @@ impl P2PArgs {
     /// If neither a file is specified, nor a raw private key input, this method
     /// will error.
     pub fn keypair(&self) -> Result<Keypair> {
-        // Attempt the parse the private key if specified.
         if let Some(mut private_key) = self.private_key {
             let keypair = base_consensus_peers::SecretKeyLoader::parse(&mut private_key.0)
                 .map_err(|e| eyre::eyre!(e))?;
@@ -835,18 +823,15 @@ mod tests {
 
     #[test]
     fn test_p2p_args_keypair_from_path() {
-        // Create a temporary directory.
         let dir = std::env::temp_dir();
         let mut source_path = dir.clone();
         assert!(std::env::set_current_dir(dir).is_ok());
 
-        // Write a private key to a file.
         let key = b256!("1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be");
         let hex = alloy_primitives::hex::encode(key.0);
         source_path.push("test.txt");
         std::fs::write(&source_path, &hex).unwrap();
 
-        // Parse the keypair from the file.
         let args =
             MockCommand::parse_from(["test", "--p2p.priv.path", source_path.to_str().unwrap()]);
         assert!(args.p2p.keypair().is_ok());
@@ -933,7 +918,6 @@ mod tests {
             ]
         );
 
-        // Parse the bootnodes.
         let bootnodes = args
             .p2p
             .bootnodes
@@ -942,7 +926,6 @@ mod tests {
             .collect::<std::result::Result<Vec<BootNode>, _>>()
             .expect("test bootnode should parse");
 
-        // Otherwise, attempt to use the Node Record format.
         let record = NodeRecord::from_str(
                 "enode://ca2774c3c401325850b2477fd7d0f27911efbf79b1e8b335066516e2bd8c4c9e0ba9696a94b1cb030a88eac582305ff55e905e64fb77fe0edcd70a4e5296d3ec@34.65.175.185:30305").unwrap();
         let expected_bootnode = vec![BootNode::from_unsigned(record).unwrap()];
@@ -1387,10 +1370,8 @@ mod tests {
 
     #[test]
     fn test_p2p_args_listen_ip_dns_resolution() {
-        // Test that DNS hostnames are resolved to IP addresses
         // Using localhost which should resolve reliably
         let args = MockCommand::parse_from(["test", "--p2p.listen.ip", "localhost"]);
-        // localhost typically resolves to 127.0.0.1 or ::1
         assert!(
             args.p2p.listen_ip == "127.0.0.1".parse::<IpAddr>().unwrap()
                 || args.p2p.listen_ip == "::1".parse::<IpAddr>().unwrap()
@@ -1399,9 +1380,7 @@ mod tests {
 
     #[test]
     fn test_p2p_args_advertise_ip_dns_resolution() {
-        // Test that DNS hostnames are resolved to IP addresses for advertise_ip
         let args = MockCommand::parse_from(["test", "--p2p.advertise.ip", "localhost"]);
-        // localhost typically resolves to 127.0.0.1 or ::1
         let ip = args.p2p.advertise_ip.unwrap();
         assert!(
             ip == "127.0.0.1".parse::<IpAddr>().unwrap() || ip == "::1".parse::<IpAddr>().unwrap()
@@ -1410,7 +1389,6 @@ mod tests {
 
     #[test]
     fn test_resolve_host_with_ip() {
-        // Test that IP addresses are passed through directly
         let ip = resolve_host("192.168.1.1").unwrap();
         assert_eq!(ip, "192.168.1.1".parse::<IpAddr>().unwrap());
 
@@ -1420,7 +1398,6 @@ mod tests {
 
     #[test]
     fn test_resolve_host_with_dns() {
-        // Test DNS resolution with localhost
         let ip = resolve_host("localhost").unwrap();
         assert!(
             ip == "127.0.0.1".parse::<IpAddr>().unwrap() || ip == "::1".parse::<IpAddr>().unwrap()
@@ -1429,7 +1406,6 @@ mod tests {
 
     #[test]
     fn test_resolve_host_invalid() {
-        // Test that invalid hostnames return an error
         let result = resolve_host("this-hostname-definitely-does-not-exist.invalid");
         assert!(result.is_err());
     }

@@ -2,31 +2,21 @@
 
 use alloy_primitives::{B256, Bytes, bytes};
 
-// Block Building
-
 /// Block time in seconds for test node configuration.
 pub const BLOCK_TIME_SECONDS: u64 = 2;
 /// Gas limit for test blocks.
 pub const GAS_LIMIT: u64 = 200_000_000;
 
-// Test Account Balances
-
 /// Balance in ETH for test accounts in fixtures.
 pub const TEST_ACCOUNT_BALANCE_ETH: u64 = 100;
-
-// Timing / Delays
 
 /// Delay in milliseconds to wait for node startup.
 pub const NODE_STARTUP_DELAY_MS: u64 = 500;
 /// Delay in milliseconds to wait for block building.
 pub const BLOCK_BUILD_DELAY_MS: u64 = 100;
 
-// Engine API
-
 /// All-zeros secret for local testing only.
 pub const DEFAULT_JWT_SECRET: B256 = B256::ZERO;
-
-// L1 Block Info (Base)
 
 /// Sample L1 block info deposit transaction for Base Sepolia tests.
 pub const L1_BLOCK_INFO_DEPOSIT_TX: Bytes = bytes!(

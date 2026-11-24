@@ -61,7 +61,6 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         state: &mut EngineState,
         new_payload: BaseExecutionPayloadEnvelope,
     ) -> Result<(), SealTaskError> {
-        // Insert the new block into the engine.
         match InsertTask::new(
             Arc::clone(&self.engine),
             Arc::clone(&self.cfg),
@@ -86,7 +85,6 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                 warn!(target: "engine", error = ?e, "Re-attempting payload import with deposits only.");
 
                 // HOLOCENE: Re-attempt payload import with deposits only
-                // First build the deposits-only payload, then seal it
                 let deposits_only_attrs = self.attributes.as_deposits_only();
 
                 return match build_and_seal(
@@ -136,7 +134,6 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         &self,
         state: &mut EngineState,
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
-        // Fetch the payload just inserted from the EL and import it into the engine.
         let block_import_start_time = Instant::now();
         let new_payload = Engine::<EngineClient_>::fetch_payload(
             &self.cfg,
@@ -153,7 +150,6 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         )
         .map_err(SealTaskError::FromBlock)?;
 
-        // Insert the payload into the engine.
         self.insert_payload(state, new_payload.clone()).await?;
 
         let block_import_duration = block_import_start_time.elapsed();

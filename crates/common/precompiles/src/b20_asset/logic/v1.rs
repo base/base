@@ -625,8 +625,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         self.approve(token, args.owner, args.spender, args.value)
     }
 
-    // --- Asset-specific mutations ---
-
     fn update_multiplier(
         &self,
         token: &mut B20AssetToken<S, A>,
@@ -714,8 +712,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
     fn end_announce(&self, token: &mut B20AssetToken<S, A>, id: String) -> Result<()> {
         token.accounting_mut().emit_event(IB20Asset::EndAnnouncement { id }.encode_log_data())
     }
-
-    // --- Computed reads ---
 
     fn is_paused(
         &self,
@@ -892,14 +888,10 @@ mod tests {
         args
     }
 
-    // --- role identifiers ---
-
     #[test]
     fn operator_role_matches_solidity_hash() {
         assert_eq!(AssetV1::OPERATOR_ROLE, keccak256("OPERATOR_ROLE"));
     }
-
-    // --- transfer ---
 
     #[test]
     fn transfer_moves_balance_and_emits_transfer() {
@@ -937,8 +929,6 @@ mod tests {
         );
     }
 
-    // --- transfer_from ---
-
     #[test]
     fn transfer_from_decrements_finite_allowance() {
         let mut tok = token();
@@ -958,8 +948,6 @@ mod tests {
         assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::MAX);
     }
 
-    // --- approve ---
-
     #[test]
     fn approve_sets_allowance_and_emits() {
         let mut tok = token();
@@ -967,8 +955,6 @@ mod tests {
         assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
         assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
     }
-
-    // --- mint ---
 
     #[test]
     fn mint_privileged_increases_supply_and_balance() {
@@ -1023,8 +1009,6 @@ mod tests {
         );
     }
 
-    // --- burn ---
-
     #[test]
     fn burn_requires_role_then_decreases_supply() {
         let mut tok = token();
@@ -1058,8 +1042,6 @@ mod tests {
         assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
     }
 
-    // --- pause ---
-
     #[test]
     fn pause_and_unpause_toggle_feature_bit() {
         let mut tok = token();
@@ -1085,8 +1067,6 @@ mod tests {
         );
         assert_eq!(LOGIC.is_paused(&tok, IB20::PausableFeature::SEIZE).unwrap_err(), expected);
     }
-
-    // --- roles ---
 
     #[test]
     fn grant_role_privileged_grants_and_emits() {
@@ -1119,8 +1099,6 @@ mod tests {
         );
     }
 
-    // --- policy ---
-
     #[test]
     fn update_policy_sets_new_id() {
         let mut tok = token();
@@ -1139,8 +1117,6 @@ mod tests {
             BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope })
         );
     }
-
-    // --- permit ---
 
     #[test]
     fn permit_sets_allowance_and_increments_nonce() {
@@ -1163,8 +1139,6 @@ mod tests {
             BasePrecompileError::revert(IB20::ExpiredSignature { deadline: U256::from(10u64) })
         );
     }
-
-    // --- asset: multiplier ---
 
     #[test]
     fn to_scaled_balance_one_to_one_multiplier() {
@@ -1211,8 +1185,6 @@ mod tests {
         assert_eq!(tok.accounting().multiplier().unwrap(), new_multiplier);
         assert_eq!(last_event_sig(&tok), IB20Asset::MultiplierUpdated::SIGNATURE_HASH);
     }
-
-    // --- asset: batch mint ---
 
     #[test]
     fn batch_mint_increases_balances() {
@@ -1273,8 +1245,6 @@ mod tests {
         );
     }
 
-    // --- asset: extra metadata ---
-
     #[test]
     fn update_extra_metadata_roundtrip_and_clear() {
         let mut tok = token();
@@ -1290,7 +1260,6 @@ mod tests {
             .unwrap();
         assert_eq!(LOGIC.extra_metadata(&tok, "category").unwrap(), "real-world-asset");
         assert_eq!(last_event_sig(&tok), IB20Asset::ExtraMetadataUpdated::SIGNATURE_HASH);
-        // Empty value clears the entry.
         LOGIC
             .update_extra_metadata(&mut tok, ADMIN, "category".to_string(), String::new(), false)
             .unwrap();
@@ -1305,8 +1274,6 @@ mod tests {
             .unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20Asset::InvalidMetadataKey {}));
     }
-
-    // --- asset: announcements ---
 
     #[test]
     fn begin_announce_marks_id_and_emits() {
@@ -1337,8 +1304,6 @@ mod tests {
         LOGIC.end_announce(&mut tok, "id".to_string()).unwrap();
         assert_eq!(last_event_sig(&tok), IB20Asset::EndAnnouncement::SIGNATURE_HASH);
     }
-
-    // --- reads ---
 
     #[test]
     fn decimals_reads_storage() {

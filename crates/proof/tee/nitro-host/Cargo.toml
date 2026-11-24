@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# base
 base-health.workspace = true
 base-proof-host.workspace = true
 base-proof-worker.workspace = true
@@ -23,17 +22,14 @@ base-prover-service-protocol.workspace = true
 base-proof-tee-nitro-enclave.workspace = true
 base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
 
-# crypto
 alloy-signer.workspace = true
 alloy-primitives.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 
-# async
 tokio-util.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "io-util", "net"] }
 
-# misc
 url.workspace = true
 eyre.workspace = true
 tower.workspace = true

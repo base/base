@@ -53,7 +53,6 @@ where
                 .get_earliest_block_number()
                 .map_err(|e| ProviderError::Database(e.into()))?,
         ) else {
-            // if no earliest block, db is empty, return error
             return Err(ProviderError::StateForNumberNotFound(block_number));
         };
 

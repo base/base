@@ -12,13 +12,11 @@ description = "Base Transaction Pool"
 workspace = true
 
 [dependencies]
-# ethereum
 alloy-eips.workspace = true
 alloy-sol-types.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives = { workspace = true, features = ["k256", "map-foldhash", "map-indexmap"] }
 
-# reth
 reth-evm.workspace = true
 reth-node-api.workspace = true
 reth-provider.workspace = true
@@ -41,11 +39,9 @@ base-common-precompiles.workspace = true
 base-execution-base-tx.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 
-# metrics
 base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
 
-# misc
 serde.workspace = true
 serde_json.workspace = true
 c-kzg.workspace = true

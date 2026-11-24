@@ -363,8 +363,6 @@ impl BatcherService {
 
         let client_builder = RpcClientBuilder::new(self.config.network_timeout);
         let sequencers = Arc::new(Sequencers::new(&self.config.sequencer_urls, client_builder)?);
-        // A canonical batcher follows the leader's rollup node, a shadow batcher the parity
-        // validator's.
         let rollup_node =
             RollupNode::new(self.config.shadow.as_ref(), Arc::clone(&sequencers), client_builder)?;
 
@@ -396,7 +394,6 @@ impl BatcherService {
         }
         info!(leader = %sequencers.leader().origin, "reading L2 blocks from the leader sequencer");
 
-        // As a provider, the sequencers send each L2 block read to the leader.
         let l2_provider: Arc<dyn Provider<Base> + Send + Sync> =
             Arc::<Sequencers>::clone(&sequencers);
 
@@ -549,7 +546,6 @@ impl BatcherService {
 
         let throttle = DaThrottle::new(self.config.throttle_controller());
 
-        // Build the L1 head source: a hybrid of optional WS subscription + polling.
         let l1_head_stream =
             Self::build_l1_head_stream(self.config.l1_ws_url.as_ref(), self.config.network_timeout)
                 .await;
@@ -561,7 +557,6 @@ impl BatcherService {
             self.config.poll_interval,
         );
 
-        // Fetch L1 chain ID and construct the tx manager.
         let l1_chain_id =
             Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || l1_provider.get_chain_id())
                 .await?;
@@ -576,7 +571,6 @@ impl BatcherService {
         .await
         .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
 
-        // A disabled throttle has nothing to push.
         if self.config.throttle.is_some() {
             background_tasks.extend(Self::spawn_throttle_pushers(
                 &self.config.sequencer_urls,
@@ -600,7 +594,6 @@ impl BatcherService {
         background_tasks
             .push(("derivation status poller", derivation_status_handle.err_into().boxed()));
 
-        // Build the driver.
         let (admin_handle, admin_rx) = AdminHandle::channel();
         let driver = BatchDriver::new(
             runtime,
@@ -833,7 +826,6 @@ mod tests {
             serde_json::to_string(&status).unwrap(),
         )
         .await;
-        // The wait only reads the sync status of the rollup node, whichever node it is.
         let rollup_node = RollupNode::ParityValidator(
             HttpClientBuilder::default().build(server.url("/")).unwrap(),
         );
@@ -1061,7 +1053,6 @@ mod tests {
         .await
         .expect("the build must give up instead of hanging");
 
-        // The fallback came from the timeout, not from a fast error.
         assert!(started.elapsed() >= network_timeout);
     }
 }

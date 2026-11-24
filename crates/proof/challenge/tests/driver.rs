@@ -335,8 +335,6 @@ async fn test_step_valid_proposals_are_skipped() {
 
 #[tokio::test]
 async fn test_step_validation_error_blocks_not_available() {
-    // Game with intermediate roots, but checkpoint blocks are unavailable.
-    // Validator returns BlockNotAvailable → process_candidate skips gracefully.
     let factory = single_game_factory();
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
@@ -579,8 +577,6 @@ async fn test_step_proof_exceeds_max_retries() {
     assert!(tx.recorded_calls().is_empty());
 }
 
-// ── TEE-first proof sourcing tests ─────────────────────────────────────────
-
 #[tokio::test]
 async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     let (l2, factory, verifier) = invalid_game_mocks();
@@ -610,12 +606,10 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
 
 #[tokio::test]
 async fn test_step_invalid_game_tee_proof_succeeds() {
-    // TEE proof succeeds → submitted directly without ZK.
     let (l2, factory, root_15, root_20) = base_game_mocks();
 
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
-        // root_15 is correct, index 1 is bogus — invalid_index == 1
         intermediate_output_roots: vec![root_15, BOGUS_ROOT],
         ..game_state(20)
     });
@@ -701,7 +695,6 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
 
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
-        // root_15 is correct, index 1 is bogus — invalid_index == 1
         intermediate_output_roots: vec![root_15, BOGUS_ROOT],
         ..game_state(20)
     });
@@ -711,7 +704,6 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
     let aggregate_proposal = tee_proposal(root_20, root_15);
     let zk = succeeded_tee_prover(aggregate_proposal);
 
-    // TEE nullify() tx reverts, ZK challenge() tx succeeds.
     let tx_manager = MockTxManager::with_responses(vec![
         Err(TxManagerError::ExecutionReverted {
             reason: Some("unexpected contract revert".to_string()),
@@ -729,10 +721,8 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
         l1_head,
     );
 
-    // Step 1: TEE proof job is initiated.
     driver.step().await.unwrap();
 
-    // Step 2: TEE proof is polled, nullify() tx fails, falls back to ZK.
     driver.step().await.unwrap();
 
     assert_tee_then_zk_requests(&zk);
@@ -746,7 +736,6 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
     // cannot re-discover it after the successful fallback submission.
     factory.games.lock().unwrap().clear();
 
-    // Step 3: ZK proof polled → Succeeded → challenge tx submitted → entry cleaned up.
     driver.step().await.unwrap();
     assert_eq!(
         sent_disputes(&tx_manager),
@@ -781,7 +770,6 @@ async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
         l1_head,
     );
 
-    // Step 1: TEE proof job is initiated.
     driver.step().await.unwrap();
 
     // Step 2: completed TEE proof has the wrong root, so the driver should
@@ -799,10 +787,6 @@ async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
     assert_tee_then_zk_requests(&proof_requester);
     assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Path 2: Correct TEE proof challenged with wrong ZK proof → nullify ZK
-// ──────────────────────────────────────────────────────────────────────────
 
 /// Builds mocks for a Path 2 (`FraudulentZkChallenge`) scenario.
 ///
@@ -834,9 +818,6 @@ fn fraudulent_zk_challenge_mocks(
 
 #[tokio::test]
 async fn test_step_fraudulent_zk_challenge_legitimate_skips() {
-    // The onchain root at the challenged index is wrong, meaning the ZK
-    // challenge was legitimate. The driver should skip without initiating
-    // a proof.
     let (l2, factory, verifier) = fraudulent_zk_challenge_mocks(false);
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
@@ -850,9 +831,6 @@ async fn test_step_fraudulent_zk_challenge_legitimate_skips() {
 
 #[tokio::test]
 async fn test_step_fraudulent_zk_challenge_nullifies() {
-    // The onchain root at the challenged index is correct, meaning the
-    // ZK challenge was fraudulent. The driver should initiate a ZK proof
-    // with DisputeIntent::Nullify.
     let (l2, factory, verifier) = fraudulent_zk_challenge_mocks(true);
 
     let zk = succeeded_zk_prover();
@@ -914,7 +892,6 @@ async fn test_step_fraudulent_zk_challenge_nullifies_despite_earlier_invalid_roo
     let verifier = single_game_verifier(MockGameState {
         zk_prover: ZK_PROVER_ADDR,
         tee_prover: DEFAULT_TEE_PROVER,
-        // Index 0 is bogus, index 1 (challenged) is correct.
         intermediate_output_roots: vec![BOGUS_ROOT, root_20],
         countered_index: 2, // 1-based → challenged_index = 1
         ..game_state(20)
@@ -940,15 +917,8 @@ async fn test_step_fraudulent_zk_challenge_nullifies_despite_earlier_invalid_roo
     assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Path 3: Wrong ZK proposal → nullify with ZK
-// ──────────────────────────────────────────────────────────────────────────
-
 #[tokio::test]
 async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
-    // A game proposed with a ZK proof (tee_prover == ZERO, zk_prover != ZERO)
-    // with invalid intermediate roots should trigger a ZK proof with
-    // DisputeIntent::Nullify.
     let (l2, factory, root_15, _root_20) = base_game_mocks();
 
     let verifier = single_game_verifier(MockGameState {
@@ -976,10 +946,6 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
     assert_eq!(sent_disputes(&tx), vec![(addr(0), DisputeKind::Nullify)]);
     assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Dual-proof games: both TEE and ZK proofs verified (no challenge)
-// ──────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn test_step_dual_proof_invalid_tee_request_failure_falls_back_to_zk_nullify() {
@@ -1078,10 +1044,6 @@ async fn test_step_dual_proof_invalid_with_tee_provider_nullifies_tee_first() {
     assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Checkpoint count mismatch (stale interval) surfaces as an error
-// ──────────────────────────────────────────────────────────────────────────
-
 #[tokio::test]
 async fn test_step_checkpoint_count_mismatch_surfaces_error() {
     // After a governance `setImplementation` changes `INTERMEDIATE_BLOCK_INTERVAL`,
@@ -1098,21 +1060,14 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
 
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
-        // Onchain: only 1 intermediate root (as if interval=10).
         intermediate_output_roots: vec![BOGUS_ROOT],
         ..game_state(20)
     });
 
-    // The mock verifier's `read_intermediate_block_interval` returns 5,
-    // so the scanner caches interval=5. With span=10, the validator
-    // expects 10/5 = 2 intermediate roots, but only 1 is onchain.
     let l2 = default_l2();
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
-    // step() should succeed (per-game errors are caught at the candidate
-    // level), but the game should not have a dispute attempt because the mismatch
-    // error prevents silent skipping and instead logs an error.
     driver.step().await.unwrap();
 
     assert!(

@@ -340,7 +340,6 @@ mod tests {
         let attributes = TestNextAttributes { next_attributes: Some(expected) };
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
-        // Step on the pipeline and expect the result.
         let cursor = L2BlockInfo::default();
         let result = pipeline.step(cursor).await;
         assert_eq!(result, StepResult::PreparedAttributes);
@@ -353,7 +352,6 @@ mod tests {
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
-        // Step on the pipeline and expect the result.
         let cursor = L2BlockInfo::default();
         let result = pipeline.step(cursor).await;
         assert_eq!(result, StepResult::AdvancedOrigin);
@@ -367,7 +365,6 @@ mod tests {
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
-        // Signal the pipeline to activate.
         let result = pipeline.signal(ActivationSignal::default().signal()).await;
         assert!(result.is_ok());
     }
@@ -379,7 +376,6 @@ mod tests {
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
-        // Signal the pipeline to flush channel.
         let result = pipeline.signal(Signal::FlushChannel).await;
         assert!(result.is_ok());
     }
@@ -391,7 +387,6 @@ mod tests {
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
-        // Signal the pipeline to reset — fails because system config is not found.
         let result = pipeline.signal(ResetSignal::default().signal()).await.unwrap_err();
         assert_eq!(result, PipelineError::Provider("System config not found".to_string()).temp());
     }
@@ -404,7 +399,6 @@ mod tests {
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
-        // Signal the pipeline to reset.
         let result = pipeline.signal(ResetSignal::default().signal()).await;
         assert!(result.is_ok());
     }

@@ -131,9 +131,7 @@ class BenchCompare:
     def render_row(self, bench_id: str, base: Measurement | None, head: Measurement | None) -> str:
         """Render a single Markdown table row for one benchmark."""
         if base is None:
-            # bench_ids is built from set(base) | set(head), so a missing base side
-            # guarantees head is present; assert it so a future refactor can't turn
-            # this into a silent AttributeError.
+            # IDs come from the union of both runs, so at least one measurement must exist.
             assert head is not None
             return f"| `{bench_id}` | — (new) | {self.humanize_ns(head.median)} | — |"
         if head is None:
@@ -144,8 +142,7 @@ class BenchCompare:
             if self.is_significant(base, head):
                 flag = " ⚠️ slower" if delta > 0 else " ✅ faster"
             else:
-                # Threshold cleared, but the confidence intervals overlap, so treat
-                # the move as noise and say so rather than raising a false alarm.
+                # Overlapping confidence intervals do not warrant a performance alert.
                 flag = " · within noise"
         return (
             f"| `{bench_id}` | {self.humanize_ns(base.median)} | {self.humanize_ns(head.median)} "
@@ -177,9 +174,7 @@ class BenchCompare:
         dropped = [b for b in bench_ids if b in base and b not in head]
 
         lines = [marker, ""]
-        # A dropped bench (lost coverage) and a regression are both actionable, so
-        # show each block that applies; an improvement is only highlighted when
-        # nothing regressed or dropped.
+        # Lost coverage and regressions are independently actionable; neither should hide the other.
         if dropped:
             lines += [
                 "> [!WARNING]",
@@ -204,9 +199,7 @@ class BenchCompare:
                 f"{self.summarize(base, head, improved)}.",
                 "",
             ]
-        # Only the notable benches get a row; unchanged ones are the bulk of the
-        # subset and only add noise. The rest are summarized as an omitted count so
-        # the trim is never silent.
+        # Omit unchanged benches to limit noise, but report their count so trimming is visible.
         notable = [b for b in bench_ids if self.is_notable(base.get(b), head.get(b))]
         omitted = len(bench_ids) - len(notable)
 

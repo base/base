@@ -176,8 +176,6 @@ impl StorageKey for String {
     }
 }
 
-// -- HELPER FUNCTIONS ---------------------------------------------------------
-
 #[inline]
 fn load_bytes_like<T, S, F>(storage: &S, base_slot: U256, into: F) -> Result<T>
 where

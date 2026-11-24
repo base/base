@@ -3,7 +3,6 @@
 # Builds base-prover-nitro-host — the worker that claims proof jobs and forwards
 # them to the Nitro Enclave over vsock.
 
-# --- Builder ---
 FROM rust:1.96.0-trixie@sha256:58fe97504a0e4cbba5d85599619a589923d3e779472a6fb0840d58d1c4ba99d7 AS builder
 WORKDIR /app
 
@@ -23,7 +22,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --locked --package base-prover-nitro-host --bin base-prover-nitro-host $CARGO_FEATURES && \
     cp target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-prover-nitro-host ./base-prover-nitro-host
 
-# --- Runtime ---
 FROM debian:trixie-slim@sha256:1d3c811171a08a5adaa4a163fbafd96b61b87aa871bbc7aa15431ac275d3d430
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \

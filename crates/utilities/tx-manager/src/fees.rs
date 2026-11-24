@@ -248,8 +248,6 @@ mod tests {
 
     use super::*;
 
-    // ── GasPriceCaps ────────────────────────────────────────────────────
-
     #[test]
     fn default_zeroes_all_fields() {
         let caps = GasPriceCaps::default();
@@ -265,15 +263,11 @@ mod tests {
         assert_send_sync::<GasPriceCaps>();
     }
 
-    // ── BumpedFees ─────────────────────────────────────────────────────
-
     #[test]
     fn bumped_fees_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<BumpedFees>();
     }
-
-    // ── calc_gas_fee_cap ────────────────────────────────────────────────
 
     #[rstest]
     #[case::zero_inputs(0, 0, 0)]
@@ -287,8 +281,6 @@ mod tests {
         assert_eq!(FeeCalculator::calc_gas_fee_cap(base_fee, tip), expected);
     }
 
-    // ── calc_blob_fee_cap ───────────────────────────────────────────────
-
     #[rstest]
     #[case::zero(0, 0)]
     #[case::normal(100, 200)]
@@ -299,10 +291,7 @@ mod tests {
         assert_eq!(FeeCalculator::calc_blob_fee_cap(blob_base_fee), expected);
     }
 
-    // ── calc_threshold_value ────────────────────────────────────────────
-
     #[rstest]
-    // Regular (non-blob) cases
     #[case::zero_regular(0, false, 1)]
     #[case::one_regular(1, false, 2)]
     #[case::nine_regular(9, false, 10)]
@@ -312,7 +301,6 @@ mod tests {
     #[case::thousand_regular(1000, false, 1100)]
     #[case::small_value_ensures_plus_one(5, false, 6)]
     #[case::saturates_regular(u128::MAX, false, u128::MAX)]
-    // Blob cases
     #[case::zero_blob(0, true, 1)]
     #[case::one_blob(1, true, 2)]
     #[case::ten_blob(10, true, 20)]
@@ -323,18 +311,11 @@ mod tests {
         assert_eq!(FeeCalculator::calc_threshold_value(x, is_blob), expected);
     }
 
-    // ── update_fees ─────────────────────────────────────────────────────
-
     #[rstest]
-    // Case 1: both above threshold → use new values
     #[case::both_above(100, 1000, 200, 500, false, (200, 1200))]
-    // Case 2: tip above, fee cap below → new tip + threshold fee cap
     #[case::tip_above_cap_below(100, 1000, 200, 1, false, (200, 1100))]
-    // Case 3: fee cap above, tip below → threshold tip + recalculated fee cap
     #[case::tip_below_cap_above(100, 1000, 50, 5000, false, (110, 10110))]
-    // Case 4: both below → both threshold values
     #[case::both_below(100, 1000, 50, 1, false, (110, 1100))]
-    // Blob cases — all four arms with 100 % bump thresholds
     #[case::blob_both_above(100, 1000, 300, 1000, true, (300, 2300))]
     #[case::blob_tip_above_cap_below(100, 1000, 300, 1, true, (300, 2000))]
     #[case::blob_tip_below_cap_above(100, 1000, 50, 5000, true, (200, 10200))]
@@ -343,7 +324,6 @@ mod tests {
     #[case::tip_above_cap_below_large_old_fee_cap(100, 10_000, 150, 1, false, (150, 11_000))]
     // Case 4: old_tip > old_fee_cap → threshold_tip > threshold_fee_cap, clamp applies
     #[case::both_below_tip_dominates(1_000, 100, 50, 1, false, (1_100, 1_100))]
-    // Zero starting fees
     #[case::zero_old_fees(0, 0, 10, 100, false, (10, 210))]
     fn update_fees(
         #[case] old_tip: u128,
@@ -359,24 +339,16 @@ mod tests {
         );
     }
 
-    // ── check_limits ────────────────────────────────────────────────────
-
     #[rstest]
-    // Below threshold → skip check, always Ok
     #[case::below_threshold_allows_any(1_000_000, 50, 5, 100, true)]
-    // At threshold, within limit → Ok
     #[case::at_threshold_within_limit(400, 100, 5, 100, true)]
     #[case::exactly_at_ceiling(500, 100, 5, 100, true)]
-    // At threshold, over limit → Err
     #[case::over_limit(501, 100, 5, 100, false)]
     #[case::way_over_limit(10_000, 100, 5, 100, false)]
-    // Zero threshold (always check)
     #[case::zero_threshold_within(5, 1, 5, 0, true)]
     #[case::zero_threshold_over(6, 1, 5, 0, false)]
-    // Zero suggested with zero threshold → ceiling is 0
     #[case::zero_suggested_zero_fee(0, 0, 5, 0, true)]
     #[case::zero_suggested_nonzero_fee(1, 0, 5, 0, false)]
-    // Large multiplier
     #[case::large_multiplier(u128::MAX, u128::MAX, u64::MAX, 0, true)]
     fn check_limits(
         #[case] fee: u128,
@@ -391,8 +363,6 @@ mod tests {
             assert!(matches!(result.unwrap_err(), TxManagerError::FeeLimitExceeded { .. }));
         }
     }
-
-    // ── calc_gas_fee_cap roundtrip ───────────────────────────────────────
 
     /// Verifies that the reverse calculation `(fee_cap - tip) / 2`
     /// recovers the original `base_fee` from a fee cap produced by
@@ -418,8 +388,6 @@ mod tests {
             );
         }
     }
-
-    // ── Property tests ──────────────────────────────────────────────────
 
     proptest! {
         #[test]

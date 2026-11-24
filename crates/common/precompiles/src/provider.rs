@@ -137,7 +137,6 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             let mut precompiles = Self::granite().clone();
             // Prague bls12 precompiles
             precompiles.extend(precompile::bls12_381::precompiles());
-            // Isthmus bls12 precompile modifications
             precompiles.extend([
                 bls12_381::ISTHMUS_G1_MSM,
                 bls12_381::ISTHMUS_G2_MSM,
@@ -454,7 +453,6 @@ mod tests {
     fn test_prague_precompiles_in_isthmus() {
         let new_prague_precompiles = Precompiles::prague().difference(Precompiles::cancun());
 
-        // isthmus contains all precompiles that were new in prague, without modifications
         assert!(new_prague_precompiles.difference(TestPrecompiles::isthmus()).is_empty())
     }
 
@@ -462,7 +460,6 @@ mod tests {
     fn test_prague_precompiles_in_jovian() {
         let new_prague_precompiles = Precompiles::prague().difference(Precompiles::cancun());
 
-        // jovian contains all precompiles that were new in prague, without modifications
         assert!(new_prague_precompiles.difference(TestPrecompiles::jovian()).is_empty())
     }
 
@@ -470,7 +467,6 @@ mod tests {
     fn test_isthmus_precompiles_in_jovian() {
         let new_isthmus_precompiles = TestPrecompiles::isthmus().difference(Precompiles::cancun());
 
-        // jovian contains all precompiles that were new in isthmus, without modifications
         assert!(new_isthmus_precompiles.difference(TestPrecompiles::jovian()).is_empty())
     }
 

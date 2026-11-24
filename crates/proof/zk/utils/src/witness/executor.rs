@@ -53,15 +53,12 @@ where
     let mut l2_provider =
         OracleL2ChainProvider::new(safe_head_hash, Arc::clone(&rollup_config), Arc::clone(&oracle));
 
-    // Fetch the safe head's block header.
     let safe_head = l2_provider
         .header_by_hash(safe_head_hash)
         .map(|header| Sealed::new_unchecked(header, safe_head_hash))?;
 
     let safe_head_number = safe_head.number;
 
-    // If the claimed L2 block number is less than the safe head of the L2 chain, the claim is
-    // invalid.
     if boot.claimed_l2_block_number < safe_head.number {
         return Err(anyhow!(
             "Claimed L2 block number {claimed} is less than the safe head {safe}",
@@ -70,7 +67,6 @@ where
         ));
     }
 
-    // Create a new derivation driver with the given boot information and oracle.
     let cursor = new_oracle_pipeline_cursor(
         rollup_config.as_ref(),
         safe_head,
@@ -169,10 +165,6 @@ where
             None,
         );
         let mut driver = Driver::new(cursor, executor, pipeline);
-        // Run the derivation pipeline until we are able to produce the output root of the claimed
-        // L2 block.
-
-        // Use custom advance to target with cycle tracking.
         #[cfg(target_os = "zkvm")]
         println!("cycle-tracker-report-start: block-execution-and-derivation");
         let (safe_head, output_root, intermediate_roots) = advance_to_target(
@@ -185,10 +177,6 @@ where
         let intermediate_roots = intermediate_roots.finish()?;
         #[cfg(target_os = "zkvm")]
         println!("cycle-tracker-report-end: block-execution-and-derivation");
-
-        ////////////////////////////////////////////////////////////////
-        //                          EPILOGUE                          //
-        ////////////////////////////////////////////////////////////////
 
         let derived_l2_block_number = safe_head.block_info.number;
         ensure_derived_block_matches_claim(derived_l2_block_number, boot.claimed_l2_block_number)?;

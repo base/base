@@ -2663,8 +2663,6 @@ mod tests {
         assert_eq!(after.state.get(&sender).expect("sender").info.nonce, 1);
     }
 
-    // ---- Gas-limit billing (BaseFeature::GasLimitBilling) ----
-
     /// Operator fee scalar seeded into the `L1Block` predeploy for the settlement
     /// tests, so the operator fee is gas-proportional and distinguishes a charge
     /// on metered gas from one on the reserved budget.
@@ -3346,7 +3344,6 @@ mod tests {
         // EIP-3529 refund for clearing a non-zero slot.
         const SSTORE_CLEARS_REFUND: u64 = 4_800;
 
-        // --- reference run at a generous limit to obtain the gross charge ---
         let mut tx_ref = base_tx();
         tx_ref.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         let signed_ref = eoa_signed(tx_ref, &key);
@@ -3360,7 +3357,6 @@ mod tests {
         let sender_floor = IntrinsicGas::compute(&signed_ref, sender).sender_floor();
         let charge_gas = (gross_gas - SSTORE_CLEARS_REFUND).max(sender_floor);
 
-        // --- estimate (simulation never commits state) ---
         let mut tx_sim = base_tx();
         tx_sim.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         let signed_sim = eoa_signed(tx_sim, &key);
@@ -3405,7 +3401,6 @@ mod tests {
              because net charge subtracted the refund"
         );
 
-        // --- execute at gas_limit = estimate_gas → must succeed ---
         let mut tx_ok = base_tx();
         tx_ok.gas_limit = estimate_gas;
         tx_ok.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
@@ -3460,7 +3455,6 @@ mod tests {
 
         let initial = U256::from(10u64).pow(U256::from(18u64));
 
-        // --- reference run at a generous limit for the metered charge ---
         let mut tx_ref = base_tx();
         tx_ref.calls = vec![vec![Call { to: forwarder, value: U256::ZERO, data: Bytes::new() }]];
         let signed_ref = eoa_signed(tx_ref, &key);
@@ -3473,7 +3467,6 @@ mod tests {
         assert!(reference.is_success(), "reference run should succeed");
         let charge_gas = reference.tx_gas_used();
 
-        // --- estimate (binary search must go beyond ceiling_spent) ---
         let mut tx_sim = base_tx();
         tx_sim.calls = vec![vec![Call { to: forwarder, value: U256::ZERO, data: Bytes::new() }]];
         let signed_sim = eoa_signed(tx_sim, &key);
@@ -3495,7 +3488,6 @@ mod tests {
              the 63/64 retention requires a higher gas limit than the raw spend"
         );
 
-        // --- execute at gas_limit = charge_gas → must revert (sink OOGs) ---
         let mut tx_low = base_tx();
         tx_low.gas_limit = charge_gas;
         tx_low.calls = vec![vec![Call { to: forwarder, value: U256::ZERO, data: Bytes::new() }]];
@@ -3512,7 +3504,6 @@ mod tests {
             "execution at gas_limit = charge_gas must revert: sink OOGs under 63/64 forwarding"
         );
 
-        // --- execute at gas_limit = estimate_gas → must succeed ---
         let mut tx_ok = base_tx();
         tx_ok.gas_limit = estimate_gas;
         tx_ok.calls = vec![vec![Call { to: forwarder, value: U256::ZERO, data: Bytes::new() }]];
@@ -4375,9 +4366,9 @@ mod tests {
         let key = signing_key(key_byte);
         let sender = eoa_address(&key);
 
-        let clear_data = vec![0u8; 32]; // store 0 -> clears slot 0
+        let clear_data = vec![0u8; 32];
         let mut second_data = vec![0u8; 32];
-        second_data[31] = second_store; // store `second_store`
+        second_data[31] = second_store;
 
         let mut tx = base_tx();
         tx.calls = vec![vec![

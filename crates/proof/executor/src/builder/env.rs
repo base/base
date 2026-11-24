@@ -152,22 +152,14 @@ where
                 decode_holocene_eip_1559_params_block_header(parent_header)
                     .map(|base_fee_params| (base_fee_params, 0))
             }
-            // If the next payload attribute timestamp is past canyon activation,
-            // use the canyon base fee params from the rollup config.
             _ if config.is_feature_active_cascading(
                 BaseFeature::BaseFeeDenominator,
                 payload_timestamp,
             ) =>
             {
-                // If the payload attribute timestamp is past canyon activation,
-                // use the canyon base fee params from the rollup config.
                 Ok((config.chain_op_config.post_canyon_params(), 0))
             }
-            _ => {
-                // If the next payload attribute timestamp is prior to canyon activation,
-                // use the default base fee params from the rollup config.
-                Ok((config.chain_op_config.pre_canyon_params(), 0))
-            }
+            _ => Ok((config.chain_op_config.pre_canyon_params(), 0)),
         }
     }
 }

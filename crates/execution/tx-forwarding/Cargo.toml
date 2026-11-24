@@ -12,20 +12,16 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# ethereum
 alloy-primitives.workspace = true
 
-# reth
 reth-tasks.workspace = true
 reth-transaction-pool.workspace = true
 
-# workspace
 base-metrics.workspace = true
 base-node-runner.workspace = true
 base-execution-txpool.workspace = true
 base-observability-events.workspace = true
 
-# misc
 url.workspace = true
 serde.workspace = true
 futures.workspace = true
@@ -38,7 +34,6 @@ tokio = { workspace = true, features = ["sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 
 [dev-dependencies]
-# ethereum
 alloy-eips.workspace = true
 alloy-signer.workspace = true
 alloy-genesis.workspace = true
@@ -47,7 +42,6 @@ alloy-provider.workspace = true
 alloy-consensus.workspace = true
 alloy-signer-local.workspace = true
 
-# workspace
 base-test-utils.workspace = true
 base-txpool-rpc.workspace = true
 base-txpool-tracing.workspace = true
@@ -57,7 +51,6 @@ base-execution-chainspec.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 
-# misc
 eyre.workspace = true
 rstest.workspace = true
 mockall.workspace = true

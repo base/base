@@ -146,14 +146,12 @@ impl ToastState {
 
     /// Poll for new toasts and remove expired ones
     pub fn poll(&mut self) {
-        // Receive new toasts
         if let Some(ref mut rx) = self.rx {
             while let Ok(toast) = rx.try_recv() {
                 self.toasts.push(toast);
             }
         }
 
-        // Remove expired toasts
         self.toasts.retain(|t| !t.is_expired());
     }
 
@@ -217,7 +215,6 @@ impl ToastState {
             return;
         }
 
-        // Clear the area behind the toast
         frame.render_widget(Clear, toast_area);
 
         let block = Block::default()

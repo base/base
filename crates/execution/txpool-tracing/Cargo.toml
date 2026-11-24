@@ -12,27 +12,22 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
 base-execution-txpool.workspace = true
 base-node-runner.workspace = true
 base-observability-events.workspace = true
 
-# reth
 reth-tracing.workspace = true
 reth-provider.workspace = true
 reth-node-api.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
 
-# alloy
 alloy-primitives.workspace = true
 
-# async
 tokio.workspace = true
 futures.workspace = true
 tokio-stream.workspace = true
 
-# misc
 lru.workspace = true
 chrono.workspace = true
 base-metrics.workspace = true
@@ -42,13 +37,10 @@ derive_more = { workspace = true, features = ["display"] }
 serde_json.workspace = true
 
 [dev-dependencies]
-# reth
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
-# metrics
 metrics-exporter-prometheus.workspace = true
 
-# misc
 rstest.workspace = true
 
 [features]

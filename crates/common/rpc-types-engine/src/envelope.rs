@@ -64,13 +64,12 @@ impl ssz::Encode for BaseExecutionPayloadEnvelope {
             buf.extend_from_slice(self.parent_beacon_block_root.unwrap_or_default().as_slice());
         }
 
-        // Write payload
         self.execution_payload.ssz_append(buf);
     }
 
     fn ssz_bytes_len(&self) -> usize {
         let mut len = 0;
-        len += B256::ssz_fixed_len(); // parent_beacon_block_root is always 32 bytes
+        len += B256::ssz_fixed_len();
         len += self.execution_payload.ssz_bytes_len();
         len
     }
@@ -90,7 +89,6 @@ impl ssz::Decode for BaseExecutionPayloadEnvelope {
             });
         }
 
-        // Decode parent_beacon_block_root
         let parent_beacon_block_root = {
             let root_bytes = &bytes[..B256::ssz_fixed_len()];
             if root_bytes.iter().all(|&b| b == 0) {
@@ -100,7 +98,6 @@ impl ssz::Decode for BaseExecutionPayloadEnvelope {
             }
         };
 
-        // Decode payload
         let execution_payload =
             BaseExecutionPayload::from_ssz_bytes(&bytes[B256::ssz_fixed_len()..])?;
 

@@ -14,10 +14,8 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
 alloy-primitives.workspace = true
 
-# base
 base-common-consensus = { workspace = true, default-features = false }
 
 [features]

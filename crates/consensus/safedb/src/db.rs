@@ -60,7 +60,6 @@ impl SafeDB {
         }
         let db = Database::create(path).map_err(|e| SafeDBError::Database(e.to_string()))?;
 
-        // Ensure the table exists.
         let txn = db.begin_write().map_err(|e| SafeDBError::Database(e.to_string()))?;
         txn.open_table(SAFE_HEADS).map_err(|e| SafeDBError::Database(e.to_string()))?;
         txn.commit().map_err(|e| SafeDBError::Database(e.to_string()))?;
@@ -217,7 +216,6 @@ impl SafeDBReader for SafeDB {
                 let txn = db.begin_read()?;
                 let table = txn.open_table(SAFE_HEADS)?;
 
-                // Find the highest entry at or before l1_block_num.
                 let entry = table.range(..=l1_block_num)?.next_back().transpose()?;
 
                 match entry {
@@ -286,7 +284,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = SafeDB::open(dir.path().join("test.redb")).unwrap();
 
-        // Insert entries at L1 blocks 100, 200, 300.
         db.safe_head_updated(l2_block_info(0xAA, 1000, 0x01, 100), block_info(0x01, 100))
             .await
             .unwrap();
@@ -297,17 +294,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Query at 150 — should return the entry at 100.
         let resp = db.safe_head_at_l1(150).await.unwrap();
         assert_eq!(resp.l1_block.number, 100);
         assert_eq!(resp.safe_head.number, 1000);
 
-        // Query at 200 — should return the entry at 200 exactly.
         let resp = db.safe_head_at_l1(200).await.unwrap();
         assert_eq!(resp.l1_block.number, 200);
         assert_eq!(resp.safe_head.number, 2000);
 
-        // Query at 999 — should return the entry at 300.
         let resp = db.safe_head_at_l1(999).await.unwrap();
         assert_eq!(resp.l1_block.number, 300);
         assert_eq!(resp.safe_head.number, 3000);
@@ -318,11 +312,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = SafeDB::open(dir.path().join("test.redb")).unwrap();
 
-        // Empty DB should return NotFound.
         let err = db.safe_head_at_l1(100).await.unwrap_err();
         assert!(matches!(err, SafeDBError::NotFound));
 
-        // Insert at L1=200, query at L1=100 should still be NotFound.
         db.safe_head_updated(l2_block_info(0xAA, 1000, 0x01, 200), block_info(0x01, 200))
             .await
             .unwrap();
@@ -335,7 +327,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = SafeDB::open(dir.path().join("test.redb")).unwrap();
 
-        // Insert entries at L1=100 (L2=1000), L1=200 (L2=2000), L1=300 (L2=3000).
         db.safe_head_updated(l2_block_info(0xAA, 1000, 0x01, 100), block_info(0x01, 100))
             .await
             .unwrap();
@@ -346,22 +337,16 @@ mod tests {
             .await
             .unwrap();
 
-        // Reset to L2=1500 with L1 origin at 200.
-        // This should find the entry at L1=200 (L2=2000 >= 1500), delete entries at 200 and 300,
-        // and re-write L1=200 with the reset values.
         let reset = l2_block_info(0xDD, 1500, 0x02, 200);
         db.safe_head_reset(reset).await.unwrap();
 
-        // Entry at L1=100 should still exist.
         let resp = db.safe_head_at_l1(100).await.unwrap();
         assert_eq!(resp.safe_head.number, 1000);
 
-        // Entry at L1=200 should now point to the reset safe head.
         let resp = db.safe_head_at_l1(200).await.unwrap();
         assert_eq!(resp.safe_head.number, 1500);
         assert_eq!(resp.safe_head.hash, B256::from([0xDD; 32]));
 
-        // Entry at L1=300 should be gone; querying 300 returns the reset entry at 200.
         let resp = db.safe_head_at_l1(300).await.unwrap();
         assert_eq!(resp.l1_block.number, 200);
         assert_eq!(resp.safe_head.number, 1500);
@@ -372,24 +357,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = SafeDB::open(dir.path().join("test.redb")).unwrap();
 
-        // Insert at L1=100 (L2=1000).
         db.safe_head_updated(l2_block_info(0xAA, 1000, 0x01, 100), block_info(0x01, 100))
             .await
             .unwrap();
 
-        // Reset to L2=500 with L1 origin at 50 — before any entry.
-        // The entry at L1=100 has L2=1000 >= 500, so it is deleted.
-        // The reset anchor is written at the reset's l1_origin (50), not at 100.
         let reset = l2_block_info(0xDD, 500, 0x05, 50);
         db.safe_head_reset(reset).await.unwrap();
 
-        // The reset should be anchored at L1=50.
         let resp = db.safe_head_at_l1(50).await.unwrap();
         assert_eq!(resp.l1_block.number, 50);
         assert_eq!(resp.safe_head.number, 500);
         assert_eq!(resp.safe_head.hash, B256::from([0xDD; 32]));
 
-        // L1=100 was deleted; querying it returns the anchor at L1=50.
         let resp = db.safe_head_at_l1(100).await.unwrap();
         assert_eq!(resp.l1_block.number, 50);
         assert_eq!(resp.safe_head.number, 500);
@@ -400,17 +379,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = SafeDB::open(dir.path().join("test.redb")).unwrap();
 
-        // Insert at L1=100 (L2=1000).
         db.safe_head_updated(l2_block_info(0xAA, 1000, 0x01, 100), block_info(0x01, 100))
             .await
             .unwrap();
 
-        // Reset to L2=2000 with L1 origin at 200 — after all entries.
-        // No entries have L2 >= 2000 in the range [200..], so this is a no-op.
         let reset = l2_block_info(0xDD, 2000, 0x02, 200);
         db.safe_head_reset(reset).await.unwrap();
 
-        // Original entry should still exist.
         let resp = db.safe_head_at_l1(100).await.unwrap();
         assert_eq!(resp.safe_head.number, 1000);
         assert_eq!(resp.safe_head.hash, B256::from([0xAA; 32]));
@@ -437,26 +412,21 @@ mod tests {
             .await
             .unwrap();
 
-        // Reset with L1 origin in the gap (150) and L2 target between entries (1500).
         let reset = l2_block_info(0xDD, 1500, 0x02, 150);
         db.safe_head_reset(reset).await.unwrap();
 
-        // Entry at L1=100 is untouched.
         let resp = db.safe_head_at_l1(100).await.unwrap();
         assert_eq!(resp.safe_head.number, 1000);
 
-        // Synthetic anchor at L1=150 (the reset's stated origin).
         let resp = db.safe_head_at_l1(150).await.unwrap();
         assert_eq!(resp.l1_block.number, 150);
         assert_eq!(resp.safe_head.number, 1500);
         assert_eq!(resp.safe_head.hash, B256::from([0xDD; 32]));
 
-        // Querying L1=200 (between anchor and deleted entry) resolves to L1=150.
         let resp = db.safe_head_at_l1(200).await.unwrap();
         assert_eq!(resp.l1_block.number, 150);
         assert_eq!(resp.safe_head.number, 1500);
 
-        // L1=300 was deleted; queries resolve to the L1=150 anchor.
         let resp = db.safe_head_at_l1(300).await.unwrap();
         assert_eq!(resp.l1_block.number, 150);
         assert_eq!(resp.safe_head.number, 1500);
@@ -474,9 +444,8 @@ mod tests {
             db.safe_head_updated(l2_block_info(0xBB, 200, 0x11, 100), block_info(0x11, 100))
                 .await
                 .unwrap();
-        } // db and its redb Database are dropped here
+        }
 
-        // Reopen and verify the entry is still present.
         let db = SafeDB::open(&path).unwrap();
         let resp = db.safe_head_at_l1(100).await.unwrap();
         assert_eq!(resp.l1_block.number, 100);

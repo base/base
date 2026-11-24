@@ -29,7 +29,6 @@ pub async fn tracex_subscription<N, Pool>(
     debug!(target: "tracex", "Starting transaction tracking subscription");
     let mut tracker = Tracker::new_with_node_role(enable_logs, node_role);
 
-    // Subscribe to events from the mempool.
     let mut all_events_stream = pool.all_transactions_event_listener();
     let mut canonical_stream = canonical_stream;
 
@@ -40,7 +39,6 @@ pub async fn tracex_subscription<N, Pool>(
                 tracker.handle_event(full_event, info);
             },
 
-            // Use canonical state notifications to track time to inclusion.
             Some(Ok(notification)) = canonical_stream.next() => {
                 let received_at = Instant::now();
                 tracker.handle_canon_state_notification(notification, received_at);

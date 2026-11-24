@@ -11,7 +11,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# reth
 reth-cli.workspace = true
 reth-tasks.workspace = true
 reth-discv4.workspace = true
@@ -35,7 +34,6 @@ reth-ethereum-forks.workspace = true
 reth-rpc-server-types.workspace = true
 reth-db = { workspace = true, features = ["mdbx"] }
 
-# op-reth
 base-metering.workspace = true
 base-reth-cli.workspace = true
 base-cli-utils.workspace = true
@@ -59,7 +57,6 @@ base-execution-payload-builder.workspace = true
 base-execution-base-tx-rpc-node.workspace = true
 base-upgrade-signal = { workspace = true, features = ["metrics"] }
 
-# misc
 tar.workspace = true
 url.workspace = true
 zstd.workspace = true
@@ -80,7 +77,6 @@ clap = { workspace = true, features = ["derive", "env"] }
 reqwest = { workspace = true, features = ["json", "stream"] }
 tokio = { workspace = true, features = ["macros", "time", "sync"] }
 
-# reth test-vectors
 proptest = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
@@ -103,7 +99,6 @@ harness = false
 [features]
 default = []
 
-# Opentelemetry feature to activate tracing and logs export
 otlp = [ "reth-node-core/otlp", "reth-tracing/otlp" ]
 otlp-logs = [ "reth-node-core/otlp-logs", "reth-tracing/otlp-logs" ]
 

@@ -32,10 +32,6 @@ use futures::Stream;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-// ---------------------------------------------------------------------------
-// Mock types
-// ---------------------------------------------------------------------------
-
 type BoxedBlockStream = Pin<Box<dyn Stream<Item = BlockInfo> + Unpin + Send>>;
 
 /// A minimal [`L1BlockFetcher`] that returns configurable blocks.
@@ -109,10 +105,6 @@ fn block_at(number: u64) -> BlockInfo {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 /// End-to-end test: the L1 watcher updates the shared atomic, and the
 /// `ConfDepthProvider` reads it to block the pipeline from advancing past
 /// `l1_head - conf_depth`.
@@ -125,16 +117,13 @@ async fn l1_watcher_and_conf_depth_provider_end_to_end() {
     let conf_depth: u64 = 4;
     let l1_head_number: L1HeadNumber = Arc::new(AtomicU64::new(0));
 
-    // 1. Create blocks for the L1 watcher to fetch (delayed blocks).
     let blocks: Vec<BlockInfo> = (90..=100).map(block_at).collect();
     let fetcher = MockL1Fetcher::with_blocks(blocks.clone());
 
-    // 2. Create the L1 watcher actor.
     let derivation_client = RecordingDerivationClient::default();
     let (l1_head_tx, _l1_head_rx) = watch::channel(None);
     let cancel = CancellationToken::new();
 
-    // Stream the head at block 100.
     let head_stream: BoxedBlockStream = Box::pin(futures::stream::iter(vec![block_at(100)]));
     let safe_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
     let finalized_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
@@ -155,15 +144,9 @@ async fn l1_watcher_and_conf_depth_provider_end_to_end() {
         Arc::clone(&l1_head_number),
     );
 
-    // Run the actor to completion (stream ends).
     let _ = actor.start(()).await;
 
-    // 3. Verify: the shared atomic holds the real L1 head (100).
     assert_eq!(l1_head_number.load(Ordering::Relaxed), 100);
-
-    // 4. Now simulate what the derivation pipeline does: try to fetch L1
-    //    blocks via the ConfDepthProvider. Blocks beyond head - conf_depth
-    //    should be gated.
 
     // Use a dummy inner provider — the conf depth check happens BEFORE the
     // inner call, so it won't be reached for gated blocks.
@@ -173,13 +156,11 @@ async fn l1_watcher_and_conf_depth_provider_end_to_end() {
     );
     let mut provider = ConfDepthProvider::new(dummy_inner, Arc::clone(&l1_head_number), conf_depth);
 
-    // Block 97: 97 + 4 = 101 > 100 → GATED (BlockNotFound, maps to Temporary).
     let err = provider.block_info_by_number(97).await.unwrap_err();
     assert!(
         matches!(err, AlloyChainProviderError::BlockNotFound(_)),
         "block 97 should be gated (97 + 4 > 100)"
     );
-    // Verify it maps to a Temporary pipeline error (pipeline yields, doesn't reset).
     let pipeline_err: PipelineErrorKind = err.into();
     assert!(
         matches!(pipeline_err, PipelineErrorKind::Temporary(_)),
@@ -206,7 +187,6 @@ async fn zero_conf_depth_does_not_gate_any_blocks() {
     );
     let mut provider = ConfDepthProvider::new(dummy_inner, l1_head_number, 0);
 
-    // With conf_depth=0, even blocks at the head should not be gated.
     let err = provider.block_info_by_number(200).await.unwrap_err();
     assert!(
         !matches!(err, AlloyChainProviderError::BlockNotFound(_)),
@@ -221,7 +201,6 @@ async fn l1_head_atomic_holds_real_head_not_delayed() {
     let conf_depth: u64 = 10;
     let l1_head_number: L1HeadNumber = Arc::new(AtomicU64::new(0));
 
-    // The fetcher needs to return blocks for delayed lookups.
     let blocks: Vec<BlockInfo> = (0..=50).map(block_at).collect();
     let fetcher = MockL1Fetcher::with_blocks(blocks);
 
@@ -229,7 +208,6 @@ async fn l1_head_atomic_holds_real_head_not_delayed() {
     let (l1_head_tx, _) = watch::channel(None);
     let cancel = CancellationToken::new();
 
-    // Stream multiple heads.
     let head_stream: BoxedBlockStream =
         Box::pin(futures::stream::iter(vec![block_at(20), block_at(30), block_at(50)]));
     let safe_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
@@ -253,10 +231,8 @@ async fn l1_head_atomic_holds_real_head_not_delayed() {
 
     let _ = actor.start(()).await;
 
-    // The atomic should hold the REAL last head (50), not a delayed value (40).
     assert_eq!(l1_head_number.load(Ordering::Relaxed), 50);
 
-    // Meanwhile, derivation should have received delayed heads.
     let heads = derivation_client.heads.lock().unwrap().clone();
     assert_eq!(heads.len(), 3, "all three heads should have been forwarded to derivation");
     assert_eq!(
