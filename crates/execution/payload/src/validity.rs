@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::{
     Address, TxHash, U256,
-    map::{B256Map, B256Set, HashMap, U256Map},
+    map::{AddressMap, B256Map, B256Set, HashMap, U256Map, U256Set},
 };
 use base_execution_txpool::{
     PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
@@ -117,6 +117,7 @@ impl ValidityPredicateEvaluation {
 #[derive(Debug)]
 pub struct ParkedPredicateIndex<T> {
     blockers: HashMap<ValidityPredicateKey, PredicateBucket>,
+    storage_slots: AddressMap<U256Set>,
     transactions: B256Map<ParkedTransaction<T>>,
     ordered_threshold: usize,
 }
@@ -163,6 +164,7 @@ impl<T> ParkedPredicateIndex<T> {
     pub fn new(ordered_threshold: usize) -> Self {
         Self {
             blockers: HashMap::default(),
+            storage_slots: AddressMap::default(),
             transactions: B256Map::default(),
             ordered_threshold: ordered_threshold.max(1),
         }
@@ -327,6 +329,9 @@ impl<T> ParkedPredicateIndex<T> {
         let entry = self.transactions.get(&hash).expect("inserted transaction must exist");
         let blocker = entry.blocker;
         let predicate = &entry.predicate;
+        if let ValidityPredicateKey::Storage(address, slot) = blocker {
+            self.storage_slots.entry(address).or_default().insert(slot);
+        }
         let bucket = self
             .blockers
             .entry(blocker)
@@ -352,8 +357,17 @@ impl<T> ParkedPredicateIndex<T> {
     ) {
         let Some(bucket) = self.blockers.get_mut(&blocker) else { return };
         bucket.remove(hash, predicate);
-        if bucket.is_empty() {
-            self.blockers.remove(&blocker);
+        if !bucket.is_empty() {
+            return;
+        }
+        self.blockers.remove(&blocker);
+        if let ValidityPredicateKey::Storage(address, slot) = blocker
+            && let Some(slots) = self.storage_slots.get_mut(&address)
+        {
+            slots.remove(&slot);
+            if slots.is_empty() {
+                self.storage_slots.remove(&address);
+            }
         }
     }
 
@@ -381,12 +395,13 @@ impl<T> ParkedPredicateIndex<T> {
             );
         }
         if change.storage_destroyed {
-            for (key, bucket) in &self.blockers {
-                if matches!(key, ValidityPredicateKey::Storage(key_address, _) if *key_address == address)
-                {
-                    bucket.extend_all(&mut effects.affected_transactions);
-                    effects.woken_buckets += 1;
-                }
+            for bucket in
+                self.storage_slots.get(&address).into_iter().flatten().filter_map(|slot| {
+                    self.blockers.get(&ValidityPredicateKey::Storage(address, *slot))
+                })
+            {
+                bucket.extend_all(&mut effects.affected_transactions);
+                effects.woken_buckets += 1;
             }
         } else {
             for (slot, old, new) in changed_slots {
@@ -705,9 +720,10 @@ mod tests {
         PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
     };
     use revm::{
-        database::InMemoryDB,
+        database::{AccountStatus, InMemoryDB, TransitionAccount, TransitionState},
         state::{Account, AccountInfo, EvmState, EvmStorageSlot},
     };
+    use rstest::rstest;
 
     use super::{
         ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation,
@@ -1262,18 +1278,52 @@ mod tests {
         assert!(index.is_empty());
     }
 
-    #[test]
-    fn selfdestruct_conservatively_wakes_ordered_storage_buckets() {
-        let address = Address::with_last_byte(1);
-        let hash = B256::with_last_byte(1);
-        let mut index = ParkedPredicateIndex::new(1);
-        index.park(hash, (), storage(address, U256::MAX, ValidityOperator::GreaterThan, 10));
-        let mut account = Account::default();
-        account.mark_selfdestruct();
-        let effects = index.affected_by_state(&EvmState::from_iter([(address, account)]));
-        assert_eq!(
-            effects,
-            StateChangeEffects { affected_transactions: vec![hash], woken_buckets: 1 }
-        );
+    #[rstest]
+    #[case::state(None)]
+    #[case::destroyed_storage(Some((true, AccountStatus::Changed)))]
+    #[case::destroyed_status(Some((false, AccountStatus::Destroyed)))]
+    fn destroyed_accounts_wake_only_their_own_storage_blockers(
+        #[values(1, 32)] threshold: usize,
+        #[case] transition: Option<(bool, AccountStatus)>,
+    ) {
+        let destroyed = Address::with_last_byte(1);
+        let other = Address::with_last_byte(2);
+        let hashes = |bytes: &[u8]| bytes.iter().copied().map(B256::with_last_byte).collect();
+        let destroy = |index: &ParkedPredicateIndex<()>| -> B256Set {
+            let effects = match transition {
+                None => {
+                    let mut account = Account::default();
+                    account.mark_selfdestruct();
+                    index.affected_by_state(&EvmState::from_iter([(destroyed, account)]))
+                }
+                Some((storage_was_destroyed, status)) => {
+                    index.affected_by_transitions(&TransitionState::single(
+                        destroyed,
+                        TransitionAccount { status, storage_was_destroyed, ..Default::default() },
+                    ))
+                }
+            };
+            effects.affected_transactions.into_iter().collect()
+        };
+        let mut index = ParkedPredicateIndex::new(threshold);
+        for (byte, (address, slot)) in
+            (0..).zip([(destroyed, 0), (destroyed, 0), (destroyed, 1), (other, 0)])
+        {
+            let predicate = ValidityPredicate::Storage {
+                address,
+                slot: U256::from(slot),
+                mask: U256::MAX,
+                op: ValidityOperator::GreaterThan,
+                value: U256::from(10),
+            };
+            index.park(B256::with_last_byte(byte), (), predicate);
+        }
+        index.park(B256::with_last_byte(4), (), balance(destroyed, ValidityOperator::Equal, 1));
+        assert_eq!(destroy(&index), hashes(&[0, 1, 2]));
+        index.remove(B256::with_last_byte(0));
+        assert!(index.reindex(B256::with_last_byte(2), balance(other, ValidityOperator::Equal, 1)));
+        assert_eq!(destroy(&index), hashes(&[1]));
+        index.retain(|_| false);
+        assert!(index.storage_slots.is_empty());
     }
 }
