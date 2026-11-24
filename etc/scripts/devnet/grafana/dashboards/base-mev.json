@@ -1808,8 +1808,8 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "sum(rate(reth_base_builder_predicate_bucket_depth_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_bucket_depth_count{job=\"l2_builder\"}[$window]))",
-          "legendFormat": "sampled bucket depth · mean",
+          "expr": "sum(rate(reth_base_builder_predicate_bucket_max_depth_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_bucket_max_depth_count{job=\"l2_builder\"}[$window]))",
+          "legendFormat": "max bucket depth · mean/build",
           "range": true,
           "refId": "B"
         },

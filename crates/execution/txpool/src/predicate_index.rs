@@ -317,9 +317,9 @@ impl<T> ParkedPredicateIndex<T> {
         removed.len()
     }
 
-    /// Returns the number of parked transactions blocked on each distinct index bucket.
-    pub fn bucket_depths(&self) -> impl Iterator<Item = usize> + '_ {
-        self.blockers.values().map(PredicateBucket::len)
+    /// Returns the number of distinct index buckets and the depth of the deepest one.
+    pub fn bucket_stats(&self) -> (usize, usize) {
+        (self.blockers.len(), self.blockers.values().map(PredicateBucket::len).max().unwrap_or(0))
     }
 
     fn insert_into_bucket(&mut self, hash: TxHash) {
@@ -1220,7 +1220,7 @@ mod tests {
                 value: U256::MAX,
             },
         );
-        assert_eq!(index.bucket_depths().collect::<Vec<_>>(), vec![1]);
+        assert_eq!(index.bucket_stats(), (1, 1));
         assert!(
             index
                 .affected_by_state(&changed_balance(address, 0, 1))
@@ -1232,17 +1232,11 @@ mod tests {
     }
 
     #[test]
-    fn ordered_bucket_depth_tracks_park_reindex_and_remove() {
+    fn ordered_bucket_stats_track_park_reindex_and_remove() {
         let address = Address::with_last_byte(1);
         let other_address = Address::with_last_byte(2);
         let hashes: Vec<B256> = (1..=6).map(B256::with_last_byte).collect();
         let mut index = ParkedPredicateIndex::new(1);
-        let depths = |index: &ParkedPredicateIndex<()>| {
-            let mut depths = index.bucket_depths().collect::<Vec<_>>();
-            depths.sort_unstable();
-            depths
-        };
-
         for (hash, op, value) in [
             (hashes[0], ValidityOperator::GreaterThanOrEqual, 10),
             (hashes[1], ValidityOperator::GreaterThanOrEqual, 10),
@@ -1262,25 +1256,25 @@ mod tests {
                 value: U256::MAX,
             },
         );
-        assert_eq!(depths(&index), vec![6]);
+        assert_eq!(index.bucket_stats(), (1, 6));
 
         assert!(index.reindex(hashes[0], balance(address, ValidityOperator::Equal, 50)));
         assert!(index.reindex(hashes[3], balance(address, ValidityOperator::Equal, 30)));
-        assert_eq!(depths(&index), vec![6]);
+        assert_eq!(index.bucket_stats(), (1, 6));
 
         assert!(index.reindex(hashes[1], balance(other_address, ValidityOperator::Equal, 1)));
-        assert_eq!(depths(&index), vec![1, 5]);
+        assert_eq!(index.bucket_stats(), (2, 5));
 
         for hash in &hashes[2..] {
             assert_eq!(index.remove(*hash), Some(()));
         }
         assert_eq!(index.remove(hashes[2]), None);
-        assert_eq!(depths(&index), vec![1, 1]);
+        assert_eq!(index.bucket_stats(), (2, 1));
 
         assert_eq!(index.remove(hashes[0]), Some(()));
         assert_eq!(index.remove(hashes[1]), Some(()));
         assert!(index.is_empty());
-        assert_eq!(depths(&index), Vec::<usize>::new());
+        assert_eq!(index.bucket_stats(), (0, 0));
     }
 
     #[rstest]
