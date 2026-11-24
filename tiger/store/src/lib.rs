@@ -36,3 +36,6 @@ pub use rocks::{BlockList, History, Rocks, RocksBatch, RocksError, RocksTable, S
 
 mod datadir;
 pub use datadir::{Datadir, STAGES, STORAGE_SETTINGS, STORAGE_SETTINGS_KEY, StoreError, WriteTxn, put_scale_bytes, scale_bytes};
+
+mod block_codec;
+pub use block_codec::{ReceiptCodec, TxCodec};

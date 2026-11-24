@@ -1220,8 +1220,10 @@ name = "base-tiger-store"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-primitives",
  "alloy-trie",
+ "base-common-consensus",
  "cc",
  "rocksdb",
  "zstd",

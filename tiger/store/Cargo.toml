@@ -17,6 +17,10 @@ workspace = true
 alloy-trie = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std"] }
+
+# base
+base-common-consensus = { workspace = true, features = ["std"] }
 
 # storage
 zstd.workspace = true

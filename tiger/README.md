@@ -56,6 +56,7 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `cc` (build) | Compiles the vendored libmdbx C sources. |
 | `rocksdb` | base-reth storage v2 keeps five tables (history indices, transaction hash numbers, block access lists) in RocksDB; tiger must read and write the same files. Features `lz4`, `zstd` (reth's column family compression), `bindgen-runtime`. |
 | `zstd` | base-reth's compact transaction and receipt encodings in static files are zstd-compressed with reth's dictionaries. |
+| `base-common-consensus` (store) | The Base transaction and receipt types the static-file codecs encode. |
 | `alloy-sol-types` | Solidity ABI encoding and decoding of the native precompile interfaces (`sol!`). |
 | `syn`, `quote`, `proc-macro2` | Parsing and generating code in `base-tiger-precompile-macros`. |
 | `k256` (dev) | Signing EIP-2612 permits in the B-20 permit tests (already in the tree through `alloy-primitives/k256`). |
@@ -70,6 +71,9 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `store/src/mdbx.rs` | simplified from reth `crates/storage/libmdbx-rs/src/` (Apache-2.0) | same | Environment flags as reth's `DatabaseEnv::open`, without `MDBX_WRITEMAP`. |
 | `store/src/static_files.rs` | hand-written after reth `crates/storage/nippy-jar/src/` and `crates/static-file/types/src/` (MIT/Apache-2.0) | same | Same file formats (`.conf` bincode, `.off`, `.csoff`), commit order and heal rules; LZ4 writes literal-only blocks. |
 | `store/src/rocks.rs` | options from reth `crates/storage/provider/src/providers/rocksdb/provider.rs`; roaring treemap format of the `roaring` crate 0.11 as reth's `IntegerList` uses it | same | Hand-written roaring serializer (array and bitmap containers) and history sharding as reth's. |
+| `store/src/block_codec.rs` | hand-written after reth-codecs 0.8.2 (`alloy/transaction/*`, `alloy/{signature,access_list,authorization_list,log}.rs`, the `Compact`/`CompactZstd` derives) and base/base `crates/common/consensus/src/reth_compat.rs` (MIT/Apache-2.0) | reth-codecs 0.8.2 at base/reth `2b20e42` | Byte-identical against a base-reth datadir; Base native (0x7b) transactions not yet. |
+| `store/zstd/*_dictionary.bin` | `reth-zstd-compressors` 0.8.2 (MIT OR Apache-2.0) | same | Unchanged. |
+| `store/src/codec.rs` (header) | reth-codecs 0.8.2 `alloy/header.rs` | same | Hand-written, byte-identical against a base-reth datadir. |
 | `store/src/datadir.rs` | commit order and heal after reth's static file and RocksDB consistency checks | same | Hand-written. |
 | `store/build.rs` | reth `crates/storage/libmdbx-rs/mdbx-sys/build.rs` | same | Without bindgen. |
 | `precompiles/` | base/base `crates/common/precompiles/` (MIT) | base/base `3001b65c30e2ebb4e28bb19242ceade6bc604e4b` | Without revm adapters, metrics, observers and Ethereum precompile caps; dispatch through `NativePrecompiles::run`. |
