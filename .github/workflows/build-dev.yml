@@ -1,0 +1,214 @@
+name: Build Dev
+run-name: Build Dev ${{ inputs.ref }}
+
+# Builds Linux binaries for development and testing.
+# The commit is tagged dev-<first 12 hex digits of the SHA> and its
+# binaries are published to a GitHub prerelease of the same name.
+#
+# The branch is unreviewed code, and cargo runs its build scripts and proc-macros. The build job
+# therefore has a read-only token, persists no credentials, and uses no OIDC, attestations,
+# signing keys or caches. Only the publish job can write, and it never runs branch code.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch name or full commit SHA in this repository'
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve commit
+        id: resolve
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+            sha="$REF"
+          elif git check-ref-format --branch "$REF" > /dev/null 2>&1 && git rev-parse --verify --quiet "refs/remotes/origin/$REF^{commit}" > /dev/null; then
+            sha=$(git rev-parse "refs/remotes/origin/$REF^{commit}")
+          else
+            echo "::error::'$REF' is not a branch in this repository or a full 40-character commit SHA"
+            exit 1
+          fi
+          # Fork commits can be fetched by SHA through the repository network, so only build
+          # commits that a branch in this repository contains.
+          if [[ -z "$(git branch --remotes --contains "$sha" 2>/dev/null)" ]]; then
+            echo "::error::$sha is not on any branch in this repository"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "tag=dev-${sha:0:12}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [resolve]
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Ubuntu 22.04 links against glibc 2.35, so the binaries run on 22.04 and newer.
+        target:
+          - triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - triple: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+        binary:
+          - base
+          - base-reth-node
+          - base-consensus
+          - basectl
+          - sidecrush
+    runs-on: ${{ matrix.target.runner }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Build binary
+        env:
+          BIN: ${{ matrix.binary }}
+          TRIPLE: ${{ matrix.target.triple }}
+        run: |
+          set -euo pipefail
+          if [[ "$TRIPLE" == aarch64-unknown-linux-gnu ]]; then
+            case "$BIN" in
+              base|base-consensus|basectl)
+                cargo rustc --locked --profile maxperf -p "$BIN" --bin "$BIN" -- -C link-arg=-lblst
+                exit
+            esac
+          fi
+          cargo build --locked --profile maxperf --bin "$BIN"
+
+      - name: Package binary
+        env:
+          BIN: ${{ matrix.binary }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          TRIPLE: ${{ matrix.target.triple }}
+        run: |
+          set -euo pipefail
+          archive="${BIN}-${TAG}-${TRIPLE}.tar.gz"
+          tar -czf "$archive" -C target/maxperf "$BIN"
+          sha256sum "$archive" > "${archive}.sha256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dev-${{ matrix.binary }}-${{ matrix.target.triple }}
+          path: |
+            *.tar.gz
+            *.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  # Runs no branch code: it only checks the artifacts, tags the commit and uploads them.
+  publish:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: build-dev-${{ needs.resolve.outputs.tag }}
+      cancel-in-progress: false
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - name: Download artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+          pattern: dev-*
+          merge-multiple: true
+
+      - name: Check artifacts
+        working-directory: artifacts
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in *; do
+            if [[ ! "$f" =~ ^[a-z-]+-${TAG}-(x86_64|aarch64)-unknown-linux-gnu\.tar\.gz(\.sha256)?$ ]]; then
+              echo "::error::unexpected artifact $f"
+              exit 1
+            fi
+          done
+          sha256sum -c -- *.sha256
+
+      - name: Create or reuse tag and prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if existing=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null); then
+            commit=$(gh api "repos/$GH_REPO/commits/$existing" --jq .sha)
+            if [[ "$commit" != "$SHA" ]]; then
+              echo "::error::Tag $TAG already points at $commit, not $SHA"
+              exit 1
+            fi
+          fi
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            # --target creates the lightweight tag at the commit when it does not exist yet.
+            gh release create "$TAG" --title "$TAG" --target "$SHA" --prerelease --latest=false \
+              --notes "Unsigned dev build of $SHA for development environments. Not a supported release." \
+              || gh release view "$TAG" > /dev/null
+          fi
+
+      - name: Upload binaries
+        working-directory: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload --clobber "$TAG" -- *.tar.gz *.tar.gz.sha256
+          {
+            echo "## Dev build"
+            echo ""
+            echo "**Commit**: \`${{ needs.resolve.outputs.sha }}\`"
+            echo "**Release**: https://github.com/$GH_REPO/releases/tag/$TAG"
+          } >> "$GITHUB_STEP_SUMMARY"
