@@ -11,7 +11,7 @@ repository = "https://github.com/base/base"
 # dependency is here and SCOPE.md for what the client does.
 [workspace]
 resolver = "2"
-members = ["evm", "net", "node", "store", "trie"]
+members = ["evm", "net", "node", "precompiles", "precompile-storage", "precompile-macros", "store", "trie"]
 
 [workspace.dependencies]
 # tiger
@@ -19,6 +19,9 @@ base-tiger-evm = { path = "evm" }
 base-tiger-store = { path = "store" }
 base-tiger-trie = { path = "trie" }
 base-tiger-net = { path = "net" }
+base-tiger-precompiles = { path = "precompiles" }
+base-tiger-precompile-macros = { path = "precompile-macros" }
+base-tiger-precompile-storage = { path = "precompile-storage" }
 
 # base: engine-neutral Base types whose dependency trees hold no reth or revm.
 base-common-flz = { path = "../crates/common/flz", default-features = false }
@@ -35,6 +38,7 @@ alloy-rlp = { version = "0.3.16", default-features = false }
 alloy-trie = { version = "0.9.8", default-features = false }
 alloy-eips = { version = "2.5.0", default-features = false }
 alloy-consensus = { version = "2.5.0", default-features = false }
+alloy-sol-types = { version = "1.6.1", default-features = false, features = ["std"] }
 alloy-primitives = { version = "1.6.1", default-features = false }
 
 # build
@@ -48,6 +52,16 @@ hmac = { version = "0.13.0", default-features = false }
 aes-gcm = { version = "0.10.3", default-features = false }
 getrandom = { version = "0.3.4", default-features = false }
 secp256k1 = { version = "0.31.1", default-features = false }
+
+# proc macros (base-tiger-precompile-macros only)
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
+
+# tests only
+k256 = { version = "0.13", features = ["ecdsa"] }
+rstest = "0.26.1"
+proptest = "1.10.0"
 
 # serialization
 serde = { version = "1.0.228", default-features = false }

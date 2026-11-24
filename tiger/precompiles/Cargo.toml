@@ -1,0 +1,73 @@
+[package]
+name = "base-tiger-precompiles"
+description = "Base native precompiles (B-20 tokens, factory, policy and activation registries, transaction context, nonce manager), ported from base-common-precompiles for the tiger client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# tiger
+base-tiger-precompile-macros.workspace = true
+base-tiger-precompile-storage.workspace = true
+
+# base
+base-common-genesis.workspace = true
+base-common-base-tx.workspace = true
+
+# alloy
+alloy-sol-types.workspace = true
+alloy-primitives = { workspace = true, features = ["std", "k256"] }
+
+[dev-dependencies]
+k256.workspace = true
+rstest.workspace = true
+base-tiger-precompile-storage = { workspace = true, features = ["test-utils"] }
+
+[features]
+test-utils = ["base-tiger-precompile-storage/test-utils"]
+
+[[test]]
+name = "b20_asset_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_asset_v2_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_asset_v3_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_factory_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_policy_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_policy_v2_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_policy_v3_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_stablecoin_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_stablecoin_v2_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_stablecoin_v3_golden"
+required-features = ["test-utils"]

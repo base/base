@@ -21,6 +21,9 @@ cargo test
 | `evm/` | `base-tiger-evm` | Base block execution on evm2: fork schedule, transactions, fees, precompiles, system calls, upgrade transitions. |
 | `store/` | `base-tiger-store` | Storage in base-reth's datadir format: MDBX (vendored libmdbx), static files, RocksDB indices; `TIGER_FAULT` crash injection. |
 | `trie/` | `base-tiger-trie` | Merkle Patricia trie, state roots, proofs, and the state database over the store. |
+| `precompiles/` | `base-tiger-precompiles` | Base native precompiles (activation and policy registries, B-20 tokens and factory, transaction context, nonce manager), ported from `base-common-precompiles`. |
+| `precompile-storage/` | `base-tiger-precompile-storage` | Storage types, the `PrecompileStorageProvider` boundary, and the fixed gas schedule the native precompiles use. |
+| `precompile-macros/` | `base-tiger-precompile-macros` | `#[contract]` and storage-layout derive macros for the native precompiles. |
 | `node/` | `base-tiger` | The `tiger` binary: node, Engine API, JSON-RPC, and the differential fuzz adapter. |
 
 ## Dependencies
@@ -39,6 +42,10 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `base-common-flz` | FastLZ size estimate for Fjord L1 fees and the Jovian DA footprint. |
 | `base-common-base-tx` | Intrinsic gas schedule shared with the Base transaction type. |
 | `cc` (build) | Compiles the vendored libmdbx C sources. |
+| `alloy-sol-types` | Solidity ABI encoding and decoding of the native precompile interfaces (`sol!`). |
+| `syn`, `quote`, `proc-macro2` | Parsing and generating code in `base-tiger-precompile-macros`. |
+| `k256` (dev) | Signing EIP-2612 permits in the B-20 permit tests (already in the tree through `alloy-primitives/k256`). |
+| `rstest`, `proptest` (dev) | Parameterized and property tests carried over unchanged from the base/base precompile crates. |
 
 ## Code copied from other projects
 

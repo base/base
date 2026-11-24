@@ -1,0 +1,1170 @@
+//! Version 1 of the stablecoin B-20 precompile logic, activated at Beryl.
+
+use alloc::{
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+
+use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
+use alloy_sol_types::{SolEvent, SolValue};
+use base_tiger_precompile_storage::{BasePrecompileError, Result};
+
+use crate::{
+    B20_MAX_SUPPLY_CAP, B20Guards, B20PausableFeature, B20PolicyType, B20StablecoinToken,
+    B20TokenRole, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Stablecoin,
+    StablecoinAccounting, Token,
+};
+
+/// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
+const DOMAIN_TYPEHASH: B256 =
+    b256!("8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f");
+
+/// EIP-712 domain version string pinned to `"1"`.
+const VERSION: &[u8] = b"1";
+
+/// First stablecoin B-20 implementation. Frozen as of its activation at Beryl.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct StablecoinV1;
+
+impl StablecoinV1 {
+    const PAUSABLE_FEATURES: &[IB20::PausableFeature] = &[
+        IB20::PausableFeature::TRANSFER,
+        IB20::PausableFeature::MINT,
+        IB20::PausableFeature::BURN,
+    ];
+
+    /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
+    fn transfer_inner<S: StablecoinAccounting, A: PolicyAccounting>(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        from: Address,
+        to: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        if from == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
+        }
+        if !privileged {
+            B20Guards::ensure_policy_type(token, B20PolicyType::TransferSender, from)?;
+            B20Guards::ensure_policy_type(token, B20PolicyType::TransferReceiver, to)?;
+        }
+        let from_balance = token.accounting().balance_of(from)?;
+        if from_balance < amount {
+            return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
+                sender: from,
+                balance: from_balance,
+                needed: amount,
+            }));
+        }
+        let new_from_balance =
+            from_balance.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        token.accounting_mut().set_balance(from, new_from_balance)?;
+        let to_balance = token.accounting().balance_of(to)?;
+        let new_to_balance =
+            to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        token.accounting_mut().set_balance(to, new_to_balance)?;
+        token.accounting_mut().emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
+    }
+
+    /// Supply-reducing core of the burn operations, without pause or role checks.
+    fn burn_inner<S: StablecoinAccounting, A: PolicyAccounting>(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        from: Address,
+        amount: U256,
+    ) -> Result<()> {
+        let balance = token.accounting().balance_of(from)?;
+        if balance < amount {
+            return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
+                sender: from,
+                balance,
+                needed: amount,
+            }));
+        }
+        token.accounting_mut().set_balance(from, balance - amount)?;
+        let supply = token.accounting().total_supply()?;
+        let new_supply =
+            supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        token.accounting_mut().set_total_supply(new_supply)?;
+        token
+            .accounting_mut()
+            .emit_event(IB20::Transfer { from, to: Address::ZERO, amount }.encode_log_data())
+    }
+
+    /// Revokes `role` from `account` without checking caller authorization.
+    fn revoke_role_unchecked<S: StablecoinAccounting, A: PolicyAccounting>(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> Result<()> {
+        if !token.accounting().has_role(role, account)? {
+            return Ok(());
+        }
+        token.accounting_mut().set_role(role, account, false)?;
+        if role == B20TokenRole::DefaultAdmin.id() {
+            let current = token.accounting().role_member_count(role)?;
+            let next =
+                current.checked_sub(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+            token.accounting_mut().set_role_member_count(role, next)?;
+        }
+        token
+            .accounting_mut()
+            .emit_event(IB20::RoleRevoked { role, account, sender }.encode_log_data())
+    }
+
+    /// Ensures role-admin mutations are still reachable.
+    fn ensure_role_admin_mutations_available<S: StablecoinAccounting, A: PolicyAccounting>(
+        &self,
+        token: &B20StablecoinToken<S, A>,
+        caller: Address,
+    ) -> Result<()> {
+        let admin_role = B20TokenRole::DefaultAdmin.id();
+        if token.accounting().role_member_count(admin_role)? == U256::ZERO {
+            return Err(BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: caller,
+                neededRole: admin_role,
+            }));
+        }
+        Ok(())
+    }
+
+    /// Ensures `policy_scope` names a built-in B-20 policy slot available on the frozen V1 (Beryl)
+    /// common surface.
+    ///
+    /// The seize scopes (`SEIZE_EXEMPT_POLICY` / `SEIZE_RECEIVER_POLICY`) were introduced at Cobalt
+    /// (V2), so they are rejected here — matching the base-std `v1.0.0` reference. This is what keeps
+    /// the common `updatePolicy` / `policyId` selectors (dialable on V1) from reaching a V2-only
+    /// scope.
+    ///
+    /// The match is exhaustive by design (no `_` arm): every `B20PolicyType` variant is named, so a
+    /// scope added for a future fork fails to compile here until an engineer explicitly places it in
+    /// the supported or rejected arm, reconciling V1 against the base-std `v1.0.0` reference. A
+    /// wildcard would silently reject a newly added scope that should be valid at V1.
+    fn ensure_supported_policy_type(policy_scope: B256) -> Result<()> {
+        match B20PolicyType::from_id(policy_scope) {
+            Some(
+                B20PolicyType::TransferSender
+                | B20PolicyType::TransferReceiver
+                | B20PolicyType::TransferExecutor
+                | B20PolicyType::MintReceiver,
+            ) => Ok(()),
+            // Cobalt (V2)-only scopes, and any unrecognized id, are not part of the frozen V1 surface.
+            Some(B20PolicyType::SeizeExempt | B20PolicyType::SeizeReceiver) | None => {
+                Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
+                    policyScope: policy_scope,
+                }))
+            }
+        }
+    }
+}
+
+impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for StablecoinV1 {
+    fn transfer(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        to: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
+        self.transfer_inner(token, caller, to, amount, privileged)
+    }
+
+    fn transfer_from(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        from: Address,
+        to: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
+        if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        if from == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
+        }
+        let allowance = token.accounting().allowance(from, caller)?;
+        let is_infinite = allowance == U256::MAX;
+        if !is_infinite && allowance < amount {
+            return Err(BasePrecompileError::revert(IB20::InsufficientAllowance {
+                spender: caller,
+                allowance,
+                needed: amount,
+            }));
+        }
+        if !privileged && caller != from {
+            B20Guards::ensure_policy_type(token, B20PolicyType::TransferExecutor, caller)?;
+        }
+        self.transfer_inner(token, from, to, amount, privileged)?;
+        if is_infinite {
+            return Ok(());
+        }
+        token.accounting_mut().set_allowance(from, caller, allowance - amount)
+    }
+
+    fn approve(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        spender: Address,
+        amount: U256,
+    ) -> Result<()> {
+        if caller == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidApprover { approver: caller }));
+        }
+        if spender == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidSpender { spender }));
+        }
+        token.accounting_mut().set_allowance(caller, spender, amount)?;
+        token
+            .accounting_mut()
+            .emit_event(IB20::Approval { owner: caller, spender, amount }.encode_log_data())
+    }
+
+    fn emit_memo(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        memo: B256,
+    ) -> Result<()> {
+        token.accounting_mut().emit_event(IB20::Memo { caller, memo }.encode_log_data())
+    }
+
+    fn mint(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        to: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        B20Guards::ensure_not_paused(token, IB20::PausableFeature::MINT)?;
+        if !privileged {
+            B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
+        }
+        if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        B20Guards::ensure_policy_type(token, B20PolicyType::MintReceiver, to)?;
+        let supply = token.accounting().total_supply()?;
+        let cap = token.accounting().supply_cap()?;
+        let new_supply =
+            supply.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        if new_supply > cap {
+            return Err(BasePrecompileError::revert(IB20::SupplyCapExceeded {
+                cap,
+                attempted: new_supply,
+            }));
+        }
+        token.accounting_mut().set_total_supply(new_supply)?;
+        let to_balance = token.accounting().balance_of(to)?;
+        let new_balance =
+            to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        token.accounting_mut().set_balance(to, new_balance)?;
+        token
+            .accounting_mut()
+            .emit_event(IB20::Transfer { from: Address::ZERO, to, amount }.encode_log_data())
+    }
+
+    fn burn(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        amount: U256,
+    ) -> Result<()> {
+        // Self-burn: `from == caller`, never factory-privileged.
+        B20Guards::ensure_not_paused(token, IB20::PausableFeature::BURN)?;
+        B20Guards::ensure_token_role(token, caller, B20TokenRole::Burn)?;
+        self.burn_inner(token, caller, amount)
+    }
+
+    fn burn_blocked(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        from: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        B20Guards::ensure_not_paused(token, IB20::PausableFeature::BURN)?;
+        if !privileged {
+            B20Guards::ensure_token_role(token, caller, B20TokenRole::BurnBlocked)?;
+        }
+        B20Guards::ensure_blocked(token, from)?;
+        self.burn_inner(token, from, amount)?;
+        token
+            .accounting_mut()
+            .emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
+    }
+
+    fn pause(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        features: Vec<IB20::PausableFeature>,
+        privileged: bool,
+    ) -> Result<()> {
+        for feature in &features {
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
+        }
+        if !privileged {
+            B20Guards::ensure_token_role(token, caller, B20TokenRole::Pause)?;
+        }
+        if features.is_empty() {
+            return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
+        }
+        let mut next = token.accounting().paused()?;
+        for feature in &features {
+            next |= B20PausableFeature::mask(*feature);
+        }
+        token.accounting_mut().set_paused(next)?;
+        token
+            .accounting_mut()
+            .emit_event(IB20::Paused { updater: caller, features }.encode_log_data())
+    }
+
+    fn unpause(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        features: Vec<IB20::PausableFeature>,
+        privileged: bool,
+    ) -> Result<()> {
+        for feature in &features {
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
+        }
+        if !privileged {
+            B20Guards::ensure_token_role(token, caller, B20TokenRole::Unpause)?;
+        }
+        if features.is_empty() {
+            return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
+        }
+        let mut next = token.accounting().paused()?;
+        for feature in &features {
+            next &= !B20PausableFeature::mask(*feature);
+        }
+        token.accounting_mut().set_paused(next)?;
+        token
+            .accounting_mut()
+            .emit_event(IB20::Unpaused { updater: caller, features }.encode_log_data())
+    }
+
+    fn update_supply_cap(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        new_cap: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        if !privileged {
+            B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
+        }
+        let supply = token.accounting().total_supply()?;
+        if new_cap < supply || new_cap > B20_MAX_SUPPLY_CAP {
+            return Err(BasePrecompileError::revert(IB20::InvalidSupplyCap {
+                currentSupply: supply,
+                proposedCap: new_cap,
+            }));
+        }
+        let old = token.accounting().supply_cap()?;
+        token.accounting_mut().set_supply_cap(new_cap)?;
+        token.accounting_mut().emit_event(
+            IB20::SupplyCapUpdated { updater: caller, oldSupplyCap: old, newSupplyCap: new_cap }
+                .encode_log_data(),
+        )
+    }
+
+    fn update_name(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        name: String,
+        privileged: bool,
+    ) -> Result<()> {
+        if !privileged {
+            B20Guards::ensure_token_role(token, caller, B20TokenRole::Metadata)?;
+        }
+        token.accounting_mut().set_name(name.clone())?;
+        token
+            .accounting_mut()
+            .emit_event(IB20::NameUpdated { updater: caller, newName: name }.encode_log_data())?;
+        token.accounting_mut().emit_event(IB20::EIP712DomainChanged {}.encode_log_data())
+    }
+
+    fn update_symbol(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        symbol: String,
+        privileged: bool,
+    ) -> Result<()> {
+        if !privileged {
+            B20Guards::ensure_token_role(token, caller, B20TokenRole::Metadata)?;
+        }
+        token.accounting_mut().set_symbol(symbol.clone())?;
+        token.accounting_mut().emit_event(
+            IB20::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data(),
+        )
+    }
+
+    fn update_contract_uri(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        uri: String,
+        privileged: bool,
+    ) -> Result<()> {
+        if !privileged {
+            B20Guards::ensure_token_role(token, caller, B20TokenRole::Metadata)?;
+        }
+        token.accounting_mut().set_contract_uri(uri)?;
+        token.accounting_mut().emit_event(IB20::ContractURIUpdated {}.encode_log_data())
+    }
+
+    fn grant_role(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        role: B256,
+        account: Address,
+        privileged: bool,
+    ) -> Result<()> {
+        if role == B20TokenRole::DefaultAdmin.id() || !privileged {
+            self.ensure_role_admin_mutations_available(token, caller)?;
+        }
+        if !privileged {
+            let admin = token.accounting().role_admin(role)?;
+            B20Guards::ensure_role(token, caller, admin)?;
+        }
+        self.grant_role_unchecked(token, role, account, caller)
+    }
+
+    fn grant_role_unchecked(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> Result<()> {
+        if token.accounting().has_role(role, account)? {
+            return Ok(());
+        }
+        token.accounting_mut().set_role(role, account, true)?;
+        if role == B20TokenRole::DefaultAdmin.id() {
+            let current = token.accounting().role_member_count(role)?;
+            let next =
+                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+            token.accounting_mut().set_role_member_count(role, next)?;
+        }
+        token
+            .accounting_mut()
+            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
+    }
+
+    fn revoke_role(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        role: B256,
+        account: Address,
+        privileged: bool,
+    ) -> Result<()> {
+        if !privileged {
+            self.ensure_role_admin_mutations_available(token, caller)?;
+            let admin = token.accounting().role_admin(role)?;
+            B20Guards::ensure_role(token, caller, admin)?;
+        }
+        if role == B20TokenRole::DefaultAdmin.id()
+            && token.accounting().has_role(role, account)?
+            && token.accounting().role_member_count(role)? == U256::ONE
+        {
+            return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
+        }
+        self.revoke_role_unchecked(token, role, account, caller)
+    }
+
+    fn renounce_role(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        role: B256,
+        confirmation: Address,
+    ) -> Result<()> {
+        if confirmation != caller {
+            return Err(BasePrecompileError::revert(IB20::AccessControlBadConfirmation {}));
+        }
+        if role == B20TokenRole::DefaultAdmin.id()
+            && token.accounting().has_role(role, caller)?
+            && token.accounting().role_member_count(role)? == U256::ONE
+        {
+            return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
+        }
+        self.revoke_role_unchecked(token, role, caller, caller)
+    }
+
+    fn renounce_last_admin(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+    ) -> Result<()> {
+        let admin_role = B20TokenRole::DefaultAdmin.id();
+        B20Guards::ensure_role(token, caller, admin_role)?;
+        if token.accounting().role_member_count(admin_role)? != U256::ONE {
+            return Err(BasePrecompileError::revert(IB20::NotSoleAdmin {}));
+        }
+        self.revoke_role_unchecked(token, admin_role, caller, caller)?;
+        token
+            .accounting_mut()
+            .emit_event(IB20::LastAdminRenounced { previousAdmin: caller }.encode_log_data())
+    }
+
+    fn set_role_admin(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        role: B256,
+        new_admin_role: B256,
+        privileged: bool,
+    ) -> Result<()> {
+        let previous_admin_role = token.accounting().role_admin(role)?;
+        if !privileged {
+            self.ensure_role_admin_mutations_available(token, caller)?;
+            B20Guards::ensure_role(token, caller, previous_admin_role)?;
+        }
+        token.accounting_mut().set_role_admin(role, new_admin_role)?;
+        token.accounting_mut().emit_event(
+            IB20::RoleAdminChanged {
+                role,
+                previousAdminRole: previous_admin_role,
+                newAdminRole: new_admin_role,
+            }
+            .encode_log_data(),
+        )
+    }
+
+    fn update_policy(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        caller: Address,
+        policy_scope: B256,
+        new_policy_id: u64,
+        privileged: bool,
+    ) -> Result<()> {
+        if !privileged {
+            B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
+        }
+        Self::ensure_supported_policy_type(policy_scope)?;
+        let old_policy_id = token.accounting().policy_id(policy_scope)?;
+        if !token.policy().policy_exists(token.policy_storage(), new_policy_id)? {
+            return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
+                policyId: new_policy_id,
+            }));
+        }
+        token.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
+        token.accounting_mut().emit_event(
+            IB20::PolicyUpdated {
+                policyScope: policy_scope,
+                oldPolicyId: old_policy_id,
+                newPolicyId: new_policy_id,
+            }
+            .encode_log_data(),
+        )
+    }
+
+    fn permit(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        chain_id: u64,
+        now: U256,
+        args: PermitArgs,
+    ) -> Result<()> {
+        if now > args.deadline {
+            return Err(BasePrecompileError::revert(IB20::ExpiredSignature {
+                deadline: args.deadline,
+            }));
+        }
+        let domain_sep = self.domain_separator(token, chain_id)?;
+        let nonce = token.accounting().nonce(args.owner)?;
+        let signing_hash = args.signing_hash(domain_sep, nonce);
+        let recovered = args.recover_signer(signing_hash)?;
+        PermitArgs::validate_recovered_address(recovered, args.owner)?;
+        token.accounting_mut().increment_nonce(args.owner)?;
+        self.approve(token, args.owner, args.spender, args.value)
+    }
+
+    fn is_paused(
+        &self,
+        token: &B20StablecoinToken<S, A>,
+        feature: IB20::PausableFeature,
+    ) -> Result<bool> {
+        B20PausableFeature::ensure_one_of(feature, Self::PAUSABLE_FEATURES)?;
+        Ok((token.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
+    }
+
+    fn paused_features(
+        &self,
+        token: &B20StablecoinToken<S, A>,
+    ) -> Result<Vec<IB20::PausableFeature>> {
+        let paused = token.accounting().paused()?;
+        let mut features = Vec::new();
+        for feature in [
+            IB20::PausableFeature::TRANSFER,
+            IB20::PausableFeature::MINT,
+            IB20::PausableFeature::BURN,
+        ] {
+            if (paused & B20PausableFeature::mask(feature)) != U256::ZERO {
+                features.push(feature);
+            }
+        }
+        Ok(features)
+    }
+
+    fn policy_id(&self, token: &B20StablecoinToken<S, A>, policy_scope: B256) -> Result<u64> {
+        Self::ensure_supported_policy_type(policy_scope)?;
+        token.accounting().policy_id(policy_scope)
+    }
+
+    fn domain_separator(&self, token: &B20StablecoinToken<S, A>, chain_id: u64) -> Result<B256> {
+        let name = token.accounting().name()?;
+        let name_hash = keccak256(name.as_bytes());
+        let version_hash = keccak256(VERSION);
+        let encoded =
+            (DOMAIN_TYPEHASH, name_hash, version_hash, U256::from(chain_id), token.token_address())
+                .abi_encode();
+        Ok(keccak256(&encoded))
+    }
+
+    fn eip712_domain(
+        &self,
+        token: &B20StablecoinToken<S, A>,
+        chain_id: u64,
+    ) -> Result<Eip712Domain> {
+        let name = token.accounting().name()?;
+        Ok((
+            // bits 0+1+2+3: name + version + chainId + verifyingContract
+            FixedBytes::<1>::from([0x0f]),
+            name,
+            "1".to_string(),
+            U256::from(chain_id),
+            token.token_address(),
+            B256::ZERO,
+            vec![],
+        ))
+    }
+
+    fn currency(&self, token: &B20StablecoinToken<S, A>) -> Result<String> {
+        token.accounting().currency()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{string::ToString, vec};
+
+    use alloy_primitives::{Address, B256, U256, keccak256};
+    use alloy_sol_types::SolEvent;
+    use base_tiger_precompile_storage::BasePrecompileError;
+    use k256::ecdsa::SigningKey;
+    use rstest::{fixture, rstest};
+
+    use crate::{
+        B20PolicyType, B20StablecoinToken, B20TokenRole, FakePolicyAccounting, IB20,
+        InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion, Stablecoin,
+        StablecoinV1, Token, TokenAccounting,
+    };
+
+    const TOKEN: Address = Address::repeat_byte(0x22);
+    const ADMIN: Address = Address::repeat_byte(0xAD);
+    const ALICE: Address = Address::repeat_byte(0xA1);
+    const BOB: Address = Address::repeat_byte(0xB0);
+    const CHAIN_ID: u64 = 8453;
+    const LOGIC: StablecoinV1 = StablecoinV1;
+
+    // Anvil/Hardhat account 0 — well-known test key, never used in production.
+    const PRIVATE_KEY: [u8; 32] =
+        alloy_primitives::hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    /// Accounting seeded with the stablecoin metadata these tests assume.
+    fn accounting() -> InMemoryTokenAccounting {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.name = "USD Coin".to_string();
+        accounting.symbol = "USDC".to_string();
+        accounting.currency = "USD".to_string();
+        accounting
+    }
+
+    type Tok = B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting>;
+
+    #[fixture]
+    fn token() -> Tok {
+        B20StablecoinToken::with_storage_and_policy(
+            accounting(),
+            FakePolicyAccounting::with_caller(ADMIN),
+            PolicyVersion::V1,
+        )
+    }
+
+    #[fixture]
+    fn funded_token(mut token: Tok) -> Tok {
+        fund(&mut token, ALICE, U256::from(100u64));
+        token
+    }
+
+    /// Grants `role` to `account` and keeps the admin member-count consistent.
+    fn grant(tok: &mut Tok, role: B256, account: Address) {
+        tok.accounting_mut().set_role(role, account, true).unwrap();
+        let next = tok.accounting().role_member_count(role).unwrap() + U256::ONE;
+        tok.accounting_mut().set_role_member_count(role, next).unwrap();
+    }
+
+    /// Credits `account` with `amount` and grows total supply to match.
+    fn fund(tok: &mut Tok, account: Address, amount: U256) {
+        let bal = tok.accounting().balance_of(account).unwrap();
+        tok.accounting_mut().set_balance(account, bal + amount).unwrap();
+        let supply = tok.accounting().total_supply().unwrap();
+        tok.accounting_mut().set_total_supply(supply + amount).unwrap();
+    }
+
+    fn last_event_sig(tok: &Tok) -> B256 {
+        tok.accounting().events.last().unwrap().topics()[0]
+    }
+
+    fn anvil_owner() -> Address {
+        let key = SigningKey::from_slice(&PRIVATE_KEY).unwrap();
+        let point = key.verifying_key().to_encoded_point(false);
+        Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
+    }
+
+    /// Produces a validly-signed `PermitArgs` for the token's current domain and `owner` nonce.
+    fn signed_permit(
+        tok: &Tok,
+        owner: Address,
+        spender: Address,
+        value: U256,
+        deadline: U256,
+    ) -> PermitArgs {
+        let domain_sep = LOGIC.domain_separator(tok, CHAIN_ID).unwrap();
+        let nonce = tok.accounting().nonce(owner).unwrap();
+        let mut args =
+            PermitArgs { owner, spender, value, deadline, v: 0, r: B256::ZERO, s: B256::ZERO };
+        let signing_hash = args.signing_hash(domain_sep, nonce);
+        let key = SigningKey::from_slice(&PRIVATE_KEY).unwrap();
+        let (sig, recid) = key.sign_prehash_recoverable(signing_hash.as_slice()).unwrap();
+        let bytes = sig.to_bytes();
+        args.r = B256::from_slice(&bytes[..32]);
+        args.s = B256::from_slice(&bytes[32..]);
+        args.v = if recid.is_y_odd() { 28 } else { 27 };
+        args
+    }
+
+    // --- transfer ---
+
+    #[rstest]
+    fn transfer_moves_balance_and_emits_transfer(#[from(funded_token)] mut tok: Tok) {
+        LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(30u64), true).unwrap();
+        assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(70u64));
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+        assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
+    }
+
+    #[rstest]
+    fn transfer_reverts_on_zero_receiver(#[from(token)] mut tok: Tok) {
+        fund(&mut tok, ALICE, U256::from(10u64));
+        let err =
+            LOGIC.transfer(&mut tok, ALICE, Address::ZERO, U256::from(1u64), true).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
+    }
+
+    #[rstest]
+    fn transfer_reverts_on_insufficient_balance(#[from(token)] mut tok: Tok) {
+        fund(&mut tok, ALICE, U256::from(10u64));
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(50u64), true).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InsufficientBalance {
+                sender: ALICE,
+                balance: U256::from(10u64),
+                needed: U256::from(50u64),
+            })
+        );
+    }
+
+    #[rstest]
+    fn transfer_reverts_when_paused(#[from(token)] mut tok: Tok) {
+        fund(&mut tok, ALICE, U256::from(10u64));
+        LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(1u64), true).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::TRANSFER,
+            })
+        );
+    }
+
+    #[rstest]
+    fn transfer_unprivileged_enforces_transfer_policies(#[from(funded_token)] mut tok: Tok) {
+        // ALLOWLIST with no members → sender/receiver policy checks revert.
+        const POLICY: u64 = (1u64 << 56) | 7;
+        tok.accounting_mut().set_policy_id(B20PolicyType::TransferSender.id(), POLICY).unwrap();
+        tok.accounting_mut().set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY).unwrap();
+        tok.policy_storage_mut().create_existing_policy(POLICY);
+        assert!(LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).is_err());
+        // Authorize both parties → transfer succeeds through the guard path.
+        tok.policy_storage_mut().allow(POLICY, ALICE);
+        tok.policy_storage_mut().allow(POLICY, BOB);
+        LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).unwrap();
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
+    }
+
+    // --- transfer_from ---
+
+    #[rstest]
+    fn transfer_from_decrements_finite_allowance(#[from(funded_token)] mut tok: Tok) {
+        tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
+        LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
+        assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(10u64));
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+    }
+
+    #[rstest]
+    fn transfer_from_infinite_allowance_is_not_decremented(#[from(funded_token)] mut tok: Tok) {
+        tok.accounting_mut().set_allowance(ALICE, BOB, U256::MAX).unwrap();
+        LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
+        assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::MAX);
+    }
+
+    #[rstest]
+    fn transfer_from_reverts_on_insufficient_allowance(#[from(funded_token)] mut tok: Tok) {
+        tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(5u64)).unwrap();
+        let err =
+            LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InsufficientAllowance {
+                spender: BOB,
+                allowance: U256::from(5u64),
+                needed: U256::from(30u64),
+            })
+        );
+    }
+
+    // --- approve ---
+
+    #[rstest]
+    fn approve_sets_allowance_and_emits(#[from(token)] mut tok: Tok) {
+        LOGIC.approve(&mut tok, ALICE, BOB, U256::from(50u64)).unwrap();
+        assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
+        assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
+    }
+
+    #[rstest]
+    fn approve_reverts_on_zero_spender(#[from(token)] mut tok: Tok) {
+        let err = LOGIC.approve(&mut tok, ALICE, Address::ZERO, U256::from(1u64)).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidSpender { spender: Address::ZERO })
+        );
+    }
+
+    // --- mint ---
+
+    #[rstest]
+    fn mint_privileged_increases_supply_and_balance(#[from(token)] mut tok: Tok) {
+        tok.policy_storage_mut().allow(0, BOB); // MintReceiver policy is enforced even when privileged
+        LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap();
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(100u64));
+        assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(100u64));
+        assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
+    }
+
+    #[rstest]
+    fn mint_reverts_over_supply_cap(#[from(token)] mut tok: Tok) {
+        tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
+        let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::SupplyCapExceeded {
+                cap: U256::from(50u64),
+                attempted: U256::from(100u64),
+            })
+        );
+    }
+
+    #[rstest]
+    fn mint_unprivileged_requires_mint_role(#[from(token)] mut tok: Tok) {
+        let err = LOGIC.mint(&mut tok, ALICE, BOB, U256::from(1u64), false).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: B20TokenRole::Mint.id(),
+            })
+        );
+    }
+
+    // --- burn / burn_blocked ---
+
+    #[rstest]
+    fn burn_requires_role_then_decreases_supply(#[from(funded_token)] mut tok: Tok) {
+        let err = LOGIC.burn(&mut tok, ALICE, U256::from(1u64)).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: B20TokenRole::Burn.id(),
+            })
+        );
+        grant(&mut tok, B20TokenRole::Burn.id(), ALICE);
+        LOGIC.burn(&mut tok, ALICE, U256::from(40u64)).unwrap();
+        assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+        assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(60u64));
+        assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
+    }
+
+    #[rstest]
+    fn burn_blocked_destroys_from_unauthorized_account(#[from(funded_token)] mut tok: Tok) {
+        // ALWAYS_BLOCK => ALICE is unauthorized/blocked; privileged skips the role check.
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::TransferSender.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
+        assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+        assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
+    }
+
+    #[rstest]
+    fn burn_blocked_reverts_when_account_not_blocked(#[from(funded_token)] mut tok: Tok) {
+        // Default ALWAYS_ALLOW authorizes ALICE => not blocked.
+        let err = LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(1u64), true).unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE }));
+    }
+
+    // --- pause ---
+
+    #[rstest]
+    fn pause_and_unpause_toggle_feature_bit(#[from(token)] mut tok: Tok) {
+        LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::MINT], true).unwrap();
+        assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
+        assert!(!LOGIC.is_paused(&tok, IB20::PausableFeature::TRANSFER).unwrap());
+        LOGIC.unpause(&mut tok, ADMIN, vec![IB20::PausableFeature::MINT], true).unwrap();
+        assert!(!LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
+    }
+
+    /// `SEIZE` is Cobalt-only. The Beryl wire rejects it at decode; this pins the matching
+    /// logic-layer allowlist so V1 does not accept it via direct logic calls either.
+    #[rstest]
+    fn pause_unpause_and_is_paused_reject_seize(#[from(token)] mut tok: Tok) {
+        let expected = BasePrecompileError::enum_conversion_error();
+        assert_eq!(
+            LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            LOGIC.unpause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap_err(),
+            expected
+        );
+        assert_eq!(LOGIC.is_paused(&tok, IB20::PausableFeature::SEIZE).unwrap_err(), expected);
+    }
+
+    #[rstest]
+    fn pause_reverts_on_empty_feature_set(#[from(token)] mut tok: Tok) {
+        let err = LOGIC.pause(&mut tok, ADMIN, vec![], true).unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
+    }
+
+    #[rstest]
+    fn paused_features_reports_active_set(#[from(token)] mut tok: Tok) {
+        LOGIC
+            .pause(
+                &mut tok,
+                ADMIN,
+                vec![IB20::PausableFeature::MINT, IB20::PausableFeature::BURN],
+                true,
+            )
+            .unwrap();
+        assert_eq!(LOGIC.paused_features(&tok).unwrap().len(), 2);
+        assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::BURN).unwrap());
+    }
+
+    // --- config / metadata ---
+
+    #[rstest]
+    fn update_supply_cap_sets_and_emits(#[from(token)] mut tok: Tok) {
+        LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(1_000u64), true).unwrap();
+        assert_eq!(tok.accounting().supply_cap().unwrap(), U256::from(1_000u64));
+        assert_eq!(last_event_sig(&tok), IB20::SupplyCapUpdated::SIGNATURE_HASH);
+    }
+
+    #[rstest]
+    fn update_supply_cap_reverts_below_current_supply(#[from(token)] mut tok: Tok) {
+        fund(&mut tok, ALICE, U256::from(500u64));
+        let err = LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(100u64), true).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidSupplyCap {
+                currentSupply: U256::from(500u64),
+                proposedCap: U256::from(100u64),
+            })
+        );
+    }
+
+    #[rstest]
+    fn update_name_emits_name_updated_and_domain_changed(#[from(token)] mut tok: Tok) {
+        LOGIC.update_name(&mut tok, ADMIN, "New Name".to_string(), true).unwrap();
+        assert_eq!(tok.accounting().name().unwrap(), "New Name");
+        let events = &tok.accounting().events;
+        assert_eq!(events[events.len() - 2].topics()[0], IB20::NameUpdated::SIGNATURE_HASH);
+        assert_eq!(events[events.len() - 1].topics()[0], IB20::EIP712DomainChanged::SIGNATURE_HASH);
+    }
+
+    // --- roles ---
+
+    #[rstest]
+    fn grant_role_privileged_grants_and_emits(#[from(token)] mut tok: Tok) {
+        LOGIC.grant_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
+        assert!(tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+        assert_eq!(last_event_sig(&tok), IB20::RoleGranted::SIGNATURE_HASH);
+    }
+
+    #[rstest]
+    fn revoke_role_privileged_revokes_and_emits(#[from(token)] mut tok: Tok) {
+        grant(&mut tok, B20TokenRole::Mint.id(), ALICE);
+        LOGIC.revoke_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
+        assert!(!tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+        assert_eq!(last_event_sig(&tok), IB20::RoleRevoked::SIGNATURE_HASH);
+    }
+
+    #[rstest]
+    fn revoke_last_admin_is_rejected(#[from(token)] mut tok: Tok) {
+        grant(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN);
+        let err = LOGIC
+            .revoke_role(&mut tok, ADMIN, B20TokenRole::DefaultAdmin.id(), ADMIN, true)
+            .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
+    }
+
+    #[rstest]
+    fn grant_role_unchecked_bumps_admin_count(#[from(token)] mut tok: Tok) {
+        LOGIC
+            .grant_role_unchecked(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
+            .unwrap();
+        assert!(tok.accounting().has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+        assert_eq!(
+            tok.accounting().role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+            U256::ONE
+        );
+    }
+
+    // --- policy ---
+
+    #[rstest]
+    fn update_policy_sets_new_id(#[from(token)] mut tok: Tok) {
+        tok.policy_storage_mut().create_existing_policy(7);
+        LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
+        assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
+    }
+
+    #[rstest]
+    fn update_policy_reverts_when_policy_missing(#[from(token)] mut tok: Tok) {
+        let err = LOGIC
+            .update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 99, true)
+            .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
+    }
+
+    #[rstest]
+    fn policy_id_rejects_unsupported_scope(#[from(token)] tok: Tok) {
+        let scope = B256::repeat_byte(0xEE);
+        let err = LOGIC.policy_id(&tok, scope).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope })
+        );
+    }
+
+    // --- permit ---
+
+    #[rstest]
+    fn permit_sets_allowance_and_increments_nonce(#[from(token)] mut tok: Tok) {
+        let owner = anvil_owner();
+        let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
+        LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
+        assert_eq!(tok.accounting().allowance(owner, BOB).unwrap(), U256::from(500u64));
+        assert_eq!(tok.accounting().nonce(owner).unwrap(), U256::ONE);
+    }
+
+    #[rstest]
+    fn permit_reverts_when_expired(#[from(token)] mut tok: Tok) {
+        let owner = anvil_owner();
+        let args = signed_permit(&tok, owner, BOB, U256::from(1u64), U256::from(10u64));
+        let err = LOGIC.permit(&mut tok, CHAIN_ID, U256::from(11u64), args).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::ExpiredSignature { deadline: U256::from(10u64) })
+        );
+    }
+
+    #[rstest]
+    fn permit_replay_is_rejected(#[from(token)] mut tok: Tok) {
+        let owner = anvil_owner();
+        let args = signed_permit(&tok, owner, BOB, U256::from(1u64), U256::MAX);
+        LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).unwrap();
+        // Same (v, r, s): the nonce has advanced, so recovery no longer matches `owner`.
+        assert!(LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).is_err());
+    }
+
+    // --- reads ---
+
+    #[rstest]
+    fn currency_reads_storage(#[from(token)] tok: Tok) {
+        assert_eq!(LOGIC.currency(&tok).unwrap(), "USD");
+    }
+
+    #[rstest]
+    fn is_initialized_reflects_storage(#[from(token)] mut tok: Tok) {
+        assert!(LOGIC.is_initialized(&tok).unwrap());
+        tok.accounting_mut().initialized = false;
+        assert!(!LOGIC.is_initialized(&tok).unwrap());
+    }
+
+    #[rstest]
+    fn domain_separator_is_deterministic_and_chain_specific(#[from(token)] tok: Tok) {
+        assert_eq!(
+            LOGIC.domain_separator(&tok, CHAIN_ID).unwrap(),
+            LOGIC.domain_separator(&tok, CHAIN_ID).unwrap()
+        );
+        assert_ne!(
+            LOGIC.domain_separator(&tok, 1).unwrap(),
+            LOGIC.domain_separator(&tok, 2).unwrap()
+        );
+    }
+
+    /// Pins this version's frozen EIP-712 domain typehash to the exact type string it must hash.
+    /// The constant is duplicated per version so each fork's wire surface stays independently
+    /// frozen; without this check a typo in one copy would silently change that version's digest.
+    #[test]
+    fn domain_typehash_matches_eip712_domain_type() {
+        let domain_type =
+            b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+        assert_eq!(super::DOMAIN_TYPEHASH, keccak256(domain_type));
+        assert_eq!(super::VERSION, b"1");
+    }
+}

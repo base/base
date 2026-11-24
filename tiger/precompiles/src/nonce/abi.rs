@@ -1,0 +1,46 @@
+//! ABI definitions for the Base transaction 2D nonce manager precompile.
+
+use alloy_sol_types::sol;
+
+sol! {
+    /// Base transaction 2D nonce manager ABI.
+    ///
+    /// Exposes the per-`(account, nonceKey)` sequence nonces that enable
+    /// concurrent Base transaction execution. Nonce key `0` is reserved for
+    /// the protocol nonce and is stored in account state rather than here, so it
+    /// is not readable through this precompile.
+    interface INonceManager {
+        /// Precompile cannot be executed via delegatecall or callcode.
+        error DelegateCallNotAllowed();
+
+        /// ETH was attached to a call targeting a nonpayable nonce-manager selector.
+        error NonPayable();
+
+        /// Nonce key `0` is the protocol nonce and is not served by this precompile.
+        error ProtocolNonceNotSupported();
+
+        /// Nonce key `0` (the protocol nonce) or `NONCE_KEY_MAX` (nonce-free mode)
+        /// has no sequence to increment here.
+        error InvalidNonceKey();
+
+        /// A nonce-free replay identifier is zero, the replay ring's empty-slot sentinel.
+        error InvalidReplayId();
+
+        /// The 2D nonce for the `(account, nonceKey)` channel is already at its maximum.
+        error NonceOverflow();
+
+        /// Expiring-nonce `validBefore` is outside the allowed `(now, now + maxExpiry]` window.
+        error InvalidExpiringNonceExpiry();
+
+        /// An expiring-nonce replay hash has already been recorded and has not yet expired.
+        error ExpiringNonceReplay();
+
+        /// The expiring-nonce ring buffer is full of unexpired entries and cannot accept more.
+        error ExpiringNonceSetFull();
+
+        /// Returns the current 2D nonce for `account` at `nonceKey`.
+        ///
+        /// Reverts with `ProtocolNonceNotSupported` for nonce key `0`.
+        function getNonce(address account, uint256 nonceKey) external view returns (uint64);
+    }
+}
