@@ -1,0 +1,20 @@
+[package]
+name = "base-tiger"
+description = "The tiger client: a Base execution client without reth or revm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tiger"
+path = "src/main.rs"
+
+[dependencies]
+# tiger
+base-tiger-evm.workspace = true

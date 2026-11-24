@@ -1,0 +1,67 @@
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+homepage = "https://github.com/base/base"
+repository = "https://github.com/base/base"
+
+# The tiger client: a Base execution client without reth or revm. Its own workspace, so its
+# dependency tree and lockfile stay separate from the base workspace. See README.md for why each
+# dependency is here and SCOPE.md for what the client does.
+[workspace]
+resolver = "2"
+members = ["evm", "node"]
+
+[workspace.dependencies]
+# tiger
+base-tiger-evm = { path = "evm" }
+
+# base: engine-neutral Base types whose dependency trees hold no reth or revm.
+base-common-flz = { path = "../crates/common/flz", default-features = false }
+base-common-base-tx = { path = "../crates/common/base-tx", default-features = false }
+base-common-genesis = { path = "../crates/common/genesis", default-features = false }
+base-common-l1-fees = { path = "../crates/common/l1-fees", default-features = false }
+base-common-consensus = { path = "../crates/common/consensus", default-features = false }
+
+# evm2
+evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "9b037449c846515624ff6afde739f2b764851446", default-features = false }
+
+# alloy
+alloy-rlp = { version = "0.3.16", default-features = false }
+alloy-trie = { version = "0.9.8", default-features = false }
+alloy-eips = { version = "2.5.0", default-features = false }
+alloy-consensus = { version = "2.5.0", default-features = false }
+alloy-primitives = { version = "1.6.1", default-features = false }
+
+# serialization
+serde = { version = "1.0.228", default-features = false }
+serde_json = { version = "1.0.151", default-features = false }
+
+[workspace.lints.rust]
+missing-debug-implementations = "warn"
+missing-docs = "warn"
+unreachable-pub = "warn"
+unused-must-use = "deny"
+rust-2018-idioms = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg-macro = "warn"
+use-self = "warn"
+uninlined-format-args = "warn"
+undocumented-unsafe-blocks = "warn"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+debug = "none"
+panic = "unwind"
+codegen-units = 16

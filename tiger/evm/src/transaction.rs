@@ -1,0 +1,159 @@
+//! Base transaction envelope for EVM2.
+
+use alloy_consensus::Transaction;
+use alloy_eips::eip2718::Typed2718;
+use alloy_primitives::Bytes;
+use base_common_consensus::{TxBaseSigned, TxDeposit};
+use evm2::ethereum::TxEnvelope;
+
+/// The Base transaction envelope: a deposit, a standard Ethereum transaction, or an enshrined
+/// Base transaction.
+#[derive(Clone, Debug)]
+pub enum BaseTxEnvelope {
+    /// An L1-originated deposit transaction.
+    Deposit(TxDeposit),
+    /// A standard, signed Ethereum transaction.
+    Standard {
+        /// The decoded standard transaction.
+        tx: TxEnvelope,
+        /// The EIP-2718 encoded bytes the transaction was decoded from, as posted to L1. Used
+        /// to price the L1 data fee over the full transaction (matching the revm integration),
+        /// which `TxEnvelope` alone cannot reproduce.
+        enveloped: Bytes,
+    },
+    /// An enshrined Base transaction (type `0x79`, Everest onwards). Its enshrined execution path
+    /// is layered on with the Base transaction track; this variant carries the signed transaction
+    /// so the envelope and receipts can already represent it.
+    ///
+    /// TODO(base-tx-execution): carry the EIP-2718 serialized bytes here (as [`Self::Standard`]
+    /// does) before the `0x79` execution handler is registered. Until then [`Self::enveloped`]
+    /// returns `None` for this variant, which the executor's Jovian DA-footprint metering treats
+    /// as an empty payload — hitting the minimum-tx-size floor and undercounting the true DA cost.
+    /// Inert today (no `0x79` handler is registered, so a Base transaction tx never reaches DA
+    /// accumulation), but it must be fixed together with the handler.
+    Base(TxBaseSigned),
+}
+
+impl BaseTxEnvelope {
+    /// Builds a standard-transaction envelope from a decoded transaction and its EIP-2718
+    /// encoded bytes.
+    pub fn standard(tx: TxEnvelope, enveloped: Bytes) -> Self {
+        // Empty enveloped bytes would make L1FeeParams::is_fee_exempt treat the transaction as
+        // fee-exempt, silently zeroing the L1 data fee and operator fee — a consensus-level fee
+        // miscalculation once this crate is wired into the node. This is an internal invariant that
+        // must always hold, so enforce it in every build (not just debug) with a runtime assert.
+        assert!(!enveloped.is_empty(), "standard tx must carry non-empty enveloped bytes");
+        Self::Standard { tx, enveloped }
+    }
+
+    /// Returns the deposit transaction, if this envelope is a deposit.
+    pub const fn as_deposit(&self) -> Option<&TxDeposit> {
+        match self {
+            Self::Deposit(tx) => Some(tx),
+            Self::Standard { .. } | Self::Base(_) => None,
+        }
+    }
+
+    /// Returns whether this envelope is a deposit transaction.
+    pub const fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit(_))
+    }
+
+    /// Returns the Base transaction, if this envelope is one.
+    pub const fn as_base_tx(&self) -> Option<&TxBaseSigned> {
+        match self {
+            Self::Base(tx) => Some(tx),
+            Self::Deposit(_) | Self::Standard { .. } => None,
+        }
+    }
+
+    /// Returns the transaction's gas limit.
+    pub fn gas_limit(&self) -> u64 {
+        match self {
+            Self::Standard { tx, .. } => tx.gas_limit(),
+            Self::Deposit(tx) => tx.gas_limit,
+            Self::Base(tx) => tx.gas_limit(),
+        }
+    }
+
+    /// Returns the standard Ethereum transaction, if this envelope is a standard transaction.
+    pub const fn as_standard(&self) -> Option<&TxEnvelope> {
+        match self {
+            Self::Standard { tx, .. } => Some(tx),
+            Self::Deposit(_) | Self::Base(_) => None,
+        }
+    }
+
+    /// Returns the standard transaction's EIP-2718 encoded bytes, if this envelope is a standard
+    /// transaction.
+    pub const fn enveloped(&self) -> Option<&Bytes> {
+        match self {
+            Self::Standard { enveloped, .. } => Some(enveloped),
+            Self::Deposit(_) | Self::Base(_) => None,
+        }
+    }
+}
+
+impl Typed2718 for BaseTxEnvelope {
+    fn ty(&self) -> u8 {
+        match self {
+            Self::Deposit(tx) => tx.ty(),
+            Self::Standard { tx, .. } => tx.ty(),
+            Self::Base(tx) => tx.ty(),
+        }
+    }
+}
+
+impl From<TxDeposit> for BaseTxEnvelope {
+    fn from(tx: TxDeposit) -> Self {
+        Self::Deposit(tx)
+    }
+}
+
+impl From<TxBaseSigned> for BaseTxEnvelope {
+    fn from(tx: TxBaseSigned) -> Self {
+        Self::Base(tx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, TxKind};
+    use base_common_consensus::{BASE_TX_TYPE_ID, DEPOSIT_TX_TYPE_ID, TxBase};
+
+    use super::*;
+
+    fn sample_deposit() -> TxDeposit {
+        TxDeposit {
+            from: Address::repeat_byte(0x11),
+            to: TxKind::Call(Address::repeat_byte(0x22)),
+            gas_limit: 100_000,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn deposit_reports_type_byte() {
+        let tx = BaseTxEnvelope::Deposit(sample_deposit());
+        assert_eq!(tx.ty(), DEPOSIT_TX_TYPE_ID);
+        assert!(tx.is_deposit());
+        assert!(tx.as_deposit().is_some());
+    }
+
+    #[test]
+    fn base_tx_reports_type_byte_and_gas_limit() {
+        let tx = TxBaseSigned::new(
+            TxBase { gas_limit: 250_000, ..Default::default() },
+            Bytes::new(),
+            Bytes::new(),
+        );
+        let envelope = BaseTxEnvelope::from(tx);
+        assert_eq!(envelope.ty(), BASE_TX_TYPE_ID);
+        assert!(envelope.as_base_tx().is_some());
+        assert_eq!(envelope.gas_limit(), 250_000);
+        // A Base transaction tx is neither a deposit nor a standard transaction.
+        assert!(!envelope.is_deposit());
+        assert!(envelope.as_standard().is_none());
+        assert!(envelope.enveloped().is_none());
+    }
+}
