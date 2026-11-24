@@ -19,6 +19,7 @@ const ETH_PROOF_WINDOW: u64 = 0;
 mod blocks;
 mod call;
 mod envelope;
+mod fees;
 mod filters;
 pub use filters::RpcFilters;
 mod receipts;
@@ -32,7 +33,7 @@ fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result
 impl Node {
     /// Answers one non-Engine JSON-RPC method.
     pub fn rpc(&self, method: &str, p: &Value) -> Result<Value, RpcError> {
-        if let Some(result) = self.rpc_blocks(method, p).or_else(|| self.rpc_call(method, p)).or_else(|| self.rpc_filters(method, p)) {
+        if let Some(result) = self.rpc_blocks(method, p).or_else(|| self.rpc_call(method, p)).or_else(|| self.rpc_filters(method, p)).or_else(|| self.rpc_fees(method, p)) {
             return result;
         }
         match method {
