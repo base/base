@@ -202,7 +202,8 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
         "reth_base_builder_predicate_slots_loaded_total_avg",
         "reth_base_builder_predicate_slots_loaded_unique_avg",
         "reth_base_builder_resting_predicate_carried_avg",
-        "reth_base_builder_predicate_bucket_depth_avg",
+        "reth_base_builder_predicate_bucket_count_avg",
+        "reth_base_builder_predicate_bucket_max_depth_avg",
     ];
     for key in present {
         assert!(PrometheusBlockCollector::is_visualizer_metric(key), "{key} is not allowlisted");
