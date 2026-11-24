@@ -16,7 +16,7 @@ use crate::{
 };
 
 /// Largest encoded record accepted (EIP-778).
-pub const MAX_RECORD_SIZE: usize = 300;
+pub(crate) const MAX_RECORD_SIZE: usize = 300;
 /// The ENR key under which base-reth advertises its fork id (reth's `NetworkStackId::OPEL`).
 pub const FORK_KEY: &[u8] = b"opel";
 
@@ -266,8 +266,8 @@ mod tests {
 
         // Signing the same content with the vector's key reproduces the same record content
         // (secp256k1 signing is deterministic, RFC 6979).
-        let key = SecretKey::from_slice(
-            &hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291").unwrap(),
+        let key = SecretKey::from_byte_array(
+            hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291").unwrap().try_into().unwrap(),
         )
         .unwrap();
         let built = Enr::build(&key, 1, Some(Ipv4Addr::LOCALHOST), 0, 30303, None);

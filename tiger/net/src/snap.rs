@@ -32,9 +32,9 @@ mod id {
 pub(crate) use id::*;
 
 /// Most bytecodes served per request (reth's `MAX_BYTE_CODES_SERVE`).
-pub const MAX_BYTE_CODES_SERVE: usize = 1024;
+pub(crate) const MAX_BYTE_CODES_SERVE: usize = 1024;
 /// Most accounts whose storage is served per request.
-pub const MAX_STORAGE_ACCOUNTS_SERVE: usize = 1024;
+pub(crate) const MAX_STORAGE_ACCOUNTS_SERVE: usize = 1024;
 /// The largest hashed key.
 pub const MAX_HASH: B256 = B256::repeat_byte(0xff);
 
@@ -152,7 +152,7 @@ pub trait SnapStateSink: Send {
 }
 
 /// Encodes an account in snap's slim form: empty strings for the empty storage root and code.
-pub fn encode_slim_account(account: &TrieAccount, out: &mut Vec<u8>) {
+pub(crate) fn encode_slim_account(account: &TrieAccount, out: &mut Vec<u8>) {
     let storage_root: &[u8] =
         if account.storage_root == EMPTY_ROOT_HASH { &[] } else { account.storage_root.as_slice() };
     let code_hash: &[u8] =
@@ -169,7 +169,7 @@ fn restore_hash(bytes: &[u8], empty: B256) -> alloy_rlp::Result<B256> {
 }
 
 /// Decodes a slim account.
-pub fn decode_slim_account(buf: &mut &[u8]) -> alloy_rlp::Result<TrieAccount> {
+pub(crate) fn decode_slim_account(buf: &mut &[u8]) -> alloy_rlp::Result<TrieAccount> {
     let mut items = list_items(buf)?;
     let nonce = u64::decode(&mut items)?;
     let balance = U256::decode(&mut items)?;
@@ -377,7 +377,7 @@ pub struct ByteCodes {
 ///
 /// Without a source (a node that cannot serve state yet) every request gets an empty answer,
 /// which snap allows for unavailable state.
-pub fn serve(
+pub(crate) fn serve(
     source: Option<&dyn SnapStateSource>,
     message_id: u8,
     payload: &[u8],

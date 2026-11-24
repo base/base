@@ -15,7 +15,7 @@
 //! roots. Work already downloaded at an older pivot stays valid; only requests move on.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex, mpsc::RecvTimeoutError},
     time::{Duration, Instant},
 };
@@ -131,6 +131,7 @@ impl From<StoreError> for SnapSyncError {
 }
 
 /// Touched-key bookkeeping shared with the execution thread.
+/// Touched keys by the last block that changed them.
 #[derive(Debug, Default)]
 struct Touched {
     latest: Option<Pivot>,
@@ -164,9 +165,11 @@ pub struct SnapHandle {
 }
 
 impl SnapHandle {
-    /// Reports an executed block: its number and state root, and the keys it changed. Call it
-    /// after the block's changes are in the flat tables, in block order.
-    pub fn on_block(&self, number: u64, state_root: B256, touched: &TouchedKeys) {
+    /// Reports an executed block: its number and state root, and the keys it changed, in block
+    /// order. Call it before writing the block's changes to the flat tables and keep the
+    /// returned guard until they are written: snap commits wait for it, so a snap write never
+    /// lands between a block's report and its write.
+    pub fn on_block(&self, number: u64, state_root: B256, touched: &TouchedKeys) -> SnapBlockGuard<'_> {
         let mut state = self.touched.lock().unwrap();
         for account in &touched.accounts {
             state.accounts.insert(*account, number);
@@ -178,7 +181,14 @@ impl SnapHandle {
             state.wiped.insert(*account, number);
         }
         state.latest = Some(Pivot { number, state_root });
+        SnapBlockGuard { _state: state }
     }
+}
+
+/// Held by the node while it writes a reported block's changes; see [`SnapHandle::on_block`].
+#[derive(Debug)]
+pub struct SnapBlockGuard<'a> {
+    _state: std::sync::MutexGuard<'a, Touched>,
 }
 
 /// One slice of the account key space.
@@ -226,6 +236,10 @@ pub struct SnapSync<S: SnapStateSink> {
     chunk_busy: Vec<bool>,
     codes_busy: HashSet<B256>,
     batch: SnapBatch,
+    /// Downloaded accounts and slots with the pivot they were read at, filtered against the
+    /// touched keys at commit time.
+    pending_accounts: Vec<(B256, SnapAccount, u64)>,
+    pending_storage: Vec<(B256, B256, U256, u64)>,
     last_commit: Instant,
 }
 
@@ -272,6 +286,8 @@ impl<S: SnapStateSink> SnapSync<S> {
             chunk_busy,
             codes_busy: HashSet::new(),
             batch: SnapBatch::default(),
+            pending_accounts: Vec::new(),
+            pending_storage: Vec::new(),
             last_commit: Instant::now(),
         })
     }
@@ -369,8 +385,11 @@ impl<S: SnapStateSink> SnapSync<S> {
             }
         }
         self.commit()?;
-        let head = self.touched.lock().unwrap().latest.expect("a pivot implies a reported block");
+        // Under the lock, the flat tables hold exactly the blocks up to the latest report.
+        let touched = self.touched.lock().unwrap();
+        let head = touched.latest.expect("a pivot implies a reported block");
         self.sink.finish_snap(head.number, head.state_root)?;
+        drop(touched);
         progress(SnapStatus::Complete);
         Ok(())
     }
@@ -551,7 +570,6 @@ impl<S: SnapStateSink> SnapSync<S> {
             response.accounts.iter().map(|(hash, account)| (*hash, account_rlp(account))).collect();
         let outcome = verify_range_proof(pivot.state_root, start, last_key, &leaves, &response.proof)
             .map_err(|_| Penalty::BadResponse)?;
-        let touched = self.touched.lock().unwrap();
         let mut reached_end = !outcome.more;
         let mut last_written = None;
         for (hash, account) in &response.accounts {
@@ -560,12 +578,11 @@ impl<S: SnapStateSink> SnapSync<S> {
                 break;
             }
             last_written = Some(*hash);
-            if !touched.account_after(hash, pivot.number) {
-                self.batch.accounts.push((
-                    *hash,
-                    SnapAccount { nonce: account.nonce, balance: account.balance, code_hash: account.code_hash },
-                ));
-            }
+            self.pending_accounts.push((
+                *hash,
+                SnapAccount { nonce: account.nonce, balance: account.balance, code_hash: account.code_hash },
+                pivot.number,
+            ));
             if account.storage_root != EMPTY_ROOT_HASH {
                 self.batch.storage_pending.push(*hash);
                 self.progress.storage.push(StorageTask {
@@ -583,7 +600,6 @@ impl<S: SnapStateSink> SnapSync<S> {
                 }
             }
         }
-        drop(touched);
         let state = &mut self.progress.chunks[chunk];
         self.chunk_busy[chunk] = false;
         if reached_end {
@@ -641,13 +657,10 @@ impl<S: SnapStateSink> SnapSync<S> {
                 .map_err(|_| Penalty::BadResponse)?;
             verified.push(outcome.more);
         }
-        let touched = self.touched.lock().unwrap();
         for (index, slots) in response.slots.iter().enumerate() {
             let task = tasks[index];
             for (slot, value) in slots {
-                if !touched.slot_after(&task.account, slot, task.pivot.number) {
-                    self.batch.storage.push((task.account, *slot, *value));
-                }
+                self.pending_storage.push((task.account, *slot, *value, task.pivot.number));
             }
             self.storage_busy.remove(&task.account);
             let more = verified[index];
@@ -660,7 +673,6 @@ impl<S: SnapStateSink> SnapSync<S> {
                 self.progress.storage.insert(0, StorageTask { next, ..task });
             }
         }
-        drop(touched);
         // Tasks the peer did not reach go back in the queue.
         for task in &tasks[response.slots.len()..] {
             self.storage_busy.remove(&task.account);
@@ -705,7 +717,20 @@ impl<S: SnapStateSink> SnapSync<S> {
         let mut blob = Vec::new();
         progress.encode(&mut blob);
         self.batch.progress = blob;
+        // Filter and write under the touched lock, so no block write interleaves.
+        let touched = self.touched.lock().unwrap();
+        for (hash, account, pivot) in self.pending_accounts.drain(..) {
+            if !touched.account_after(&hash, pivot) {
+                self.batch.accounts.push((hash, account));
+            }
+        }
+        for (account, slot, value, pivot) in self.pending_storage.drain(..) {
+            if !touched.slot_after(&account, &slot, pivot) {
+                self.batch.storage.push((account, slot, value));
+            }
+        }
         self.sink.commit_snap(&self.batch)?;
+        drop(touched);
         self.batch = SnapBatch::default();
         Ok(())
     }

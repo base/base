@@ -20,7 +20,7 @@ use std::{
 };
 
 use alloy_primitives::{B256, Bytes, keccak256};
-use alloy_rlp::{Decodable, Encodable, Header as RlpHeader};
+use alloy_rlp::{Decodable, Encodable};
 use secp256k1::{PublicKey, SecretKey};
 
 use crate::{
@@ -729,7 +729,7 @@ mod tests {
     use alloy_primitives::{b256, hex};
 
     fn key(text: &str) -> SecretKey {
-        SecretKey::from_slice(&hex::decode(text).unwrap()).unwrap()
+        SecretKey::from_byte_array(hex::decode(text).unwrap().try_into().unwrap()).unwrap()
     }
 
     const NODE_A: &str = "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f";

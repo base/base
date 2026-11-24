@@ -14,7 +14,7 @@ use std::{
 
 use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes};
-use alloy_rlp::{Decodable, Encodable};
+use alloy_rlp::Decodable;
 
 use crate::{
     block::BlockBody,
@@ -241,7 +241,7 @@ impl Peer {
 
 /// Session settings fixed by the network.
 #[derive(Debug, Clone)]
-pub struct SessionConfig {
+pub(crate) struct SessionConfig {
     /// The network id (chain id).
     pub network_id: u64,
     /// The fork schedule, for Status and peer fork id checks.
@@ -253,7 +253,7 @@ pub struct SessionConfig {
 }
 
 /// The local Status for `version` from the chain head.
-pub fn local_status(config: &SessionConfig, version: u64, head: ChainHead) -> Status {
+pub(crate) fn local_status(config: &SessionConfig, version: u64, head: ChainHead) -> Status {
     Status {
         version,
         network_id: config.network_id,
@@ -267,13 +267,13 @@ pub fn local_status(config: &SessionConfig, version: u64, head: ChainHead) -> St
 
 /// Why a session ended before or after the Status exchange.
 #[derive(Debug)]
-pub enum SessionError {
+pub(crate) enum SessionError {
     /// Transport failure.
     Rlpx(RlpxError),
     /// The peer is on another chain or fork, or broke the protocol: worth a ban.
-    Incompatible(&'static str),
+    Incompatible,
     /// Protocol breach after the handshake: worth a ban.
-    Breach(&'static str),
+    Breach,
 }
 
 impl From<RlpxError> for SessionError {
@@ -283,7 +283,7 @@ impl From<RlpxError> for SessionError {
 }
 
 /// Exchanges Status on a fresh connection and checks the peer's chain and fork.
-pub fn handshake(
+pub(crate) fn handshake(
     mut conn: RlpxConnection,
     config: &SessionConfig,
     chain: &dyn BlockSource,
@@ -292,7 +292,7 @@ pub fn handshake(
 ) -> Result<(Arc<Peer>, RlpxReader), SessionError> {
     let Some(eth) = conn.shared.iter().find(|c| c.name == "eth").cloned() else {
         let _ = conn.writer.disconnect(DisconnectReason::UselessPeer);
-        return Err(SessionError::Incompatible("no eth capability"));
+        return Err(SessionError::Incompatible /* no eth capability */);
     };
     let snap = conn.shared.iter().find(|c| c.name == "snap").cloned();
     let head = chain.chain_head();
@@ -313,14 +313,14 @@ pub fn handshake(
             }
             None if message.id == eth.offset + eth::STATUS => {
                 break Status::decode_payload(eth.version, &message.payload)
-                    .map_err(|_| SessionError::Incompatible("bad status"))?;
+                    .map_err(|_| SessionError::Incompatible /* bad status */)?;
             }
-            None => return Err(SessionError::Incompatible("message before status")),
+            None => return Err(SessionError::Incompatible /* message before status */),
         }
     };
-    let reject = |writer: &mut RlpxWriter, why| {
+    let reject = |writer: &mut RlpxWriter, _why: &'static str| {
         let _ = writer.disconnect(DisconnectReason::UselessPeer);
-        Err(SessionError::Incompatible(why))
+        Err(SessionError::Incompatible)
     };
     if theirs.network_id != config.network_id {
         return reject(&mut conn.writer, "network id");
@@ -351,7 +351,7 @@ pub fn handshake(
 }
 
 /// Runs the session loop until the peer disconnects or misbehaves. Returns why it ended.
-pub fn run_session(
+pub(crate) fn run_session(
     peer: &Peer,
     mut reader: RlpxReader,
     config: &SessionConfig,
@@ -361,7 +361,7 @@ pub fn run_session(
 ) -> SessionError {
     let error = session_loop(peer, &mut reader, config, chain, snap_source, shutdown);
     peer.close(match &error {
-        SessionError::Breach(_) | SessionError::Incompatible(_) => DisconnectReason::ProtocolBreach,
+        SessionError::Breach | SessionError::Incompatible => DisconnectReason::ProtocolBreach,
         SessionError::Rlpx(RlpxError::Disconnected(_)) => DisconnectReason::Requested,
         SessionError::Rlpx(_) => DisconnectReason::TcpError,
     });
@@ -426,7 +426,7 @@ fn session_loop(
                 {
                     handle_snap(peer, snap_cap, id - snap_cap.offset, message.payload, snap_source)
                 } else {
-                    Err(SessionError::Breach("message id outside negotiated range"))
+                    Err(SessionError::Breach /* message id outside negotiated range */)
                 }
             }
         };
@@ -443,10 +443,10 @@ fn handle_eth(
     chain: &dyn BlockSource,
 ) -> Result<(), SessionError> {
     let offset = peer.eth.offset;
-    let breach = |_| SessionError::Breach("bad eth message");
+    let breach = |_| SessionError::Breach /* bad eth message */;
     match id {
         eth::BLOCK_HEADERS | eth::BLOCK_BODIES | eth::RECEIPTS | eth::POOLED_TRANSACTIONS => {
-            peer.deliver(offset + id, payload).map_err(SessionError::Breach)
+            peer.deliver(offset + id, payload).map_err(|_| SessionError::Breach)
         }
         eth::GET_BLOCK_HEADERS => {
             let (request_id, mut body) = split_request_id(&payload).map_err(breach)?;
@@ -482,7 +482,7 @@ fn handle_eth(
                 let mut items = Vec::with_capacity(receipts.len());
                 for receipt in &receipts {
                     items.push(if peer.eth.version >= 69 {
-                        receipt_to_eth69(receipt).map_err(|_| SessionError::Breach("bad stored receipt"))?
+                        receipt_to_eth69(receipt).map_err(|_| SessionError::Breach /* bad stored receipt */)?
                     } else {
                         receipt_to_eth68(receipt)
                     });
@@ -518,7 +518,7 @@ fn handle_eth(
         eth::TRANSACTIONS |
         eth::NEW_BLOCK |
         eth::NEW_POOLED_TRANSACTION_HASHES => Ok(()),
-        eth::STATUS => Err(SessionError::Breach("second status")),
+        eth::STATUS => Err(SessionError::Breach /* second status */),
         _ => Ok(()),
     }
 }
@@ -532,7 +532,7 @@ fn handle_snap(
 ) -> Result<(), SessionError> {
     match id {
         snap::ACCOUNT_RANGE | snap::STORAGE_RANGES | snap::BYTE_CODES | snap::BLOCK_ACCESS_LISTS => {
-            peer.deliver(cap.offset + id, payload).map_err(SessionError::Breach)
+            peer.deliver(cap.offset + id, payload).map_err(|_| SessionError::Breach)
         }
         _ => {
             if let Some((response_id, response)) = snap::serve(source, id, &payload) {

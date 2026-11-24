@@ -16,9 +16,9 @@ use crate::crypto::{
 };
 
 /// Largest handshake packet accepted (EIP-8 packets are about 300 to 600 bytes).
-pub const MAX_HANDSHAKE_PACKET: usize = 2048;
+pub(crate) const MAX_HANDSHAKE_PACKET: usize = 2048;
 /// Largest RLPx frame payload accepted; frames carry whole messages, capped at 16 MiB.
-pub const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 /// Bytes of ECIES overhead: ephemeral key (65), IV (16), and HMAC tag (32).
 const ECIES_OVERHEAD: usize = 65 + 16 + 32;
 /// The handshake version written into auth and ack bodies.
@@ -108,7 +108,7 @@ fn open_packet(secret: &SecretKey, packet: &[u8]) -> Result<Vec<u8>, EciesError>
 }
 
 /// Returns the total length of an EIP-8 handshake packet from its first two bytes.
-pub fn handshake_packet_len(prefix: [u8; 2]) -> Result<usize, EciesError> {
+pub(crate) fn handshake_packet_len(prefix: [u8; 2]) -> Result<usize, EciesError> {
     let len = u16::from_be_bytes(prefix) as usize + 2;
     if len > MAX_HANDSHAKE_PACKET || len < 2 + ECIES_OVERHEAD {
         return Err(EciesError::BadLength);
@@ -245,7 +245,7 @@ pub struct Accepted {
 }
 
 /// Accepts an auth packet (size prefix included) as the recipient.
-pub fn accept(static_key: &SecretKey, auth: &[u8]) -> Result<Accepted, EciesError> {
+pub(crate) fn accept(static_key: &SecretKey, auth: &[u8]) -> Result<Accepted, EciesError> {
     let mut nonce = B256::ZERO;
     random_bytes(&mut nonce.0);
     accept_with_keys(static_key, auth, random_secret_key(), nonce)
@@ -437,7 +437,7 @@ mod tests {
     const ACK_3: &str = "01f004076e58aae772bb101ab1a8e64e01ee96e64857ce82b1113817c6cdd52c09d26f7b90981cd7ae835aeac72e1573b8a0225dd56d157a010846d888dac7464baf53f2ad4e3d584531fa203658fab03a06c9fd5e35737e417bc28c1cbf5e5dfc666de7090f69c3b29754725f84f75382891c561040ea1ddc0d8f381ed1b9d0d4ad2a0ec021421d847820d6fa0ba66eaf58175f1b235e851c7e2124069fbc202888ddb3ac4d56bcbd1b9b7eab59e78f2e2d400905050f4a92dec1c4bdf797b3fc9b2f8e84a482f3d800386186712dae00d5c386ec9387a5e9c9a1aca5a573ca91082c7d68421f388e79127a5177d4f8590237364fd348c9611fa39f78dcdceee3f390f07991b7b47e1daa3ebcb6ccc9607811cb17ce51f1c8c2c5098dbdd28fca547b3f58c01a424ac05f869f49c6a34672ea2cbbc558428aa1fe48bbfd61158b1b735a65d99f21e70dbc020bfdface9f724a0d1fb5895db971cc81aa7608baa0920abb0a565c9c436e2fd13323428296c86385f2384e408a31e104670df0791d93e743a3a5194ee6b076fb6323ca593011b7348c16cf58f66b9633906ba54a2ee803187344b394f75dd2e663a57b956cb830dd7a908d4f39a2336a61ef9fda549180d4ccde21514d117b6c6fd07a9102b5efe710a32af4eeacae2cb3b1dec035b9593b48b9d3ca4c13d245d5f04169b0b1";
 
     fn key(hex_str: &str) -> SecretKey {
-        SecretKey::from_slice(&hex::decode(hex_str).unwrap()).unwrap()
+        SecretKey::from_byte_array(hex::decode(hex_str).unwrap().try_into().unwrap()).unwrap()
     }
 
     fn nonce(hex_str: &str) -> B256 {

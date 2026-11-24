@@ -22,17 +22,8 @@ const MAX_OFFSET: usize = 65_535;
 /// Hash table size of the encoder, in entries.
 const HASH_BITS: u32 = 14;
 
-/// Returns the uncompressed length announced by a Snappy block, checking it against `max`.
-pub fn decompressed_len(input: &[u8], max: usize) -> Result<usize, SnappyError> {
-    let (len, _) = read_varint(input)?;
-    if len > max as u64 {
-        return Err(SnappyError::TooLarge);
-    }
-    Ok(len as usize)
-}
-
 /// Decodes a Snappy block whose uncompressed length is at most `max`.
-pub fn decompress(input: &[u8], max: usize) -> Result<Vec<u8>, SnappyError> {
+pub(crate) fn decompress(input: &[u8], max: usize) -> Result<Vec<u8>, SnappyError> {
     let (len, mut pos) = read_varint(input)?;
     if len > max as u64 {
         return Err(SnappyError::TooLarge);
@@ -100,7 +91,7 @@ pub fn decompress(input: &[u8], max: usize) -> Result<Vec<u8>, SnappyError> {
 }
 
 /// Encodes `input` as one Snappy block.
-pub fn compress(input: &[u8]) -> Vec<u8> {
+pub(crate) fn compress(input: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(input.len() + input.len() / 6 + 16);
     write_varint(&mut out, input.len() as u64);
     let mut table = vec![u32::MAX; 1 << HASH_BITS];
@@ -202,7 +193,6 @@ cf00fecf00fecf00fecf00fecf00fecf0076cf00";
     fn decodes_reference_compressor_output() {
         let compressed = alloy_primitives::hex::decode(REFERENCE_COMPRESSED).unwrap();
         let expected = REFERENCE_TEXT.repeat(3);
-        assert_eq!(decompressed_len(&compressed, 1000).unwrap(), expected.len());
         assert_eq!(decompress(&compressed, 1000).unwrap(), expected);
     }
 

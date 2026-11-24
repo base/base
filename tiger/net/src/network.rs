@@ -453,7 +453,7 @@ fn start_session(inner: &Arc<Inner>, conn: RlpxConnection, inbound: bool) {
     let (peer, reader) =
         match handshake(conn, &inner.session, inner.chain.as_ref(), trusted, inbound) {
             Ok(result) => result,
-            Err(SessionError::Incompatible(_)) => {
+            Err(SessionError::Incompatible) => {
                 // Another chain or fork: do not dial it again for a while.
                 let mut table = inner.table.lock().unwrap();
                 table.reputation.entry(remote).or_default().banned_until =
@@ -480,7 +480,7 @@ fn start_session(inner: &Arc<Inner>, conn: RlpxConnection, inbound: bool) {
     );
     let mut table = inner.table.lock().unwrap();
     table.peers.remove(&remote);
-    if matches!(error, SessionError::Breach(_) | SessionError::Incompatible(_)) && !trusted {
+    if matches!(error, SessionError::Breach | SessionError::Incompatible) && !trusted {
         table.reputation.entry(remote).or_default().banned_until =
             Some(Instant::now() + BAN_DURATION);
     }
@@ -572,7 +572,7 @@ fn maintain(inner: Arc<Inner>) {
 }
 
 /// A channel for collecting responses from several peers at once.
-pub fn response_channel() -> (mpsc::Sender<crate::peer::Response>, mpsc::Receiver<crate::peer::Response>) {
+pub(crate) fn response_channel() -> (mpsc::Sender<crate::peer::Response>, mpsc::Receiver<crate::peer::Response>) {
     mpsc::channel()
 }
 

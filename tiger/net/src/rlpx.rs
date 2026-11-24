@@ -20,11 +20,11 @@ use crate::{
 };
 
 /// The devp2p base protocol version tiger speaks (v5 adds Snappy compression).
-pub const P2P_VERSION: u64 = 5;
+pub(crate) const P2P_VERSION: u64 = 5;
 /// Largest uncompressed message accepted, as in reth and geth.
-pub const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 /// Message ids below this are reserved for the `p2p` capability.
-pub const BASE_PROTOCOL_OFFSET: u8 = 0x10;
+pub(crate) const BASE_PROTOCOL_OFFSET: u8 = 0x10;
 
 /// `p2p` message ids.
 const HELLO: u8 = 0x00;
@@ -166,7 +166,7 @@ pub struct LocalCapability {
 
 /// Computes the shared capabilities: the highest common version of each name, ordered by name,
 /// with message ids assigned consecutively from 0x10 (devp2p rules).
-pub fn negotiate(
+pub(crate) fn negotiate(
     local: &[LocalCapability],
     remote: &[Capability],
 ) -> Result<Vec<SharedCapability>, RlpxError> {

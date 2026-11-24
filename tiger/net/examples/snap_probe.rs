@@ -31,6 +31,8 @@ use base_tiger_net::{
 };
 use serde_json::{Value, json};
 
+static COMMIT_SLEEP_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 struct GenesisOnly(ChainHead);
 
 impl BlockSource for GenesisOnly {
@@ -96,6 +98,7 @@ impl SnapStateSink for MemSink {
     }
 
     fn commit_snap(&mut self, batch: &SnapBatch) -> Result<(), StoreError> {
+        std::thread::sleep(Duration::from_millis(COMMIT_SLEEP_MS.load(std::sync::atomic::Ordering::Relaxed)));
         let mut flat = self.0.lock().unwrap();
         for (hash, account) in &batch.accounts {
             flat.accounts.insert(*hash, *account);
@@ -179,7 +182,10 @@ fn follow_block(url: &str, number: u64, flat: &Arc<Mutex<Flat>>, handle: &SnapHa
         json!([format!("0x{number:x}"), {"tracer": "prestateTracer", "tracerConfig": {"diffMode": true}}]),
     );
     let mut touched = TouchedKeys::default();
-    let mut flat = flat.lock().unwrap();
+    // Changes to apply once the block is reported: account (None = delete) and slot values.
+    let mut account_writes: Vec<(B256, Option<SnapAccount>)> = Vec::new();
+    let mut slot_writes: Vec<(B256, B256, U256)> = Vec::new();
+    let snapshot = flat.lock().unwrap().accounts.clone();
     for trace in traces.as_array().unwrap() {
         let result = &trace["result"];
         let pre = result["pre"].as_object().cloned().unwrap_or_default();
@@ -193,13 +199,12 @@ fn follow_block(url: &str, number: u64, flat: &Arc<Mutex<Flat>>, handle: &SnapHa
             let (before, after) = (pre.get(address), post.get(address));
             if after.is_none() && before.is_some() {
                 // In diff mode, an account only in `pre` was deleted.
-                flat.accounts.remove(&hashed);
-                flat.storage.remove(&hashed);
+                account_writes.push((hashed, None));
                 touched.wiped.push(hashed);
                 continue;
             }
             let field = |name: &str| after.and_then(|a| a.get(name)).or_else(|| before.and_then(|b| b.get(name)));
-            let current = flat.accounts.get(&hashed).copied();
+            let current = account_writes.iter().rev().find(|(h, _)| *h == hashed).and_then(|(_, a)| *a).or_else(|| snapshot.get(&hashed).copied());
             let code_hash = match field("code") {
                 Some(code) => keccak256(alloy_primitives::hex::decode(code.as_str().unwrap()).unwrap()),
                 None => current.map_or(KECCAK256_EMPTY, |a| a.code_hash),
@@ -209,7 +214,7 @@ fn follow_block(url: &str, number: u64, flat: &Arc<Mutex<Flat>>, handle: &SnapHa
                 balance: field("balance").map_or(current.map_or(U256::ZERO, |a| a.balance), hex_u256),
                 code_hash,
             };
-            flat.accounts.insert(hashed, account);
+            account_writes.push((hashed, Some(account)));
             let mut slots: Vec<String> = Vec::new();
             for side in [before, after].into_iter().flatten() {
                 if let Some(storage) = side.get("storage").and_then(|s| s.as_object()) {
@@ -224,12 +229,7 @@ fn follow_block(url: &str, number: u64, flat: &Arc<Mutex<Flat>>, handle: &SnapHa
                     .and_then(|s| s.get(&slot))
                     .map_or(U256::ZERO, hex_u256);
                 touched.storage.push((hashed, hashed_slot));
-                let entry = flat.storage.entry(hashed).or_default();
-                if value.is_zero() {
-                    entry.remove(&hashed_slot);
-                } else {
-                    entry.insert(hashed_slot, value);
-                }
+                slot_writes.push((hashed, hashed_slot, value));
             }
         }
     }
@@ -245,16 +245,33 @@ fn follow_block(url: &str, number: u64, flat: &Arc<Mutex<Flat>>, handle: &SnapHa
             let value = hex_u256(&rpc(url, "eth_getStorageAt", json!([address, format!("{key}"), format!("0x{number:x}")])));
             let hashed_slot = keccak256(key);
             touched.storage.push((hashed, hashed_slot));
-            let entry = flat.storage.entry(hashed).or_default();
-            if value.is_zero() {
-                entry.remove(&hashed_slot);
-            } else {
-                entry.insert(hashed_slot, value);
+            slot_writes.push((hashed, hashed_slot, value));
+        }
+    }
+    // Report first, then write while holding the guard, as the node does.
+    let guard = handle.on_block(number, state_root, &touched);
+    let mut flat = flat.lock().unwrap();
+    for (hashed, account) in account_writes {
+        match account {
+            Some(account) => {
+                flat.accounts.insert(hashed, account);
+            }
+            None => {
+                flat.accounts.remove(&hashed);
+                flat.storage.remove(&hashed);
             }
         }
     }
+    for (hashed, slot, value) in slot_writes {
+        let entry = flat.storage.entry(hashed).or_default();
+        if value.is_zero() {
+            entry.remove(&slot);
+        } else {
+            entry.insert(slot, value);
+        }
+    }
     drop(flat);
-    handle.on_block(number, state_root, &touched);
+    drop(guard);
 }
 
 fn main() {
@@ -262,6 +279,7 @@ fn main() {
     let (mut chain_id, mut genesis, mut genesis_time) = (0u64, B256::ZERO, 0u64);
     let mut peers: Vec<NodeRecord> = Vec::new();
     let mut rpc_url: Option<String> = None;
+    let mut snap_config = SnapSyncConfig::default();
     while let Some(flag) = args.next() {
         let value = args.next().expect("flag value");
         match flag.as_str() {
@@ -270,6 +288,13 @@ fn main() {
             "--genesis-time" => genesis_time = value.parse().unwrap(),
             "--peer" => peers.push(value.parse().unwrap()),
             "--rpc" => rpc_url = Some(value),
+            // Small responses and a short pivot age make a sync span many blocks and pivots.
+            "--response-bytes" => snap_config.response_bytes = value.parse().unwrap(),
+            "--pivot-age" => snap_config.max_pivot_age = value.parse().unwrap(),
+            "--inflight" => snap_config.max_inflight_per_peer = value.parse().unwrap(),
+            "--commit-ms" => snap_config.commit_interval = Duration::from_millis(value.parse().unwrap()),
+            // Slows every commit, which throttles the download loop (it commits inline).
+            "--commit-sleep-ms" => COMMIT_SLEEP_MS.store(value.parse().unwrap(), std::sync::atomic::Ordering::Relaxed),
             other => panic!("unknown flag {other}"),
         }
     }
@@ -291,7 +316,7 @@ fn main() {
     println!("peer {} eth/{} snap={} head={}", info.client_id, info.eth_version, info.snap, info.head_number);
 
     let flat = Arc::new(Mutex::new(Flat::default()));
-    let mut sync = SnapSync::new(network.clone(), MemSink(flat.clone()), SnapSyncConfig::default()).unwrap();
+    let mut sync = SnapSync::new(network.clone(), MemSink(flat.clone()), snap_config).unwrap();
     let handle = sync.handle();
     let follower = match &rpc_url {
         // Follow mode: the node's executed blocks drive the pivot; start a few blocks back so the
@@ -304,7 +329,7 @@ fn main() {
             // Seed: the flat state must hold every change after the first pivot, so start the
             // follower at the pivot itself.
             let block = rpc(&url, "eth_getBlockByNumber", json!([format!("0x{first:x}"), false]));
-            handle.on_block(first, block["stateRoot"].as_str().unwrap().parse().unwrap(), &TouchedKeys::default());
+            drop(handle.on_block(first, block["stateRoot"].as_str().unwrap().parse().unwrap(), &TouchedKeys::default()));
             Some(std::thread::spawn(move || {
                 let mut next = first + 1;
                 let mut followed = 0;
@@ -335,7 +360,7 @@ fn main() {
                 })
                 .unwrap()
                 .remove(0);
-            handle.on_block(number, header.header.state_root, &TouchedKeys::default());
+            drop(handle.on_block(number, header.header.state_root, &TouchedKeys::default()));
             None
         }
     };
@@ -355,6 +380,45 @@ fn main() {
     drop(flat_state);
     if let Some(follower) = follower {
         println!("followed {} blocks during the sync", follower.join().unwrap());
+    }
+    if result.is_err() {
+        // Diagnose: download the expected state afresh at the head and diff the two.
+        let (_, expected) = flat.lock().unwrap().result.unwrap();
+        let head = network.peer(&info.id).unwrap().head().0;
+        let truth = Arc::new(Mutex::new(Flat::default()));
+        let mut fresh = SnapSync::new(network.clone(), MemSink(truth.clone()), SnapSyncConfig::default()).unwrap();
+        drop(fresh.handle().on_block(head, expected, &TouchedKeys::default()));
+        let _ = fresh.run(&mut |_| {});
+        let (ours, theirs) = (flat.lock().unwrap(), truth.lock().unwrap());
+        let mut shown = 0;
+        for (hash, account) in &theirs.accounts {
+            if ours.accounts.get(hash) != Some(account) && shown < 20 {
+                println!("account {hash}: ours {:?} expected {account:?}", ours.accounts.get(hash));
+                shown += 1;
+            }
+        }
+        for hash in ours.accounts.keys() {
+            if !theirs.accounts.contains_key(hash) && shown < 20 {
+                println!("account {hash}: extra in ours");
+                shown += 1;
+            }
+        }
+        for (hash, slots) in &theirs.storage {
+            let empty = BTreeMap::new();
+            let mine = ours.storage.get(hash).unwrap_or(&empty);
+            for (slot, value) in slots {
+                if mine.get(slot) != Some(value) && shown < 40 {
+                    println!("slot {hash}/{slot}: ours {:?} expected {value}", mine.get(slot));
+                    shown += 1;
+                }
+            }
+            for slot in mine.keys() {
+                if !slots.contains_key(slot) && shown < 40 {
+                    println!("slot {hash}/{slot}: extra in ours");
+                    shown += 1;
+                }
+            }
+        }
     }
     result.expect("snap sync");
     println!("snap sync verified");

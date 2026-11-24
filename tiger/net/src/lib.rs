@@ -51,3 +51,6 @@ pub use download::{DownloadConfig, DownloadError, Downloader};
 
 mod snap_sync;
 pub use snap_sync::{Pivot, SnapHandle, SnapStatus, SnapSync, SnapSyncConfig, SnapSyncError, TouchedKeys};
+
+mod bootnodes;
+pub use bootnodes::BASE_BOOTNODES;

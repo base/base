@@ -4,7 +4,7 @@
 //! through eth/71; tiger offers 68 and 69 and the highest common version wins (69 with
 //! base-reth). Message ids below are relative to the capability's offset.
 
-use alloy_primitives::{B256, Bytes, U256};
+use alloy_primitives::{B256, U256};
 use alloy_rlp::{Decodable, Encodable, Header as RlpHeader};
 
 use crate::{block::BlockBody, forkid::ForkId, rlpx::LocalCapability};
@@ -50,11 +50,11 @@ mod id {
 }
 
 /// Most headers served per request (reth's `MAX_HEADERS_SERVE`).
-pub const MAX_HEADERS_SERVE: usize = 1024;
+pub(crate) const MAX_HEADERS_SERVE: usize = 1024;
 /// Most bodies or receipt lists served per request.
-pub const MAX_BODIES_SERVE: usize = 1024;
+pub(crate) const MAX_BODIES_SERVE: usize = 1024;
 /// Responses stop growing once they pass this many bytes (reth's `SOFT_RESPONSE_LIMIT`).
-pub const SOFT_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
+pub(crate) const SOFT_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
 
 /// The Status handshake message, either version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,7 +202,7 @@ impl Encodable for RawRlp<'_> {
 }
 
 /// Encodes `items` as an RLP list.
-pub fn encode_list(items: &[&dyn Encodable], out: &mut Vec<u8>) {
+pub(crate) fn encode_list(items: &[&dyn Encodable], out: &mut Vec<u8>) {
     let payload_length = items.iter().map(|i| i.length()).sum();
     RlpHeader { list: true, payload_length }.encode(out);
     for item in items {
@@ -211,7 +211,7 @@ pub fn encode_list(items: &[&dyn Encodable], out: &mut Vec<u8>) {
 }
 
 /// Returns the payload of the RLP list at the start of `buf` and advances `buf` past it.
-pub fn list_items<'a>(buf: &mut &'a [u8]) -> alloy_rlp::Result<&'a [u8]> {
+pub(crate) fn list_items<'a>(buf: &mut &'a [u8]) -> alloy_rlp::Result<&'a [u8]> {
     let header = RlpHeader::decode(buf)?;
     if !header.list {
         return Err(alloy_rlp::Error::UnexpectedString);
@@ -223,7 +223,7 @@ pub fn list_items<'a>(buf: &mut &'a [u8]) -> alloy_rlp::Result<&'a [u8]> {
 }
 
 /// Splits a request or response payload `[request_id, body]` into the id and the body bytes.
-pub fn split_request_id(payload: &[u8]) -> alloy_rlp::Result<(u64, &[u8])> {
+pub(crate) fn split_request_id(payload: &[u8]) -> alloy_rlp::Result<(u64, &[u8])> {
     let mut buf = payload;
     let mut items = list_items(&mut buf)?;
     let id = u64::decode(&mut items)?;
@@ -231,7 +231,7 @@ pub fn split_request_id(payload: &[u8]) -> alloy_rlp::Result<(u64, &[u8])> {
 }
 
 /// Encodes `[request_id, [items...]]` where each item is already-encoded RLP.
-pub fn encode_response<I: AsRef<[u8]>>(request_id: u64, items: &[I]) -> Vec<u8> {
+pub(crate) fn encode_response<I: AsRef<[u8]>>(request_id: u64, items: &[I]) -> Vec<u8> {
     let inner_length: usize = items.iter().map(|i| i.as_ref().len()).sum();
     let inner_header = RlpHeader { list: true, payload_length: inner_length };
     let payload_length = request_id.length() + inner_header.length_with_payload();
@@ -246,7 +246,7 @@ pub fn encode_response<I: AsRef<[u8]>>(request_id: u64, items: &[I]) -> Vec<u8> 
 }
 
 /// Encodes already-encoded RLP items as one list.
-pub fn encode_list_of_raw<I: AsRef<[u8]>>(items: &[I]) -> Vec<u8> {
+pub(crate) fn encode_list_of_raw<I: AsRef<[u8]>>(items: &[I]) -> Vec<u8> {
     let payload_length: usize = items.iter().map(|i| i.as_ref().len()).sum();
     let mut out = Vec::with_capacity(payload_length + 4);
     RlpHeader { list: true, payload_length }.encode(&mut out);
@@ -257,21 +257,21 @@ pub fn encode_list_of_raw<I: AsRef<[u8]>>(items: &[I]) -> Vec<u8> {
 }
 
 /// Encodes `[request_id, [hash, ...]]`, the body of GetBlockBodies and GetReceipts.
-pub fn encode_hashes_request(request_id: u64, hashes: &[B256]) -> Vec<u8> {
+pub(crate) fn encode_hashes_request(request_id: u64, hashes: &[B256]) -> Vec<u8> {
     let mut out = Vec::new();
     encode_list(&[&request_id, &hashes.to_vec()], &mut out);
     out
 }
 
 /// Decodes a list of bodies from a BlockBodies response body.
-pub fn decode_bodies(mut items: &[u8]) -> alloy_rlp::Result<Vec<BlockBody>> {
+pub(crate) fn decode_bodies(mut items: &[u8]) -> alloy_rlp::Result<Vec<BlockBody>> {
     Vec::<BlockBody>::decode(&mut items)
 }
 
 /// Converts an EIP-2718 receipt (`type || rlp([status, gas, bloom, logs, ...])`, or the bare list
 /// for legacy) into its eth/69 wire form `[type, status, gas, logs, ...]`, which drops the bloom.
 /// Base deposit receipts keep their trailing deposit nonce and version fields.
-pub fn receipt_to_eth69(receipt: &[u8]) -> alloy_rlp::Result<Vec<u8>> {
+pub(crate) fn receipt_to_eth69(receipt: &[u8]) -> alloy_rlp::Result<Vec<u8>> {
     let (tx_type, mut rest) = match receipt.first() {
         Some(b) if *b >= 0xc0 => (0u8, receipt),
         Some(b) => (*b, &receipt[1..]),
@@ -303,17 +303,12 @@ pub fn receipt_to_eth69(receipt: &[u8]) -> alloy_rlp::Result<Vec<u8>> {
 
 /// Encodes an EIP-2718 receipt for an eth/68 Receipts response: legacy as the bare list,
 /// typed receipts wrapped in an RLP string.
-pub fn receipt_to_eth68(receipt: &[u8]) -> Vec<u8> {
+pub(crate) fn receipt_to_eth68(receipt: &[u8]) -> Vec<u8> {
     if receipt.first().is_some_and(|b| *b >= 0xc0) {
         receipt.to_vec()
     } else {
         alloy_rlp::encode(receipt)
     }
-}
-
-/// A `Bytes` list encoded as RLP, used for the empty PooledTransactions answer.
-pub fn empty_list() -> Bytes {
-    Bytes::from_static(&[0xc0])
 }
 
 #[cfg(test)]
