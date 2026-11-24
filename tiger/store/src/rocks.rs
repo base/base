@@ -25,7 +25,7 @@ use crate::Fault;
 pub const SHARD_SIZE: usize = 2_000;
 
 /// A RocksDB-backed table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RocksTable {
     /// Transaction hash -> number.
     TransactionHashNumbers,

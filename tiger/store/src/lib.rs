@@ -21,7 +21,7 @@ pub use fault::{Fault, FaultConfig, FaultMode};
 
 mod codec;
 pub use codec::{
-    Account, AccountBeforeTx, BytecodeCodec, CodecError, Decoded, Flags, Reader, StorageEntry, TrieCodec,
+    Account, AccountBeforeTx, BlockBodyIndices, BytecodeCodec, StageCheckpointCodec, StorageBeforeTx, CodecError, Decoded, Flags, Reader, StorageEntry, TrieCodec,
     put_compact_u64, put_compact_u128, put_compact_u256, put_varuint,
 };
 
@@ -33,3 +33,6 @@ pub use static_files::{BLOCKS_PER_FILE, Jar, JarConfig, Lz4, Range, Segment, Seg
 
 mod rocks;
 pub use rocks::{BlockList, History, Rocks, RocksBatch, RocksError, RocksTable, SHARD_SIZE};
+
+mod datadir;
+pub use datadir::{Datadir, STAGES, STORAGE_SETTINGS, STORAGE_SETTINGS_KEY, StoreError, WriteTxn, put_scale_bytes, scale_bytes};

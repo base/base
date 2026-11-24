@@ -923,6 +923,17 @@ impl StaticFiles {
         jar.truncate(rows, csoff_len, header)
     }
 
+    /// Deletes every jar of `segment`.
+    pub fn clear(&self, segment: Segment) -> io::Result<()> {
+        let mut segments = self.segments.write().unwrap();
+        let files = &mut segments[segment as usize];
+        files.pending.clear();
+        for jar in files.jars.drain(..) {
+            jar.delete()?;
+        }
+        Ok(())
+    }
+
     /// Runs `f` on the committed jar of `segment` holding block `block`.
     pub fn with_block_jar<T>(&self, segment: Segment, block: u64, f: impl FnOnce(&Jar) -> io::Result<T>) -> io::Result<Option<T>> {
         let segments = self.segments.read().unwrap();

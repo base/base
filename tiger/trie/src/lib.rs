@@ -22,3 +22,6 @@ pub use root::{AccountProof, StorageProof, TrieView};
 
 mod write;
 pub use write::StateWriter;
+
+mod state_db;
+pub use state_db::{AccountInfo, BlockChanges, StateDb, StateView};

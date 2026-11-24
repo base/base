@@ -320,6 +320,104 @@ impl AccountBeforeTx {
     }
 }
 
+/// A storage changeset entry (`StorageChangeSets` static file rows): the plain address and slot
+/// and the value before the block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageBeforeTx {
+    /// The address.
+    pub address: Address,
+    /// The plain slot.
+    pub slot: B256,
+    /// The value before the change (zero when unset).
+    pub value: U256,
+}
+
+impl StorageBeforeTx {
+    /// The encoding: 20-byte address, 32-byte slot, compact value.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(84);
+        out.extend_from_slice(self.address.as_slice());
+        out.extend_from_slice(self.slot.as_slice());
+        put_compact_u256(&mut out, self.value);
+        out
+    }
+
+    /// Decodes a whole row.
+    pub fn from_bytes(bytes: &[u8]) -> Decoded<Self> {
+        let mut reader = Reader::new(bytes);
+        let address = reader.address()?;
+        let slot = reader.b256()?;
+        let value = reader.compact_u256(reader.rest.len())?;
+        Ok(Self { address, slot, value })
+    }
+}
+
+/// reth's `StageCheckpoint` value: flags (block number length 4 bits, stage progress present 1
+/// bit), then the block number. Tiger writes no stage progress and ignores it on read.
+#[derive(Debug)]
+pub struct StageCheckpointCodec;
+
+impl StageCheckpointCodec {
+    /// Encodes a checkpoint at `block`.
+    pub fn encode(block: u64) -> Vec<u8> {
+        let mut body = Vec::with_capacity(8);
+        let mut flags = Flags::default();
+        flags.put(4, put_compact_u64(&mut body, block));
+        flags.put(1, 0);
+        let mut out = Vec::with_capacity(9);
+        flags.write(&mut out);
+        out.extend_from_slice(&body);
+        out
+    }
+
+    /// The block number of a stored checkpoint.
+    pub fn decode(bytes: &[u8]) -> Decoded<u64> {
+        let mut reader = Reader::new(bytes);
+        let mut flags = reader.flags(1)?;
+        let len = flags.get(4) as usize;
+        reader.compact_u64(len)
+    }
+}
+
+/// reth's `StoredBlockBodyIndices`: the first transaction number and the transaction count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BlockBodyIndices {
+    /// The block's first transaction number.
+    pub first_tx: u64,
+    /// The block's transaction count.
+    pub tx_count: u64,
+}
+
+impl BlockBodyIndices {
+    /// Flags (4 bits per field, 1 byte), then both compact integers.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut body = Vec::with_capacity(16);
+        let mut flags = Flags::default();
+        flags.put(4, put_compact_u64(&mut body, self.first_tx));
+        flags.put(4, put_compact_u64(&mut body, self.tx_count));
+        let mut out = Vec::with_capacity(17);
+        flags.write(&mut out);
+        out.extend_from_slice(&body);
+        out
+    }
+
+    /// Decodes a whole value.
+    pub fn from_bytes(bytes: &[u8]) -> Decoded<Self> {
+        let mut reader = Reader::new(bytes);
+        let mut flags = reader.flags(1)?;
+        let (a, b) = (flags.get(4) as usize, flags.get(4) as usize);
+        let first_tx = reader.compact_u64(a)?;
+        let tx_count = reader.compact_u64(b)?;
+        reader.finish()?;
+        Ok(Self { first_tx, tx_count })
+    }
+
+    /// The first transaction number after the block.
+    pub const fn next_tx(&self) -> u64 {
+        self.first_tx + self.tx_count
+    }
+}
+
 /// Trie node encodings: `BranchNodeCompact` values and the packed nibble keys of storage v2.
 #[derive(Debug)]
 pub struct TrieCodec;

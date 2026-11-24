@@ -2,8 +2,11 @@
 //!
 //! Table names and `DUPSORT` flags are reth's `tables!` list (crates/storage/db-api/src/tables at
 //! base/reth 2b20e42), in the same order. Tiger creates every one of them, as reth does, so either
-//! client opens a datadir the other made. `TigerKnownRanges` is tiger's own table; reth opens
-//! tables by name and ignores others.
+//! client opens a datadir the other made. The `Tiger*` tables are tiger's own (reth opens tables
+//! by name and ignores others): `TigerKnownRanges` records complete hashed-key ranges of a
+//! partial state, `TigerWipes` (`hashed address ++ block`) and `TigerWipedStorage`
+//! (`block ++ hashed address` -> `hashed slot ++ value` duplicates) keep the storage a wipe
+//! removed, which reth's v2 changesets do not, so unwinds and historical roots restore it.
 
 use std::{fs, io, path::Path};
 
@@ -70,6 +73,8 @@ tables! {
     ChainState: false,
     Metadata: false,
     TigerKnownRanges: false,
+    TigerWipes: false,
+    TigerWipedStorage: true,
 }
 
 /// The `database.version` file reth checks next to `mdbx.dat`.
