@@ -346,6 +346,47 @@ mod tests {
     }
 
     #[test]
+    fn delegation_designator_is_followed_before_prague() {
+        // From the RPC fuzzer: an eth_call state override put a 7702 designator on an account at
+        // a pre-Isthmus block; base-reth (revm) runs the delegate's code, on any fork.
+        const DELEGATOR: Address = Address::repeat_byte(0x33);
+        const IMPLEMENTATION: Address = Address::repeat_byte(0x44);
+        const CALLER: Address = Address::repeat_byte(0x55);
+        let code = |bytes: Vec<u8>| {
+            let code = evm2::bytecode::Bytecode::new_raw(bytes.into());
+            evm2::AccountInfo { code_hash: code.hash_slow(), code: Some(code), ..Default::default() }
+        };
+        let mut db = InMemoryDB::default();
+        let mut designator = vec![0xef, 0x01, 0x00];
+        designator.extend_from_slice(IMPLEMENTATION.as_slice());
+        db.insert_account_info(&DELEGATOR, code(designator));
+        // CALLER PUSH1 0 SSTORE STOP: records who called, in the delegator's storage.
+        db.insert_account_info(&IMPLEMENTATION, code(vec![0x33, 0x60, 0x00, 0x55, 0x00]));
+        // CALL(GAS, DELEGATOR, 0, 0, 0, 0, 0) STOP.
+        let mut call = vec![0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73];
+        call.extend_from_slice(DELEGATOR.as_slice());
+        call.extend([0x5a, 0xf1, 0x00]);
+        db.insert_account_info(&CALLER, code(call));
+        let mut evm = Evm::new_with_execution_config(
+            BaseEvmTypes::execution_config(SPEC, 8453),
+            SPEC,
+            BlockEnv::<BaseEvmTypes>::default(),
+            BaseEvmTypes::tx_registry(SPEC),
+            db,
+            Precompiles::base(SPEC.into()),
+        );
+        let slot = |evm: &mut Evm<'static, BaseEvmTypes>| {
+            evm.state_mut().storage_slot_untracked(&DELEGATOR, &U256::ZERO).unwrap()
+        };
+        // The transaction's own call.
+        assert!(run(&mut evm, deposit(TxKind::Call(DELEGATOR), 0, U256::ZERO, Bytes::new(), false)).status);
+        assert_eq!(slot(&mut evm), U256::from_be_slice(SENDER.as_slice()));
+        // A CALL from a contract.
+        assert!(run(&mut evm, deposit(TxKind::Call(CALLER), 0, U256::ZERO, Bytes::new(), false)).status);
+        assert_eq!(slot(&mut evm), U256::from_be_slice(CALLER.as_slice()));
+    }
+
+    #[test]
     fn create_deposit_from_max_nonce_sender_succeeds_with_intrinsic_gas() {
         // From diff-fuzz gen seed 3 case 511 (Beryl): base-reth (revm) reports status 1 and only
         // intrinsic gas, creating nothing; the nonce stays at u64::MAX.

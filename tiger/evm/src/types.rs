@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use base_common_l1_fees::L1FeeParams;
-use evm2::{BaseEvmConfigSelector, Evm, EvmTypesHost};
+use evm2::{BaseEvmConfigSelector, Evm, EvmConfigSelector, EvmFeatures, EvmTypesHost, ExecutionConfig};
 
 use crate::{BaseSpecId, BaseTxEnvelope};
 
@@ -27,6 +27,23 @@ impl EvmTypesHost for BaseEvmTypes {
     type TxResultExt = BaseTxResultExt;
     type BlockEnvExt = ();
     type Host<'a> = Evm<'a, Self>;
+}
+
+impl BaseEvmTypes {
+    /// The execution config of `spec` on chain `chain_id`.
+    ///
+    /// base-reth parity: EIP-7702 delegation designators are followed on every fork, as revm
+    /// resolves them at call time without checking the spec (`load_account_delegated` and the
+    /// top-level call in revm-handler). Before Isthmus no account can hold one on a real chain
+    /// (EIP-3541 rejects `0xEF` code), but a genesis allocation or an `eth_call` state override
+    /// can place one, and base-reth then runs the delegate's code.
+    pub fn execution_config(spec: BaseSpecId, chain_id: u64) -> ExecutionConfig<Self> {
+        let config = <BaseEvmConfigSelector as EvmConfigSelector<Self>>::execution_config(spec);
+        let mut version = *config.version();
+        version.chain_id = chain_id;
+        version.features.set(EvmFeatures::EIP7702, true);
+        config.with_version(version)
+    }
 }
 
 /// Transaction-result extension data for Base transactions.

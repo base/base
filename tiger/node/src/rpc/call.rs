@@ -12,7 +12,7 @@ use base_common_genesis::BaseFeature;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_tiger_evm::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope, BaseTxHandlerHooks, BlockRules};
 use evm2::{
-    AccountInfo, Evm, EvmConfigSelector, EvmFeatures, SpecId, TxResult,
+    AccountInfo, Evm, EvmFeatures, SpecId, TxResult,
     bytecode::Bytecode,
     env::BlockEnv,
     ethereum::{LazyTxEip7702, TxEnvelope, eip4844},
@@ -290,10 +290,8 @@ impl Node {
         kind: CallKind,
     ) -> Evm<'a, BaseEvmTypes> {
         let spec = self.spec.spec_at(block.spec_timestamp);
-        let config =
-            <evm2::BaseEvmConfigSelector as EvmConfigSelector<BaseEvmTypes>>::execution_config(spec);
+        let config = BaseEvmTypes::execution_config(spec, self.spec.chain_id);
         let mut version = *config.version();
-        version.chain_id = self.spec.chain_id;
         for feature in [
             EvmFeatures::EIP3607,
             EvmFeatures::BASE_FEE_CHECK,
