@@ -10,7 +10,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder,
-    BaseSpecId, BaseTransaction, BaseTxEnv,
+    BaseSpecId, BaseTransaction, BaseTxEnv, BaseTxResult,
 };
 #[cfg(not(feature = "std"))]
 use base_common_rpc_types_engine as _;
@@ -20,7 +20,10 @@ use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
-use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnvMut, precompiles::PrecompilesMap};
+use reth_evm::{
+    ConfigureEvm, EvmEnv, HaltReasonFor, TransactionEnvMut, TxExecutionResultFor,
+    precompiles::PrecompilesMap,
+};
 use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader, SignedTransaction};
 #[cfg(feature = "std")]
 use reth_primitives_traits::{TxTy, WithEncoded};
@@ -29,7 +32,7 @@ use reth_storage_errors as _;
 #[cfg(feature = "std")]
 use reth_storage_errors::any::AnyError;
 use revm::{
-    context::{BlockEnv, TxEnv},
+    context::{BlockEnv, TxEnv, result::ResultAndState},
     primitives::{Address, B256, Bytes as RevmBytes},
 };
 
@@ -211,6 +214,23 @@ where
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             extra_data: attributes.extra_data,
         })
+    }
+
+    /// Base meets the reuse contract with three adjustments: the L1 block info is reloaded for
+    /// every transaction so its reads are recorded, [`BaseTxResult::from_prewarm`] rejects the
+    /// results the block executor would handle beyond `transact`, and the executor applies the
+    /// DA footprint limit of reused results when the block finishes. Reuse still needs
+    /// `--engine.prewarm-reuse`.
+    fn reuses_prewarm_results(&self) -> bool {
+        true
+    }
+
+    fn prewarm_tx_result(
+        &self,
+        tx: &N::SignedTx,
+        result: ResultAndState<HaltReasonFor<Self>>,
+    ) -> Option<TxExecutionResultFor<Self>> {
+        BaseTxResult::from_prewarm(tx, result)
     }
 }
 

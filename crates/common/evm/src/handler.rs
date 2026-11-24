@@ -395,7 +395,7 @@ where
 
         // commit transaction
         evm.ctx().journal_mut().commit_tx();
-        evm.ctx().chain_mut().clear_tx_l1_cost();
+        evm.ctx().chain_mut().reset_for_next_tx();
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
 
@@ -444,7 +444,7 @@ where
         }
 
         // do the cleanup
-        evm.ctx().chain_mut().clear_tx_l1_cost();
+        evm.ctx().chain_mut().reset_for_next_tx();
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
 
@@ -824,6 +824,66 @@ mod tests {
                 tx_l1_cost: Some(U256::ZERO),
                 da_footprint_gas_scalar: None
             }
+        );
+    }
+
+    /// An EVM reused across transactions reloads the L1 block info for each one, so a transaction
+    /// pays L1 fees from parameters written after the previous one. Engine prewarm reuse depends
+    /// on this: each transaction's L1 block reads must be its own.
+    #[test]
+    fn l1_block_info_reloads_for_each_transaction() {
+        const L1_BASE_FEE: u64 = 10_000_000_000;
+        /// A base fee scalar of 1,000,000 and no blob base fee scalar.
+        const L1_FEE_SCALARS: U256 = U256::from_limbs([0, 1_000_000 << 32, 0, 0]);
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            FEE_FLOW_CALLER,
+            AccountInfo { balance: FEE_FLOW_INITIAL_BALANCE, ..Default::default() },
+        );
+        db.insert_account_storage(
+            Predeploys::L1_BLOCK_INFO,
+            L1BlockInfo::ECOTONE_L1_FEE_SCALARS_SLOT,
+            L1_FEE_SCALARS,
+        )
+        .unwrap();
+        db.insert_account_storage(
+            Predeploys::L1_BLOCK_INFO,
+            L1BlockInfo::L1_BASE_FEE_SLOT,
+            U256::from(L1_BASE_FEE),
+        )
+        .unwrap();
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_block(BlockEnv {
+                basefee: FEE_FLOW_BASE_FEE,
+                beneficiary: FEE_FLOW_BENEFICIARY,
+                ..Default::default()
+            })
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus)))
+            .build_base();
+        let l1_fee = |state: &revm::state::EvmState| {
+            state
+                .get(&Predeploys::L1_FEE_VAULT)
+                .map(|account| account.info.balance)
+                .unwrap_or_default()
+        };
+
+        let first = evm.transact(fee_flow_tx()).expect("first transaction should execute");
+        evm.ctx_mut()
+            .db_mut()
+            .insert_account_storage(
+                Predeploys::L1_BLOCK_INFO,
+                L1BlockInfo::L1_BASE_FEE_SLOT,
+                U256::from(2 * L1_BASE_FEE),
+            )
+            .unwrap();
+        let second = evm.transact(fee_flow_tx()).expect("second transaction should execute");
+
+        assert!(!l1_fee(&first.state).is_zero(), "the first transaction pays an L1 fee");
+        assert!(
+            l1_fee(&second.state) > l1_fee(&first.state),
+            "the second transaction pays from the doubled L1 base fee"
         );
     }
 
