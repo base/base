@@ -669,9 +669,9 @@ impl SegmentFiles {
         self.pending.last().map(|p| &p.header).or_else(|| self.jars.last().map(|j| &j.config.header))
     }
 
-    /// The next block this segment expects.
-    fn next_block(&self) -> u64 {
-        self.tip_header().map_or(0, |h| h.blocks.map_or(h.expected.start, |b| b.end + 1))
+    /// The next block this segment expects, `None` when it is empty (any first block).
+    fn next_block(&self) -> Option<u64> {
+        self.tip_header().map(|h| h.blocks.map_or(h.expected.start, |b| b.end + 1))
     }
 
     /// The next transaction number, from the newest header that has transactions.
@@ -744,6 +744,23 @@ impl StaticFiles {
         segments[segment as usize].jars.iter().rev().find_map(|j| j.config.header.blocks.map(|b| b.end))
     }
 
+    /// The next block `segment` takes, counting uncommitted rows; `None` when it is empty.
+    pub fn next_block(&self, segment: Segment) -> Option<u64> {
+        self.segments.read().unwrap()[segment as usize].next_block()
+    }
+
+    /// The next transaction number of a transaction segment, counting uncommitted rows.
+    pub fn pending_next_tx(&self, segment: Segment) -> u64 {
+        assert!(segment.is_tx_based());
+        self.segments.read().unwrap()[segment as usize].next_tx()
+    }
+
+    /// The committed first block of `segment`, `None` when it has none.
+    pub fn first_block(&self, segment: Segment) -> Option<u64> {
+        let segments = self.segments.read().unwrap();
+        segments[segment as usize].jars.iter().find_map(|j| j.config.header.blocks.map(|b| b.start))
+    }
+
     /// The committed next transaction number of a transaction segment.
     pub fn next_tx(&self, segment: Segment) -> u64 {
         assert!(segment.is_tx_based());
@@ -755,8 +772,9 @@ impl StaticFiles {
     /// Starts block `block` in `segment` (it must be the next block), rolling to a new file at a
     /// file boundary.
     fn begin_block(&self, files: &mut SegmentFiles, block: u64) -> io::Result<()> {
-        let next = files.next_block();
-        if block != next {
+        if let Some(next) = files.next_block()
+            && block != next
+        {
             return Err(invalid(format!("{}: appending block {block}, expected {next}", files.segment.name())));
         }
         let tip = files.tip_header().cloned();
@@ -765,7 +783,14 @@ impl StaticFiles {
             Some(h) => block > h.expected.end,
         };
         if needs_new_file {
-            let mut header = JarConfig::new(files.segment, Range::fixed(block, self.blocks_per_file)).header;
+            let mut expected = Range::fixed(block, self.blocks_per_file);
+            // A segment's first block may lie above its file's start (a genesis above block
+            // zero). reth then moves a changeset file's expected start to that block
+            // (`set_expected_block_start`) and keeps the other segments' fixed range.
+            if tip.is_none() && files.segment.is_change_based() {
+                expected.start = block;
+            }
+            let mut header = JarConfig::new(files.segment, expected).header;
             header.blocks = None;
             files.pending.push(Pending { header, data: Vec::new(), ends: Vec::new(), rows: 0, max_row_size: 0, csoff: Vec::new() });
         } else if files.pending.is_empty() {
@@ -862,7 +887,8 @@ impl StaticFiles {
             for p in pending {
                 let is_last = files.jars.last().is_some_and(|j| j.config.header.expected == p.header.expected);
                 if !is_last {
-                    let path = self.dir.join(files.segment.file_name(p.header.expected));
+                    // Files are named after their fixed range even when the expected start moved.
+                    let path = self.dir.join(files.segment.file_name(Range::fixed(p.header.expected.start, self.blocks_per_file)));
                     let mut config = JarConfig::new(files.segment, p.header.expected);
                     // The block range is set by the append; an empty new file has none.
                     config.header.blocks = None;

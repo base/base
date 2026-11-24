@@ -10,3 +10,10 @@ reth's storage v2 layout. It also holds the fault-injection layer used to prove 
 `reth-mdbx-sys`, with one tiger patch: hooks before every `pwrite` and after every `fsync`
 (search `tiger` in `mdbx.c`). `src/mdbx_sys.rs` holds bindings pre-generated with bindgen 0.72.1
 using reth's `reth-mdbx-sys` build script settings.
+
+Canonical block data (`src/blocks.rs`) is written as base-reth writes it: `WriteTxn::append_block`
+puts the header, transactions, senders and receipts in the static files and `HeaderNumbers`,
+`BlockBodyIndices`, `TransactionBlocks` and `TransactionHashNumbers` in the databases, and
+`Datadir::header`, `transactions`, `receipts`, `senders`, `block_number` and
+`transaction_location` read them back. The first block (genesis) may have any number; the static
+files then start at it as base-reth's `init_genesis` makes them.

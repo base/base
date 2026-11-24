@@ -19,3 +19,8 @@ base-tiger-store.workspace = true
 alloy-rlp.workspace = true
 alloy-trie = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["std"] }

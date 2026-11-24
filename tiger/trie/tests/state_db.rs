@@ -5,8 +5,12 @@
 
 use std::collections::BTreeMap;
 
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_consensus::{Header, Receipt, Signed, TxLegacy};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::{Address, B256, Bytes, Signature, U256, keccak256};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use alloy_trie::{HashBuilder, KECCAK_EMPTY, Nibbles, proof::verify_proof};
+use base_tiger_store::{RocksTable, Segment};
 use base_tiger_trie::{AccountInfo, BlockChanges, StateDb, account_leaf, storage_leaf};
 
 struct Rng(u64);
@@ -95,6 +99,46 @@ fn random_block(rng: &mut Rng, model: &mut Model, addresses: &[Address], slots: 
     changes
 }
 
+/// Block `number`'s header and `count` distinct legacy transactions with senders and receipts.
+fn block_data(number: u64, root: B256, count: u64) -> (Header, Vec<BaseTxEnvelope>, Vec<Address>, Vec<BaseReceipt>) {
+    let header = Header { number, state_root: root, ..Header::default() };
+    let mut txs = Vec::new();
+    let mut receipts = Vec::new();
+    for i in 0..count {
+        let tx = TxLegacy { nonce: number * 16 + i, gas_limit: 21_000, chain_id: Some(8453), ..TxLegacy::default() };
+        let signature = Signature::new(U256::from(1 + i), U256::from(number + 1), false);
+        txs.push(BaseTxEnvelope::Legacy(Signed::new_unhashed(tx, signature)));
+        let receipt = Receipt { status: true.into(), cumulative_gas_used: 21_000 * (i + 1), logs: Vec::new() };
+        receipts.push(BaseReceipt::Legacy(receipt));
+    }
+    let senders = (0..count).map(|i| Address::with_last_byte(i as u8)).collect();
+    (header, txs, senders, receipts)
+}
+
+/// The stored block data agrees with the stored tip: blocks up to it and their transactions
+/// are found, the given blocks above it are gone.
+fn check_blocks(db: &StateDb, genesis: u64, tip: u64, gone: &[(u64, Vec<BaseTxEnvelope>)]) {
+    let dd = &db.datadir;
+    for number in genesis..=tip {
+        let (header, hash) = dd.header(number).unwrap().unwrap();
+        assert_eq!(dd.block_number(hash).unwrap(), Some(number));
+        let txs = dd.transactions(number).unwrap().unwrap();
+        assert_eq!(txs, block_data(number, header.state_root, txs.len() as u64).1);
+        for (index, tx) in txs.iter().enumerate() {
+            assert_eq!(dd.transaction_location(tx.trie_hash()).unwrap(), Some((number, index)));
+        }
+        assert_eq!(dd.receipts(number).unwrap().unwrap().len(), txs.len());
+    }
+    assert!(dd.header(tip + 1).unwrap().is_none());
+    for (number, txs) in gone {
+        assert!(*number > tip);
+        for tx in txs {
+            let entry = dd.rocks.get(RocksTable::TransactionHashNumbers, tx.trie_hash().as_slice()).unwrap();
+            assert_eq!(entry, None, "hash of a tx of block {number} above the tip {tip}");
+        }
+    }
+}
+
 fn temp(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("tiger-statedb-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -142,18 +186,24 @@ fn randomized_blocks_unwinds_reopens_and_history() {
         let dir = temp(&format!("rand-{seed}"));
         let addresses: Vec<Address> = (0..24u64).map(|i| Address::from_word(keccak256(i.to_be_bytes()))).collect();
         let slots: Vec<U256> = (0..12u64).map(|i| U256::from(i * 7 + seed)).collect();
+        // Even seeds start at a genesis above zero, just before a static-file boundary.
+        let genesis = if seed % 2 == 0 { seed * 1_000_000 + 499_990 } else { 0 };
         let mut db = StateDb::open(&dir).unwrap();
-        // snapshots[n] = model after block n; changes[n] = block n's changes.
+        // snapshots[n] = model after block genesis + n; changes[n] = that block's changes.
         let mut snapshots: Vec<Model> = Vec::new();
         let mut roots: Vec<B256> = Vec::new();
         let mut all_changes: Vec<BlockChanges> = Vec::new();
         let mut model = Model::new();
-        for step in 0..40 {
+        for _ in 0..40 {
             let tip = snapshots.len() as u64;
-            if step > 3 && rng.below(6) == 0 {
+            if tip > 2 && rng.below(6) == 0 {
                 let depth = 1 + rng.below(3.min(tip - 1));
                 let target = tip - 1 - depth;
-                let got = db.unwind_to(target).unwrap();
+                let gone: Vec<_> = (genesis + target + 1..genesis + tip)
+                    .map(|n| (n, db.datadir.transactions(n).unwrap().unwrap()))
+                    .collect();
+                let got = db.unwind_to(genesis + target).unwrap();
+                check_blocks(&db, genesis, genesis + target, &gone);
                 snapshots.truncate(target as usize + 1);
                 roots.truncate(target as usize + 1);
                 all_changes.truncate(target as usize + 1);
@@ -161,19 +211,27 @@ fn randomized_blocks_unwinds_reopens_and_history() {
                 assert_eq!(got, roots[target as usize], "seed {seed} unwind to {target}");
                 continue;
             }
-            let number = snapshots.len() as u64;
+            let number = genesis + snapshots.len() as u64;
             let changes = random_block(&mut rng, &mut model, &addresses, &slots);
             // Sometimes crash after the static files (and RocksDB) committed, then reopen.
+            let tx_count = rng.below(3);
             if rng.below(8) == 0 {
                 let mut w = db.write().unwrap();
-                db.commit_block(&mut w, number, &changes).unwrap();
+                let root = db.commit_block(&mut w, number, &changes).unwrap();
+                let (header, txs, senders, receipts) = block_data(number, root, tx_count);
+                w.append_block(&header, header.hash_slow(), &txs, &senders, &receipts).unwrap();
                 w.crash_before_mdbx(rng.below(2) == 0).unwrap();
                 drop(db);
                 db = StateDb::open(&dir).unwrap();
-                assert_eq!(db.tip().unwrap(), number.checked_sub(1));
+                assert_eq!(db.tip().unwrap(), (number > genesis).then(|| number - 1));
+                if number > genesis {
+                    check_blocks(&db, genesis, number - 1, &[(number, txs)]);
+                }
             }
             let mut w = db.write().unwrap();
             let got = db.commit_block(&mut w, number, &changes).unwrap();
+            let (header, txs, senders, receipts) = block_data(number, got, tx_count);
+            w.append_block(&header, header.hash_slow(), &txs, &senders, &receipts).unwrap();
             w.commit().unwrap();
             assert_eq!(got, root(&model), "seed {seed} block {number}");
             snapshots.push(model.clone());
@@ -185,15 +243,16 @@ fn randomized_blocks_unwinds_reopens_and_history() {
             }
         }
         let tip = snapshots.len() as u64 - 1;
-        assert_eq!(db.tip().unwrap(), Some(tip));
+        assert_eq!(db.tip().unwrap(), Some(genesis + tip));
+        check_blocks(&db, genesis, genesis + tip, &[]);
         for _ in 0..6 {
             let block = rng.below(tip + 1);
-            check_view(&db, block, &snapshots[block as usize], roots[block as usize], &addresses, &slots, &mut rng);
+            check_view(&db, genesis + block, &snapshots[block as usize], roots[block as usize], &addresses, &slots, &mut rng);
         }
-        check_view(&db, tip, &snapshots[tip as usize], roots[tip as usize], &addresses, &slots, &mut rng);
+        check_view(&db, genesis + tip, &snapshots[tip as usize], roots[tip as usize], &addresses, &slots, &mut rng);
         // In-memory overlays: the stored block two back with the last two blocks on top.
         let base = tip - 2;
-        let view = db.view(base, vec![all_changes[tip as usize - 1].clone(), all_changes[tip as usize].clone()]).unwrap();
+        let view = db.view(genesis + base, vec![all_changes[tip as usize - 1].clone(), all_changes[tip as usize].clone()]).unwrap();
         assert_eq!(view.state_root(None).unwrap(), roots[tip as usize]);
         for address in &addresses {
             assert_eq!(view.account(*address).unwrap(), snapshots[tip as usize].get(address).map(|(i, _)| *i));
@@ -203,14 +262,16 @@ fn randomized_blocks_unwinds_reopens_and_history() {
             }
         }
         drop(view);
-        let view = db.view(base, vec![all_changes[tip as usize - 1].clone()]).unwrap();
+        let view = db.view(genesis + base, vec![all_changes[tip as usize - 1].clone()]).unwrap();
         assert_eq!(view.state_root(Some(&all_changes[tip as usize])).unwrap(), roots[tip as usize]);
         drop(view);
         // Unwind all the way to genesis.
-        assert_eq!(db.unwind_to(0).unwrap(), roots[0]);
+        assert_eq!(db.unwind_to(genesis).unwrap(), roots[0]);
         drop(db);
         let db = StateDb::open(&dir).unwrap();
-        assert_eq!(db.view(0, Vec::new()).unwrap().state_root(None).unwrap(), roots[0]);
+        assert_eq!(db.view(genesis, Vec::new()).unwrap().state_root(None).unwrap(), roots[0]);
+        assert!(genesis == 0 || db.view(genesis - 1, Vec::new()).and_then(|v| v.state_root(None)).is_err(), "no state below genesis");
+        assert_eq!(db.datadir.static_files.first_block(Segment::AccountChangeSets), Some(genesis));
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

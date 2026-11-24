@@ -184,14 +184,16 @@ impl StateDb {
     }
 
     /// Writes block `number`'s state changes into `w`: flat state, trie nodes, code, changesets,
-    /// history and every stage checkpoint. Blocks are committed in order from genesis (block 0,
-    /// its allocations as changes). Returns the state root after the block.
+    /// history and every stage checkpoint. Blocks are committed in order from genesis (any block
+    /// number, its allocations as changes). Returns the state root after the block.
     pub fn commit_block(&self, w: &mut WriteTxn<'_>, number: u64, changes: &BlockChanges) -> Result<B256, TrieError> {
         let datadir = w.datadir;
         let db = &datadir.db;
-        let expected = Datadir::tip_in(w.txn(), db)?.map_or(0, |t| t + 1);
-        if number != expected {
-            return Err(TrieError::Corrupt(format!("committing block {number}, expected {expected}")));
+        // The first block (genesis) may have any number; later blocks follow the tip.
+        if let Some(tip) = Datadir::tip_in(w.txn(), db)?
+            && number != tip + 1
+        {
+            return Err(TrieError::Corrupt(format!("committing block {number}, expected {}", tip + 1)));
         }
         w.set_label(number);
         let n = changes.normalized();
@@ -329,8 +331,10 @@ impl StateDb {
         Ok(())
     }
 
-    /// Unwinds the stored chain to block `number` inside `w` (the node removes its own block
-    /// data in the same transaction). The static files and history are cut after the commit.
+    /// Unwinds the stored chain to block `number` inside `w`, with the block data of the blocks
+    /// above it (the node removes its own tables' rows in the same transaction). The static
+    /// files, transaction hashes and history are cut after the commit, so commit `w` before
+    /// committing new blocks: one transaction cannot both unwind and append.
     /// Returns the state root at `number`.
     pub fn unwind_in(&self, w: &mut WriteTxn<'_>, number: u64) -> Result<B256, TrieError> {
         let db = &w.datadir.db;
@@ -364,6 +368,7 @@ impl StateDb {
             let wipes_key = [&key[8..], &key[..8]].concat();
             txn.delete(db.dbi(Table::TigerWipes), &wipes_key, None)?;
         }
+        w.unwind_blocks(number, tip)?;
         w.set_checkpoints(number)?;
         w.heal_after_commit();
         Ok(root)
@@ -384,6 +389,11 @@ impl StateDb {
         let tip = Datadir::tip_in(&txn, &self.datadir.db)?.ok_or_else(|| TrieError::Corrupt("empty datadir".into()))?;
         if block > tip {
             return Err(TrieError::Corrupt(format!("view at {block} above the tip {tip}")));
+        }
+        if let Some(genesis) = self.datadir.static_files.first_block(Segment::AccountChangeSets)
+            && block < genesis
+        {
+            return Err(TrieError::Corrupt(format!("view at {block} below the first stored block {genesis}")));
         }
         let overlays = overlays.into_iter().map(|c| (c.normalized(), c)).collect();
         Ok(StateView { db: self, txn, block, tip, overlays, state: std::cell::OnceCell::new() })

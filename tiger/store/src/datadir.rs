@@ -11,9 +11,11 @@
 
 use std::{collections::BTreeMap, io, path::{Path, PathBuf}};
 
+use alloy_eips::eip2718::Encodable2718;
+
 use crate::{
     AccountBeforeTx, BlockBodyIndices, CodecError, Db, Fault, History, MdbxError, OpenError, Rocks, RocksBatch,
-    RocksTable, Rw, Segment, StageCheckpointCodec, StaticFiles, StorageBeforeTx, Table, Txn,
+    RocksTable, Rw, Segment, StageCheckpointCodec, StaticFiles, StorageBeforeTx, Table, Txn, TxCodec,
 };
 
 /// reth's stage ids, all advanced together by tiger.
@@ -191,7 +193,7 @@ impl Datadir {
             if !keep(Some(last)) {
                 continue;
             }
-            let first = tip.map_or(0, |t| t + 1);
+            let first = tip.map_or(0, |t| t + 1).max(self.static_files.first_block(segment).unwrap_or(0));
             for block in first..=last {
                 for row in self.static_files.changeset(segment, block)?.unwrap_or_default() {
                     let prefix = if segment == Segment::AccountChangeSets {
@@ -214,10 +216,6 @@ impl Datadir {
                 }
             }
         }
-        if !batch.ops.is_empty() {
-            Fault::phase(tip.map_or(0, |t| t + 1), "heal-rocksdb");
-            self.rocks.write(batch)?;
-        }
         let next_tx = match tip {
             Some(tip) => {
                 let txn = self.db.read()?;
@@ -228,6 +226,20 @@ impl Datadir {
             }
             None => Some(0),
         };
+        // Hash index entries of the transactions about to be cut.
+        if let Some(next_tx) = next_tx
+            && keep(self.static_files.last_block(Segment::Transactions))
+        {
+            for tx in next_tx..self.static_files.next_tx(Segment::Transactions) {
+                if let Some(row) = self.static_files.tx_row(Segment::Transactions, tx)? {
+                    batch.delete(RocksTable::TransactionHashNumbers, TxCodec::decode(&row)?.trie_hash().to_vec());
+                }
+            }
+        }
+        if !batch.ops.is_empty() {
+            Fault::phase(tip.map_or(0, |t| t + 1), "heal-rocksdb");
+            self.rocks.write(batch)?;
+        }
         for segment in Segment::ALL {
             if !keep(self.static_files.last_block(segment)) {
                 continue;

@@ -6,24 +6,22 @@
 
 use std::{collections::BTreeSet, path::Path};
 
+use alloy_consensus::Header;
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, U256};
-use base_tiger_store::{
-    AccountBeforeTx, BlockBodyIndices, HeaderCodec, RocksTable, Segment, StorageBeforeTx, Table,
-};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_tiger_store::{AccountBeforeTx, RocksTable, Segment, StorageBeforeTx, Table};
 use base_tiger_trie::{BlockChanges, StateDb};
 
-/// One block's data rows, copied as stored.
+/// One block as read back through tiger's block and state reads.
 struct BlockRows {
     number: u64,
     changes: BlockChanges,
-    state_root: B256,
-    header: [Vec<u8>; 3],
-    first_tx: u64,
-    txs: Vec<Vec<u8>>,
-    receipts: Vec<Vec<u8>>,
-    senders: Vec<Vec<u8>>,
-    mdbx: Vec<(Table, Vec<u8>, Vec<u8>)>,
-    tx_hashes: Vec<(Vec<u8>, Vec<u8>)>,
+    header: Header,
+    hash: B256,
+    transactions: Vec<BaseTxEnvelope>,
+    senders: Vec<Address>,
+    receipts: Vec<BaseReceipt>,
 }
 
 fn table_entries(db: &StateDb, table: Table) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -67,59 +65,55 @@ fn read_block(db: &StateDb, number: u64) -> BlockRows {
         changes.storage.push((*address, slot, view.storage(*address, slot).unwrap()));
     }
     drop(view);
-    let header = sf.header(number).unwrap().unwrap();
-    let state_root = HeaderCodec::decode(&header[0]).unwrap().state_root;
-    let d = &db.datadir.db;
-    let txn = d.read().unwrap();
-    let mut mdbx = Vec::new();
-    let body = txn.get(d.dbi(Table::BlockBodyIndices), &number.to_be_bytes()).unwrap().unwrap().to_vec();
-    mdbx.push((Table::BlockBodyIndices, number.to_be_bytes().to_vec(), body.clone()));
-    mdbx.push((Table::HeaderNumbers, header[2].clone(), txn.get(d.dbi(Table::HeaderNumbers), &header[2]).unwrap().unwrap().to_vec()));
-    drop(txn);
-    for (key, value) in table_entries(db, Table::TransactionBlocks) {
-        if value == number.to_le_bytes() {
-            mdbx.push((Table::TransactionBlocks, key, value));
-        }
+    let dd = &db.datadir;
+    let (header, hash) = dd.header(number).unwrap().unwrap();
+    assert_eq!(header.hash_slow(), hash);
+    assert_eq!(dd.block_number(hash).unwrap(), Some(number));
+    let transactions = dd.transactions(number).unwrap().unwrap();
+    for (index, tx) in transactions.iter().enumerate() {
+        assert_eq!(dd.transaction_location(tx.trie_hash()).unwrap(), Some((number, index)));
     }
-    let body = BlockBodyIndices::from_bytes(&body).unwrap();
-    let rows = |segment| (body.first_tx..body.next_tx()).map(|tx| sf.tx_row(segment, tx).unwrap().unwrap()).collect();
-    let tx_hashes = db
-        .datadir
-        .rocks
-        .scan_prefix(RocksTable::TransactionHashNumbers, &[], usize::MAX)
-        .unwrap()
-        .into_iter()
-        .filter(|(_, v)| (body.first_tx..body.next_tx()).contains(&u64::from_le_bytes(v[..8].try_into().unwrap())))
-        .collect();
     BlockRows {
         number,
         changes,
-        state_root,
         header,
-        first_tx: body.first_tx,
-        txs: rows(Segment::Transactions),
-        receipts: rows(Segment::Receipts),
-        senders: rows(Segment::TransactionSenders),
-        mdbx,
-        tx_hashes,
+        hash,
+        transactions,
+        senders: dd.senders(number).unwrap().unwrap(),
+        receipts: dd.receipts(number).unwrap().unwrap(),
     }
 }
 
 /// Everything the round trip must reproduce.
 fn snapshot(db: &StateDb, tip: u64) -> Vec<String> {
     let mut out = Vec::new();
-    for table in [Table::HashedAccounts, Table::HashedStorages, Table::AccountsTrie, Table::StoragesTrie, Table::Bytecodes] {
+    for table in [
+        Table::HashedAccounts,
+        Table::HashedStorages,
+        Table::AccountsTrie,
+        Table::StoragesTrie,
+        Table::Bytecodes,
+        Table::HeaderNumbers,
+        Table::BlockBodyIndices,
+        Table::TransactionBlocks,
+        Table::StageCheckpoints,
+    ] {
         out.push(format!("{table:?} {:?}", table_entries(db, table)));
     }
     for table in [RocksTable::AccountsHistory, RocksTable::StoragesHistory, RocksTable::TransactionHashNumbers] {
         out.push(format!("{table:?} {:?}", db.datadir.rocks.scan_prefix(table, &[], usize::MAX).unwrap()));
     }
     let sf = &db.datadir.static_files;
-    for block in 0..=tip {
+    let first = sf.first_block(Segment::AccountChangeSets).unwrap();
+    for block in first..=tip {
         for segment in [Segment::AccountChangeSets, Segment::StorageChangeSets] {
             out.push(format!("{segment:?} {block} {:?}", sf.changeset(segment, block).unwrap()));
         }
         out.push(format!("header {block} {:?}", sf.header(block).unwrap()));
+    }
+    for segment in [Segment::Transactions, Segment::Receipts, Segment::TransactionSenders] {
+        let rows: Vec<_> = (0..sf.next_tx(segment)).map(|tx| sf.tx_row(segment, tx).unwrap()).collect();
+        out.push(format!("{segment:?} {rows:?}"));
     }
     out
 }
@@ -139,22 +133,17 @@ fn unwind_and_recommit_reproduce_reths_datadir() {
     let base = tip - 5;
     let before = snapshot(&db, tip);
     let blocks: Vec<BlockRows> = (base + 1..=tip).map(|n| read_block(&db, n)).collect();
-    let base_root = HeaderCodec::decode(&db.datadir.static_files.header(base).unwrap().unwrap()[0]).unwrap().state_root;
+    let base_root = db.datadir.header(base).unwrap().unwrap().0.state_root;
 
-    // Unwind, removing the node's block rows in the same transaction.
-    let mut w = db.write().unwrap();
-    let root = db.unwind_in(&mut w, base).unwrap();
+    // Unwind: the state and the block rows.
+    let root = db.unwind_to(base).unwrap();
     assert_eq!(root, base_root, "unwound root");
     for block in &blocks {
-        for (table, key, _) in &block.mdbx {
-            let dbi = w.db().dbi(*table);
-            w.txn().delete(dbi, key, None).unwrap();
-        }
-        for (key, _) in &block.tx_hashes {
-            w.rocks.delete(RocksTable::TransactionHashNumbers, key.clone());
+        assert_eq!(db.datadir.block_number(block.hash).unwrap(), None);
+        for tx in &block.transactions {
+            assert_eq!(db.datadir.transaction_location(tx.trie_hash()).unwrap(), None);
         }
     }
-    w.commit().unwrap();
     drop(db);
     let db = StateDb::open(&work).unwrap();
     assert_eq!(db.tip().unwrap(), Some(base));
@@ -167,20 +156,8 @@ fn unwind_and_recommit_reproduce_reths_datadir() {
     for block in &blocks {
         let mut w = db.write().unwrap();
         let root = db.commit_block(&mut w, block.number, &block.changes).unwrap();
-        assert_eq!(root, block.state_root, "block {}", block.number);
-        let sf = &db.datadir.static_files;
-        let [h, td, hash] = &block.header;
-        sf.append_header(block.number, h, td, hash.as_slice().try_into().unwrap()).unwrap();
-        sf.append_txs(Segment::Transactions, block.number, block.first_tx, &block.txs).unwrap();
-        sf.append_txs(Segment::Receipts, block.number, block.first_tx, &block.receipts).unwrap();
-        sf.append_txs(Segment::TransactionSenders, block.number, block.first_tx, &block.senders).unwrap();
-        for (table, key, value) in &block.mdbx {
-            let dbi = w.db().dbi(*table);
-            w.txn().put(dbi, key, value).unwrap();
-        }
-        for (key, value) in &block.tx_hashes {
-            w.rocks.put(RocksTable::TransactionHashNumbers, key.clone(), value.clone());
-        }
+        assert_eq!(root, block.header.state_root, "block {}", block.number);
+        w.append_block(&block.header, block.hash, &block.transactions, &block.senders, &block.receipts).unwrap();
         w.commit().unwrap();
     }
     drop(db);
@@ -194,4 +171,48 @@ fn unwind_and_recommit_reproduce_reths_datadir() {
     if std::env::var_os("TIGER_ROUNDTRIP_OUT").is_none() {
         let _ = std::fs::remove_dir_all(&work);
     }
+}
+
+/// Genesis, also above block zero (set `TIGER_RETH_GENESIS_DATADIR` to a copy of a datadir that
+/// `base-reth-node init` made): tiger commits the same genesis into a new
+/// datadir, and every table, RocksDB row and static file must equal base-reth's byte for byte
+/// (header rows after LZ4 decoding).
+#[test]
+fn genesis_matches_reths() {
+    let Some(source) = std::env::var_os("TIGER_RETH_GENESIS_DATADIR") else { return };
+    let reth = StateDb::open(Path::new(&source)).unwrap();
+    let number = reth.tip().unwrap().unwrap();
+    let block = read_block(&reth, number);
+    let work = std::env::temp_dir().join(format!("tiger-genesis-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    let tiger = StateDb::open(&work).unwrap();
+    let mut w = tiger.write().unwrap();
+    let root = tiger.commit_block(&mut w, number, &block.changes).unwrap();
+    assert_eq!(root, block.header.state_root);
+    w.append_block(&block.header, block.hash, &block.transactions, &block.senders, &block.receipts).unwrap();
+    w.commit().unwrap();
+    drop(tiger);
+    let tiger = StateDb::open(&work).unwrap();
+    assert_eq!(snapshot(&reth, number), snapshot(&tiger, number));
+    let files = |dir: &Path| {
+        let mut names: Vec<_> = std::fs::read_dir(dir.join("static_files"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n != "lock")
+            .collect();
+        names.sort();
+        names.into_iter().map(|n| (std::fs::read(dir.join("static_files").join(&n)).unwrap(), n)).collect::<Vec<_>>()
+    };
+    let (reth_files, tiger_files) = (files(Path::new(&source)), files(&work));
+    assert_eq!(reth_files.iter().map(|f| &f.1).collect::<Vec<_>>(), tiger_files.iter().map(|f| &f.1).collect::<Vec<_>>());
+    for (r, t) in reth_files.iter().zip(&tiger_files) {
+        // Tiger writes LZ4 header rows uncompressed (literal-only blocks), so the header data and
+        // its offsets differ; the decoded rows are compared in the snapshot.
+        let headers_data = r.1.starts_with("static_file_headers_") && !r.1.ends_with(".conf");
+        if !headers_data {
+            assert_eq!(r.0, t.0, "{}", r.1);
+        }
+    }
+    drop(tiger);
+    let _ = std::fs::remove_dir_all(&work);
 }
