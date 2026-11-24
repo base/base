@@ -227,6 +227,16 @@ impl Chain {
             {
                 chain.forkchoice =
                     alloy_rlp::decode_exact(bytes).map_err(|error| format!("forkchoice record: {error}"))?;
+            } else {
+                // A datadir base-reth wrote keeps no head hash (the head is the tip) and only the
+                // safe and finalized numbers, in `ChainState`.
+                let (finalized, safe) =
+                    chain.db.datadir.chain_state().map_err(|error| error.to_string())?.unwrap_or((tip, tip));
+                let hash = |number: u64| -> Result<B256, String> {
+                    let header = chain.db.datadir.header(number.min(tip)).map_err(|error| error.to_string())?;
+                    Ok(header.ok_or_else(|| format!("datadir has no canonical block {number}"))?.1)
+                };
+                chain.forkchoice = Forkchoice { head: chain.head.hash, safe: hash(safe)?, finalized: hash(finalized)? };
             }
         }
         if chain.forkchoice.head != chain.head.hash {
