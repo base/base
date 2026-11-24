@@ -80,6 +80,8 @@ pub(super) struct CallTx {
     blob_hashes: Vec<B256>,
     max_fee_per_blob_gas: u128,
     blob_checks: BlobChecks,
+    /// Whether the request's chain id (if any) is the chain's.
+    chain_id_valid: bool,
 }
 
 /// What revm's blob checks need besides the request.
@@ -89,20 +91,15 @@ pub(super) struct BlobChecks {
     pub block_blob_fee: u128,
     /// The fork's blob limit per transaction; `None` before Cancun (Ecotone).
     pub max_blobs: Option<u64>,
-    /// Whether the request's chain id (if any) is the chain's.
-    pub chain_id_valid: bool,
 }
 
 impl CallTx {
-    /// revm's validation of a blob request, in its order: chain id, then the blob fee, the blob
-    /// count and the hash versions (`validate_eip4844_tx`).
+    /// revm's validation of a blob request, in its order after the chain id: the blob fee, the
+    /// blob count and the hash versions (`validate_eip4844_tx`).
     fn check_blob_create(&self) -> Result<(), RpcError> {
         let Some(max_blobs) = self.blob_checks.max_blobs else {
             return Err(RpcError::new(-32003, "transaction type not supported"));
         };
-        if !self.blob_checks.chain_id_valid {
-            return Err(RpcError::new(-32000, "invalid chain ID"));
-        }
         if self.blob_checks.block_blob_fee > self.max_fee_per_blob_gas {
             return Err(RpcError::new(-32003, "max fee per blob gas less than block blob gas fee"));
         }
@@ -120,6 +117,10 @@ impl CallTx {
 
     /// The transaction with `gas` and `nonce`, as the evm2 envelope the registry dispatches.
     pub(super) fn recovered(&self, gas: u64, nonce: u64) -> Result<alloy_consensus::transaction::Recovered<BaseTxEnvelope>, RpcError> {
+        // revm checks the chain id first, before gating the transaction type by fork.
+        if !self.chain_id_valid {
+            return Err(RpcError::new(-32000, "invalid chain ID"));
+        }
         let chain_id = self.chain_id;
         let tx = match self.ty {
             0 => TxEnvelope::Legacy(TxLegacy {
@@ -514,8 +515,8 @@ impl Node {
             blob_checks: BlobChecks {
                 block_blob_fee: blob_base_fee,
                 max_blobs,
-                chain_id_valid: request.chain_id.is_none_or(|chain_id| chain_id == self.spec.chain_id),
             },
+            chain_id_valid: request.chain_id.is_none_or(|chain_id| chain_id == self.spec.chain_id),
         })
     }
 
@@ -838,15 +839,20 @@ impl Node {
                 TxKind::Call(to) => to,
                 TxKind::Create => tx.from.create(nonce),
             });
-            let mut inspector = AccessListInspector::default();
-            if let Some(standard) = recovered.as_standard() {
-                let standard = alloy_consensus::transaction::Recovered::new_unchecked(standard.clone(), tx.from);
-                inspector = inspector.with_excluded_from_tx(&standard);
-                excluded.extend(inspector.excluded().iter().copied());
-            }
+            // Only valid authorizations' authorities: chain id 0 or the chain's, a nonce below
+            // u64::MAX, and a signature that recovers (revm-inspectors `AccessListInspector`).
+            excluded.extend(
+                tx.authorizations
+                    .iter()
+                    .filter(|authorization| {
+                        (authorization.chain_id.is_zero() || authorization.chain_id == U256::from(self.spec.chain_id))
+                            && authorization.nonce != u64::MAX
+                    })
+                    .filter_map(|authorization| authorization.recover_authority().ok()),
+            );
             let mut seeded = Self::dedup(initial);
             seeded.0.retain(|item| !excluded.contains(&item.address));
-            let inspector = AccessListInspector::new(seeded).with_excluded(inspector.excluded().iter().copied());
+            let inspector = AccessListInspector::new(seeded).with_excluded(excluded.iter().copied());
             let inspector = Shared::new(inspector);
             evm.set_inspector(inspector.handle());
             let first = evm.call_tx(&recovered).map_err(Self::handler_error);
@@ -934,5 +940,41 @@ mod tests {
         assert_eq!(call(&node, "eth_call", json!([underpaid]))["error"]["code"], json!(-32003));
                 // An unknown block is -32001.
         assert_eq!(call(&node, "eth_call", json!([{ "to": REVERTER }, "0x5"]))["error"]["code"], json!(-32001));
+    }
+
+    #[test]
+    fn access_lists_exclude_only_valid_authorities() {
+        let node = node();
+        // Key 0x11…11 signs an authorization (to REVERTER, nonce 0) for chain 0 and for chain 1.
+        let authority = "0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a";
+        let authorization = |chain_id: &str, r: &str, s: &str| {
+            json!({ "address": REVERTER, "chainId": chain_id, "nonce": "0x0", "yParity": "0x0", "r": r, "s": s })
+        };
+        let any_chain = authorization(
+            "0x0",
+            "0xb2eabe2cec138312f83ac334b8e6e8dc8d71164b626e0bc5472330aa4b067ee4",
+            "0x61a7f5edbad872106f00170ebde6049b1a2679d1dddc5a8dcda47fd6d04c8f7f",
+        );
+        let other_chain = authorization(
+            "0x1",
+            "0xc228c60faa2dc984c07e5106195d29de90bad6810f12236272b5e290e720ae6c",
+            "0x2f0af96840630e39b266aa5732b3ea97f5c3a86c447b9b3810e56b4e26cadbd1",
+        );
+        // The callee reads the authority's balance: PUSH20 authority, BALANCE, STOP.
+        let callee = "0x000000000000000000000000000000000000c0de";
+        let code = format!("0x73{}3100", &authority[2..]);
+        let listed = |authorization: Value| {
+            let request = json!({
+                "from": "0x0000000000000000000000000000000000000001",
+                "to": callee,
+                "authorizationList": [authorization],
+            });
+            let list = call(&node, "eth_createAccessList", json!([request, "latest", { callee: { "code": code } }]));
+            list["result"]["accessList"].as_array().expect("an access list").iter().any(|item| item["address"] == json!(authority))
+        };
+        // revm-inspectors excludes the authority of a valid authorization only; chain 1 is
+        // invalid on Base, so its authority stays in the list.
+        assert!(!listed(any_chain));
+        assert!(listed(other_chain));
     }
 }
