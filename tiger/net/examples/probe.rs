@@ -78,7 +78,7 @@ fn main() {
     config.trusted_peers = peers;
     config.bootnodes = bootnodes;
     let head = ChainHead { number: 0, hash: genesis, timestamp: genesis_time, earliest: 0 };
-    let network = Network::start(config, Arc::new(GenesisOnly(head)), None).unwrap();
+    let network = Network::start(config, Arc::new(GenesisOnly(head))).unwrap();
     println!("local id {}", network.local_id());
     if let Some(enr) = network.local_enr() {
         println!("local enr {enr}");
@@ -91,8 +91,8 @@ fn main() {
     assert!(!peers.is_empty(), "no peer connected within {wait}s");
     for peer in &peers {
         println!(
-            "peer {} {} client={} eth/{} snap={} head={}",
-            peer.id, peer.addr, peer.client_id, peer.eth_version, peer.snap, peer.head_number
+            "peer {} {} client={} eth/{} head={}",
+            peer.id, peer.addr, peer.client_id, peer.eth_version, peer.head_number
         );
     }
     let best = peers.iter().max_by_key(|p| p.head_number).unwrap();

@@ -24,16 +24,6 @@ pub use block::{BlockBody, BodyError, SealedHeader};
 mod eth;
 pub use eth::{BlockId, ETH_CAPABILITIES, HeadersRequest, RawRlp, Status};
 
-mod range_proof;
-pub use range_proof::{RangeProofError, RangeProofOutcome, verify_range_proof};
-
-mod snap;
-pub use snap::{
-    AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, MAX_HASH,
-    SNAP_CAPABILITY, SnapAccount, SnapBatch, SnapRange, SnapStateSink, SnapStateSource,
-    SnapStateView, StorageRanges, StoreError,
-};
-
 mod enr;
 pub use enr::{Enr, EnrError, FORK_KEY};
 
@@ -48,11 +38,6 @@ pub use network::{Network, NetworkConfig, NodeRecord, PeerInfo, Penalty};
 
 mod download;
 pub use download::{DownloadConfig, DownloadError, Downloader};
-
-mod snap_sync;
-pub use snap_sync::{
-    Pivot, SnapHandle, SnapStatus, SnapSync, SnapSyncConfig, SnapSyncError, TouchedKeys,
-};
 
 mod bootnodes;
 pub use bootnodes::BASE_BOOTNODES;

@@ -28,7 +28,6 @@ use crate::{
         DisconnectReason, P2pMessage, Received, RlpxConnection, RlpxError, RlpxReader, RlpxWriter,
         SharedCapability,
     },
-    snap::{self, SnapStateSource},
 };
 
 /// The node's chain, which the network serves to peers. Implemented by the node over its store.
@@ -89,7 +88,6 @@ pub struct Peer {
     /// The client name from Hello.
     pub client_id: String,
     eth: SharedCapability,
-    snap: Option<SharedCapability>,
     head: Mutex<(u64, B256)>,
     writer: Mutex<RlpxWriter>,
     pending: Mutex<HashMap<u64, Pending>>,
@@ -109,19 +107,12 @@ impl std::fmt::Debug for Peer {
 pub enum RequestError {
     /// The peer is gone.
     Closed,
-    /// The peer does not speak the capability the request needs.
-    Unsupported,
 }
 
 impl Peer {
     /// The negotiated eth version.
     pub fn eth_version(&self) -> u64 {
         self.eth.version
-    }
-
-    /// Whether the peer negotiated snap.
-    pub const fn supports_snap(&self) -> bool {
-        self.snap.is_some()
     }
 
     /// The peer's last announced head (number is 0 for eth/68 peers, which do not announce it).
@@ -149,38 +140,16 @@ impl Peer {
         tag: u64,
         tx: &Sender<Response>,
     ) -> Result<(), RequestError> {
-        self.request(&self.eth, request_id, encode, tag, tx)
-    }
-
-    /// Sends a snap request; see [`Self::request_eth`].
-    pub fn request_snap(
-        &self,
-        request_id: u8,
-        encode: impl FnOnce(u64) -> Vec<u8>,
-        tag: u64,
-        tx: &Sender<Response>,
-    ) -> Result<(), RequestError> {
-        let Some(snap) = &self.snap else { return Err(RequestError::Unsupported) };
-        self.request(snap, request_id, encode, tag, tx)
-    }
-
-    fn request(
-        &self,
-        cap: &SharedCapability,
-        request_id: u8,
-        encode: impl FnOnce(u64) -> Vec<u8>,
-        tag: u64,
-        tx: &Sender<Response>,
-    ) -> Result<(), RequestError> {
         if self.is_closed() {
             return Err(RequestError::Closed);
         }
         let id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        let pending = Pending { response_id: cap.offset + request_id + 1, tag, tx: tx.clone() };
+        let pending =
+            Pending { response_id: self.eth.offset + request_id + 1, tag, tx: tx.clone() };
         self.pending.lock().unwrap().insert(id, pending);
         self.inflight.fetch_add(1, Ordering::Relaxed);
         let payload = encode(id);
-        if self.writer.lock().unwrap().send(cap.offset + request_id, &payload).is_err() {
+        if self.writer.lock().unwrap().send(self.eth.offset + request_id, &payload).is_err() {
             self.cancel(id);
             self.close(DisconnectReason::TcpError);
             return Err(RequestError::Closed);
@@ -295,7 +264,6 @@ pub(crate) fn handshake(
         let _ = conn.writer.disconnect(DisconnectReason::UselessPeer);
         return Err(SessionError::Incompatible /* no eth capability */);
     };
-    let snap = conn.shared.iter().find(|c| c.name == "snap").cloned();
     let head = chain.chain_head();
     let ours = local_status(config, eth.version, head);
     conn.writer.send(eth.offset + eth::STATUS, &ours.encode_payload())?;
@@ -340,7 +308,6 @@ pub(crate) fn handshake(
         trusted,
         client_id: conn.remote_hello.client_id.clone(),
         eth,
-        snap,
         head: Mutex::new((theirs.latest, theirs.head_hash)),
         writer: Mutex::new(conn.writer),
         pending: Mutex::new(HashMap::new()),
@@ -357,10 +324,9 @@ pub(crate) fn run_session(
     mut reader: RlpxReader,
     config: &SessionConfig,
     chain: &dyn BlockSource,
-    snap_source: Option<&dyn SnapStateSource>,
     shutdown: &AtomicBool,
 ) -> SessionError {
-    let error = session_loop(peer, &mut reader, config, chain, snap_source, shutdown);
+    let error = session_loop(peer, &mut reader, config, chain, shutdown);
     peer.close(match &error {
         SessionError::Breach | SessionError::Incompatible => DisconnectReason::ProtocolBreach,
         SessionError::Rlpx(RlpxError::Disconnected(_)) => DisconnectReason::Requested,
@@ -375,7 +341,6 @@ fn session_loop(
     reader: &mut RlpxReader,
     config: &SessionConfig,
     chain: &dyn BlockSource,
-    snap_source: Option<&dyn SnapStateSource>,
     shutdown: &AtomicBool,
 ) -> SessionError {
     if let Err(error) = reader.set_timeout(Duration::from_millis(500)) {
@@ -422,10 +387,6 @@ fn session_loop(
                 let id = message.id;
                 if id >= peer.eth.offset && id < peer.eth.offset + peer.eth.count {
                     handle_eth(peer, id - peer.eth.offset, message.payload, chain)
-                } else if let Some(snap_cap) =
-                    peer.snap.as_ref().filter(|s| id >= s.offset && id < s.offset + s.count)
-                {
-                    handle_snap(peer, snap_cap, id - snap_cap.offset, message.payload, snap_source)
                 } else {
                     Err(SessionError::Breach /* message id outside negotiated range */)
                 }
@@ -525,29 +486,6 @@ fn handle_eth(
         | eth::NEW_POOLED_TRANSACTION_HASHES => Ok(()),
         eth::STATUS => Err(SessionError::Breach /* second status */),
         _ => Ok(()),
-    }
-}
-
-fn handle_snap(
-    peer: &Peer,
-    cap: &SharedCapability,
-    id: u8,
-    payload: Vec<u8>,
-    source: Option<&dyn SnapStateSource>,
-) -> Result<(), SessionError> {
-    match id {
-        snap::ACCOUNT_RANGE
-        | snap::STORAGE_RANGES
-        | snap::BYTE_CODES
-        | snap::BLOCK_ACCESS_LISTS => {
-            peer.deliver(cap.offset + id, payload).map_err(|_| SessionError::Breach)
-        }
-        _ => {
-            if let Some((response_id, response)) = snap::serve(source, id, &payload) {
-                peer.send(cap.offset + response_id, &response)?;
-            }
-            Ok(())
-        }
     }
 }
 

@@ -95,7 +95,6 @@ impl Downloader {
     fn run<J: Clone>(
         &self,
         jobs: Vec<J>,
-        snap: bool,
         send: impl Fn(&Peer, &J, u64, &std::sync::mpsc::Sender<Response>) -> bool,
         mut handle: impl FnMut(&J, &PeerId, Vec<u8>) -> Result<Step<J>, Rejected>,
     ) -> Result<(), DownloadError> {
@@ -110,9 +109,7 @@ impl Downloader {
                 if attempts >= self.config.max_attempts {
                     return Err(DownloadError::Exhausted("too many failed attempts"));
                 }
-                let Some(peer) =
-                    self.network.select_peer(snap, self.config.max_inflight_per_peer, &[])
-                else {
+                let Some(peer) = self.network.select_peer(self.config.max_inflight_per_peer) else {
                     queue.push_front((job, attempts));
                     break;
                 };
@@ -176,7 +173,6 @@ impl Downloader {
         let mut not_found = 0;
         let result = self.run(
             vec![request],
-            false,
             |peer, request, tag, tx| {
                 peer.request_eth(eth::GET_BLOCK_HEADERS, |id| request.encode_payload(id), tag, tx)
                     .is_ok()
@@ -247,7 +243,6 @@ impl Downloader {
         let mut fetched: HashMap<u64, Vec<SealedHeader>> = HashMap::new();
         self.run(
             chunks,
-            false,
             |peer, request, tag, tx| {
                 peer.request_eth(eth::GET_BLOCK_HEADERS, |id| request.encode_payload(id), tag, tx)
                     .is_ok()
@@ -334,7 +329,6 @@ impl Downloader {
         let mut done = 0;
         self.run(
             jobs,
-            false,
             |peer, job, tag, tx| {
                 let hashes: Vec<B256> = job.iter().map(|i| headers[*i].hash).collect();
                 peer.request_eth(

@@ -29,7 +29,6 @@ use crate::{
     forkid::ForkSchedule,
     peer::{BlockSource, Peer, SessionConfig, SessionError, handshake, run_session},
     rlpx::{DisconnectReason, LocalCapability, RlpxConnection},
-    snap::{SNAP_CAPABILITY, SnapStateSource},
 };
 
 /// A node address in enode form: `enode://<128 hex id>@<ip or host>:<tcp port>[?discport=<udp>]`.
@@ -185,7 +184,6 @@ pub(crate) struct Inner {
     session: SessionConfig,
     local_caps: Vec<LocalCapability>,
     chain: Arc<dyn BlockSource>,
-    snap_source: Option<Arc<dyn SnapStateSource>>,
     table: Mutex<Table>,
     shutdown: AtomicBool,
     dials: AtomicUsize,
@@ -215,8 +213,6 @@ pub struct PeerInfo {
     pub client_id: String,
     /// Negotiated eth version.
     pub eth_version: u64,
-    /// Whether snap was negotiated.
-    pub snap: bool,
     /// Last announced head number (0 if unknown).
     pub head_number: u64,
     /// Whether the peer dialed us.
@@ -225,15 +221,8 @@ pub struct PeerInfo {
 
 impl Network {
     /// Starts the network threads.
-    pub fn start(
-        config: NetworkConfig,
-        chain: Arc<dyn BlockSource>,
-        snap_source: Option<Arc<dyn SnapStateSource>>,
-    ) -> io::Result<Self> {
-        // snap/2 is always offered so snap sync can download; without a state source, requests
-        // from peers get empty answers.
-        let mut local_caps = ETH_CAPABILITIES.to_vec();
-        local_caps.push(SNAP_CAPABILITY);
+    pub fn start(config: NetworkConfig, chain: Arc<dyn BlockSource>) -> io::Result<Self> {
+        let local_caps = ETH_CAPABILITIES.to_vec();
         let session = SessionConfig {
             network_id: config.network_id,
             forks: config.forks.clone(),
@@ -271,7 +260,6 @@ impl Network {
             session,
             local_caps,
             chain,
-            snap_source,
             table: Mutex::new(table),
             shutdown: AtomicBool::new(false),
             dials: AtomicUsize::new(0),
@@ -307,7 +295,6 @@ impl Network {
                 addr: p.addr,
                 client_id: p.client_id.clone(),
                 eth_version: p.eth_version(),
-                snap: p.supports_snap(),
                 head_number: p.head().0,
                 inbound: p.inbound,
             })
@@ -332,20 +319,15 @@ impl Network {
         self.inner.table.lock().unwrap().peers.get(id).cloned()
     }
 
-    /// The best peer for a new request: eth (and snap if `snap`), not closed, fewest requests
-    /// in flight, and at most `max_inflight` of them. Peers in `exclude` are skipped.
-    pub fn select_peer(
-        &self,
-        snap: bool,
-        max_inflight: usize,
-        exclude: &[PeerId],
-    ) -> Option<Arc<Peer>> {
+    /// The best peer for a new request: not closed, fewest requests
+    /// in flight, and at most `max_inflight` of them.
+    pub fn select_peer(&self, max_inflight: usize) -> Option<Arc<Peer>> {
         let table = self.inner.table.lock().unwrap();
         table
             .peers
             .values()
-            .filter(|p| !p.is_closed() && (!snap || p.supports_snap()))
-            .filter(|p| p.inflight() < max_inflight && !exclude.contains(&p.id))
+            .filter(|p| !p.is_closed())
+            .filter(|p| p.inflight() < max_inflight)
             .min_by_key(|p| {
                 (
                     p.inflight(),
@@ -475,14 +457,7 @@ fn start_session(inner: &Arc<Inner>, conn: RlpxConnection, inbound: bool) {
         }
         table.peers.insert(remote, peer.clone());
     }
-    let error = run_session(
-        &peer,
-        reader,
-        &inner.session,
-        inner.chain.as_ref(),
-        inner.snap_source.as_deref(),
-        &inner.shutdown,
-    );
+    let error = run_session(&peer, reader, &inner.session, inner.chain.as_ref(), &inner.shutdown);
     let mut table = inner.table.lock().unwrap();
     table.peers.remove(&remote);
     if matches!(error, SessionError::Breach | SessionError::Incompatible) && !trusted {

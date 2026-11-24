@@ -161,9 +161,8 @@ What base-reth does, checked in base/base (`crates/execution/node/src/node.rs`,
   If the gap exceeds the backfill threshold (32 blocks), the staged pipeline backfills:
   headers downloaded in reverse from the target, then bodies, then execution and the other
   stages. Smaller gaps are downloaded block by block by the engine tree.
-- **Snap**: no snap/1 server. snap/2 (EIP-8189) is served only with `--snap.v2` (off by
-  default): GetAccountRange, GetStorageRanges, GetByteCodes, and GetBlockAccessLists (empty on
-  Base). It has no GetTrieNodes. Ranges are served only at the last 128 state roots.
+- **Snap**: no snap/1 server. snap/2 (EIP-8189) is served only with `--snap.v2`, which is off
+  by default, and Base does not run it.
 - `--dev` does not mine (the runner calls `.launch()`), so local tests drive blocks over the
   Engine API.
 
@@ -175,24 +174,17 @@ What base-reth does, checked in base/base (`crates/execution/node/src/node.rs`,
 - eth/69 (eth/68 as fallback): Status with Base's fork id (EIP-2124 validation), headers,
   bodies and receipts both ways, with base-reth's serving limits. Transaction announcements are
   read and ignored; PooledTransactions requests get an empty answer.
-- snap/2 client: account ranges, storage ranges (large tries continued across requests), and
-  bytecodes, each range proof verified against the pivot's state root. The pivot moves to a
-  recent head after 64 blocks. Healing comes from tiger's own per-block diffs instead of
-  GetTrieNodes: keys a newer executed block touched are dropped from responses for older
-  pivots, and the state finishes with a full trie rebuild checked against the head's state
-  root. The syncer writes completed key ranges and its progress atomically with the data, so it
-  resumes after a restart.
-- snap/2 server over the store's hashed tables and tries, at the roots the store retains.
-  GetBlockAccessLists gets empty answers, as on Base.
 - Peers: at most 100 outbound and 30 inbound, trusted peers always dialed and never banned,
   request timeouts, reputation, and a one-hour ban for invalid responses or another chain.
 - Backfill: `headers_back` from a target hash, then `bodies` validated against the headers,
-  spread over peers. The node's sync driver executes them, as base-reth's pipeline does.
+  spread over peers. The node's sync driver executes them, as base-reth's pipeline and engine
+  tree do. State comes only from executing blocks (or, in a stateless start, from per-block
+  witnesses); there is no background state download.
 - Node flags (mapped onto `NetworkConfig`): `--port`, `--discovery.v5.port`,
   `--disable-discovery`, `--bootnodes`, `--trusted-peers`, max peer counts, `--p2p-secret-key`.
 
-Left out: discv4, DNS discovery, eth/70 and eth/71, snap/1 (GetTrieNodes), transaction gossip,
-and NAT traversal (UPnP). The external IP comes from configuration.
+Left out: snap sync (client and server, any version), discv4, DNS discovery, eth/70 and eth/71,
+transaction gossip, and NAT traversal (UPnP). The external IP comes from configuration.
 
 ## Left out
 
