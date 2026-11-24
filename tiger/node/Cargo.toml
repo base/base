@@ -21,22 +21,32 @@ path = "src/main.rs"
 [dependencies]
 # tiger
 base-tiger-evm.workspace = true
+base-tiger-store.workspace = true
 
 # base
 base-proof-mpt = { path = "../../crates/proof/mpt", default-features = false, features = ["std"] }
 base-common-genesis = { workspace = true, features = ["std"] }
-base-common-consensus = { workspace = true, features = ["std", "k256"] }
+base-common-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+base-common-rpc-types = { workspace = true, features = ["std"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 
 # evm2
 evm2 = { workspace = true, features = ["std"] }
 
 # alloy
-alloy-rlp.workspace = true
+alloy-rlp = { workspace = true, features = ["derive"] }
+alloy-genesis = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std", "serde"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
 alloy-trie = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-serde = { version = "2.5.0", default-features = false, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std", "serde"] }
+
+# crypto (Engine API JWT)
+sha2.workspace = true
+hmac.workspace = true
 
 # serialization
 serde = { workspace = true, features = ["std", "derive"] }

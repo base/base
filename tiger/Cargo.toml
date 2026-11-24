@@ -29,6 +29,8 @@ base-common-base-tx = { path = "../crates/common/base-tx", default-features = fa
 base-common-genesis = { path = "../crates/common/genesis", default-features = false }
 base-common-l1-fees = { path = "../crates/common/l1-fees", default-features = false }
 base-common-consensus = { path = "../crates/common/consensus", default-features = false }
+base-common-rpc-types = { path = "../crates/common/rpc-types", default-features = false }
+base-common-rpc-types-engine = { path = "../crates/common/rpc-types-engine", default-features = false }
 
 # evm2
 evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "9b037449c846515624ff6afde739f2b764851446", default-features = false }
@@ -38,6 +40,9 @@ alloy-rlp = { version = "0.3.16", default-features = false }
 alloy-trie = { version = "0.9.8", default-features = false }
 alloy-eips = { version = "2.5.0", default-features = false }
 alloy-consensus = { version = "2.5.0", default-features = false }
+alloy-genesis = { version = "2.5.0", default-features = false }
+alloy-rpc-types-eth = { version = "2.5.0", default-features = false }
+alloy-rpc-types-engine = { version = "2.5.0", default-features = false }
 alloy-sol-types = { version = "1.6.1", default-features = false, features = ["std"] }
 alloy-primitives = { version = "1.6.1", default-features = false }
 

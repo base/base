@@ -14,7 +14,7 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, keccak256};
 use alloy_rlp::Decodable;
 use alloy_trie::{EMPTY_ROOT_HASH, Nibbles, TrieAccount};
-use base_proof_mpt::{TrieNode, TrieNodeError, TrieProvider};
+use base_proof_mpt::{NoopTrieProvider, TrieNode, TrieNodeError, TrieProvider};
 use evm2::{
     AccountInfo, BlockStateAccumulator, bytecode::Bytecode, evm::Database,
 };
@@ -154,6 +154,57 @@ fn collect_nodes(node: &TrieNode, root: bool, out: &mut Vec<Bytes>) {
     }
 }
 
+/// One account of a state built from scratch (a genesis allocation).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GenesisAccount {
+    /// Nonce.
+    pub nonce: u64,
+    /// Balance.
+    pub balance: U256,
+    /// Hash of `code`.
+    pub code_hash: B256,
+    /// Bytecode.
+    pub code: Bytes,
+    /// Non-zero storage slots.
+    pub storage: BTreeMap<U256, U256>,
+}
+
+fn storage_trie(storage: &BTreeMap<U256, U256>) -> TrieNode {
+    let mut trie = TrieNode::Empty;
+    for (slot, value) in storage {
+        assert!(!value.is_zero(), "zero slots are not stored");
+        let path = Nibbles::unpack(keccak256(slot.to_be_bytes::<32>()));
+        trie.insert(&path, alloy_rlp::encode(value).into(), &NoopTrieProvider)
+            .expect("inserting into a fully revealed trie reads no nodes");
+    }
+    trie
+}
+
+/// The storage root of `storage` (non-zero slots).
+pub fn storage_root(storage: &BTreeMap<U256, U256>) -> B256 {
+    storage_trie(storage).blind()
+}
+
+/// Builds a whole state from scratch: its root and every trie node.
+pub fn build_state(accounts: &BTreeMap<Address, GenesisAccount>) -> StateUpdate {
+    let mut nodes = Vec::new();
+    let mut trie = TrieNode::Empty;
+    for (address, account) in accounts {
+        let storage = storage_trie(&account.storage);
+        collect_nodes(&storage, true, &mut nodes);
+        let leaf = TrieAccount {
+            nonce: account.nonce,
+            balance: account.balance,
+            storage_root: storage.blind(),
+            code_hash: account.code_hash,
+        };
+        trie.insert(&Nibbles::unpack(keccak256(address)), alloy_rlp::encode(leaf).into(), &NoopTrieProvider)
+            .expect("inserting into a fully revealed trie reads no nodes");
+    }
+    collect_nodes(&trie, true, &mut nodes);
+    StateUpdate { root: trie.blind(), nodes }
+}
+
 /// The state after a block: its root, and the trie nodes it references that the parent state
 /// may not hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,6 +274,62 @@ impl WitnessState {
     pub fn account(&self, address: &Address) -> Result<Option<TrieAccount>, WitnessError> {
         let mut tries = self.tries.borrow_mut();
         self.nodes.open_account(&mut tries.accounts, keccak256(address))
+    }
+
+    /// The trie nodes from `root` to `key` (an account or storage proof): every node on the
+    /// path that its parent references by hash, root first.
+    pub fn proof(&self, root: B256, key: B256) -> Result<Vec<Bytes>, WitnessError> {
+        use alloy_trie::nodes::TrieNode as RawNode;
+        let mut proof = Vec::new();
+        if root == EMPTY_ROOT_HASH {
+            return Ok(proof);
+        }
+        let path = Nibbles::unpack(key);
+        let fetch = |hash: B256| {
+            self.nodes
+                .source
+                .trie_node(&hash)
+                .ok_or_else(|| self.nodes.record(WitnessError::MissingTrieNode(hash)))
+        };
+        let mut encoded = fetch(root)?;
+        let mut depth = 0;
+        loop {
+            proof.push(encoded.clone());
+            let mut next = None;
+            // Inline children (under 32 bytes) are part of their parent's encoding.
+            let mut node = RawNode::decode(&mut encoded.as_ref())
+                .map_err(|error| WitnessError::Malformed(error.to_string()))?;
+            loop {
+                let child = match &node {
+                    RawNode::Branch(branch) => {
+                        let Some(nibble) = path.get(depth) else { break };
+                        if !branch.state_mask.is_bit_set(nibble) {
+                            break;
+                        }
+                        let below = (branch.state_mask.get() & ((1u16 << nibble) - 1)).count_ones();
+                        depth += 1;
+                        branch.stack[below as usize].clone()
+                    }
+                    RawNode::Extension(extension) => {
+                        if !path.slice(depth..).starts_with(&extension.key) {
+                            break;
+                        }
+                        depth += extension.key.len();
+                        extension.child.clone()
+                    }
+                    RawNode::Leaf(_) | RawNode::EmptyRoot => break,
+                };
+                if let Some(hash) = child.as_hash() {
+                    next = Some(hash);
+                    break;
+                }
+                node = RawNode::decode(&mut child.as_ref())
+                    .map_err(|error| WitnessError::Malformed(error.to_string()))?;
+            }
+            let Some(hash) = next else { break };
+            encoded = fetch(hash)?;
+        }
+        Ok(proof)
     }
 
     /// The parent value of storage `slot` of `address`.

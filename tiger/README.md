@@ -41,6 +41,13 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `base-common-l1-fees` | L1 data fee and operator fee math. |
 | `base-common-flz` | FastLZ size estimate for Fjord L1 fees and the Jovian DA footprint. |
 | `base-common-base-tx` | Intrinsic gas schedule shared with the Base transaction type. |
+| `alloy-trie` | Trie node types, nibbles and ordered trie roots (transactions, receipts, proofs). |
+| `alloy-genesis` | Parsing geth-style genesis files, the format base-reth takes as `--chain`. |
+| `alloy-rpc-types-engine`, `base-common-rpc-types-engine` | Engine API payload, attribute, forkchoice and envelope wire types, and base-reth's payload id. |
+| `alloy-rpc-types-eth`, `base-common-rpc-types` | JSON-RPC block, transaction and receipt shapes, so responses serialize as base-reth's do. |
+| `base-proof-mpt` | Merkle Patricia trie over hash-addressed nodes, used for witness state and the node's state until `trie/` replaces it. |
+| `hmac`, `sha2` | HS256 for Engine API JWTs (already in the tree for networking). |
+| `serde`, `serde_json` | JSON-RPC and the diff adapter protocol. |
 | `cc` (build) | Compiles the vendored libmdbx C sources. |
 | `alloy-sol-types` | Solidity ABI encoding and decoding of the native precompile interfaces (`sol!`). |
 | `syn`, `quote`, `proc-macro2` | Parsing and generating code in `base-tiger-precompile-macros`. |
