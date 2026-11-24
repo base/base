@@ -37,6 +37,10 @@ const BLOCK_HASH_WINDOW: u64 = 256;
 const TRANSFER_GAS: u64 = 21_000;
 /// reth stops the estimation search when the range is below this fraction of the upper bound.
 const ESTIMATE_GAS_ERROR_RATIO: f64 = 0.015;
+/// How many blocks below the head reth can hold in memory without persisting them: it persists
+/// once more than `DEFAULT_PERSISTENCE_THRESHOLD` (50) are, down to 5 below the head.
+const RETH_MAX_UNPERSISTED_BLOCKS: u64 = 51;
+
 /// Gas kept for a callee's stipend in the optimistic estimate.
 const CALL_STIPEND_GAS: u64 = 2_300;
 
@@ -368,13 +372,23 @@ impl Node {
     }
 
     /// Applies block-hash overrides to the EVM's overlay. An overridden block number moves the
-    /// `BLOCKHASH` window: reth answers it with canonical hashes by number, zero where there is
-    /// no block, so those are filled in.
-    pub(super) fn apply_block_hash_overrides(chain: &Chain, evm: &mut Evm<'_, BaseEvmTypes>, overrides: &BlockOverrides) {
+    /// `BLOCKHASH` window: reth answers it from the state provider at `state_block`, which knows
+    /// the canonical hashes up to that block, plus every block reth has persisted to its
+    /// database. Later blocks still in reth's memory are zero. Which recent blocks are persisted
+    /// depends on reth's persistence timing; tiger takes the blocks at least
+    /// [`RETH_MAX_UNPERSISTED_BLOCKS`] below the head as persisted and newer ones as in memory.
+    pub(super) fn apply_block_hash_overrides(
+        chain: &Chain,
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        overrides: &BlockOverrides,
+        state_block: u64,
+    ) {
         if let Some(number) = overrides.number {
             let number = number.saturating_to::<u64>();
+            let head = chain.head().number();
             for at in number.saturating_sub(BLOCK_HASH_WINDOW)..number {
-                let hash = chain.canonical_hash(at).unwrap_or_default();
+                let persisted = at.saturating_add(RETH_MAX_UNPERSISTED_BLOCKS) <= head;
+                let hash = if at <= state_block || persisted { chain.canonical_hash(at).unwrap_or_default() } else { B256::ZERO };
                 evm.overlay_db_mut().insert_block_hash(&U256::from(at), &hash);
             }
         }
@@ -590,7 +604,7 @@ impl Node {
         }
         let mut evm = self.call_evm(chain, state, block, CallKind::Call);
         if let Some(overrides) = block_overrides {
-            Self::apply_block_hash_overrides(chain, &mut evm, overrides);
+            Self::apply_block_hash_overrides(chain, &mut evm, overrides, block.parent.number());
         }
         if let Some(overrides) = state_overrides {
             Self::apply_state_overrides(&mut evm, overrides)?;
@@ -711,9 +725,9 @@ impl Node {
         let chain = self.chain.read().expect("chain lock");
         let state = self.rpc_state(&chain, &block.parent)?;
         let estimate = || -> Result<Value, RpcError> {
-    let mut evm = self.call_evm(&chain, &state, &block, CallKind::Estimate);
+            let mut evm = self.call_evm(&chain, &state, &block, CallKind::Estimate);
             if let Some(overrides) = &block_overrides {
-                Self::apply_block_hash_overrides(&chain, &mut evm, overrides);
+                Self::apply_block_hash_overrides(&chain, &mut evm, overrides, block.parent.number());
             }
             if let Some(overrides) = &state_overrides {
                 Self::apply_state_overrides(&mut evm, overrides)?;
@@ -829,7 +843,7 @@ impl Node {
         let chain = self.chain.read().expect("chain lock");
         let state = self.rpc_state(&chain, &block.parent)?;
         let access_list = || -> Result<Value, RpcError> {
-    let (mut evm, mut tx, gas, nonce) = self.prepare_call(&chain, &state, &request, &mut block, state_overrides.as_ref(), None)?;
+            let (mut evm, mut tx, gas, nonce) = self.prepare_call(&chain, &state, &request, &mut block, state_overrides.as_ref(), None)?;
             let recovered = tx.recovered(gas, nonce)?;
             // revm-inspectors drops the caller, the callee (or created address), the precompiles and
             // the valid authorities from the request's list; evm2's inspector only skips them later.
