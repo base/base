@@ -16,7 +16,8 @@ use crate::{
 };
 
 /// The snap version tiger speaks, with its message id count (reth's `SnapVersion::V2`).
-pub const SNAP_CAPABILITY: LocalCapability = LocalCapability { name: "snap", version: 2, count: 10 };
+pub const SNAP_CAPABILITY: LocalCapability =
+    LocalCapability { name: "snap", version: 2, count: 10 };
 
 /// Relative snap message ids.
 mod id {
@@ -86,7 +87,10 @@ pub trait SnapStateView {
 pub trait SnapStateSource: Send + Sync {
     /// A consistent view of the state with this root, if it is a retained recent canonical root
     /// (base-reth serves the last 128). `None` otherwise.
-    fn open_state(&self, state_root: B256) -> Result<Option<Box<dyn SnapStateView + '_>>, StoreError>;
+    fn open_state(
+        &self,
+        state_root: B256,
+    ) -> Result<Option<Box<dyn SnapStateView + '_>>, StoreError>;
 
     /// The bytecode with this hash, if stored (code is content addressed, so no root is needed).
     fn code(&self, code_hash: B256) -> Result<Option<Bytes>, StoreError>;
@@ -385,26 +389,33 @@ pub(crate) fn serve(
     match message_id {
         GET_ACCOUNT_RANGE => {
             let request = GetAccountRange::decode(&mut &payload[..]).ok()?;
-            let response = source.and_then(|s| serve_account_range(s, &request).ok()).unwrap_or(AccountRange {
-                request_id: request.request_id,
-                accounts: Vec::new(),
-                proof: Vec::new(),
-            });
+            let response = source.and_then(|s| serve_account_range(s, &request).ok()).unwrap_or(
+                AccountRange {
+                    request_id: request.request_id,
+                    accounts: Vec::new(),
+                    proof: Vec::new(),
+                },
+            );
             Some((ACCOUNT_RANGE, response.encode_payload()))
         }
         GET_STORAGE_RANGES => {
             let request = GetStorageRanges::decode_payload(payload).ok()?;
-            let response = source.and_then(|s| serve_storage_ranges(s, &request).ok()).unwrap_or(StorageRanges {
-                request_id: request.request_id,
-                slots: Vec::new(),
-                proof: Vec::new(),
-            });
+            let response = source.and_then(|s| serve_storage_ranges(s, &request).ok()).unwrap_or(
+                StorageRanges {
+                    request_id: request.request_id,
+                    slots: Vec::new(),
+                    proof: Vec::new(),
+                },
+            );
             Some((STORAGE_RANGES, response.encode_payload()))
         }
         GET_BYTE_CODES => {
             let request = GetByteCodes::decode(&mut &payload[..]).ok()?;
             let codes = source.and_then(|s| serve_byte_codes(s, &request).ok()).unwrap_or_default();
-            Some((BYTE_CODES, alloy_rlp::encode(ByteCodes { request_id: request.request_id, codes })))
+            Some((
+                BYTE_CODES,
+                alloy_rlp::encode(ByteCodes { request_id: request.request_id, codes }),
+            ))
         }
         GET_BLOCK_ACCESS_LISTS => {
             // Base blocks have no access lists: answer `[request_id, []]`.
@@ -426,7 +437,8 @@ fn serve_account_range(
     source: &dyn SnapStateSource,
     request: &GetAccountRange,
 ) -> Result<AccountRange, StoreError> {
-    let empty = AccountRange { request_id: request.request_id, accounts: Vec::new(), proof: Vec::new() };
+    let empty =
+        AccountRange { request_id: request.request_id, accounts: Vec::new(), proof: Vec::new() };
     let Some(view) = source.open_state(request.root)? else { return Ok(empty) };
     if request.start > request.limit {
         return Ok(empty);
@@ -527,6 +539,7 @@ fn dedup_proof(proof: &mut Vec<Bytes>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::verify_range_proof;
 
     #[test]
     fn messages_round_trip() {
@@ -538,7 +551,10 @@ mod tests {
         };
         let range = AccountRange {
             request_id: 7,
-            accounts: vec![(B256::repeat_byte(1), account), (B256::repeat_byte(2), TrieAccount::default())],
+            accounts: vec![
+                (B256::repeat_byte(1), account),
+                (B256::repeat_byte(2), TrieAccount::default()),
+            ],
             proof: vec![Bytes::from_static(b"\xc2\x01\x02")],
         };
         assert_eq!(AccountRange::decode_payload(&range.encode_payload()).unwrap(), range);
@@ -568,5 +584,228 @@ mod tests {
         // [nonce 0, balance 0, "", ""] -- every field is an empty string.
         assert_eq!(out, vec![0xc4, 0x80, 0x80, 0x80, 0x80]);
         assert_eq!(decode_slim_account(&mut out.as_slice()).unwrap(), TrieAccount::default());
+    }
+
+    /// An in-memory state: hashed accounts with their storage, proofs from a rebuilt trie.
+    struct MemoryState {
+        accounts:
+            std::collections::BTreeMap<B256, (TrieAccount, std::collections::BTreeMap<B256, U256>)>,
+        root: B256,
+    }
+
+    fn trie_proof(leaves: impl Iterator<Item = (B256, Vec<u8>)>, key: B256) -> (B256, Vec<Bytes>) {
+        use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
+        let retainer = ProofRetainer::new(vec![Nibbles::unpack(key)]);
+        let mut builder = HashBuilder::default().with_proof_retainer(retainer);
+        for (k, v) in leaves {
+            builder.add_leaf(Nibbles::unpack(k), &v);
+        }
+        let root = builder.root();
+        let nodes =
+            builder.take_proof_nodes().into_nodes_sorted().into_iter().map(|(_, n)| n).collect();
+        (root, nodes)
+    }
+
+    impl MemoryState {
+        fn new(count: u64, slots_of_first: u64) -> Self {
+            let mut accounts = std::collections::BTreeMap::new();
+            for i in 0..count {
+                let mut storage = std::collections::BTreeMap::new();
+                let slots = if i == 0 { slots_of_first } else { i % 3 };
+                for j in 0..slots {
+                    storage.insert(
+                        alloy_primitives::keccak256((i * 1000 + j).to_be_bytes()),
+                        U256::from(j + 1),
+                    );
+                }
+                let storage_root =
+                    trie_proof(storage.iter().map(|(k, v)| (*k, alloy_rlp::encode(v))), B256::ZERO)
+                        .0;
+                let account = TrieAccount {
+                    nonce: i,
+                    balance: U256::from(i * 7),
+                    storage_root,
+                    code_hash: KECCAK256_EMPTY,
+                };
+                accounts.insert(alloy_primitives::keccak256(i.to_be_bytes()), (account, storage));
+            }
+            let mut state = Self { accounts, root: B256::ZERO };
+            state.root = state.account_trie(B256::ZERO).0;
+            state
+        }
+
+        fn account_trie(&self, key: B256) -> (B256, Vec<Bytes>) {
+            trie_proof(self.accounts.iter().map(|(k, (a, _))| (*k, alloy_rlp::encode(a))), key)
+        }
+    }
+
+    impl SnapStateView for &MemoryState {
+        fn accounts(
+            &self,
+            start: B256,
+            max: usize,
+            out: &mut Vec<(B256, TrieAccount)>,
+        ) -> Result<(), StoreError> {
+            out.extend(self.accounts.range(start..).take(max).map(|(k, (a, _))| (*k, *a)));
+            Ok(())
+        }
+        fn storage(
+            &self,
+            account: B256,
+            start: B256,
+            max: usize,
+            out: &mut Vec<(B256, U256)>,
+        ) -> Result<(), StoreError> {
+            let storage = &self.accounts[&account].1;
+            out.extend(storage.range(start..).take(max).map(|(k, v)| (*k, *v)));
+            Ok(())
+        }
+        fn account_proof(&self, key: B256, out: &mut Vec<Bytes>) -> Result<(), StoreError> {
+            out.extend(self.account_trie(key).1);
+            Ok(())
+        }
+        fn storage_proof(
+            &self,
+            account: B256,
+            key: B256,
+            out: &mut Vec<Bytes>,
+        ) -> Result<(), StoreError> {
+            let storage = &self.accounts[&account].1;
+            out.extend(trie_proof(storage.iter().map(|(k, v)| (*k, alloy_rlp::encode(v))), key).1);
+            Ok(())
+        }
+    }
+
+    impl SnapStateSource for MemoryState {
+        fn open_state(
+            &self,
+            state_root: B256,
+        ) -> Result<Option<Box<dyn SnapStateView + '_>>, StoreError> {
+            Ok((state_root == self.root).then(|| Box::new(self) as Box<dyn SnapStateView + '_>))
+        }
+        fn code(&self, _code_hash: B256) -> Result<Option<Bytes>, StoreError> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn served_ranges_verify_and_cover_the_state() {
+        let state = MemoryState::new(200, 300);
+
+        // Walk the account trie in small responses, verifying each against the root.
+        let mut start = B256::ZERO;
+        let mut seen = Vec::new();
+        loop {
+            let request = GetAccountRange {
+                request_id: 1,
+                root: state.root,
+                start,
+                limit: MAX_HASH,
+                response_bytes: 3000,
+            };
+            let (id, payload) =
+                serve(Some(&state), GET_ACCOUNT_RANGE, &alloy_rlp::encode(request)).unwrap();
+            assert_eq!(id, ACCOUNT_RANGE);
+            let response = AccountRange::decode_payload(&payload).unwrap();
+            assert!(!response.accounts.is_empty());
+            let leaves: Vec<_> =
+                response.accounts.iter().map(|(k, a)| (*k, alloy_rlp::encode(a))).collect();
+            let outcome =
+                verify_range_proof(state.root, start, MAX_HASH, &leaves, &response.proof).unwrap();
+            seen.extend(response.accounts.iter().map(|(k, _)| *k));
+            if !outcome.more {
+                break;
+            }
+            start = increment_key(seen.last().copied().unwrap());
+        }
+        assert_eq!(seen, state.accounts.keys().copied().collect::<Vec<_>>());
+
+        // A dropped account breaks the proof.
+        let request = GetAccountRange {
+            request_id: 2,
+            root: state.root,
+            start: B256::ZERO,
+            limit: MAX_HASH,
+            response_bytes: 3000,
+        };
+        let (_, payload) =
+            serve(Some(&state), GET_ACCOUNT_RANGE, &alloy_rlp::encode(request)).unwrap();
+        let mut response = AccountRange::decode_payload(&payload).unwrap();
+        response.accounts.remove(3);
+        let leaves: Vec<_> =
+            response.accounts.iter().map(|(k, a)| (*k, alloy_rlp::encode(a))).collect();
+        assert!(
+            verify_range_proof(state.root, B256::ZERO, MAX_HASH, &leaves, &response.proof).is_err()
+        );
+
+        // The large storage trie comes back in several proven pieces; small ones arrive whole.
+        let (big, (account, storage)) =
+            state.accounts.iter().find(|(_, (_, s))| s.len() == 300).unwrap();
+        let small: Vec<B256> = state
+            .accounts
+            .iter()
+            .filter(|(_, (_, s))| s.len() == 2)
+            .map(|(k, _)| *k)
+            .take(3)
+            .collect();
+        let request = GetStorageRanges {
+            request_id: 3,
+            root: state.root,
+            accounts: small.clone(),
+            start: B256::ZERO,
+            limit: MAX_HASH,
+            response_bytes: 100_000,
+        };
+        let (_, payload) =
+            serve(Some(&state), GET_STORAGE_RANGES, &request.encode_payload()).unwrap();
+        let response = StorageRanges::decode_payload(&payload).unwrap();
+        assert_eq!(response.slots.len(), 3);
+        assert!(response.proof.is_empty());
+        let mut start = B256::ZERO;
+        let mut slots = Vec::new();
+        let mut pieces = 0;
+        loop {
+            let request = GetStorageRanges {
+                request_id: 4,
+                root: state.root,
+                accounts: vec![*big],
+                start,
+                limit: MAX_HASH,
+                response_bytes: 4000,
+            };
+            let (_, payload) =
+                serve(Some(&state), GET_STORAGE_RANGES, &request.encode_payload()).unwrap();
+            let response = StorageRanges::decode_payload(&payload).unwrap();
+            let piece = &response.slots[0];
+            let leaves: Vec<_> = piece.iter().map(|(k, v)| (*k, alloy_rlp::encode(v))).collect();
+            let outcome =
+                verify_range_proof(account.storage_root, start, MAX_HASH, &leaves, &response.proof)
+                    .unwrap();
+            slots.extend(piece.iter().map(|(k, _)| *k));
+            pieces += 1;
+            if !outcome.more {
+                break;
+            }
+            start = increment_key(*slots.last().unwrap());
+        }
+        assert!(pieces > 1);
+        assert_eq!(slots, storage.keys().copied().collect::<Vec<_>>());
+
+        // An unknown root gets an empty answer.
+        let request = GetAccountRange {
+            request_id: 5,
+            root: B256::repeat_byte(9),
+            start: B256::ZERO,
+            limit: MAX_HASH,
+            response_bytes: 3000,
+        };
+        let (_, payload) =
+            serve(Some(&state), GET_ACCOUNT_RANGE, &alloy_rlp::encode(request)).unwrap();
+        let response = AccountRange::decode_payload(&payload).unwrap();
+        assert!(response.accounts.is_empty() && response.proof.is_empty());
+    }
+
+    fn increment_key(key: B256) -> B256 {
+        B256::from(U256::from_be_bytes(key.0) + U256::from(1))
     }
 }

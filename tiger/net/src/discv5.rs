@@ -178,7 +178,12 @@ fn ecdh_compressed(public: &PublicKey, secret: &SecretKey) -> [u8; 33] {
 }
 
 /// Derives (initiator-key, recipient-key) for a handshake.
-fn derive_keys(secret: &[u8; 33], challenge: &[u8], id_a: &B256, id_b: &B256) -> ([u8; 16], [u8; 16]) {
+fn derive_keys(
+    secret: &[u8; 33],
+    challenge: &[u8],
+    id_a: &B256,
+    id_b: &B256,
+) -> ([u8; 16], [u8; 16]) {
     let mut info = b"discovery v5 key agreement".to_vec();
     info.extend_from_slice(id_a.as_slice());
     info.extend_from_slice(id_b.as_slice());
@@ -225,7 +230,9 @@ fn decode_packet<'a>(protocol_id: &[u8; 6], local_id: &B256, data: &'a [u8]) -> 
     // Unmask the static header first to learn the authdata size, then the whole header.
     let mut static_header = data[16..16 + STATIC_HEADER].to_vec();
     aes128_ctr(&key, &masking_iv, &mut static_header);
-    if &static_header[..6] != protocol_id || u16::from_be_bytes([static_header[6], static_header[7]]) != VERSION {
+    if &static_header[..6] != protocol_id
+        || u16::from_be_bytes([static_header[6], static_header[7]]) != VERSION
+    {
         return None;
     }
     let authdata_size = u16::from_be_bytes([static_header[21], static_header[22]]) as usize;
@@ -416,7 +423,9 @@ impl Inner {
             random_array(),
         );
         match state.sessions.get(&node) {
-            Some(session) => packet.extend(aes128_gcm_encrypt(&session.write_key, &nonce, &plaintext, &ad)),
+            Some(session) => {
+                packet.extend(aes128_gcm_encrypt(&session.write_key, &nonce, &plaintext, &ad))
+            }
             // No session: random content provokes a WHOAREYOU, which starts the handshake.
             None => packet.extend_from_slice(&random_array::<20>()),
         }
@@ -462,7 +471,12 @@ impl Inner {
         }
         let src = B256::from_slice(packet.authdata());
         let plaintext = state.sessions.get(&src).and_then(|session| {
-            aes128_gcm_decrypt(&session.read_key, &packet.nonce, packet.message, &packet.iv_and_header())
+            aes128_gcm_decrypt(
+                &session.read_key,
+                &packet.nonce,
+                packet.message,
+                &packet.iv_and_header(),
+            )
         });
         match plaintext {
             Some(plaintext) => self.on_message(state, src, from, &plaintext),
@@ -486,7 +500,9 @@ impl Inner {
         if state.challenges.len() >= MAX_SESSIONS {
             state.challenges.retain(|_, c| c.sent.elapsed() < REQUEST_TIMEOUT);
         }
-        state.challenges.insert(src, Challenge { data: challenge, addr: from, sent: Instant::now() });
+        state
+            .challenges
+            .insert(src, Challenge { data: challenge, addr: from, sent: Instant::now() });
     }
 
     fn on_whoareyou(&self, state: &mut State, packet: &Packet<'_>, from: SocketAddr) {
@@ -504,8 +520,10 @@ impl Inner {
         let ephemeral_public = PublicKey::from_secret_key_global(&ephemeral).serialize();
         let secret = ecdh_compressed(&contact.public_key, &ephemeral);
         let (write_key, read_key) = derive_keys(&secret, &challenge, &self.local_id, &request.node);
-        let signature =
-            sign_compact(id_signature_digest(&challenge, &ephemeral_public, &request.node), &self.key);
+        let signature = sign_compact(
+            id_signature_digest(&challenge, &ephemeral_public, &request.node),
+            &self.key,
+        );
         let mut authdata = self.local_id.to_vec();
         authdata.push(64);
         authdata.push(33);
@@ -515,8 +533,14 @@ impl Inner {
             authdata.extend_from_slice(&state.local_enr.encode());
         }
         let nonce: [u8; 12] = random_array();
-        let (mut out, ad) =
-            encode_header(&self.protocol_id, &request.node, FLAG_HANDSHAKE, &nonce, &authdata, random_array());
+        let (mut out, ad) = encode_header(
+            &self.protocol_id,
+            &request.node,
+            FLAG_HANDSHAKE,
+            &nonce,
+            &authdata,
+            random_array(),
+        );
         out.extend(aes128_gcm_encrypt(&write_key, &nonce, &request.plaintext, &ad));
         self.send_to(&out, from);
         state.sessions.insert(request.node, Session { write_key, read_key });
@@ -560,10 +584,14 @@ impl Inner {
         }
         let Ok(ephemeral_key) = PublicKey::from_slice(ephemeral) else { return };
         let secret = ecdh_compressed(&ephemeral_key, &self.key);
-        let (initiator_key, recipient_key) = derive_keys(&secret, &challenge.data, &src, &self.local_id);
-        let Some(plaintext) =
-            aes128_gcm_decrypt(&initiator_key, &packet.nonce, packet.message, &packet.iv_and_header())
-        else {
+        let (initiator_key, recipient_key) =
+            derive_keys(&secret, &challenge.data, &src, &self.local_id);
+        let Some(plaintext) = aes128_gcm_decrypt(
+            &initiator_key,
+            &packet.nonce,
+            packet.message,
+            &packet.iv_and_header(),
+        ) else {
             return;
         };
         if state.sessions.len() >= MAX_SESSIONS {
@@ -610,7 +638,8 @@ impl Inner {
                         records.push(state.local_enr.encode());
                     } else if let Some(bucket) = state.buckets.get(*distance as usize) {
                         for node in bucket.iter().take(BUCKET_SIZE) {
-                            if let Some(enr) = state.contacts.get(node).and_then(|c| c.enr.as_ref()) {
+                            if let Some(enr) = state.contacts.get(node).and_then(|c| c.enr.as_ref())
+                            {
                                 records.push(enr.encode());
                             }
                         }
@@ -623,7 +652,8 @@ impl Inner {
                 let total = chunks.len() as u64;
                 for chunk in chunks {
                     let list = crate::eth::encode_list_of_raw(chunk);
-                    let message = encode_message(NODES, &[&request_id, &total, &crate::eth::RawRlp(&list)]);
+                    let message =
+                        encode_message(NODES, &[&request_id, &total, &crate::eth::RawRlp(&list)]);
                     self.send_response(state, src, from, &message);
                 }
             }
@@ -656,8 +686,14 @@ impl Inner {
         state.ip_learned = true;
         let udp = self.socket.local_addr().map(|a| a.port()).unwrap_or(0);
         let seq = state.local_enr.seq + 1;
-        state.local_enr =
-            Enr::build(&self.key, seq, Some(ip), self.config.tcp_port, udp, Some(self.config.fork_id));
+        state.local_enr = Enr::build(
+            &self.key,
+            seq,
+            Some(ip),
+            self.config.tcp_port,
+            udp,
+            Some(self.config.fork_id),
+        );
     }
 
     fn add_contact(&self, state: &mut State, enr: Enr, udp: SocketAddr) {
@@ -700,12 +736,8 @@ impl Inner {
         }
         state.lookup_rounds += 1;
         let target = state.lookup_target;
-        let mut candidates: Vec<B256> = state
-            .contacts
-            .keys()
-            .filter(|id| !state.lookup_asked.contains(*id))
-            .copied()
-            .collect();
+        let mut candidates: Vec<B256> =
+            state.contacts.keys().filter(|id| !state.lookup_asked.contains(*id)).copied().collect();
         candidates.sort_by_key(|id| {
             let mut xor = [0u8; 32];
             for (i, b) in xor.iter_mut().enumerate() {
@@ -717,7 +749,8 @@ impl Inner {
             state.lookup_asked.insert(node);
             let distance = log2_distance(&node, &target).max(1) as u16;
             let distances: Vec<u16> =
-                [distance, distance.saturating_add(1).min(256), distance.saturating_sub(1).max(1)].to_vec();
+                [distance, distance.saturating_add(1).min(256), distance.saturating_sub(1).max(1)]
+                    .to_vec();
             self.find_node(&mut state, node, &distances);
         }
     }
@@ -752,7 +785,8 @@ mod tests {
         let a_id = node_id(&PublicKey::from_secret_key_global(&key(NODE_A)));
         assert_eq!(packet.authdata(), a_id.as_slice());
         let plaintext =
-            aes128_gcm_decrypt(&[0u8; 16], &packet.nonce, packet.message, &packet.iv_and_header()).unwrap();
+            aes128_gcm_decrypt(&[0u8; 16], &packet.nonce, packet.message, &packet.iv_and_header())
+                .unwrap();
         // PING [req-id 0x00000001, enr-seq 2]
         assert_eq!(hex::encode(plaintext), "01c6840000000102");
         // The same bytes under Base's protocol id do not decode.
@@ -801,8 +835,13 @@ mod tests {
         let secret = ecdh_compressed(&PublicKey::from_slice(ephemeral).unwrap(), &b);
         let (initiator_key, _) = derive_keys(&secret, &challenge, &a_id, &b_id);
         assert_eq!(hex::encode(initiator_key), "4f9fac6de7567d1e3b1241dffe90f662");
-        let plaintext =
-            aes128_gcm_decrypt(&initiator_key, &packet.nonce, packet.message, &packet.iv_and_header()).unwrap();
+        let plaintext = aes128_gcm_decrypt(
+            &initiator_key,
+            &packet.nonce,
+            packet.message,
+            &packet.iv_and_header(),
+        )
+        .unwrap();
         assert_eq!(hex::encode(plaintext), "01c6840000000101");
     }
 
@@ -810,19 +849,23 @@ mod tests {
     fn crypto_primitives_match_spec_vectors() {
         let ephemeral = key("fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736");
         let dest = PublicKey::from_slice(
-            &hex::decode("0317931e6e0840220642f230037d285d122bc59063221ef3226b1f403ddc69ca91").unwrap(),
+            &hex::decode("0317931e6e0840220642f230037d285d122bc59063221ef3226b1f403ddc69ca91")
+                .unwrap(),
         )
         .unwrap();
         let challenge = hex::decode("000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000").unwrap();
         let id_a = b256!("aaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb");
         let id_b = b256!("bbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9");
-        let (initiator, recipient) = derive_keys(&ecdh_compressed(&dest, &ephemeral), &challenge, &id_a, &id_b);
+        let (initiator, recipient) =
+            derive_keys(&ecdh_compressed(&dest, &ephemeral), &challenge, &id_a, &id_b);
         assert_eq!(hex::encode(initiator), "dccc82d81bd610f4f76d3ebe97a40571");
         assert_eq!(hex::encode(recipient), "ac74bb8773749920b0d3a8881c173ec5");
 
         let ephemeral_public =
-            hex::decode("039961e4c2356d61bedb83052c115d311acb3a96f5777296dcf297351130266231").unwrap();
-        let signature = sign_compact(id_signature_digest(&challenge, &ephemeral_public, &id_b), &ephemeral);
+            hex::decode("039961e4c2356d61bedb83052c115d311acb3a96f5777296dcf297351130266231")
+                .unwrap();
+        let signature =
+            sign_compact(id_signature_digest(&challenge, &ephemeral_public, &id_b), &ephemeral);
         assert_eq!(
             hex::encode(signature),
             "94852a1e2318c4e5e9d422c98eaf19d1d90d876b29cd06ca7cb7546d0fff7b484fe86c09a064fe72bdbef73ba8e9c34df0cd2b53e9d65528c2c7f336d5dfc6e6"
@@ -832,7 +875,8 @@ mod tests {
             &hex::decode("9f2d77db7004bf8a1a85107ac686990b").unwrap().try_into().unwrap(),
             &hex::decode("27b5af763c446acd2749fe8e").unwrap().try_into().unwrap(),
             &hex::decode("01c20101").unwrap(),
-            &hex::decode("93a7400fa0d6a694ebc24d5cf570f65d04215b6ac00757875e3f3a5f42107903").unwrap(),
+            &hex::decode("93a7400fa0d6a694ebc24d5cf570f65d04215b6ac00757875e3f3a5f42107903")
+                .unwrap(),
         );
         assert_eq!(hex::encode(ct), "a5d12a2d94b8ccb3ba55558229867dc13bfa3648");
     }

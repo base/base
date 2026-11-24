@@ -117,7 +117,11 @@ fn main() {
     let t = Instant::now();
     let bodies = downloader.bodies(&headers, &mut |_| {}).expect("bodies");
     let txs: usize = bodies.iter().map(|b| b.transactions.len()).sum();
-    println!("bodies: {} with {txs} transactions, roots checked, in {:?}", bodies.len(), t.elapsed());
+    println!(
+        "bodies: {} with {txs} transactions, roots checked, in {:?}",
+        bodies.len(),
+        t.elapsed()
+    );
     for header in headers.iter().step_by((headers.len() / 4).max(1)) {
         println!("block {} {}", header.number(), header.hash);
     }

@@ -49,13 +49,16 @@ impl FromStr for NodeRecord {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let rest = s.strip_prefix("enode://").ok_or("missing enode:// prefix")?;
         let (id, rest) = rest.split_once('@').ok_or("missing @")?;
-        let id = PeerId::from_slice(&hex::decode(id).map_err(|e| e.to_string())?.try_into().map_err(|_| "id must be 64 bytes".to_string()).map(|v: [u8; 64]| v)?);
+        let id = PeerId::from_slice(
+            &hex::decode(id)
+                .map_err(|e| e.to_string())?
+                .try_into()
+                .map_err(|_| "id must be 64 bytes".to_string())
+                .map(|v: [u8; 64]| v)?,
+        );
         let (host, query) = rest.split_once('?').unwrap_or((rest, ""));
-        let addr = host
-            .to_socket_addrs()
-            .map_err(|e| e.to_string())?
-            .next()
-            .ok_or("unresolvable host")?;
+        let addr =
+            host.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("unresolvable host")?;
         let udp_port = match query.strip_prefix("discport=") {
             Some(port) => port.parse().map_err(|_| "bad discport")?,
             None => addr.port(),
@@ -241,11 +244,8 @@ impl Network {
             Some(addr) => Some(TcpListener::bind(addr)?),
             None => None,
         };
-        let tcp_port = listener
-            .as_ref()
-            .and_then(|l| l.local_addr().ok())
-            .map(|a| a.port())
-            .unwrap_or(0);
+        let tcp_port =
+            listener.as_ref().and_then(|l| l.local_addr().ok()).map(|a| a.port()).unwrap_or(0);
         let discovery = match config.discovery_addr {
             Some(addr) => {
                 let head = chain.chain_head();
@@ -286,9 +286,7 @@ impl Network {
         }
         {
             let inner = inner.clone();
-            thread::Builder::new()
-                .name("tiger-net-dial".into())
-                .spawn(move || maintain(inner))?;
+            thread::Builder::new().name("tiger-net-dial".into()).spawn(move || maintain(inner))?;
         }
         Ok(Self { inner })
     }
@@ -348,7 +346,12 @@ impl Network {
             .values()
             .filter(|p| !p.is_closed() && (!snap || p.supports_snap()))
             .filter(|p| p.inflight() < max_inflight && !exclude.contains(&p.id))
-            .min_by_key(|p| (p.inflight(), std::cmp::Reverse(table.reputation.get(&p.id).map_or(0, |r| r.score))))
+            .min_by_key(|p| {
+                (
+                    p.inflight(),
+                    std::cmp::Reverse(table.reputation.get(&p.id).map_or(0, |r| r.score)),
+                )
+            })
             .cloned()
     }
 
@@ -435,7 +438,9 @@ fn start_session(inner: &Arc<Inner>, conn: RlpxConnection, inbound: bool) {
         } else {
             outbound_count >= inner.config.max_outbound
         };
-        let reason = if table.peers.contains_key(&remote) || remote == peer_id_of_secret(&inner.config.secret_key) {
+        let reason = if table.peers.contains_key(&remote)
+            || remote == peer_id_of_secret(&inner.config.secret_key)
+        {
             Some(DisconnectReason::AlreadyConnected)
         } else if table.is_banned(&remote) && !trusted {
             Some(DisconnectReason::UselessPeer)
@@ -514,27 +519,36 @@ fn maintain(inner: Arc<Inner>) {
             let now = Instant::now();
             let local = peer_id_of_secret(&inner.config.secret_key);
             for trusted in &inner.config.trusted_peers {
-                let recent = table.last_dial.get(&trusted.id).is_some_and(|t| now - *t < Duration::from_secs(5));
-                if !table.peers.contains_key(&trusted.id) && !table.dialing.contains(&trusted.id) && !recent {
+                let recent = table
+                    .last_dial
+                    .get(&trusted.id)
+                    .is_some_and(|t| now - *t < Duration::from_secs(5));
+                if !table.peers.contains_key(&trusted.id)
+                    && !table.dialing.contains(&trusted.id)
+                    && !recent
+                {
                     to_dial.push(*trusted);
                 }
             }
             let (_, outbound) = table.counts();
-            let free = inner
-                .config
-                .max_outbound
-                .saturating_sub(outbound + table.dialing.len())
-                .min(inner.config.max_concurrent_dials.saturating_sub(inner.dials.load(Ordering::Relaxed)));
+            let free =
+                inner.config.max_outbound.saturating_sub(outbound + table.dialing.len()).min(
+                    inner
+                        .config
+                        .max_concurrent_dials
+                        .saturating_sub(inner.dials.load(Ordering::Relaxed)),
+                );
             let mut rotated = 0;
             while to_dial.len() < free && rotated < table.candidates.len() {
                 let Some(candidate) = table.candidates.pop_front() else { break };
                 rotated += 1;
-                let backoff = table.last_dial.get(&candidate.id).is_some_and(|t| now - *t < DIAL_BACKOFF);
-                let skip = candidate.id == local ||
-                    table.peers.contains_key(&candidate.id) ||
-                    table.dialing.contains(&candidate.id) ||
-                    table.is_banned(&candidate.id) ||
-                    backoff;
+                let backoff =
+                    table.last_dial.get(&candidate.id).is_some_and(|t| now - *t < DIAL_BACKOFF);
+                let skip = candidate.id == local
+                    || table.peers.contains_key(&candidate.id)
+                    || table.dialing.contains(&candidate.id)
+                    || table.is_banned(&candidate.id)
+                    || backoff;
                 table.candidates.push_back(candidate);
                 if !skip && !to_dial.iter().any(|d: &NodeRecord| d.id == candidate.id) {
                     to_dial.push(candidate);
@@ -572,7 +586,8 @@ fn maintain(inner: Arc<Inner>) {
 }
 
 /// A channel for collecting responses from several peers at once.
-pub(crate) fn response_channel() -> (mpsc::Sender<crate::peer::Response>, mpsc::Receiver<crate::peer::Response>) {
+pub(crate) fn response_channel()
+-> (mpsc::Sender<crate::peer::Response>, mpsc::Receiver<crate::peer::Response>) {
     mpsc::channel()
 }
 

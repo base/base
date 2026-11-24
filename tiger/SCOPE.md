@@ -96,8 +96,8 @@ Peer-to-peer sync as base-reth does it, so a node catches up much faster than th
 Engine API alone: node discovery (the protocol versions and Base identity base-reth uses),
 RLPx, the eth wire protocol (status with Base's fork id, header, body and receipt download and
 serving, and the transaction announcements the protocol requires, without a mempool), backfill
-of a forkchoice to an unknown head, and snap sync to fill state. Details: the networking section
-below, maintained by the networking work.
+of a forkchoice to an unknown head, and snap sync to fill state. Details: the "Networking and EL sync"
+section below.
 
 ### JSON-RPC (HTTP on the RPC port)
 
@@ -130,6 +130,59 @@ The methods the RPC and state fuzzers compare, with base-reth's answers:
   compare tiger with base-reth. Build and validate run on the node's own block execution and
   trie code; trie mode runs the node's trie over its own database.
 - The node itself runs under the RPC and state fuzzers (`base-diff-fuzz rpc` / `state`).
+
+## Networking and EL sync
+
+What base-reth does, checked in base/base (`crates/execution/node/src/node.rs`,
+`crates/common/chains/src/config.rs`) and reth at base/reth `2b20e42`, and what tiger does
+(`net/`, crate `base-tiger-net`).
+
+### base-reth
+
+- **Discovery**: discv5 only, with protocol id `basev0` instead of `discv5`. discv4 is off
+  unless `--rollup.discovery.v4`; DNS discovery is not used. The ENR carries the fork id under
+  key `opel` as `[ForkId]`; discovered records with an `eth2` key (consensus nodes) are dropped.
+- **Bootnodes**: `bootnodes.execution` in the chain config; mainnet and Sepolia list the same
+  10 enodes (ports 30301 and 9200). The fork id keeps the chains apart.
+- **Wire protocols**: RLPx with Snappy, eth/66 to eth/71 offered (tiger negotiates eth/69).
+  Transaction gossip is off (`tx_gossip_disabled`), but announcements must still be accepted.
+  Requests are served up to 1024 headers, bodies or receipts, with a 2 MiB soft size limit.
+- **Sync**: base-reth does not snap sync. A forkchoice to an unknown head returns `SYNCING`.
+  If the gap exceeds the backfill threshold (32 blocks), the staged pipeline backfills:
+  headers downloaded in reverse from the target, then bodies, then execution and the other
+  stages. Smaller gaps are downloaded block by block by the engine tree.
+- **Snap**: no snap/1 server. snap/2 (EIP-8189) is served only with `--snap.v2` (off by
+  default): GetAccountRange, GetStorageRanges, GetByteCodes, and GetBlockAccessLists (empty on
+  Base). It has no GetTrieNodes. Ranges are served only at the last 128 state roots.
+- `--dev` does not mine (the runner calls `.launch()`), so local tests drive blocks over the
+  Engine API.
+
+### Tiger
+
+- discv5 with `basev0`, the `opel` fork id in its own ENR, FINDNODE lookups, and the `eth2`
+  filter. No discv4, no DNS discovery.
+- RLPx: EIP-8 ECIES handshake, frame codec, Snappy. Writes its own Snappy.
+- eth/69 (eth/68 as fallback): Status with Base's fork id (EIP-2124 validation), headers,
+  bodies and receipts both ways, with base-reth's serving limits. Transaction announcements are
+  read and ignored; PooledTransactions requests get an empty answer.
+- snap/2 client: account ranges, storage ranges (large tries continued across requests), and
+  bytecodes, each range proof verified against the pivot's state root. The pivot moves to a
+  recent head after 64 blocks. Healing comes from tiger's own per-block diffs instead of
+  GetTrieNodes: keys a newer executed block touched are dropped from responses for older
+  pivots, and the state finishes with a full trie rebuild checked against the head's state
+  root. The syncer writes completed key ranges and its progress atomically with the data, so it
+  resumes after a restart.
+- snap/2 server over the store's hashed tables and tries, at the roots the store retains.
+  GetBlockAccessLists gets empty answers, as on Base.
+- Peers: at most 100 outbound and 30 inbound, trusted peers always dialed and never banned,
+  request timeouts, reputation, and a one-hour ban for invalid responses or another chain.
+- Backfill: `headers_back` from a target hash, then `bodies` validated against the headers,
+  spread over peers. The node's sync driver executes them, as base-reth's pipeline does.
+- Node flags (mapped onto `NetworkConfig`): `--port`, `--discovery.v5.port`,
+  `--disable-discovery`, `--bootnodes`, `--trusted-peers`, max peer counts, `--p2p-secret-key`.
+
+Left out: discv4, DNS discovery, eth/70 and eth/71, snap/1 (GetTrieNodes), transaction gossip,
+and NAT traversal (UPnP). The external IP comes from configuration.
 
 ## Left out
 

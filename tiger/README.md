@@ -24,6 +24,7 @@ cargo test
 | `precompiles/` | `base-tiger-precompiles` | Base native precompiles (activation and policy registries, B-20 tokens and factory, transaction context, nonce manager), ported from `base-common-precompiles`. |
 | `precompile-storage/` | `base-tiger-precompile-storage` | Storage types, the `PrecompileStorageProvider` boundary, and the fixed gas schedule the native precompiles use. |
 | `precompile-macros/` | `base-tiger-precompile-macros` | `#[contract]` and storage-layout derive macros for the native precompiles. |
+| `net/` | `base-tiger-net` | Peer-to-peer networking and EL sync: discv5, RLPx, eth/69 and snap/2 (client and server), peers, block downloader, snap sync with healing. |
 | `node/` | `base-tiger` | The `tiger` binary: node, Engine API, JSON-RPC, and the differential fuzz adapter. |
 
 ## Dependencies
@@ -46,8 +47,12 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `alloy-rpc-types-engine`, `base-common-rpc-types-engine` | Engine API payload, attribute, forkchoice and envelope wire types, and base-reth's payload id. |
 | `alloy-rpc-types-eth`, `base-common-rpc-types` | JSON-RPC block, transaction and receipt shapes, so responses serialize as base-reth's do. |
 | `base-proof-mpt` | Merkle Patricia trie over hash-addressed nodes, used for witness state and the node's state until `trie/` replaces it. |
-| `hmac`, `sha2` | HS256 for Engine API JWTs (already in the tree for networking). |
-| `serde`, `serde_json` | JSON-RPC and the diff adapter protocol. |
+| `serde`, `serde_json` | JSON-RPC and the diff adapter protocol (dev-only in `base-tiger-net`, for its probes). |
+| `secp256k1` | Node keys, ECDH and signatures for RLPx, discv5 and ENRs (libsecp256k1, already in evm2's tree). |
+| `aes`, `ctr` | AES-256-CTR for RLPx ECIES and frame encryption, and AES-128-CTR for discv5 packet headers. |
+| `aes-gcm` | AES-128-GCM for discv5 message encryption. |
+| `sha2`, `hmac` | SHA-256 and HMAC for the RLPx ECIES KDF and MAC, discv5's HKDF, and HS256 Engine API JWTs. |
+| `getrandom` | Random node keys, nonces and ephemeral keys from the OS. |
 | `cc` (build) | Compiles the vendored libmdbx C sources. |
 | `alloy-sol-types` | Solidity ABI encoding and decoding of the native precompile interfaces (`sol!`). |
 | `syn`, `quote`, `proc-macro2` | Parsing and generating code in `base-tiger-precompile-macros`. |

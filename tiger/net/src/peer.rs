@@ -226,7 +226,8 @@ impl Peer {
         if pending.response_id != message_id {
             return Err("response of the wrong type");
         }
-        let _ = pending.tx.send(Response { tag: pending.tag, peer: self.id, payload: Some(payload) });
+        let _ =
+            pending.tx.send(Response { tag: pending.tag, peer: self.id, payload: Some(payload) });
         Ok(())
     }
 
@@ -482,7 +483,8 @@ fn handle_eth(
                 let mut items = Vec::with_capacity(receipts.len());
                 for receipt in &receipts {
                     items.push(if peer.eth.version >= 69 {
-                        receipt_to_eth69(receipt).map_err(|_| SessionError::Breach /* bad stored receipt */)?
+                        receipt_to_eth69(receipt)
+                            .map_err(|_| SessionError::Breach /* bad stored receipt */)?
                     } else {
                         receipt_to_eth68(receipt)
                     });
@@ -500,7 +502,10 @@ fn handle_eth(
         eth::GET_POOLED_TRANSACTIONS => {
             // Tiger keeps no transaction pool: answer with an empty list.
             let (request_id, _) = split_request_id(&payload).map_err(breach)?;
-            peer.send(offset + eth::POOLED_TRANSACTIONS, &encode_response::<&[u8]>(request_id, &[]))?;
+            peer.send(
+                offset + eth::POOLED_TRANSACTIONS,
+                &encode_response::<&[u8]>(request_id, &[]),
+            )?;
             Ok(())
         }
         eth::BLOCK_RANGE_UPDATE => {
@@ -514,10 +519,10 @@ fn handle_eth(
         }
         // Announcements and broadcasts: base-reth disables transaction gossip and block
         // propagation, and tiger has no pool, so these are accepted and dropped.
-        eth::NEW_BLOCK_HASHES |
-        eth::TRANSACTIONS |
-        eth::NEW_BLOCK |
-        eth::NEW_POOLED_TRANSACTION_HASHES => Ok(()),
+        eth::NEW_BLOCK_HASHES
+        | eth::TRANSACTIONS
+        | eth::NEW_BLOCK
+        | eth::NEW_POOLED_TRANSACTION_HASHES => Ok(()),
         eth::STATUS => Err(SessionError::Breach /* second status */),
         _ => Ok(()),
     }
@@ -531,7 +536,10 @@ fn handle_snap(
     source: Option<&dyn SnapStateSource>,
 ) -> Result<(), SessionError> {
     match id {
-        snap::ACCOUNT_RANGE | snap::STORAGE_RANGES | snap::BYTE_CODES | snap::BLOCK_ACCESS_LISTS => {
+        snap::ACCOUNT_RANGE
+        | snap::STORAGE_RANGES
+        | snap::BYTE_CODES
+        | snap::BLOCK_ACCESS_LISTS => {
             peer.deliver(cap.offset + id, payload).map_err(|_| SessionError::Breach)
         }
         _ => {
@@ -613,7 +621,8 @@ mod tests {
                 .map(|h| Header::decode(&mut h.as_slice()).unwrap().number)
                 .collect()
         };
-        let forward = HeadersRequest { start: BlockId::Number(3), limit: 4, skip: 2, reverse: false };
+        let forward =
+            HeadersRequest { start: BlockId::Number(3), limit: 4, skip: 2, reverse: false };
         assert_eq!(numbers(forward), vec![3, 6, 9, 12]);
         let back = HeadersRequest {
             start: BlockId::Hash(chain.0[5].hash_slow()),
@@ -622,7 +631,8 @@ mod tests {
             reverse: true,
         };
         assert_eq!(numbers(back), vec![5, 4, 3, 2, 1, 0]);
-        let past_end = HeadersRequest { start: BlockId::Number(18), limit: 5, skip: 0, reverse: false };
+        let past_end =
+            HeadersRequest { start: BlockId::Number(18), limit: 5, skip: 0, reverse: false };
         assert_eq!(numbers(past_end), vec![18, 19]);
     }
 }

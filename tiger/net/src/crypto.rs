@@ -97,7 +97,8 @@ pub(crate) fn sha256(parts: &[&[u8]]) -> [u8; 32] {
 
 /// HMAC-SHA-256 of the concatenation of `parts`.
 pub(crate) fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
-    let mut mac = <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(key).expect("HMAC accepts any key length");
+    let mut mac =
+        <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(key).expect("HMAC accepts any key length");
     for part in parts {
         mac.update(part);
     }
@@ -178,7 +179,12 @@ impl std::fmt::Debug for Aes256Block {
 }
 
 /// AES-128-GCM encryption (discv5 message packets): returns ciphertext with the 16-byte tag.
-pub(crate) fn aes128_gcm_encrypt(key: &[u8; 16], nonce: &[u8; 12], plain: &[u8], aad: &[u8]) -> Vec<u8> {
+pub(crate) fn aes128_gcm_encrypt(
+    key: &[u8; 16],
+    nonce: &[u8; 12],
+    plain: &[u8],
+    aad: &[u8],
+) -> Vec<u8> {
     use aes_gcm::aead::{Aead, Payload};
     let cipher = aes_gcm::Aes128Gcm::new(key.into());
     cipher

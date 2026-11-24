@@ -142,8 +142,11 @@ impl ForkSchedule {
                 // As alloy's ForkFilter: a value above a timestamp older than Ethereum mainnet
                 // is a timestamp, anything smaller a block number.
                 let is_time = remote.next > TIMESTAMP_BEFORE_ETHEREUM_MAINNET;
-                let reached =
-                    if is_time { head.timestamp >= remote.next } else { head.number >= remote.next };
+                let reached = if is_time {
+                    head.timestamp >= remote.next
+                } else {
+                    head.number >= remote.next
+                };
                 if reached {
                     return Err(ForkIdError::RemoteStale);
                 }
@@ -243,7 +246,10 @@ mod tests {
                 .to_vec(),
         };
         let block = |number| Head { number, timestamp: 0 };
-        assert_eq!(mainnet.fork_id(block(0)), ForkId { hash: [0xfc, 0x64, 0xec, 0x04], next: 1_150_000 });
+        assert_eq!(
+            mainnet.fork_id(block(0)),
+            ForkId { hash: [0xfc, 0x64, 0xec, 0x04], next: 1_150_000 }
+        );
         assert_eq!(
             mainnet.fork_id(block(1_920_000)),
             ForkId { hash: [0x91, 0xd1, 0xf9, 0x48], next: 2_463_000 }
@@ -252,7 +258,10 @@ mod tests {
             mainnet.fork_id(block(4_370_000)),
             ForkId { hash: [0xa0, 0x0b, 0xc3, 0x24], next: 7_280_000 }
         );
-        assert_eq!(mainnet.fork_id(block(7_987_396)), ForkId { hash: [0x66, 0x8d, 0xb0, 0xaf], next: 0 });
+        assert_eq!(
+            mainnet.fork_id(block(7_987_396)),
+            ForkId { hash: [0x66, 0x8d, 0xb0, 0xaf], next: 0 }
+        );
 
         // EIP-2124 validation vectors (subset), local head at 7_987_396 (Petersburg).
         let head = block(7_987_396);
@@ -266,10 +275,16 @@ mod tests {
         // Unknown hash: another chain.
         assert_eq!(ok([0xaf, 0xec, 0x6b, 0x27], 0), Err(ForkIdError::IncompatibleOrStale));
         // Local at Byzantium, remote at Petersburg (ahead): compatible.
-        assert_eq!(mainnet.validate(block(7_279_999), ForkId { hash: [0x66, 0x8d, 0xb0, 0xaf], next: 0 }), Ok(()));
+        assert_eq!(
+            mainnet.validate(block(7_279_999), ForkId { hash: [0x66, 0x8d, 0xb0, 0xaf], next: 0 }),
+            Ok(())
+        );
         // Same fork, remote announces a fork we already passed.
         assert_eq!(
-            mainnet.validate(block(7_279_999), ForkId { hash: [0xa0, 0x0b, 0xc3, 0x24], next: 7_279_999 }),
+            mainnet.validate(
+                block(7_279_999),
+                ForkId { hash: [0xa0, 0x0b, 0xc3, 0x24], next: 7_279_999 }
+            ),
             Err(ForkIdError::RemoteStale)
         );
     }

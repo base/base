@@ -44,13 +44,15 @@ mod peer;
 pub use peer::{BlockSource, ChainHead, Peer, RequestError, Response};
 
 mod network;
-pub use network::{Network, NetworkConfig, NodeRecord, Penalty, PeerInfo};
+pub use network::{Network, NetworkConfig, NodeRecord, PeerInfo, Penalty};
 
 mod download;
 pub use download::{DownloadConfig, DownloadError, Downloader};
 
 mod snap_sync;
-pub use snap_sync::{Pivot, SnapHandle, SnapStatus, SnapSync, SnapSyncConfig, SnapSyncError, TouchedKeys};
+pub use snap_sync::{
+    Pivot, SnapHandle, SnapStatus, SnapSync, SnapSyncConfig, SnapSyncError, TouchedKeys,
+};
 
 mod bootnodes;
 pub use bootnodes::BASE_BOOTNODES;

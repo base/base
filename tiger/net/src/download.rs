@@ -182,7 +182,8 @@ impl Downloader {
                     .is_ok()
             },
             |request, _, payload| {
-                let headers = decode_headers(&payload).map_err(|_| Rejected(Penalty::BadResponse))?;
+                let headers =
+                    decode_headers(&payload).map_err(|_| Rejected(Penalty::BadResponse))?;
                 if headers.is_empty() {
                     not_found += 1;
                     if not_found >= 3 {
@@ -214,7 +215,12 @@ impl Downloader {
     ) -> Result<Vec<SealedHeader>, DownloadError> {
         assert!(max > 0);
         let top = self
-            .headers(HeadersRequest { start: BlockId::Hash(target), limit: 1, skip: 0, reverse: false })?
+            .headers(HeadersRequest {
+                start: BlockId::Hash(target),
+                limit: 1,
+                skip: 0,
+                reverse: false,
+            })?
             .remove(0);
         if top.hash != target {
             return Err(DownloadError::Exhausted("peer returned another header"));
@@ -230,7 +236,12 @@ impl Downloader {
         let mut start = low;
         while start < number {
             let limit = size.min(number - start);
-            chunks.push(HeadersRequest { start: BlockId::Number(start), limit, skip: 0, reverse: false });
+            chunks.push(HeadersRequest {
+                start: BlockId::Number(start),
+                limit,
+                skip: 0,
+                reverse: false,
+            });
             start += limit;
         }
         let mut fetched: HashMap<u64, Vec<SealedHeader>> = HashMap::new();
@@ -242,7 +253,8 @@ impl Downloader {
                     .is_ok()
             },
             |request, _, payload| {
-                let headers = decode_headers(&payload).map_err(|_| Rejected(Penalty::BadResponse))?;
+                let headers =
+                    decode_headers(&payload).map_err(|_| Rejected(Penalty::BadResponse))?;
                 if headers.is_empty() {
                     return Err(Rejected(Penalty::Useless));
                 }
@@ -285,11 +297,20 @@ impl Downloader {
     }
 
     /// Walks back from `hash` with reverse by-hash requests, sequentially, for `count` headers.
-    fn headers_by_hash_back(&self, mut hash: B256, count: u64) -> Result<Vec<SealedHeader>, DownloadError> {
+    fn headers_by_hash_back(
+        &self,
+        mut hash: B256,
+        count: u64,
+    ) -> Result<Vec<SealedHeader>, DownloadError> {
         let mut out = Vec::new();
         while (out.len() as u64) < count {
             let limit = (count - out.len() as u64).min(self.config.headers_per_request);
-            let headers = self.headers(HeadersRequest { start: BlockId::Hash(hash), limit, skip: 0, reverse: true })?;
+            let headers = self.headers(HeadersRequest {
+                start: BlockId::Hash(hash),
+                limit,
+                skip: 0,
+                reverse: true,
+            })?;
             if headers[0].hash != hash {
                 return Err(DownloadError::Exhausted("by-hash response starts elsewhere"));
             }
@@ -316,11 +337,17 @@ impl Downloader {
             false,
             |peer, job, tag, tx| {
                 let hashes: Vec<B256> = job.iter().map(|i| headers[*i].hash).collect();
-                peer.request_eth(eth::GET_BLOCK_BODIES, |id| encode_hashes_request(id, &hashes), tag, tx)
-                    .is_ok()
+                peer.request_eth(
+                    eth::GET_BLOCK_BODIES,
+                    |id| encode_hashes_request(id, &hashes),
+                    tag,
+                    tx,
+                )
+                .is_ok()
             },
             |job, _, payload| {
-                let (_, body) = split_request_id(&payload).map_err(|_| Rejected(Penalty::BadResponse))?;
+                let (_, body) =
+                    split_request_id(&payload).map_err(|_| Rejected(Penalty::BadResponse))?;
                 let bodies = decode_bodies(body).map_err(|_| Rejected(Penalty::BadResponse))?;
                 if bodies.is_empty() {
                     return Err(Rejected(Penalty::Useless));
@@ -329,7 +356,8 @@ impl Downloader {
                     return Err(Rejected(Penalty::BadResponse));
                 }
                 for (body, index) in bodies.iter().zip(job) {
-                    body.validate(&headers[*index].header).map_err(|_| Rejected(Penalty::BadResponse))?;
+                    body.validate(&headers[*index].header)
+                        .map_err(|_| Rejected(Penalty::BadResponse))?;
                 }
                 let got = bodies.len();
                 for (body, index) in bodies.into_iter().zip(job) {
@@ -375,12 +403,20 @@ fn check_header_run(request: &HeadersRequest, headers: &[SealedHeader]) -> Resul
     let step = request.skip + 1;
     for pair in headers.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
-        let expected = if request.reverse { a.number().checked_sub(step) } else { a.number().checked_add(step) };
+        let expected = if request.reverse {
+            a.number().checked_sub(step)
+        } else {
+            a.number().checked_add(step)
+        };
         if Some(b.number()) != expected {
             return Err(Penalty::BadResponse);
         }
         if request.skip == 0 {
-            let linked = if request.reverse { a.header.parent_hash == b.hash } else { b.header.parent_hash == a.hash };
+            let linked = if request.reverse {
+                a.header.parent_hash == b.hash
+            } else {
+                b.header.parent_hash == a.hash
+            };
             if !linked {
                 return Err(Penalty::BadResponse);
             }
@@ -406,7 +442,8 @@ mod tests {
     #[test]
     fn header_runs_must_chain() {
         let headers = chain(10);
-        let forward = HeadersRequest { start: BlockId::Number(2), limit: 5, skip: 0, reverse: false };
+        let forward =
+            HeadersRequest { start: BlockId::Number(2), limit: 5, skip: 0, reverse: false };
         assert!(check_header_run(&forward, &headers[2..7]).is_ok());
         assert!(check_header_run(&forward, &headers[3..8]).is_err());
         let mut broken = headers[2..7].to_vec();
@@ -414,7 +451,12 @@ mod tests {
         assert!(check_header_run(&forward, &broken).is_err());
         let mut reversed = headers[..6].to_vec();
         reversed.reverse();
-        let back = HeadersRequest { start: BlockId::Hash(headers[5].hash), limit: 6, skip: 0, reverse: true };
+        let back = HeadersRequest {
+            start: BlockId::Hash(headers[5].hash),
+            limit: 6,
+            skip: 0,
+            reverse: true,
+        };
         assert!(check_header_run(&back, &reversed).is_ok());
         assert!(check_header_run(&HeadersRequest { limit: 5, ..back }, &reversed).is_err());
     }

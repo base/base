@@ -146,8 +146,8 @@ impl Touched {
     }
 
     fn slot_after(&self, account: &B256, slot: &B256, pivot: u64) -> bool {
-        self.wiped.get(account).is_some_and(|n| *n > pivot) ||
-            self.slots.get(&(*account, *slot)).is_some_and(|n| *n > pivot)
+        self.wiped.get(account).is_some_and(|n| *n > pivot)
+            || self.slots.get(&(*account, *slot)).is_some_and(|n| *n > pivot)
     }
 
     /// Forgets touches at or below `pivot`: no outstanding or future request is older.
@@ -169,7 +169,12 @@ impl SnapHandle {
     /// order. Call it before writing the block's changes to the flat tables and keep the
     /// returned guard until they are written: snap commits wait for it, so a snap write never
     /// lands between a block's report and its write.
-    pub fn on_block(&self, number: u64, state_root: B256, touched: &TouchedKeys) -> SnapBlockGuard<'_> {
+    pub fn on_block(
+        &self,
+        number: u64,
+        state_root: B256,
+        touched: &TouchedKeys,
+    ) -> SnapBlockGuard<'_> {
         let mut state = self.touched.lock().unwrap();
         for account in &touched.accounts {
             state.accounts.insert(*account, number);
@@ -258,7 +263,9 @@ impl<S: SnapStateSink> SnapSync<S> {
     pub fn new(network: Network, sink: S, config: SnapSyncConfig) -> Result<Self, SnapSyncError> {
         assert!(config.account_chunks > 0 && config.account_chunks <= 256);
         let progress = match sink.load_progress()? {
-            Some(blob) => Progress::decode(&mut blob.as_slice()).map_err(|_| SnapSyncError::BadProgress)?,
+            Some(blob) => {
+                Progress::decode(&mut blob.as_slice()).map_err(|_| SnapSyncError::BadProgress)?
+            }
             None => {
                 let mut chunks = Vec::with_capacity(config.account_chunks);
                 let step = U256::MAX / U256::from(config.account_chunks);
@@ -323,11 +330,11 @@ impl<S: SnapStateSink> SnapSync<S> {
     }
 
     fn is_done(&self) -> bool {
-        self.progress.chunks.iter().all(|c| c.done) &&
-            self.progress.storage.is_empty() &&
-            self.progress.codes.is_empty() &&
-            self.storage_busy.is_empty() &&
-            self.codes_busy.is_empty()
+        self.progress.chunks.iter().all(|c| c.done)
+            && self.progress.storage.is_empty()
+            && self.progress.codes.is_empty()
+            && self.storage_busy.is_empty()
+            && self.codes_busy.is_empty()
     }
 
     /// Downloads until every range is written, then asks the store to finish. Blocks.
@@ -339,9 +346,9 @@ impl<S: SnapStateSink> SnapSync<S> {
         while !(self.is_done() && inflight.is_empty()) {
             self.update_pivot();
             // Dispatch.
-            while let Some(peer) =
-                self.pivot.and_then(|_| self.network.select_peer(true, self.config.max_inflight_per_peer, &[]))
-            {
+            while let Some(peer) = self.pivot.and_then(|_| {
+                self.network.select_peer(true, self.config.max_inflight_per_peer, &[])
+            }) {
                 let Some(request) = self.next_request() else { break };
                 let tag = next_tag;
                 next_tag += 1;
@@ -449,8 +456,9 @@ impl<S: SnapStateSink> SnapSync<S> {
             }
             return Some(Request::Storage { tasks });
         }
-        let queues_full = self.progress.storage.len() + self.storage_busy.len() >= self.config.max_storage_tasks ||
-            self.progress.codes.len() + self.codes_busy.len() >= self.config.max_code_tasks;
+        let queues_full = self.progress.storage.len() + self.storage_busy.len()
+            >= self.config.max_storage_tasks
+            || self.progress.codes.len() + self.codes_busy.len() >= self.config.max_code_tasks;
         if queues_full {
             return None;
         }
@@ -483,7 +491,13 @@ impl<S: SnapStateSink> SnapSync<S> {
         }
     }
 
-    fn send(&self, peer: &Peer, request: &Request, tag: u64, tx: &std::sync::mpsc::Sender<Response>) -> bool {
+    fn send(
+        &self,
+        peer: &Peer,
+        request: &Request,
+        tag: u64,
+        tx: &std::sync::mpsc::Sender<Response>,
+    ) -> bool {
         let bytes = self.config.response_bytes;
         let result = match request {
             Request::Accounts { chunk, pivot, start } => {
@@ -535,7 +549,13 @@ impl<S: SnapStateSink> SnapSync<S> {
             ),
             Request::Codes { hashes } => peer.request_snap(
                 snap::GET_BYTE_CODES,
-                |id| alloy_rlp::encode(GetByteCodes { request_id: id, hashes: hashes.clone(), response_bytes: bytes }),
+                |id| {
+                    alloy_rlp::encode(GetByteCodes {
+                        request_id: id,
+                        hashes: hashes.clone(),
+                        response_bytes: bytes,
+                    })
+                },
                 tag,
                 tx,
             ),
@@ -545,7 +565,9 @@ impl<S: SnapStateSink> SnapSync<S> {
 
     fn on_response(&mut self, request: Request, peer: &PeerId, payload: &[u8]) {
         let outcome = match &request {
-            Request::Accounts { chunk, pivot, start } => self.on_accounts(*chunk, *pivot, *start, payload),
+            Request::Accounts { chunk, pivot, start } => {
+                self.on_accounts(*chunk, *pivot, *start, payload)
+            }
             Request::Refresh { task, pivot } => self.on_refresh(*task, *pivot, payload),
             Request::Storage { tasks } => self.on_storage(tasks, payload),
             Request::Codes { hashes } => self.on_codes(hashes, payload),
@@ -559,7 +581,13 @@ impl<S: SnapStateSink> SnapSync<S> {
         }
     }
 
-    fn on_accounts(&mut self, chunk: usize, pivot: Pivot, start: B256, payload: &[u8]) -> Result<(), Penalty> {
+    fn on_accounts(
+        &mut self,
+        chunk: usize,
+        pivot: Pivot,
+        start: B256,
+        payload: &[u8],
+    ) -> Result<(), Penalty> {
         let response = AccountRange::decode_payload(payload).map_err(|_| Penalty::BadResponse)?;
         if response.accounts.is_empty() && response.proof.is_empty() {
             // The peer does not have this root (too old, or not reached yet).
@@ -568,8 +596,9 @@ impl<S: SnapStateSink> SnapSync<S> {
         let last_key = self.progress.chunks[chunk].last;
         let leaves: Vec<(B256, Vec<u8>)> =
             response.accounts.iter().map(|(hash, account)| (*hash, account_rlp(account))).collect();
-        let outcome = verify_range_proof(pivot.state_root, start, last_key, &leaves, &response.proof)
-            .map_err(|_| Penalty::BadResponse)?;
+        let outcome =
+            verify_range_proof(pivot.state_root, start, last_key, &leaves, &response.proof)
+                .map_err(|_| Penalty::BadResponse)?;
         let mut reached_end = !outcome.more;
         let mut last_written = None;
         for (hash, account) in &response.accounts {
@@ -580,7 +609,11 @@ impl<S: SnapStateSink> SnapSync<S> {
             last_written = Some(*hash);
             self.pending_accounts.push((
                 *hash,
-                SnapAccount { nonce: account.nonce, balance: account.balance, code_hash: account.code_hash },
+                SnapAccount {
+                    nonce: account.nonce,
+                    balance: account.balance,
+                    code_hash: account.code_hash,
+                },
                 pivot.number,
             ));
             if account.storage_root != EMPTY_ROOT_HASH {
@@ -592,8 +625,9 @@ impl<S: SnapStateSink> SnapSync<S> {
                     pivot,
                 });
             }
-            if account.code_hash != KECCAK256_EMPTY && !self.codes_busy.contains(&account.code_hash) &&
-                !self.progress.codes.contains(&account.code_hash)
+            if account.code_hash != KECCAK256_EMPTY
+                && !self.codes_busy.contains(&account.code_hash)
+                && !self.progress.codes.contains(&account.code_hash)
             {
                 if let Ok(false) = self.sink.has_code(account.code_hash) {
                     self.progress.codes.push(account.code_hash);
@@ -616,7 +650,12 @@ impl<S: SnapStateSink> SnapSync<S> {
         Ok(())
     }
 
-    fn on_refresh(&mut self, task: StorageTask, pivot: Pivot, payload: &[u8]) -> Result<(), Penalty> {
+    fn on_refresh(
+        &mut self,
+        task: StorageTask,
+        pivot: Pivot,
+        payload: &[u8],
+    ) -> Result<(), Penalty> {
         let response = AccountRange::decode_payload(payload).map_err(|_| Penalty::BadResponse)?;
         if response.accounts.is_empty() && response.proof.is_empty() {
             return Err(Penalty::Useless);
@@ -627,12 +666,22 @@ impl<S: SnapStateSink> SnapSync<S> {
             .map_err(|_| Penalty::BadResponse)?;
         self.storage_busy.remove(&task.account);
         match response.accounts.first() {
-            Some((hash, account)) if *hash == task.account && account.storage_root != EMPTY_ROOT_HASH => {
-                self.progress.storage.push(StorageTask { storage_root: account.storage_root, pivot, ..task });
+            Some((hash, account))
+                if *hash == task.account && account.storage_root != EMPTY_ROOT_HASH =>
+            {
+                self.progress.storage.push(StorageTask {
+                    storage_root: account.storage_root,
+                    pivot,
+                    ..task
+                });
             }
             // The account or its storage is gone at the new pivot: what remains comes from the
             // executed blocks' diffs.
-            _ => self.batch.completed.push(SnapRange { trie: Some(task.account), from: task.next, to: MAX_HASH }),
+            _ => self.batch.completed.push(SnapRange {
+                trie: Some(task.account),
+                from: task.next,
+                to: MAX_HASH,
+            }),
         }
         Ok(())
     }
@@ -653,8 +702,9 @@ impl<S: SnapStateSink> SnapSync<S> {
             let leaves: Vec<(B256, Vec<u8>)> =
                 slots.iter().map(|(hash, value)| (*hash, alloy_rlp::encode(value))).collect();
             let proof: &[Bytes] = if last { &response.proof } else { &[] };
-            let outcome = verify_range_proof(task.storage_root, task.next, MAX_HASH, &leaves, proof)
-                .map_err(|_| Penalty::BadResponse)?;
+            let outcome =
+                verify_range_proof(task.storage_root, task.next, MAX_HASH, &leaves, proof)
+                    .map_err(|_| Penalty::BadResponse)?;
             verified.push(outcome.more);
         }
         for (index, slots) in response.slots.iter().enumerate() {
@@ -666,7 +716,11 @@ impl<S: SnapStateSink> SnapSync<S> {
             let more = verified[index];
             let to = if more { slots.last().map(|(h, _)| *h) } else { Some(MAX_HASH) };
             if let Some(to) = to {
-                self.batch.completed.push(SnapRange { trie: Some(task.account), from: task.next, to });
+                self.batch.completed.push(SnapRange {
+                    trie: Some(task.account),
+                    from: task.next,
+                    to,
+                });
             }
             if more {
                 let next = slots.last().and_then(|(h, _)| increment(*h)).unwrap_or(task.next);

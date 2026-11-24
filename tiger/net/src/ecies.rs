@@ -459,10 +459,8 @@ mod tests {
         // Node B's view of (Auth2, Ack2): B receives Auth2 and sent Ack2, so its ingress MAC is
         // seeded with Auth2 and its secrets come from both ephemeral keys and nonces.
         let auth = hex::decode(AUTH_2).unwrap();
-        let shared = ecdh_x(
-            &PublicKey::from_secret_key_global(&key(EPHEMERAL_A)),
-            &key(EPHEMERAL_B),
-        );
+        let shared =
+            ecdh_x(&PublicKey::from_secret_key_global(&key(EPHEMERAL_A)), &key(EPHEMERAL_B));
         let secrets = Secrets::derive(&shared, &nonce(NONCE_B), &nonce(NONCE_A));
         assert_eq!(
             hex::encode(secrets.aes),

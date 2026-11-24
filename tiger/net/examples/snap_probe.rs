@@ -98,7 +98,9 @@ impl SnapStateSink for MemSink {
     }
 
     fn commit_snap(&mut self, batch: &SnapBatch) -> Result<(), StoreError> {
-        std::thread::sleep(Duration::from_millis(COMMIT_SLEEP_MS.load(std::sync::atomic::Ordering::Relaxed)));
+        std::thread::sleep(Duration::from_millis(
+            COMMIT_SLEEP_MS.load(std::sync::atomic::Ordering::Relaxed),
+        ));
         let mut flat = self.0.lock().unwrap();
         for (hash, account) in &batch.accounts {
             flat.accounts.insert(*hash, *account);
@@ -203,15 +205,26 @@ fn follow_block(url: &str, number: u64, flat: &Arc<Mutex<Flat>>, handle: &SnapHa
                 touched.wiped.push(hashed);
                 continue;
             }
-            let field = |name: &str| after.and_then(|a| a.get(name)).or_else(|| before.and_then(|b| b.get(name)));
-            let current = account_writes.iter().rev().find(|(h, _)| *h == hashed).and_then(|(_, a)| *a).or_else(|| snapshot.get(&hashed).copied());
+            let field = |name: &str| {
+                after.and_then(|a| a.get(name)).or_else(|| before.and_then(|b| b.get(name)))
+            };
+            let current = account_writes
+                .iter()
+                .rev()
+                .find(|(h, _)| *h == hashed)
+                .and_then(|(_, a)| *a)
+                .or_else(|| snapshot.get(&hashed).copied());
             let code_hash = match field("code") {
-                Some(code) => keccak256(alloy_primitives::hex::decode(code.as_str().unwrap()).unwrap()),
+                Some(code) => {
+                    keccak256(alloy_primitives::hex::decode(code.as_str().unwrap()).unwrap())
+                }
                 None => current.map_or(KECCAK256_EMPTY, |a| a.code_hash),
             };
             let account = SnapAccount {
-                nonce: field("nonce").map_or(current.map_or(0, |a| a.nonce), |n| n.as_u64().unwrap()),
-                balance: field("balance").map_or(current.map_or(U256::ZERO, |a| a.balance), hex_u256),
+                nonce: field("nonce")
+                    .map_or(current.map_or(0, |a| a.nonce), |n| n.as_u64().unwrap()),
+                balance: field("balance")
+                    .map_or(current.map_or(U256::ZERO, |a| a.balance), hex_u256),
                 code_hash,
             };
             account_writes.push((hashed, Some(account)));
@@ -235,14 +248,21 @@ fn follow_block(url: &str, number: u64, flat: &Arc<Mutex<Flat>>, handle: &SnapHa
     }
     // System calls before the transactions: EIP-4788 beacon roots and EIP-2935 block hashes.
     let systems = [
-        ("0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02", vec![timestamp % 8191, timestamp % 8191 + 8191]),
+        (
+            "0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02",
+            vec![timestamp % 8191, timestamp % 8191 + 8191],
+        ),
         ("0x0000F90827F1C53a10cb7A02335B175320002935", vec![(number - 1) % 8191]),
     ];
     for (address, slots) in systems {
         let hashed = keccak256(address.parse::<Address>().unwrap());
         for slot in slots {
             let key = B256::from(U256::from(slot));
-            let value = hex_u256(&rpc(url, "eth_getStorageAt", json!([address, format!("{key}"), format!("0x{number:x}")])));
+            let value = hex_u256(&rpc(
+                url,
+                "eth_getStorageAt",
+                json!([address, format!("{key}"), format!("0x{number:x}")]),
+            ));
             let hashed_slot = keccak256(key);
             touched.storage.push((hashed, hashed_slot));
             slot_writes.push((hashed, hashed_slot, value));
@@ -292,9 +312,13 @@ fn main() {
             "--response-bytes" => snap_config.response_bytes = value.parse().unwrap(),
             "--pivot-age" => snap_config.max_pivot_age = value.parse().unwrap(),
             "--inflight" => snap_config.max_inflight_per_peer = value.parse().unwrap(),
-            "--commit-ms" => snap_config.commit_interval = Duration::from_millis(value.parse().unwrap()),
+            "--commit-ms" => {
+                snap_config.commit_interval = Duration::from_millis(value.parse().unwrap())
+            }
             // Slows every commit, which throttles the download loop (it commits inline).
-            "--commit-sleep-ms" => COMMIT_SLEEP_MS.store(value.parse().unwrap(), std::sync::atomic::Ordering::Relaxed),
+            "--commit-sleep-ms" => {
+                COMMIT_SLEEP_MS.store(value.parse().unwrap(), std::sync::atomic::Ordering::Relaxed)
+            }
             other => panic!("unknown flag {other}"),
         }
     }
@@ -313,7 +337,10 @@ fn main() {
         std::thread::sleep(Duration::from_millis(100));
     }
     let info = network.peers().into_iter().find(|p| p.snap).expect("a snap peer");
-    println!("peer {} eth/{} snap={} head={}", info.client_id, info.eth_version, info.snap, info.head_number);
+    println!(
+        "peer {} eth/{} snap={} head={}",
+        info.client_id, info.eth_version, info.snap, info.head_number
+    );
 
     let flat = Arc::new(Mutex::new(Flat::default()));
     let mut sync = SnapSync::new(network.clone(), MemSink(flat.clone()), snap_config).unwrap();
@@ -329,7 +356,11 @@ fn main() {
             // Seed: the flat state must hold every change after the first pivot, so start the
             // follower at the pivot itself.
             let block = rpc(&url, "eth_getBlockByNumber", json!([format!("0x{first:x}"), false]));
-            drop(handle.on_block(first, block["stateRoot"].as_str().unwrap().parse().unwrap(), &TouchedKeys::default()));
+            drop(handle.on_block(
+                first,
+                block["stateRoot"].as_str().unwrap().parse().unwrap(),
+                &TouchedKeys::default(),
+            ));
             Some(std::thread::spawn(move || {
                 let mut next = first + 1;
                 let mut followed = 0;
@@ -386,7 +417,9 @@ fn main() {
         let (_, expected) = flat.lock().unwrap().result.unwrap();
         let head = network.peer(&info.id).unwrap().head().0;
         let truth = Arc::new(Mutex::new(Flat::default()));
-        let mut fresh = SnapSync::new(network.clone(), MemSink(truth.clone()), SnapSyncConfig::default()).unwrap();
+        let mut fresh =
+            SnapSync::new(network.clone(), MemSink(truth.clone()), SnapSyncConfig::default())
+                .unwrap();
         drop(fresh.handle().on_block(head, expected, &TouchedKeys::default()));
         let _ = fresh.run(&mut |_| {});
         let (ours, theirs) = (flat.lock().unwrap(), truth.lock().unwrap());

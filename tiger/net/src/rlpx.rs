@@ -427,7 +427,9 @@ impl RlpxReader {
             match self.stream.read(&mut chunk[..want]) {
                 Ok(0) => return Err(RlpxError::Io(io::ErrorKind::UnexpectedEof.into())),
                 Ok(read) => self.buf.extend_from_slice(&chunk[..read]),
-                Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {
+                Err(e)
+                    if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+                {
                     return Ok(false);
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}

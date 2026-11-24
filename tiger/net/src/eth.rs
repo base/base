@@ -336,12 +336,8 @@ mod tests {
     #[test]
     fn headers_request_matches_spec_example() {
         // From the eth spec style: GetBlockHeaders by number 9999, 5 headers, skip 5, reverse.
-        let request = HeadersRequest {
-            start: BlockId::Number(9999),
-            limit: 5,
-            skip: 5,
-            reverse: true,
-        };
+        let request =
+            HeadersRequest { start: BlockId::Number(9999), limit: 5, skip: 5, reverse: true };
         let encoded = request.encode_payload(1111);
         assert_eq!(hex::encode(&encoded), "ca820457c682270f050501");
         let (id, mut body) = split_request_id(&encoded).unwrap();

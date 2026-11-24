@@ -120,7 +120,8 @@ impl Enr {
 
     /// The IPv4 address.
     pub fn ip4(&self) -> Option<Ipv4Addr> {
-        let bytes: [u8; 4] = self.get_decoded::<alloy_primitives::Bytes>(b"ip")?.as_ref().try_into().ok()?;
+        let bytes: [u8; 4] =
+            self.get_decoded::<alloy_primitives::Bytes>(b"ip")?.as_ref().try_into().ok()?;
         Some(Ipv4Addr::from(bytes))
     }
 
@@ -175,7 +176,9 @@ impl Enr {
         let seq = u64::decode(&mut items).map_err(|_| EnrError::Malformed)?;
         let mut pairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         while !items.is_empty() {
-            let key = RlpHeader::decode_bytes(&mut items, false).map_err(|_| EnrError::Malformed)?.to_vec();
+            let key = RlpHeader::decode_bytes(&mut items, false)
+                .map_err(|_| EnrError::Malformed)?
+                .to_vec();
             let value_start = items;
             let value_header = RlpHeader::decode(&mut items).map_err(|_| EnrError::Malformed)?;
             let consumed = value_start.len() - items.len() + value_header.payload_length;
@@ -194,7 +197,8 @@ impl Enr {
         let key_value = find(b"secp256k1").ok_or(EnrError::UnsupportedScheme)?;
         let key_bytes = RlpHeader::decode_bytes(&mut key_value.as_slice(), false)
             .map_err(|_| EnrError::UnsupportedScheme)?;
-        let public_key = PublicKey::from_slice(key_bytes).map_err(|_| EnrError::UnsupportedScheme)?;
+        let public_key =
+            PublicKey::from_slice(key_bytes).map_err(|_| EnrError::UnsupportedScheme)?;
         let digest = keccak256(content_rlp(seq, &pairs));
         if !verify_compact(digest, &signature, &public_key) {
             return Err(EnrError::BadSignature);
@@ -220,9 +224,9 @@ const BASE64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 fn base64url_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let n = (chunk[0] as u32) << 16 |
-            (*chunk.get(1).unwrap_or(&0) as u32) << 8 |
-            *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (chunk[0] as u32) << 16
+            | (*chunk.get(1).unwrap_or(&0) as u32) << 8
+            | *chunk.get(2).unwrap_or(&0) as u32;
         for i in 0..=chunk.len() {
             out.push(BASE64URL[(n >> (18 - 6 * i) & 63) as usize] as char);
         }
@@ -267,7 +271,10 @@ mod tests {
         // Signing the same content with the vector's key reproduces the same record content
         // (secp256k1 signing is deterministic, RFC 6979).
         let key = SecretKey::from_byte_array(
-            hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291").unwrap().try_into().unwrap(),
+            hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+                .unwrap()
+                .try_into()
+                .unwrap(),
         )
         .unwrap();
         let built = Enr::build(&key, 1, Some(Ipv4Addr::LOCALHOST), 0, 30303, None);
@@ -278,7 +285,8 @@ mod tests {
     fn rejects_tampered_records_and_reads_fork_ids() {
         let key = crate::crypto::random_secret_key();
         let fork_id = ForkId { hash: [1, 2, 3, 4], next: 5 };
-        let enr = Enr::build(&key, 7, Some(Ipv4Addr::new(10, 0, 0, 1)), 30303, 30304, Some(fork_id));
+        let enr =
+            Enr::build(&key, 7, Some(Ipv4Addr::new(10, 0, 0, 1)), 30303, 30304, Some(fork_id));
         let mut bytes = enr.encode();
         let decoded = Enr::decode(&mut bytes.as_slice()).unwrap();
         assert_eq!(decoded.fork_id(), Some(fork_id));

@@ -60,7 +60,11 @@ struct Verifier<'a> {
 }
 
 impl Verifier<'_> {
-    fn visit_reference(&mut self, prefix: Nibbles, reference: &RlpNode) -> Result<(), RangeProofError> {
+    fn visit_reference(
+        &mut self,
+        prefix: Nibbles,
+        reference: &RlpNode,
+    ) -> Result<(), RangeProofError> {
         if prefix.len() > KEY_NIBBLES {
             return Err(RangeProofError::BadNode);
         }
@@ -162,7 +166,6 @@ impl Verifier<'_> {
     }
 }
 
-
 impl From<alloy_rlp::Error> for RangeProofError {
     fn from(_: alloy_rlp::Error) -> Self {
         Self::BadNode
@@ -253,14 +256,14 @@ mod tests {
             builder.add_leaf(Nibbles::unpack(key), value);
         }
         let root = builder.root();
-        let proof = builder.take_proof_nodes().into_nodes_sorted().into_iter().map(|(_, n)| n).collect();
+        let proof =
+            builder.take_proof_nodes().into_nodes_sorted().into_iter().map(|(_, n)| n).collect();
         (root, proof)
     }
 
     fn leaves(n: u64) -> Vec<(B256, Vec<u8>)> {
-        let mut out: Vec<_> = (0..n)
-            .map(|i| (keccak256(i.to_be_bytes()), alloy_rlp::encode(i + 1)))
-            .collect();
+        let mut out: Vec<_> =
+            (0..n).map(|i| (keccak256(i.to_be_bytes()), alloy_rlp::encode(i + 1))).collect();
         out.sort();
         out
     }
@@ -269,7 +272,8 @@ mod tests {
     fn accepts_whole_trie_without_proof() {
         let all = leaves(50);
         let (root, _) = trie(&all, &[]);
-        let outcome = verify_range_proof(root, B256::ZERO, B256::repeat_byte(0xff), &all, &[]).unwrap();
+        let outcome =
+            verify_range_proof(root, B256::ZERO, B256::repeat_byte(0xff), &all, &[]).unwrap();
         assert!(!outcome.more);
         assert_eq!(
             verify_range_proof(root, B256::ZERO, B256::ZERO, &all[1..], &[]),
@@ -300,7 +304,10 @@ mod tests {
             assert!(verify_range_proof(root, origin, last, &changed, &proof).is_err());
             // Dropping the last leaf fails: its proof path no longer matches the boundary.
             if range.len() > 1 {
-                assert!(verify_range_proof(root, origin, last, &range[..range.len() - 1], &proof).is_err());
+                assert!(
+                    verify_range_proof(root, origin, last, &range[..range.len() - 1], &proof)
+                        .is_err()
+                );
             }
         }
     }
@@ -323,7 +330,8 @@ mod tests {
         let mut after = all[99].0;
         after.0[31] = after.0[31].wrapping_add(1);
         let (root, proof) = trie(&all, &[after]);
-        let outcome = verify_range_proof(root, after, B256::repeat_byte(0xff), &[], &proof).unwrap();
+        let outcome =
+            verify_range_proof(root, after, B256::repeat_byte(0xff), &[], &proof).unwrap();
         assert!(!outcome.more);
     }
 }

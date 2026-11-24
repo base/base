@@ -132,13 +132,16 @@ impl Decodable for BlockBody {
         if !header.list {
             return Err(alloy_rlp::Error::UnexpectedString);
         }
-        let (mut items, rest) = buf.split_at_checked(header.payload_length).ok_or(alloy_rlp::Error::InputTooShort)?;
+        let (mut items, rest) =
+            buf.split_at_checked(header.payload_length).ok_or(alloy_rlp::Error::InputTooShort)?;
         *buf = rest;
         let txs_header = RlpHeader::decode(&mut items)?;
         if !txs_header.list {
             return Err(alloy_rlp::Error::UnexpectedString);
         }
-        let (mut txs, after) = items.split_at_checked(txs_header.payload_length).ok_or(alloy_rlp::Error::InputTooShort)?;
+        let (mut txs, after) = items
+            .split_at_checked(txs_header.payload_length)
+            .ok_or(alloy_rlp::Error::InputTooShort)?;
         items = after;
         let mut transactions = Vec::new();
         while !txs.is_empty() {
