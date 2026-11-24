@@ -1492,6 +1492,75 @@ mod tests {
         assert!(transact(&mut evm, &next).unwrap().status);
     }
 
+    /// Execution publishes the sender to the `TxContext` precompile:
+    /// `getTransactionSenderActorId()` returns the sender address right-aligned in a word.
+    #[test]
+    fn calls_read_the_sender_actor_id_from_tx_context() {
+        let key = signing_key(0x53);
+        let sender = eoa_address(&key);
+        let reader = address!("0x00000000000000000000000000000000000000e2");
+
+        // Calls `getTransactionSenderActorId()` and stores the returned word in slot 0.
+        let mut code = vec![0x63];
+        code.extend_from_slice(&keccak256("getTransactionSenderActorId()")[..4]);
+        // PUSH1 0xe0 SHL PUSH1 0 MSTORE: the selector at memory[0..4].
+        code.extend_from_slice(&[0x60, 0xe0, 0x1b, 0x60, 0x00, 0x52]);
+        // CALL(gas, TxContext, 0, 0, 4, 0, 32).
+        code.extend_from_slice(&[0x60, 0x20, 0x60, 0x00, 0x60, 0x04, 0x60, 0x00, 0x60, 0x00, 0x73]);
+        code.extend_from_slice(TX_CONTEXT_ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xf1]);
+        // POP PUSH1 0 MLOAD PUSH1 0 SSTORE STOP.
+        code.extend_from_slice(&[0x50, 0x60, 0x00, 0x51, 0x60, 0x00, 0x55, 0x00]);
+
+        let mut tx = base_tx();
+        tx.calls = vec![vec![call(reader)]];
+        let signed = eoa_signed(tx, &key);
+        let mut evm = Fixture::new(sender, eth(), &[(reader, Bytes::from(code))]).evm();
+        let result = transact(&mut evm, &signed).expect("Base tx executes");
+
+        assert!(result.status);
+        assert_eq!(B256::from(slot(&mut evm, reader, U256::ZERO)), sender.into_word());
+    }
+
+    /// A call that reads its own 2D nonce during simulation sees the post-increment sequence,
+    /// as it would on inclusion.
+    #[test]
+    fn simulate_calls_see_the_advanced_two_dimensional_nonce() {
+        let key = signing_key(0x2b);
+        let sender = eoa_address(&key);
+        let reader = address!("0x00000000000000000000000000000000000000ab");
+        let nonce_key = 7u8;
+        let current_nonce = 3u8;
+
+        // STATICCALL getNonce(sender, nonce_key) and revert unless it returns current_nonce + 1.
+        let mut code = vec![0x63];
+        code.extend_from_slice(&keccak256("getNonce(address,uint256)")[..4]);
+        code.extend_from_slice(&[0x60, 0xe0, 0x1b, 0x60, 0x00, 0x52, 0x73]);
+        code.extend_from_slice(sender.as_slice());
+        code.extend_from_slice(&[0x60, 0x04, 0x52, 0x60, nonce_key, 0x60, 0x24, 0x52]);
+        code.extend_from_slice(&[0x60, 0x20, 0x60, 0x00, 0x60, 0x44, 0x60, 0x00, 0x73]);
+        code.extend_from_slice(NonceManagerSlots::ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xfa, 0x50, 0x60, 0x00, 0x51, 0x60, current_nonce + 1]);
+        let ok = u8::try_from(code.len() + 8).unwrap();
+        code.extend_from_slice(&[0x14, 0x60, ok, 0x57, 0x60, 0x00, 0x80, 0xfd, 0x5b, 0x00]);
+
+        let mut tx = base_tx();
+        tx.nonce_key = U256::from(nonce_key);
+        tx.nonce_sequence = current_nonce.into();
+        tx.calls = vec![vec![call(reader)]];
+        let signed = eoa_signed(tx, &key);
+        let nonce_slot = NonceManagerSlots::nonce_slot(sender, U256::from(nonce_key)).unwrap();
+        let mut fixture = Fixture::new(sender, eth(), &[(reader, Bytes::from(code))]);
+        fixture.storage(NonceManagerSlots::ADDRESS, nonce_slot, U256::from(current_nonce));
+        let mut evm = fixture.evm();
+
+        let result = metered_call(&mut evm, &signed, sender);
+        assert!(result.status, "the call must observe nonce {}", current_nonce + 1);
+        // Inclusion sees the same advanced nonce.
+        let result = transact(&mut evm, &signed).expect("Base tx executes");
+        assert!(result.status, "inclusion must observe nonce {}", current_nonce + 1);
+    }
+
     #[test]
     fn delegation_over_ordinary_sender_code_is_rejected_without_replacing_it() {
         let key = signing_key(0x23);
