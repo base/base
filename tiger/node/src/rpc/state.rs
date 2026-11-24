@@ -14,6 +14,20 @@ use serde_json::{Value, json};
 
 use crate::{Chain, Node, NodeState, RpcError, StateReadError, chain::StoredBlock};
 
+/// The JSON-RPC error code of a state read a stateless node cannot serve: the state is not in
+/// its partial datadir and no upstream is configured, the upstream failed, or its answer did not
+/// verify against tiger's state root. base-reth never answers it; the message always starts with
+/// [`STATE_NOT_LOCAL_MESSAGE`].
+pub(super) const STATE_NOT_LOCAL_CODE: i64 = -32020;
+
+/// The message prefix of a [`STATE_NOT_LOCAL_CODE`] error; the detail follows after `": "`.
+pub(super) const STATE_NOT_LOCAL_MESSAGE: &str = "state not local";
+
+/// The refusal of a state read this node does not hold and could not verify from an upstream.
+fn not_local(detail: impl core::fmt::Display) -> RpcError {
+    RpcError::new(STATE_NOT_LOCAL_CODE, format!("{STATE_NOT_LOCAL_MESSAGE}: {detail}"))
+}
+
 /// The post-state of one block for one request, falling back to a verified upstream read for
 /// state the datadir does not hold. It holds a read transaction: keep it per request.
 #[derive(Debug)]
@@ -145,7 +159,7 @@ impl RpcState<'_> {
             Some(_) if self.local.is_unknown() => upstream(),
             Some(_) => Err(RpcError::internal(local)),
             None if self.local.is_unknown() => {
-                Err(RpcError::internal(format!("state not local: {local}")))
+                Err(not_local(local))
             }
             None => Err(RpcError::internal(local)),
         };
@@ -167,7 +181,6 @@ impl RpcState<'_> {
         keys: &[JsonStorageKey],
     ) -> Result<(Value, EIP1186AccountProofResponse), RpcError> {
         let upstream = self.upstream.expect("fallbacks run with an upstream");
-        let not_local = |error: String| RpcError::internal(format!("state not local: {error}"));
         let reply = upstream
             .call("eth_getProof", json!([address, keys, self.block_id()]))
             .map_err(not_local)?;
@@ -242,7 +255,6 @@ impl RpcState<'_> {
         if let Some(code) = self.codes.borrow().get(hash) {
             return Ok(code.clone());
         }
-        let not_local = |error: String| RpcError::internal(format!("state not local: {error}"));
         let Some(owner) = self.code_owners.borrow().get(hash).copied() else {
             return Err(not_local(format!("code {hash} of no account read")));
         };

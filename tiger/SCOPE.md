@@ -90,8 +90,8 @@ for how the consensus node drives the execution layer.
   incomplete witness (refetch, then stop). RPC state reads (`eth_getBalance`, `getCode`,
   `getStorageAt`, `getTransactionCount`, `getProof`, `call`, `estimateGas`, traces) that touch
   unknown state answer from a verified upstream `eth_getProof` at the same block (each proof
-  checked against tiger's own state root) when one is configured, and otherwise return a JSON-RPC
-  error saying the state is not local. History, receipts and archive queries begin at the start
+  checked against tiger's own state root) when one is configured, and otherwise return the
+  "state not local" JSON-RPC error (see the JSON-RPC section). History, receipts and archive queries begin at the start
   block. A partial datadir is tiger-only.
 - **Archive proofs before Denim**: no endpoint serves witnesses or proofs for Base mainnet before
   about block 57.11M (Denim), and none is coming. Pre-Denim eras are checked through synthetic
@@ -132,6 +132,12 @@ The methods the RPC and state fuzzers compare, with base-reth's answers:
   inspectors), `executionWitness`.
 - `trace_block`, `trace_transaction` (parity traces from the same inspectors).
 - `net_version`, `web3_clientVersion`, `rpc_modules`.
+
+Tiger-only error: on a stateless node, a state read it cannot serve answers code **-32020**
+with a message starting `state not local` (then `: ` and the detail). It means the state is not
+in the partial datadir and no upstream is configured, the upstream call failed, or the upstream's
+answer did not verify against tiger's state root; retrying later or against a full node can
+succeed. base-reth never returns -32020, and a full node never does either.
 
 ### Differential testing
 
