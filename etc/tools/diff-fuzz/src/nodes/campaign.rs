@@ -594,9 +594,9 @@ impl RpcCampaign {
     pub const KNOWN_BASE_FAILED_DEPOSIT_FRAME: &str = "base: failed system deposit frame";
     /// base/base's BLOCKHASH under a `number` block override above the state block answers the
     /// canonical hash for blocks it has persisted and zero for blocks still in its in-memory
-    /// canonical state, so the answer for the last \~51 blocks depends on when it last persisted
-    /// (reth persists once 50 blocks are in memory, down to head−5). Tiger answers the hash up
-    /// to head−51 and zero above it.
+    /// canonical state, so the answer depends on how far persistence lags the head: reth persists
+    /// once 50 blocks are in memory, down to head−5, but while blocks arrive quickly the backlog
+    /// grows past 51 (seen at more than 60). Tiger answers the hash up to head−51, zero above.
     pub const KNOWN_BASE_PERSISTED_BLOCKHASH: &str =
         "base: blockhash above the state block depends on persistence";
     /// base/base accepts a JSON number as a call's `type`.
@@ -892,7 +892,7 @@ impl RpcCampaign {
 
     /// [`Self::KNOWN_BASE_PERSISTED_BLOCKHASH`] with base's index, when `case` can reach it: an
     /// eth\_call or eth\_estimateGas whose `number` override N is above its state block B, so a
-    /// BLOCKHASH(n) with B < n < N, n ≥ N − 256, and head − 51 < n ≤ head − 5 is possible, and
+    /// BLOCKHASH(n) with B < n < N, n ≥ N − 256, and n ≤ head − 5 is possible, and
     /// the other node disagrees with base. A state block given as a tag other than latest or
     /// pending counts as block 0.
     pub fn persisted_blockhash(
@@ -916,7 +916,7 @@ impl RpcCampaign {
             Some(_) => number(tag).unwrap_or(0),
             None => number(&tag["blockNumber"]).unwrap_or(0),
         };
-        let low = (state + 1).max(head.saturating_sub(50));
+        let low = state + 1;
         let high = head.saturating_sub(5).min(over.saturating_sub(1));
         (low <= high && high + 256 >= over).then_some((Self::KNOWN_BASE_PERSISTED_BLOCKHASH, base))
     }
