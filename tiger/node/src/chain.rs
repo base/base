@@ -20,7 +20,7 @@ use alloy_primitives::{Address, B256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, BaseTxEnvelope as SignedTx};
 use base_tiger_store::{Fault, Table, WriteTxn};
-use base_tiger_trie::{BlockChanges, StateDb};
+use base_tiger_trie::{BlockChanges, PreparedRoot, StateDb};
 
 use crate::{Executed, Genesis, NodeState, block_changes, genesis::genesis_changes};
 
@@ -100,6 +100,8 @@ pub struct Chain {
     pub db: StateDb,
     /// Executed blocks within `MEMORY_DEPTH` of the head, canonical or not, with their changes.
     blocks: HashMap<B256, Arc<StoredBlock>>,
+    /// Trie changes computed while validating in-memory blocks, reused when they are committed.
+    prepared: HashMap<B256, PreparedRoot>,
     head: Arc<StoredBlock>,
     forkchoice: Forkchoice,
 }
@@ -120,6 +122,7 @@ impl Chain {
         let mut chain = Self {
             db,
             blocks: HashMap::new(),
+            prepared: HashMap::new(),
             head: Arc::clone(&genesis_block),
             forkchoice: Forkchoice { head: genesis.hash, safe: genesis.hash, finalized: genesis.hash },
             genesis,
@@ -309,8 +312,14 @@ impl Chain {
         hashes
     }
 
-    /// Keeps a validated block in memory until it becomes canonical.
-    pub fn insert(&mut self, hash: B256, executed: &Executed) -> Result<Arc<StoredBlock>, String> {
+    /// Keeps a validated block in memory until it becomes canonical, with the trie changes its
+    /// state root came from (`NodeState::take_prepared`).
+    pub fn insert(
+        &mut self,
+        hash: B256,
+        executed: &Executed,
+        prepared: Option<PreparedRoot>,
+    ) -> Result<Arc<StoredBlock>, String> {
         if let Some(block) = self.blocks.get(&hash) {
             return Ok(Arc::clone(block));
         }
@@ -324,6 +333,9 @@ impl Chain {
             Some(Arc::new(block_changes(&executed.changes))),
         ));
         self.blocks.insert(hash, Arc::clone(&block));
+        if let Some(prepared) = prepared {
+            self.prepared.insert(hash, prepared);
+        }
         Ok(block)
     }
 
@@ -362,7 +374,9 @@ impl Chain {
         let mut w = self.db.write().map_err(|error| error.to_string())?;
         for block in &branch {
             let changes = block.changes.as_ref().ok_or_else(|| format!("state of block {} is gone", block.hash))?;
-            let root = self.db.commit_block(&mut w, block.number(), changes).map_err(|error| error.to_string())?;
+            let prepared = self.prepared.remove(&block.hash);
+            let root =
+                self.db.commit_prepared(&mut w, block.number(), changes, prepared).map_err(|error| error.to_string())?;
             if root != block.header.state_root {
                 return Err(format!(
                     "committing block {} {} gave state root {root}, not {}",
@@ -399,6 +413,8 @@ impl Chain {
             }
         }
         self.blocks = reachable;
+        let blocks = &self.blocks;
+        self.prepared.retain(|hash, _| blocks.contains_key(hash));
     }
 
     /// Applies a forkchoice update whose blocks are all stored, and persists it. `safe` and

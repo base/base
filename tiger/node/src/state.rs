@@ -4,7 +4,7 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_tiger_trie::{AccountInfo, AccountProof, BlockChanges, StateView};
+use base_tiger_trie::{AccountInfo, AccountProof, BlockChanges, PreparedRoot, StateView};
 use evm2::{
     AccountInfo as EvmAccount, BlockStateAccumulator,
     bytecode::Bytecode,
@@ -77,12 +77,14 @@ pub struct NodeState<'d> {
     view: StateView<'d>,
     block_hashes: HashMap<u64, B256>,
     missing: RefCell<Option<String>>,
+    /// The trie changes of the last `state_root_after`, for the commit to reuse.
+    prepared: RefCell<Option<PreparedRoot>>,
 }
 
 impl<'d> NodeState<'d> {
     /// The state of `view`, reading block hashes from `block_hashes`.
     pub fn new(view: StateView<'d>, block_hashes: HashMap<u64, B256>) -> Self {
-        Self { view, block_hashes, missing: RefCell::new(None) }
+        Self { view, block_hashes, missing: RefCell::new(None), prepared: RefCell::new(None) }
     }
 
     fn record(&self, error: impl ToString) -> String {
@@ -113,6 +115,12 @@ impl<'d> NodeState<'d> {
         self.view.proof(address, slots).map_err(|error| self.record(error))
     }
 
+    /// The trie changes behind the last state root computed after a block on this state, which
+    /// [`base_tiger_trie::StateDb::commit_prepared`] reuses when the block is committed.
+    pub fn take_prepared(&self) -> Option<PreparedRoot> {
+        self.prepared.borrow_mut().take()
+    }
+
     /// The hash of ancestor block `number`.
     pub fn block_hash(&self, number: u64) -> Result<B256, String> {
         self.block_hashes.get(&number).copied().ok_or_else(|| self.record(format!("missing block hash {number}")))
@@ -125,7 +133,10 @@ impl ParentState for NodeState<'_> {
     }
 
     fn state_root_after(&self, changes: &BlockStateAccumulator) -> Result<B256, String> {
-        self.view.state_root(Some(&block_changes(changes))).map_err(|error| self.record(error))
+        let prepared = self.view.prepare_root(&block_changes(changes)).map_err(|error| self.record(error))?;
+        let root = prepared.root;
+        *self.prepared.borrow_mut() = Some(prepared);
+        Ok(root)
     }
 
     fn storage_root_after(&self, address: Address, changes: &BlockStateAccumulator) -> Result<B256, String> {

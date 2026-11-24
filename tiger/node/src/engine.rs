@@ -25,6 +25,7 @@ use base_common_rpc_types_engine::{
     BasePayloadAttributes,
 };
 use base_tiger_evm::{BlockEnvInput, BlockRules};
+use base_tiger_trie::PreparedRoot;
 use serde_json::{Value, json};
 
 use crate::{BlockExecution, Executed, Node, RpcError, chain::Forkchoice};
@@ -332,15 +333,17 @@ impl Node {
                 return Ok(Imported::MissingParent);
             };
             let state = chain.state_after(&parent).map_err(RpcError::internal)?;
-            BlockExecution { chain: &self.spec }
+            let validated = BlockExecution { chain: &self.spec }
                 .validate(&header, transactions, &parent.header, &state)
-                .map_err(|error| RpcError::internal(format!("state of block {parent_hash}: {error}")))?
+                .map_err(|error| RpcError::internal(format!("state of block {parent_hash}: {error}")))?;
+            (validated, state.take_prepared())
         };
+        let (validated, prepared) = validated;
         match (validated.invalid, validated.executed) {
             (None, Some(executed)) => {
                 let mut stored = executed;
                 stored.header = header;
-                self.chain.write().expect("chain lock").insert(hash, &stored).map_err(RpcError::internal)?;
+                self.chain.write().expect("chain lock").insert(hash, &stored, prepared).map_err(RpcError::internal)?;
                 Ok(Imported::Valid)
             }
             (invalid, _) => {
@@ -424,10 +427,10 @@ impl Node {
         if !engine.payloads.iter().any(|(existing, _)| *existing == id) {
             let built = {
                 let state = chain.state_after(&head_block).map_err(RpcError::internal)?;
-                self.build(&head_block.header, &attributes, &state)?
+                (self.build(&head_block.header, &attributes, &state)?, state.take_prepared())
             };
             drop(chain);
-            let built = self.store_built(built)?;
+            let built = self.store_built(built.0, built.1)?;
             engine.payloads.push_back((id, built));
             while engine.payloads.len() > MAX_PAYLOADS {
                 engine.payloads.pop_front();
@@ -508,8 +511,8 @@ impl Node {
 
     /// Stores a built payload's block: the consensus node inserts the payload with newPayload,
     /// and storing it now makes that a no-op, as base-reth's built blocks are already in its tree.
-    fn store_built(&self, built: BuiltPayload) -> Result<BuiltPayload, RpcError> {
-        self.chain.write().expect("chain lock").insert(built.hash, &built.executed).map_err(RpcError::internal)?;
+    fn store_built(&self, built: BuiltPayload, prepared: Option<PreparedRoot>) -> Result<BuiltPayload, RpcError> {
+        self.chain.write().expect("chain lock").insert(built.hash, &built.executed, prepared).map_err(RpcError::internal)?;
         Ok(built)
     }
 
