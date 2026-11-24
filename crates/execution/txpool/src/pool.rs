@@ -364,6 +364,9 @@ where
         for diff in diffs {
             diff.push_exact_keys(&mut exact);
         }
+        let unaffordable = self.validity.pool.read().unaffordable_transactions(
+            diffs.iter().filter_map(|diff| Some((diff.address, diff.balance?))),
+        );
         // An account's code changes when it gains or loses an EIP-7702
         // delegation. Delegated senders may not hold validity transactions, so a
         // sender delegated after admission (for example through an authorization
@@ -385,6 +388,7 @@ where
                 }
             }
             dropped.extend(delegated);
+            dropped.extend(unaffordable);
             dropped
         };
         let removed = self.remove_from_stores(dropped, RemoveMode::Exact);
@@ -2421,14 +2425,15 @@ where
         // dropped reservation cannot be recreated from an older validation
         // snapshot after reth publishes the transaction.
         let _admission_guard = self.protocol_admission_lock.lock();
-        let dropped = {
+        let mut dropped = self.validity.pool.read().unaffordable_transactions(
+            accounts.iter().map(|account| (account.address, account.balance)),
+        );
+        {
             let mut guard = self.guard.write();
-            let mut dropped = Vec::new();
             for account in &accounts {
                 dropped.extend(guard.on_balance_changed(account.address, account.balance));
             }
-            dropped
-        };
+        }
         let invalidated = self.remove_from_stores(dropped, RemoveMode::Exact);
         GuardMetrics::record_balance_update_invalidations(invalidated.len());
         if !invalidated.is_empty() {
@@ -4360,10 +4365,11 @@ mod tests {
         let (pool, client) = build_integration_pool();
         let signer = funded_signer(&client);
         let standard0 = add(&pool, signed_1559(&signer, 0)).await;
-        let validity1 = add(&pool, validity_1559(&signer, 1, 1_000)).await;
+        let validity1 = add(&pool, validity_1559(&signer, 1, 500)).await;
         assert_eq!(best_hashes(&pool), vec![standard0, validity1]);
 
-        set_balance(&pool, signer.address(), U256::ZERO);
+        let validity_cost = *pool.get(&validity1).unwrap().transaction.cost();
+        set_balance(&pool, signer.address(), validity_cost);
         assert!(is_queued(&pool, standard0), "reth parks the insolvent standard transaction");
         assert!(is_queued(&pool, validity1), "the validity successor follows it");
         assert!(best_hashes(&pool).is_empty());
@@ -4885,6 +4891,37 @@ mod tests {
         assert!(is_queued(&pool, standard1), "the standard successor still waits for nonce 0");
         let standard0 = add(&pool, signed_1559(&signer, 0)).await;
         assert_eq!(best_hashes(&pool), vec![standard0, standard1]);
+    }
+
+    #[tokio::test]
+    async fn a_balance_drop_removes_validity_transactions_the_sender_can_no_longer_pay() {
+        let (pool, client) = build_integration_pool();
+        let drained = funded_signer(&client);
+        let funded = funded_signer(&client);
+        let unaffordable = add(&pool, validity_1559(&drained, 0, 1_000)).await;
+        let affordable = add(&pool, validity_1559(&funded, 0, 1_000)).await;
+        let cost = *pool.get(&unaffordable).unwrap().transaction.cost();
+
+        let removed = pool.apply_state_diff(&[
+            AccountStateDiff {
+                address: drained.address(),
+                balance: Some(cost - U256::from(1)),
+                ..Default::default()
+            },
+            AccountStateDiff {
+                address: funded.address(),
+                balance: Some(cost),
+                ..Default::default()
+            },
+        ]);
+
+        assert_eq!(removed.iter().map(|tx| *tx.hash()).collect::<Vec<_>>(), vec![unaffordable]);
+        assert_gone(&pool, unaffordable);
+        assert_store(&pool, affordable, PoolStore::Validity);
+
+        set_balance(&pool, funded.address(), cost - U256::from(1));
+        assert_gone(&pool, affordable);
+        assert_eq!(pool.validity_pool_occupancy(), (0, 0));
     }
 
     #[tokio::test]

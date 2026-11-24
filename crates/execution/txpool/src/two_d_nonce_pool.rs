@@ -875,6 +875,26 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.transactions_by_sender(*sender).iter().map(|transaction| *transaction.hash()).collect()
     }
 
+    /// Returns the hashes of the transactions whose sender's balance in
+    /// `balances` no longer covers their `cost()`. EIP-8130 transactions are
+    /// skipped; the mempool guard tracks their payers' balances.
+    pub(crate) fn unaffordable_transactions(
+        &self,
+        balances: impl IntoIterator<Item = (Address, U256)>,
+    ) -> Vec<TxHash> {
+        balances
+            .into_iter()
+            .filter(|(sender, _)| self.usage.sender_count(sender) > 0)
+            .flat_map(|(sender, balance)| {
+                self.transactions_by_sender(sender).into_iter().filter(move |transaction| {
+                    transaction.transaction.as_eip8130().is_none()
+                        && *transaction.transaction.cost() > balance
+                })
+            })
+            .map(|transaction| *transaction.hash())
+            .collect()
+    }
+
     /// Returns transactions for the given sender.
     pub(crate) fn transactions_by_sender(
         &self,
