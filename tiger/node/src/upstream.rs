@@ -18,11 +18,14 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// How long one upstream request may take, connect to last byte.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long one upstream request may take, connect to last byte (a full mainnet block's witness
+/// takes the upstream up to about 15 s).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Witness requests in flight at once: generating one takes the upstream seconds for a full
 /// mainnet block, and it serves many in parallel.
 const WITNESS_WORKERS: usize = 16;
+/// A witness fetch slower than this is logged.
+const SLOW_WITNESS: Duration = Duration::from_secs(10);
 /// Fetched witnesses kept until taken; older ones (of blocks that never came) are dropped.
 const MAX_READY_WITNESSES: usize = 512;
 
@@ -54,6 +57,35 @@ pub struct Upstream {
 /// A connection to the upstream, plain or TLS.
 trait Connection: Read + Write {}
 impl<T: Read + Write> Connection for T {}
+
+/// A socket whose reads end at `until`: each read waits at most the time left, so a reply that
+/// trickles in cannot hold a request past its deadline.
+struct Deadline {
+    until: std::time::Instant,
+    socket: TcpStream,
+    stream: TcpStream,
+}
+
+impl Read for Deadline {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.until.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "upstream request deadline passed"));
+        }
+        self.socket.set_read_timeout(Some(left))?;
+        self.stream.read(buf)
+    }
+}
+
+impl Write for Deadline {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
+}
 
 impl Upstream {
     /// Parses `url`, which must be `http://` or `https://host[:port][/path]`.
@@ -259,9 +291,10 @@ impl Upstream {
             .to_socket_addrs()?
             .next()
             .ok_or_else(|| std::io::Error::other("host does not resolve"))?;
+        let until = std::time::Instant::now() + REQUEST_TIMEOUT;
         let tcp = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)?;
-        tcp.set_read_timeout(Some(REQUEST_TIMEOUT))?;
         tcp.set_write_timeout(Some(REQUEST_TIMEOUT))?;
+        let tcp = Deadline { until, socket: tcp.try_clone()?, stream: tcp };
         let mut stream: Box<dyn Connection> = match &self.tls {
             None => Box::new(tcp),
             Some(config) => {
@@ -376,7 +409,14 @@ impl Witnesses {
                 loop {
                     let job = receiver.lock().expect("witness jobs").recv();
                     let Ok((hash, number, by_hash)) = job else { return };
+                    let started = std::time::Instant::now();
                     let witness = upstream.execution_witness(hash, number, by_hash);
+                    let took = started.elapsed();
+                    if let Err(error) = &witness {
+                        eprintln!("tiger: witness of block {number} {hash} (by hash: {by_hash}) failed after {took:?}: {error}");
+                    } else if took > SLOW_WITNESS {
+                        eprintln!("tiger: witness of block {number} {hash} (by hash: {by_hash}) took {took:?}");
+                    }
                     let (slots, ready) = &*shared;
                     let mut slots = slots.lock().expect("witness slots");
                     slots.inflight.remove(&hash);

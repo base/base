@@ -8,9 +8,10 @@
 //! (see [`Node::collapse_siblings`]), and the block's whole witness when one is a branch.
 
 use std::{
-    collections::{HashSet, VecDeque},
-    sync::{Arc, Mutex, mpsc},
+    collections::BTreeMap,
+    sync::{Arc, Condvar, Mutex},
     thread,
+    time::Duration,
 };
 
 use alloy_consensus::Header;
@@ -26,14 +27,19 @@ const PREWARM_WORKERS: usize = 12;
 const PREWARM_ROUNDS: usize = 2;
 /// The ring size of the EIP-2935 block-hash and EIP-4788 beacon-root contracts.
 const HISTORY_WINDOW: u64 = 8191;
-/// Recently queued block numbers remembered, so one is queued once.
-const PREWARM_SEEN: usize = 2048;
+/// How far above the head blocks are prewarmed: farther ones (such as gossiped payloads while a
+/// long backfill runs) wait, so the blocks imported next are prewarmed first.
+const PREWARM_AHEAD: u64 = 512;
+/// Most blocks waiting; the highest are dropped beyond it.
+const MAX_QUEUED: usize = 4096;
+/// How often an idle worker looks again at the head.
+const IDLE_POLL: Duration = Duration::from_millis(200);
 
-/// The prewarm queue.
-#[derive(Debug)]
+/// The prewarm queue: blocks by number (with timestamp and hash), lowest first.
+#[derive(Debug, Default)]
 pub struct Prewarm {
-    jobs: Mutex<mpsc::Sender<(u64, u64, B256)>>,
-    seen: Mutex<(HashSet<u64>, VecDeque<u64>)>,
+    queue: Mutex<BTreeMap<u64, (u64, B256)>>,
+    queued: Condvar,
 }
 
 impl Node {
@@ -42,40 +48,47 @@ impl Node {
         if self.upstream.is_none() {
             return;
         }
-        let (sender, receiver) = mpsc::channel::<(u64, u64, B256)>();
-        let receiver = Arc::new(Mutex::new(receiver));
+        assert!(self.prewarm.set(Prewarm::default()).is_ok(), "prewarm starts once");
         for _ in 0..PREWARM_WORKERS {
-            let (node, receiver) = (Arc::clone(self), Arc::clone(&receiver));
+            let node = Arc::clone(self);
             thread::spawn(move || {
                 loop {
-                    let job = receiver.lock().expect("prewarm jobs").recv();
-                    let Ok((number, timestamp, hash)) = job else { return };
+                    let (number, timestamp, hash) = node.next_prewarm();
                     node.prewarm_block(number, timestamp, hash);
                 }
             });
         }
-        let prewarm = Prewarm {
-            jobs: Mutex::new(sender),
-            seen: Mutex::new((HashSet::new(), VecDeque::new())),
-        };
-        assert!(self.prewarm.set(prewarm).is_ok(), "prewarm starts once");
     }
 
     /// Queues block `header` (hash `hash`) for prewarming (no-op unless prewarming runs).
     pub fn prewarm(&self, header: &Header, hash: B256) {
-        let number = header.number;
         let Some(prewarm) = self.prewarm.get() else { return };
-        let mut seen = prewarm.seen.lock().expect("prewarm seen");
-        if !seen.0.insert(number) {
-            return;
+        let mut queue = prewarm.queue.lock().expect("prewarm queue");
+        queue.entry(header.number).or_insert((header.timestamp, hash));
+        while queue.len() > MAX_QUEUED {
+            queue.pop_last();
         }
-        seen.1.push_back(number);
-        while seen.1.len() > PREWARM_SEEN {
-            let oldest = seen.1.pop_front().expect("over capacity");
-            seen.0.remove(&oldest);
+        prewarm.queued.notify_one();
+    }
+
+    /// The lowest queued block above the head and within [`PREWARM_AHEAD`] of it, waiting for
+    /// one; blocks at or below the head are dropped.
+    fn next_prewarm(&self) -> (u64, u64, B256) {
+        let prewarm = self.prewarm.get().expect("prewarm started");
+        loop {
+            let head = self.chain.read().expect("chain lock").head().number();
+            let mut queue = prewarm.queue.lock().expect("prewarm queue");
+            while queue.first_key_value().is_some_and(|(number, _)| *number <= head) {
+                queue.pop_first();
+            }
+            if let Some(entry) = queue.first_entry()
+                && *entry.key() <= head + PREWARM_AHEAD
+            {
+                let (number, (timestamp, hash)) = entry.remove_entry();
+                return (number, timestamp, hash);
+            }
+            let _ = prewarm.queued.wait_timeout(queue, IDLE_POLL).expect("prewarm queue");
         }
-        drop(seen);
-        let _ = prewarm.jobs.lock().expect("prewarm jobs").send((number, header.timestamp, hash));
     }
 
     fn prewarm_block(&self, number: u64, timestamp: u64, hash: B256) {

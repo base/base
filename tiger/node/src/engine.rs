@@ -425,7 +425,11 @@ impl Node {
                 Ok(Ok(validated))
             }
             // The upstream's canonical block at this number may be another one.
-            Err(_) if witnesses.retry_by_hash(hash, header.number) => {
+            Err(error) if witnesses.retry_by_hash(hash, header.number) => {
+                eprintln!(
+                    "tiger: the witness of block {} {hash} by number does not verify ({}), fetching it by hash",
+                    header.number, error.message
+                );
                 Ok(Err(Imported::AwaitingWitness))
             }
             Err(error) => {
@@ -482,7 +486,9 @@ impl Node {
         transactions: &[Bytes],
         parent: &crate::StoredBlock,
     ) -> Result<Result<(crate::Validated, Option<Validation>), String>, RpcError> {
-        let stateless = chain.db.is_partial() && self.upstream.is_some();
+        // Proofs are fetched at the stored tip, so they serve a block on the tip. A block on a side
+        // branch uses its witness, which is stored at commit, after the unwind to its fork point.
+        let stateless = chain.db.is_partial() && self.upstream.is_some() && parent.hash == chain.head().hash;
         let mut previous: Option<String> = None;
         for round in 0..=MAX_PROOF_ROUNDS {
             let state = chain.state_after(parent).map_err(RpcError::internal)?;

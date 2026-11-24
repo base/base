@@ -491,7 +491,9 @@ impl Chain {
             // Unwinding cuts the static files after its commit, so it commits on its own, with
             // the fork point as the persisted head.
             let mut w = self.db.write().map_err(|error| error.to_string())?;
-            self.db.unwind_in(&mut w, fork_number).map_err(|error| error.to_string())?;
+            self.db
+                .unwind_in(&mut w, fork_number)
+                .map_err(|error| format!("unwinding from block {tip} to {fork_number}: {error}"))?;
             Self::put_forkchoice(&mut w, Forkchoice { head: at, ..self.forkchoice })?;
             w.commit().map_err(|error| error.to_string())?;
             self.head = fork_block;
@@ -502,13 +504,17 @@ impl Chain {
             let prepared = match self.validations.remove(&block.hash) {
                 Some(Validation::Prepared(prepared)) => Some(*prepared),
                 Some(Validation::Witness(witness)) => {
-                    self.db.absorb_witness(&mut w, &witness.state, &witness.codes).map_err(|error| error.to_string())?;
+                    self.db
+                        .absorb_witness(&mut w, &witness.state, &witness.codes)
+                        .map_err(|error| format!("storing the witness of block {} {}: {error}", block.number(), block.hash))?;
                     None
                 }
                 None => None,
             };
-            let root =
-                self.db.commit_prepared(&mut w, block.number(), changes, prepared).map_err(|error| error.to_string())?;
+            let root = self
+                .db
+                .commit_prepared(&mut w, block.number(), changes, prepared)
+                .map_err(|error| format!("committing block {} {}: {error}", block.number(), block.hash))?;
             if root != block.header.state_root {
                 return Err(format!(
                     "committing block {} {} gave state root {root}, not {}",

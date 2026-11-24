@@ -201,7 +201,15 @@ impl Node {
                 Some((header, _)) => (header.number, header.parent_hash),
                 None => match chain.block(&at) {
                     Some(stored) => (stored.number(), stored.header.parent_hash),
-                    None => return Ok(()),
+                    // A gap: the head is a gossiped block far ahead of the blocks being
+                    // backfilled. A block extending the canonical tip is committed (as base-reth's
+                    // backfill does); a forkchoice to another branch later unwinds it.
+                    None => {
+                        if block.header.parent_hash == chain.head().hash {
+                            chain.set_canonical(hash)?;
+                        }
+                        return Ok(());
+                    }
                 },
             };
             if number <= block.number() {
