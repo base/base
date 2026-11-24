@@ -27,3 +27,6 @@ hmac.workspace = true
 getrandom = { workspace = true, features = ["std"] }
 aes-gcm = { workspace = true, features = ["aes", "alloc"] }
 secp256k1 = { workspace = true, features = ["std", "recovery", "global-context"] }
+
+[dev-dependencies]
+serde_json = { workspace = true, features = ["std"] }

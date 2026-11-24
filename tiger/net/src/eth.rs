@@ -245,6 +245,17 @@ pub fn encode_response<I: AsRef<[u8]>>(request_id: u64, items: &[I]) -> Vec<u8> 
     out
 }
 
+/// Encodes already-encoded RLP items as one list.
+pub fn encode_list_of_raw<I: AsRef<[u8]>>(items: &[I]) -> Vec<u8> {
+    let payload_length: usize = items.iter().map(|i| i.as_ref().len()).sum();
+    let mut out = Vec::with_capacity(payload_length + 4);
+    RlpHeader { list: true, payload_length }.encode(&mut out);
+    for item in items {
+        out.extend_from_slice(item.as_ref());
+    }
+    out
+}
+
 /// Encodes `[request_id, [hash, ...]]`, the body of GetBlockBodies and GetReceipts.
 pub fn encode_hashes_request(request_id: u64, hashes: &[B256]) -> Vec<u8> {
     let mut out = Vec::new();

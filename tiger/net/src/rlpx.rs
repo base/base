@@ -392,6 +392,11 @@ impl RlpxWriter {
         result
     }
 
+    /// The remote socket address.
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.stream.peer_addr().ok()
+    }
+
     /// Shuts the socket down without a message, which also wakes the reader.
     pub fn shutdown(&self) {
         let _ = self.stream.shutdown(std::net::Shutdown::Both);

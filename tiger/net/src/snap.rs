@@ -125,9 +125,15 @@ pub struct SnapBatch {
     pub storage: Vec<(B256, B256, U256)>,
     /// Bytecodes by hash.
     pub codes: Vec<(B256, Bytes)>,
-    /// Ranges whose leaves are complete once this batch commits. An account range marks only
-    /// the account leaves; each storage trie is complete once its own range is sent.
+    /// Ranges whose leaves are complete once this batch commits. An account range marks the
+    /// account leaves, and the storage of every account in it except those listed in
+    /// `storage_pending` (now or in an earlier batch) whose storage trie has not been completed
+    /// up to `MAX_HASH` yet.
     pub completed: Vec<SnapRange>,
+    /// Accounts with storage that is not downloaded yet, inside account ranges this batch (or an
+    /// earlier one) completes. Each stays pending until a storage range for it reaches
+    /// `MAX_HASH` with everything before it complete.
+    pub storage_pending: Vec<B256>,
     /// The syncer's opaque progress, returned by [`SnapStateSink::load_progress`] after restart.
     pub progress: Vec<u8>,
 }
@@ -368,11 +374,18 @@ pub struct ByteCodes {
 
 /// Serves snap requests from a [`SnapStateSource`]. Returns the relative response id and the
 /// encoded payload, or `None` for a message that is not a snap request.
-pub fn serve(source: &dyn SnapStateSource, message_id: u8, payload: &[u8]) -> Option<(u8, Vec<u8>)> {
+///
+/// Without a source (a node that cannot serve state yet) every request gets an empty answer,
+/// which snap allows for unavailable state.
+pub fn serve(
+    source: Option<&dyn SnapStateSource>,
+    message_id: u8,
+    payload: &[u8],
+) -> Option<(u8, Vec<u8>)> {
     match message_id {
         GET_ACCOUNT_RANGE => {
             let request = GetAccountRange::decode(&mut &payload[..]).ok()?;
-            let response = serve_account_range(source, &request).unwrap_or(AccountRange {
+            let response = source.and_then(|s| serve_account_range(s, &request).ok()).unwrap_or(AccountRange {
                 request_id: request.request_id,
                 accounts: Vec::new(),
                 proof: Vec::new(),
@@ -381,7 +394,7 @@ pub fn serve(source: &dyn SnapStateSource, message_id: u8, payload: &[u8]) -> Op
         }
         GET_STORAGE_RANGES => {
             let request = GetStorageRanges::decode_payload(payload).ok()?;
-            let response = serve_storage_ranges(source, &request).unwrap_or(StorageRanges {
+            let response = source.and_then(|s| serve_storage_ranges(s, &request).ok()).unwrap_or(StorageRanges {
                 request_id: request.request_id,
                 slots: Vec::new(),
                 proof: Vec::new(),
@@ -390,7 +403,7 @@ pub fn serve(source: &dyn SnapStateSource, message_id: u8, payload: &[u8]) -> Op
         }
         GET_BYTE_CODES => {
             let request = GetByteCodes::decode(&mut &payload[..]).ok()?;
-            let codes = serve_byte_codes(source, &request).unwrap_or_default();
+            let codes = source.and_then(|s| serve_byte_codes(s, &request).ok()).unwrap_or_default();
             Some((BYTE_CODES, alloy_rlp::encode(ByteCodes { request_id: request.request_id, codes })))
         }
         GET_BLOCK_ACCESS_LISTS => {

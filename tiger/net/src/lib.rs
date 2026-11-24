@@ -33,3 +33,21 @@ pub use snap::{
     SNAP_CAPABILITY, SnapAccount, SnapBatch, SnapRange, SnapStateSink, SnapStateSource,
     SnapStateView, StorageRanges, StoreError,
 };
+
+mod enr;
+pub use enr::{Enr, EnrError, FORK_KEY};
+
+mod discv5;
+pub use discv5::{BASE_PROTOCOL_ID, DISCV5_PROTOCOL_ID, Discv5, Discv5Config, FoundNode};
+
+mod peer;
+pub use peer::{BlockSource, ChainHead, Peer, RequestError, Response};
+
+mod network;
+pub use network::{Network, NetworkConfig, NodeRecord, Penalty, PeerInfo};
+
+mod download;
+pub use download::{DownloadConfig, DownloadError, Downloader};
+
+mod snap_sync;
+pub use snap_sync::{Pivot, SnapHandle, SnapStatus, SnapSync, SnapSyncConfig, SnapSyncError, TouchedKeys};

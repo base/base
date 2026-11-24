@@ -1046,6 +1046,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hmac 0.13.0",
  "secp256k1 0.31.1",
+ "serde_json",
  "sha2 0.11.0",
 ]
 
