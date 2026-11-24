@@ -25,6 +25,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::OpenOptions,
     io::Write,
+    panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -319,7 +320,8 @@ fn tear_static_files(dir: &Path, salt: u64) -> std::io::Result<()> {
 
 /// Applies every block on a fresh datadir at `dir`; returns one result per block.
 fn run(dir: &Path, blocks: &[Block], preimages: bool, mode: Run) -> Result<Vec<Value>, String> {
-    let mut db = StateDb::open(dir).map_err(err)?;
+    let mut slot = Some(StateDb::open(dir).map_err(err)?);
+    let db = slot.as_ref().expect("open");
     // Genesis: an empty block 0.
     let mut w = db.write().map_err(err)?;
     if preimages {
@@ -331,64 +333,93 @@ fn run(dir: &Path, blocks: &[Block], preimages: bool, mode: Run) -> Result<Vec<V
     let mut results = Vec::with_capacity(blocks.len());
     let mut tip = 0u64;
     for (index, block) in blocks.iter().enumerate() {
-        if block.number != tip + 1 - block.unwind {
-            return Err(format!("block {} does not follow {tip} unwinding {}", block.number, block.unwind));
-        }
-        let root = if preimages {
-            if block.unwind > 0 {
-                db.unwind_to(block.number - 1).map_err(err)?;
+        let step = catch_unwind(AssertUnwindSafe(|| -> Result<Value, String> {
+            if block.number != tip + 1 - block.unwind {
+                return Err(format!("block {} does not follow {tip} unwinding {}", block.number, block.unwind));
             }
-            let changes = block_changes(&block.ops);
-            if mode == Run::CrashHeal {
-                let mut w = db.write().map_err(err)?;
-                db.commit_block(&mut w, block.number, &changes).map_err(err)?;
-                w.crash_before_mdbx(index % 2 == 1).map_err(err)?;
-                drop(db);
-                db = StateDb::open(dir).map_err(err)?;
+            let root = if preimages {
+                if block.unwind > 0 {
+                    slot.as_ref().expect("open").unwind_to(block.number - 1).map_err(err)?;
+                }
+                let changes = block_changes(&block.ops);
+                if mode == Run::CrashHeal {
+                    let mut w = slot.as_ref().expect("open").write().map_err(err)?;
+                    slot.as_ref().expect("open").commit_block(&mut w, block.number, &changes).map_err(err)?;
+                    w.crash_before_mdbx(index % 2 == 1).map_err(err)?;
+                    reopen(&mut slot, dir)?;
+                }
+                let mut w = slot.as_ref().expect("open").write().map_err(err)?;
+                let root = slot.as_ref().expect("open").commit_block(&mut w, block.number, &changes).map_err(err)?;
+                w.commit().map_err(err)?;
+                root
+            } else {
+                let changes = hashed_changes(block.revert.iter().chain(&block.ops));
+                if mode == Run::CrashHeal {
+                    let mut w = slot.as_ref().expect("open").write().map_err(err)?;
+                    slot.as_ref().expect("open").commit_hashed(&mut w, block.number, &changes).map_err(err)?;
+                    w.crash_before_mdbx(true).map_err(err)?;
+                    reopen(&mut slot, dir)?;
+                }
+                let mut w = slot.as_ref().expect("open").write().map_err(err)?;
+                let root = slot.as_ref().expect("open").commit_hashed(&mut w, block.number, &changes).map_err(err)?;
+                w.commit().map_err(err)?;
+                root
+            };
+            tip = block.number;
+            let reopen_now = match mode {
+                Run::Primary | Run::CrashHeal => false,
+                // Every block for short requests, every fourth for long ones (opening is not free).
+                Run::Reopen => blocks.len() <= 32 || index % 4 == 3,
+                Run::TornTail => {
+                    tear_static_files(dir, index as u64).map_err(err)?;
+                    true
+                }
+            };
+            if reopen_now {
+                reopen(&mut slot, dir)?;
+                if slot.as_ref().expect("open").tip().map_err(err)? != Some(tip) {
+                    return Err(format!("reopened at {:?}, committed {tip}", slot.as_ref().expect("open").tip().map_err(err)?));
+                }
             }
-            let mut w = db.write().map_err(err)?;
-            let root = db.commit_block(&mut w, block.number, &changes).map_err(err)?;
-            w.commit().map_err(err)?;
-            root
-        } else {
-            let changes = hashed_changes(block.revert.iter().chain(&block.ops));
-            if mode == Run::CrashHeal {
-                let mut w = db.write().map_err(err)?;
-                db.commit_hashed(&mut w, block.number, &changes).map_err(err)?;
-                w.crash_before_mdbx(true).map_err(err)?;
-                drop(db);
-                db = StateDb::open(dir).map_err(err)?;
+            let view = slot.as_ref().expect("open").view(tip, Vec::new()).map_err(err)?;
+            let stored_root = view.state_root(None).map_err(err)?;
+            if stored_root != root {
+                return Err(format!("block {tip}: commit returned {root}, the stored state has root {stored_root}"));
             }
-            let mut w = db.write().map_err(err)?;
-            let root = db.commit_hashed(&mut w, block.number, &changes).map_err(err)?;
-            w.commit().map_err(err)?;
-            root
+            block_result(&view, block, root, preimages).map_err(err)
+        }));
+        let result = match step {
+            Ok(result) => result,
+            Err(panic) => Err(format!("panicked: {}", panic_message(&*panic))),
         };
-        tip = block.number;
-        let reopen_now = match mode {
-            Run::Primary | Run::CrashHeal => false,
-            // Every block for short requests, every fourth for long ones (opening is not free).
-            Run::Reopen => blocks.len() <= 32 || index % 4 == 3,
-            Run::TornTail => {
-                tear_static_files(dir, index as u64).map_err(err)?;
-                true
-            }
-        };
-        if reopen_now {
-            drop(db);
-            db = StateDb::open(dir).map_err(err)?;
-            if db.tip().map_err(err)? != Some(tip) {
-                return Err(format!("reopened at {:?}, committed {tip}", db.tip().map_err(err)?));
+        match result {
+            Ok(value) => results.push(value),
+            Err(error) => {
+                // As base/base's adapter: the failing block reports the error, later blocks
+                // report nothing.
+                results.push(json!({ "number": format!("{:#x}", block.number), "error": error }));
+                break;
             }
         }
-        let view = db.view(tip, Vec::new()).map_err(err)?;
-        let stored_root = view.state_root(None).map_err(err)?;
-        if stored_root != root {
-            return Err(format!("block {tip}: commit returned {root}, the stored state has root {stored_root}"));
-        }
-        results.push(block_result(&view, block, root, preimages).map_err(err)?);
     }
+    results.resize(blocks.len(), json!({}));
     Ok(results)
+}
+
+/// Closes and reopens the datadir.
+fn reopen(slot: &mut Option<StateDb>, dir: &Path) -> Result<(), String> {
+    *slot = None;
+    *slot = Some(StateDb::open(dir).map_err(err)?);
+    Ok(())
+}
+
+/// The text of a caught panic.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_owned())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic payload".to_owned())
 }
 
 /// The `overlay` and `history` variants (preimages only).
@@ -431,7 +462,8 @@ fn run_views(dir: &Path, blocks: &[Block]) -> Result<(Vec<Value>, Vec<Value>), S
 }
 
 fn variant(dir: PathBuf, f: impl FnOnce(&Path) -> Result<Vec<Value>, String>, count: usize) -> Value {
-    let result = f(&dir);
+    let result = catch_unwind(AssertUnwindSafe(|| f(&dir)))
+        .unwrap_or_else(|panic| Err(format!("panicked: {}", panic_message(&*panic))));
     let _ = std::fs::remove_dir_all(&dir);
     match result {
         Ok(results) => Value::Array(results),
@@ -451,7 +483,8 @@ pub fn handle(request: &Value) -> Value {
         Err(error) => return failure(error),
     };
     let count = blocks.len();
-    let primary = run(&dir.join("primary"), &blocks, preimages, Run::Primary);
+    let primary = catch_unwind(AssertUnwindSafe(|| run(&dir.join("primary"), &blocks, preimages, Run::Primary)))
+        .unwrap_or_else(|panic| Err(format!("panicked: {}", panic_message(&*panic))));
     let _ = std::fs::remove_dir_all(dir.join("primary"));
     let primary = match primary {
         Ok(results) => results,
@@ -465,7 +498,8 @@ pub fn handle(request: &Value) -> Value {
     variants.insert("crash-heal".into(), variant(dir.join("crash"), |d| run(d, &blocks, preimages, Run::CrashHeal), count));
     if preimages {
         variants.insert("torn-tail".into(), variant(dir.join("torn"), |d| run(d, &blocks, true, Run::TornTail), count));
-        let views = run_views(&dir.join("views"), &blocks);
+        let views = catch_unwind(AssertUnwindSafe(|| run_views(&dir.join("views"), &blocks)))
+            .unwrap_or_else(|panic| Err(format!("panicked: {}", panic_message(&*panic))));
         let _ = std::fs::remove_dir_all(dir.join("views"));
         match views {
             Ok((overlay, history)) => {
