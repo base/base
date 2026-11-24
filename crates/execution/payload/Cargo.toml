@@ -74,6 +74,7 @@ base-execution-chainspec.workspace = true
 reth-revm = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 criterion.workspace = true
+rstest.workspace = true
 
 [[bench]]
 name = "validity_conditions"
