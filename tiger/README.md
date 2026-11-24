@@ -34,6 +34,7 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | Dependency | Reason |
 | --- | --- |
 | `evm2` | The EVM interpreter, gas schedule, and standard precompiles. |
+| `evm2-inspectors` | The access list inspector for `eth_createAccessList`, and the tracers for `debug_trace*` and `trace_*`. |
 | `alloy-primitives` | Addresses, hashes, U256, keccak. |
 | `alloy-rlp` | RLP encoding of headers, transactions, receipts and trie nodes. |
 | `alloy-consensus`, `alloy-eips` | Ethereum header, transaction, receipt and EIP types that Base types build on. |
@@ -41,7 +42,7 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `base-common-genesis` | Base upgrade list and feature gates, rollup and system config types. |
 | `base-common-l1-fees` | L1 data fee and operator fee math. |
 | `base-common-flz` | FastLZ size estimate for Fjord L1 fees and the Jovian DA footprint. |
-| `base-common-base-tx` | Intrinsic gas schedule shared with the Base transaction type. |
+| `base-common-base-tx` | Intrinsic gas schedule shared with the Base transaction type, and the nonce manager's storage slots for `eth_getTransactionCount` with a nonce key. |
 | `alloy-trie` | Trie node types, nibbles and ordered trie roots (transactions, receipts, proofs). |
 | `alloy-genesis` | Parsing geth-style genesis files, the format base-reth takes as `--chain`. |
 | `alloy-rpc-types-engine`, `base-common-rpc-types-engine` | Engine API payload, attribute, forkchoice and envelope wire types, and base-reth's payload id. |

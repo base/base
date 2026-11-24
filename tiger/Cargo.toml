@@ -34,6 +34,7 @@ base-common-rpc-types-engine = { path = "../crates/common/rpc-types-engine", def
 
 # evm2
 evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "9b037449c846515624ff6afde739f2b764851446", default-features = false }
+evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "9b037449c846515624ff6afde739f2b764851446", default-features = false, features = ["std", "serde"] }
 
 # alloy
 alloy-rlp = { version = "0.3.16", default-features = false }

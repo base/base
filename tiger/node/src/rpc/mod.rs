@@ -3,15 +3,23 @@
 use std::sync::Arc;
 
 use alloy_consensus::transaction::Recovered;
+use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U64, U256};
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_consensus::{BaseTransactionInfo, DepositInfo};
+use base_common_base_tx::NonceManagerSlots;
 use serde_json::{Value, json};
 
 use crate::{Node, RpcError, chain::StoredBlock};
 
+/// reth's default `--rpc.eth-proof-window`: proofs only at the head.
+const ETH_PROOF_WINDOW: u64 = 0;
+
 mod blocks;
+mod call;
+mod envelope;
 mod receipts;
+mod shared;
 
 fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result<T, RpcError> {
     let value = params.get(index).cloned().unwrap_or(Value::Null);
@@ -21,7 +29,7 @@ fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result
 impl Node {
     /// Answers one non-Engine JSON-RPC method.
     pub fn rpc(&self, method: &str, p: &Value) -> Result<Value, RpcError> {
-        if let Some(result) = self.rpc_blocks(method, p) {
+        if let Some(result) = self.rpc_blocks(method, p).or_else(|| self.rpc_call(method, p)) {
             return result;
         }
         match method {
@@ -36,8 +44,14 @@ impl Node {
                 Ok(json!(U64::from(self.chain.read().expect("chain lock").head().number())))
             }
             "eth_getBlockByNumber" | "eth_getBlockByHash" => {
+                let block = self.block_by_hash_or_tag(method.ends_with("ByHash"), p.get(0))?;
                 let full: bool = param(p, 1)?;
-                Ok(self.find_block(p.get(0))?.map_or(Value::Null, |block| self.block_json(&block, full)))
+                Ok(block.map_or(Value::Null, |block| self.block_json(&block, full)))
+            }
+            "eth_getTransactionCount" if param::<Option<U256>>(p, 2)?.is_some_and(|key| !key.is_zero()) => {
+                let address: Address = param(p, 0)?;
+                let key: U256 = param(p, 2)?;
+                self.channel_nonce(address, key, p.get(1))
             }
             "eth_getBalance" | "eth_getTransactionCount" | "eth_getCode" => {
                 let address: Address = param(p, 0)?;
@@ -71,6 +85,18 @@ impl Node {
             "eth_getProof" => {
                 let address: Address = param(p, 0)?;
                 let slots: Vec<U256> = param(p, 1)?;
+                // reth checks the window on the block's number before looking a numbered block up.
+                let target = match p.get(2).map(|tag| serde_json::from_value::<BlockId>(tag.clone())) {
+                    Some(Ok(BlockId::Number(BlockNumberOrTag::Number(number)))) => number,
+                    Some(Ok(BlockId::Number(BlockNumberOrTag::Earliest))) => 0,
+                    _ => self.state_block(p.get(2))?.number(),
+                };
+                let head = self.chain.read().expect("chain lock").head().number();
+                if head.saturating_sub(target) > ETH_PROOF_WINDOW {
+                    return Err(RpcError::invalid_params(
+                        "distance to target block exceeds maximum proof window".into(),
+                    ));
+                }
                 let block = self.state_block(p.get(2))?;
                 self.proof(&block, address, &slots)
             }
@@ -109,47 +135,58 @@ impl Node {
     pub fn find_block(&self, tag: Option<&Value>) -> Result<Option<Arc<StoredBlock>>, RpcError> {
         let chain = self.chain.read().expect("chain lock");
         let forkchoice = chain.forkchoice();
-        let by_hash = |hash: B256, canonical: bool| {
-            chain.block(&hash).filter(|block| !canonical || chain.is_canonical(&block.hash))
+        let id: Option<BlockId> = match tag {
+            None => None,
+            Some(tag) => serde_json::from_value(tag.clone()).map_err(|error| RpcError::invalid_params(error.to_string()))?,
         };
-        Ok(match tag {
-            None | Some(Value::Null) => Some(chain.head()),
-            Some(Value::String(text)) => match text.as_str() {
-                "latest" | "pending" => Some(chain.head()),
-                "earliest" => chain.canonical_block(chain.genesis.header.number),
-                "safe" => chain.block(&forkchoice.safe),
-                "finalized" => chain.block(&forkchoice.finalized),
-                text if text.len() == 66 => {
-                    let hash: B256 = text.parse().map_err(|_| RpcError::invalid_params(format!("invalid block hash {text}")))?;
-                    by_hash(hash, false)
-                }
-                text => {
-                    let number: U64 = serde_json::from_value(json!(text))
-                        .map_err(|_| RpcError::invalid_params(format!("invalid block tag {text}")))?;
-                    chain.canonical_block(number.to())
-                }
+        Ok(match id {
+            None => Some(chain.head()),
+            Some(BlockId::Number(tag)) => match tag {
+                BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => Some(chain.head()),
+                // reth's earliest block is number zero, whatever the genesis number.
+                BlockNumberOrTag::Earliest => chain.canonical_block(0),
+                BlockNumberOrTag::Safe => chain.block(&forkchoice.safe),
+                BlockNumberOrTag::Finalized => chain.block(&forkchoice.finalized),
+                BlockNumberOrTag::Number(number) => chain.canonical_block(number),
             },
-            Some(Value::Object(object)) => {
-                if let Some(hash) = object.get("blockHash") {
-                    let hash: B256 = serde_json::from_value(hash.clone())
-                        .map_err(|error| RpcError::invalid_params(error.to_string()))?;
-                    let canonical = object.get("requireCanonical").and_then(Value::as_bool).unwrap_or(false);
-                    by_hash(hash, canonical)
-                } else if let Some(number) = object.get("blockNumber") {
-                    let number: U64 = serde_json::from_value(number.clone())
-                        .map_err(|error| RpcError::invalid_params(error.to_string()))?;
-                    chain.canonical_block(number.to())
-                } else {
-                    return Err(RpcError::invalid_params("invalid block id".into()));
-                }
-            }
-            Some(other) => return Err(RpcError::invalid_params(format!("invalid block id {other}"))),
+            Some(BlockId::Hash(hash)) => chain
+                .block(&hash.block_hash)
+                .filter(|block| !hash.require_canonical.unwrap_or(false) || chain.is_canonical(&block.hash)),
         })
+    }
+
+    /// The block a `*ByHash` method (a bare hash) or a `*ByNumber` method (a number or tag)
+    /// names, parsed as reth's parameter types do.
+    pub fn block_by_hash_or_tag(&self, by_hash: bool, param: Option<&Value>) -> Result<Option<Arc<StoredBlock>>, RpcError> {
+        let param = param.cloned().unwrap_or_default();
+        let invalid = |error: serde_json::Error| RpcError::invalid_params(error.to_string());
+        if by_hash {
+            let hash: B256 = serde_json::from_value(param).map_err(invalid)?;
+            return Ok(self.chain.read().expect("chain lock").block(&hash));
+        }
+        let tag: BlockNumberOrTag = serde_json::from_value(param).map_err(invalid)?;
+        self.find_block(Some(&json!(tag)))
     }
 
     /// The block whose post-state a state read uses; an unknown block is an error.
     pub fn state_block(&self, tag: Option<&Value>) -> Result<Arc<StoredBlock>, RpcError> {
         self.find_block(tag)?.ok_or_else(|| RpcError::new(-32001, "block not found"))
+    }
+
+    /// base-reth's `ChannelNonceReader`: the Base transaction channel nonce of `address` under
+    /// a nonzero `key`, read from the nonce manager's storage after Everest.
+    fn channel_nonce(&self, address: Address, key: U256, tag: Option<&Value>) -> Result<Value, RpcError> {
+        let block = self.everest_gate(tag)?;
+        if key == U256::MAX {
+            return Err(RpcError::invalid_params(
+                "nonce_key NONCE_KEY_MAX selects the expiring-nonce channel which has no per-channel counter".into(),
+            ));
+        }
+        let slot = NonceManagerSlots::nonce_slot(address, key).expect("the key is not the protocol key");
+        let chain = self.chain.read().expect("chain lock");
+        let state = chain.state_after(&block).map_err(RpcError::internal)?;
+        let word = state.storage(&NonceManagerSlots::ADDRESS, &slot).map_err(RpcError::internal)?;
+        Ok(json!(word & U256::from(u64::MAX)))
     }
 
     /// `eth_getProof` at the post-state of `block`.
@@ -223,5 +260,53 @@ impl Node {
             object.insert("withdrawals".into(), json!([]));
         }
         value
+    }
+}
+
+#[cfg(test)]
+pub(super) mod test_utils {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use serde_json::{Value, json};
+
+    use crate::{Genesis, Node};
+
+    /// A contract that reverts with the single byte `0xaa`.
+    pub(crate) const REVERTER: &str = "0x00000000000000000000000000000000000000aa";
+
+    /// A node on a fresh datadir whose genesis (block 0, every fork through Jovian active) holds
+    /// [`REVERTER`] and a funded account `0x…01`.
+    pub(crate) fn node() -> Node {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir()
+            .join(format!("tiger-rpc-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let _ = std::fs::remove_dir_all(&dir);
+        let genesis = json!({
+            "config": {
+                "chainId": 8453, "homesteadBlock": 0, "eip150Block": 0, "eip155Block": 0, "eip158Block": 0,
+                "byzantiumBlock": 0, "constantinopleBlock": 0, "petersburgBlock": 0, "istanbulBlock": 0,
+                "muirGlacierBlock": 0, "berlinBlock": 0, "londonBlock": 0, "arrowGlacierBlock": 0,
+                "grayGlacierBlock": 0, "mergeNetsplitBlock": 0, "bedrockBlock": 0, "regolithTime": 0,
+                "canyonTime": 0, "deltaTime": 0, "ecotoneTime": 0, "fjordTime": 0, "graniteTime": 0,
+                "holoceneTime": 0, "isthmusTime": 0, "jovianTime": 0, "blockTime": 2,
+                "terminalTotalDifficulty": 0, "terminalTotalDifficultyPassed": true,
+                "optimism": { "eip1559Elasticity": 6, "eip1559Denominator": 50, "eip1559DenominatorCanyon": 250 }
+            },
+            "nonce": "0x0", "timestamp": "0x0", "extraData": "0x000000000100000006", "gasLimit": "0x1c9c380",
+            "difficulty": "0x0", "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "coinbase": "0x4200000000000000000000000000000000000011", "baseFeePerGas": "0x1",
+            "excessBlobGas": "0x0", "blobGasUsed": "0x0",
+            "alloc": {
+                REVERTER: { "balance": "0x0", "code": "0x60aa60005360016000fd" },
+                "0x0000000000000000000000000000000000000001": { "balance": "0xde0b6b3a7640000" }
+            }
+        });
+        let genesis = Genesis::parse(&genesis.to_string()).expect("test genesis parses");
+        Node::open(&dir, genesis).expect("test node opens")
+    }
+
+    /// The node's reply to `body`.
+    pub(crate) fn reply(node: &Node, body: &str) -> Option<Value> {
+        node.handle_body(body.as_bytes(), false)
     }
 }

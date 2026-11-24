@@ -6,6 +6,7 @@ use std::sync::Arc;
 use alloy_consensus::Transaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, U64, U256};
+use alloy_rpc_types_eth::Index;
 use serde_json::{Value, json};
 
 use super::param;
@@ -16,21 +17,21 @@ impl Node {
     pub(super) fn rpc_blocks(&self, method: &str, p: &Value) -> Option<Result<Value, RpcError>> {
         Some(match method {
             "eth_getBlockTransactionCountByNumber" | "eth_getBlockTransactionCountByHash" => {
-                self.with_block(p, |block| json!(U256::from(block.transactions.len())))
+                self.with_block(method, p, |block| json!(U256::from(block.transactions.len())))
             }
             "eth_getUncleCountByBlockNumber" | "eth_getUncleCountByBlockHash" => {
-                self.with_block(p, |_| json!(U256::ZERO))
+                self.with_block(method, p, |_| json!(U256::ZERO))
             }
             "eth_getUncleByBlockNumberAndIndex" | "eth_getUncleByBlockHashAndIndex" => {
-                param::<U64>(p, 1).and_then(|_| self.find_block(p.get(0))).map(|_| Value::Null)
+                self.block_param(method, p).and_then(|_| param::<Index>(p, 1)).map(|_| Value::Null)
             }
             "eth_getTransactionByBlockHashAndIndex" | "eth_getTransactionByBlockNumberAndIndex" => {
-                self.block_and_index(p).map(|found| {
+                self.block_and_index(method, p).map(|found| {
                     found.map_or(Value::Null, |(block, index)| self.transaction_json(&block, index))
                 })
             }
             "eth_getRawTransactionByBlockHashAndIndex" | "eth_getRawTransactionByBlockNumberAndIndex" => {
-                self.block_and_index(p).map(|found| {
+                self.block_and_index(method, p).map(|found| {
                     found.map_or(Value::Null, |(block, index)| {
                         json!(Bytes::from(block.transactions[index].encoded_2718()))
                     })
@@ -58,15 +59,21 @@ impl Node {
     }
 
     /// `f` of the block the first parameter names, or `null` for an unknown block.
-    fn with_block(&self, p: &Value, f: impl FnOnce(&StoredBlock) -> Value) -> Result<Value, RpcError> {
-        Ok(self.find_block(p.get(0))?.map_or(Value::Null, |block| f(&block)))
+    fn with_block(&self, method: &str, p: &Value, f: impl FnOnce(&StoredBlock) -> Value) -> Result<Value, RpcError> {
+        Ok(self.block_param(method, p)?.map_or(Value::Null, |block| f(&block)))
+    }
+
+    /// The block the first parameter names: a bare hash for `*Hash*` methods, otherwise a
+    /// number or tag.
+    fn block_param(&self, method: &str, p: &Value) -> Result<Option<Arc<StoredBlock>>, RpcError> {
+        self.block_by_hash_or_tag(method.contains("Hash"), p.get(0))
     }
 
     /// The block (first parameter) and an in-range transaction index (second parameter).
-    fn block_and_index(&self, p: &Value) -> Result<Option<(Arc<StoredBlock>, usize)>, RpcError> {
-        let index: U64 = param(p, 1)?;
-        let Some(block) = self.find_block(p.get(0))? else { return Ok(None) };
-        let index = usize::try_from(index.to::<u64>()).unwrap_or(usize::MAX);
+    fn block_and_index(&self, method: &str, p: &Value) -> Result<Option<(Arc<StoredBlock>, usize)>, RpcError> {
+        let block = self.block_param(method, p)?;
+        let index: usize = param::<Index>(p, 1)?.into();
+        let Some(block) = block else { return Ok(None) };
         Ok((index < block.transactions.len()).then_some((block, index)))
     }
 

@@ -1,0 +1,878 @@
+//! `eth_call`, `eth_estimateGas` and `eth_createAccessList` as base-reth answers them: reth's
+//! call environment (fee charging, EIP-3607 and the base fee check off), the RPC gas cap, block
+//! and state overrides, reth's estimation search, and reth's error codes.
+
+use std::sync::Arc;
+
+use alloy_consensus::{TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702, TxLegacy};
+use alloy_eips::eip2930::AccessList;
+use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, TxKind, U64, U256, keccak256};
+use alloy_rpc_types_eth::{BlockOverrides, TransactionRequest, state::StateOverride};
+use base_common_genesis::BaseFeature;
+use base_common_rpc_types::BaseTransactionRequest;
+use base_tiger_evm::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope, BaseTxHandlerHooks, BlockRules};
+use evm2::{
+    AccountInfo, Evm, EvmConfigSelector, EvmFeatures, SpecId, TxResult,
+    bytecode::Bytecode,
+    env::BlockEnv,
+    ethereum::{LazyTxEip7702, TxEnvelope, eip4844},
+    evm::Db,
+    interpreter::InstrStop,
+    registry::{HandlerError, TxRegistry},
+};
+use evm2_inspectors::access_list::AccessListInspector;
+use serde_json::{Value, json};
+
+use super::{param, shared::Shared};
+use crate::{Chain, Node, NodeDb, NodeState, ParentState, RpcError, chain::StoredBlock};
+
+/// reth's default `--rpc.gascap`.
+pub(super) const RPC_GAS_CAP: u64 = 50_000_000;
+/// base-reth's error for a Base transaction request at a block before Everest.
+const BASE_TX_PRE_EVEREST_RPC_ERROR: &str = "Base transaction RPC features are not active before the Everest hard fork; the `nonce_key` parameter is not supported at this block";
+/// Blocks `BLOCKHASH` reaches back.
+const BLOCK_HASH_WINDOW: u64 = 256;
+/// Gas a plain value transfer uses.
+const TRANSFER_GAS: u64 = 21_000;
+/// reth stops the estimation search when the range is below this fraction of the upper bound.
+const ESTIMATE_GAS_ERROR_RATIO: f64 = 0.015;
+/// Gas kept for a callee's stipend in the optimistic estimate.
+const CALL_STIPEND_GAS: u64 = 2_300;
+
+/// Which method an environment is for: they disable different checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CallKind {
+    /// `eth_call`, `eth_createAccessList`, `debug_traceCall`.
+    Call,
+    /// `eth_estimateGas`: keeps the block gas limit check and the EIP-7825 cap.
+    Estimate,
+}
+
+/// The block a call runs on: the state after `parent`, and the block environment.
+#[derive(Debug)]
+pub(super) struct CallBlock {
+    /// The block whose post-state the call reads.
+    pub parent: Arc<StoredBlock>,
+    /// The block environment.
+    pub env: BlockEnv<BaseEvmTypes>,
+    /// The timestamp that selects the spec: the block's own, never an overridden one.
+    pub spec_timestamp: u64,
+}
+
+/// A request turned into transaction fields, as alloy-evm's `TryIntoTxEnv` does.
+#[derive(Debug, Clone)]
+pub(super) struct CallTx {
+    ty: u8,
+    gas_price: u128,
+    priority_fee: Option<u128>,
+    /// `None` when the request has no `gas`.
+    pub gas: Option<u64>,
+    chain_id: u64,
+    /// The caller.
+    pub from: Address,
+    /// The call target, or create.
+    pub kind: TxKind,
+    value: U256,
+    input: Bytes,
+    access_list: AccessList,
+    authorizations: Vec<alloy_eips::eip7702::SignedAuthorization>,
+    blob_hashes: Vec<B256>,
+    max_fee_per_blob_gas: u128,
+    chain_id_valid: bool,
+}
+
+impl CallTx {
+    /// The transaction with `gas` and `nonce`, as the evm2 envelope the registry dispatches.
+    pub(super) fn recovered(&self, gas: u64, nonce: u64) -> Result<alloy_consensus::transaction::Recovered<BaseTxEnvelope>, RpcError> {
+        let chain_id = self.chain_id;
+        let tx = match self.ty {
+            0 => TxEnvelope::Legacy(TxLegacy {
+                chain_id: Some(chain_id),
+                nonce,
+                gas_price: self.gas_price,
+                gas_limit: gas,
+                to: self.kind,
+                value: self.value,
+                input: self.input.clone(),
+            }),
+            1 => TxEnvelope::Eip2930(TxEip2930 {
+                chain_id,
+                nonce,
+                gas_price: self.gas_price,
+                gas_limit: gas,
+                to: self.kind,
+                value: self.value,
+                input: self.input.clone(),
+                access_list: self.access_list.clone(),
+            }),
+            2 => TxEnvelope::Eip1559(TxEip1559 {
+                chain_id,
+                nonce,
+                gas_limit: gas,
+                max_fee_per_gas: self.gas_price,
+                max_priority_fee_per_gas: self.priority_fee.unwrap_or_default(),
+                to: self.kind,
+                value: self.value,
+                access_list: self.access_list.clone(),
+                input: self.input.clone(),
+            }),
+            3 => {
+                let TxKind::Call(to) = self.kind else {
+                    // revm checks the chain id before the blob transaction's shape.
+                    if !self.chain_id_valid {
+                        return Err(RpcError::new(-32000, "invalid chain ID"));
+                    }
+                    return Err(RpcError::new(-32003, "blob transaction is a create transaction"));
+                };
+                TxEnvelope::Eip4844(TxEip4844Variant::TxEip4844(TxEip4844 {
+                    chain_id,
+                    nonce,
+                    gas_limit: gas,
+                    max_fee_per_gas: self.gas_price,
+                    max_priority_fee_per_gas: self.priority_fee.unwrap_or_default(),
+                    to,
+                    value: self.value,
+                    access_list: self.access_list.clone(),
+                    blob_versioned_hashes: self.blob_hashes.clone(),
+                    max_fee_per_blob_gas: self.max_fee_per_blob_gas,
+                    input: self.input.clone(),
+                }))
+            }
+            4 => {
+                let TxKind::Call(to) = self.kind else {
+                    return Err(RpcError::new(-32003, "EIP-7702 transaction cannot create"));
+                };
+                TxEnvelope::Eip7702(LazyTxEip7702::from_signed_authorizations(TxEip7702 {
+                    chain_id,
+                    nonce,
+                    gas_limit: gas,
+                    max_fee_per_gas: self.gas_price,
+                    max_priority_fee_per_gas: self.priority_fee.unwrap_or_default(),
+                    to,
+                    value: self.value,
+                    access_list: self.access_list.clone(),
+                    authorization_list: self.authorizations.clone(),
+                    input: self.input.clone(),
+                }))
+            }
+            _ => return Err(RpcError::new(-32003, "transaction type not supported")),
+        };
+        // A call pays no L1 fee (fee charging is off); the envelope bytes only need to exist.
+        let envelope = BaseTxEnvelope::standard(tx, Bytes::from(vec![self.ty]));
+        Ok(alloy_consensus::transaction::Recovered::new_unchecked(envelope, self.from))
+    }
+}
+
+impl Node {
+    /// Answers the call methods; `None` for other methods.
+    pub(super) fn rpc_call(&self, method: &str, p: &Value) -> Option<Result<Value, RpcError>> {
+        Some(match method {
+            "eth_call" => self.eth_call(p),
+            "eth_estimateGas" => self.estimate_gas(p),
+            "eth_createAccessList" => self.create_access_list(p),
+            _ => return None,
+        })
+    }
+
+    /// The block environment of a call at block `tag`. `pending` is the next block on the head,
+    /// with the Denim schedule's timestamp when `forecast` is set (as base-reth's `eth_call` and
+    /// `eth_estimateGas` do) and twelve seconds later otherwise.
+    pub(super) fn call_block(&self, tag: Option<&Value>, forecast: bool) -> Result<CallBlock, RpcError> {
+        if tag.and_then(Value::as_str) == Some("pending") {
+            let parent = self.chain.read().expect("chain lock").head();
+            let header = &parent.header;
+            let number = header.number + 1;
+            let timestamp = match self.spec.denim_schedule().filter(|_| forecast) {
+                Some(schedule) => schedule.block_timestamp_parts(number).0,
+                None => header.timestamp + 12,
+            };
+            let base_fee = BlockRules { chain: &self.spec }.next_base_fee(header, timestamp).unwrap_or_default();
+            let env = BlockEnv::<BaseEvmTypes> {
+                number: U256::from(number),
+                beneficiary: header.beneficiary,
+                timestamp: U256::from(timestamp),
+                gas_limit: U256::from(header.gas_limit),
+                basefee: U256::from(base_fee),
+                prevrandao: U256::from_be_bytes(Self::random_word().0),
+                ..BlockEnv::<BaseEvmTypes>::default()
+            };
+            return Ok(CallBlock { parent, env, spec_timestamp: timestamp });
+        }
+        let parent = self.find_block(tag)?.ok_or_else(|| Self::block_not_found(tag))?;
+        let header = &parent.header;
+        let env = BlockEnv::<BaseEvmTypes> {
+            number: U256::from(header.number),
+            beneficiary: header.beneficiary,
+            timestamp: U256::from(header.timestamp),
+            gas_limit: U256::from(header.gas_limit),
+            basefee: U256::from(header.base_fee_per_gas.unwrap_or_default()),
+            prevrandao: U256::from_be_bytes(header.mix_hash.0),
+            ..BlockEnv::<BaseEvmTypes>::default()
+        };
+        let spec_timestamp = header.timestamp;
+        Ok(CallBlock { parent, env, spec_timestamp })
+    }
+
+    /// reth's `-32001 block not found: <id>`.
+    pub(super) fn block_not_found(tag: Option<&Value>) -> RpcError {
+        let id = match tag {
+            Some(Value::String(text)) => text.clone(),
+            Some(Value::Object(object)) => match (object.get("blockHash"), object.get("blockNumber")) {
+                (Some(hash), _) => format!("hash {}", hash.as_str().unwrap_or_default()),
+                (None, Some(number)) => number.as_str().unwrap_or_default().to_owned(),
+                _ => String::new(),
+            },
+            _ => "latest".to_owned(),
+        };
+        RpcError::new(-32001, format!("block not found: {id}"))
+    }
+
+    /// A fresh unpredictable word, as reth's pending `prevrandao`.
+    fn random_word() -> B256 {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        keccak256(nanos.as_nanos().to_le_bytes())
+    }
+
+    /// An EVM for calls on `block`'s environment over the state after its parent block.
+    pub(super) fn call_evm<'a>(
+        &self,
+        chain: &Chain,
+        state: &'a NodeState<'_>,
+        block: &CallBlock,
+        kind: CallKind,
+    ) -> Evm<'a, BaseEvmTypes> {
+        let spec = self.spec.spec_at(block.spec_timestamp);
+        let config =
+            <evm2::BaseEvmConfigSelector as EvmConfigSelector<BaseEvmTypes>>::execution_config(spec);
+        let mut version = *config.version();
+        version.chain_id = self.spec.chain_id;
+        for feature in [
+            EvmFeatures::EIP3607,
+            EvmFeatures::BASE_FEE_CHECK,
+            EvmFeatures::FEE_CHARGE,
+            EvmFeatures::BALANCE_CHECK,
+            EvmFeatures::BALANCE_TOP_UP,
+        ] {
+            version.features.remove(feature);
+        }
+        if kind == CallKind::Call {
+            version.features.remove(EvmFeatures::BLOCK_GAS_LIMIT_CHECK);
+            version.tx_gas_limit_cap = u64::MAX;
+        }
+        let mut evm = Evm::new_with_execution_config(
+            config.with_version(version),
+            spec,
+            block.env,
+            Self::call_registry(spec),
+            Db::new(NodeDb(state)),
+            BaseEvmTypes::precompiles(spec, &self.spec),
+        );
+        // The state's `BLOCKHASH` window is the one for the block after `parent`; a call at
+        // `parent`'s own number also sees the block 256 below it.
+        let number = block.parent.number();
+        if block.env.number == U256::from(number) && number >= BLOCK_HASH_WINDOW {
+            let at = number - BLOCK_HASH_WINDOW;
+            evm.overlay_db_mut().insert_block_hash(&U256::from(at), &chain.canonical_hash(at).unwrap_or_default());
+        }
+        evm
+    }
+
+    /// The transaction types calls run: blocks reject EIP-4844 on Base, but base-reth's call
+    /// path executes a blob request once Cancun (Ecotone) is active.
+    fn call_registry(spec: BaseSpecId) -> TxRegistry<BaseEvmTypes, TxResult<BaseEvmTypes>> {
+        let mut registry = BaseEvmTypes::tx_registry(spec);
+        if SpecId::from(spec).enables(SpecId::CANCUN) {
+            registry.register(
+                3,
+                |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip4844),
+                eip4844::handle_with_hooks::<BaseEvmTypes, BaseTxHandlerHooks>,
+            );
+        }
+        registry
+    }
+
+    /// Applies block overrides to an environment, as alloy-evm does (the spec stays the
+    /// block's).
+    pub(super) fn apply_block_overrides(env: &mut BlockEnv<BaseEvmTypes>, overrides: &BlockOverrides) {
+        if let Some(number) = overrides.number {
+            env.number = number;
+        }
+        if let Some(difficulty) = overrides.difficulty {
+            env.difficulty = difficulty;
+        }
+        if let Some(time) = overrides.time {
+            env.timestamp = U256::from(time);
+        }
+        if let Some(gas_limit) = overrides.gas_limit {
+            env.gas_limit = U256::from(gas_limit);
+        }
+        if let Some(coinbase) = overrides.coinbase {
+            env.beneficiary = coinbase;
+        }
+        if let Some(random) = overrides.random {
+            env.prevrandao = U256::from_be_bytes(random.0);
+        }
+        if let Some(base_fee) = overrides.base_fee {
+            env.basefee = U256::from(base_fee.saturating_to::<u64>());
+        }
+        if let Some(blob_base_fee) = overrides.blob_base_fee {
+            env.blob_basefee = U256::from(blob_base_fee.saturating_to::<u128>());
+        }
+    }
+
+    /// Applies block-hash overrides to the EVM's overlay. An overridden block number moves the
+    /// `BLOCKHASH` window: reth answers it with canonical hashes by number, zero where there is
+    /// no block, so those are filled in.
+    pub(super) fn apply_block_hash_overrides(chain: &Chain, evm: &mut Evm<'_, BaseEvmTypes>, overrides: &BlockOverrides) {
+        if let Some(number) = overrides.number {
+            let number = number.saturating_to::<u64>();
+            for at in number.saturating_sub(BLOCK_HASH_WINDOW)..number {
+                let hash = chain.canonical_hash(at).unwrap_or_default();
+                evm.overlay_db_mut().insert_block_hash(&U256::from(at), &hash);
+            }
+        }
+        for (number, hash) in overrides.block_hash.iter().flatten() {
+            evm.overlay_db_mut().insert_block_hash(&U256::from(*number), hash);
+        }
+    }
+
+    /// Applies state overrides to the EVM's overlay, as alloy-evm's `apply_state_overrides`.
+    pub(super) fn apply_state_overrides(
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        overrides: &StateOverride,
+    ) -> Result<(), RpcError> {
+        for (address, account) in overrides {
+            let mut info = evm.read_account_info(address).map_err(|error| RpcError::internal(format!("{error:?}")))?.unwrap_or_default();
+            if let Some(nonce) = account.nonce {
+                info.nonce = nonce;
+            }
+            if let Some(code) = &account.code {
+                let bytecode = Bytecode::new_raw_checked(code.clone())
+                    .map_err(|error| RpcError::invalid_params(format!("Invalid bytecode: {error:?}")))?;
+                info.code_hash = keccak256(code);
+                info.code = Some(bytecode);
+            }
+            if let Some(balance) = account.balance {
+                info.balance = balance;
+            }
+            if account.state.is_some() && account.state_diff.is_some() {
+                return Err(RpcError::invalid_params(format!(
+                    "account {address:?} has both 'state' and 'stateDiff'"
+                )));
+            }
+            let overlay = evm.overlay_db_mut();
+            overlay.insert_account_info(address, info);
+            if let Some(state) = &account.state {
+                overlay.cache.storage.entry(*address).or_default().wipe();
+                for (slot, value) in state {
+                    overlay.insert_account_storage(address, &U256::from_be_bytes(slot.0), &U256::from_be_bytes(value.0));
+                }
+            }
+            if let Some(diff) = &account.state_diff {
+                for (slot, value) in diff {
+                    overlay.insert_account_storage(address, &U256::from_be_bytes(slot.0), &U256::from_be_bytes(value.0));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The request as transaction fields: fee resolution, type inference and the input check,
+    /// in alloy-evm's order. `base_fee` and `blob_base_fee` are the block's after overrides.
+    pub(super) fn call_tx(
+        &self,
+        request: &TransactionRequest,
+        base_fee: u128,
+        blob_base_fee: u128,
+        from: Address,
+    ) -> Result<CallTx, RpcError> {
+        let blob_hashes = request.blob_versioned_hashes.as_ref();
+        if blob_hashes.is_some_and(Vec::is_empty) {
+            return Err(RpcError::new(-32003, "blob transaction missing blob hashes"));
+        }
+        let ty = if request.authorization_list.is_some() {
+            4
+        } else if blob_hashes.is_some() || request.sidecar.is_some() {
+            3
+        } else if request.max_fee_per_gas.is_some() || request.max_priority_fee_per_gas.is_some() {
+            2
+        } else if request.access_list.is_some() {
+            1
+        } else {
+            0
+        };
+        let has_blob_hashes = blob_hashes.is_some_and(|hashes| !hashes.is_empty());
+        let effective = |max_fee: Option<u128>, priority: Option<u128>| -> Result<u128, RpcError> {
+            match max_fee {
+                Some(max_fee) => {
+                    let priority = priority.unwrap_or_default();
+                    if !(max_fee == 0 && priority == 0) && max_fee < base_fee {
+                        return Err(RpcError::new(-32000, "max fee per gas less than block base fee"));
+                    }
+                    if max_fee < priority {
+                        return Err(RpcError::new(-32003, "max priority fee per gas higher than max fee per gas"));
+                    }
+                    let tip = base_fee
+                        .checked_add(priority)
+                        .ok_or_else(|| RpcError::new(-32003, "max priority fee per gas higher than 2^256-1"))?;
+                    Ok(max_fee.min(tip))
+                }
+                None => base_fee
+                    .checked_add(priority.unwrap_or_default())
+                    .ok_or_else(|| RpcError::new(-32003, "max priority fee per gas higher than 2^256-1")),
+            }
+        };
+        let (gas_price, priority_fee) = match (
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
+        ) {
+            (gas_price, None, None, None) => (gas_price.unwrap_or_default(), None),
+            (None, max_fee, priority, None) => (effective(max_fee, priority)?, priority),
+            (None, max_fee, priority, Some(_)) => {
+                let price = effective(max_fee, priority)?;
+                if !has_blob_hashes {
+                    return Err(RpcError::new(-32003, "blob transaction missing blob hashes"));
+                }
+                (price, priority)
+            }
+            _ => {
+                return Err(RpcError::invalid_params(
+                    "both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified".into(),
+                ));
+            }
+        };
+        let input = request.input.clone().try_into_unique_input().map_err(|_| {
+            RpcError::invalid_params(
+                "both \"data\" and \"input\" are set and not equal. Please use \"input\" to pass transaction call data"
+                    .into(),
+            )
+        })?;
+        Ok(CallTx {
+            ty,
+            gas_price,
+            priority_fee,
+            gas: request.gas,
+            chain_id: request.chain_id.unwrap_or(self.spec.chain_id),
+            from,
+            kind: request.to.unwrap_or(TxKind::Create),
+            value: request.value.unwrap_or_default(),
+            input: input.unwrap_or_default(),
+            access_list: request.access_list.clone().unwrap_or_default(),
+            authorizations: request.authorization_list.clone().unwrap_or_default(),
+            blob_hashes: blob_hashes.cloned().unwrap_or_default(),
+            // revm skips the blob fee check with the base fee check off; evm2 always makes it,
+            // and the cap is otherwise unobservable in a call that charges no fees.
+            max_fee_per_blob_gas: request.max_fee_per_blob_gas.unwrap_or_default().max(blob_base_fee),
+            chain_id_valid: request.chain_id.is_none_or(|chain_id| chain_id == self.spec.chain_id),
+        })
+    }
+
+    /// The nonce and balance of `address` in the EVM's current (overridden) state.
+    fn account_now(evm: &mut Evm<'_, BaseEvmTypes>, address: &Address) -> Result<AccountInfo, RpcError> {
+        Ok(evm.read_account_info(address).map_err(|error| RpcError::internal(format!("{error:?}")))?.unwrap_or_default())
+    }
+
+    /// `(balance - value) / gas_price`, or reth's insufficient funds error.
+    fn caller_allowance(evm: &mut Evm<'_, BaseEvmTypes>, tx: &CallTx) -> Result<u64, RpcError> {
+        let balance = Self::account_now(evm, &tx.from)?.balance;
+        if tx.value > balance {
+            return Err(RpcError::new(
+                -32003,
+                format!("insufficient funds for gas * price + value: have {balance} want {}", tx.value),
+            ));
+        }
+        Ok(((balance - tx.value) / U256::from(tx.gas_price)).saturating_to())
+    }
+
+    /// Parses a request and rejects what base-reth routes elsewhere: Base transaction requests
+    /// (`0x79` or account-abstraction fields).
+    pub(super) fn plain_request(&self, p: &Value, block: Option<&Value>, method: &str) -> Result<TransactionRequest, RpcError> {
+        let request: BaseTransactionRequest = param(p, 0)?;
+        if request.as_base_tx().is_some() {
+            if method == "eth_createAccessList" {
+                return Err(RpcError::invalid_params(
+                    "Base transaction requests are supported only by eth_call and eth_estimateGas".into(),
+                ));
+            }
+            return Err(self.base_tx_unsupported(block));
+        }
+        Ok(request.into())
+    }
+
+    /// base-reth's `TxBaseEverestGate`: the block `tag` names (`pending` is the head), which must
+    /// exist and be at or after Everest, or `-32602`.
+    pub(super) fn everest_gate(&self, tag: Option<&Value>) -> Result<Arc<StoredBlock>, RpcError> {
+        let pending = tag.and_then(Value::as_str) == Some("pending");
+        let block = self
+            .find_block(if pending { None } else { tag })?
+            .ok_or_else(|| RpcError::invalid_params(Self::block_not_found(tag).message))?;
+        if !self.spec.is_active(BaseFeature::TxBase, block.header.timestamp) {
+            return Err(RpcError::invalid_params(BASE_TX_PRE_EVEREST_RPC_ERROR.into()));
+        }
+        Ok(block)
+    }
+
+    /// The error for a Base transaction request: before Everest base-reth rejects it with
+    /// `-32602`; simulating one after Everest is not wired into tiger's RPC yet.
+    fn base_tx_unsupported(&self, block: Option<&Value>) -> RpcError {
+        match self.everest_gate(block) {
+            Ok(_) => RpcError::internal("Base transaction simulation is not supported yet".into()),
+            Err(error) => error,
+        }
+    }
+
+    /// Prepares an `eth_call`-style execution: the EVM with overrides applied, the transaction
+    /// fields, and the gas limit, following reth's `prepare_call_env`.
+    pub(super) fn prepare_call<'a>(
+        &self,
+        chain: &Chain,
+        state: &'a NodeState<'_>,
+        request: &TransactionRequest,
+        block: &mut CallBlock,
+        state_overrides: Option<&StateOverride>,
+        block_overrides: Option<&BlockOverrides>,
+    ) -> Result<(Evm<'a, BaseEvmTypes>, CallTx, u64, u64), RpcError> {
+        if let Some(overrides) = block_overrides {
+            Self::apply_block_overrides(&mut block.env, overrides);
+        }
+        let mut evm = self.call_evm(chain, state, block, CallKind::Call);
+        if let Some(overrides) = block_overrides {
+            Self::apply_block_hash_overrides(chain, &mut evm, overrides);
+        }
+        if let Some(overrides) = state_overrides {
+            Self::apply_state_overrides(&mut evm, overrides)?;
+        }
+        let from = request.from.unwrap_or_default();
+        let nonce = Self::account_now(&mut evm, &from)?.nonce;
+        let tx = self.call_tx(request, block.env.basefee.saturating_to(), evm.block().blob_basefee.saturating_to(), from)?;
+        let mut gas = tx.gas.map_or(RPC_GAS_CAP, |gas| gas.min(RPC_GAS_CAP));
+        if tx.gas_price == 0 {
+            let mut env = *evm.block();
+            env.basefee = U256::ZERO;
+            evm.set_block(env);
+        }
+        if tx.gas.is_none() && tx.gas_price > 0 {
+            let allowance = Self::caller_allowance(&mut evm, &tx)?;
+            gas = allowance.min(gas).min(evm.block().gas_limit.saturating_to());
+        }
+        Ok((evm, tx, gas, nonce))
+    }
+
+    /// Runs `tx` at `gas`, discarding its state.
+    pub(super) fn run(
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        tx: &CallTx,
+        gas: u64,
+        nonce: u64,
+    ) -> Result<TxResult<BaseEvmTypes>, RpcError> {
+        let recovered = tx.recovered(gas, nonce)?;
+        evm.call_tx(&recovered).map_err(Self::handler_error)
+    }
+
+    /// An internal error carries the state read that failed, which evm2 reports only as a code.
+    pub(super) fn state_error(error: RpcError, state: &NodeState<'_>) -> RpcError {
+        match state.missing() {
+            Some(missing) if error.code == -32603 => RpcError::internal(missing),
+            _ => error,
+        }
+    }
+
+    /// reth's JSON-RPC error for a transaction evm2 rejected before executing it.
+    pub(super) fn handler_error(error: HandlerError) -> RpcError {
+        let (code, message) = match &error {
+            HandlerError::InvalidChainId { .. } | HandlerError::MissingChainId => (-32000, "invalid chain ID".to_owned()),
+            HandlerError::IntrinsicGasTooLow { .. } => (-32000, "intrinsic gas too low".to_owned()),
+            HandlerError::GasLimitMoreThanBlock { .. } | HandlerError::TxGasLimitGreaterThanCap { .. } => {
+                (-32000, "intrinsic gas too high".to_owned())
+            }
+            HandlerError::InvalidNonce { expected, got } if got < expected => {
+                (-32000, format!("nonce too low: next nonce {expected}, tx nonce {got}"))
+            }
+            HandlerError::InvalidNonce { .. } => (-32000, "nonce too high".to_owned()),
+            HandlerError::FeeCapLessThanBaseFee { .. } => (-32000, "max fee per gas less than block base fee".to_owned()),
+            HandlerError::NonceOverflow => (-32003, "nonce has max value".to_owned()),
+            HandlerError::CreateInitCodeSizeLimit { .. } => (-32003, "max initcode size exceeded".to_owned()),
+            HandlerError::PriorityFeeGreaterThanMaxFee => {
+                (-32003, "max priority fee per gas higher than max fee per gas".to_owned())
+            }
+            HandlerError::UnsupportedTransactionType(_) | HandlerError::WrongTransactionType { .. } => {
+                (-32003, "transaction type not supported".to_owned())
+            }
+            HandlerError::EmptyAuthorizationList => (-32003, "EIP-7702 authorization list has invalid fields".to_owned()),
+            HandlerError::InsufficientFunds => (-32003, "insufficient funds for gas * price + value".to_owned()),
+            HandlerError::RejectCallerWithCode => (-32003, "sender is not an EOA".to_owned()),
+            HandlerError::Fatal(_) => (-32603, error.to_string()),
+            _ => (-32003, error.to_string()),
+        };
+        RpcError::new(code, message)
+    }
+
+    /// Whether evm2 reports a halt (anything but success or `REVERT`).
+    fn is_revert(result: &TxResult<BaseEvmTypes>) -> bool {
+        result.stop == InstrStop::Revert
+    }
+
+    /// reth's error for a failed execution: code 3 with the revert data, or `-32003` for a halt.
+    pub(super) fn failure(result: &TxResult<BaseEvmTypes>, gas: u64) -> RpcError {
+        if Self::is_revert(result) {
+            let mut error = RpcError::new(3, "execution reverted");
+            if !result.output.is_empty() {
+                error.data = Some(json!(result.output));
+            }
+            return error;
+        }
+        RpcError::new(-32003, Self::halt_message(result.stop, gas))
+    }
+
+    /// reth's message for a halt.
+    pub(super) fn halt_message(stop: InstrStop, gas: u64) -> String {
+        match stop {
+            InstrStop::OutOfGas | InstrStop::ReentrancySentryOOG => format!("out of gas: gas required exceeds: {gas}"),
+            InstrStop::MemoryOOG => format!("out of gas: gas exhausted during memory expansion: {gas}"),
+            InstrStop::MemoryLimitOOG => "out of memory: memory limit exceeded during memory expansion".to_owned(),
+            InstrStop::PrecompileOOG => format!("out of gas: gas exhausted during precompiled contract execution: {gas}"),
+            InstrStop::InvalidOperandOOG => format!("out of gas: invalid operand to an opcode: {gas}"),
+            InstrStop::NonceOverflow => "nonce has max value".to_owned(),
+            other => format!("EVM error: {other:?}"),
+        }
+    }
+
+    fn eth_call(&self, p: &Value) -> Result<Value, RpcError> {
+        let request = self.plain_request(p, p.get(1), "eth_call")?;
+        let state_overrides: Option<StateOverride> = param(p, 2)?;
+        let block_overrides: Option<BlockOverrides> = param(p, 3)?;
+        let mut block = self.call_block(p.get(1), true)?;
+        let chain = self.chain.read().expect("chain lock");
+        let state = chain.state_after(&block.parent).map_err(RpcError::internal)?;
+        let (mut evm, tx, gas, nonce) =
+            self.prepare_call(&chain, &state, &request, &mut block, state_overrides.as_ref(), block_overrides.as_ref())?;
+        let result = Self::run(&mut evm, &tx, gas, nonce).map_err(|error| Self::state_error(error, &state))?;
+        if result.status {
+            return Ok(json!(result.output));
+        }
+        Err(Self::failure(&result, result.tx_gas_used()))
+    }
+
+    fn estimate_gas(&self, p: &Value) -> Result<Value, RpcError> {
+        let request = self.plain_request(p, p.get(1), "eth_estimateGas")?;
+        let state_overrides: Option<StateOverride> = param(p, 2)?;
+        let block_overrides: Option<BlockOverrides> = param(p, 3)?;
+        let mut block = self.call_block(p.get(1), true)?;
+        if let Some(overrides) = &block_overrides {
+            Self::apply_block_overrides(&mut block.env, overrides);
+        }
+        let chain = self.chain.read().expect("chain lock");
+        let state = chain.state_after(&block.parent).map_err(RpcError::internal)?;
+        let mut evm = self.call_evm(&chain, &state, &block, CallKind::Estimate);
+        if let Some(overrides) = &block_overrides {
+            Self::apply_block_hash_overrides(&chain, &mut evm, overrides);
+        }
+        if let Some(overrides) = &state_overrides {
+            Self::apply_state_overrides(&mut evm, overrides)?;
+        }
+        let block_gas_limit: u64 = evm.block().gas_limit.saturating_to();
+        let max_gas_limit = evm.version().tx_gas_limit_cap.min(block_gas_limit).min(RPC_GAS_CAP);
+        let mut highest = request.gas.unwrap_or(max_gas_limit).min(max_gas_limit);
+        let from = request.from.unwrap_or_default();
+        let nonce = Self::account_now(&mut evm, &from)?.nonce;
+        let tx = self.call_tx(&request, evm.block().basefee.saturating_to(), evm.block().blob_basefee.saturating_to(), from)?;
+        let mut gas = tx.gas.unwrap_or(block_gas_limit);
+        let basic_transfer = tx.input.is_empty()
+            && match tx.kind {
+                TxKind::Call(to) => evm
+                    .read_account_info(&to)
+                    .ok()
+                    .is_some_and(|info| info.is_none_or(|info| info.code_hash == KECCAK256_EMPTY)),
+                TxKind::Create => false,
+            };
+        if tx.gas_price > 0 {
+            highest = highest.min(Self::caller_allowance(&mut evm, &tx)?);
+        }
+        gas = gas.min(highest);
+        if basic_transfer
+            && let Ok(result) = Self::run(&mut evm, &tx, TRANSFER_GAS.min(max_gas_limit), nonce)
+            && result.status
+        {
+            return Ok(json!(U64::from(result.tx_gas_used())));
+        }
+        let explicit = request.gas.is_some() || request.gas_price.is_some();
+        let result = match Self::run(&mut evm, &tx, gas, nonce) {
+            Err(error) if error.message == "intrinsic gas too high" && explicit => {
+                return self.out_of_gas_error(&mut evm, &tx, gas, max_gas_limit, nonce);
+            }
+            Err(error) if error.message == "intrinsic gas too low" => {
+                return Err(RpcError::new(-32000, format!("gas required exceeds allowance ({gas})")));
+            }
+            Err(error) => return Err(error),
+            Ok(result) => result,
+        };
+        if !result.status {
+            if Self::is_revert(&result) && explicit {
+                return self.out_of_gas_error(&mut evm, &tx, gas, max_gas_limit, nonce);
+            }
+            return Err(Self::failure(&result, gas));
+        }
+        let refund = Self::final_refund(&result);
+        highest = gas;
+        let mut gas_used = result.tx_gas_used();
+        let mut lowest = gas_used.saturating_sub(1);
+        let optimistic = (u128::from(gas_used) + u128::from(refund) + u128::from(CALL_STIPEND_GAS)) * 64 / 63;
+        if optimistic < u128::from(highest) {
+            let optimistic = optimistic as u64;
+            let result = Self::run(&mut evm, &tx, optimistic, nonce)?;
+            gas_used = result.tx_gas_used();
+            if result.status {
+                highest = optimistic;
+            } else {
+                lowest = optimistic;
+            }
+        }
+        let mut mid = u64::try_from((u128::from(highest) + u128::from(lowest)) / 2)
+            .expect("the mean of two u64 fits")
+            .min(gas_used.saturating_mul(3));
+        while lowest + 1 < highest {
+            if ((highest - lowest) as f64 / highest as f64) < ESTIMATE_GAS_ERROR_RATIO {
+                break;
+            }
+            match Self::run(&mut evm, &tx, mid, nonce) {
+                Err(error) if error.message == "intrinsic gas too high" => highest = mid,
+                Err(error) if error.message == "intrinsic gas too low" => lowest = mid,
+                Err(error) => return Err(error),
+                Ok(result) if result.status => highest = mid,
+                Ok(_) => lowest = mid,
+            }
+            mid = u64::try_from((u128::from(highest) + u128::from(lowest)) / 2).expect("the mean of two u64 fits");
+        }
+        Ok(json!(U64::from(highest)))
+    }
+
+    /// The refund the result applied: none when the EIP-7623 floor decided the gas.
+    fn final_refund(result: &TxResult<BaseEvmTypes>) -> u64 {
+        if result.total_gas_spent.saturating_sub(result.refunded) >= result.floor_gas { result.refunded } else { 0 }
+    }
+
+    /// reth's `map_out_of_gas_err`: retries at the largest limit to tell an out-of-gas from a
+    /// revert.
+    fn out_of_gas_error(
+        &self,
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        tx: &CallTx,
+        gas: u64,
+        max_gas_limit: u64,
+        nonce: u64,
+    ) -> Result<Value, RpcError> {
+        let result = Self::run(evm, tx, max_gas_limit, nonce)?;
+        if result.status {
+            return Err(RpcError::new(-32003, format!("out of gas: gas required exceeds: {gas}")));
+        }
+        Err(Self::failure(&result, gas))
+    }
+
+    fn create_access_list(&self, p: &Value) -> Result<Value, RpcError> {
+        // reth resolves the block before the request turns into a transaction environment.
+        param::<BaseTransactionRequest>(p, 0)?;
+        let state_overrides: Option<StateOverride> = param(p, 2)?;
+        let mut block = self.call_block(p.get(1), false)?;
+        let request = self.plain_request(p, p.get(1), "eth_createAccessList")?;
+        let initial = request.access_list.clone().unwrap_or_default();
+        let chain = self.chain.read().expect("chain lock");
+        let state = chain.state_after(&block.parent).map_err(RpcError::internal)?;
+        let (mut evm, mut tx, gas, nonce) = self.prepare_call(&chain, &state, &request, &mut block, state_overrides.as_ref(), None)?;
+        let recovered = tx.recovered(gas, nonce)?;
+        // revm-inspectors drops the caller, the callee (or created address), the precompiles and
+        // the valid authorities from the request's list; evm2's inspector only skips them later.
+        let mut excluded: std::collections::HashSet<Address> = evm.precompiles().addresses().into_iter().collect();
+        excluded.insert(tx.from);
+        excluded.insert(match tx.kind {
+            TxKind::Call(to) => to,
+            TxKind::Create => tx.from.create(nonce),
+        });
+        let mut inspector = AccessListInspector::default();
+        if let Some(standard) = recovered.as_standard() {
+            let standard = alloy_consensus::transaction::Recovered::new_unchecked(standard.clone(), tx.from);
+            inspector = inspector.with_excluded_from_tx(&standard);
+            excluded.extend(inspector.excluded().iter().copied());
+        }
+        let mut seeded = Self::dedup(initial);
+        seeded.0.retain(|item| !excluded.contains(&item.address));
+        let inspector = AccessListInspector::new(seeded).with_excluded(inspector.excluded().iter().copied());
+        let inspector = Shared::new(inspector);
+        evm.set_inspector(inspector.handle());
+        let first = evm.call_tx(&recovered).map_err(Self::handler_error);
+        evm.clear_inspector();
+        let first = first?;
+        let mut list = inspector.into_inner().into_access_list();
+        list.0.sort_by_key(|item| item.address);
+        list.0.iter_mut().for_each(|item| item.storage_keys.sort());
+        if !first.status {
+            return Ok(json!({
+                "accessList": list,
+                "gasUsed": U256::from(first.tx_gas_used()),
+                "error": Self::failure(&first, first.tx_gas_used()).message,
+            }));
+        }
+        tx.access_list = list.clone();
+        if tx.ty == 0 {
+            tx.ty = 1;
+        }
+        let second = Self::run(&mut evm, &tx, gas, nonce)?;
+        let mut out = json!({ "accessList": list, "gasUsed": U256::from(second.tx_gas_used()) });
+        if !second.status {
+            out["error"] = json!(Self::failure(&second, second.tx_gas_used()).message);
+        }
+        Ok(out)
+    }
+
+    /// Merges duplicate addresses and keys of an access list, as alloy's `dedup`.
+    fn dedup(list: AccessList) -> AccessList {
+        let mut merged: Vec<alloy_eips::eip2930::AccessListItem> = Vec::new();
+        for item in list.0 {
+            match merged.iter_mut().find(|existing| existing.address == item.address) {
+                Some(existing) => existing.storage_keys.extend(item.storage_keys),
+                None => merged.push(item),
+            }
+        }
+        for item in &mut merged {
+            let mut seen = std::collections::HashSet::new();
+            item.storage_keys.retain(|key| seen.insert(*key));
+        }
+        AccessList(merged)
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::super::test_utils::{REVERTER, node, reply};
+
+    fn call(node: &crate::Node, method: &str, params: Value) -> Value {
+        let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+        reply(node, &body.to_string()).expect("a request is answered")
+    }
+
+    #[test]
+    fn calls_report_reverts_and_estimates_as_reth() {
+        let node = node();
+        let reverted = call(&node, "eth_call", json!([{ "to": REVERTER }]));
+        assert_eq!(reverted["error"]["code"], json!(3));
+        assert_eq!(reverted["error"]["data"], json!("0xaa"));
+        let reverted = call(&node, "eth_estimateGas", json!([{ "to": REVERTER }]));
+        assert_eq!((reverted["error"]["code"].clone(), reverted["error"]["data"].clone()), (json!(3), json!("0xaa")));
+        // A plain transfer is 21000 without searching; a value above the balance is a halt.
+        let transfer = json!({ "from": "0x0000000000000000000000000000000000000001", "to": "0x000000000000000000000000000000000000beef", "value": "0x1" });
+        assert_eq!(call(&node, "eth_estimateGas", json!([transfer]))["result"], json!("0x5208"));
+        let broke = json!({ "from": "0x0000000000000000000000000000000000000003", "to": "0x000000000000000000000000000000000000beef", "value": "0x1" });
+        assert_eq!(call(&node, "eth_call", json!([broke]))["error"]["code"], json!(-32003));
+        // A fee cap below the base fee is rejected before execution, unless both fees are zero.
+        let underpriced = json!({ "to": REVERTER, "maxFeePerGas": "0x0", "maxPriorityFeePerGas": "0x0" });
+        assert_eq!(call(&node, "eth_call", json!([underpriced]))["error"]["code"], json!(3));
+        let underpriced = json!({ "to": REVERTER, "maxFeePerGas": "0x0", "maxPriorityFeePerGas": "0x0", "gasPrice": "0x1" });
+        assert_eq!(call(&node, "eth_call", json!([underpriced]))["error"]["code"], json!(-32602));
+        // An unknown block is -32001.
+        assert_eq!(call(&node, "eth_call", json!([{ "to": REVERTER }, "0x5"]))["error"]["code"], json!(-32001));
+    }
+}

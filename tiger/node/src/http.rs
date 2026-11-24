@@ -199,14 +199,9 @@ fn connection(node: &Node, stream: TcpStream, jwt: Option<&JwtSecret>) -> std::i
         }) {
             respond(&mut writer, 401, "Unauthorized", error.as_bytes(), close)?;
         } else {
-            let response = match serde_json::from_slice::<Value>(&body) {
-                Ok(request) => node.handle(&request, jwt.is_some()),
-                Err(error) => Some(serde_json::json!({
-                    "jsonrpc": "2.0", "id": null,
-                    "error": { "code": -32700, "message": format!("parse error: {error}") },
-                })),
-            };
-            let bytes = response.map(|value| serde_json::to_vec(&value).expect("JSON serializes")).unwrap_or_default();
+            let response = node.handle_body(&body, jwt.is_some());
+            // base-reth answers a notification with the body `null`.
+            let bytes = serde_json::to_vec(&response.unwrap_or(Value::Null)).expect("JSON serializes");
             respond(&mut writer, 200, "OK", &bytes, close)?;
         }
         if close {

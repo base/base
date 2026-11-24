@@ -30,12 +30,14 @@ base-proof-mpt = { path = "../../crates/proof/mpt", default-features = false, fe
 base-common-flz = { workspace = true, features = ["std"] }
 base-common-genesis = { workspace = true, features = ["std"] }
 base-common-l1-fees.workspace = true
+base-common-base-tx.workspace = true
 base-common-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 base-common-rpc-types = { workspace = true, features = ["std"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 
 # evm2
 evm2 = { workspace = true, features = ["std"] }
+evm2-inspectors.workspace = true
 
 # alloy
 alloy-rlp = { workspace = true, features = ["derive"] }
