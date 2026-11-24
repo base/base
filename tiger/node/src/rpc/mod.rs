@@ -94,6 +94,7 @@ pub use filters::RpcFilters;
 mod receipts;
 mod sequencer;
 mod shared;
+mod state;
 
 fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result<T, RpcError> {
     let value = params.get(index).cloned().unwrap_or(Value::Null);
@@ -131,16 +132,14 @@ impl Node {
                 let address: Address = param(p, 0)?;
                 let block = self.state_block(p.get(1))?;
                 let chain = self.chain.read().expect("chain lock");
-        let state = chain.state_after(&block).map_err(RpcError::internal)?;
-                let account = state.account(&address).map_err(|error| RpcError::internal(error.to_string()))?;
+                let state = self.rpc_state(&chain, &block)?;
+                let account = state.account(&address)?;
                 Ok(match method {
                     "eth_getBalance" => json!(account.map_or(U256::ZERO, |account| account.balance)),
                     "eth_getTransactionCount" => json!(U64::from(account.map_or(0, |account| account.nonce))),
                     _ => {
                         let code = match account {
-                            Some(account) => state
-                                .code(&account.code_hash)
-                                .map_err(|error| RpcError::internal(error.to_string()))?,
+                            Some(account) => state.code(&account.code_hash)?,
                             None => Default::default(),
                         };
                         json!(code)
@@ -152,8 +151,8 @@ impl Node {
                 let slot = U256::from_be_bytes(param::<JsonStorageKey>(p, 1)?.as_b256().0);
                 let block = self.state_block(p.get(2))?;
                 let chain = self.chain.read().expect("chain lock");
-        let state = chain.state_after(&block).map_err(RpcError::internal)?;
-                let value = state.storage(&address, &slot).map_err(|error| RpcError::internal(error.to_string()))?;
+                let state = self.rpc_state(&chain, &block)?;
+                let value = state.storage(&address, &slot)?;
                 Ok(json!(B256::from(value)))
             }
             "eth_getProof" => {
@@ -263,33 +262,17 @@ impl Node {
         }
         let slot = NonceManagerSlots::nonce_slot(address, key).expect("the key is not the protocol key");
         let chain = self.chain.read().expect("chain lock");
-        let state = chain.state_after(&block).map_err(RpcError::internal)?;
-        let word = state.storage(&NonceManagerSlots::ADDRESS, &slot).map_err(RpcError::internal)?;
+        let state = self.rpc_state(&chain, &block)?;
+        let word = state.storage(&NonceManagerSlots::ADDRESS, &slot)?;
         Ok(json!(word & U256::from(u64::MAX)))
     }
 
     /// `eth_getProof` at the post-state of `block`.
     fn proof(&self, block: &StoredBlock, address: Address, keys: &[JsonStorageKey]) -> Result<Value, RpcError> {
         let chain = self.chain.read().expect("chain lock");
-        let state = chain.state_after(block).map_err(RpcError::internal)?;
-        let slots: Vec<U256> = keys.iter().map(|key| U256::from_be_bytes(key.as_b256().0)).collect();
-        let proof = state.proof(address, &slots).map_err(RpcError::internal)?;
-        let storage_proof: Vec<Value> = keys
-            .iter()
-            .zip(&proof.storage)
-            .map(|(key, storage)| json!({ "key": key, "value": storage.value, "proof": storage.proof }))
-            .collect();
-        let account = proof.account;
-        Ok(json!({
-            "address": address,
-            "accountProof": proof.proof,
-            "balance": account.map_or(U256::ZERO, |account| account.balance),
-            "codeHash": account.and_then(|account| account.bytecode_hash).unwrap_or(alloy_primitives::KECCAK256_EMPTY),
-            "nonce": U64::from(account.map_or(0, |account| account.nonce)),
-            "storageHash": proof.storage_root,
-            "storageProof": storage_proof,
-        }))
+        self.rpc_state(&chain, block)?.proof_json(address, keys)
     }
+
 
     /// The RPC form of transaction `index` of `block`.
     pub fn transaction_json(&self, block: &StoredBlock, index: usize) -> Value {

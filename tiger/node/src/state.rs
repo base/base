@@ -1,10 +1,14 @@
 //! The parent state a block executes on, behind one trait so block building and validation run
 //! the same code over a stateless witness (the diff adapter) and over the node's database.
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_tiger_trie::{AccountInfo, AccountProof, BlockChanges, PreparedRoot, StateView};
+use base_tiger_trie::{AccountInfo, AccountProof, BlockChanges, PreparedRoot, StateView, TrieError};
 use evm2::{
     AccountInfo as EvmAccount, BlockStateAccumulator,
     bytecode::Bytecode,
@@ -77,6 +81,8 @@ pub struct NodeState<'d> {
     view: StateView<'d>,
     block_hashes: HashMap<u64, B256>,
     missing: RefCell<Option<String>>,
+    /// Whether a read failed for state not held locally (a partial, stateless datadir).
+    unknown: Cell<bool>,
     /// The trie changes of the last `state_root_after`, for the commit to reuse.
     prepared: RefCell<Option<PreparedRoot>>,
 }
@@ -84,35 +90,51 @@ pub struct NodeState<'d> {
 impl<'d> NodeState<'d> {
     /// The state of `view`, reading block hashes from `block_hashes`.
     pub fn new(view: StateView<'d>, block_hashes: HashMap<u64, B256>) -> Self {
-        Self { view, block_hashes, missing: RefCell::new(None), prepared: RefCell::new(None) }
+        Self { view, block_hashes, missing: RefCell::new(None), unknown: Cell::new(false), prepared: RefCell::new(None) }
     }
 
     fn record(&self, error: impl ToString) -> String {
         self.missing.borrow_mut().get_or_insert_with(|| error.to_string()).clone()
     }
 
+    fn record_trie(&self, error: TrieError) -> String {
+        if error.is_unknown() {
+            self.unknown.set(true);
+        }
+        self.record(error)
+    }
+
+    /// Whether a failed read needed state this datadir does not hold (a stateless node's
+    /// partial state), rather than failing on unreadable data.
+    pub fn is_unknown(&self) -> bool {
+        self.unknown.get()
+    }
+
     /// The account at `address`.
     pub fn account(&self, address: &Address) -> Result<Option<AccountInfo>, String> {
-        self.view.account(*address).map_err(|error| self.record(error))
+        self.view.account(*address).map_err(|error| self.record_trie(error))
     }
 
     /// The value of storage `slot` of `address`.
     pub fn storage(&self, address: &Address, slot: &U256) -> Result<U256, String> {
-        self.view.storage(*address, *slot).map_err(|error| self.record(error))
+        self.view.storage(*address, *slot).map_err(|error| self.record_trie(error))
     }
 
     /// The code with hash `hash`.
     pub fn code(&self, hash: &B256) -> Result<Bytes, String> {
         match self.view.code(*hash) {
             Ok(Some(code)) => Ok(code),
-            Ok(None) => Err(self.record(format!("missing bytecode {hash}"))),
-            Err(error) => Err(self.record(error)),
+            Ok(None) => {
+                self.unknown.set(true);
+                Err(self.record(format!("missing bytecode {hash}")))
+            }
+            Err(error) => Err(self.record_trie(error)),
         }
     }
 
     /// The `eth_getProof` proof of `address` and `slots`.
     pub fn proof(&self, address: Address, slots: &[U256]) -> Result<AccountProof, String> {
-        self.view.proof(address, slots).map_err(|error| self.record(error))
+        self.view.proof(address, slots).map_err(|error| self.record_trie(error))
     }
 
     /// The trie changes behind the last state root computed after a block on this state, which

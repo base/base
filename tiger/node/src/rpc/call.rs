@@ -24,7 +24,8 @@ use evm2_inspectors::access_list::AccessListInspector;
 use serde_json::{Value, json};
 
 use super::{param, shared::Shared};
-use crate::{Chain, Node, NodeDb, NodeState, ParentState, RpcError, chain::StoredBlock};
+use super::state::{RpcDb, RpcState};
+use crate::{Chain, Node, RpcError, chain::StoredBlock};
 
 /// reth's default `--rpc.gascap`.
 pub(super) const RPC_GAS_CAP: u64 = 50_000_000;
@@ -284,7 +285,7 @@ impl Node {
     pub(super) fn call_evm<'a>(
         &self,
         chain: &Chain,
-        state: &'a NodeState<'_>,
+        state: &'a RpcState<'_>,
         block: &CallBlock,
         kind: CallKind,
     ) -> Evm<'a, BaseEvmTypes> {
@@ -311,7 +312,7 @@ impl Node {
             spec,
             block.env,
             Self::call_registry(spec),
-            Db::new(NodeDb(state)),
+            Db::new(RpcDb(state)),
             BaseEvmTypes::precompiles(spec, &self.spec),
         );
         // The state's `BLOCKHASH` window is the one for the block after `parent`; a call at
@@ -579,7 +580,7 @@ impl Node {
     pub(super) fn prepare_call<'a>(
         &self,
         chain: &Chain,
-        state: &'a NodeState<'_>,
+        state: &'a RpcState<'_>,
         request: &TransactionRequest,
         block: &mut CallBlock,
         state_overrides: Option<&StateOverride>,
@@ -621,14 +622,6 @@ impl Node {
     ) -> Result<TxResult<BaseEvmTypes>, RpcError> {
         let recovered = tx.recovered(gas, nonce)?;
         evm.call_tx(&recovered).map_err(Self::handler_error)
-    }
-
-    /// An internal error carries the state read that failed, which evm2 reports only as a code.
-    pub(super) fn state_error(error: RpcError, state: &NodeState<'_>) -> RpcError {
-        match state.missing() {
-            Some(missing) if error.code == -32603 => RpcError::internal(missing),
-            _ => error,
-        }
     }
 
     /// reth's JSON-RPC error for a transaction evm2 rejected before executing it.
@@ -697,10 +690,11 @@ impl Node {
         let block_overrides: Option<BlockOverrides> = param(p, 3)?;
         let mut block = self.call_block(p.get(1), true)?;
         let chain = self.chain.read().expect("chain lock");
-        let state = chain.state_after(&block.parent).map_err(RpcError::internal)?;
+        let state = self.rpc_state(&chain, &block.parent)?;
         let (mut evm, tx, gas, nonce) =
-            self.prepare_call(&chain, &state, &request, &mut block, state_overrides.as_ref(), block_overrides.as_ref())?;
-        let result = Self::run(&mut evm, &tx, gas, nonce).map_err(|error| Self::state_error(error, &state))?;
+            self.prepare_call(&chain, &state, &request, &mut block, state_overrides.as_ref(), block_overrides.as_ref())
+                .map_err(|error| state.read_error(error))?;
+        let result = Self::run(&mut evm, &tx, gas, nonce).map_err(|error| state.read_error(error))?;
         if result.status {
             return Ok(json!(result.output));
         }
@@ -716,89 +710,92 @@ impl Node {
             Self::apply_block_overrides(&mut block.env, overrides);
         }
         let chain = self.chain.read().expect("chain lock");
-        let state = chain.state_after(&block.parent).map_err(RpcError::internal)?;
-        let mut evm = self.call_evm(&chain, &state, &block, CallKind::Estimate);
-        if let Some(overrides) = &block_overrides {
-            Self::apply_block_hash_overrides(&chain, &mut evm, overrides);
-        }
-        if let Some(overrides) = &state_overrides {
-            Self::apply_state_overrides(&mut evm, overrides)?;
-        }
-        let block_gas_limit: u64 = evm.block().gas_limit.saturating_to();
-        let max_gas_limit = evm.version().tx_gas_limit_cap.min(block_gas_limit).min(RPC_GAS_CAP);
-        let mut highest = request.gas.unwrap_or(max_gas_limit).min(max_gas_limit);
-        let from = request.from.unwrap_or_default();
-        let nonce = Self::account_now(&mut evm, &from)?.nonce;
-        let max_blobs = self.blob_params(block.spec_timestamp).map(|params| params.max_blobs_per_tx);
-        let tx = self.call_tx(&request, evm.block().basefee.saturating_to(), evm.block().blob_basefee.saturating_to(), max_blobs, from)?;
-        let mut gas = tx.gas.unwrap_or(block_gas_limit);
-        let basic_transfer = tx.input.is_empty()
-            && match tx.kind {
-                TxKind::Call(to) => evm
-                    .read_account_info(&to)
-                    .ok()
-                    .is_some_and(|info| info.is_none_or(|info| info.code_hash == KECCAK256_EMPTY)),
-                TxKind::Create => false,
-            };
-        if tx.gas_price > 0 {
-            highest = highest.min(Self::caller_allowance(&mut evm, &tx)?);
-        }
-        gas = gas.min(highest);
-        if basic_transfer
-            && let Ok(result) = Self::run(&mut evm, &tx, TRANSFER_GAS.min(max_gas_limit), nonce)
-            && result.status
-        {
-            return Ok(json!(U64::from(result.tx_gas_used())));
-        }
-        let explicit = request.gas.is_some() || request.gas_price.is_some();
-        let result = match Self::run(&mut evm, &tx, gas, nonce) {
-            Err(error) if error.message == "intrinsic gas too high" && explicit => {
-                return self.out_of_gas_error(&mut evm, &tx, gas, max_gas_limit, nonce);
+        let state = self.rpc_state(&chain, &block.parent)?;
+        let estimate = || -> Result<Value, RpcError> {
+    let mut evm = self.call_evm(&chain, &state, &block, CallKind::Estimate);
+            if let Some(overrides) = &block_overrides {
+                Self::apply_block_hash_overrides(&chain, &mut evm, overrides);
             }
-            Err(error) if error.message == "intrinsic gas too low" => {
-                return Err(RpcError::new(-32000, format!("gas required exceeds allowance ({gas})")));
+            if let Some(overrides) = &state_overrides {
+                Self::apply_state_overrides(&mut evm, overrides)?;
             }
-            Err(error) => return Err(error),
-            Ok(result) => result,
-        };
-        if !result.status {
-            if Self::is_revert(&result) && explicit {
-                return self.out_of_gas_error(&mut evm, &tx, gas, max_gas_limit, nonce);
+            let block_gas_limit: u64 = evm.block().gas_limit.saturating_to();
+            let max_gas_limit = evm.version().tx_gas_limit_cap.min(block_gas_limit).min(RPC_GAS_CAP);
+            let mut highest = request.gas.unwrap_or(max_gas_limit).min(max_gas_limit);
+            let from = request.from.unwrap_or_default();
+            let nonce = Self::account_now(&mut evm, &from)?.nonce;
+            let max_blobs = self.blob_params(block.spec_timestamp).map(|params| params.max_blobs_per_tx);
+            let tx = self.call_tx(&request, evm.block().basefee.saturating_to(), evm.block().blob_basefee.saturating_to(), max_blobs, from)?;
+            let mut gas = tx.gas.unwrap_or(block_gas_limit);
+            let basic_transfer = tx.input.is_empty()
+                && match tx.kind {
+                    TxKind::Call(to) => evm
+                        .read_account_info(&to)
+                        .ok()
+                        .is_some_and(|info| info.is_none_or(|info| info.code_hash == KECCAK256_EMPTY)),
+                    TxKind::Create => false,
+                };
+            if tx.gas_price > 0 {
+                highest = highest.min(Self::caller_allowance(&mut evm, &tx)?);
             }
-            return Err(Self::failure(&result, gas));
-        }
-        let refund = Self::final_refund(&result);
-        highest = gas;
-        let mut gas_used = result.tx_gas_used();
-        let mut lowest = gas_used.saturating_sub(1);
-        let optimistic = (u128::from(gas_used) + u128::from(refund) + u128::from(CALL_STIPEND_GAS)) * 64 / 63;
-        if optimistic < u128::from(highest) {
-            let optimistic = optimistic as u64;
-            let result = Self::run(&mut evm, &tx, optimistic, nonce)?;
-            gas_used = result.tx_gas_used();
-            if result.status {
-                highest = optimistic;
-            } else {
-                lowest = optimistic;
+            gas = gas.min(highest);
+            if basic_transfer
+                && let Ok(result) = Self::run(&mut evm, &tx, TRANSFER_GAS.min(max_gas_limit), nonce)
+                && result.status
+            {
+                return Ok(json!(U64::from(result.tx_gas_used())));
             }
-        }
-        let mut mid = u64::try_from((u128::from(highest) + u128::from(lowest)) / 2)
-            .expect("the mean of two u64 fits")
-            .min(gas_used.saturating_mul(3));
-        while lowest + 1 < highest {
-            if ((highest - lowest) as f64 / highest as f64) < ESTIMATE_GAS_ERROR_RATIO {
-                break;
-            }
-            match Self::run(&mut evm, &tx, mid, nonce) {
-                Err(error) if error.message == "intrinsic gas too high" => highest = mid,
-                Err(error) if error.message == "intrinsic gas too low" => lowest = mid,
+            let explicit = request.gas.is_some() || request.gas_price.is_some();
+            let result = match Self::run(&mut evm, &tx, gas, nonce) {
+                Err(error) if error.message == "intrinsic gas too high" && explicit => {
+                    return self.out_of_gas_error(&mut evm, &tx, gas, max_gas_limit, nonce);
+                }
+                Err(error) if error.message == "intrinsic gas too low" => {
+                    return Err(RpcError::new(-32000, format!("gas required exceeds allowance ({gas})")));
+                }
                 Err(error) => return Err(error),
-                Ok(result) if result.status => highest = mid,
-                Ok(_) => lowest = mid,
+                Ok(result) => result,
+            };
+            if !result.status {
+                if Self::is_revert(&result) && explicit {
+                    return self.out_of_gas_error(&mut evm, &tx, gas, max_gas_limit, nonce);
+                }
+                return Err(Self::failure(&result, gas));
             }
-            mid = u64::try_from((u128::from(highest) + u128::from(lowest)) / 2).expect("the mean of two u64 fits");
-        }
-        Ok(json!(U64::from(highest)))
+            let refund = Self::final_refund(&result);
+            highest = gas;
+            let mut gas_used = result.tx_gas_used();
+            let mut lowest = gas_used.saturating_sub(1);
+            let optimistic = (u128::from(gas_used) + u128::from(refund) + u128::from(CALL_STIPEND_GAS)) * 64 / 63;
+            if optimistic < u128::from(highest) {
+                let optimistic = optimistic as u64;
+                let result = Self::run(&mut evm, &tx, optimistic, nonce)?;
+                gas_used = result.tx_gas_used();
+                if result.status {
+                    highest = optimistic;
+                } else {
+                    lowest = optimistic;
+                }
+            }
+            let mut mid = u64::try_from((u128::from(highest) + u128::from(lowest)) / 2)
+                .expect("the mean of two u64 fits")
+                .min(gas_used.saturating_mul(3));
+            while lowest + 1 < highest {
+                if ((highest - lowest) as f64 / highest as f64) < ESTIMATE_GAS_ERROR_RATIO {
+                    break;
+                }
+                match Self::run(&mut evm, &tx, mid, nonce) {
+                    Err(error) if error.message == "intrinsic gas too high" => highest = mid,
+                    Err(error) if error.message == "intrinsic gas too low" => lowest = mid,
+                    Err(error) => return Err(error),
+                    Ok(result) if result.status => highest = mid,
+                    Ok(_) => lowest = mid,
+                }
+                mid = u64::try_from((u128::from(highest) + u128::from(lowest)) / 2).expect("the mean of two u64 fits");
+            }
+            Ok(json!(U64::from(highest)))
+        };
+        estimate().map_err(|error| state.read_error(error))
     }
 
     /// The refund the result applied: none when the EIP-7623 floor decided the gas.
@@ -831,51 +828,54 @@ impl Node {
         let request = self.plain_request(p, p.get(1), "eth_createAccessList")?;
         let initial = request.access_list.clone().unwrap_or_default();
         let chain = self.chain.read().expect("chain lock");
-        let state = chain.state_after(&block.parent).map_err(RpcError::internal)?;
-        let (mut evm, mut tx, gas, nonce) = self.prepare_call(&chain, &state, &request, &mut block, state_overrides.as_ref(), None)?;
-        let recovered = tx.recovered(gas, nonce)?;
-        // revm-inspectors drops the caller, the callee (or created address), the precompiles and
-        // the valid authorities from the request's list; evm2's inspector only skips them later.
-        let mut excluded: std::collections::HashSet<Address> = evm.precompiles().addresses().into_iter().collect();
-        excluded.insert(tx.from);
-        excluded.insert(match tx.kind {
-            TxKind::Call(to) => to,
-            TxKind::Create => tx.from.create(nonce),
-        });
-        let mut inspector = AccessListInspector::default();
-        if let Some(standard) = recovered.as_standard() {
-            let standard = alloy_consensus::transaction::Recovered::new_unchecked(standard.clone(), tx.from);
-            inspector = inspector.with_excluded_from_tx(&standard);
-            excluded.extend(inspector.excluded().iter().copied());
-        }
-        let mut seeded = Self::dedup(initial);
-        seeded.0.retain(|item| !excluded.contains(&item.address));
-        let inspector = AccessListInspector::new(seeded).with_excluded(inspector.excluded().iter().copied());
-        let inspector = Shared::new(inspector);
-        evm.set_inspector(inspector.handle());
-        let first = evm.call_tx(&recovered).map_err(Self::handler_error);
-        evm.clear_inspector();
-        let first = first?;
-        let mut list = inspector.into_inner().into_access_list();
-        list.0.sort_by_key(|item| item.address);
-        list.0.iter_mut().for_each(|item| item.storage_keys.sort());
-        if !first.status {
-            return Ok(json!({
-                "accessList": list,
-                "gasUsed": U256::from(first.tx_gas_used()),
-                "error": Self::failure(&first, first.tx_gas_used()).message,
-            }));
-        }
-        tx.access_list = list.clone();
-        if tx.ty == 0 {
-            tx.ty = 1;
-        }
-        let second = Self::run(&mut evm, &tx, gas, nonce)?;
-        let mut out = json!({ "accessList": list, "gasUsed": U256::from(second.tx_gas_used()) });
-        if !second.status {
-            out["error"] = json!(Self::failure(&second, second.tx_gas_used()).message);
-        }
-        Ok(out)
+        let state = self.rpc_state(&chain, &block.parent)?;
+        let access_list = || -> Result<Value, RpcError> {
+    let (mut evm, mut tx, gas, nonce) = self.prepare_call(&chain, &state, &request, &mut block, state_overrides.as_ref(), None)?;
+            let recovered = tx.recovered(gas, nonce)?;
+            // revm-inspectors drops the caller, the callee (or created address), the precompiles and
+            // the valid authorities from the request's list; evm2's inspector only skips them later.
+            let mut excluded: std::collections::HashSet<Address> = evm.precompiles().addresses().into_iter().collect();
+            excluded.insert(tx.from);
+            excluded.insert(match tx.kind {
+                TxKind::Call(to) => to,
+                TxKind::Create => tx.from.create(nonce),
+            });
+            let mut inspector = AccessListInspector::default();
+            if let Some(standard) = recovered.as_standard() {
+                let standard = alloy_consensus::transaction::Recovered::new_unchecked(standard.clone(), tx.from);
+                inspector = inspector.with_excluded_from_tx(&standard);
+                excluded.extend(inspector.excluded().iter().copied());
+            }
+            let mut seeded = Self::dedup(initial);
+            seeded.0.retain(|item| !excluded.contains(&item.address));
+            let inspector = AccessListInspector::new(seeded).with_excluded(inspector.excluded().iter().copied());
+            let inspector = Shared::new(inspector);
+            evm.set_inspector(inspector.handle());
+            let first = evm.call_tx(&recovered).map_err(Self::handler_error);
+            evm.clear_inspector();
+            let first = first?;
+            let mut list = inspector.into_inner().into_access_list();
+            list.0.sort_by_key(|item| item.address);
+            list.0.iter_mut().for_each(|item| item.storage_keys.sort());
+            if !first.status {
+                return Ok(json!({
+                    "accessList": list,
+                    "gasUsed": U256::from(first.tx_gas_used()),
+                    "error": Self::failure(&first, first.tx_gas_used()).message,
+                }));
+            }
+            tx.access_list = list.clone();
+            if tx.ty == 0 {
+                tx.ty = 1;
+            }
+            let second = Self::run(&mut evm, &tx, gas, nonce)?;
+            let mut out = json!({ "accessList": list, "gasUsed": U256::from(second.tx_gas_used()) });
+            if !second.status {
+                out["error"] = json!(Self::failure(&second, second.tx_gas_used()).message);
+            }
+            Ok(out)
+        };
+        access_list().map_err(|error| state.read_error(error))
     }
 
     /// Merges duplicate addresses and keys of an access list, as alloy's `dedup`.

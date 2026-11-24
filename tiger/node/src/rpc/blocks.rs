@@ -104,8 +104,7 @@ impl Node {
     fn nonce_at(&self, sender: Address, number: u64) -> Result<u64, RpcError> {
         let block = self.state_block(Some(&json!(U64::from(number))))?;
         let chain = self.chain.read().expect("chain lock");
-        let state = chain.state_after(&block).map_err(RpcError::internal)?;
-        let account = state.account(&sender).map_err(|error| RpcError::internal(error.to_string()))?;
+        let account = self.rpc_state(&chain, &block)?.account(&sender)?;
         Ok(account.map_or(0, |account| account.nonce))
     }
 
