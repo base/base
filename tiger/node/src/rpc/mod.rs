@@ -19,6 +19,8 @@ const ETH_PROOF_WINDOW: u64 = 0;
 mod blocks;
 mod call;
 mod envelope;
+mod filters;
+pub use filters::RpcFilters;
 mod receipts;
 mod shared;
 
@@ -30,7 +32,7 @@ fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result
 impl Node {
     /// Answers one non-Engine JSON-RPC method.
     pub fn rpc(&self, method: &str, p: &Value) -> Result<Value, RpcError> {
-        if let Some(result) = self.rpc_blocks(method, p).or_else(|| self.rpc_call(method, p)) {
+        if let Some(result) = self.rpc_blocks(method, p).or_else(|| self.rpc_call(method, p)).or_else(|| self.rpc_filters(method, p)) {
             return result;
         }
         match method {
@@ -76,7 +78,7 @@ impl Node {
             }
             "eth_getStorageAt" => {
                 let address: Address = param(p, 0)?;
-                let slot: U256 = param(p, 1)?;
+                let slot = U256::from_be_bytes(param::<JsonStorageKey>(p, 1)?.as_b256().0);
                 let block = self.state_block(p.get(2))?;
                 let chain = self.chain.read().expect("chain lock");
         let state = chain.state_after(&block).map_err(RpcError::internal)?;

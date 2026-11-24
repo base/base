@@ -31,6 +31,7 @@ mod node;
 pub use node::{Node, RpcError};
 
 mod rpc;
+pub use rpc::RpcFilters;
 
 mod trie_mode;
 pub use trie_mode::handle as handle_trie_request;
