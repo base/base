@@ -450,7 +450,8 @@ impl ChainFuzzer {
             // Guided runs start few fresh chains, so they rotate the era a fresh chain targets
             // (before its activation or within it) instead of weighting recent eras: every
             // era, Regolith included, gets an equal share.
-            options.eras = vec![Era::ALL[index as usize % Era::ALL.len()]];
+            let eras = Era::targeted();
+            options.eras = vec![eras[index as usize % eras.len()]];
         }
         let chain = catch_unwind(AssertUnwindSafe(|| ChainGenerator::new(seed, options))).ok()?;
         Some(ChainRun {

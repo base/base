@@ -8,6 +8,10 @@ post-state, and every header field. The wire format between the harness and an a
 
 ## Commands
 
+Generators (`gen`, `fuzz`, `chain`, `chain-fuzz`) target every era from Regolith to Denim. Set
+`BASE_DIFF_MAX_ERA` to an era name, such as `azul`, to stop at that era for a client that does
+not implement later upgrades yet (chains can still cross into the next era).
+
 - `run <paths>`: saved requests (JSON files, JSON-lines files, or directories of them).
 - `gen --seed S --count N`: single-block generator cases `0..N`.
 - `chain --seed S --chains N --length L`: multi-block synthetic chains. A chain advances only

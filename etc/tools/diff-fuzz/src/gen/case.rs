@@ -46,7 +46,7 @@ pub struct GeneratorOptions {
 impl Default for GeneratorOptions {
     fn default() -> Self {
         Self {
-            eras: Era::ALL.to_vec(),
+            eras: Era::targeted(),
             min_txs: 4,
             max_txs: 24,
             invalid_percent: 8,

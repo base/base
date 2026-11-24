@@ -54,6 +54,24 @@ impl Era {
         Self::Denim,
     ];
 
+    /// Environment variable naming the newest era generators target, such as `azul`, for
+    /// clients that do not implement later upgrades yet. Unset means every era.
+    pub const MAX_ERA_ENV: &str = "BASE_DIFF_MAX_ERA";
+
+    /// The eras generators target: [`Self::ALL`] up to [`Self::MAX_ERA_ENV`].
+    ///
+    /// # Panics
+    ///
+    /// When the variable names no era.
+    pub fn targeted() -> Vec<Self> {
+        let Ok(name) = std::env::var(Self::MAX_ERA_ENV) else { return Self::ALL.to_vec() };
+        let last = Self::ALL
+            .into_iter()
+            .find(|era| era.name() == name.trim())
+            .unwrap_or_else(|| panic!("{} names no era: {name}", Self::MAX_ERA_ENV));
+        Self::ALL.into_iter().filter(|era| *era <= last).collect()
+    }
+
     /// Mainnet activation timestamp of the era's upgrade.
     pub const fn activation_timestamp(self) -> u64 {
         let c = ChainConfig::mainnet();
