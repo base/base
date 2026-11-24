@@ -11,6 +11,12 @@ pub use chain::ChainSpec;
 mod l1block;
 pub use l1block::L1BlockInfo;
 
+mod validation;
+pub use validation::{BlockRules, ComputedHeader, Invalid, MAXIMUM_EXTRA_DATA_SIZE, MAXIMUM_GAS_LIMIT};
+
+mod block;
+pub use block::{Transactions, assemble_header, computed_header, receipts_root};
+
 mod canyon;
 pub use canyon::Canyon;
 

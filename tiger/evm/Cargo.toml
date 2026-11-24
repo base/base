@@ -17,13 +17,14 @@ base-common-flz.workspace = true
 base-common-base-tx.workspace = true
 base-common-genesis.workspace = true
 base-common-l1-fees.workspace = true
-base-common-consensus.workspace = true
+base-common-consensus = { workspace = true, features = ["std", "k256"] }
 
 # evm2
 evm2 = { workspace = true, features = ["std", "secp256k1", "asm-keccak"] }
 
 # alloy
 alloy-rlp.workspace = true
+alloy-trie.workspace = true
 alloy-eips.workspace = true
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["std", "secp256k1"] }
 alloy-primitives.workspace = true

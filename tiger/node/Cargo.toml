@@ -11,6 +11,9 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "tiger"
 path = "src/main.rs"
@@ -18,3 +21,23 @@ path = "src/main.rs"
 [dependencies]
 # tiger
 base-tiger-evm.workspace = true
+
+# base
+base-proof-mpt = { path = "../../crates/proof/mpt", default-features = false, features = ["std"] }
+base-common-genesis = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["std", "k256"] }
+
+# evm2
+evm2 = { workspace = true, features = ["std"] }
+
+# alloy
+alloy-rlp.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-serde = { version = "2.5.0", default-features = false, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std", "serde"] }
+
+# serialization
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true, features = ["std"] }

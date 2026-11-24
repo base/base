@@ -9,7 +9,7 @@ use base_common_l1_fees::L1FeeParams;
 use evm2::{
     BlockStateAccumulator, Evm, SpecId,
     evm::DynDatabase,
-    env::BlockEnv,
+    EvmConfigSelector, env::BlockEnv,
     evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SystemTx},
     registry::{HandlerError, HandlerResult},
 };
@@ -231,7 +231,12 @@ impl<'a> BaseBlockExecutor<'a> {
             prevrandao: env.prev_randao.into(),
             ..BlockEnv::<BaseEvmTypes>::default()
         };
-        let evm = Evm::new(
+        let config =
+            <evm2::BaseEvmConfigSelector as EvmConfigSelector<BaseEvmTypes>>::execution_config(spec);
+        let mut version = *config.version();
+        version.chain_id = chain.chain_id;
+        let evm = Evm::new_with_execution_config(
+            config.with_version(version),
             spec,
             block,
             BaseEvmTypes::tx_registry(spec),

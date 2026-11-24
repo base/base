@@ -6,7 +6,7 @@ use evm2::{
     Evm, SpecId, TxResult,
     env::TxEnvExt,
     ethereum::{
-        TxEnvelope, eip1559, eip2930, eip7702, execute_initial_frame, finalize_gas,
+        TxEnvelope, eip1559, eip2930, eip7702, execute_initial_frame, finalize_gas, floor_gas,
         initial_gas_and_reservoir, intrinsic_gas, legacy, prepare_initial_frame,
         warm_base_accounts,
     },
@@ -94,7 +94,10 @@ impl BaseEvmTypes {
         // run the call/create frame with the remaining gas. A deposit that cannot afford its
         // intrinsic cost is settled as a failed deposit.
         let intrinsic = intrinsic_gas(host.version(), tx.from, tx.to, &tx.input, 0, 0, tx.value);
-        if tx.gas_limit < intrinsic {
+        // The EIP-7623 calldata floor applies to deposits too (revm validates and charges it for
+        // every transaction type).
+        let floor = floor_gas(host.version(), tx.from, tx.to, &tx.input, 0, 0, tx.value);
+        if tx.gas_limit < intrinsic || tx.gas_limit < floor {
             return Ok(Self::failed_deposit(tx));
         }
         let (execution_gas_limit, reservoir) =
@@ -154,7 +157,7 @@ impl BaseEvmTypes {
                 caller: tx.from,
                 gas_price: U256::ZERO,
                 gas_limit: tx.gas_limit,
-                floor_gas: 0,
+                floor_gas: floor,
                 initial_state_gas: 0,
                 state_refund: 0,
                 result,
