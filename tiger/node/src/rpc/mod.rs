@@ -86,6 +86,7 @@ impl RpcConfig {
 
 mod blocks;
 mod call;
+mod config;
 mod envelope;
 mod fees;
 mod filters;
@@ -102,7 +103,7 @@ fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result
 impl Node {
     /// Answers one non-Engine JSON-RPC method.
     pub fn rpc(&self, method: &str, p: &Value) -> Result<Value, RpcError> {
-        if let Some(result) = self.rpc_blocks(method, p).or_else(|| self.rpc_call(method, p)).or_else(|| self.rpc_filters(method, p)).or_else(|| self.rpc_fees(method, p)).or_else(|| self.rpc_sequencer(method, p)) {
+        if let Some(result) = self.rpc_blocks(method, p).or_else(|| self.rpc_call(method, p)).or_else(|| self.rpc_filters(method, p)).or_else(|| self.rpc_fees(method, p)).or_else(|| self.rpc_sequencer(method, p)).or_else(|| self.rpc_config_method(method)) {
             return result;
         }
         match method {
