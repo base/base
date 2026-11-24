@@ -17,5 +17,9 @@ workspace = true
 alloy-trie = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 
+# storage
+zstd.workspace = true
+rocksdb.workspace = true
+
 [build-dependencies]
 cc.workspace = true

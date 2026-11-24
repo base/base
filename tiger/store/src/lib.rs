@@ -27,3 +27,9 @@ pub use codec::{
 
 mod tables;
 pub use tables::{DB_VERSION, DB_VERSION_FILE, Db, OpenError, Table};
+
+mod static_files;
+pub use static_files::{BLOCKS_PER_FILE, Jar, JarConfig, Lz4, Range, Segment, SegmentHeader, StaticFiles};
+
+mod rocks;
+pub use rocks::{BlockList, History, Rocks, RocksBatch, RocksError, RocksTable, SHARD_SIZE};

@@ -173,6 +173,32 @@ impl Fault {
         }
     }
 
+    /// Runs a durable write tiger cannot split into file writes (a synced RocksDB batch) as one
+    /// counted write. At the crash write, `torn` and `lose_unsynced` both perform it or not at
+    /// random (a torn WAL record is dropped by RocksDB's recovery; a synced one survives), then
+    /// abort.
+    pub fn opaque_write(name: &str, write: impl FnOnce()) {
+        let Some(state) = Self::state() else { return write() };
+        let mut state = state.lock().unwrap();
+        state.writes += 1;
+        if state.writes != state.config.crash_after_writes {
+            drop(state);
+            return write();
+        }
+        let performed = state.next() % 2 == 0;
+        if performed {
+            write();
+        }
+        eprintln!(
+            "tiger-fault: crash at write {} mode={:?} phase=\"{}\" file={name} offset=0 len=0: batch {}",
+            state.writes,
+            state.config.mode,
+            state.phase,
+            if performed { "written" } else { "lost" },
+        );
+        std::process::abort();
+    }
+
     /// Called by tiger's own writers after `path` was synced.
     pub fn after_sync(path: &Path) {
         if let Some(state) = Self::state() {
