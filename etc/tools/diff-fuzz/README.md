@@ -368,3 +368,10 @@ target. In each phase the target must reach `VALID` within `--timeout`. Then eve
 compared with the source (block hash, state, receipts, and transactions roots, logs bloom), plus
 the balance, nonce, and code of the head block's accounts. The report (`--out`) lists, per phase,
 the statuses seen, the target's height when the reorg happened, the time taken, and any mismatches.
+
+With `--stateless-start <block|tag>` the target starts without state at that block of the source,
+with the source as its execution witness upstream (`BASE_DIFF_STATELESS="<source http url> <start>"`
+for the launch script; tiger takes `--stateless.upstream` and `--stateless.start`). Heights below
+the first block the target serves are absent; that block must stay the same across phases, and
+the report records it with the source's finalized block at launch. `latest` cannot pass the first
+phase: the mid-sync reorg drops the start block.

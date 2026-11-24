@@ -27,6 +27,9 @@ pub struct SyncConfig {
     pub reorg_after: Duration,
     /// How long the target may take to reach one head.
     pub timeout: Duration,
+    /// Start the target without state at this block or tag of the source (a stateless start
+    /// with the source as its witness upstream) instead of from genesis.
+    pub stateless_start: Option<String>,
 }
 
 /// What one phase of the check saw.
@@ -59,6 +62,13 @@ pub struct SyncReport {
     pub phases: Vec<SyncPhase>,
     /// Divergences of the source from the generator while building (the source's own).
     pub source_divergences: Vec<String>,
+    /// Stateless start asked for, if any.
+    pub stateless_start: Option<String>,
+    /// The source's finalized block when the target started (where a `finalized` start
+    /// begins).
+    pub source_finalized_at_start: Option<u64>,
+    /// The lowest block the target serves; heights below it are absent (stateless start).
+    pub first_block: Option<u64>,
 }
 
 /// A source node driven by a state session and a target node that syncs from it.
@@ -91,7 +101,14 @@ impl SyncCheck {
             proc,
             config,
             rng: Rng::new(&[seed, 0x5e7c]),
-            report: SyncReport { seed, phases: Vec::new(), source_divergences: Vec::new() },
+            report: SyncReport {
+                seed,
+                phases: Vec::new(),
+                source_divergences: Vec::new(),
+                stateless_start: None,
+                source_finalized_at_start: None,
+                first_block: None,
+            },
         }
     }
 
@@ -102,6 +119,15 @@ impl SyncCheck {
         self.extend(self.config.blocks)?;
         let enode = self.source_enode()?;
         self.proc.peers = Some(enode);
+        if let Some(start) = self.config.stateless_start.clone() {
+            let source = self.session.nodes.first().ok_or_else(|| eyre!("no source node"))?;
+            let finalized = source.result("eth_getBlockByNumber", &json!(["finalized", false]))?;
+            self.report.source_finalized_at_start = finalized["number"]
+                .as_str()
+                .and_then(|n| u64::from_str_radix(n.trim_start_matches("0x"), 16).ok());
+            self.proc.stateless = Some(format!("{} {start}", source.http_url));
+            self.report.stateless_start = Some(start);
+        }
         self.proc.spawn(true)?;
         self.proc.wait_ready(&self.target)?;
 
@@ -250,15 +276,35 @@ impl SyncCheck {
         Ok(())
     }
 
-    /// Compares the target with the source at every height up to the head: block hash, state
-    /// root, receipts root, and the accounts of the head block's transactions.
-    fn compare(&self, head: (u64, B256), mismatches: &mut Vec<String>) -> eyre::Result<u64> {
+    /// Compares the target with the source at every height it serves up to the head: block
+    /// hash, state root, receipts root, and the accounts of the head block's transactions. A
+    /// full target serves every height; a stateless one the heights from its start block, which
+    /// must not move between phases.
+    fn compare(&mut self, head: (u64, B256), mismatches: &mut Vec<String>) -> eyre::Result<u64> {
         let source = self.session.nodes.first().ok_or_else(|| eyre!("no source node"))?;
         let latest = self.target.result("eth_getBlockByNumber", &json!(["latest", false]))?;
         if latest["hash"] != json!(head.1) {
             mismatches.push(format!("target latest {} is not head {}", latest["hash"], head.1));
         }
-        for number in 0..=head.0 {
+        let mut first = 0;
+        if self.config.stateless_start.is_some() {
+            while first <= head.0
+                && self
+                    .target
+                    .result("eth_getBlockByNumber", &json!([format!("{first:#x}"), false]))?
+                    .is_null()
+            {
+                first += 1;
+            }
+            match self.report.first_block {
+                None => self.report.first_block = Some(first),
+                Some(was) if was != first => {
+                    mismatches.push(format!("first served block moved from {was} to {first}"));
+                }
+                Some(_) => {}
+            }
+        }
+        for number in first..=head.0 {
             let params = json!([format!("{number:#x}"), false]);
             let ours = source.result("eth_getBlockByNumber", &params)?;
             let theirs = self.target.result("eth_getBlockByNumber", &params)?;
@@ -296,6 +342,6 @@ impl SyncCheck {
                 }
             }
         }
-        Ok(head.0 + 1)
+        Ok(head.0 + 1 - first)
     }
 }

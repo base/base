@@ -483,6 +483,11 @@ enum Command {
         /// How long the target may take to reach one head.
         #[arg(long, default_value = "10m", value_parser = parse_duration)]
         timeout: Duration,
+        /// Start the target without state at this block or tag of the source (`finalized`,
+        /// `safe`, or a number), with the source as its execution witness upstream; heights
+        /// below the start are absent on the target.
+        #[arg(long)]
+        stateless_start: Option<String>,
         /// Report file.
         #[arg(long, default_value = "sync-report.json")]
         out: PathBuf,
@@ -726,6 +731,7 @@ fn main() -> eyre::Result<()> {
             blocks,
             reorg_after_ms,
             timeout,
+            stateless_start,
             out,
         } => {
             fs::create_dir_all(&root)?;
@@ -747,8 +753,12 @@ fn main() -> eyre::Result<()> {
                 Lag { safe: 4, finalized: 64 },
                 40,
             )?;
-            let config =
-                SyncConfig { blocks, reorg_after: Duration::from_millis(reorg_after_ms), timeout };
+            let config = SyncConfig {
+                blocks,
+                reorg_after: Duration::from_millis(reorg_after_ms),
+                timeout,
+                stateless_start,
+            };
             let report = SyncCheck::new(session, target, proc, config).run()?;
             fs::write(&out, serde_json::to_string_pretty(&report)?)?;
             println!("{}", serde_json::to_string_pretty(&report)?);

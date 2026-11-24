@@ -28,6 +28,8 @@ pub struct NodeProcess {
     pub fault: Option<String>,
     /// Peers the next launch connects to (see [`Self::PEERS_ENV`]).
     pub peers: Option<String>,
+    /// Stateless start the next launch asks for (see [`Self::STATELESS_ENV`]).
+    pub stateless: Option<String>,
     child: Option<Child>,
     /// Length of the log when the running process was launched.
     log_start: u64,
@@ -41,7 +43,16 @@ impl NodeProcess {
 
     /// A process handle for node `name`; nothing is started.
     pub const fn new(name: String, launch: PathBuf, root: PathBuf) -> Self {
-        Self { name, launch, root, fault: None, peers: None, child: None, log_start: 0 }
+        Self {
+            name,
+            launch,
+            root,
+            fault: None,
+            peers: None,
+            stateless: None,
+            child: None,
+            log_start: 0,
+        }
     }
 
     /// Environment variable passed to the launch script: the fault injection to arm for this
@@ -51,6 +62,10 @@ impl NodeProcess {
     /// Environment variable passed to the launch script: comma-separated enodes the node
     /// should peer with (the sync check's source), or empty for none.
     pub const PEERS_ENV: &str = "BASE_DIFF_PEERS";
+    /// Environment variable passed to the launch script: `<upstream http url> <start block or
+    /// tag>` for a node that starts without state from an upstream's execution witnesses
+    /// (tiger's `--stateless.upstream` and `--stateless.start`), or empty for a full node.
+    pub const STATELESS_ENV: &str = "BASE_DIFF_STATELESS";
     /// Line prefix a node prints when an injected fault crashes it (tiger's `TIGER_FAULT`).
     pub const FAULT_LINE: &str = "tiger-fault: crash at write";
 
@@ -96,6 +111,7 @@ impl NodeProcess {
             .arg(&dir)
             .env(Self::FAULT_ENV, self.fault.as_deref().unwrap_or_default())
             .env(Self::PEERS_ENV, self.peers.as_deref().unwrap_or_default())
+            .env(Self::STATELESS_ENV, self.stateless.as_deref().unwrap_or_default())
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)
