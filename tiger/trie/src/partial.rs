@@ -319,8 +319,13 @@ impl PartialState {
         keys: &BTreeMap<Option<B256>, Vec<Nibbles>>,
     ) -> Result<(), TrieError> {
         let by_hash: BTreeMap<B256, &Bytes> = nodes.iter().map(|n| (keccak256(n), n)).collect();
-        let on_key_path =
-            |owner: &Option<B256>, path: &Nibbles| keys.get(owner).is_some_and(|keys| keys.iter().any(|key| key.starts_with(path)));
+        // Sorted, the keys under a path follow it directly: the first key at or after the path
+        // is under it if any is.
+        let keys: BTreeMap<Option<B256>, BTreeSet<Nibbles>> =
+            keys.iter().map(|(owner, keys)| (*owner, keys.iter().copied().collect())).collect();
+        let on_key_path = |owner: &Option<B256>, path: &Nibbles| {
+            keys.get(owner).and_then(|keys| keys.range(*path..).next()).is_some_and(|key| key.starts_with(path))
+        };
         let (table, accounts, storages) = (db.dbi(Table::TigerNodes), db.dbi(Table::HashedAccounts), db.dbi(Table::HashedStorages));
         let mut stack = Vec::with_capacity(64);
         if root != EMPTY_ROOT_HASH {

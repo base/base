@@ -571,6 +571,11 @@ impl Chain {
             let (safe, finalized) = (number(&next.safe)?, number(&next.finalized)?);
             let mut w = self.db.write().map_err(|error| error.to_string())?;
             w.set_chain_state(finalized, safe).map_err(|error| error.to_string())?;
+            // A stateless node's unwinds restore journaled trie nodes; nothing unwinds below the
+            // finalized block, so its journal goes.
+            if next.finalized != self.forkchoice.finalized {
+                self.db.prune_unwind_journal(&mut w, finalized).map_err(|error| error.to_string())?;
+            }
             Self::put_forkchoice(&mut w, next)?;
             w.commit().map_err(|error| error.to_string())?;
             self.forkchoice = next;
