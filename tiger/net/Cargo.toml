@@ -1,0 +1,29 @@
+[package]
+name = "base-tiger-net"
+description = "Peer-to-peer networking and execution-layer sync for the tiger client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-rlp = { workspace = true, features = ["std", "derive"] }
+alloy-trie = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std", "asm-keccak"] }
+
+# crypto
+aes.workspace = true
+ctr.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+getrandom = { workspace = true, features = ["std"] }
+aes-gcm = { workspace = true, features = ["aes", "alloc"] }
+secp256k1 = { workspace = true, features = ["std", "recovery", "global-context"] }
