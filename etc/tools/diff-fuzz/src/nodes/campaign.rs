@@ -436,7 +436,8 @@ impl RpcCampaign {
         let mut serving = serving.to_vec();
         let known = Self::known_base_cause(case, &replies, &normalized)
             .or_else(|| Self::known_base_difference(case, &replies, &normalized))
-            .or_else(|| Self::settled_unfunded_fee(case, &replies, &normalized));
+            .or_else(|| Self::settled_unfunded_fee(case, &replies, &normalized))
+            .or_else(|| Self::persisted_blockhash(case, head, &normalized));
         if Self::simulate_encoding_only(case, &normalized) {
             *summary
                 .lock()
@@ -591,6 +592,13 @@ impl RpcCampaign {
     /// base/base's callTracer frame for a system deposit after Regolith, which fails before any
     /// frame starts, has `to` 0x0 and no input; Nethermind builds it from the tx (B11).
     pub const KNOWN_BASE_FAILED_DEPOSIT_FRAME: &str = "base: failed system deposit frame";
+    /// base/base's BLOCKHASH under a `number` block override above the state block answers the
+    /// canonical hash for blocks it has persisted and zero for blocks still in its in-memory
+    /// canonical state, so the answer for the last \~51 blocks depends on when it last persisted
+    /// (reth persists once 50 blocks are in memory, down to head−5). Tiger answers the hash up
+    /// to head−51 and zero above it.
+    pub const KNOWN_BASE_PERSISTED_BLOCKHASH: &str =
+        "base: blockhash above the state block depends on persistence";
     /// base/base accepts a JSON number as a call's `type`.
     pub const KNOWN_BASE_INTEGER_TYPE: &str = "base: integer type accepted";
 
@@ -880,6 +888,37 @@ impl RpcCampaign {
             return None;
         };
         Some((cause, base))
+    }
+
+    /// [`Self::KNOWN_BASE_PERSISTED_BLOCKHASH`] with base's index, when `case` can reach it: an
+    /// eth\_call or eth\_estimateGas whose `number` override N is above its state block B, so a
+    /// BLOCKHASH(n) with B < n < N, n ≥ N − 256, and head − 51 < n ≤ head − 5 is possible, and
+    /// the other node disagrees with base. A state block given as a tag other than latest or
+    /// pending counts as block 0.
+    pub fn persisted_blockhash(
+        case: &RpcCase,
+        head: u64,
+        normalized: &[(String, Value)],
+    ) -> Option<(&'static str, usize)> {
+        let base = normalized.iter().position(|(n, _)| n == "base")?;
+        if normalized.iter().all(|(_, v)| *v == normalized[base].1)
+            || !matches!(case.method.as_str(), "eth_call" | "eth_estimateGas")
+        {
+            return None;
+        }
+        let body: Value = serde_json::from_str(&case.body).ok()?;
+        let number = |v: &Value| u64::from_str_radix(v.as_str()?.strip_prefix("0x")?, 16).ok();
+        let over = number(&body["params"][3]["number"])?;
+        let tag = &body["params"][1];
+        let state = match tag.as_str() {
+            None if tag.is_null() => head,
+            Some("latest" | "pending") => head,
+            Some(_) => number(tag).unwrap_or(0),
+            None => number(&tag["blockNumber"]).unwrap_or(0),
+        };
+        let low = (state + 1).max(head.saturating_sub(50));
+        let high = head.saturating_sub(5).min(over.saturating_sub(1));
+        (low <= high && high + 256 >= over).then_some((Self::KNOWN_BASE_PERSISTED_BLOCKHASH, base))
     }
 
     /// [`Self::SETTLED_UNFUNDED_FEE`] with Nethermind's index, when it explains `case`: a priced
