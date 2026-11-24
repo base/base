@@ -18,6 +18,11 @@ the block when it becomes canonical. History begins at the start block; blocks o
 forks below it cannot be followed. The upstream needs the `debug` and `eth` RPC modules and must
 hold the state of the blocks tiger catches up on.
 
+RPC reads of state the datadir does not hold are answered from the upstream's `eth_getProof` at
+the same block, verified against tiger's state root, or fail with "state not local". The upstream
+needs an `--rpc.eth-proof-window` covering how far behind its head tiger's queried blocks are
+(reth's default 0 answers only at its head).
+
 ## Edge coverage
 
 With `BASE_DIFF_COVERAGE=1` the adapter adds a `coverage` map of `tiger:edge:<index>` features to
