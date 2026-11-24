@@ -106,6 +106,20 @@ impl BaseEvmTypes {
         if tx.gas_limit < intrinsic || tx.gas_limit < floor {
             return Ok(Self::failed_deposit(tx));
         }
+        // base-reth parity (known base-reth bug #4, from revm): a create deposit whose sender is
+        // at nonce u64::MAX cannot bump the nonce, and revm's create frame then returns success
+        // with all its gas left and no account created. The deposit succeeds, uses only its
+        // intrinsic gas (or the EIP-7623 floor), and the nonce stays at u64::MAX. Only deposits
+        // reach this: other transactions reject a sender at u64::MAX before execution.
+        if tx.to.is_create() && nonce == u64::MAX {
+            return Ok(TxResult::<Self> {
+                status: true,
+                total_gas_spent: intrinsic,
+                floor_gas: floor,
+                stop: InstrStop::Return,
+                ..Default::default()
+            });
+        }
         let (execution_gas_limit, reservoir) =
             initial_gas_and_reservoir(host.version(), tx.gas_limit, intrinsic, 0);
         let mut tx_gas =
@@ -321,6 +335,36 @@ mod tests {
         // The mint is credited and the nonce bumped even though execution is skipped.
         assert_eq!(balance(&mut evm, SENDER), U256::from(1_000));
         assert_eq!(nonce(&mut evm, SENDER), 1);
+    }
+
+    #[test]
+    fn create_deposit_from_max_nonce_sender_succeeds_with_intrinsic_gas() {
+        // From diff-fuzz gen seed 3 case 511 (Beryl): base-reth (revm) reports status 1 and only
+        // intrinsic gas, creating nothing; the nonce stays at u64::MAX.
+        let spec = BaseSpecId::new(BaseUpgrade::Beryl);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(&SENDER, evm2::AccountInfo { nonce: u64::MAX, ..Default::default() });
+        let mut evm = Evm::new(
+            spec,
+            BlockEnv::<BaseEvmTypes>::default(),
+            BaseEvmTypes::tx_registry(spec),
+            db,
+            Precompiles::base(spec.into()),
+        );
+        // PUSH32 0xef00..00, PUSH0, MSTORE, PUSH1 0x21, PUSH0, RETURN: 8 non-zero, 31 zero bytes.
+        let mut initcode = vec![0x7f, 0xef];
+        initcode.extend([0u8; 31]);
+        initcode.extend([0x5f, 0x52, 0x60, 0x21, 0x5f, 0xf3]);
+        let mut tx = deposit(TxKind::Create, 1_000, U256::ZERO, initcode.into(), false);
+        tx.gas_limit = 0x5707c;
+        let result = run(&mut evm, tx);
+        assert!(result.status);
+        // 21000 + 32000 (create) + 16 * 8 + 4 * 31 (calldata) + 2 * 2 (EIP-3860 initcode words).
+        assert_eq!(result.tx_gas_used(), 53_256);
+        assert_eq!(result.created_address, None);
+        assert_eq!(nonce(&mut evm, SENDER), u64::MAX);
+        assert_eq!(balance(&mut evm, SENDER), U256::from(1_000));
+        assert_eq!(evm.state_mut().account_info_untracked(&SENDER.create(u64::MAX)).unwrap(), None);
     }
 
     #[test]
