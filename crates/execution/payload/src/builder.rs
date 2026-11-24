@@ -636,12 +636,13 @@ impl<Txs> Builder<'_, Txs> {
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
         }
-        // Consecutive instants bound each stage, so the stages sum to the whole build.
-        let execution_end = Instant::now();
         // Start the end-of-block sweep now so it overlaps the state root.
         let resting = resting
             .zip(resting_predicates.as_ref())
             .map(|(resting, store)| store.finish(resting.take_predicates()));
+        // Consecutive instants bound each stage, so the stages sum to the whole build. Execution
+        // ends after the sweep starts, so the state-root wait counts only the state-root job.
+        let execution_end = Instant::now();
 
         let block_num = ctx.parent().number().saturating_add(1);
         let state_root = state_root_handle.and_then(|mut task| {

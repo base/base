@@ -111,7 +111,7 @@ base_metrics::define_metrics! {
     )]
     native_payload_build_duration: histogram,
     #[describe(
-        "Time spent applying pre-execution changes and executing transactions in one native payload build in seconds"
+        "Time spent applying pre-execution changes, executing transactions and starting the end-of-block resting sweep in one native payload build in seconds"
     )]
     native_payload_execution_duration: histogram,
     #[describe(
@@ -234,7 +234,8 @@ type CounterHandle = base_metrics::NoopMetric;
 /// they sum to the whole build time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NativeBuildTimings {
-    /// Pre-execution changes, sequencer transactions and pool transactions.
+    /// Pre-execution changes, sequencer and pool transactions, and starting the end-of-block
+    /// resting sweep (the whole sweep when no executor runs it in the background).
     pub execution: Duration,
     /// Waiting for the parallel state-root job after execution ends; zero without a job.
     pub state_root_wait: Duration,

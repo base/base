@@ -282,7 +282,8 @@ defaults to `<benchmark-run>-<timestamp>` when omitted. Upload the metrics and a
 
 The native builder produces every canonical block at both cadences, so read
 `reth_base_builder_native_payload_*_duration_avg` for build timing. `build` splits into four
-consecutive stages that sum to it: `execution` (pre-execution changes and all transactions),
+consecutive stages that sum to it: `execution` (pre-execution changes, all transactions, and
+starting the end-of-block resting sweep),
 `state_root_wait` (blocked on the parallel state-root job after execution), `finish`
 (`BlockBuilder::finish`: post-execution changes, hashed post-state, block assembly, and the
 synchronous state root when no job produced one) and `seal` (block hash through payload
