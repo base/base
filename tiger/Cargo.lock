@@ -1222,6 +1222,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-rlp",
  "alloy-trie",
  "base-common-consensus",
  "cc",

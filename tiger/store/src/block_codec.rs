@@ -13,8 +13,8 @@
 //!   fields and committed phases; a body longer than 7 bytes is zstd-compressed with reth's
 //!   receipt dictionary.
 //!
-//! Base's native transaction type (`0x7b`) is not supported yet: its compact tail uses private
-//! encoders of `base-common-consensus`.
+//! Base's native transaction type keeps its compact head, an RLP tail of account changes, calls
+//! and metadata, and an RLP list of the two authentication payloads.
 
 use std::cell::RefCell;
 
@@ -24,6 +24,7 @@ use alloy_eips::{
     eip7702::{Authorization, SignedAuthorization},
 };
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, Signature, TxKind, U256};
+use alloy_rlp::{Decodable, Encodable};
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, TxDeposit};
 
 use crate::{CodecError, Decoded, Flags, Reader, put_compact_u64, put_compact_u128, put_compact_u256, put_varuint};
@@ -103,6 +104,13 @@ impl W {
             put_compact_u128(&mut tmp, v);
             put_varuint(&mut self.body, tmp.len());
             self.body.extend_from_slice(&tmp);
+        }
+    }
+    /// `Option<Address>`: a presence bit, then the raw address.
+    fn opt_address(&mut self, v: Option<Address>) {
+        self.flags.put(1, u64::from(v.is_some()));
+        if let Some(v) = v {
+            self.body.extend_from_slice(v.as_slice());
         }
     }
     fn raw(&mut self, bytes: &[u8]) {
@@ -207,6 +215,9 @@ impl F<'_, '_> {
     fn kind(&mut self) -> Decoded<TxKind> {
         Ok(if self.flags.get(1) == 1 { TxKind::Call(self.r.address()?) } else { TxKind::Create })
     }
+    fn opt_address(&mut self) -> Decoded<Option<Address>> {
+        if self.flags.get(1) == 0 { Ok(None) } else { Ok(Some(self.r.address()?)) }
+    }
     fn opt(&mut self) -> Decoded<Option<u128>> {
         if self.flags.get(1) == 0 {
             return Ok(None);
@@ -214,6 +225,50 @@ impl F<'_, '_> {
         let len = self.r.varuint()?;
         Ok(Some(self.r.compact_u128(len)?))
     }
+}
+
+static EMPTY_INPUT: Bytes = Bytes::new();
+
+/// A Base transaction's compact tail: `rlp([rlp(account_changes), rlp(calls), metadata])` with
+/// the first two as byte strings.
+fn base_tail(t: &base_common_consensus::TxBase) -> Vec<u8> {
+    let account_changes = Bytes::from(alloy_rlp::encode(&t.account_changes));
+    let payload: usize = t.calls.iter().map(Encodable::length).sum();
+    let mut calls = Vec::with_capacity(payload + 9);
+    alloy_rlp::Header { list: true, payload_length: payload }.encode(&mut calls);
+    for phase in &t.calls {
+        phase.encode(&mut calls);
+    }
+    let calls = Bytes::from(calls);
+    let payload = account_changes.length() + calls.length() + t.metadata.length();
+    let mut tail = Vec::with_capacity(payload + 9);
+    alloy_rlp::Header { list: true, payload_length: payload }.encode(&mut tail);
+    account_changes.encode(&mut tail);
+    calls.encode(&mut tail);
+    t.metadata.encode(&mut tail);
+    tail
+}
+
+type BaseTail = (Vec<base_common_consensus::AccountChange>, Vec<Vec<base_common_consensus::Call>>, Bytes);
+
+fn decode_base_tail(mut tail: &[u8]) -> Decoded<BaseTail> {
+    let bad = |_| CodecError("bad Base transaction tail");
+    let header = alloy_rlp::Header::decode(&mut tail).map_err(bad)?;
+    let before = tail.len();
+    let account_changes = Bytes::decode(&mut tail).map_err(bad)?;
+    let calls = Bytes::decode(&mut tail).map_err(bad)?;
+    let metadata = Bytes::decode(&mut tail).map_err(bad)?;
+    if !header.list || before - tail.len() != header.payload_length || !tail.is_empty() {
+        return Err(CodecError("bad Base transaction tail list"));
+    }
+    let mut buf = account_changes.as_ref();
+    let account_changes = Vec::<base_common_consensus::AccountChange>::decode(&mut buf).map_err(bad)?;
+    let mut calls_buf = calls.as_ref();
+    let calls = base_common_consensus::TxBase::decode_calls(&mut calls_buf).map_err(bad)?;
+    if !buf.is_empty() || !calls_buf.is_empty() {
+        return Err(CodecError("trailing bytes in Base transaction tail"));
+    }
+    Ok((account_changes, calls, metadata))
 }
 
 /// Transaction static-file rows.
@@ -287,7 +342,29 @@ impl TxCodec {
                 w.raw(&d.input);
                 IDENTIFIER_EXTENDED
             }
-            BaseTxEnvelope::Base(_) => return Err(CodecError("Base native transactions are not supported yet")),
+            BaseTxEnvelope::Base(signed) => {
+                out.push(base_common_consensus::BASE_TX_TYPE_ID);
+                let t = signed.tx();
+                let tail = base_tail(t);
+                w.u64(t.chain_id);
+                w.opt_address(t.sender);
+                w.u256(t.nonce_key);
+                w.u64(t.nonce_sequence);
+                w.u64(t.valid_after);
+                w.u64(t.valid_before);
+                w.u128(t.max_priority_fee_per_gas);
+                w.u128(t.max_fee_per_gas);
+                w.u64(t.gas_limit);
+                w.opt_address(t.payer);
+                w.u64(tail.len() as u64);
+                out.extend_from_slice(&w.finish());
+                out.extend_from_slice(&tail);
+                let auth_len = signed.sender_auth().length() + signed.payer_auth().length();
+                alloy_rlp::Header { list: true, payload_length: auth_len }.encode(out);
+                signed.sender_auth().encode(out);
+                signed.payer_auth().encode(out);
+                return Ok(IDENTIFIER_EXTENDED);
+            }
         };
         out.extend_from_slice(&w.finish());
         Ok(identifier)
@@ -302,7 +379,8 @@ impl TxCodec {
             BaseTxEnvelope::Eip1559(s) => (*s.signature(), &s.tx().input),
             BaseTxEnvelope::Eip7702(s) => (*s.signature(), &s.tx().input),
             BaseTxEnvelope::Deposit(d) => (zero, &d.input),
-            BaseTxEnvelope::Base(_) => return Err(CodecError("Base native transactions are not supported yet")),
+            // Base transactions carry their authentication inside; their input is empty.
+            BaseTxEnvelope::Base(_) => (zero, &EMPTY_INPUT),
         };
         let mut out = vec![0u8];
         out.extend_from_slice(&signature.r().to_le_bytes::<32>());
@@ -420,6 +498,46 @@ impl TxCodec {
                     input,
                 }))
             }
+            (_, t) if t == base_common_consensus::BASE_TX_TYPE_ID => {
+                let mut f = F { flags: r.flags(6)?, r: &mut r };
+                let chain_id = f.u64()?;
+                let sender = f.opt_address()?;
+                let nonce_key = f.u256()?;
+                let nonce_sequence = f.u64()?;
+                let valid_after = f.u64()?;
+                let valid_before = f.u64()?;
+                let max_priority_fee_per_gas = f.u128()?;
+                let max_fee_per_gas = f.u128()?;
+                let gas_limit = f.u64()?;
+                let payer = f.opt_address()?;
+                let tail_len = usize::try_from(f.u64()?).map_err(|_| CodecError("tail length"))?;
+                let (account_changes, calls, metadata) = decode_base_tail(f.r.take(tail_len)?)?;
+                let mut auth = f.r.rest;
+                let bad = |_| CodecError("bad Base transaction auth");
+                let header = alloy_rlp::Header::decode(&mut auth).map_err(bad)?;
+                let before = auth.len();
+                let sender_auth = Bytes::decode(&mut auth).map_err(bad)?;
+                let payer_auth = Bytes::decode(&mut auth).map_err(bad)?;
+                if !header.list || before - auth.len() != header.payload_length || !auth.is_empty() {
+                    return Err(CodecError("bad Base transaction auth list"));
+                }
+                let tx = base_common_consensus::TxBase {
+                    chain_id,
+                    sender,
+                    nonce_key,
+                    nonce_sequence,
+                    valid_after,
+                    valid_before,
+                    max_priority_fee_per_gas,
+                    max_fee_per_gas,
+                    gas_limit,
+                    account_changes,
+                    calls,
+                    metadata,
+                    payer,
+                };
+                BaseTxEnvelope::Base(base_common_consensus::TxBaseSigned::new(tx, sender_auth, payer_auth))
+            }
             _ => return Err(CodecError("unsupported transaction type")),
         };
         Ok(tx)
@@ -530,6 +648,35 @@ mod tests {
 
     use super::*;
     use crate::{Rocks, RocksTable, Segment, StaticFiles};
+
+    #[test]
+    fn base_native_transactions_round_trip() {
+        let tx = base_common_consensus::TxBase {
+            chain_id: 8453,
+            sender: Some(Address::repeat_byte(1)),
+            nonce_key: U256::from(7),
+            nonce_sequence: 3,
+            valid_after: 10,
+            valid_before: 1_000,
+            max_priority_fee_per_gas: 5,
+            max_fee_per_gas: 1_000_000,
+            gas_limit: 90_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::from_static(b"meta"),
+            payer: None,
+        };
+        let signed = base_common_consensus::TxBaseSigned::new(tx, Bytes::from(vec![9u8; 85]), Bytes::new());
+        let envelope = BaseTxEnvelope::Base(signed);
+        let bytes = TxCodec::encode(&envelope).unwrap();
+        assert_eq!(bytes[0], 3 << 1, "extended identifier, no zstd, zero parity");
+        assert_eq!(TxCodec::decode(&bytes).unwrap(), envelope);
+        let receipt = BaseReceipt::Base(base_common_consensus::TxBaseReceipt::new(
+            Receipt { status: true.into(), cumulative_gas_used: 21_000, logs: Vec::new() },
+            2,
+        ));
+        assert_eq!(ReceiptCodec::decode(&ReceiptCodec::encode(&receipt)).unwrap(), receipt);
+    }
 
     /// Every transaction and receipt of a base-reth datadir (set `TIGER_RETH_DATADIR`) decodes,
     /// re-encodes to the same bytes, and hashes to its `TransactionHashNumbers` entry.
