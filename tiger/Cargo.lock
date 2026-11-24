@@ -1130,6 +1130,7 @@ dependencies = [
  "base-tiger-evm",
  "base-tiger-net",
  "base-tiger-store",
+ "base-tiger-trie",
  "evm2",
  "hmac 0.13.0",
  "secp256k1 0.31.1",

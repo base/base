@@ -106,7 +106,7 @@ impl Adapter {
         };
         let id = value.get("id").and_then(|id| id.as_str()).unwrap_or_default().to_owned();
         if value.get("mode").and_then(|mode| mode.as_str()) == Some("trie") {
-            return Self::failure(id, "trie mode is not implemented yet".into());
+            return crate::handle_trie_request(&value);
         }
         let request = match serde_json::from_value::<Request>(value) {
             Ok(request) => request,
