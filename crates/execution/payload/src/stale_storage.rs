@@ -273,7 +273,8 @@ impl StaleStorageCache {
     }
 
     /// Creates an empty cache of about `size_bytes` keyed with `secret`, whose stamps count from
-    /// `base_hour`.
+    /// `base_hour`. Every set is written with zeros here, so the whole cache is resident once
+    /// this returns.
     pub fn with_secret(size_bytes: u64, secret: (u64, u64), base_hour: u64) -> Self {
         let sets = Self::sets_for_size(size_bytes);
         let sets: Box<[StaleStorageCacheSet]> =

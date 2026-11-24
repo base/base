@@ -62,7 +62,8 @@ the cache. It skips a block, counting its changed slots in
 (as while the node syncs), is past the stamp range, or is timestamped more than two hours before
 the last recorded block.
 
-The cache defaults to 128 mebibytes (about 33.5 million entries). Base Mainnet writes an
+The cache defaults to 128 mebibytes (about 33.5 million entries). When metering is enabled, the
+node writes zeros to the whole cache as it starts, so all of it is resident from startup. Base Mainnet writes an
 estimated 10 million distinct slots a day, and fewer distinct regions. Ten million live keys is
 under a third of the cache's entries, so no key is in excess of total capacity, but keys hash to
 sets unevenly: at about 2.4 keys per set on average, about 0.08% of sets receive more than eight
