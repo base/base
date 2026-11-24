@@ -198,7 +198,7 @@ impl Transplant {
         let start = BlockPool::system_prefix(&request);
         let len = request.transactions.len();
         let own = Era::at(request.header.timestamp);
-        let era = if rng.chance(60) { own } else { *rng.pick(&Era::ALL[3..]) };
+        let era = if rng.chance(60) { own } else { *rng.pick(&Era::all()[3..]) };
         let mut items = Vec::new();
         for _ in 0..1 + rng.below(12) {
             if start >= len {
@@ -256,7 +256,7 @@ impl Transplant {
                         }
                     }
                 }
-                6 => case.era = *rng.pick(&Era::ALL[3..]),
+                6 => case.era = *rng.pick(&Era::all()[3..]),
                 _ => {
                     case.seed = rng.next_u64();
                     case.synthetic = rng.below(6) as u8;

@@ -321,7 +321,7 @@ impl ChainGenerator {
         // Upgrade activation blocks start a new epoch when they can, and usually change the
         // system config, so config changes land on fork boundaries. A burst gives consecutive
         // blocks an update each, for as long as the L1 origin can advance every block.
-        let activation = Era::ALL.into_iter().any(|era| {
+        let activation = Era::all().iter().copied().any(|era| {
             (parent_timestamp + 1..=next_timestamp).contains(&era.activation_timestamp())
         });
         let forced = activation || self.burst > 0;

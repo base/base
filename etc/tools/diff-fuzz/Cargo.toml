@@ -35,6 +35,7 @@ base-common-evm = { workspace = true, features = ["std"] }
 base-consensus-upgrades = { workspace = true, features = ["std"] }
 base-common-precompiles = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+base-common-base-tx = { workspace = true, features = ["std"] }
 
 # mainnet case fetcher
 alloy-rpc-types-debug.workspace = true

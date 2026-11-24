@@ -3,10 +3,14 @@
 
 use std::collections::BTreeMap;
 
-use alloy_eips::eip2930::AccessList;
+use alloy_eips::{Encodable2718, eip2930::AccessList};
 use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, TxKind, U256, address, keccak256};
+use alloy_signer::SignerSync;
+use base_common_base_tx::{IntrinsicGas, NonceManagerSlots};
 use base_common_chains::MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS;
-use base_common_consensus::{Predeploys, TxDeposit};
+use base_common_consensus::{
+    AccountChange, Call, Delegation, Predeploys, TxBase, TxBaseConstants, TxBaseSigned, TxDeposit,
+};
 use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_common_precompiles::{B20FactoryStorage, B20Variant};
 
@@ -88,6 +92,8 @@ pub struct Planner<'a> {
     pub auth_nonces: BTreeMap<Address, u64>,
     /// See `GeneratorOptions::max_nonce_deposit_creates`.
     pub max_nonce_deposit_creates: bool,
+    /// Expected next sequence per Base transaction sender and 2D nonce key.
+    pub base_nonces: BTreeMap<(Address, U256), u64>,
 }
 
 /// Addresses of contracts every era has.
@@ -127,6 +133,7 @@ impl<'a> Planner<'a> {
             self_bump: false,
             auth_nonces: BTreeMap::new(),
             max_nonce_deposit_creates: true,
+            base_nonces: BTreeMap::new(),
         }
     }
 
@@ -1499,7 +1506,8 @@ impl<'a> Planner<'a> {
         }
         let native = if Native::active(self.ctx.upgrade) { 14 } else { 0 };
         let deposits = if self.ctx.deposits_allowed { 7 } else { 0 };
-        let weights = [10, 30, 6, 10, native, 9, 7, deposits, 3, 3, 2, 2];
+        let base_tx = if self.feature(BaseFeature::TxBase) { 25 } else { 0 };
+        let weights = [10, 30, 6, 10, native, 9, 7, deposits, 3, 3, 2, 2, base_tx];
         match self.rng.weighted(&weights) {
             0 => self.transfer(),
             1 => self.program_call(),
@@ -1512,8 +1520,197 @@ impl<'a> Planner<'a> {
             8 => self.deep_call(),
             9 => self.create_case(),
             10 => self.destruct_case(),
-            _ => self.refund_case(),
+            11 => self.refund_case(),
+            _ => self.base_tx(),
         }
+    }
+
+    /// One call of a Base transaction phase: a program, native or arbitrary call, a value
+    /// transfer (often to a fresh account), or a read of the transaction context or the nonce
+    /// manager.
+    fn base_call(&mut self, sender: Address, nonce_key: U256) -> (Call, &'static str) {
+        let selector = |s: &str| Bytes::from(selector(s));
+        match self.rng.below(10) {
+            0..=3 => {
+                let (to, value, data, _) = self.forward();
+                (Call { to, value, data }, "call")
+            }
+            4 | 5 => {
+                let to = if self.rng.chance(50) { self.rng.address() } else { self.recipient() };
+                let value = self.value(&sender);
+                (Call { to, value, data: Bytes::new() }, "transfer")
+            }
+            6 => {
+                let getter = *self.rng.pick(&[
+                    "getTransactionSender()",
+                    "getTransactionPayer()",
+                    "getTransactionSenderActorId()",
+                ]);
+                let to = address!("813000000000000000000000000000000000aa02");
+                (Call { to, value: U256::ZERO, data: selector(getter) }, "txContext")
+            }
+            7 => {
+                let mut data = selector("getNonce(address,uint256)").to_vec();
+                let account = if self.rng.chance(80) { sender } else { self.recipient() };
+                data.extend_from_slice(B256::left_padding_from(account.as_slice()).as_slice());
+                let key = match self.rng.below(4) {
+                    0 => U256::ZERO,
+                    1 => TxBaseConstants::NONCE_KEY_MAX,
+                    _ => nonce_key,
+                };
+                data.extend_from_slice(&word(key));
+                let value = if self.rng.chance(5) { U256::from(1) } else { U256::ZERO };
+                (Call { to: NonceManagerSlots::ADDRESS, value, data: data.into() }, "getNonce")
+            }
+            8 => {
+                let to = *self.rng.pick(&Precompiles::active(self.ctx.upgrade));
+                (
+                    Call { to, value: U256::ZERO, data: self.rng.bytes_between(0, 200).into() },
+                    "precompile",
+                )
+            }
+            _ => (Call { to: sender, value: self.value(&sender), data: Bytes::new() }, "self"),
+        }
+    }
+
+    /// A Base transaction (type `0x79`, Everest): protocol, 2D or nonce-free nonce; recovered
+    /// or named sender; self, named or open payer; an optional delegation change; and up to
+    /// four phases of calls.
+    pub fn base_tx(&mut self) -> Option<()> {
+        let keys = Keys::get();
+        let key = self.sender(None)?;
+        let sender = keys.address(key);
+        let (nonce_key, nonce_sequence, mode) = match self.rng.below(10) {
+            0..=4 => (U256::ZERO, self.nonce(&sender), "protocol"),
+            5..=7 => {
+                let nonce_key = U256::from(self.rng.range(1, 4));
+                let stored = NonceManagerSlots::nonce_slot(sender, nonce_key)
+                    .map(|slot| self.state.storage(&NonceManagerSlots::ADDRESS, slot.into()))
+                    .unwrap_or_default();
+                let next = self
+                    .base_nonces
+                    .get(&(sender, nonce_key))
+                    .copied()
+                    .unwrap_or_else(|| u64::try_from(stored).unwrap_or(u64::MAX));
+                (nonce_key, next, "2d")
+            }
+            _ => (TxBaseConstants::NONCE_KEY_MAX, 0, "nonceFree"),
+        };
+        // Nonce-free transactions must expire within the replay ring's window after the
+        // block's millisecond time; the millisecond part is below 1000.
+        let valid_before = if mode == "nonceFree" {
+            self.ctx.timestamp * 1000 + self.rng.range(1_000, 20_001)
+        } else if self.rng.chance(10) {
+            self.ctx.timestamp + self.rng.range(1, 60)
+        } else {
+            0
+        };
+        let valid_after = if self.rng.chance(10) {
+            self.ctx.timestamp.saturating_sub(self.rng.below(5))
+        } else {
+            0
+        };
+        let payer_key = match self.rng.below(10) {
+            0..=5 => None,
+            _ => self.sender(None).filter(|k| *k != key),
+        };
+        let open_payer = payer_key.is_some() && self.rng.chance(40);
+        let payer = payer_key
+            .map(|k| if open_payer { TxBaseConstants::OPEN_PAYER } else { keys.address(k) });
+        let named_sender = self.rng.chance(30);
+        // A delegation change needs the protocol nonce; one in ten tries another nonce anyway.
+        let delegation_ok = mode == "protocol" || self.rng.chance(10);
+        let account_changes = if delegation_ok && self.rng.chance(15) {
+            vec![AccountChange::Delegation(Delegation { target: self.delegate() })]
+        } else {
+            Vec::new()
+        };
+        let mut labels = vec![mode];
+        let mut calls = Vec::new();
+        for _ in 0..self.rng.below(5) {
+            let mut phase = Vec::new();
+            for _ in 0..self.rng.range(1, 4) {
+                let (call, label) = self.base_call(sender, nonce_key);
+                labels.push(label);
+                phase.push(call);
+            }
+            calls.push(phase);
+        }
+        let value: U256 = calls.iter().flatten().map(|c| c.value).sum();
+        let (max_fee, priority_fee) = self.fees();
+        let metadata = if self.rng.chance(15) {
+            Bytes::from(self.rng.bytes_between(1, 64))
+        } else {
+            Bytes::new()
+        };
+        let mut tx = TxBase {
+            chain_id: 8453,
+            sender: named_sender.then_some(sender),
+            nonce_key,
+            nonce_sequence,
+            valid_after,
+            valid_before,
+            max_priority_fee_per_gas: priority_fee,
+            max_fee_per_gas: max_fee,
+            gas_limit: 0,
+            account_changes,
+            calls,
+            metadata,
+            payer,
+        };
+        let sign = |tx: TxBase| -> TxBaseSigned {
+            let signature = keys.signers[key]
+                .sign_hash_sync(&tx.sender_signature_hash())
+                .expect("signing never fails");
+            let mut sender_auth = Vec::new();
+            if named_sender {
+                sender_auth.extend_from_slice(TxBaseConstants::K1_AUTHENTICATOR.as_slice());
+            }
+            sender_auth.extend_from_slice(&signature.as_bytes());
+            let mut payer_auth = Vec::new();
+            if let Some(payer_key) = payer_key {
+                let signature = keys.signers[payer_key]
+                    .sign_hash_sync(&tx.payer_signature_hash(sender))
+                    .expect("signing never fails");
+                if !open_payer {
+                    payer_auth.extend_from_slice(TxBaseConstants::K1_AUTHENTICATOR.as_slice());
+                }
+                payer_auth.extend_from_slice(&signature.as_bytes());
+            }
+            TxBaseSigned::new(tx, sender_auth.into(), payer_auth.into())
+        };
+        let intrinsic = IntrinsicGas::compute(&sign(tx.clone()), sender);
+        let gas_limit = self.gas_for(intrinsic.sender_intrinsic(), intrinsic.sender_floor(), true);
+        if gas_limit > self.gas_left {
+            return None;
+        }
+        tx.gas_limit = gas_limit;
+        let fee = U256::from(gas_limit + intrinsic.payer_auth_cost) * U256::from(max_fee);
+        let fee_payer = payer_key.map_or(sender, |k| keys.address(k));
+        if fee + if fee_payer == sender { value } else { U256::ZERO } > self.available(&fee_payer)
+            || value > self.available(&sender)
+        {
+            return None;
+        }
+        let signed = sign(tx);
+        self.out.push(PlannedTx {
+            raw: signed.encoded_2718().into(),
+            label: format!("baseTx:{}", labels.join(":")),
+            deploy: None,
+        });
+        match mode {
+            "protocol" => {
+                self.nonces.insert(sender, nonce_sequence.saturating_add(1));
+            }
+            "2d" => {
+                self.base_nonces.insert((sender, nonce_key), nonce_sequence.saturating_add(1));
+            }
+            _ => {}
+        }
+        *self.spent.entry(fee_payer).or_default() += fee;
+        *self.spent.entry(sender).or_default() += value;
+        self.gas_left -= gas_limit;
+        Some(())
     }
 
     /// Creates a well-formed token from the operator, grants it the mint role, and mints to

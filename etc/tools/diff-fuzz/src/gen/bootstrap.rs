@@ -125,7 +125,7 @@ impl Bootstrap {
         }
 
         let schedule = Schedule::mainnet();
-        for step in Era::ALL.into_iter().skip(1).take_while(|step| *step <= era) {
+        for step in Era::all().iter().copied().skip(1).take_while(|step| *step <= era) {
             let timestamp = step.activation_timestamp();
             match step {
                 Era::Canyon => {

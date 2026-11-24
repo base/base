@@ -35,11 +35,14 @@ pub enum Era {
     Cobalt,
     /// Denim network upgrade (200 ms blocks).
     Denim,
+    /// Everest network upgrade (Base transactions). Not scheduled on mainnet: it exists only
+    /// when [`Era::EVEREST_TIMESTAMP_ENV`] gives it an activation time.
+    Everest,
 }
 
 impl Era {
-    /// Every era, oldest first.
-    pub const ALL: [Self; 12] = [
+    /// Every era of mainnet's own schedule, oldest first.
+    const SCHEDULED: [Self; 12] = [
         Self::Regolith,
         Self::Canyon,
         Self::Ecotone,
@@ -54,27 +57,74 @@ impl Era {
         Self::Denim,
     ];
 
+    /// Environment variable giving Everest an activation timestamp (unix seconds, at or after
+    /// Denim's) on top of the mainnet schedule. Every adapter must honor it the same way.
+    pub const EVEREST_TIMESTAMP_ENV: &str = "BASE_DIFF_EVEREST_TIMESTAMP";
+
+    /// Everest's activation timestamp from [`Self::EVEREST_TIMESTAMP_ENV`], if set.
+    ///
+    /// # Panics
+    ///
+    /// When the value is not a number or comes before Denim.
+    pub fn everest_timestamp() -> Option<u64> {
+        let value = std::env::var(Self::EVEREST_TIMESTAMP_ENV).ok()?;
+        let timestamp: u64 = value
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("{} is not a number: {value}", Self::EVEREST_TIMESTAMP_ENV));
+        let denim = ChainConfig::mainnet().denim_timestamp.expect("denim is scheduled on mainnet");
+        assert!(timestamp >= denim, "{} is before Denim", Self::EVEREST_TIMESTAMP_ENV);
+        Some(timestamp)
+    }
+
+    /// The Base mainnet chain config, with Everest from [`Self::EVEREST_TIMESTAMP_ENV`].
+    pub fn chain_config() -> &'static ChainConfig {
+        static CONFIG: OnceLock<ChainConfig> = OnceLock::new();
+        CONFIG.get_or_init(|| {
+            let mut config = ChainConfig::mainnet().clone();
+            config.everest_timestamp = Self::everest_timestamp();
+            config
+        })
+    }
+
+    /// Every era, oldest first: mainnet's schedule, plus Everest when it has an activation time.
+    pub fn all() -> &'static [Self] {
+        static ALL: OnceLock<Vec<Era>> = OnceLock::new();
+        ALL.get_or_init(|| {
+            let mut all = Self::SCHEDULED.to_vec();
+            if Self::everest_timestamp().is_some() {
+                all.push(Self::Everest);
+            }
+            all
+        })
+    }
+
     /// Environment variable naming the newest era generators target, such as `azul`, for
     /// clients that do not implement later upgrades yet. Unset means every era.
     pub const MAX_ERA_ENV: &str = "BASE_DIFF_MAX_ERA";
 
-    /// The eras generators target: [`Self::ALL`] up to [`Self::MAX_ERA_ENV`].
+    /// The eras generators target: [`Self::all`] up to [`Self::MAX_ERA_ENV`].
     ///
     /// # Panics
     ///
     /// When the variable names no era.
     pub fn targeted() -> Vec<Self> {
-        let Ok(name) = std::env::var(Self::MAX_ERA_ENV) else { return Self::ALL.to_vec() };
-        let last = Self::ALL
-            .into_iter()
+        let Ok(name) = std::env::var(Self::MAX_ERA_ENV) else { return Self::all().to_vec() };
+        let last = Self::all()
+            .iter()
+            .copied()
             .find(|era| era.name() == name.trim())
             .unwrap_or_else(|| panic!("{} names no era: {name}", Self::MAX_ERA_ENV));
-        Self::ALL.into_iter().filter(|era| *era <= last).collect()
+        Self::all().iter().copied().filter(|era| *era <= last).collect()
     }
 
     /// Mainnet activation timestamp of the era's upgrade.
-    pub const fn activation_timestamp(self) -> u64 {
-        let c = ChainConfig::mainnet();
+    ///
+    /// # Panics
+    ///
+    /// For Everest without an activation time; such an era is not in [`Self::all`].
+    pub fn activation_timestamp(self) -> u64 {
+        let c = Self::chain_config();
         match self {
             Self::Regolith => c.regolith_timestamp,
             Self::Canyon => c.canyon_timestamp,
@@ -88,6 +138,7 @@ impl Era {
             Self::Beryl => c.beryl_timestamp.expect("beryl is scheduled on mainnet"),
             Self::Cobalt => c.cobalt_timestamp.expect("cobalt is scheduled on mainnet"),
             Self::Denim => c.denim_timestamp.expect("denim is scheduled on mainnet"),
+            Self::Everest => c.everest_timestamp.expect("everest has an activation time"),
         }
     }
 
@@ -106,13 +157,15 @@ impl Era {
             Self::Beryl => BaseUpgrade::Beryl,
             Self::Cobalt => BaseUpgrade::Cobalt,
             Self::Denim => BaseUpgrade::Denim,
+            Self::Everest => BaseUpgrade::Everest,
         }
     }
 
     /// The era in effect at a timestamp.
     pub fn at(timestamp: u64) -> Self {
-        Self::ALL
-            .into_iter()
+        Self::all()
+            .iter()
+            .copied()
             .rev()
             .find(|era| era.activation_timestamp() <= timestamp)
             .unwrap_or(Self::Regolith)
@@ -120,8 +173,8 @@ impl Era {
 
     /// The previous era, if any.
     pub fn previous(self) -> Option<Self> {
-        let index = Self::ALL.iter().position(|era| *era == self)?;
-        index.checked_sub(1).map(|i| Self::ALL[i])
+        let index = Self::all().iter().position(|era| *era == self)?;
+        index.checked_sub(1).map(|i| Self::all()[i])
     }
 
     /// Lower-case era name.
@@ -139,6 +192,7 @@ impl Era {
             Self::Beryl => "beryl",
             Self::Cobalt => "cobalt",
             Self::Denim => "denim",
+            Self::Everest => "everest",
         }
     }
 }
@@ -154,7 +208,7 @@ impl Schedule {
     /// The shared Base mainnet schedule.
     pub fn mainnet() -> &'static Self {
         static SCHEDULE: OnceLock<Schedule> = OnceLock::new();
-        SCHEDULE.get_or_init(|| Self { rollup: ChainConfig::mainnet().rollup_config() })
+        SCHEDULE.get_or_init(|| Self { rollup: Era::chain_config().rollup_config() })
     }
 
     /// The `(seconds, millis part)` timestamp of a block number.
@@ -196,7 +250,7 @@ mod tests {
     #[test]
     fn activation_blocks_reach_their_timestamps() {
         let schedule = Schedule::mainnet();
-        for era in Era::ALL.into_iter().skip(1) {
+        for era in Era::all().iter().copied().skip(1) {
             let block = schedule.first_block_at(era.activation_timestamp());
             assert!(schedule.timestamp_parts(block).0 >= era.activation_timestamp());
             assert!(schedule.timestamp_parts(block - 1).0 < era.activation_timestamp());

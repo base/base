@@ -10,7 +10,11 @@ post-state, and every header field. The wire format between the harness and an a
 
 Generators (`gen`, `fuzz`, `chain`, `chain-fuzz`) target every era from Regolith to Denim. Set
 `BASE_DIFF_MAX_ERA` to an era name, such as `azul`, to stop at that era for a client that does
-not implement later upgrades yet (chains can still cross into the next era).
+not implement later upgrades yet (chains can still cross into the next era). Everest is not
+scheduled on mainnet; `BASE_DIFF_EVEREST_TIMESTAMP=<unix seconds>` (at or after Denim) schedules it
+for the harness and every adapter, adds an `everest` era, and lets generators plan Base
+transactions (type `0x79`: protocol, 2D and nonce-free nonces, recovered or named sender, self,
+named or open payer, delegation changes, multi-phase calls).
 
 - `run <paths>`: saved requests (JSON files, JSON-lines files, or directories of them).
 - `gen --seed S --count N`: single-block generator cases `0..N`.

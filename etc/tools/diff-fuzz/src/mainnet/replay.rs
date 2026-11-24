@@ -95,7 +95,7 @@ impl MainnetReplay {
     /// block and the block after it. The Denim era ends at `tip`.
     pub fn era_samples(per_era: u64, first_era: Era, tip: u64) -> Vec<u64> {
         let mut blocks = BTreeSet::new();
-        for era in Era::ALL.into_iter().filter(|era| *era >= first_era) {
+        for era in Era::all().iter().copied().filter(|era| *era >= first_era) {
             let (first, last) = era_blocks(era);
             let last = last.min(tip);
             if first > last {
@@ -165,8 +165,9 @@ impl MainnetReplay {
     }
 
     fn replay_one(&self, campaign: &Campaign, adapters: &mut [Adapter], block: u64) -> BlockResult {
-        let era_of_number = Era::ALL
-            .into_iter()
+        let era_of_number = Era::all()
+            .iter()
+            .copied()
             .rev()
             .find(|era| era_blocks(*era).0 <= block)
             .unwrap_or(Era::Regolith);

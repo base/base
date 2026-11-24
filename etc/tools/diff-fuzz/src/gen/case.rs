@@ -74,7 +74,7 @@ impl GeneratorOptions {
             .eras
             .iter()
             .map(|era| {
-                let position = Era::ALL.iter().position(|e| e == era).unwrap_or(0) as u64;
+                let position = Era::all().iter().position(|e| e == era).unwrap_or(0) as u64;
                 1 + position * position
             })
             .collect();
@@ -88,7 +88,7 @@ pub fn era_blocks(era: Era) -> (u64, u64) {
     let schedule = Schedule::mainnet();
     let first =
         if era == Era::Regolith { 1 } else { schedule.first_block_at(era.activation_timestamp()) };
-    let next = Era::ALL.iter().position(|e| *e == era).and_then(|i| Era::ALL.get(i + 1));
+    let next = Era::all().iter().position(|e| *e == era).and_then(|i| Era::all().get(i + 1));
     let last = next.map_or(first + 50_000_000, |next| {
         schedule.first_block_at(next.activation_timestamp()) - 1
     });

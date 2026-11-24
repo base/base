@@ -4206,6 +4206,7 @@ dependencies = [
  "alloy-signer-local 2.5.0",
  "alloy-sol-types",
  "alloy-trie",
+ "base-common-base-tx",
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",

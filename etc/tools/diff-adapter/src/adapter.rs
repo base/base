@@ -81,8 +81,13 @@ pub struct DiffAdapter {
 impl DiffAdapter {
     /// Creates an adapter for Base mainnet.
     pub fn base_mainnet() -> Self {
-        let chain_spec = BaseChainSpec::parse_chain(BASE_MAINNET_NODE_CHAIN)
-            .expect("base mainnet is a built-in chain");
+        let mut config = ChainConfig::by_any_name(BASE_MAINNET_NODE_CHAIN)
+            .expect("base mainnet is a built-in chain")
+            .clone();
+        config.everest_timestamp = Era::everest_timestamp();
+        let chain_spec = Arc::new(
+            BaseChainSpec::try_from(&config).expect("base mainnet config builds a chain spec"),
+        );
         Self {
             evm_config: BaseEvmConfig::base(Arc::clone(&chain_spec)),
             consensus: BaseBeaconConsensus::new(Arc::clone(&chain_spec)),
@@ -90,7 +95,7 @@ impl DiffAdapter {
                 Arc::clone(&chain_spec),
             ),
             chain_spec,
-            rollup_config: ChainConfig::mainnet().rollup_config(),
+            rollup_config: config.rollup_config(),
             coverage: std::env::var_os(COVERAGE_ENV).is_some_and(|value| value != "0"),
         }
     }

@@ -376,7 +376,7 @@ impl ConfigLogs {
         match rng.below(10) {
             0..=3 => near(rng, Era::Ecotone),
             4..=6 => {
-                let era = *rng.pick(&Era::ALL[1..]);
+                let era = *rng.pick(&Era::all()[1..]);
                 near(rng, era)
             }
             _ => {
@@ -387,8 +387,9 @@ impl ConfigLogs {
 
     /// The upgrades active at a timestamp, oldest first.
     pub fn forks(timestamp: u64) -> Vec<String> {
-        Era::ALL
-            .into_iter()
+        Era::all()
+            .iter()
+            .copied()
             .filter(|era| era.activation_timestamp() <= timestamp)
             .map(|era| era.name().to_owned())
             .collect()

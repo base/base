@@ -472,8 +472,9 @@ impl ChainFuzzer {
             1 => ChainEdit::ConfigUpdate { salt: rng.next_u64() },
             _ => {
                 let timestamp = chain.request().header.timestamp;
-                let next = Era::ALL
-                    .into_iter()
+                let next = Era::all()
+                    .iter()
+                    .copied()
                     .map(Era::activation_timestamp)
                     .filter(|t| *t > timestamp)
                     .min();

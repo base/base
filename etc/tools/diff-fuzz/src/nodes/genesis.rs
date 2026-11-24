@@ -2,10 +2,9 @@
 
 use alloy_consensus::Header;
 use alloy_primitives::{B256, KECCAK256_EMPTY};
-use base_common_chains::ChainConfig;
 use serde_json::{Map, Value, json};
 
-use crate::WorldState;
+use crate::{Era, WorldState};
 
 /// The genesis file every node starts from.
 ///
@@ -31,7 +30,7 @@ impl NodeGenesis {
     /// chain rebased onto it numbers its blocks from one (see [`crate::ChainGenerator::rebase`]),
     /// for nodes that cannot reopen a datadir whose genesis is above block zero.
     pub fn json(state: &WorldState, parent: &Header, zero_number: bool) -> Value {
-        let c = ChainConfig::mainnet();
+        let c = Era::chain_config();
         let mut alloc = Map::new();
         for (address, account) in &state.accounts {
             let mut entry = Map::new();
@@ -78,6 +77,7 @@ impl NodeGenesis {
                     "beryl": c.beryl_timestamp,
                     "cobalt": c.cobalt_timestamp,
                     "denim": c.denim_timestamp,
+                    "everest": c.everest_timestamp,
                 },
                 "activationAdminAddress": c.beryl_activation_admin_address(),
                 "blockTime": c.block_time,
