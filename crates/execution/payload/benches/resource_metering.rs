@@ -22,6 +22,12 @@ use revm::{
     state::{Account, EvmState, EvmStorageSlot, TransactionId},
 };
 
+/// The allocator the node binaries use, so allocation in the measured code costs what it does in
+/// production.
+#[cfg(unix)]
+#[global_allocator]
+static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 fn operation(name: &str, count_cost: u64) -> ResourceMeteringOperation {
     ResourceMeteringOperation { name: name.to_string(), gas_used_weight: 1, count_cost }
 }
@@ -127,8 +133,12 @@ const BLOCK_TIMESTAMP: u64 = 1_800_000_000;
 /// the block, under fingerprints no probed slot has, so each probe scans a full set and misses
 /// and each write evicts. That is the steady state of a full cache and its slowest path.
 fn filled_meter() -> StaleStorageMeter {
-    let meter = StaleStorageMeter::with_cache_mib(STALE_STORAGE_CACHE_MIB);
     let hour = BLOCK_TIMESTAMP / STALE_STORAGE_EPOCH_SECONDS - 2;
+    let cache = StaleStorageCache::with_base_hour(
+        u64::from(STALE_STORAGE_CACHE_MIB) << 20,
+        hour - StaleStorageCache::BASE_MARGIN_HOURS,
+    );
+    let meter = StaleStorageMeter { cache: Arc::new(cache) };
     let sets = (meter.cache.len() / STALE_STORAGE_CACHE_WAYS) as u64;
     for set in 0..sets {
         for fingerprint in 1..=STALE_STORAGE_CACHE_WAYS as u64 {
@@ -363,7 +373,9 @@ fn typical_block_states() -> Vec<EvmState> {
 }
 
 /// The canonical bundle of `states`: every changed slot once, as the recorder sees the block.
-fn block_bundle(states: &[EvmState]) -> BundleState {
+/// A nonzero `salt` moves every slot to a different trie path, so each salt gives a block whose
+/// slots the cache has not seen.
+fn block_bundle(states: &[EvmState], salt: u64) -> BundleState {
     let mut bundle = BundleState::default();
     for state in states {
         for (address, account) in state {
@@ -375,7 +387,7 @@ fn block_bundle(states: &[EvmState]) -> BundleState {
             });
             for (slot, value) in &account.storage {
                 entry.storage.insert(
-                    *slot,
+                    *slot ^ (U256::from(salt) << 192),
                     StorageSlot {
                         previous_or_original_value: value.original_value(),
                         present_value: value.present_value(),
@@ -392,7 +404,9 @@ fn block_bundle(states: &[EvmState]) -> BundleState {
 /// - `builder_*`: [`BlockStaleTracker::evaluate`] and [`BlockStaleTracker::commit`] for every
 ///   transaction, on the payload builder's commit path.
 /// - `recorder_*`: [`StaleStorageMeter::record_bundle`] for the canonical block, including its
-///   occupancy sample, on the canonical-state task.
+///   occupancy sample, on the canonical-state task. Each iteration records a block of new slots
+///   (a fresh salt) two seconds after the previous one, up to 20 hours past the fill, so every
+///   probe misses and every write evicts an entry still within the window.
 /// - `typical`: [`typical_block_states`]; `xen`: the same plus one 725-slot claim batch.
 fn bench_stale_storage_block(c: &mut Criterion) {
     let meter = filled_meter();
@@ -414,9 +428,20 @@ fn bench_stale_storage_block(c: &mut Criterion) {
                 BatchSize::SmallInput,
             );
         });
-        let bundle = block_bundle(states);
+        let mut round = 0u64;
         group.bench_function(BenchmarkId::new("recorder", label), |b| {
-            b.iter(|| black_box(meter.record_bundle(black_box(&bundle), 1, BLOCK_TIMESTAMP)));
+            b.iter_batched(
+                || {
+                    round += 1;
+                    let elapsed = (round * 2).min(20 * STALE_STORAGE_EPOCH_SECONDS);
+                    (block_bundle(states, round), BLOCK_TIMESTAMP + elapsed)
+                },
+                |(bundle, timestamp)| {
+                    black_box(meter.record_bundle(black_box(&bundle), 1, timestamp));
+                    bundle
+                },
+                BatchSize::SmallInput,
+            );
         });
     }
     group.finish();

@@ -37,22 +37,36 @@ left stale counts in contracts with under a thousand written slots unchanged, re
 distinct keys over the whole capture, and changed no dry-run verdict.
 
 Each entry packs a 16-bit fingerprint of the key and a 16-bit hour stamp into four bytes, and
-each set fits in half a cache line. Stamps count hours from a base hour set one window before
-the first recorded block, so ages are exact and never wrap: an entry left untouched for any
-length of time reads as stale. The stamp covers about seven years; recording past that clears
-the cache. A slot reads as recent only if its set holds a matching fingerprint stamped within
-the window, so every error over-meters: an evicted or never-seen region reads as stale. Beyond
-the intended sharing within a region, the only false recent reading is a fingerprint collision,
-at most about one probe in 8,000 against a set full of live entries. The per-process secret
-keeps set placement and fingerprints unpredictable even though trie paths are public.
+each set fits in half a cache line. Stamps count hours from a base hour fixed when the
+cache is built, one window before the wall-clock hour, so every reader decodes every entry
+against the same base. Ages are exact and never wrap: an entry left untouched for any length of
+time reads as stale. The stamp covers about seven years; past that the recorder stops writing,
+logs a warning once, and every slot reads stale until the process restarts. A slot reads as
+recent only if its set holds a matching fingerprint stamped within the window, so every error
+over-meters: an evicted or never-seen region reads as stale. Beyond the intended sharing within
+a region, the only false recent reading is a fingerprint collision, at most about one probe in
+8,000 against a set full of live entries. At expected load that is about 6 falsely recent slots
+a day across Base Mainnet (about 0.0002 per block), and at most about 21 a day if every set were
+full of live entries. That is negligible for a log-only meter; revisit the fingerprint width
+before enforcing limits. The per-process secret keeps set placement and fingerprints
+unpredictable even though trie paths are public.
 
 The recorder classifies every slot of a canonical block against the cache as it was before the
 block, then stamps the block's regions, so trie siblings written in the same block do not make
-each other read recent.
+each other read recent. On a reorg it first empties the entries for every changed slot of the
+reverted blocks, so writes that left the canonical chain cannot keep a region recent; a region
+the new chain also wrote reads stale until the new chain is stamped. The recorder never clears
+the cache. It skips a block, counting its changed slots in
+`base_payload_stale_storage_cache_dropped_writes_total`, when the block predates the base hour
+(as while the node syncs), is past the stamp range, or is timestamped more than two hours before
+the last recorded block.
 
 The cache defaults to 128 mebibytes (about 33.5 million entries). Base Mainnet writes an
-estimated 10 million distinct slots a day, and fewer distinct regions; at 10 million keys about
-0.04% of sets overflow within the window. Set the size with `--payload.stale-storage-cache-mib`
+estimated 10 million distinct slots a day, and fewer distinct regions. Ten million live keys is
+under a third of the cache's entries, so no key is in excess of total capacity, but keys hash to
+sets unevenly: at about 2.4 keys per set on average, about 0.08% of sets receive more than eight
+within the window. Only the keys beyond eight in those overflowed sets are evicted early, about
+0.045% of live keys. Set the size with `--payload.stale-storage-cache-mib`
 (env `PAYLOAD_STALE_STORAGE_CACHE_MIB`), a power of two from 8 to 4096.
 
 To decide whether the cache is large enough, compare

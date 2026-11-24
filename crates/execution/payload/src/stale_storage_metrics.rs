@@ -25,6 +25,10 @@ base_metrics::define_metrics! {
     #[describe("Share of stale-storage cache entries within the window, sampled from 64 sets per recorded canonical notification")]
     #[no_zero]
     cache_occupancy_ratio: gauge,
+    #[describe("Changed storage slots the stale-storage recorder did not write, because their block predates the cache's base hour, is past its stamp range, or is timestamped before the last recorded hour")]
+    cache_dropped_writes_total: counter,
+    #[describe("Stale-storage cache entries emptied because the blocks that wrote them were reorged out")]
+    cache_reorg_invalidations_total: counter,
     #[describe("Canonical-state notifications the stale-storage recorder missed because its stream lagged")]
     canonical_stream_lagged_total: counter,
 }

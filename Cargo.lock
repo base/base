@@ -4516,6 +4516,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tikv-jemallocator",
  "tokio",
  "tokio-stream",
  "tracing",
