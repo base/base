@@ -90,6 +90,7 @@ impl TxForwardingService {
         for builder_url in &self.config.builder_urls {
             let client = match HttpClientBuilder::default()
                 .request_timeout(forwarder_config.request_timeout)
+                .max_request_size(forwarder_config.max_request_size)
                 .build(builder_url.as_str())
             {
                 Ok(client) => client,
@@ -164,6 +165,7 @@ impl TxForwardingService {
         for (url, receiver) in destinations {
             let client = HttpClientBuilder::default()
                 .request_timeout(forwarder_config.request_timeout)
+                .max_request_size(forwarder_config.max_request_size)
                 .build(url.as_str())
                 .map_err(|source| ForwardingSetupError::Client {
                     url: url.clone(),
