@@ -1,0 +1,51 @@
+[package]
+name = "base-diff-fuzz"
+description = "Differential fuzz and mainnet replay harness for Base execution clients"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-rlp.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std", "serde"] }
+alloy-serde = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std", "serde", "k256"] }
+alloy-primitives = { workspace = true, features = ["std", "serde", "rlp", "rand"] }
+
+# case generator
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+revm = { workspace = true, features = ["std"] }
+k256 = { workspace = true, features = ["ecdsa"] }
+p256 = { workspace = true, features = ["ecdsa"] }
+sha2 = { workspace = true, features = ["std"] }
+alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-genesis = { workspace = true, features = ["std"] }
+base-common-chains = { workspace = true, features = ["std"] }
+base-common-genesis = { workspace = true, features = ["std"] }
+base-common-evm = { workspace = true, features = ["std"] }
+base-consensus-upgrades = { workspace = true, features = ["std"] }
+base-common-precompiles = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+
+# mainnet case fetcher
+alloy-rpc-types-debug.workspace = true
+base-common-rpc-types.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["std", "serde"] }
+reqwest = { workspace = true, features = ["blocking"] }
+
+# misc
+libc.workspace = true
+eyre.workspace = true
+base64.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["unbounded_depth"] }
+clap = { workspace = true, features = ["derive"] }

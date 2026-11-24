@@ -4151,6 +4151,128 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-diff-adapter"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.5.0",
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-signer 2.5.0",
+ "alloy-signer-local 2.5.0",
+ "alloy-trie",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-evm",
+ "base-common-genesis",
+ "base-common-rpc-types-engine",
+ "base-diff-fuzz",
+ "base-execution-chainspec",
+ "base-execution-consensus",
+ "base-execution-evm",
+ "base-node-core",
+ "base-proof-mpt",
+ "eyre",
+ "reth-chainspec",
+ "reth-consensus",
+ "reth-evm",
+ "reth-execution-types",
+ "reth-node-api",
+ "reth-primitives-traits",
+ "reth-revm",
+ "reth-storage-api",
+ "reth-storage-errors",
+ "reth-trie-common",
+ "revm",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "base-diff-fuzz"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.5.0",
+ "alloy-eips 2.5.0",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-debug",
+ "alloy-rpc-types-eth 2.5.0",
+ "alloy-serde 2.5.0",
+ "alloy-signer 2.5.0",
+ "alloy-signer-local 2.5.0",
+ "alloy-sol-types",
+ "alloy-trie",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-evm",
+ "base-common-genesis",
+ "base-common-precompiles",
+ "base-common-rpc-types",
+ "base-consensus-upgrades",
+ "base64 0.22.1",
+ "clap",
+ "eyre",
+ "k256 0.13.4",
+ "libc",
+ "p256 0.13.2",
+ "reqwest 0.13.4",
+ "revm",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "base-diff-node"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-diff-adapter",
+ "base-execution-cli",
+ "base-node-runner",
+ "base-reth-cli",
+ "clap",
+ "jsonrpsee",
+ "reth-cli-util",
+ "serde",
+]
+
+[[package]]
+name = "base-diff-trie-adapter"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-trie",
+ "base-diff-adapter",
+ "base-diff-fuzz",
+ "base-execution-trie",
+ "eyre",
+ "reth-chainspec",
+ "reth-codecs",
+ "reth-db",
+ "reth-db-api",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-stages-types",
+ "reth-storage-api",
+ "reth-tasks",
+ "reth-trie",
+ "reth-trie-common",
+ "reth-trie-db",
+ "reth-trie-parallel",
+ "reth-trie-sparse",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "base-execution-base-tx"
 version = "0.0.0"
 dependencies = [

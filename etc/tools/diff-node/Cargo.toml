@@ -1,0 +1,34 @@
+[package]
+name = "base-diff-node"
+description = "base-reth-node with per-request JSON-RPC edge coverage, for the RPC differential fuzzer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "base-diff-node"
+path = "src/main.rs"
+
+[dependencies]
+# workspace
+base-cli-utils.workspace = true
+base-node-runner.workspace = true
+base-diff-adapter = { path = "../diff-adapter", features = ["edge-coverage"] }
+
+# reth
+base-reth-cli.workspace = true
+reth-cli-util = { workspace = true, features = ["jemalloc"] }
+base-execution-cli = { workspace = true, features = ["asm-keccak", "jemalloc", "keccak-cache-global"] }
+
+# rpc
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+
+# misc
+clap.workspace = true
+serde = { workspace = true, features = ["derive"] }
