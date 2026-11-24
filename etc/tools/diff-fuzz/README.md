@@ -373,5 +373,7 @@ With `--stateless-start <block|tag>` the target starts without state at that blo
 with the source as its execution witness upstream (`BASE_DIFF_STATELESS="<source http url> <start>"`
 for the launch script; tiger takes `--stateless.upstream` and `--stateless.start`). Heights below
 the first block the target serves are absent; that block must stay the same across phases, and
-the report records it with the source's finalized block at launch. `latest` cannot pass the first
+the report records it with the source's finalized block at launch. An account read the
+target refuses with an error where the source answers (state it does not hold yet) is allowed
+and listed under `partialStateErrors`; a different value is a mismatch. `latest` cannot pass the first
 phase: the mid-sync reorg drops the start block.

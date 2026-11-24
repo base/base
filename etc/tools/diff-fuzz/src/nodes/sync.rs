@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Rng, StressPlan,
-    nodes::{NodeClient, NodeProcess, StateOp, StateSession},
+    nodes::{NodeClient, NodeProcess, Reply, StateOp, StateSession},
 };
 
 /// Settings of one sync check.
@@ -69,6 +69,9 @@ pub struct SyncReport {
     pub source_finalized_at_start: Option<u64>,
     /// The lowest block the target serves; heights below it are absent (stateless start).
     pub first_block: Option<u64>,
+    /// Account reads a stateless target answered with an error where the source answered:
+    /// state it does not hold yet. Allowed (a clear error, never a wrong value), and counted.
+    pub partial_state_errors: Vec<String>,
 }
 
 /// A source node driven by a state session and a target node that syncs from it.
@@ -108,6 +111,7 @@ impl SyncCheck {
                 stateless_start: None,
                 source_finalized_at_start: None,
                 first_block: None,
+                partial_state_errors: Vec::new(),
             },
         }
     }
@@ -334,7 +338,13 @@ impl SyncCheck {
                 let params = json!([address, format!("{:#x}", head.0)]);
                 let ours = source.call(method, &params);
                 let theirs = self.target.call(method, &params);
-                if ours != theirs {
+                let refused = matches!(&theirs, Reply::Body(body) if body.get("error").is_some())
+                    && matches!(&ours, Reply::Body(body) if body.get("result").is_some());
+                if refused && self.config.stateless_start.is_some() {
+                    self.report
+                        .partial_state_errors
+                        .push(format!("{method} {address} at {}: {theirs:?}", head.0));
+                } else if ours != theirs {
                     mismatches.push(format!(
                         "{method} {address} at {}: source {ours:?} target {theirs:?}",
                         head.0
