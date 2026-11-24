@@ -11,7 +11,7 @@ repository.workspace = true
 base-prover-service-protocol.workspace = true
 
 futures.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-native-tls"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-rustls-ring"] }
 
 serde_json.workspace = true
 serde = { workspace = true, features = ["derive"] }

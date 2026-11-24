@@ -272,14 +272,15 @@ impl Discv5Driver {
                                 },
                             }
                             None => {
-                                trace!(target: "discovery", "Receiver `None` peer enr");
+                                info!(target: "discovery", "All discovery handlers dropped, stopping discovery driver");
+                                break;
                             }
                         }
                     }
                     event = event_stream.recv() => {
                         let Some(event) = event else {
-                            trace!(target: "discovery", "Received `None` event");
-                            continue;
+                            warn!(target: "discovery", "Discv5 event stream ended, stopping discovery driver");
+                            break;
                         };
                         match event {
                             discv5::Event::Discovered(enr)
