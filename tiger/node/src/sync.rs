@@ -37,7 +37,7 @@ impl Node {
     /// Starts the network and the sync thread.
     pub fn start_sync(self: &Arc<Self>, config: base_tiger_net::NetworkConfig) -> Result<(), String> {
         let source: Arc<dyn BlockSource> = Arc::clone(self) as Arc<dyn BlockSource>;
-        let network = Network::start(config, source, None).map_err(|error| format!("starting the network: {error}"))?;
+        let network = Network::start(config, source).map_err(|error| format!("starting the network: {error}"))?;
         eprintln!("tiger: node id {}", alloy_primitives::hex::encode(network.local_id()));
         let (sender, receiver) = mpsc::channel();
         let sync = Sync { network: network.clone(), targets: Mutex::new(sender) };
