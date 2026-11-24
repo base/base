@@ -62,6 +62,8 @@ hmac = { version = "0.13.0", default-features = false }
 aes-gcm = { version = "0.10.3", default-features = false }
 getrandom = { version = "0.3.4", default-features = false }
 secp256k1 = { version = "0.31.1", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 
 # proc macros (base-tiger-precompile-macros only)
 syn = { version = "2", features = ["full", "extra-traits"] }

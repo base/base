@@ -71,6 +71,8 @@ pub struct Node {
     pub upstream: Option<crate::Upstream>,
     /// Execution witnesses fetched ahead from the upstream (a stateless node).
     pub witnesses: Option<crate::Witnesses>,
+    /// The prewarm queue of a stateless node, once started.
+    pub prewarm: OnceLock<crate::Prewarm>,
 }
 
 impl Node {
@@ -87,6 +89,7 @@ impl Node {
             sync: OnceLock::new(),
             filters: crate::RpcFilters::default(),
             rpc_config: crate::RpcConfig::default(),
+            prewarm: OnceLock::new(),
             witnesses: upstream.as_ref().map(|(upstream, _)| crate::Witnesses::new(upstream)),
             upstream: upstream.map(|(upstream, _)| upstream),
         })

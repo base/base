@@ -1,12 +1,12 @@
 //! The upstream base-reth JSON-RPC endpoint a stateless node reads what it does not hold: the
 //! start block, and an execution witness for each block whose state is not all local.
 //!
-//! The client speaks plain HTTP/1.1 (one request per connection) and nothing else: the upstream
-//! is an operator's own node, and every answer is verified (witness nodes by hash against tiger's
-//! own state roots, blocks by hash), so the channel adds no trust.
+//! The client speaks HTTP/1.1 (one request per connection), plain or over TLS (rustls, Mozilla
+//! roots). Every answer is verified (witness and proof nodes by hash against tiger's own state
+//! roots, blocks by hash), so the channel adds no trust; TLS keeps an endpoint's key private.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     io::{BufRead, BufReader, Read, Write},
     net::{TcpStream, ToSocketAddrs},
     sync::{Arc, Condvar, Mutex, mpsc},
@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -41,32 +41,55 @@ pub struct ExecutionWitness {
     pub headers: Vec<Bytes>,
 }
 
-/// An upstream JSON-RPC endpoint (`http://host:port/path`).
+/// An upstream JSON-RPC endpoint (`http://` or `https://host:port/path`).
 #[derive(Debug, Clone)]
 pub struct Upstream {
     host: String,
     port: u16,
     path: String,
+    /// TLS settings for an `https://` endpoint, which the Mozilla root certificates verify.
+    tls: Option<Arc<rustls::ClientConfig>>,
 }
 
+/// A connection to the upstream, plain or TLS.
+trait Connection: Read + Write {}
+impl<T: Read + Write> Connection for T {}
+
 impl Upstream {
-    /// Parses `url`, which must be `http://host[:port][/path]`.
+    /// Parses `url`, which must be `http://` or `https://host[:port][/path]`.
     pub fn new(url: &str) -> Result<Self, String> {
-        let rest = url.strip_prefix("http://").ok_or_else(|| format!("upstream {url}: only http:// is supported"))?;
+        let (rest, tls) = match (url.strip_prefix("http://"), url.strip_prefix("https://")) {
+            (Some(rest), _) => (rest, false),
+            (None, Some(rest)) => (rest, true),
+            (None, None) => {
+                return Err(format!("upstream {url}: only http:// and https:// are supported"));
+            }
+        };
         let (authority, path) = match rest.find('/') {
             Some(index) => (&rest[..index], &rest[index..]),
             None => (rest, "/"),
         };
         let (host, port) = match authority.rsplit_once(':') {
-            Some((host, port)) => {
-                (host, port.parse::<u16>().map_err(|error| format!("upstream {url}: port: {error}"))?)
-            }
-            None => (authority, 80),
+            Some((host, port)) => (
+                host,
+                port.parse::<u16>().map_err(|error| format!("upstream {url}: port: {error}"))?,
+            ),
+            None => (authority, if tls { 443 } else { 80 }),
         };
         if host.is_empty() {
             return Err(format!("upstream {url}: no host"));
         }
-        Ok(Self { host: host.to_owned(), port, path: path.to_owned() })
+        let tls = tls.then(|| {
+            let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
+            rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .map(|builder| {
+                    Arc::new(builder.with_root_certificates(roots).with_no_client_auth())
+                })
+                .map_err(|error| format!("upstream {url}: tls: {error}"))
+        });
+        Ok(Self { host: host.to_owned(), port, path: path.to_owned(), tls: tls.transpose()? })
     }
 
     /// Calls `method` with `params` and returns its result.
@@ -81,22 +104,145 @@ impl Upstream {
         Ok(reply["result"].take())
     }
 
+    /// Calls every `(method, params)` in one JSON-RPC batch; results in the same order.
+    pub fn call_batch(&self, calls: &[(&str, Value)]) -> Result<Vec<Value>, String> {
+        let batch: Vec<Value> = calls
+            .iter()
+            .enumerate()
+            .map(|(id, (method, params))| json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))
+            .collect();
+        let response = self
+            .post(&Value::Array(batch).to_string())
+            .map_err(|error| format!("upstream batch: {error}"))?;
+        let replies: Vec<Value> = serde_json::from_slice(&response)
+            .map_err(|error| format!("upstream batch: reply: {error}"))?;
+        let mut results = vec![Value::Null; calls.len()];
+        let mut answered = 0;
+        for mut reply in replies {
+            let id = reply["id"]
+                .as_u64()
+                .and_then(|id| usize::try_from(id).ok())
+                .filter(|id| *id < calls.len());
+            let Some(id) = id else {
+                return Err("upstream batch: reply with an unknown id".into());
+            };
+            if let Some(error) = reply.get("error") {
+                return Err(format!("upstream {}: {error}", calls[id].0));
+            }
+            results[id] = reply["result"].take();
+            answered += 1;
+        }
+        if answered != calls.len() {
+            return Err("upstream batch: missing replies".into());
+        }
+        Ok(results)
+    }
+
+    /// The trie nodes proving `keys` (accounts with storage slots) and the code of `codes`
+    /// (accounts), at block `block`, from `eth_getProof` and `eth_getCode` in one batch. Nothing
+    /// in them is trusted: the caller keeps only the nodes that link by hash to the block's state
+    /// root and the code that hashes to a known code hash.
+    pub fn proofs(
+        &self,
+        block: B256,
+        keys: &[(Address, Vec<U256>)],
+        codes: &[Address],
+    ) -> Result<(Vec<Bytes>, Vec<Bytes>), String> {
+        let mut calls = Vec::with_capacity(keys.len() + codes.len());
+        for (address, slots) in keys {
+            let slots: Vec<B256> = slots.iter().map(|slot| B256::from(*slot)).collect();
+            calls.push(("eth_getProof", json!([address, slots, block])));
+        }
+        for address in codes {
+            calls.push(("eth_getCode", json!([address, block])));
+        }
+        let results = self.call_batch(&calls)?;
+        let mut nodes = Vec::new();
+        let bytes = |value: &Value| {
+            serde_json::from_value::<Bytes>(value.clone()).map_err(|error| error.to_string())
+        };
+        for result in &results[..keys.len()] {
+            for node in result["accountProof"].as_array().into_iter().flatten() {
+                nodes.push(bytes(node)?);
+            }
+            for storage in result["storageProof"].as_array().into_iter().flatten() {
+                for node in storage["proof"].as_array().into_iter().flatten() {
+                    nodes.push(bytes(node)?);
+                }
+            }
+        }
+        let codes = results[keys.len()..].iter().map(bytes).collect::<Result<Vec<_>, _>>()?;
+        Ok((nodes, codes))
+    }
+
     /// The execution witness of block `hash` (number `number`). By number it is the witness of
     /// the upstream's canonical block at `number`, which may be another block (it then fails
     /// verification against tiger's roots); `by_hash` asks for `hash` itself, which base-reth
     /// serves several times slower (no proofs-history index), falling back to the number when the
     /// upstream lacks the method.
-    pub fn execution_witness(&self, hash: B256, number: u64, by_hash: bool) -> Result<ExecutionWitness, String> {
+    pub fn execution_witness(
+        &self,
+        hash: B256,
+        number: u64,
+        by_hash: bool,
+    ) -> Result<ExecutionWitness, String> {
         let by_number = || self.call("debug_executionWitness", json!([format!("{number:#x}")]));
-        let result = match by_hash.then(|| self.call("debug_executionWitnessByBlockHash", json!([hash]))) {
-            None => by_number()?,
-            Some(Ok(result)) => result,
-            // Only an upstream without the method falls back to the block number: one that
-            // lacks the block (a reorged-out branch) would answer for another block.
-            Some(Err(error)) if error.contains("-32601") => by_number()?,
-            Some(Err(error)) => return Err(error),
+        let result =
+            match by_hash.then(|| self.call("debug_executionWitnessByBlockHash", json!([hash]))) {
+                None => by_number()?,
+                Some(Ok(result)) => result,
+                // Only an upstream without the method falls back to the block number: one that
+                // lacks the block (a reorged-out branch) would answer for another block.
+                Some(Err(error)) if error.contains("-32601") => by_number()?,
+                Some(Err(error)) => return Err(error),
+            };
+        serde_json::from_value(result)
+            .map_err(|error| format!("upstream debug_executionWitness: {error}"))
+    }
+
+    /// The keys canonical block `number` reads and deletes, from the upstream's
+    /// `prestateTracer`. Only a hint of which keys to prove: a reorged block's keys differ, and
+    /// every value comes from proofs instead.
+    pub fn block_keys(&self, number: u64) -> Result<BlockKeys, String> {
+        let block = format!("{number:#x}");
+        let reads = json!({ "tracer": "prestateTracer", "tracerConfig": { "disableCode": true } });
+        let diff = json!({ "tracer": "prestateTracer", "tracerConfig": { "diffMode": true, "disableCode": true } });
+        let traces = self.call_batch(&[
+            ("debug_traceBlockByNumber", json!([block, reads])),
+            ("debug_traceBlockByNumber", json!([block, diff])),
+        ])?;
+        let parse = |address: &String| {
+            address.parse::<Address>().map_err(|error| format!("prestate account: {error}"))
         };
-        serde_json::from_value(result).map_err(|error| format!("upstream debug_executionWitness: {error}"))
+        let slots = |account: &Value| {
+            account["storage"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(slot, _)| {
+                    slot.parse::<U256>().map_err(|error| format!("prestate slot: {error}"))
+                })
+                .collect::<Result<BTreeSet<U256>, String>>()
+        };
+        let mut keys = BlockKeys::default();
+        for trace in traces[0].as_array().into_iter().flatten() {
+            for (address, account) in trace["result"].as_object().into_iter().flatten() {
+                keys.read.entry(parse(address)?).or_default().extend(slots(account)?);
+            }
+        }
+        // In diff mode a slot set to zero is in `pre` but not `post`, and so is a deleted account.
+        for trace in traces[1].as_array().into_iter().flatten() {
+            let post = &trace["result"]["post"];
+            for (address, account) in trace["result"]["pre"].as_object().into_iter().flatten() {
+                let after = &post[address.as_str()];
+                let kept = slots(after)?;
+                let deleted: BTreeSet<U256> = slots(account)?.difference(&kept).copied().collect();
+                if after.is_null() || !deleted.is_empty() {
+                    keys.deleted.entry(parse(address)?).or_default().extend(deleted);
+                }
+            }
+        }
+        Ok(keys)
     }
 
     /// The RLP of canonical block `block` (a number or tag) and its receipts (EIP-2718).
@@ -113,17 +259,28 @@ impl Upstream {
             .to_socket_addrs()?
             .next()
             .ok_or_else(|| std::io::Error::other("host does not resolve"))?;
-        let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)?;
-        stream.set_read_timeout(Some(REQUEST_TIMEOUT))?;
-        stream.set_write_timeout(Some(REQUEST_TIMEOUT))?;
+        let tcp = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)?;
+        tcp.set_read_timeout(Some(REQUEST_TIMEOUT))?;
+        tcp.set_write_timeout(Some(REQUEST_TIMEOUT))?;
+        let mut stream: Box<dyn Connection> = match &self.tls {
+            None => Box::new(tcp),
+            Some(config) => {
+                let name = rustls::pki_types::ServerName::try_from(self.host.clone())
+                    .map_err(std::io::Error::other)?;
+                let connection = rustls::ClientConnection::new(Arc::clone(config), name)
+                    .map_err(std::io::Error::other)?;
+                Box::new(rustls::StreamOwned::new(connection, tcp))
+            }
+        };
         write!(
             stream,
-            "POST {} HTTP/1.1\r\nHost: {}:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "POST {} HTTP/1.1\r\nHost: {}:{}\r\nUser-Agent: base-tiger\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             self.path,
             self.host,
             self.port,
             body.len()
         )?;
+        stream.flush()?;
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
         reader.read_line(&mut line)?;
@@ -177,6 +334,16 @@ impl Upstream {
         }
         Ok(body)
     }
+}
+
+/// The accounts and storage slots a block reads, and the accounts it deletes (with no slots) and
+/// the slots it sets to zero.
+#[derive(Debug, Default)]
+pub struct BlockKeys {
+    /// Read keys.
+    pub read: BTreeMap<Address, BTreeSet<U256>>,
+    /// Deleted keys.
+    pub deleted: BTreeMap<Address, BTreeSet<U256>>,
 }
 
 /// Execution witnesses fetched ahead from the upstream, many at a time, so a stateless node keeps

@@ -184,6 +184,7 @@ impl NodeArgs {
         let config = self.net.config(&node, &self.chain, &secret_path)?;
         eprintln!("tiger: p2p on port {}", self.net.port);
         node.start_sync(config)?;
+        node.start_prewarm();
         base_tiger::serve(Arc::clone(&node), self.auth, Some(jwt))?;
         base_tiger::serve(node, self.http, None)?;
         eprintln!("tiger: serving http on {} and the Engine API on {}", self.http, self.auth);

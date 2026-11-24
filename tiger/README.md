@@ -54,6 +54,8 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `aes-gcm` | AES-128-GCM for discv5 message encryption. |
 | `sha2`, `hmac` | SHA-256 and HMAC for the RLPx ECIES KDF and MAC, discv5's HKDF, and HS256 Engine API JWTs. |
 | `getrandom` | Random node keys, nonces and ephemeral keys from the OS. |
+| `rustls` | TLS for an `https://` stateless upstream (operators' proof endpoints are https); `ring` provider, no aws-lc. |
+| `webpki-roots` | The Mozilla root certificates rustls verifies the upstream's certificate against. |
 | `cc` (build) | Compiles the vendored libmdbx C sources. |
 | `rocksdb` | base-reth storage v2 keeps five tables (history indices, transaction hash numbers, block access lists) in RocksDB; tiger must read and write the same files. Features `lz4`, `zstd` (reth's column family compression), `bindgen-runtime`. |
 | `zstd` | base-reth's compact transaction and receipt encodings in static files are zstd-compressed with reth's dictionaries. |

@@ -16,7 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_trie::KECCAK_EMPTY;
+use alloy_trie::{KECCAK_EMPTY, Nibbles};
 use base_tiger_store::{
     Account, AccountBeforeTx, BytecodeCodec, Datadir, Db, History, Reader, RocksTable, Ro, Rw, Segment, StorageBeforeTx,
     StorageEntry, StoreError, Table, Txn, WriteTxn, put_compact_u256,
@@ -286,6 +286,21 @@ impl StateDb {
         let db = &w.datadir.db;
         let root = self.partial_root(w.txn())?.ok_or_else(|| TrieError::Corrupt("witnesses fill only partial states".into()))?;
         PartialState::absorb_witness(w.txn(), db, root, nodes, codes)
+    }
+
+    /// Stores what proofs of the hashed `keys` (by trie owner, `None` for the account trie),
+    /// taken at an older block, reveal of the stored tip's state: the parts of the proofs whose
+    /// subtrees did not change since (see [`PartialState::absorb_proofs`]), and `codes`.
+    pub fn absorb_proofs(
+        &self,
+        w: &mut WriteTxn<'_>,
+        nodes: &[Bytes],
+        codes: &[Bytes],
+        keys: &BTreeMap<Option<B256>, Vec<Nibbles>>,
+    ) -> Result<(), TrieError> {
+        let db = &w.datadir.db;
+        let root = self.partial_root(w.txn())?.ok_or_else(|| TrieError::Corrupt("proofs fill only partial states".into()))?;
+        PartialState::absorb_proofs(w.txn(), db, root, nodes, codes, keys)
     }
 
     /// The new state root after hashed `state`, writing the trie changes into `txn`.

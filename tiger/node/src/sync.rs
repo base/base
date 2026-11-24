@@ -4,8 +4,7 @@
 //! forward by number in batches (base-reth's backfill); the last stretch, and any reorg below the
 //! local head, is fetched backward by hash from the target. Payloads the consensus node sent that
 //! could not be imported yet (`EngineState::pending`) are imported from there, without a
-//! download. On a stateless node, the execution witnesses of the blocks to import are fetched
-//! ahead, many at a time.
+//! download.
 
 use std::{
     sync::{Arc, Mutex, mpsc},
@@ -40,7 +39,10 @@ pub struct Sync {
 
 impl Node {
     /// Starts the network and the sync thread.
-    pub fn start_sync(self: &Arc<Self>, config: base_tiger_net::NetworkConfig) -> Result<(), String> {
+    pub fn start_sync(
+        self: &Arc<Self>,
+        config: base_tiger_net::NetworkConfig,
+    ) -> Result<(), String> {
         let source: Arc<dyn BlockSource> = Arc::clone(self) as Arc<dyn BlockSource>;
         let network = Network::start(config, source).map_err(|error| format!("starting the network: {error}"))?;
         eprintln!("tiger: node id {}", alloy_primitives::hex::encode(network.local_id()));
@@ -99,7 +101,12 @@ impl Node {
         while top.number() > number + BACKFILL_THRESHOLD {
             let count = BATCH.min(top.number() - number - 1);
             let headers = downloader
-                .headers(HeadersRequest { start: BlockId::Number(number + 1), limit: count, skip: 0, reverse: false })
+                .headers(HeadersRequest {
+                    start: BlockId::Number(number + 1),
+                    limit: count,
+                    skip: 0,
+                    reverse: false,
+                })
                 .map_err(error)?;
             if headers.first().is_none_or(|first| first.header.parent_hash != hash) {
                 // Peers are on another branch below our head: fetch backward instead.
@@ -167,37 +174,80 @@ impl Node {
             }
         }
         blocks.reverse();
-        self.prefetch_witnesses(blocks.iter().map(|(header, hash, _)| (*hash, header.number)));
+        for (header, hash, _) in &blocks {
+            self.prewarm(header, *hash);
+        }
         let mut imported = 0;
         for (header, hash, transactions) in blocks {
             imported += self.import_one(header, hash, &transactions)?;
+            self.advance_canonical(hash)?;
         }
         Ok(Some(imported))
     }
 
-    /// Starts fetching the execution witnesses of blocks about to be imported (stateless nodes).
-    fn prefetch_witnesses(&self, blocks: impl Iterator<Item = (B256, u64)>) {
-        if let Some(witnesses) = &self.witnesses
-            && self.chain.read().expect("chain lock").db.is_partial()
-        {
-            for (hash, number) in blocks {
-                witnesses.request(hash, number);
+    /// Makes imported block `hash` canonical when it is an ancestor of the latest forkchoice
+    /// head, so a long catch-up commits as it goes, as base-reth's backfill does, instead of
+    /// holding every block in memory until the head is reached. On a stateless node this also
+    /// keeps the stored tip at the next block's parent, where its proofs are fetched.
+    fn advance_canonical(&self, hash: B256) -> Result<(), String> {
+        let engine = self.engine.lock().expect("engine lock");
+        let Some(head) = engine.forkchoice_head else { return Ok(()) };
+        let mut chain = self.chain.write().expect("chain lock");
+        let Some(block) = chain.block(&hash) else { return Ok(()) };
+        // Walk back from the forkchoice head, through buffered payloads and stored blocks.
+        let mut at = head;
+        loop {
+            let (number, parent) = match engine.pending.get(&at) {
+                Some((header, _)) => (header.number, header.parent_hash),
+                None => match chain.block(&at) {
+                    Some(stored) => (stored.number(), stored.header.parent_hash),
+                    None => return Ok(()),
+                },
+            };
+            if number <= block.number() {
+                if at == hash {
+                    chain.set_canonical(hash)?;
+                }
+                return Ok(());
             }
+            at = parent;
         }
     }
 
     /// Imports one block whose parent is stored, waiting (without holding the Engine API lock)
     /// for its execution witness when it needs one. Returns 1 when it was imported now.
-    fn import_one(&self, header: alloy_consensus::Header, hash: B256, transactions: &[Bytes]) -> Result<u64, String> {
+    fn import_one(
+        &self,
+        header: alloy_consensus::Header,
+        hash: B256,
+        transactions: &[Bytes],
+    ) -> Result<u64, String> {
         let number = header.number;
         loop {
-            let mut engine = self.engine.lock().expect("engine lock");
-            let outcome =
-                self.import_block(&mut engine, header.clone(), hash, transactions).map_err(|error| error.message)?;
+            // Validation runs without the Engine API lock, so newPayload and forkchoiceUpdated
+            // calls are answered (and buffered) while a long stretch imports.
+            let checked = Self::check_known_invalid(
+                &mut self.engine.lock().expect("engine lock"),
+                &header,
+                hash,
+            );
+            let outcome = match checked {
+                Some(outcome) => outcome,
+                None => match self
+                    .validate_block(&header, hash, transactions)
+                    .map_err(|error| error.message)?
+                {
+                    Ok(validated) => {
+                        let mut engine = self.engine.lock().expect("engine lock");
+                        self.store_validated(&mut engine, header.clone(), hash, validated)
+                            .map_err(|error| error.message)?
+                    }
+                    Err(outcome) => outcome,
+                },
+            };
             if !matches!(outcome, Imported::AwaitingWitness) {
-                engine.pending.remove(&hash);
+                self.engine.lock().expect("engine lock").pending.remove(&hash);
             }
-            drop(engine);
             match outcome {
                 Imported::Valid => return Ok(1),
                 Imported::Known => return Ok(0),
@@ -216,12 +266,19 @@ impl Node {
     }
 
     /// Downloads the bodies of `headers` (ascending, linked) and imports the blocks in order.
-    fn import_downloaded(&self, downloader: &Downloader, headers: &[SealedHeader]) -> Result<u64, String> {
-        self.prefetch_witnesses(headers.iter().map(|header| (header.hash, header.number())));
+    fn import_downloaded(
+        &self,
+        downloader: &Downloader,
+        headers: &[SealedHeader],
+    ) -> Result<u64, String> {
         let bodies = downloader.bodies(headers, &mut |_| {}).map_err(|error| error.to_string())?;
+        for header in headers {
+            self.prewarm(&header.header, header.hash);
+        }
         let mut imported = 0;
         for (header, body) in headers.iter().zip(bodies) {
             imported += self.import_one(header.header.clone(), header.hash, &body.transactions)?;
+            self.advance_canonical(header.hash)?;
         }
         Ok(imported)
     }

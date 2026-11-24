@@ -8,18 +8,23 @@
 //! attributes, `-38005` unsupported fork, `-38001` unknown payload).
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     rc::Rc,
     sync::Arc,
 };
 
 use alloy_consensus::{Block, BlockBody, Header};
-use alloy_eips::{eip7685::Requests, eip4895::Withdrawals};
+use alloy_eips::{eip4895::Withdrawals, eip7685::Requests};
 use alloy_primitives::{B256, Bytes, U256};
+use alloy_rlp::Decodable;
 use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, CancunPayloadFields, ExecutionPayloadEnvelopeV2,
     ExecutionPayloadFieldV2, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV3,
     ForkchoiceState, PayloadId, PraguePayloadFields,
+};
+use alloy_trie::{
+    Nibbles,
+    nodes::{ExtensionNode, LeafNode, TrieNode},
 };
 use base_common_consensus::{BaseTxEnvelope as SignedTx, Predeploys};
 use base_common_genesis::BaseFeature;
@@ -42,6 +47,8 @@ const MAX_PAYLOADS: usize = 16;
 const MAX_INVALID: usize = 512;
 /// Payloads buffered until they can be imported (about half an hour of 2 s blocks).
 const MAX_PENDING: usize = 1024;
+/// Rounds of fetching proofs for the state a block misses before its whole-block witness is used.
+const MAX_PROOF_ROUNDS: usize = 8;
 
 /// Engine API message versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -100,6 +107,8 @@ pub struct EngineState {
     /// the sync thread imports once they can be.
     pub pending: HashMap<B256, (Header, Vec<Bytes>)>,
     pending_order: VecDeque<B256>,
+    /// The head of the latest forkchoice update.
+    pub forkchoice_head: Option<B256>,
     payloads: VecDeque<(PayloadId, BuiltPayload)>,
     invalid: HashMap<B256, InvalidBlock>,
     invalid_order: VecDeque<B256>,
@@ -271,10 +280,14 @@ impl Node {
             }
         };
         match version {
-            Version::V1 if has_withdrawals => return Err(invalid("withdrawals not supported in V1")),
+            Version::V1 if has_withdrawals => {
+                return Err(invalid("withdrawals not supported in V1"));
+            }
             Version::V1 if shanghai => return Err(invalid("no withdrawals post-Shanghai")),
             Version::V1 => {}
-            _ if shanghai && !has_withdrawals => return Err(invalid("no withdrawals post-Shanghai")),
+            _ if shanghai && !has_withdrawals => {
+                return Err(invalid("no withdrawals post-Shanghai"));
+            }
             _ if !shanghai && has_withdrawals => return Err(invalid("withdrawals pre-Shanghai")),
             _ => {}
         }
@@ -325,12 +338,15 @@ impl Node {
             Imported::MissingParent | Imported::AwaitingWitness => {
                 // As base-reth buffers a block it cannot validate yet: the sync thread imports it
                 // from here (or downloads it) once its parent and witness are in.
+                self.prewarm(&header, hash);
                 engine.keep_pending(hash, header, block.body.transactions);
                 drop(engine);
                 self.request_sync(hash);
                 Ok(status("SYNCING", None, None))
             }
-            Imported::Invalid { latest_valid, error } => Ok(status("INVALID", latest_valid, Some(&error))),
+            Imported::Invalid { latest_valid, error } => {
+                Ok(status("INVALID", latest_valid, Some(&error)))
+            }
         }
     }
 
@@ -342,70 +358,274 @@ impl Node {
         hash: B256,
         transactions: &[Bytes],
     ) -> Result<Imported, RpcError> {
-        let parent_hash = header.parent_hash;
-        if let Some(invalid) = engine.invalid.get(&hash) {
-            return Ok(Imported::Invalid { latest_valid: invalid.latest_valid, error: invalid.error.clone() });
+        if let Some(imported) = Self::check_known_invalid(engine, &header, hash) {
+            return Ok(imported);
         }
-        if let Some(invalid) = engine.invalid.get(&parent_hash).cloned() {
-            engine.reject(hash, invalid.clone());
-            return Ok(Imported::Invalid {
+        match self.validate_block(&header, hash, transactions)? {
+            Ok(validated) => self.store_validated(engine, header, hash, validated),
+            Err(imported) => Ok(imported),
+        }
+    }
+
+    /// The outcome of a block already rejected, or linking to one (which is rejected now).
+    pub fn check_known_invalid(
+        engine: &mut EngineState,
+        header: &Header,
+        hash: B256,
+    ) -> Option<Imported> {
+        if let Some(invalid) = engine.invalid.get(&hash) {
+            return Some(Imported::Invalid {
                 latest_valid: invalid.latest_valid,
-                error: "links to previously rejected block".into(),
+                error: invalid.error.clone(),
             });
         }
-        let validated = {
-            let chain = self.chain.read().expect("chain lock");
-            if chain.block(&hash).is_some() {
-                return Ok(Imported::Known);
-            }
-            let Some(parent) = chain.block(&parent_hash) else {
-                return Ok(Imported::MissingParent);
-            };
-            let state = chain.state_after(&parent).map_err(RpcError::internal)?;
-            match (BlockExecution { chain: &self.spec }).validate(&header, transactions, &parent.header, &state) {
-                Ok(validated) => (validated, state.take_prepared().map(|prepared| Validation::Prepared(Box::new(prepared)))),
-                Err(missing) => match &self.witnesses {
-                    Some(witnesses) if chain.db.is_partial() => {
-                        drop(state);
-                        let Some(witness) = witnesses.take(&hash) else {
-                            witnesses.request(hash, header.number);
-                            return Ok(Imported::AwaitingWitness);
-                        };
-                        let witness = witness.map_err(RpcError::internal)?;
-                        match self.validate_with_witness(&chain, witness, &header, hash, transactions, &parent) {
-                            Ok(validated) => {
-                                witnesses.forget(&hash);
-                                validated
-                            }
-                            // The upstream's canonical block at this number may be another one.
-                            Err(_) if witnesses.retry_by_hash(hash, header.number) => {
-                                return Ok(Imported::AwaitingWitness);
-                            }
-                            Err(error) => {
-                                witnesses.forget(&hash);
-                                return Err(error);
-                            }
-                        }
-                    }
-                    _ => return Err(RpcError::internal(format!("state of block {parent_hash}: {missing}"))),
-                },
+        let invalid = engine.invalid.get(&header.parent_hash).cloned()?;
+        engine.reject(hash, invalid.clone());
+        Some(Imported::Invalid {
+            latest_valid: invalid.latest_valid,
+            error: "links to previously rejected block".into(),
+        })
+    }
+
+    /// Validates and executes block `hash` without the Engine API state, so a long validation
+    /// (a stateless node's proof rounds) does not hold up the Engine API. `Err` is an outcome
+    /// with nothing to store.
+    pub fn validate_block(
+        &self,
+        header: &Header,
+        hash: B256,
+        transactions: &[Bytes],
+    ) -> Result<Result<(crate::Validated, Option<Validation>), Imported>, RpcError> {
+        let parent_hash = header.parent_hash;
+        let chain = self.chain.read().expect("chain lock");
+        if chain.block(&hash).is_some() {
+            return Ok(Err(Imported::Known));
+        }
+        let Some(parent) = chain.block(&parent_hash) else {
+            return Ok(Err(Imported::MissingParent));
+        };
+        let missing = match self.validate_fetching_proofs(&chain, header, transactions, &parent)? {
+            Ok(validated) => return Ok(Ok(validated)),
+            Err(missing) => missing,
+        };
+        let witnesses = match &self.witnesses {
+            Some(witnesses) if chain.db.is_partial() => witnesses,
+            _ => {
+                return Err(RpcError::internal(format!("state of block {parent_hash}: {missing}")));
             }
         };
+        let Some(witness) = witnesses.take(&hash) else {
+            witnesses.request(hash, header.number);
+            return Ok(Err(Imported::AwaitingWitness));
+        };
+        let witness = witness.map_err(RpcError::internal)?;
+        match self.validate_with_witness(&chain, witness, header, hash, transactions, &parent) {
+            Ok(validated) => {
+                witnesses.forget(&hash);
+                Ok(Ok(validated))
+            }
+            // The upstream's canonical block at this number may be another one.
+            Err(_) if witnesses.retry_by_hash(hash, header.number) => {
+                Ok(Err(Imported::AwaitingWitness))
+            }
+            Err(error) => {
+                witnesses.forget(&hash);
+                Err(error)
+            }
+        }
+    }
+
+    /// Stores block `hash` that [`Self::validate_block`] validated, or records it as invalid.
+    pub fn store_validated(
+        &self,
+        engine: &mut EngineState,
+        header: Header,
+        hash: B256,
+        validated: (crate::Validated, Option<Validation>),
+    ) -> Result<Imported, RpcError> {
+        let parent_hash = header.parent_hash;
         let (validated, prepared) = validated;
         match (validated.invalid, validated.executed) {
             (None, Some(executed)) => {
                 let mut stored = executed;
                 stored.header = header;
-                self.chain.write().expect("chain lock").insert(hash, &stored, prepared).map_err(RpcError::internal)?;
+                let mut chain = self.chain.write().expect("chain lock");
+                // The Engine API may have pruned the parent while the block validated unlocked.
+                if chain.block(&parent_hash).is_none() {
+                    return Ok(Imported::MissingParent);
+                }
+                chain.insert(hash, &stored, prepared).map_err(RpcError::internal)?;
                 Ok(Imported::Valid)
             }
             (invalid, _) => {
                 let error = invalid.unwrap_or_else(|| "block did not execute".into());
                 eprintln!("tiger: invalid block {} {hash}: {error}", header.number);
-                engine.reject(hash, InvalidBlock { latest_valid: Some(parent_hash), error: error.clone() });
+                engine.reject(
+                    hash,
+                    InvalidBlock { latest_valid: Some(parent_hash), error: error.clone() },
+                );
                 Ok(Imported::Invalid { latest_valid: Some(parent_hash), error })
             }
         }
+    }
+
+    /// Validates `header` over the database state after `parent`. On a stateless node, the
+    /// accounts, slots and code the block reads that the partial state does not hold are fetched
+    /// from the upstream as proofs at the stored tip and stored (each node only when it links by
+    /// hash to the tip's state root), over a few rounds of execution. The inner `Err` is the
+    /// state still missing after them (a trie node, such as the sibling a deletion collapses
+    /// into, or an ancestor's block hash), for the whole-block witness to supply.
+    fn validate_fetching_proofs(
+        &self,
+        chain: &crate::Chain,
+        header: &Header,
+        transactions: &[Bytes],
+        parent: &crate::StoredBlock,
+    ) -> Result<Result<(crate::Validated, Option<Validation>), String>, RpcError> {
+        let stateless = chain.db.is_partial() && self.upstream.is_some();
+        let mut previous: Option<String> = None;
+        for round in 0..=MAX_PROOF_ROUNDS {
+            let state = chain.state_after(parent).map_err(RpcError::internal)?;
+            let state = if stateless { state.collecting() } else { state };
+            let missing = match (BlockExecution { chain: &self.spec }).validate(
+                header,
+                transactions,
+                &parent.header,
+                &state,
+            ) {
+                Ok(validated) => {
+                    let prepared = state
+                        .take_prepared()
+                        .map(|prepared| Validation::Prepared(Box::new(prepared)));
+                    return Ok(Ok((validated, prepared)));
+                }
+                Err(missing) => missing,
+            };
+            let misses = state.take_misses();
+            drop(state);
+            // The same first miss after a fetch means the upstream supplied nothing that links.
+            let stalled = previous.as_ref() == Some(&missing);
+            if !stateless
+                || round == MAX_PROOF_ROUNDS
+                || stalled
+                || (misses.is_empty() && misses.deleted.is_empty())
+            {
+                return Ok(Err(missing));
+            }
+            let fetched = if misses.is_empty() {
+                self.collapse_siblings(chain.head().hash, header.number, &misses.deleted)
+                    .and_then(|(proofs, _)| Self::absorb(chain, &proofs))
+            } else {
+                self.absorb_proofs(chain, &misses)
+            };
+            if let Err(error) = fetched {
+                return Ok(Err(format!("{missing} ({error})")));
+            }
+            previous = Some(missing);
+        }
+        unreachable!("the last round returns")
+    }
+
+    /// The trie nodes block `number`'s deletions may collapse into, which no read loads, and
+    /// whether one of them is a branch, which no proof reveals (its witness has it). A deleted
+    /// key's proof in the block's post-state ends at the leaf or extension its collapsed sibling
+    /// became; that node, re-keyed at each deeper path it covers, is the sibling's pre-state form
+    /// at one of them. The candidates come with the keys' proofs at `tip`, so storing them keeps
+    /// only those that link by hash to the tip's state root: nothing the upstream returns is
+    /// trusted.
+    pub fn collapse_siblings(
+        &self,
+        tip: B256,
+        number: u64,
+        deleted: &BTreeMap<alloy_primitives::Address, std::collections::BTreeSet<U256>>,
+    ) -> Result<(Proofs, bool), String> {
+        let upstream = self.upstream.as_ref().expect("a stateless node has an upstream");
+        let post = json!(format!("{number:#x}"));
+        let mut calls = Vec::with_capacity(deleted.len() * 2);
+        for (address, slots) in deleted {
+            let slots: Vec<B256> = slots.iter().map(|slot| B256::from(*slot)).collect();
+            calls.push(("eth_getProof", json!([address, slots, tip])));
+            calls.push(("eth_getProof", json!([address, slots, post])));
+        }
+        let results = upstream.call_batch(&calls)?;
+        let bytes = |value: &Value| {
+            serde_json::from_value::<Bytes>(value.clone()).map_err(|error| error.to_string())
+        };
+        let proof = |value: &Value| {
+            value.as_array().into_iter().flatten().map(bytes).collect::<Result<Vec<_>, _>>()
+        };
+        let (mut nodes, mut branch) = (Vec::new(), false);
+        let mut add = |target: B256, proof: &[Bytes], nodes: &mut Vec<Bytes>| {
+            let (candidates, is_branch) = collapse_candidates(target, proof);
+            nodes.extend(candidates);
+            branch |= is_branch;
+        };
+        for ((address, _), pair) in deleted.iter().zip(results.chunks_exact(2)) {
+            let (pre, post) = (&pair[0], &pair[1]);
+            nodes.extend(proof(&pre["accountProof"])?);
+            add(alloy_primitives::keccak256(address), &proof(&post["accountProof"])?, &mut nodes);
+            for storage in pre["storageProof"].as_array().into_iter().flatten() {
+                nodes.extend(proof(&storage["proof"])?);
+            }
+            for storage in post["storageProof"].as_array().into_iter().flatten() {
+                let key: U256 = serde_json::from_value(storage["key"].clone())
+                    .map_err(|error| error.to_string())?;
+                add(
+                    alloy_primitives::keccak256(B256::from(key)),
+                    &proof(&storage["proof"])?,
+                    &mut nodes,
+                );
+            }
+        }
+        let keys =
+            Proofs::key_paths(deleted.iter().map(|(address, slots)| (address, slots.iter())));
+        Ok((Proofs { nodes, codes: Vec::new(), keys }, branch))
+    }
+
+    /// Fetches proofs of `misses` at the stored tip from the upstream and stores what links to
+    /// the tip's state root.
+    fn absorb_proofs(&self, chain: &crate::Chain, misses: &crate::Misses) -> Result<(), String> {
+        Self::absorb(chain, &self.fetch_proofs(chain.head().hash, misses)?)
+    }
+
+    /// Stores what `proofs` reveal of the stored tip's state: their nodes that link by hash to
+    /// its state root, also through stored nodes when the proofs were taken at an older tip.
+    pub fn absorb(chain: &crate::Chain, proofs: &Proofs) -> Result<(), String> {
+        let mut w = chain.db.write().map_err(|error| error.to_string())?;
+        chain
+            .db
+            .absorb_proofs(&mut w, &proofs.nodes, &proofs.codes, &proofs.keys)
+            .map_err(|error| error.to_string())?;
+        w.commit().map_err(|error| error.to_string())
+    }
+
+    /// The upstream's proofs of `misses` at block `block`, with the missed code (only code
+    /// whose hash was missed; code no read account holds is skipped).
+    pub fn fetch_proofs(&self, block: B256, misses: &crate::Misses) -> Result<Proofs, String> {
+        let upstream = self.upstream.as_ref().expect("a stateless node has an upstream");
+        let mut keys: BTreeMap<alloy_primitives::Address, Vec<U256>> =
+            misses.accounts.iter().map(|address| (*address, Vec::new())).collect();
+        for (address, slots) in &misses.storage {
+            keys.entry(*address).or_default().extend(slots.iter().copied());
+        }
+        let mut owners = Vec::with_capacity(misses.codes.len());
+        for owner in misses.codes.values().flatten() {
+            keys.entry(*owner).or_default();
+            owners.push(*owner);
+        }
+        let keys: Vec<_> = keys.into_iter().collect();
+        let (nodes, codes) = upstream.proofs(block, &keys, &owners)?;
+        let codes = codes
+            .into_iter()
+            .filter(|code| misses.codes.contains_key(&alloy_primitives::keccak256(code)))
+            .collect();
+        Ok(Proofs {
+            nodes,
+            codes,
+            keys: Proofs::key_paths(
+                keys.iter().map(|(address, slots)| (address, slots.as_slice())),
+            ),
+        })
     }
 
     /// Validates block `hash` on a partial state over the upstream's execution witness, which
@@ -449,7 +669,9 @@ impl Node {
         let message_passer_root = parent
             .header
             .withdrawals_root
-            .filter(|_| self.spec.is_active(BaseFeature::L2ToL1MessageRoot, parent.header.timestamp))
+            .filter(|_| {
+                self.spec.is_active(BaseFeature::L2ToL1MessageRoot, parent.header.timestamp)
+            })
             .map(|root| (Predeploys::L2_TO_L1_MESSAGE_PASSER, root));
         let state = Rc::new(WitnessState::new(
             parent.header.state_root,
@@ -488,22 +710,24 @@ impl Node {
             let payload_status = status("INVALID", invalid.latest_valid, Some(&invalid.error));
             return Ok(json!({ "payloadStatus": payload_status, "payloadId": null }));
         }
+        engine.forkchoice_head = Some(head);
         let mut chain = self.chain.write().expect("chain lock");
         let Some(head_block) = chain.block(&head) else {
             drop(chain);
             self.request_sync(head);
-            return Ok(json!({ "payloadStatus": status("SYNCING", None, None), "payloadId": null }));
+            return Ok(
+                json!({ "payloadStatus": status("SYNCING", None, None), "payloadId": null }),
+            );
         };
         for hash in [state.safe_block_hash, state.finalized_block_hash] {
             if !hash.is_zero() && chain.block(&hash).is_none() {
-                return Ok(json!({ "payloadStatus": status("SYNCING", None, None), "payloadId": null }));
+                return Ok(
+                    json!({ "payloadStatus": status("SYNCING", None, None), "payloadId": null }),
+                );
             }
         }
-        let update = Forkchoice {
-            head,
-            safe: state.safe_block_hash,
-            finalized: state.finalized_block_hash,
-        };
+        let update =
+            Forkchoice { head, safe: state.safe_block_hash, finalized: state.finalized_block_hash };
         let previous = chain.forkchoice();
         // As in base-reth, the head moves before safe and finalized are checked against it.
         chain.set_canonical(head).map_err(RpcError::internal)?;
@@ -537,7 +761,10 @@ impl Node {
         if !engine.payloads.iter().any(|(existing, _)| *existing == id) {
             let built = {
                 let state = chain.state_after(&head_block).map_err(RpcError::internal)?;
-                (self.build(&head_block.header, &attributes, &state)?, state.take_prepared().map(|prepared| Validation::Prepared(Box::new(prepared))))
+                (
+                    self.build(&head_block.header, &attributes, &state)?,
+                    state.take_prepared().map(|prepared| Validation::Prepared(Box::new(prepared))),
+                )
             };
             drop(chain);
             let built = self.store_built(built.0, built.1)?;
@@ -621,8 +848,16 @@ impl Node {
 
     /// Stores a built payload's block: the consensus node inserts the payload with newPayload,
     /// and storing it now makes that a no-op, as base-reth's built blocks are already in its tree.
-    fn store_built(&self, built: BuiltPayload, prepared: Option<Validation>) -> Result<BuiltPayload, RpcError> {
-        self.chain.write().expect("chain lock").insert(built.hash, &built.executed, prepared).map_err(RpcError::internal)?;
+    fn store_built(
+        &self,
+        built: BuiltPayload,
+        prepared: Option<Validation>,
+    ) -> Result<BuiltPayload, RpcError> {
+        self.chain
+            .write()
+            .expect("chain lock")
+            .insert(built.hash, &built.executed, prepared)
+            .map_err(RpcError::internal)?;
         Ok(built)
     }
 
@@ -640,7 +875,9 @@ impl Node {
             version >= Version::V3,
             false,
         )
-        .map_err(|error| if error.code == -38005 { error } else { RpcError::new(-38005, "Unsupported fork") })?;
+        .map_err(|error| {
+            if error.code == -38005 { error } else { RpcError::new(-38005, "Unsupported fork") }
+        })?;
         let block = Block {
             header: header.clone(),
             body: BlockBody::<SignedTx> {
@@ -689,5 +926,135 @@ impl Node {
             }),
         };
         Ok(json)
+    }
+}
+
+/// Proof nodes and code from the upstream, with the keys they prove as trie paths.
+#[derive(Debug, Default)]
+pub struct Proofs {
+    /// Trie nodes, untrusted until they link by hash to a known root.
+    pub nodes: Vec<Bytes>,
+    /// Bytecode, stored by its hash.
+    pub codes: Vec<Bytes>,
+    /// The proved keys: hashed addresses in the account trie (`None`), hashed slots by hashed
+    /// address.
+    pub keys: BTreeMap<Option<B256>, Vec<Nibbles>>,
+}
+
+impl Proofs {
+    /// The trie paths of accounts with their storage slots.
+    pub fn key_paths<'a, S: IntoIterator<Item = &'a U256>>(
+        keys: impl Iterator<Item = (&'a alloy_primitives::Address, S)>,
+    ) -> BTreeMap<Option<B256>, Vec<Nibbles>> {
+        let mut paths: BTreeMap<Option<B256>, Vec<Nibbles>> = BTreeMap::new();
+        for (address, slots) in keys {
+            let hashed = alloy_primitives::keccak256(address);
+            paths.entry(None).or_default().push(Nibbles::unpack(hashed));
+            let storage = paths.entry(Some(hashed)).or_default();
+            storage.extend(
+                slots
+                    .into_iter()
+                    .map(|slot| Nibbles::unpack(alloy_primitives::keccak256(B256::from(*slot)))),
+            );
+        }
+        paths
+    }
+}
+
+/// The nodes a deletion's collapsed sibling may have been before the block: `proof` is the
+/// post-state proof (root first) of hashed key `target`, and its last node on the key's path, a
+/// leaf or an extension at path `p` with key `k`, is re-keyed as the node at each longer path
+/// `p ++ k[..i]` it covers, with key `k[i..]`. Only nodes referenced by hash (32 bytes of RLP or
+/// more) are returned; the caller keeps those that link to a known root. The flag is set when
+/// the end is an extension: the sibling may be the branch it points to, which no candidate is.
+fn collapse_candidates(target: B256, proof: &[Bytes]) -> (Vec<Bytes>, bool) {
+    let target = Nibbles::unpack(target);
+    let mut depth = 0;
+    let mut end = None;
+    for rlp in proof {
+        let Ok(node) = TrieNode::decode(&mut &rlp[..]) else { return (Vec::new(), false) };
+        match node {
+            TrieNode::Branch(_) if depth < target.len() => depth += 1,
+            TrieNode::Extension(extension) if target.slice(depth..).starts_with(&extension.key) => {
+                depth += extension.key.len();
+            }
+            TrieNode::Leaf(_) | TrieNode::Extension(_) => {
+                end = Some(node);
+                break;
+            }
+            TrieNode::Branch(_) | TrieNode::EmptyRoot => break,
+        }
+    }
+    let mut candidates = Vec::new();
+    let key = match &end {
+        Some(TrieNode::Leaf(leaf)) => leaf.key,
+        Some(TrieNode::Extension(extension)) => extension.key,
+        _ => return (candidates, false),
+    };
+    assert!(depth + key.len() <= 64, "a trie path is at most 64 nibbles");
+    for split in 1..key.len() {
+        let rest = key.slice(split..);
+        let rlp = match &end {
+            Some(TrieNode::Leaf(leaf)) => {
+                alloy_rlp::encode(LeafNode::new(rest, leaf.value.clone()))
+            }
+            Some(TrieNode::Extension(extension)) => {
+                alloy_rlp::encode(ExtensionNode::new(rest, extension.child.clone()))
+            }
+            _ => unreachable!("the end node is a leaf or an extension"),
+        };
+        if rlp.len() >= 32 {
+            candidates.push(Bytes::from(rlp));
+        }
+    }
+    (candidates, matches!(end, Some(TrieNode::Extension(_))))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_trie::{HashBuilder, proof::ProofRetainer};
+
+    use super::*;
+
+    /// The nodes of a trie over `leaves` (sorted) on the path of `target`, root first.
+    fn proof(leaves: &[(B256, Vec<u8>)], target: B256) -> Vec<(Nibbles, Bytes)> {
+        let mut builder = HashBuilder::default()
+            .with_proof_retainer(ProofRetainer::new(vec![Nibbles::unpack(target)]));
+        for (key, value) in leaves {
+            builder.add_leaf(Nibbles::unpack(key), value);
+        }
+        builder.root();
+        builder.take_proof_nodes().into_nodes_sorted()
+    }
+
+    /// Deleting a leaf collapses its branch into the sibling leaf, which moves up and merges
+    /// with the extension above; the deleted key's post-state proof yields the sibling's
+    /// pre-state node; a branch sibling, which no proof reveals, is flagged instead.
+    #[test]
+    fn collapse_candidates_recover_the_pre_state_sibling() {
+        let key = |hex: &str| {
+            B256::from_slice(&alloy_primitives::hex::decode(format!("{hex:0<64}")).unwrap())
+        };
+        let (deleted, sibling, other) = (key("12a1"), key("12b7"), key("5c"));
+        let value = |byte: u8| alloy_rlp::encode(U256::from(byte) << 200);
+        let before = [(deleted, value(1)), (sibling, value(2)), (other, value(3))];
+        let after = [(sibling, value(2)), (other, value(3))];
+        let pre_sibling = proof(&before, sibling).pop().expect("the sibling leaf");
+        assert_eq!(pre_sibling.0.len(), 3, "the sibling sits below the branch at 0x12");
+
+        let (candidates, branch) = collapse_candidates(
+            deleted,
+            &proof(&after, deleted).into_iter().map(|(_, n)| n).collect::<Vec<_>>(),
+        );
+        assert!(!branch);
+        assert!(candidates.contains(&pre_sibling.1), "the pre-state sibling is a candidate");
+
+        // A sibling that is a branch: the post-state ends at an extension into it.
+        let after = [(key("12b1"), value(2)), (key("12b2"), value(4)), (other, value(3))];
+        let (_, branch) = collapse_candidates(
+            deleted,
+            &proof(&after, deleted).into_iter().map(|(_, n)| n).collect::<Vec<_>>(),
+        );
+        assert!(branch, "a branch sibling is flagged for the witness");
     }
 }

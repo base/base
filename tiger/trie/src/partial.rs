@@ -262,7 +262,35 @@ impl PartialState {
     /// in the flat tables; `codes` go to `Bytecodes`. Nodes not reachable are ignored, so a witness
     /// for another root changes nothing.
     pub fn absorb_witness(txn: &mut Txn<Rw>, db: &Db, root: B256, nodes: &[Bytes], codes: &[Bytes]) -> Result<(), TrieError> {
+        Self::absorb(txn, db, root, nodes, codes, &BTreeMap::new())
+    }
+
+    /// Like [`Self::absorb_witness`] for proofs of the hashed keys `keys` (by trie owner, `None`
+    /// for the account trie) taken at an older root: where a node on a key's path is not among
+    /// `nodes`, the walk continues through the stored node at that path when it has the hash
+    /// the parent references, so the proofs' unchanged subtrees are still reached and stored.
+    pub fn absorb_proofs(
+        txn: &mut Txn<Rw>,
+        db: &Db,
+        root: B256,
+        nodes: &[Bytes],
+        codes: &[Bytes],
+        keys: &BTreeMap<Option<B256>, Vec<Nibbles>>,
+    ) -> Result<(), TrieError> {
+        Self::absorb(txn, db, root, nodes, codes, keys)
+    }
+
+    fn absorb(
+        txn: &mut Txn<Rw>,
+        db: &Db,
+        root: B256,
+        nodes: &[Bytes],
+        codes: &[Bytes],
+        keys: &BTreeMap<Option<B256>, Vec<Nibbles>>,
+    ) -> Result<(), TrieError> {
         let by_hash: BTreeMap<B256, &Bytes> = nodes.iter().map(|n| (keccak256(n), n)).collect();
+        let on_key_path =
+            |owner: &Option<B256>, path: &Nibbles| keys.get(owner).is_some_and(|keys| keys.iter().any(|key| key.starts_with(path)));
         let (table, accounts, storages) = (db.dbi(Table::TigerNodes), db.dbi(Table::HashedAccounts), db.dbi(Table::HashedStorages));
         let mut stack = Vec::with_capacity(64);
         if root != EMPTY_ROOT_HASH {
@@ -275,11 +303,20 @@ impl PartialState {
                 return Err(TrieError::Corrupt("witness walk exceeds its node bound".into()));
             }
             let (owner, path, rlp) = match item {
-                Pending::Hash(owner, path, hash) => {
-                    let Some(rlp) = by_hash.get(&hash) else { continue };
-                    txn.put(table, &Self::node_key(owner, &path), rlp)?;
-                    (owner, path, rlp.to_vec())
-                }
+                Pending::Hash(owner, path, hash) => match by_hash.get(&hash) {
+                    Some(rlp) => {
+                        txn.put(table, &Self::node_key(owner, &path), rlp)?;
+                        (owner, path, rlp.to_vec())
+                    }
+                    None if on_key_path(&owner, &path) => {
+                        let Some(stored) = txn.get(table, &Self::node_key(owner, &path))?.map(<[u8]>::to_vec) else { continue };
+                        if keccak256(&stored) != hash {
+                            continue;
+                        }
+                        (owner, path, stored)
+                    }
+                    None => continue,
+                },
                 Pending::Inline(owner, path, rlp) => (owner, path, rlp),
             };
             let node = TrieNode::decode(&mut &rlp[..]).map_err(|e| TrieError::Corrupt(format!("witness node: {e}")))?;

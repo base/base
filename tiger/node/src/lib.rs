@@ -16,16 +16,19 @@ mod genesis;
 pub use genesis::{Genesis, genesis_changes};
 
 mod state;
-pub use state::{NodeDb, NodeState, ParentState, StateReadError, block_changes};
+pub use state::{Misses, NodeDb, NodeState, ParentState, StateReadError, block_changes};
 
 mod chain;
 pub use chain::{BLOCK_HASH_WINDOW, Chain, Forkchoice, StatelessStart, StoredBlock, Validation};
 
 mod upstream;
-pub use upstream::{ExecutionWitness, Upstream, Witnesses};
+pub use upstream::{BlockKeys, ExecutionWitness, Upstream, Witnesses};
 
 mod engine;
-pub use engine::{EngineState, Imported, Version as EngineVersion};
+pub use engine::{EngineState, Imported, Proofs, Version as EngineVersion};
+
+mod prewarm;
+pub use prewarm::Prewarm;
 
 mod sync;
 pub use sync::{BACKFILL_THRESHOLD, Sync};

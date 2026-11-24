@@ -3,12 +3,14 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{BTreeMap, BTreeSet, HashMap},
     rc::Rc,
 };
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_tiger_trie::{AccountInfo, AccountProof, BlockChanges, PreparedRoot, StateView, TrieError};
+use base_tiger_trie::{
+    AccountInfo, AccountProof, BlockChanges, PreparedRoot, StateView, TrieError,
+};
 use evm2::{
     AccountInfo as EvmAccount, BlockStateAccumulator,
     bytecode::Bytecode,
@@ -24,7 +26,11 @@ pub trait ParentState {
     /// The state root after `changes`.
     fn state_root_after(&self, changes: &BlockStateAccumulator) -> Result<B256, String>;
     /// The storage root of `address` after `changes`.
-    fn storage_root_after(&self, address: Address, changes: &BlockStateAccumulator) -> Result<B256, String>;
+    fn storage_root_after(
+        &self,
+        address: Address,
+        changes: &BlockStateAccumulator,
+    ) -> Result<B256, String>;
     /// The first read this state could not serve (a witness or partial state missing data).
     fn missing(&self) -> Option<String>;
 }
@@ -38,7 +44,11 @@ impl ParentState for Rc<WitnessState> {
         WitnessState::state_root_after(self, changes).map_err(|error| error.to_string())
     }
 
-    fn storage_root_after(&self, address: Address, changes: &BlockStateAccumulator) -> Result<B256, String> {
+    fn storage_root_after(
+        &self,
+        address: Address,
+        changes: &BlockStateAccumulator,
+    ) -> Result<B256, String> {
         WitnessState::storage_root_after(self, address, changes).map_err(|error| error.to_string())
     }
 
@@ -85,12 +95,77 @@ pub struct NodeState<'d> {
     unknown: Cell<bool>,
     /// The trie changes of the last `state_root_after`, for the commit to reuse.
     prepared: RefCell<Option<PreparedRoot>>,
+    /// When collecting ([`Self::collecting`]): the state reads that were not local.
+    misses: Option<RefCell<Misses>>,
+}
+
+/// The accounts, storage slots and code a block's execution read that a partial state does not
+/// hold, collected so they can be fetched in one round.
+#[derive(Debug, Default)]
+pub struct Misses {
+    /// Accounts.
+    pub accounts: BTreeSet<Address>,
+    /// Storage slots by account.
+    pub storage: BTreeMap<Address, BTreeSet<U256>>,
+    /// Code, by hash, with an account that holds it.
+    pub codes: BTreeMap<B256, Option<Address>>,
+    /// When the state root missed a trie node: the accounts the block deleted (with no slots)
+    /// and the storage slots it set to zero, by account.
+    pub deleted: BTreeMap<Address, BTreeSet<U256>>,
+    /// An account read with each code hash, to fetch the code of.
+    code_owners: HashMap<B256, Address>,
+}
+
+impl Misses {
+    /// Whether nothing was missed by key (a missing trie node or block hash is not a key).
+    pub fn is_empty(&self) -> bool {
+        self.accounts.is_empty() && self.storage.is_empty() && self.codes.is_empty()
+    }
 }
 
 impl<'d> NodeState<'d> {
     /// The state of `view`, reading block hashes from `block_hashes`.
     pub fn new(view: StateView<'d>, block_hashes: HashMap<u64, B256>) -> Self {
-        Self { view, block_hashes, missing: RefCell::new(None), unknown: Cell::new(false), prepared: RefCell::new(None) }
+        Self {
+            view,
+            block_hashes,
+            missing: RefCell::new(None),
+            unknown: Cell::new(false),
+            prepared: RefCell::new(None),
+            misses: None,
+        }
+    }
+
+    /// This state with reads of state that is not local answered as absent (zero, empty) and
+    /// recorded in [`Self::take_misses`] instead of failing, so one execution finds many of the
+    /// keys a block needs. The execution still reports the first miss as missing state.
+    pub fn collecting(mut self) -> Self {
+        self.misses = Some(RefCell::new(Misses::default()));
+        self
+    }
+
+    /// The reads collected as missing (empty when not collecting).
+    pub fn take_misses(&self) -> Misses {
+        let mut misses = self
+            .misses
+            .as_ref()
+            .map(|misses| std::mem::take(&mut *misses.borrow_mut()))
+            .unwrap_or_default();
+        for (hash, owner) in &mut misses.codes {
+            *owner = misses.code_owners.get(hash).copied();
+        }
+        misses
+    }
+
+    /// Records `miss` when collecting and `error` is state that is not local.
+    fn collect(&self, error: &TrieError, miss: impl FnOnce(&mut Misses)) -> bool {
+        match &self.misses {
+            Some(misses) if error.is_unknown() => {
+                miss(&mut misses.borrow_mut());
+                true
+            }
+            _ => false,
+        }
     }
 
     fn record(&self, error: impl ToString) -> String {
@@ -112,12 +187,35 @@ impl<'d> NodeState<'d> {
 
     /// The account at `address`.
     pub fn account(&self, address: &Address) -> Result<Option<AccountInfo>, String> {
-        self.view.account(*address).map_err(|error| self.record_trie(error))
+        match self.view.account(*address) {
+            Ok(account) => {
+                if let (Some(misses), Some(account)) = (&self.misses, &account) {
+                    misses.borrow_mut().code_owners.insert(account.code_hash, *address);
+                }
+                Ok(account)
+            }
+            Err(error) if self.collect(&error, |misses| _ = misses.accounts.insert(*address)) => {
+                self.record_trie(error);
+                Ok(None)
+            }
+            Err(error) => Err(self.record_trie(error)),
+        }
     }
 
     /// The value of storage `slot` of `address`.
     pub fn storage(&self, address: &Address, slot: &U256) -> Result<U256, String> {
-        self.view.storage(*address, *slot).map_err(|error| self.record_trie(error))
+        match self.view.storage(*address, *slot) {
+            Ok(value) => Ok(value),
+            Err(error)
+                if self.collect(&error, |misses| {
+                    _ = misses.storage.entry(*address).or_default().insert(*slot)
+                }) =>
+            {
+                self.record_trie(error);
+                Ok(U256::ZERO)
+            }
+            Err(error) => Err(self.record_trie(error)),
+        }
     }
 
     /// The code with hash `hash`.
@@ -126,7 +224,18 @@ impl<'d> NodeState<'d> {
             Ok(Some(code)) => Ok(code),
             Ok(None) => {
                 self.unknown.set(true);
-                Err(self.record(format!("missing bytecode {hash}")))
+                let error = self.record(format!("missing bytecode {hash}"));
+                match &self.misses {
+                    Some(misses) => {
+                        misses.borrow_mut().codes.insert(*hash, None);
+                        Ok(Bytes::new())
+                    }
+                    None => Err(error),
+                }
+            }
+            Err(error) if self.collect(&error, |misses| _ = misses.codes.insert(*hash, None)) => {
+                self.record_trie(error);
+                Ok(Bytes::new())
             }
             Err(error) => Err(self.record_trie(error)),
         }
@@ -155,14 +264,43 @@ impl ParentState for NodeState<'_> {
     }
 
     fn state_root_after(&self, changes: &BlockStateAccumulator) -> Result<B256, String> {
-        let prepared = self.view.prepare_root(&block_changes(changes)).map_err(|error| self.record(error))?;
+        let changes = block_changes(changes);
+        let prepared = match self.view.prepare_root(&changes) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                // A deletion can collapse a branch into a sibling no read loaded; the deleted
+                // keys let the caller find that sibling in the block's post-state proofs.
+                if let (Some(misses), TrieError::MissingNode { .. }) = (&self.misses, &error) {
+                    let mut misses = misses.borrow_mut();
+                    for (address, account) in &changes.accounts {
+                        if account.is_none() {
+                            misses.deleted.entry(*address).or_default();
+                        }
+                    }
+                    for (address, slot, value) in &changes.storage {
+                        if value.is_zero() {
+                            misses.deleted.entry(*address).or_default().insert(*slot);
+                        }
+                    }
+                }
+                return Err(self.record(error));
+            }
+        };
         let root = prepared.root;
         *self.prepared.borrow_mut() = Some(prepared);
         Ok(root)
     }
 
-    fn storage_root_after(&self, address: Address, changes: &BlockStateAccumulator) -> Result<B256, String> {
-        self.view.storage_root_after(address, &block_changes(changes)).map_err(|error| self.record(error))
+    fn storage_root_after(
+        &self,
+        address: Address,
+        changes: &BlockStateAccumulator,
+    ) -> Result<B256, String> {
+        // The message passer's account is read only for its storage root, not by execution.
+        self.view.storage_root_after(address, &block_changes(changes)).map_err(|error| {
+            self.collect(&error, |misses| _ = misses.accounts.insert(address));
+            self.record(error)
+        })
     }
 
     fn missing(&self) -> Option<String> {

@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256, keccak256};
-use alloy_trie::KECCAK_EMPTY;
+use alloy_trie::{KECCAK_EMPTY, Nibbles};
 use base_tiger_trie::{AccountInfo, BlockChanges, StateDb, StateView, TrieError};
 
 struct Rng(u64);
@@ -227,6 +227,56 @@ fn partial_state_refuses_a_wipe_of_unknown_storage() {
     let err = partial.commit_block(&mut w, 1, &block).unwrap_err();
     assert!(err.is_unknown(), "{err}");
     drop(w);
+    drop((full, partial));
+    let _ = std::fs::remove_dir_all(&full_dir);
+    let _ = std::fs::remove_dir_all(&partial_dir);
+}
+
+/// Proofs taken at an older root still fill the parts of the trie that did not change since,
+/// reached through the stored nodes on the proved key's path; without the key paths the walk
+/// stops at the changed root and nothing is stored.
+#[test]
+fn proofs_from_an_older_root_fill_unchanged_subtrees() {
+    let (full_dir, partial_dir) = (temp("old-proofs-full"), temp("old-proofs-partial"));
+    let info = |nonce| AccountInfo { nonce, balance: U256::from(1_000), code_hash: KECCAK_EMPTY };
+    // Two accounts in different first-nibble subtrees, plus filler so the root is a branch.
+    let addresses: Vec<Address> = (1..=40u8).map(Address::with_last_byte).collect();
+    let changed = addresses[0];
+    let unchanged = *addresses[1..]
+        .iter()
+        .find(|a| keccak256(a.as_slice())[0] >> 4 != keccak256(changed.as_slice())[0] >> 4)
+        .unwrap();
+    let mut genesis = BlockChanges::default();
+    genesis.accounts.extend(addresses.iter().map(|a| (*a, Some(info(1)))));
+    let full = StateDb::open(&full_dir).unwrap();
+    let mut w = full.write().unwrap();
+    full.commit_block(&mut w, 0, &genesis).unwrap();
+    w.commit().unwrap();
+    let mut block = BlockChanges::default();
+    block.accounts.push((changed, Some(info(2))));
+    let mut w = full.write().unwrap();
+    let root = full.commit_block(&mut w, 1, &block).unwrap();
+    w.commit().unwrap();
+
+    let partial = StateDb::open_partial(&partial_dir, 1, root).unwrap();
+    // The current root node and the changed account's path, from a proof at the tip.
+    let current = full.view(1, Vec::new()).unwrap().proof(changed, &[]).unwrap();
+    let mut w = partial.write().unwrap();
+    partial.absorb_witness(&mut w, &current.proof, &[]).unwrap();
+    w.commit().unwrap();
+    let old = full.view(0, Vec::new()).unwrap().proof(unchanged, &[]).unwrap();
+    assert!(partial.view(1, Vec::new()).unwrap().account(unchanged).unwrap_err().is_unknown());
+
+    let mut w = partial.write().unwrap();
+    partial.absorb_witness(&mut w, &old.proof, &[]).unwrap();
+    w.commit().unwrap();
+    assert!(partial.view(1, Vec::new()).unwrap().account(unchanged).unwrap_err().is_unknown());
+
+    let keys = BTreeMap::from([(None, vec![Nibbles::unpack(keccak256(unchanged.as_slice()))])]);
+    let mut w = partial.write().unwrap();
+    partial.absorb_proofs(&mut w, &old.proof, &[], &keys).unwrap();
+    w.commit().unwrap();
+    assert_eq!(partial.view(1, Vec::new()).unwrap().account(unchanged).unwrap(), Some(info(1)));
     drop((full, partial));
     let _ = std::fs::remove_dir_all(&full_dir);
     let _ = std::fs::remove_dir_all(&partial_dir);

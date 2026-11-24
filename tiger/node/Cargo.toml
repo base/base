@@ -55,6 +55,10 @@ sha2.workspace = true
 hmac.workspace = true
 secp256k1 = { workspace = true, features = ["std"] }
 
+# TLS for an https:// stateless upstream
+rustls.workspace = true
+webpki-roots.workspace = true
+
 # serialization
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std"] }
