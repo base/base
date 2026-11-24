@@ -69,8 +69,10 @@ pub struct SyncReport {
     pub source_finalized_at_start: Option<u64>,
     /// The lowest block the target serves; heights below it are absent (stateless start).
     pub first_block: Option<u64>,
-    /// Account reads a stateless target answered with an error where the source answered:
-    /// state it does not hold yet. Allowed (a clear error, never a wrong value), and counted.
+    /// Account reads a stateless target answered with an error where the source answered but
+    /// could not prove the account (`eth_getProof` failed), so the target had nowhere to fetch
+    /// it from. Allowed (a clear error, never a wrong value), and counted. A refusal the source
+    /// could have proven is a mismatch.
     pub partial_state_errors: Vec<String>,
 }
 
@@ -90,6 +92,10 @@ pub struct SyncCheck {
 }
 
 impl SyncCheck {
+    /// JSON-RPC error code tiger answers for a state read a stateless node cannot serve (state
+    /// not in its partial datadir, upstream failed, or the upstream's proof did not verify).
+    pub const STATE_NOT_LOCAL: i64 = -32020;
+
     /// A check of `target` syncing from the session's only node.
     pub fn new(
         session: StateSession,
@@ -338,9 +344,18 @@ impl SyncCheck {
                 let params = json!([address, format!("{:#x}", head.0)]);
                 let ours = source.call(method, &params);
                 let theirs = self.target.call(method, &params);
-                let refused = matches!(&theirs, Reply::Body(body) if body.get("error").is_some())
+                // Tiger's documented refusal of state a stateless node does not hold.
+                let refused = matches!(&theirs, Reply::Body(body)
+                    if body["error"]["code"] == json!(Self::STATE_NOT_LOCAL))
                     && matches!(&ours, Reply::Body(body) if body.get("result").is_some());
-                if refused && self.config.stateless_start.is_some() {
+                // A stateless target fills reads it does not hold from the upstream's proofs (the
+                // source here), so a refusal is allowed only when the source cannot prove it.
+                let unprovable = refused
+                    && self.config.stateless_start.is_some()
+                    && source
+                        .result("eth_getProof", &json!([address, [], format!("{:#x}", head.0)]))
+                        .is_err();
+                if unprovable {
                     self.report
                         .partial_state_errors
                         .push(format!("{method} {address} at {}: {theirs:?}", head.0));
