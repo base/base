@@ -46,8 +46,11 @@ pub const STALE_STORAGE_EPOCH_SECONDS: u64 = 3_600;
 /// Default size of the recency cache, in mebibytes: `2^25` four-byte entries in `2^22` sets.
 ///
 /// Base Mainnet writes an estimated 10 million distinct storage slots a day, which map to fewer
-/// distinct trie regions. At 10 million keys about 0.04% of sets overflow within the window, and about 1.9% at twice the volume. An
-/// overflow evicts the oldest entry, which then reads as stale, so an undersized cache only
+/// distinct trie regions. Ten million live keys is under a third of the entries, so no key is in
+/// excess of total capacity, but keys hash to sets unevenly: about 0.08% of sets receive more
+/// than eight within the window, and the keys beyond eight in those sets, about 0.045% of live
+/// keys, are evicted early. At twice the volume about 5.4% of sets overflow and about 2.0% of
+/// keys are evicted early. An evicted key reads as stale, so an undersized cache only
 /// over-meters. Raise the size with `--payload.stale-storage-cache-mib` when
 /// `cache_unexpired_evictions_total` exceeds about 1% of `cache_writes_total`.
 pub const STALE_STORAGE_CACHE_MIB: u32 = 128;
@@ -1030,6 +1033,14 @@ pub struct BlockStaleTotals {
     pub flagged_transaction_scope: u64,
     /// Transactions the age-tiered block limit would have flagged.
     pub flagged_block_scope: u64,
+    /// Block-scope stale total of the transactions the age-tiered limits would have admitted.
+    pub tiered_admitted_stale_block: u64,
+    /// Block-scope stale total of the transactions the plain limit would have admitted.
+    pub plain_admitted_stale_block: u64,
+    /// Transactions added without a verdict, such as sequencer transactions.
+    pub unmetered_transactions: u64,
+    /// Block-scope stale slots of the transactions added without a verdict.
+    pub unmetered_stale_block: u64,
 }
 
 /// Dry-run outcome of one committed transaction.
@@ -1037,8 +1048,14 @@ pub struct BlockStaleTotals {
 pub struct StaleTxVerdict {
     /// The transaction's counts.
     pub sample: StaleTxSample,
-    /// Block-scope total before this transaction.
+    /// Block-scope total before this transaction, over every committed transaction.
     pub cumulative_stale_block: u64,
+    /// Block-scope total before this transaction, over the transactions the age-tiered limits
+    /// would have admitted. The age-tiered block limit applies to this total.
+    pub tiered_admitted_stale_block: u64,
+    /// Block-scope total before this transaction, over the transactions the plain limit would
+    /// have admitted. The plain block limit applies to this total.
+    pub plain_admitted_stale_block: u64,
     /// The age-tiered transaction limit would have flagged it.
     pub exceeds_transaction_limit: bool,
     /// The age-tiered block limit would have flagged it.
@@ -1062,8 +1079,9 @@ impl StaleTxVerdict {
 /// Per-build stale-slot state for the payload builder.
 ///
 /// Call [`Self::evaluate`] on each executed transaction's state in the commit path and
-/// [`Self::commit`] once the block builder commits it. A transaction that is evaluated but not
-/// committed is discarded by the next evaluation.
+/// [`Self::commit`] once the block builder commits it, or [`Self::include_unmetered`] for a
+/// transaction enforcement could not exclude, such as a sequencer transaction. A transaction that
+/// is evaluated but not committed is discarded by the next evaluation.
 #[derive(Debug)]
 pub struct BlockStaleTracker {
     cache: Arc<StaleStorageCache>,
@@ -1193,9 +1211,10 @@ impl BlockStaleTracker {
         sample
     }
 
-    /// Adds the last evaluated transaction to the block and logs what the dry-run limits would
-    /// have flagged. Returns `None` if nothing was evaluated since the last commit.
-    pub fn commit(&mut self, tx_hash: &TxHash) -> Option<StaleTxVerdict> {
+    /// Adds the last evaluated transaction's slots to the block's gate and dedupe state without
+    /// counting it toward any total. Returns its sample, or `None` if nothing was evaluated since
+    /// the last commit.
+    pub fn merge_pending(&mut self) -> Option<StaleTxSample> {
         let sample = self.pending.take()?;
         for (address, changed) in self.pending_contracts.drain(..) {
             let total = self.contract_changed_slots.entry(address).or_default();
@@ -1206,23 +1225,55 @@ impl BlockStaleTracker {
         self.changed_slot_keys.extend(self.pending_changed_keys.drain(..));
         self.created_slot_keys.extend(self.pending_created_keys.drain(..));
         self.counted_stale_keys.extend(self.pending_stale_keys.drain(..));
+        Some(sample)
+    }
 
+    /// Adds the last evaluated transaction to the block without a verdict, for transactions
+    /// enforcement could not exclude, such as sequencer transactions. Its slots still count
+    /// toward the gate and are not counted again by later transactions, but its stale slots stay
+    /// out of the dry-run totals. Returns `None` if nothing was evaluated since the last commit.
+    pub fn include_unmetered(&mut self) -> Option<StaleTxSample> {
+        let sample = self.merge_pending()?;
+        self.totals.unmetered_transactions += 1;
+        self.totals.unmetered_stale_block += u64::from(sample.stale_block);
+        Some(sample)
+    }
+
+    /// Adds the last evaluated transaction to the block and logs what the dry-run limits would
+    /// have flagged. Returns `None` if nothing was evaluated since the last commit.
+    ///
+    /// Each set of limits, tiered and plain, checks the block scope against the stale total of
+    /// the transactions it would have admitted: a transaction it would have flagged would be
+    /// excluded under enforcement, so its slots do not push later transactions over.
+    pub fn commit(&mut self, tx_hash: &TxHash) -> Option<StaleTxVerdict> {
+        let sample = self.merge_pending()?;
         let cumulative_stale_block = self.totals.stale_block;
+        let tiered_admitted_stale_block = self.totals.tiered_admitted_stale_block;
+        let plain_admitted_stale_block = self.totals.plain_admitted_stale_block;
         let stale_transaction = u64::from(sample.stale_transaction);
         let stale_block = u64::from(sample.stale_block);
-        let block_total = cumulative_stale_block + stale_block;
         let verdict = StaleTxVerdict {
             sample,
             cumulative_stale_block,
+            tiered_admitted_stale_block,
+            plain_admitted_stale_block,
             exceeds_transaction_limit: stale_transaction > self.limits.transaction,
-            exceeds_block_limit: stale_block > 0 && block_total > self.limits.block,
+            exceeds_block_limit: stale_block > 0
+                && tiered_admitted_stale_block + stale_block > self.limits.block,
             exceeds_plain_transaction_limit: stale_transaction > STALE_STORAGE_LIMIT,
-            exceeds_plain_block_limit: stale_block > 0 && block_total > STALE_STORAGE_LIMIT,
+            exceeds_plain_block_limit: stale_block > 0
+                && plain_admitted_stale_block + stale_block > STALE_STORAGE_LIMIT,
         };
 
         let totals = &mut self.totals;
         totals.transactions += 1;
-        totals.stale_block = block_total;
+        totals.stale_block = cumulative_stale_block + stale_block;
+        if !(verdict.exceeds_transaction_limit || verdict.exceeds_block_limit) {
+            totals.tiered_admitted_stale_block += stale_block;
+        }
+        if !(verdict.exceeds_plain_transaction_limit || verdict.exceeds_plain_block_limit) {
+            totals.plain_admitted_stale_block += stale_block;
+        }
         totals.max_stale_transaction = totals.max_stale_transaction.max(stale_transaction);
         totals.gated_changed_slots += u64::from(sample.gated_changed_slots);
         totals.gated_created_slots += u64::from(sample.gated_created_slots);
@@ -1258,6 +1309,8 @@ impl BlockStaleTracker {
             stale_transaction = sample.stale_transaction,
             stale_block = sample.stale_block,
             cumulative_stale_block = verdict.cumulative_stale_block,
+            tiered_admitted_stale_block = verdict.tiered_admitted_stale_block,
+            plain_admitted_stale_block = verdict.plain_admitted_stale_block,
             changed_slots = sample.changed_slots,
             gated_changed_slots = sample.gated_changed_slots,
             gated_created_slots = sample.gated_created_slots,
@@ -1284,6 +1337,8 @@ impl BlockStaleTracker {
                 block_number = self.block_number,
                 transactions = totals.transactions,
                 stale_block = totals.stale_block,
+                unmetered_transactions = totals.unmetered_transactions,
+                unmetered_stale_block = totals.unmetered_stale_block,
                 max_stale_transaction = totals.max_stale_transaction,
                 gated_changed_slots = totals.gated_changed_slots,
                 gated_created_slots = totals.gated_created_slots,
@@ -1949,6 +2004,46 @@ mod tests {
         assert_eq!((totals.flagged_transaction_scope, totals.flagged_block_scope), (0, 1));
         assert_eq!(totals.stale_block, 500);
         assert_eq!(tracker.commit(&TxHash::ZERO), None);
+    }
+
+    #[test]
+    fn a_transaction_a_limit_would_exclude_does_not_count_toward_that_limits_block_total() {
+        let meter = meter();
+        // An empty cache: the tiered limit is 450 and the plain limit 200.
+        let mut tracker = meter.block_tracker(1, NOW);
+        tracker.evaluate(&updates(contract(7), 0, 460));
+        let first = tracker.commit(&TxHash::ZERO).unwrap();
+        assert!(first.exceeds_transaction_limit && first.exceeds_plain_transaction_limit);
+        tracker.evaluate(&updates(contract(8), 0, 70));
+        let second = tracker.commit(&TxHash::ZERO).unwrap();
+        assert!(!second.is_flagged(), "the excluded first transaction must not push it over");
+        tracker.evaluate(&updates(contract(9), 0, 150));
+        let third = tracker.commit(&TxHash::ZERO).unwrap();
+        assert!(third.exceeds_plain_block_limit, "70 + 150 admitted under the plain limit");
+        assert!(!third.exceeds_block_limit, "70 + 150 admitted under the tiered limit");
+        let totals = tracker.totals();
+        assert_eq!(totals.stale_block, 680, "the build total counts every committed transaction");
+        assert_eq!((totals.flagged_transaction_scope, totals.flagged_block_scope), (1, 1));
+    }
+
+    #[test]
+    fn an_unmetered_transaction_counts_toward_the_gate_and_dedupe_but_not_the_verdicts() {
+        let meter = meter();
+        let mut tracker = meter.block_tracker(1, NOW);
+        tracker.evaluate(&updates(contract(7), 0, 300));
+        let sample = tracker.include_unmetered().unwrap();
+        assert_eq!(sample.stale_block, 300);
+        // A later transaction rewriting the same slots finds them already loaded.
+        assert_eq!(tracker.evaluate(&updates(contract(7), 0, 300)).stale_block, 0);
+        tracker.commit(&TxHash::ZERO);
+        // A gated contract's stale slots are judged without the unmetered 300.
+        tracker.evaluate(&updates(contract(8), 0, 150));
+        let verdict = tracker.commit(&TxHash::ZERO).unwrap();
+        assert!(!verdict.is_flagged());
+        let totals = tracker.totals();
+        assert_eq!((totals.unmetered_transactions, totals.unmetered_stale_block), (1, 300));
+        assert_eq!((totals.transactions, totals.stale_block), (2, 150));
+        assert_eq!(tracker.include_unmetered(), None);
     }
 
     // ---------------------------------------------------------------- canonical recorder

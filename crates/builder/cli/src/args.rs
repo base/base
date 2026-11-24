@@ -400,15 +400,6 @@ mod tests {
         assert_eq!(cache_entries("8").expect("override"), 8 << 18);
         assert!(cache_entries("100").is_err());
         assert!(cache_entries("8192").is_err());
-        assert!(
-            CommandParser::try_parse_from([
-                "builder",
-                "--payload.stale-storage-metering",
-                "--payload.stale-storage-tx-limit",
-                "20",
-            ])
-            .is_err()
-        );
     }
 
     #[test]

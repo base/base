@@ -1018,8 +1018,12 @@ where
     }
 
     /// Starts the log-only stale-storage tracker for this build, or `None` when the meter is
-    /// disabled.
+    /// disabled or the build replays derived attributes (`no_tx_pool`), whose transactions
+    /// enforcement could never exclude.
     pub fn stale_storage_tracker(&self) -> Option<BlockStaleTracker> {
+        if self.attributes().no_tx_pool() {
+            return None;
+        }
         self.builder_config.stale_storage.as_ref().map(|meter| {
             meter.block_tracker(
                 self.parent().number().saturating_add(1),
@@ -1136,8 +1140,10 @@ where
                     &mut info.resource_metering_usage,
                 );
             }
+            // Sequencer transactions cannot be excluded, so they count toward the gate and
+            // dedupe but not toward the dry-run verdicts.
             if let Some(stale_storage) = info.stale_storage.as_mut() {
-                stale_storage.commit(&tx_hash);
+                stale_storage.include_unmetered();
             }
         }
         Ok(info)
@@ -3186,6 +3192,17 @@ mod tests {
 
         assert!(metered.0 > 0);
         assert_eq!(metered, unmetered);
+    }
+
+    /// Derived-attribute (`no_tx_pool`) builds replay a block whose contents enforcement could
+    /// never change, so they must not add to the dry-run counts.
+    #[test]
+    fn derived_attribute_builds_do_not_meter_stale_storage() {
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.stale_storage = Some(StaleStorageMeter::new(1 << 16));
+        assert!(ctx.stale_storage_tracker().is_some());
+        ctx.config.attributes.no_tx_pool = true;
+        assert!(ctx.stale_storage_tracker().is_none());
     }
 
     #[test]

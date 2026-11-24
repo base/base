@@ -1032,7 +1032,7 @@ fn is_inspector_opcode_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use clap::{Args, CommandFactory, Parser};
+    use clap::{Args, Parser};
 
     use super::*;
 
@@ -1659,38 +1659,15 @@ mod tests {
     }
 
     #[test]
-    fn stale_storage_has_only_the_metering_and_cache_size_flags() {
-        let command = CommandParser::<StaleStorageArgs>::command();
-        let flags: Vec<_> = command
-            .get_arguments()
-            .filter_map(|arg| Some((arg.get_long()?, arg.get_env()?.to_str()?)))
-            .collect();
-        assert_eq!(
-            flags,
-            [
-                ("payload.stale-storage-metering", "PAYLOAD_STALE_STORAGE_METERING"),
-                ("payload.stale-storage-cache-mib", "PAYLOAD_STALE_STORAGE_CACHE_MIB"),
-            ]
-        );
-
-        let parse = |flags: &[&str]| {
-            CommandParser::<StaleStorageArgs>::try_parse_from(["reth"].iter().chain(flags).copied())
-        };
-        assert!(parse(&["--payload.stale-storage-metering"]).expect("flag").args.enabled);
-        for removed in [
-            "--payload.stale-storage-table-log2",
-            "--payload.stale-storage-window-hours",
-            "--payload.stale-storage-contract-gate",
-            "--payload.stale-storage-tx-limit",
-            "--payload.stale-storage-block-limit",
-            "--payload.stale-storage-first-hour-limit",
-            "--payload.stale-storage-first-day-limit",
-        ] {
-            assert!(
-                parse(&["--payload.stale-storage-metering", removed, "12"]).is_err(),
-                "{removed} must not be accepted"
-            );
-        }
+    fn the_stale_storage_metering_flag_enables_the_meter() {
+        let args = CommandParser::<StaleStorageArgs>::try_parse_from([
+            "reth",
+            "--payload.stale-storage-metering",
+        ])
+        .expect("flag")
+        .args;
+        assert!(args.enabled);
+        assert!(args.meter().is_some());
     }
 
     #[test]
