@@ -18,11 +18,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_trie::KECCAK_EMPTY;
 use base_tiger_store::{
-    Account, AccountBeforeTx, BytecodeCodec, Datadir, Db, History, Reader, RocksTable, Ro, Segment, StorageBeforeTx,
+    Account, AccountBeforeTx, BytecodeCodec, Datadir, Db, History, Reader, RocksTable, Ro, Rw, Segment, StorageBeforeTx,
     StorageEntry, StoreError, Table, Txn, WriteTxn, put_compact_u256,
 };
 
-use crate::{AccountProof, HashedState, HashedStorage, StateWriter, TrieError, TrieView, hash_key};
+use alloy_rlp::Decodable;
+
+use crate::{
+    AccountProof, DbNodes, EMPTY_ROOT, HashedState, HashedStorage, PARTIAL_ROOT_KEY, ProofNodes, Recording, SparseTrie,
+    PartialState, StateTries, StateWriter, TrieError, TrieView, hash_key,
+};
 
 /// An account's fields as the state database takes them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -121,12 +126,12 @@ fn read_account<K>(txn: &Txn<K>, db: &Db, key: B256) -> Result<Option<Account>, 
     }
 }
 
-/// Reads one `HashedStorages` slot (zero when unset).
-fn read_slot<K>(txn: &Txn<K>, db: &Db, key: B256, slot: B256) -> Result<U256, TrieError> {
+/// Reads one `HashedStorages` slot, `None` when not in the table.
+fn read_slot<K>(txn: &Txn<K>, db: &Db, key: B256, slot: B256) -> Result<Option<U256>, TrieError> {
     let mut cursor = txn.cursor(db.dbi(Table::HashedStorages))?;
     match cursor.seek_dup(key.as_slice(), slot.as_slice())? {
-        Some((_, value)) if value.starts_with(slot.as_slice()) => Ok(StorageEntry::from_bytes(value)?.value),
-        _ => Ok(U256::ZERO),
+        Some((_, value)) if value.starts_with(slot.as_slice()) => Ok(Some(StorageEntry::from_bytes(value)?.value)),
+        _ => Ok(None),
     }
 }
 
@@ -161,16 +166,117 @@ fn wiped_slot(value: &[u8]) -> Result<Option<(B256, U256)>, TrieError> {
 }
 
 /// The state database over a datadir.
+///
+/// A datadir holds either the full state in reth's layout, or a partial state (see
+/// [`crate::partial`]) for a node that started at a recent block from execution witnesses. In a
+/// partial state, reads, roots and proofs that need state not held locally fail with an error
+/// for which [`TrieError::is_unknown`] holds; they never answer zero or absent for it.
 #[derive(Debug)]
 pub struct StateDb {
     /// The datadir.
     pub datadir: Datadir,
+    partial: bool,
 }
 
 impl StateDb {
     /// Opens (creating if needed) the datadir at `path`.
     pub fn open(path: &std::path::Path) -> Result<Self, TrieError> {
-        Ok(Self { datadir: Datadir::open(path)? })
+        let datadir = Datadir::open(path)?;
+        let partial = PartialState::root(&datadir.db.read()?, &datadir.db)?.is_some();
+        Ok(Self { datadir, partial })
+    }
+
+    /// Opens the partial-state datadir at `path`, creating it when new: its state is the one
+    /// with root `root` after block `block`, of which nothing is held yet. An existing partial
+    /// datadir opens as it is. Fill it with [`Self::absorb_witness`] before each block.
+    pub fn open_partial(path: &std::path::Path, block: u64, root: B256) -> Result<Self, TrieError> {
+        let mut db = Self::open(path)?;
+        if db.partial {
+            return Ok(db);
+        }
+        if db.tip()?.is_some() {
+            return Err(TrieError::Corrupt("the datadir holds a full state".into()));
+        }
+        let mut w = db.write()?;
+        w.set_label(block);
+        let dbi = w.db().dbi(Table::Metadata);
+        w.txn().put(dbi, PARTIAL_ROOT_KEY, root.as_slice())?;
+        w.set_checkpoints(block)?;
+        // Empty changesets at the start block, so views at it work and history begins there.
+        db.datadir.static_files.append_changeset(Segment::AccountChangeSets, block, &[])?;
+        db.datadir.static_files.append_changeset(Segment::StorageChangeSets, block, &[])?;
+        w.commit()?;
+        db.partial = true;
+        Ok(db)
+    }
+
+    /// Whether the datadir holds a partial state.
+    pub const fn is_partial(&self) -> bool {
+        self.partial
+    }
+
+    /// The partial state's tip root as `txn` sees it, `None` for a full state.
+    fn partial_root<K>(&self, txn: &Txn<K>) -> Result<Option<B256>, TrieError> {
+        if !self.partial {
+            return Ok(None);
+        }
+        let root = PartialState::root(txn, &self.datadir.db)?;
+        Ok(Some(root.ok_or_else(|| TrieError::Corrupt("partial state without a root".into()))?))
+    }
+
+    /// The account with hashed address `key` at the stored tip.
+    fn tip_account<K>(&self, txn: &Txn<K>, key: B256) -> Result<Option<Account>, TrieError> {
+        let db = &self.datadir.db;
+        if let Some(account) = read_account(txn, db, key)? {
+            return Ok(Some(account));
+        }
+        let Some(root) = self.partial_root(txn)? else { return Ok(None) };
+        let leaf = SparseTrie::new(None, root).get(&DbNodes { txn, db }, key)?;
+        Ok(leaf.map(|leaf| PartialState::decode_account_leaf(&leaf)).transpose()?.map(|(account, _)| account))
+    }
+
+    /// The storage root of the account `key` at the stored tip of a partial state.
+    fn tip_storage_root<K>(&self, txn: &Txn<K>, root: B256, key: B256) -> Result<B256, TrieError> {
+        let leaf = SparseTrie::new(None, root).get(&DbNodes { txn, db: &self.datadir.db }, key)?;
+        Ok(leaf.map(|leaf| PartialState::decode_account_leaf(&leaf)).transpose()?.map_or(EMPTY_ROOT, |(_, storage_root)| storage_root))
+    }
+
+    /// The value of hashed `slot` of the account `key` at the stored tip.
+    fn tip_slot<K>(&self, txn: &Txn<K>, key: B256, slot: B256) -> Result<U256, TrieError> {
+        let db = &self.datadir.db;
+        if let Some(value) = read_slot(txn, db, key, slot)? {
+            return Ok(value);
+        }
+        let Some(root) = self.partial_root(txn)? else { return Ok(U256::ZERO) };
+        let storage_root = self.tip_storage_root(txn, root, key)?;
+        let leaf = SparseTrie::new(Some(key), storage_root).get(&DbNodes { txn, db }, slot)?;
+        match leaf {
+            Some(leaf) => U256::decode(&mut &leaf[..]).map_err(|e| TrieError::Corrupt(format!("storage leaf: {e}"))),
+            None => Ok(U256::ZERO),
+        }
+    }
+
+    /// Stores what an execution witness for the next block reveals of the stored tip's state
+    /// (partial states only): its trie nodes reachable from the tip root, the values of its
+    /// leaves, and `codes`. Call it in the block's write transaction before
+    /// [`Self::commit_block`]; nodes of other roots are ignored.
+    pub fn absorb_witness(&self, w: &mut WriteTxn<'_>, nodes: &[Bytes], codes: &[Bytes]) -> Result<(), TrieError> {
+        let db = &w.datadir.db;
+        let root = self.partial_root(w.txn())?.ok_or_else(|| TrieError::Corrupt("witnesses fill only partial states".into()))?;
+        PartialState::absorb_witness(w.txn(), db, root, nodes, codes)
+    }
+
+    /// The new state root after hashed `state`, writing the trie changes into `txn`.
+    fn write_trie(&self, txn: &mut Txn<Rw>, state: &HashedState) -> Result<B256, TrieError> {
+        let db = &self.datadir.db;
+        if let Some(root) = self.partial_root(txn)? {
+            let tries = StateTries::apply(&DbNodes { txn, db }, root, state)?;
+            tries.write(txn, db)?;
+            return Ok(tries.root);
+        }
+        let (root, updates) = TrieView::new(txn, db, state).state_root(true)?;
+        StateWriter::write_trie_updates(txn, db, &updates)?;
+        Ok(root)
     }
 
     /// The last committed block, `None` before genesis.
@@ -201,14 +307,14 @@ impl StateDb {
         // Prior values for the changesets.
         let mut account_rows = Vec::new();
         for (address, info) in &n.accounts {
-            let prior = read_account(txn, db, hash_key(address.as_slice()))?;
+            let prior = self.tip_account(txn, hash_key(address.as_slice()))?;
             if prior != info.map(AccountInfo::to_account) {
                 account_rows.push(AccountBeforeTx { address: *address, info: prior });
             }
         }
         let mut storage_rows = Vec::new();
         for ((address, slot), value) in &n.storage {
-            let prior = read_slot(txn, db, hash_key(address.as_slice()), hash_key(slot.as_slice()))?;
+            let prior = self.tip_slot(txn, hash_key(address.as_slice()), hash_key(slot.as_slice()))?;
             if prior != *value {
                 storage_rows.push(StorageBeforeTx { address: *address, slot: *slot, value: prior });
             }
@@ -219,8 +325,16 @@ impl StateDb {
         let mut wipes = Vec::new();
         for address in &wiped {
             let key = hash_key(address.as_slice());
+            if let Some(root) = self.partial_root(txn)?
+                && self.tip_storage_root(txn, root, key)? != EMPTY_ROOT
+            {
+                // A partial state cannot record what the wipe removes. Base wipes only empty
+                // storage: EIP-6780 deletes only accounts created in the same transaction, and
+                // EIP-7610 forbids creating over storage.
+                return Err(TrieError::Unknown(format!("storage of {address} wiped by block {number}")));
+            }
             let slots = read_storage(txn, db, key)?;
-            if slots.is_empty() && read_account(txn, db, key)?.is_none() {
+            if slots.is_empty() && self.tip_account(txn, key)?.is_none() {
                 continue;
             }
             wipes.push((key, slots));
@@ -239,9 +353,8 @@ impl StateDb {
         }
         // Trie and flat state.
         let state = changes.hashed();
-        let (root, updates) = TrieView::new(txn, db, &state).state_root(true)?;
+        let root = self.write_trie(txn, &state)?;
         StateWriter::write_hashed_state(txn, db, &state)?;
-        StateWriter::write_trie_updates(txn, db, &updates)?;
         for (hash, code) in &changes.codes {
             txn.put(db.dbi(Table::Bytecodes), hash.as_slice(), &BytecodeCodec::encode(code))?;
         }
@@ -267,9 +380,8 @@ impl StateDb {
         let db = &w.datadir.db;
         w.set_label(number);
         let txn = w.txn();
-        let (root, updates) = TrieView::new(txn, db, state).state_root(true)?;
+        let root = self.write_trie(txn, state)?;
         StateWriter::write_hashed_state(txn, db, state)?;
-        StateWriter::write_trie_updates(txn, db, &updates)?;
         w.set_checkpoints(number)?;
         Ok(root)
     }
@@ -348,9 +460,8 @@ impl StateDb {
             self.reverts(txn, number + 1, tip)?
         };
         let txn = w.txn();
-        let (root, updates) = TrieView::new(txn, db, &state).state_root(true)?;
+        let root = self.write_trie(txn, &state)?;
         StateWriter::write_hashed_state(txn, db, &state)?;
-        StateWriter::write_trie_updates(txn, db, &updates)?;
         // Drop wipe records above `number`.
         let mut stale = Vec::new();
         {
@@ -453,7 +564,7 @@ impl StateView<'_> {
                 return Err(TrieError::Corrupt(format!("history names block {change} for {address}, its changeset does not")));
             }
         }
-        Ok(read_account(&self.txn, self.dbs(), key)?.map(AccountInfo::from_account))
+        Ok(self.db.tip_account(&self.txn, key)?.map(AccountInfo::from_account))
     }
 
     /// The value of `slot` of `address` (zero when unset).
@@ -491,7 +602,7 @@ impl StateView<'_> {
                 _ => {}
             }
         }
-        read_slot(&self.txn, self.dbs(), key, hashed_slot)
+        self.db.tip_slot(&self.txn, key, hashed_slot)
     }
 
     /// The first block after this view's block that wiped `key`'s storage.
@@ -515,7 +626,7 @@ impl StateView<'_> {
         }
     }
 
-    /// The code with `hash`, if stored.
+    /// The code with `hash`, if stored (in a partial state, code not held is unknown).
     pub fn code(&self, hash: B256) -> Result<Option<Bytes>, TrieError> {
         if hash == KECCAK_EMPTY {
             return Ok(Some(Bytes::new()));
@@ -527,6 +638,7 @@ impl StateView<'_> {
         }
         match self.txn.get(self.dbs().dbi(Table::Bytecodes), hash.as_slice())? {
             Some(bytes) => Ok(Some(BytecodeCodec::decode(bytes)?.into())),
+            None if self.db.partial => Err(TrieError::Unknown(format!("code {hash}"))),
             None => Ok(None),
         }
     }
@@ -544,19 +656,58 @@ impl StateView<'_> {
             }
             None => base,
         };
+        if let Some(root) = self.db.partial_root(&self.txn)? {
+            return Ok(StateTries::apply(&self.nodes(), root, state)?.root);
+        }
         Ok(TrieView::new(&self.txn, self.dbs(), state).state_root(false)?.0)
+    }
+
+    fn nodes(&self) -> DbNodes<'_, Ro> {
+        DbNodes { txn: &self.txn, db: self.dbs() }
+    }
+
+    /// The storage root of `key` after hashed `state` over the stored tables.
+    fn storage_root_in(&self, state: &HashedState, key: B256) -> Result<B256, TrieError> {
+        if let Some(root) = self.db.partial_root(&self.txn)? {
+            return StateTries::apply(&self.nodes(), root, state)?.storage_root(&self.nodes(), key);
+        }
+        TrieView::new(&self.txn, self.dbs(), state).storage_root(key)
+    }
+
+    /// The trie nodes a root computation of `extra` over this view loads: the nodes on the path
+    /// of every changed key, and the siblings that deletions collapse into. A partial state
+    /// answers only at its stored tip without overlays.
+    pub fn trie_witness(&self, extra: &BlockChanges) -> Result<Vec<Bytes>, TrieError> {
+        let changes = extra.hashed();
+        if self.db.partial {
+            if self.block != self.tip || !self.overlays.is_empty() {
+                return Err(TrieError::Unknown("witness below the tip of a partial state".into()));
+            }
+            let root = self.db.partial_root(&self.txn)?.expect("partial");
+            let nodes = self.nodes();
+            let recording = Recording { inner: &nodes, seen: Default::default() };
+            StateTries::apply(&recording, root, &changes)?;
+            return Ok(recording.seen.into_inner().into_values().collect());
+        }
+        let base = self.hashed()?;
+        let view = TrieView::new(&self.txn, self.dbs(), base);
+        let root = view.state_root(false)?.0;
+        let source = ProofNodes { view: &view };
+        let recording = Recording { inner: &source, seen: Default::default() };
+        StateTries::apply(&recording, root, &changes)?;
+        Ok(recording.seen.into_inner().into_values().collect())
     }
 
     /// The storage root of `address` with `extra` applied on top (nothing is written).
     pub fn storage_root_after(&self, address: Address, extra: &BlockChanges) -> Result<B256, TrieError> {
         let mut state = self.hashed()?.clone();
         state.extend(&extra.hashed());
-        TrieView::new(&self.txn, self.dbs(), &state).storage_root(hash_key(address.as_slice()))
+        self.storage_root_in(&state, hash_key(address.as_slice()))
     }
 
     /// The storage root of the account with hashed address `key`.
     pub fn storage_root_hashed(&self, key: B256) -> Result<B256, TrieError> {
-        TrieView::new(&self.txn, self.dbs(), self.hashed()?).storage_root(key)
+        self.storage_root_in(self.hashed()?, key)
     }
 
     /// The storage root of `address`.
@@ -566,6 +717,9 @@ impl StateView<'_> {
 
     /// The proof of the account with hashed address `key` and its hashed `slots`.
     pub fn proof_hashed(&self, key: B256, slots: &[B256]) -> Result<AccountProof, TrieError> {
+        if let Some(root) = self.db.partial_root(&self.txn)? {
+            return StateTries::apply(&self.nodes(), root, self.hashed()?)?.proof(&self.nodes(), key, slots);
+        }
         TrieView::new(&self.txn, self.dbs(), self.hashed()?).proof(key, slots)
     }
 
@@ -581,6 +735,6 @@ impl StateView<'_> {
         if let Some(account) = self.hashed()?.accounts.get(&key) {
             return Ok(*account);
         }
-        read_account(&self.txn, self.dbs(), key)
+        self.db.tip_account(&self.txn, key)
     }
 }

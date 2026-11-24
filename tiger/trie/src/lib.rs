@@ -20,6 +20,12 @@ pub use cursor::{
 mod root;
 pub use root::{AccountProof, StorageProof, TrieView};
 
+mod sparse;
+pub use sparse::{NoNodes, NodeSource, SparseChanges, SparseTrie, WitnessSource};
+
+mod partial;
+pub use partial::{DbNodes, PARTIAL_ROOT_KEY, PartialState, ProofNodes, Recording, StateTries};
+
 mod write;
 pub use write::StateWriter;
 

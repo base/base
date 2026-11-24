@@ -43,6 +43,14 @@ impl std::fmt::Display for TrieError {
 
 impl std::error::Error for TrieError {}
 
+impl TrieError {
+    /// Whether the operation needs state that is not held locally (a partial state or an
+    /// incomplete witness), rather than failing on corrupt or unreadable data.
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::MissingNode { .. } | Self::Unknown(_))
+    }
+}
+
 impl From<MdbxError> for TrieError {
     fn from(err: MdbxError) -> Self {
         Self::Mdbx(err)

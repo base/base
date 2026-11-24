@@ -3,8 +3,9 @@
 //! Table names and `DUPSORT` flags are reth's `tables!` list (crates/storage/db-api/src/tables at
 //! base/reth 2b20e42), in the same order. Tiger creates every one of them, as reth does, so either
 //! client opens a datadir the other made. The `Tiger*` tables are tiger's own (reth opens tables
-//! by name and ignores others): `TigerKnownRanges` records complete hashed-key ranges of a
-//! partial state, `TigerWipes` (`hashed address ++ block`) and `TigerWipedStorage`
+//! by name and ignores others): `TigerNodes` holds a partial state's trie nodes as RLP by
+//! path (`0 ++ packed path` for the account trie, `1 ++ hashed address ++ packed path` for storage
+//! tries), `TigerWipes` (`hashed address ++ block`) and `TigerWipedStorage`
 //! (`block ++ hashed address` -> `hashed slot ++ value` duplicates) keep the storage a wipe
 //! removed, which reth's v2 changesets do not, so unwinds and historical roots restore it.
 //! `TigerBlocks` (block number -> the node's block record: header, transactions, senders,
@@ -75,7 +76,7 @@ tables! {
     VersionHistory: false,
     ChainState: false,
     Metadata: false,
-    TigerKnownRanges: false,
+    TigerNodes: false,
     TigerWipes: false,
     TigerWipedStorage: true,
     TigerBlocks: false,
