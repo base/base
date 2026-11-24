@@ -1770,6 +1770,16 @@ impl BaseProofsStore for RocksdbProofsStorage {
 
         let _guard = self.history_gate.write();
 
+        // Like `unwind_history`, never rewrite history below the earliest stored block.
+        if let Some(proof_window) = self.get_proof_window()?
+            && latest_common_block.number < proof_window.earliest.number
+        {
+            return Err(BaseProofsStorageError::UnwindBeyondEarliest {
+                unwind_block_number: latest_common_block.number + 1,
+                earliest_block_number: proof_window.earliest.number,
+            });
+        }
+
         let mut latest_block_hash = latest_common_block.hash;
         for (block_with_parent, _) in &blocks_to_add {
             let block_number = block_with_parent.block.number;
