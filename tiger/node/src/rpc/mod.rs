@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_consensus::transaction::Recovered;
-use alloy_primitives::{Address, B256, U64, U256, keccak256};
+use alloy_primitives::{Address, B256, U64, U256};
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_consensus::{BaseTransactionInfo, DepositInfo};
 use serde_json::{Value, json};
@@ -42,7 +42,8 @@ impl Node {
             "eth_getBalance" | "eth_getTransactionCount" | "eth_getCode" => {
                 let address: Address = param(p, 0)?;
                 let block = self.state_block(p.get(1))?;
-                let state = self.chain.read().expect("chain lock").state_after(&block);
+                let chain = self.chain.read().expect("chain lock");
+        let state = chain.state_after(&block).map_err(RpcError::internal)?;
                 let account = state.account(&address).map_err(|error| RpcError::internal(error.to_string()))?;
                 Ok(match method {
                     "eth_getBalance" => json!(account.map_or(U256::ZERO, |account| account.balance)),
@@ -62,7 +63,8 @@ impl Node {
                 let address: Address = param(p, 0)?;
                 let slot: U256 = param(p, 1)?;
                 let block = self.state_block(p.get(2))?;
-                let state = self.chain.read().expect("chain lock").state_after(&block);
+                let chain = self.chain.read().expect("chain lock");
+        let state = chain.state_after(&block).map_err(RpcError::internal)?;
                 let value = state.storage(&address, &slot).map_err(|error| RpcError::internal(error.to_string()))?;
                 Ok(json!(B256::from(value)))
             }
@@ -152,25 +154,22 @@ impl Node {
 
     /// `eth_getProof` at the post-state of `block`.
     fn proof(&self, block: &StoredBlock, address: Address, slots: &[U256]) -> Result<Value, RpcError> {
-        let state = self.chain.read().expect("chain lock").state_after(block);
-        let internal = |error: crate::WitnessError| RpcError::internal(error.to_string());
-        let account = state.account(&address).map_err(internal)?;
-        let account_proof = state.proof(block.header.state_root, keccak256(address)).map_err(internal)?;
-        let storage_root = account.map_or(alloy_trie::EMPTY_ROOT_HASH, |account| account.storage_root);
-        let mut storage_proof = Vec::with_capacity(slots.len());
-        for slot in slots {
-            let key = B256::from(*slot);
-            let value = state.storage(&address, slot).map_err(internal)?;
-            let proof = state.proof(storage_root, keccak256(key)).map_err(internal)?;
-            storage_proof.push(json!({ "key": key, "value": value, "proof": proof }));
-        }
+        let chain = self.chain.read().expect("chain lock");
+        let state = chain.state_after(block).map_err(RpcError::internal)?;
+        let proof = state.proof(address, slots).map_err(RpcError::internal)?;
+        let storage_proof: Vec<Value> = slots
+            .iter()
+            .zip(&proof.storage)
+            .map(|(slot, storage)| json!({ "key": B256::from(*slot), "value": storage.value, "proof": storage.proof }))
+            .collect();
+        let account = proof.account;
         Ok(json!({
             "address": address,
-            "accountProof": account_proof,
+            "accountProof": proof.proof,
             "balance": account.map_or(U256::ZERO, |account| account.balance),
-            "codeHash": account.map_or(alloy_primitives::KECCAK256_EMPTY, |account| account.code_hash),
+            "codeHash": account.and_then(|account| account.bytecode_hash).unwrap_or(alloy_primitives::KECCAK256_EMPTY),
             "nonce": U64::from(account.map_or(0, |account| account.nonce)),
-            "storageHash": storage_root,
+            "storageHash": proof.storage_root,
             "storageProof": storage_proof,
         }))
     }

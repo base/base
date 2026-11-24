@@ -1,40 +1,36 @@
 //! The node's block tree, canonical chain and state.
 //!
-//! State is a hash-addressed store of trie nodes and bytecodes: every block's state is its state
-//! root, so the state of any stored block (canonical or side branch) can be read, executed on and
-//! proven, and a reorg only moves the canonical pointer.
+//! State lives in the state database (`base-tiger-trie`), a base-reth storage v2 datadir under
+//! `--datadir`. As in base-reth's engine tree, a validated block stays in memory with its state
+//! changes until it becomes canonical; making a branch canonical unwinds the database to the
+//! fork point and commits the branch's blocks, with their block records and the forkchoice heads,
+//! in one write transaction, so the database tip is always the canonical head. Side-branch state
+//! is read as a database view at the fork point with the branch's changes on top. Blocks that
+//! were never canonical are not persisted: after a restart the consensus node sends them again.
 //!
-//! Persistence is an append-only log under `<datadir>/tiger/chain.log`, written with
-//! [`base_tiger_store::Fault`] hooks so crash-injection runs cover it. A block's nodes and codes
-//! are written before the block, and every block and forkchoice record is synced before the
-//! Engine API answers, so a crash loses at most what was not acknowledged. Reopening replays the
-//! log and drops a torn tail. This log is the interim store until the base-reth-compatible store
-//! (`tiger/store`) serves the same reads.
+//! Block records (header, transactions, senders, receipts) are kept in tiger's own
+//! `TigerBlocks` table until the node writes reth's static files.
 
 use std::{
     collections::HashMap,
-    fs::{self, File, OpenOptions},
-    io::Read,
-    os::unix::fs::FileExt,
-    path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    path::Path,
+    sync::Arc,
 };
 
 use alloy_consensus::Header;
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope as SignedTx};
-use base_tiger_store::Fault;
+use base_tiger_store::{Fault, Table, WriteTxn};
+use base_tiger_trie::{BlockChanges, StateDb};
 
-use crate::{
-    Executed, Genesis, NodeSource, WitnessState,
-    genesis::genesis_codes,
-    witness::build_state,
-};
+use crate::{Executed, Genesis, NodeState, block_changes, genesis::genesis_changes};
 
 /// Blocks `BLOCKHASH` can reach.
 const BLOCK_HASH_WINDOW: u64 = 256;
+/// The `TigerForkchoice` key of the forkchoice heads.
+const FORKCHOICE_KEY: &[u8] = b"forkchoice";
 
 /// One stored block with its execution results.
 #[derive(Debug, Clone)]
@@ -51,6 +47,9 @@ pub struct StoredBlock {
     pub senders: Vec<Address>,
     /// Receipt of each transaction.
     pub receipts: Vec<BaseReceiptEnvelope>,
+    /// The block's state changes while the block is held in memory (`None` for blocks loaded
+    /// from the database, whose changes are its changesets).
+    pub changes: Option<Arc<BlockChanges>>,
 }
 
 impl StoredBlock {
@@ -60,290 +59,29 @@ impl StoredBlock {
         transactions: Vec<SignedTx>,
         senders: Vec<Address>,
         receipts: Vec<BaseReceiptEnvelope>,
+        changes: Option<Arc<BlockChanges>>,
     ) -> Self {
         assert_eq!(transactions.len(), senders.len());
         assert_eq!(transactions.len(), receipts.len());
         let tx_hashes = transactions.iter().map(|tx| tx.trie_hash()).collect();
-        Self { header, hash, transactions, tx_hashes, senders, receipts }
+        Self { header, hash, transactions, tx_hashes, senders, receipts, changes }
     }
 
     /// The block number.
     pub const fn number(&self) -> u64 {
         self.header.number
     }
-}
 
-/// The three heads the consensus node sets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, RlpEncodable, RlpDecodable)]
-pub struct Forkchoice {
-    /// The canonical head.
-    pub head: B256,
-    /// The safe head.
-    pub safe: B256,
-    /// The finalized head.
-    pub finalized: B256,
-}
-
-/// Trie nodes and bytecodes by hash. Append-only: nothing is ever removed, so a state root that
-/// was readable stays readable.
-#[derive(Debug, Default)]
-pub struct NodeStore {
-    nodes: RwLock<HashMap<B256, Bytes>>,
-    codes: RwLock<HashMap<B256, Bytes>>,
-}
-
-impl NodeStore {
-    fn insert_nodes(&self, nodes: impl IntoIterator<Item = Bytes>) -> Vec<Bytes> {
-        let mut map = self.nodes.write().expect("node store lock");
-        let mut added = Vec::new();
-        for node in nodes {
-            if let std::collections::hash_map::Entry::Vacant(entry) = map.entry(keccak256(&node)) {
-                entry.insert(node.clone());
-                added.push(node);
-            }
-        }
-        added
-    }
-
-    fn insert_codes(&self, codes: impl IntoIterator<Item = Bytes>) -> Vec<Bytes> {
-        let mut map = self.codes.write().expect("code store lock");
-        let mut added = Vec::new();
-        for code in codes {
-            if let std::collections::hash_map::Entry::Vacant(entry) = map.entry(keccak256(&code)) {
-                entry.insert(code.clone());
-                added.push(code);
-            }
-        }
-        added
-    }
-}
-
-impl NodeSource for NodeStore {
-    fn trie_node(&self, hash: &B256) -> Option<Bytes> {
-        self.nodes.read().expect("node store lock").get(hash).cloned()
-    }
-
-    fn code(&self, hash: &B256) -> Option<Bytes> {
-        self.codes.read().expect("code store lock").get(hash).cloned()
-    }
-}
-
-/// A stored block as logged.
-#[derive(Debug, RlpEncodable, RlpDecodable)]
-struct BlockRecord {
-    header: Header,
-    transactions: Vec<Bytes>,
-    senders: Vec<Address>,
-    receipts: Vec<Bytes>,
-}
-
-/// Log record kinds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum Kind {
-    Genesis = 0,
-    Node = 1,
-    Code = 2,
-    Block = 3,
-    Forkchoice = 4,
-}
-
-impl Kind {
-    const fn from_byte(byte: u8) -> Option<Self> {
-        Some(match byte {
-            0 => Self::Genesis,
-            1 => Self::Node,
-            2 => Self::Code,
-            3 => Self::Block,
-            4 => Self::Forkchoice,
-            _ => return None,
+    fn record(&self) -> Vec<u8> {
+        alloy_rlp::encode(BlockRecord {
+            header: self.header.clone(),
+            transactions: self.transactions.iter().map(|tx| tx.encoded_2718().into()).collect(),
+            senders: self.senders.clone(),
+            receipts: self.receipts.iter().map(|receipt| receipt.encoded_2718().into()).collect(),
         })
     }
-}
 
-/// The append-only chain log: records of `kind (1) | length (4, LE) | payload | check (8)`,
-/// where `check` is the first 8 bytes of `keccak(kind | payload)`.
-#[derive(Debug)]
-struct ChainLog {
-    path: PathBuf,
-    file: File,
-    len: u64,
-    buffer: Vec<u8>,
-    commits: u64,
-}
-
-impl ChainLog {
-    /// Largest record accepted when reading (a block of 4 MB of transactions plus receipts).
-    const MAX_RECORD: u32 = 256 << 20;
-    const HEADER: usize = 5;
-    const CHECK: usize = 8;
-
-    fn check(kind: u8, payload: &[u8]) -> [u8; 8] {
-        let mut data = Vec::with_capacity(payload.len() + 1);
-        data.push(kind);
-        data.extend_from_slice(payload);
-        keccak256(&data)[..8].try_into().expect("8 bytes")
-    }
-
-    /// Opens the log, returning the valid records and truncating a torn tail.
-    fn open(dir: &Path) -> Result<(Self, Vec<(Kind, Vec<u8>)>), String> {
-        fs::create_dir_all(dir).map_err(|error| format!("creating {}: {error}", dir.display()))?;
-        let path = dir.join("chain.log");
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(|error| format!("opening {}: {error}", path.display()))?;
-        let mut data = Vec::new();
-        file.read_to_end(&mut data).map_err(|error| format!("reading {}: {error}", path.display()))?;
-        let mut records = Vec::new();
-        let mut at = 0usize;
-        while data.len() - at >= Self::HEADER {
-            let kind_byte = data[at];
-            let length = u32::from_le_bytes(data[at + 1..at + 5].try_into().expect("4 bytes"));
-            let Some(kind) = Kind::from_byte(kind_byte) else { break };
-            if length > Self::MAX_RECORD {
-                break;
-            }
-            let end = at + Self::HEADER + length as usize + Self::CHECK;
-            if end > data.len() {
-                break;
-            }
-            let payload = &data[at + Self::HEADER..end - Self::CHECK];
-            if data[end - Self::CHECK..end] != Self::check(kind_byte, payload) {
-                break;
-            }
-            records.push((kind, payload.to_vec()));
-            at = end;
-        }
-        let len = at as u64;
-        if len != data.len() as u64 {
-            eprintln!(
-                "tiger: dropping {} bytes of torn chain log tail at offset {len}",
-                data.len() as u64 - len
-            );
-            file.set_len(len).map_err(|error| format!("truncating {}: {error}", path.display()))?;
-            file.sync_all().map_err(|error| format!("syncing {}: {error}", path.display()))?;
-        }
-        Ok((Self { path, file, len, buffer: Vec::new(), commits: 0 }, records))
-    }
-
-    fn push(&mut self, kind: Kind, payload: &[u8]) {
-        let length = u32::try_from(payload.len()).expect("records are below 4 GB");
-        assert!(length <= Self::MAX_RECORD, "record of {length} bytes is too large");
-        self.buffer.push(kind as u8);
-        self.buffer.extend_from_slice(&length.to_le_bytes());
-        self.buffer.extend_from_slice(payload);
-        self.buffer.extend_from_slice(&Self::check(kind as u8, payload));
-    }
-
-    /// Writes the buffered records and syncs them.
-    fn commit(&mut self, step: &str) -> Result<(), String> {
-        if self.buffer.is_empty() {
-            return Ok(());
-        }
-        self.commits += 1;
-        Fault::phase(self.commits, step);
-        Fault::before_write(&self.path, self.len, &self.buffer);
-        self.file
-            .write_all_at(&self.buffer, self.len)
-            .map_err(|error| format!("writing {}: {error}", self.path.display()))?;
-        self.file.sync_data().map_err(|error| format!("syncing {}: {error}", self.path.display()))?;
-        Fault::after_sync(&self.path);
-        self.len += self.buffer.len() as u64;
-        self.buffer.clear();
-        Ok(())
-    }
-}
-
-/// The block tree, the canonical chain, and the forkchoice heads.
-#[derive(Debug)]
-pub struct Chain {
-    /// The chain and its genesis.
-    pub genesis: Genesis,
-    /// Trie nodes and codes of every stored state.
-    pub store: Arc<NodeStore>,
-    blocks: HashMap<B256, Arc<StoredBlock>>,
-    /// Canonical block hashes, indexed by number minus the genesis number.
-    canonical: Vec<B256>,
-    /// Canonical transactions by hash: block number and index.
-    tx_index: HashMap<B256, (u64, usize)>,
-    forkchoice: Forkchoice,
-    log: ChainLog,
-}
-
-impl Chain {
-    /// Opens (or initializes) the chain under `datadir`.
-    pub fn open(datadir: &Path, genesis: Genesis) -> Result<Self, String> {
-        Fault::init();
-        let (log, records) = ChainLog::open(&datadir.join("tiger"))?;
-        let genesis_block = Arc::new(StoredBlock::new(
-            genesis.header.clone(),
-            genesis.hash,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ));
-        let mut chain = Self {
-            store: Arc::new(NodeStore::default()),
-            blocks: HashMap::from([(genesis.hash, genesis_block)]),
-            canonical: vec![genesis.hash],
-            tx_index: HashMap::new(),
-            forkchoice: Forkchoice { head: genesis.hash, safe: genesis.hash, finalized: genesis.hash },
-            log,
-            genesis,
-        };
-        if records.is_empty() {
-            let alloc = chain.genesis.alloc.clone().ok_or(
-                "a new datadir for a built-in chain needs a genesis file with its full allocation",
-            )?;
-            let state = build_state(&alloc);
-            assert_eq!(state.root, chain.genesis.header.state_root);
-            chain.log.push(Kind::Genesis, chain.genesis.hash.as_slice());
-            for node in chain.store.insert_nodes(state.nodes) {
-                chain.log.push(Kind::Node, &node);
-            }
-            for code in chain.store.insert_codes(genesis_codes(&alloc)) {
-                chain.log.push(Kind::Code, &code);
-            }
-            chain.log.commit("genesis")?;
-            return Ok(chain);
-        }
-        let mut forkchoice = chain.forkchoice;
-        for (index, (kind, payload)) in records.into_iter().enumerate() {
-            match kind {
-                Kind::Genesis => {
-                    if index != 0 || payload != chain.genesis.hash.as_slice() {
-                        return Err(format!(
-                            "datadir holds another chain (genesis {})",
-                            alloy_primitives::hex::encode(&payload)
-                        ));
-                    }
-                }
-                Kind::Node => {
-                    chain.store.insert_nodes([payload.into()]);
-                }
-                Kind::Code => {
-                    chain.store.insert_codes([payload.into()]);
-                }
-                Kind::Block => {
-                    let block = Self::decode_block(&payload)?;
-                    chain.blocks.insert(block.hash, Arc::new(block));
-                }
-                Kind::Forkchoice => {
-                    forkchoice = alloy_rlp::decode_exact(&payload)
-                        .map_err(|error| format!("forkchoice record: {error}"))?;
-                }
-            }
-        }
-        chain.set_canonical(forkchoice.head)?;
-        chain.forkchoice = forkchoice;
-        Ok(chain)
-    }
-
-    fn decode_block(payload: &[u8]) -> Result<StoredBlock, String> {
+    fn from_record(payload: &[u8]) -> Result<Self, String> {
         let record: BlockRecord =
             alloy_rlp::decode_exact(payload).map_err(|error| format!("block record: {error}"))?;
         let transactions = record
@@ -359,7 +97,130 @@ impl Chain {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("block record receipt: {error}"))?;
         let hash = record.header.hash_slow();
-        Ok(StoredBlock::new(record.header, hash, transactions, record.senders, receipts))
+        Ok(Self::new(record.header, hash, transactions, record.senders, receipts, None))
+    }
+}
+
+/// The three heads the consensus node sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, RlpEncodable, RlpDecodable)]
+pub struct Forkchoice {
+    /// The canonical head.
+    pub head: B256,
+    /// The safe head.
+    pub safe: B256,
+    /// The finalized head.
+    pub finalized: B256,
+}
+
+/// A stored block as recorded in `TigerBlocks`.
+#[derive(Debug, RlpEncodable, RlpDecodable)]
+struct BlockRecord {
+    header: Header,
+    transactions: Vec<Bytes>,
+    senders: Vec<Address>,
+    receipts: Vec<Bytes>,
+}
+
+/// The block tree, the canonical chain, and the forkchoice heads.
+#[derive(Debug)]
+pub struct Chain {
+    /// The chain and its genesis.
+    pub genesis: Genesis,
+    /// The state database.
+    pub db: StateDb,
+    blocks: HashMap<B256, Arc<StoredBlock>>,
+    /// Canonical block hashes, indexed by number minus the genesis number.
+    canonical: Vec<B256>,
+    /// Canonical transactions by hash: block number and index.
+    tx_index: HashMap<B256, (u64, usize)>,
+    forkchoice: Forkchoice,
+}
+
+impl Chain {
+    /// Opens (or initializes) the chain in the datadir `datadir`.
+    pub fn open(datadir: &Path, genesis: Genesis) -> Result<Self, String> {
+        Fault::init();
+        if genesis.header.number != 0 {
+            return Err(format!(
+                "genesis block {} is above zero; the state database does not support that yet",
+                genesis.header.number
+            ));
+        }
+        let db = StateDb::open(datadir).map_err(|error| format!("opening {}: {error}", datadir.display()))?;
+        let mut chain = Self {
+            db,
+            blocks: HashMap::new(),
+            canonical: Vec::new(),
+            tx_index: HashMap::new(),
+            forkchoice: Forkchoice { head: genesis.hash, safe: genesis.hash, finalized: genesis.hash },
+            genesis,
+        };
+        let tip = chain.db.tip().map_err(|error| error.to_string())?;
+        let Some(tip) = tip else {
+            let alloc = chain.genesis.alloc.clone().ok_or(
+                "a new datadir for a built-in chain needs a genesis file with its full allocation",
+            )?;
+            let block = Arc::new(StoredBlock::new(
+                chain.genesis.header.clone(),
+                chain.genesis.hash,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                None,
+            ));
+            let mut w = chain.db.write().map_err(|error| error.to_string())?;
+            let root = chain.db.commit_block(&mut w, 0, &genesis_changes(&alloc)).map_err(|error| error.to_string())?;
+            if root != chain.genesis.header.state_root {
+                return Err(format!("genesis state root {root} is not {}", chain.genesis.header.state_root));
+            }
+            Self::put_block(&mut w, &block)?;
+            Self::put_forkchoice(&mut w, chain.forkchoice)?;
+            w.commit().map_err(|error| error.to_string())?;
+            chain.canonical.push(block.hash);
+            chain.blocks.insert(block.hash, block);
+            return Ok(chain);
+        };
+        {
+            let txn = chain.db.datadir.db.read().map_err(|error| error.to_string())?;
+            let blocks_dbi = chain.db.datadir.db.dbi(Table::TigerBlocks);
+            for number in 0..=tip {
+                let record = txn
+                    .get(blocks_dbi, &number.to_be_bytes())
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("datadir has state up to block {tip} but no block record {number}"))?;
+                let block = Arc::new(StoredBlock::from_record(record)?);
+                if number == 0 && block.hash != chain.genesis.hash {
+                    return Err(format!("datadir holds another chain (genesis {})", block.hash));
+                }
+                for (index, hash) in block.tx_hashes.iter().enumerate() {
+                    chain.tx_index.insert(*hash, (number, index));
+                }
+                chain.canonical.push(block.hash);
+                chain.blocks.insert(block.hash, block);
+            }
+            if let Some(bytes) = txn
+                .get(chain.db.datadir.db.dbi(Table::TigerForkchoice), FORKCHOICE_KEY)
+                .map_err(|error| error.to_string())?
+            {
+                chain.forkchoice =
+                    alloy_rlp::decode_exact(bytes).map_err(|error| format!("forkchoice record: {error}"))?;
+            }
+        }
+        let head = *chain.canonical.last().expect("genesis is canonical");
+        if chain.forkchoice.head != head {
+            return Err(format!("forkchoice head {} is not the stored tip {head}", chain.forkchoice.head));
+        }
+        Ok(chain)
+    }
+
+    fn put_block(w: &mut WriteTxn<'_>, block: &StoredBlock) -> Result<(), String> {
+        let dbi = w.db().dbi(Table::TigerBlocks);
+        w.txn().put(dbi, &block.number().to_be_bytes(), &block.record()).map_err(|error| error.to_string())
+    }
+
+    fn put_forkchoice(w: &mut WriteTxn<'_>, forkchoice: Forkchoice) -> Result<(), String> {
+        let dbi = w.db().dbi(Table::TigerForkchoice);
+        w.txn().put(dbi, FORKCHOICE_KEY, &alloy_rlp::encode(forkchoice)).map_err(|error| error.to_string())
     }
 
     /// The block with hash `hash`.
@@ -398,68 +259,66 @@ impl Chain {
         self.tx_index.get(hash).copied()
     }
 
-    /// The parent state of a child of `parent` (or the state after `parent`), with the block
-    /// hashes `BLOCKHASH` can read along `parent`'s chain.
-    pub fn state_after(&self, parent: &StoredBlock) -> WitnessState {
-        let genesis_number = self.genesis.header.number;
-        let mut hashes = Vec::with_capacity(BLOCK_HASH_WINDOW as usize);
-        let mut at = Some((parent.number(), parent.hash, parent.header.parent_hash));
-        while let Some((number, hash, parent_hash)) = at {
+    /// The state after `block` (canonical or a side branch) with the block hashes `BLOCKHASH`
+    /// reads in a child of it. Holds a database read transaction: use it and drop it.
+    pub fn state_after(&self, block: &StoredBlock) -> Result<NodeState<'_>, String> {
+        let mut overlays = Vec::new();
+        let mut at = block;
+        while !self.is_canonical(&at.hash) {
+            let changes = at.changes.as_ref().ok_or_else(|| format!("state of block {} is gone", at.hash))?;
+            overlays.push(BlockChanges::clone(changes));
+            at = self.blocks.get(&at.header.parent_hash).ok_or_else(|| format!("block {} has no parent", at.hash))?;
+        }
+        overlays.reverse();
+        let view = self.db.view(at.number(), overlays).map_err(|error| error.to_string())?;
+        Ok(NodeState::new(view, self.block_hashes(block)))
+    }
+
+    /// The hashes of `block` and its ancestors in the `BLOCKHASH` window, zero below genesis.
+    fn block_hashes(&self, block: &StoredBlock) -> HashMap<u64, B256> {
+        let mut hashes = HashMap::with_capacity(BLOCK_HASH_WINDOW as usize);
+        let mut at = Some(block);
+        while let Some(current) = at {
             if hashes.len() as u64 >= BLOCK_HASH_WINDOW {
                 break;
             }
-            hashes.push((number, hash));
-            at = self.blocks.get(&parent_hash).map(|block| (block.number(), block.hash, block.header.parent_hash));
+            hashes.insert(current.number(), current.hash);
+            at = self.blocks.get(&current.header.parent_hash).map(Arc::as_ref);
         }
-        // Below the genesis block every block hash is zero.
-        let first = parent.number().saturating_sub(BLOCK_HASH_WINDOW);
-        let before_genesis = (first..genesis_number.min(parent.number())).map(|number| (number, B256::ZERO));
-        let source: Arc<dyn NodeSource + Send + Sync> = self.store.clone();
-        WitnessState::new(parent.header.state_root, source, hashes.into_iter().chain(before_genesis), [])
+        let first = block.number().saturating_sub(BLOCK_HASH_WINDOW);
+        for number in first..self.genesis.header.number.min(block.number()) {
+            hashes.insert(number, B256::ZERO);
+        }
+        hashes
     }
 
-    /// Stores an executed block (valid or not yet canonical) and syncs it.
+    /// Keeps a validated block in memory until it becomes canonical.
     pub fn insert(&mut self, hash: B256, executed: &Executed) -> Result<Arc<StoredBlock>, String> {
         if let Some(block) = self.blocks.get(&hash) {
             return Ok(Arc::clone(block));
         }
         assert!(self.blocks.contains_key(&executed.header.parent_hash), "parent is stored");
-        for node in self.store.insert_nodes(executed.update.nodes.iter().cloned()) {
-            self.log.push(Kind::Node, &node);
-        }
-        let codes = executed.changes.code().map(|(_, code)| code.original_bytes());
-        for code in self.store.insert_codes(codes.filter(|code| !code.is_empty())) {
-            self.log.push(Kind::Code, &code);
-        }
-        let record = BlockRecord {
-            header: executed.header.clone(),
-            transactions: executed.transactions.iter().map(|tx| tx.encoded_2718().into()).collect(),
-            senders: executed.senders.clone(),
-            receipts: executed.receipts.iter().map(|receipt| receipt.encoded_2718().into()).collect(),
-        };
-        self.log.push(Kind::Block, &alloy_rlp::encode(&record));
-        self.log.commit("block")?;
         let block = Arc::new(StoredBlock::new(
             executed.header.clone(),
             hash,
             executed.transactions.clone(),
             executed.senders.clone(),
             executed.receipts.clone(),
+            Some(Arc::new(block_changes(&executed.changes))),
         ));
         self.blocks.insert(hash, Arc::clone(&block));
         Ok(block)
     }
 
-    /// Makes `head` (a stored block) the canonical head, reorging as needed. The forkchoice
-    /// heads are not persisted until [`Self::update_forkchoice`].
+    /// Makes `head` (a stored block) the canonical head: unwinds the database to the fork point
+    /// and commits the new branch, its block records and the head in one transaction.
     pub fn set_canonical(&mut self, head: B256) -> Result<(), String> {
         let genesis_number = self.genesis.header.number;
         let mut branch = Vec::new();
         let mut at = head;
         loop {
             let block = self.blocks.get(&at).ok_or_else(|| format!("block {at} is not stored"))?;
-            let index = (block.number() - genesis_number) as usize;
-            if self.canonical.get(index) == Some(&at) {
+            if self.canonical_hash(block.number()) == Some(at) {
                 break;
             }
             if block.number() == genesis_number {
@@ -469,23 +328,64 @@ impl Chain {
             at = block.header.parent_hash;
         }
         let fork_number = self.blocks[&at].number();
+        let tip = self.head().number();
+        if branch.is_empty() && fork_number == tip {
+            return Ok(());
+        }
+        branch.reverse();
+        if fork_number < tip {
+            // Unwinding cuts the static files after its commit, so it commits on its own, with
+            // the fork point as the persisted head.
+            let mut w = self.db.write().map_err(|error| error.to_string())?;
+            self.db.unwind_in(&mut w, fork_number).map_err(|error| error.to_string())?;
+            let dbi = w.db().dbi(Table::TigerBlocks);
+            for number in fork_number + 1..=tip {
+                w.txn().delete(dbi, &number.to_be_bytes(), None).map_err(|error| error.to_string())?;
+            }
+            Self::put_forkchoice(&mut w, Forkchoice { head: at, ..self.forkchoice })?;
+            w.commit().map_err(|error| error.to_string())?;
+        }
+        let mut w = self.db.write().map_err(|error| error.to_string())?;
+        for block in &branch {
+            let changes = block.changes.as_ref().ok_or_else(|| format!("state of block {} is gone", block.hash))?;
+            let root = self.db.commit_block(&mut w, block.number(), changes).map_err(|error| error.to_string())?;
+            if root != block.header.state_root {
+                return Err(format!(
+                    "committing block {} {} gave state root {root}, not {}",
+                    block.number(),
+                    block.hash,
+                    block.header.state_root
+                ));
+            }
+            Self::put_block(&mut w, block)?;
+        }
+        Self::put_forkchoice(&mut w, Forkchoice { head, ..self.forkchoice })?;
+        w.commit().map_err(|error| error.to_string())?;
+
+        // The unwound blocks stay readable as a side branch only while their changes are in
+        // memory; blocks loaded from the database lose theirs and are dropped.
         let keep = (fork_number - genesis_number) as usize + 1;
         for hash in self.canonical.drain(keep..) {
-            for tx in &self.blocks[&hash].tx_hashes {
+            let block = &self.blocks[&hash];
+            for tx in &block.tx_hashes {
                 self.tx_index.remove(tx);
             }
+            if block.changes.is_none() {
+                self.blocks.remove(&hash);
+            }
         }
-        for block in branch.into_iter().rev() {
+        for block in branch {
             for (index, tx) in block.tx_hashes.iter().enumerate() {
                 self.tx_index.insert(*tx, (block.number(), index));
             }
             self.canonical.push(block.hash);
         }
+        self.forkchoice.head = head;
         assert_eq!(self.canonical.last(), Some(&head));
         Ok(())
     }
 
-    /// Applies a forkchoice update whose blocks are all stored, and syncs it. `safe` and
+    /// Applies a forkchoice update whose blocks are all stored, and persists it. `safe` and
     /// `finalized` must be canonical after the head moves (zero hashes leave them unchanged).
     pub fn update_forkchoice(&mut self, update: Forkchoice) -> Result<(), String> {
         self.set_canonical(update.head)?;
@@ -497,9 +397,10 @@ impl Chain {
             next.finalized = update.finalized;
         }
         if next != self.forkchoice {
+            let mut w = self.db.write().map_err(|error| error.to_string())?;
+            Self::put_forkchoice(&mut w, next)?;
+            w.commit().map_err(|error| error.to_string())?;
             self.forkchoice = next;
-            self.log.push(Kind::Forkchoice, &alloy_rlp::encode(next));
-            self.log.commit("forkchoice")?;
         }
         Ok(())
     }

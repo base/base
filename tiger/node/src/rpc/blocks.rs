@@ -96,7 +96,8 @@ impl Node {
     /// The nonce of `sender` after canonical block `number`; an unknown block is `-32001`.
     fn nonce_at(&self, sender: Address, number: u64) -> Result<u64, RpcError> {
         let block = self.state_block(Some(&json!(U64::from(number))))?;
-        let state = self.chain.read().expect("chain lock").state_after(&block);
+        let chain = self.chain.read().expect("chain lock");
+        let state = chain.state_after(&block).map_err(RpcError::internal)?;
         let account = state.account(&sender).map_err(|error| RpcError::internal(error.to_string()))?;
         Ok(account.map_or(0, |account| account.nonce))
     }

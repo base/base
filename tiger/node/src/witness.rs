@@ -135,25 +135,6 @@ impl Nodes {
     }
 }
 
-/// Appends to `out` the encoding of every unblinded node of `node` that its parent references
-/// by hash (encodings of 32 bytes or more), and of the root itself.
-fn collect_nodes(node: &TrieNode, root: bool, out: &mut Vec<Bytes>) {
-    match node {
-        TrieNode::Empty | TrieNode::Blinded { .. } => return,
-        TrieNode::Leaf { .. } => {}
-        TrieNode::Extension { node: child, .. } => collect_nodes(child, false, out),
-        TrieNode::Branch { stack } => {
-            for child in stack {
-                collect_nodes(child, false, out);
-            }
-        }
-    }
-    let encoded = alloy_rlp::encode(node);
-    if root || encoded.len() >= 32 {
-        out.push(encoded.into());
-    }
-}
-
 /// One account of a state built from scratch (a genesis allocation).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GenesisAccount {
@@ -185,13 +166,11 @@ pub fn storage_root(storage: &BTreeMap<U256, U256>) -> B256 {
     storage_trie(storage).blind()
 }
 
-/// Builds a whole state from scratch: its root and every trie node.
-pub fn build_state(accounts: &BTreeMap<Address, GenesisAccount>) -> StateUpdate {
-    let mut nodes = Vec::new();
+/// The state root of a whole state built from scratch.
+pub fn build_state(accounts: &BTreeMap<Address, GenesisAccount>) -> B256 {
     let mut trie = TrieNode::Empty;
     for (address, account) in accounts {
         let storage = storage_trie(&account.storage);
-        collect_nodes(&storage, true, &mut nodes);
         let leaf = TrieAccount {
             nonce: account.nonce,
             balance: account.balance,
@@ -201,18 +180,7 @@ pub fn build_state(accounts: &BTreeMap<Address, GenesisAccount>) -> StateUpdate 
         trie.insert(&Nibbles::unpack(keccak256(address)), alloy_rlp::encode(leaf).into(), &NoopTrieProvider)
             .expect("inserting into a fully revealed trie reads no nodes");
     }
-    collect_nodes(&trie, true, &mut nodes);
-    StateUpdate { root: trie.blind(), nodes }
-}
-
-/// The state after a block: its root, and the trie nodes it references that the parent state
-/// may not hold.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StateUpdate {
-    /// The state root.
-    pub root: B256,
-    /// Encodings of the account and storage trie nodes on the paths the block read or wrote.
-    pub nodes: Vec<Bytes>,
+    trie.blind()
 }
 
 impl TrieProvider for Nodes {
@@ -274,62 +242,6 @@ impl WitnessState {
     pub fn account(&self, address: &Address) -> Result<Option<TrieAccount>, WitnessError> {
         let mut tries = self.tries.borrow_mut();
         self.nodes.open_account(&mut tries.accounts, keccak256(address))
-    }
-
-    /// The trie nodes from `root` to `key` (an account or storage proof): every node on the
-    /// path that its parent references by hash, root first.
-    pub fn proof(&self, root: B256, key: B256) -> Result<Vec<Bytes>, WitnessError> {
-        use alloy_trie::nodes::TrieNode as RawNode;
-        let mut proof = Vec::new();
-        if root == EMPTY_ROOT_HASH {
-            return Ok(proof);
-        }
-        let path = Nibbles::unpack(key);
-        let fetch = |hash: B256| {
-            self.nodes
-                .source
-                .trie_node(&hash)
-                .ok_or_else(|| self.nodes.record(WitnessError::MissingTrieNode(hash)))
-        };
-        let mut encoded = fetch(root)?;
-        let mut depth = 0;
-        loop {
-            proof.push(encoded.clone());
-            let mut next = None;
-            // Inline children (under 32 bytes) are part of their parent's encoding.
-            let mut node = RawNode::decode(&mut encoded.as_ref())
-                .map_err(|error| WitnessError::Malformed(error.to_string()))?;
-            loop {
-                let child = match &node {
-                    RawNode::Branch(branch) => {
-                        let Some(nibble) = path.get(depth) else { break };
-                        if !branch.state_mask.is_bit_set(nibble) {
-                            break;
-                        }
-                        let below = (branch.state_mask.get() & ((1u16 << nibble) - 1)).count_ones();
-                        depth += 1;
-                        branch.stack[below as usize].clone()
-                    }
-                    RawNode::Extension(extension) => {
-                        if !path.slice(depth..).starts_with(&extension.key) {
-                            break;
-                        }
-                        depth += extension.key.len();
-                        extension.child.clone()
-                    }
-                    RawNode::Leaf(_) | RawNode::EmptyRoot => break,
-                };
-                if let Some(hash) = child.as_hash() {
-                    next = Some(hash);
-                    break;
-                }
-                node = RawNode::decode(&mut child.as_ref())
-                    .map_err(|error| WitnessError::Malformed(error.to_string()))?;
-            }
-            let Some(hash) = next else { break };
-            encoded = fetch(hash)?;
-        }
-        Ok(proof)
     }
 
     /// The parent value of storage `slot` of `address`.
@@ -412,7 +324,7 @@ impl WitnessState {
     pub fn state_root_after(
         &self,
         changes: &BlockStateAccumulator,
-    ) -> Result<StateUpdate, WitnessError> {
+    ) -> Result<B256, WitnessError> {
         let mut writes: BTreeMap<B256, BTreeMap<B256, U256>> = BTreeMap::new();
         for (key, slot) in changes.storage() {
             writes
@@ -430,7 +342,6 @@ impl WitnessState {
 
         let mut accounts = self.tries.borrow().accounts.clone();
         let nodes = &self.nodes;
-        let mut new_nodes = Vec::new();
         for hashed_address in touched {
             let path = Nibbles::unpack(hashed_address);
             let parent = nodes.open_account(&mut accounts, hashed_address)?;
@@ -456,14 +367,12 @@ impl WitnessState {
                     self.parent_storage_trie(hashed_address)?
                 };
                 nodes.apply_storage(&mut trie, slot_writes)?;
-                collect_nodes(&trie, true, &mut new_nodes);
                 trie.blind()
             };
             let leaf = alloy_rlp::encode(TrieAccount { nonce, balance, storage_root, code_hash });
             accounts.insert(&path, leaf.into(), nodes).map_err(|error| nodes.trie_error(error))?;
         }
-        collect_nodes(&accounts, true, &mut new_nodes);
-        Ok(StateUpdate { root: accounts.blind(), nodes: new_nodes })
+        Ok(accounts.blind())
     }
 }
 

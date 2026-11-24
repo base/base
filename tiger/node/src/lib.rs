@@ -5,7 +5,7 @@ pub use adapter::Adapter;
 
 mod witness;
 pub use witness::{
-    GenesisAccount, NodeSource, StateUpdate, WitnessDb, WitnessError, WitnessNodes, WitnessState,
+    GenesisAccount, NodeSource, WitnessDb, WitnessError, WitnessNodes, WitnessState,
     build_state, storage_root,
 };
 
@@ -13,7 +13,10 @@ mod exec;
 pub use exec::{BlockExecution, Built, Executed, Validated};
 
 mod genesis;
-pub use genesis::{Genesis, genesis_codes};
+pub use genesis::{Genesis, genesis_changes};
+
+mod state;
+pub use state::{NodeDb, NodeState, ParentState, StateReadError, block_changes};
 
 mod chain;
 pub use chain::{Chain, Forkchoice, StoredBlock};

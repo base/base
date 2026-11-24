@@ -537,6 +537,13 @@ impl StateView<'_> {
         Ok(TrieView::new(&self.txn, self.dbs(), state).state_root(false)?.0)
     }
 
+    /// The storage root of `address` with `extra` applied on top (nothing is written).
+    pub fn storage_root_after(&self, address: Address, extra: &BlockChanges) -> Result<B256, TrieError> {
+        let mut state = self.hashed()?.clone();
+        state.extend(&extra.hashed());
+        TrieView::new(&self.txn, self.dbs(), &state).storage_root(hash_key(address.as_slice()))
+    }
+
     /// The storage root of the account with hashed address `key`.
     pub fn storage_root_hashed(&self, key: B256) -> Result<B256, TrieError> {
         TrieView::new(&self.txn, self.dbs(), self.hashed()?).storage_root(key)

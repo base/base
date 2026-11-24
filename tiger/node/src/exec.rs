@@ -1,8 +1,6 @@
 //! Block building and block validation over a parent state, shared by the node (Engine API) and
 //! the diff adapter.
 
-use std::rc::Rc;
-
 use alloy_consensus::Header;
 use alloy_primitives::{Address, Bytes};
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope as SignedTx, Predeploys};
@@ -11,9 +9,10 @@ use base_tiger_evm::{
     BaseBlockExecutor, BlockEnvInput, BlockExecutionResult, BlockRules, ChainSpec, ComputedHeader,
     Transactions, assemble_header, computed_header,
 };
-use evm2::{BlockStateAccumulator, evm::Db, registry::HandlerError};
+use alloy_primitives::B256;
+use evm2::{BlockStateAccumulator, registry::HandlerError};
 
-use crate::witness::{StateUpdate, WitnessDb, WitnessState};
+use crate::ParentState;
 
 /// One executed block: what the chain stores and what RPC serves.
 #[derive(Debug, Clone)]
@@ -28,8 +27,8 @@ pub struct Executed {
     pub receipts: Vec<BaseReceiptEnvelope>,
     /// The block's state changes.
     pub changes: BlockStateAccumulator,
-    /// The state root after the block and the trie nodes it references.
-    pub update: StateUpdate,
+    /// The state root after the block.
+    pub state_root: B256,
 }
 
 /// The outcome of building a block from a list of candidate transactions.
@@ -71,10 +70,10 @@ impl BlockExecution<'_> {
         excess_blob_gas: Option<u64>,
         candidates: &[Bytes],
         skip_invalid: bool,
-        state: &Rc<WitnessState>,
+        state: &impl ParentState,
     ) -> Result<Built, String> {
         let invalid = |reason: String| Built { invalid: Some(reason), rejected: Vec::new(), executed: None };
-        let database = Db::new(WitnessDb(Rc::clone(state)));
+        let database = state.database();
         let mut executor = match BaseBlockExecutor::for_block(self.chain, env, database) {
             Ok(executor) => executor,
             Err(error) => return Ok(invalid(format!("pre-execution changes: {error}"))),
@@ -104,10 +103,10 @@ impl BlockExecution<'_> {
             }
         }
         if let Some(missing) = state.missing() {
-            return Err(missing.to_string());
+            return Err(missing);
         }
         let (_, result, changes) = executor.finish();
-        let (computed, update) = self.computed(env.timestamp, &transactions, &result, &changes, state)?;
+        let (computed, state_root) = self.computed(env.timestamp, &transactions, &result, &changes, state)?;
         let header = assemble_header(self.chain, env, extra_data, excess_blob_gas, &computed);
         Ok(Built {
             invalid: None,
@@ -118,7 +117,7 @@ impl BlockExecution<'_> {
                 senders,
                 receipts: result.receipts,
                 changes,
-                update,
+                state_root,
             }),
         })
     }
@@ -133,7 +132,7 @@ impl BlockExecution<'_> {
         header: &Header,
         raw: &[Bytes],
         parent: &Header,
-        state: &Rc<WitnessState>,
+        state: &impl ParentState,
     ) -> Result<Validated, String> {
         let mut signed = Vec::with_capacity(raw.len());
         let mut recovered = Vec::with_capacity(raw.len());
@@ -168,7 +167,7 @@ impl BlockExecution<'_> {
         );
 
         let env = Self::env(header);
-        let database = Db::new(WitnessDb(Rc::clone(state)));
+        let database = state.database();
         let mut executor = match BaseBlockExecutor::for_block(self.chain, &env, database) {
             Ok(executor) => executor,
             Err(error) => {
@@ -179,7 +178,7 @@ impl BlockExecution<'_> {
         for (index, tx) in recovered.iter().enumerate() {
             if let Err(error) = executor.execute_transaction(tx) {
                 if let Some(missing) = state.missing() {
-                    return Err(missing.to_string());
+                    return Err(missing);
                 }
                 let invalid =
                     invalid.unwrap_or_else(|| format!("execution: transaction {index}: {error}"));
@@ -187,10 +186,10 @@ impl BlockExecution<'_> {
             }
         }
         if let Some(missing) = state.missing() {
-            return Err(missing.to_string());
+            return Err(missing);
         }
         let (_, result, changes) = executor.finish();
-        let (computed, update) = self.computed(env.timestamp, &signed, &result, &changes, state)?;
+        let (computed, state_root) = self.computed(env.timestamp, &signed, &result, &changes, state)?;
         if let Err(error) = rules.validate_post_execution(header, &computed) {
             invalid.get_or_insert_with(|| format!("post-execution: {error}"));
         }
@@ -209,7 +208,7 @@ impl BlockExecution<'_> {
                 senders: recovered.iter().map(|tx| tx.signer()).collect(),
                 receipts: result.receipts,
                 changes,
-                update,
+                state_root,
             }),
         })
     }
@@ -234,14 +233,12 @@ impl BlockExecution<'_> {
         transactions: &[SignedTx],
         result: &BlockExecutionResult,
         changes: &BlockStateAccumulator,
-        state: &WitnessState,
-    ) -> Result<(ComputedHeader, StateUpdate), String> {
-        let update = state.state_root_after(changes).map_err(|error| error.to_string())?;
-        let computed = computed_header(self.chain, timestamp, transactions, result, update.root, || {
-            state
-                .storage_root_after(Predeploys::L2_TO_L1_MESSAGE_PASSER, changes)
-                .map_err(|error| error.to_string())
+        state: &impl ParentState,
+    ) -> Result<(ComputedHeader, B256), String> {
+        let state_root = state.state_root_after(changes)?;
+        let computed = computed_header(self.chain, timestamp, transactions, result, state_root, || {
+            state.storage_root_after(Predeploys::L2_TO_L1_MESSAGE_PASSER, changes)
         })?;
-        Ok((computed, update))
+        Ok((computed, state_root))
     }
 }

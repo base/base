@@ -7,10 +7,7 @@
 //! JSON-RPC errors (`-32602`, `-38002` invalid forkchoice state, `-38003` invalid payload
 //! attributes, `-38005` unsupported fork, `-38001` unknown payload).
 
-use std::{
-    collections::{HashMap, VecDeque},
-    rc::Rc,
-};
+use std::collections::{HashMap, VecDeque};
 
 use alloy_consensus::{Block, BlockBody, Header};
 use alloy_eips::{eip7685::Requests, eip4895::Withdrawals};
@@ -326,7 +323,7 @@ impl Node {
                 error: "links to previously rejected block".into(),
             });
         }
-        let (parent, state) = {
+        let validated = {
             let chain = self.chain.read().expect("chain lock");
             if chain.block(&hash).is_some() {
                 return Ok(Imported::Known);
@@ -334,12 +331,11 @@ impl Node {
             let Some(parent) = chain.block(&parent_hash) else {
                 return Ok(Imported::MissingParent);
             };
-            let state = Rc::new(chain.state_after(&parent));
-            (parent, state)
+            let state = chain.state_after(&parent).map_err(RpcError::internal)?;
+            BlockExecution { chain: &self.spec }
+                .validate(&header, transactions, &parent.header, &state)
+                .map_err(|error| RpcError::internal(format!("state of block {parent_hash}: {error}")))?
         };
-        let validated = BlockExecution { chain: &self.spec }
-            .validate(&header, transactions, &parent.header, &state)
-            .map_err(|error| RpcError::internal(format!("state of block {parent_hash}: {error}")))?;
         match (validated.invalid, validated.executed) {
             (None, Some(executed)) => {
                 let mut stored = executed;
@@ -426,9 +422,12 @@ impl Node {
         }
         let id = attributes.payload_id(&head, version as u8);
         if !engine.payloads.iter().any(|(existing, _)| *existing == id) {
-            let state = Rc::new(chain.state_after(&head_block));
+            let built = {
+                let state = chain.state_after(&head_block).map_err(RpcError::internal)?;
+                self.build(&head_block.header, &attributes, &state)?
+            };
             drop(chain);
-            let built = self.build(&head_block.header, &attributes, &state)?;
+            let built = self.store_built(built)?;
             engine.payloads.push_back((id, built));
             while engine.payloads.len() > MAX_PAYLOADS {
                 engine.payloads.pop_front();
@@ -468,7 +467,7 @@ impl Node {
         &self,
         parent: &Header,
         attributes: &BasePayloadAttributes,
-        state: &Rc<crate::WitnessState>,
+        state: &impl crate::ParentState,
     ) -> Result<BuiltPayload, RpcError> {
         let inner = &attributes.payload_attributes;
         let timestamp = inner.timestamp;
@@ -504,10 +503,14 @@ impl Node {
             return Err(RpcError::internal(format!("building payload: {reason}")));
         };
         let hash = executed.header.hash_slow();
-        // The consensus node inserts the payload with newPayload; storing it now makes that a
-        // no-op, as base-reth's built blocks are already in its tree.
-        self.chain.write().expect("chain lock").insert(hash, &executed).map_err(RpcError::internal)?;
         Ok(BuiltPayload { hash, executed })
+    }
+
+    /// Stores a built payload's block: the consensus node inserts the payload with newPayload,
+    /// and storing it now makes that a no-op, as base-reth's built blocks are already in its tree.
+    fn store_built(&self, built: BuiltPayload) -> Result<BuiltPayload, RpcError> {
+        self.chain.write().expect("chain lock").insert(built.hash, &built.executed).map_err(RpcError::internal)?;
+        Ok(built)
     }
 
     fn get_payload(&self, version: Version, p: &Value) -> Result<Value, RpcError> {

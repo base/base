@@ -7,6 +7,9 @@
 //! partial state, `TigerWipes` (`hashed address ++ block`) and `TigerWipedStorage`
 //! (`block ++ hashed address` -> `hashed slot ++ value` duplicates) keep the storage a wipe
 //! removed, which reth's v2 changesets do not, so unwinds and historical roots restore it.
+//! `TigerBlocks` (block number -> the node's block record: header, transactions, senders,
+//! receipts) and `TigerForkchoice` hold the node's canonical blocks and heads until the node
+//! writes reth's static files.
 
 use std::{fs, io, path::Path};
 
@@ -75,6 +78,8 @@ tables! {
     TigerKnownRanges: false,
     TigerWipes: false,
     TigerWipedStorage: true,
+    TigerBlocks: false,
+    TigerForkchoice: false,
 }
 
 /// The `database.version` file reth checks next to `mdbx.dat`.

@@ -7,13 +7,13 @@ use std::{collections::BTreeMap, sync::Arc};
 use alloy_consensus::{EMPTY_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::{eip1559::INITIAL_BASE_FEE, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_genesis::Genesis as GethGenesis;
-use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256, b256, keccak256};
 use base_common_consensus::Predeploys;
 use base_common_genesis::{BaseFeature, BaseUpgradeConfig, FeeConfig, UpgradeConfig};
 use base_tiger_evm::ChainSpec;
 use serde::Deserialize;
 
-use crate::witness::{GenesisAccount, StateUpdate, build_state, storage_root};
+use crate::witness::{GenesisAccount, build_state, storage_root};
 
 /// Base fee parameters of chains whose genesis has no `optimism` section (Ethereum's).
 const ETHEREUM_FEE_CONFIG: FeeConfig =
@@ -170,7 +170,7 @@ impl Genesis {
             })
             .collect();
         let state = build_state(&alloc);
-        let header = Self::header(&genesis, &chain, &alloc, &state);
+        let header = Self::header(&genesis, &chain, &alloc, state);
         let hash = header.hash_slow();
         Ok(Self { chain, header, hash, alloc: Some(Arc::new(alloc)) })
     }
@@ -181,7 +181,7 @@ impl Genesis {
         genesis: &GethGenesis,
         chain: &ChainSpec,
         alloc: &BTreeMap<Address, GenesisAccount>,
-        state: &StateUpdate,
+        state_root: B256,
     ) -> Header {
         let timestamp = genesis.timestamp;
         let cancun = chain.is_active(BaseFeature::BlobHeader, timestamp);
@@ -201,7 +201,7 @@ impl Genesis {
             difficulty: genesis.difficulty,
             nonce: genesis.nonce.into(),
             extra_data: genesis.extra_data.clone(),
-            state_root: state.root,
+            state_root,
             timestamp,
             mix_hash: genesis.mix_hash,
             beneficiary: genesis.coinbase,
@@ -218,7 +218,20 @@ impl Genesis {
     }
 }
 
-/// Bytecodes of the genesis state, by hash.
-pub fn genesis_codes(alloc: &BTreeMap<Address, GenesisAccount>) -> impl Iterator<Item = Bytes> + '_ {
-    alloc.values().filter(|account| !account.code.is_empty()).map(|account| account.code.clone())
+/// The genesis allocation as the state changes of block zero.
+pub fn genesis_changes(alloc: &BTreeMap<Address, GenesisAccount>) -> base_tiger_trie::BlockChanges {
+    let mut changes = base_tiger_trie::BlockChanges::default();
+    for (address, account) in alloc {
+        let info = base_tiger_trie::AccountInfo {
+            nonce: account.nonce,
+            balance: account.balance,
+            code_hash: account.code_hash,
+        };
+        changes.accounts.push((*address, Some(info)));
+        changes.storage.extend(account.storage.iter().map(|(slot, value)| (*address, *slot, *value)));
+        if !account.code.is_empty() {
+            changes.codes.push((account.code_hash, account.code.clone()));
+        }
+    }
+    changes
 }
