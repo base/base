@@ -63,8 +63,12 @@ impl WriteTxn<'_> {
             rows.push(TxCodec::encode(tx)?);
         }
         sf.append_txs(Segment::Transactions, number, first_tx, &rows)?;
-        let rows: Vec<Vec<u8>> = senders.iter().map(|s| s.to_vec()).collect();
-        sf.append_txs(Segment::TransactionSenders, number, first_tx, &rows)?;
+        // A base-reth datadir pruned with `sender_recovery = "full"` has no senders segment
+        // (reth does not write one): keep it that way rather than start one mid-chain.
+        if sf.pending_next_tx(Segment::TransactionSenders) == first_tx {
+            let rows: Vec<Vec<u8>> = senders.iter().map(|s| s.to_vec()).collect();
+            sf.append_txs(Segment::TransactionSenders, number, first_tx, &rows)?;
+        }
         let rows: Vec<Vec<u8>> = receipts.iter().map(ReceiptCodec::encode).collect();
         sf.append_txs(Segment::Receipts, number, first_tx, &rows)?;
 
@@ -152,13 +156,16 @@ impl Datadir {
         Ok(Some(rows.iter().map(|row| TxCodec::decode(row)).collect::<Result<_, _>>()?))
     }
 
-    /// Canonical block `number`'s transaction senders.
+    /// Canonical block `number`'s transaction senders, `None` when the datadir does not store
+    /// them (no body, or senders pruned: recover them from the signatures, as reth does).
     pub fn senders(&self, number: u64) -> Result<Option<Vec<Address>>, StoreError> {
-        let Some(rows) = self.rows(Segment::TransactionSenders, number)? else { return Ok(None) };
-        rows.iter()
-            .map(|row| Address::try_from(row.as_slice()).map_err(|_| StoreError::Corrupt("sender row".into())))
-            .collect::<Result<_, _>>()
-            .map(Some)
+        let Some(indices) = self.body_indices(number)? else { return Ok(None) };
+        let mut senders = Vec::with_capacity(indices.tx_count as usize);
+        for tx in indices.first_tx..indices.next_tx() {
+            let Some(row) = self.static_files.tx_row(Segment::TransactionSenders, tx)? else { return Ok(None) };
+            senders.push(Address::try_from(row.as_slice()).map_err(|_| StoreError::Corrupt("sender row".into()))?);
+        }
+        Ok(Some(senders))
     }
 
     /// Canonical block `number`'s receipts.

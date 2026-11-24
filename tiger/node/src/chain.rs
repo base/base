@@ -25,7 +25,7 @@ use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, B256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, BaseTxEnvelope as SignedTx};
-use base_tiger_store::{Fault, Table, WriteTxn};
+use base_tiger_store::{Fault, Segment, Table, WriteTxn};
 use base_tiger_trie::{BlockChanges, PreparedRoot, StateDb};
 use serde_json::json;
 
@@ -134,6 +134,13 @@ pub struct Chain {
     validations: HashMap<B256, Validation>,
     /// The first block the datadir holds: the genesis block, or a stateless start block.
     first: u64,
+    /// The first block whose body and receipts the datadir holds: `first`, or above it in a
+    /// base-reth datadir with pruned bodies (reth's `earliest_history_height`). Blocks below it
+    /// keep only their headers.
+    earliest: u64,
+    /// The first block whose post-state the datadir can rebuild: `first`, or the block base-reth's
+    /// pruner removed history up to.
+    earliest_state: u64,
     head: Arc<StoredBlock>,
     forkchoice: Forkchoice,
 }
@@ -174,6 +181,8 @@ impl Chain {
             blocks: HashMap::new(),
             validations: HashMap::new(),
             first: genesis.header.number,
+            earliest: genesis.header.number,
+            earliest_state: genesis.header.number,
             head: Arc::clone(&genesis_block),
             forkchoice: Forkchoice { head: genesis.hash, safe: genesis.hash, finalized: genesis.hash },
             genesis,
@@ -208,6 +217,9 @@ impl Chain {
                 chain.first = u64::from_be_bytes(bytes);
             }
         }
+        chain.earliest = chain.db.datadir.static_files.first_block(Segment::Transactions).map_or(chain.first, |b| b.max(chain.first));
+        let pruned = chain.db.datadir.history_pruned_to().map_err(|error| error.to_string())?;
+        chain.earliest_state = pruned.map_or(chain.first, |b| b.max(chain.first));
         if chain.db.is_partial() != (chain.first != genesis_number) {
             return Err("the datadir's partial state and its start block record disagree".into());
         }
@@ -291,7 +303,14 @@ impl Chain {
             let Some((header, hash)) = datadir.header(number)? else { return Ok(None) };
             let missing = || base_tiger_store::StoreError::Corrupt(format!("block {number} has a header but no body"));
             let transactions = datadir.transactions(number)?.ok_or_else(missing)?;
-            let senders = datadir.senders(number)?.ok_or_else(missing)?;
+            let senders = match datadir.senders(number)? {
+                Some(senders) => senders,
+                None => transactions
+                    .iter()
+                    .map(alloy_consensus::transaction::SignerRecoverable::recover_signer_unchecked)
+                    .collect::<Result<_, _>>()
+                    .map_err(|error| base_tiger_store::StoreError::Corrupt(format!("block {number} sender: {error}")))?,
+            };
             let receipts = datadir.receipts(number)?.ok_or_else(missing)?;
             let receipts = receipts.into_iter().map(|receipt| receipt.into_with_bloom().into()).collect();
             Ok(Some(StoredBlock::new(header, hash, transactions, senders, receipts, None)))
@@ -322,7 +341,42 @@ impl Chain {
             return Some(Arc::clone(&self.head));
         }
         let number = self.db.datadir.block_number(*hash).unwrap_or_else(|error| panic!("reading block {hash}: {error}"))?;
-        Some(self.load_canonical(number))
+        (number >= self.earliest).then(|| self.load_canonical(number))
+    }
+
+    /// The header of known block `hash`, also below [`Self::earliest`].
+    pub fn header(&self, hash: &B256) -> Option<Header> {
+        if let Some(block) = self.blocks.get(hash) {
+            return Some(block.header.clone());
+        }
+        let number = self.db.datadir.block_number(*hash).unwrap_or_else(|error| panic!("reading block {hash}: {error}"))?;
+        self.canonical_header(number)
+    }
+
+    /// The canonical header at `number`, also below [`Self::earliest`].
+    pub fn canonical_header(&self, number: u64) -> Option<Header> {
+        if number == self.head.number() {
+            return Some(self.head.header.clone());
+        }
+        self.canonical_hash(number)?;
+        let header = self.db.datadir.header(number).unwrap_or_else(|error| panic!("reading header {number}: {error}"));
+        header.map(|(header, _)| header)
+    }
+
+    /// The number of canonical block `hash` when its body is pruned (below [`Self::earliest`]).
+    pub fn expired(&self, hash: &B256) -> Option<u64> {
+        let number = self.db.datadir.block_number(*hash).unwrap_or_else(|error| panic!("reading block {hash}: {error}"))?;
+        (number < self.earliest).then_some(number)
+    }
+
+    /// The first block whose body and receipts the datadir holds.
+    pub const fn earliest(&self) -> u64 {
+        self.earliest
+    }
+
+    /// The first block whose post-state the datadir holds.
+    pub const fn earliest_state(&self) -> u64 {
+        self.earliest_state
     }
 
     /// The first block the datadir holds: the genesis block, or a stateless start block.
@@ -344,6 +398,9 @@ impl Chain {
 
     /// The canonical block at `number`.
     pub fn canonical_block(&self, number: u64) -> Option<Arc<StoredBlock>> {
+        if number < self.earliest {
+            return None;
+        }
         let hash = self.canonical_hash(number)?;
         Some(self.blocks.get(&hash).cloned().unwrap_or_else(|| {
             if hash == self.head.hash { Arc::clone(&self.head) } else { self.load_canonical(number) }
@@ -375,7 +432,8 @@ impl Chain {
     pub fn transaction(&self, hash: &B256) -> Option<(u64, usize)> {
         let location =
             self.db.datadir.transaction_location(*hash).unwrap_or_else(|error| panic!("reading transaction {hash}: {error}"))?;
-        (location.0 <= self.head.number()).then_some(location)
+        // reth keeps the hash index of pruned bodies; their transactions are not found.
+        (self.earliest..=self.head.number()).contains(&location.0).then_some(location)
     }
 
     /// The state after `block` (canonical or a side branch) with the block hashes `BLOCKHASH`

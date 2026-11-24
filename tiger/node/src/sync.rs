@@ -300,16 +300,16 @@ impl BlockSource for Node {
             number: head.number(),
             hash: head.hash,
             timestamp: head.header.timestamp,
-            earliest: chain.genesis.header.number,
+            earliest: chain.earliest(),
         }
     }
 
     fn header_by_hash(&self, hash: B256) -> Option<alloy_consensus::Header> {
-        self.chain.read().expect("chain lock").block(&hash).map(|block| block.header.clone())
+        self.chain.read().expect("chain lock").header(&hash)
     }
 
     fn header_by_number(&self, number: u64) -> Option<alloy_consensus::Header> {
-        self.chain.read().expect("chain lock").canonical_block(number).map(|block| block.header.clone())
+        self.chain.read().expect("chain lock").canonical_header(number)
     }
 
     fn body_by_hash(&self, hash: B256) -> Option<BlockBody> {

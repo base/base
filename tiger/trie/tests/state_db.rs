@@ -322,3 +322,52 @@ fn prepared_roots_apply_only_to_the_state_they_were_computed_on() {
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A base-reth full node's datadir: no senders segment (`sender_recovery = "full"`) and history
+/// pruned up to a checkpoint. Blocks commit on top without starting a senders segment, and views
+/// below the checkpoint fail instead of reading the pruned history as the current state.
+#[test]
+fn pruned_senders_and_history() {
+    let dir = temp("pruned");
+    let mut rng = Rng(5);
+    let addresses: Vec<Address> = (0..8u64).map(|i| Address::from_word(keccak256(i.to_be_bytes()))).collect();
+    let slots: Vec<U256> = (0..4u64).map(U256::from).collect();
+    let mut db = StateDb::open(&dir).unwrap();
+    let mut model = Model::new();
+    let mut commit = |db: &StateDb, number: u64| {
+        let changes = random_block(&mut rng, &mut model, &addresses, &slots);
+        let mut w = db.write().unwrap();
+        let root = db.commit_block(&mut w, number, &changes).unwrap();
+        let (header, txs, senders, receipts) = block_data(number, root, 2);
+        w.append_block(&header, header.hash_slow(), &txs, &senders, &receipts).unwrap();
+        w.commit().unwrap();
+    };
+    for number in 0..4 {
+        commit(&db, number);
+    }
+    assert_eq!(db.datadir.senders(3).unwrap().map(|s| s.len()), Some(2));
+    db.datadir.static_files.clear(Segment::TransactionSenders).unwrap();
+    for number in 4..8 {
+        commit(&db, number);
+    }
+    // reth's `AccountHistory` checkpoint at block 5, Distance(10064).
+    {
+        let mut txn = db.datadir.db.write().unwrap();
+        let dbi = db.datadir.db.dbi(base_tiger_store::Table::PruneCheckpoints);
+        txn.put(dbi, &[4], &[0x01, 0x01, 0x05, 0x01, 0x27, 0x50]).unwrap();
+        txn.commit().unwrap();
+    }
+    drop(db);
+    db = StateDb::open(&dir).unwrap();
+    assert_eq!(db.tip().unwrap(), Some(7));
+    assert_eq!(db.datadir.static_files.last_block(Segment::TransactionSenders), None);
+    for number in 0..8 {
+        assert_eq!(db.datadir.senders(number).unwrap(), None, "block {number}");
+        assert_eq!(db.datadir.transactions(number).unwrap().unwrap().len(), 2);
+    }
+    assert_eq!(db.datadir.history_pruned_to().unwrap(), Some(5));
+    assert!(db.view(4, Vec::new()).is_err());
+    for number in 5..8 {
+        db.view(number, Vec::new()).unwrap().account(addresses[0]).unwrap();
+    }
+}

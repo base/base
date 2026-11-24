@@ -596,6 +596,13 @@ impl StateDb {
         {
             return Err(TrieError::Corrupt(format!("view at {block} below the first stored block {genesis}")));
         }
+        // A base-reth full node prunes history (index and changesets) up to a checkpoint.
+        if block < tip
+            && let Some(pruned) = self.datadir.history_pruned_to()?
+            && block < pruned
+        {
+            return Err(TrieError::Corrupt(format!("view at {block} below the history pruned up to block {pruned}")));
+        }
         let overlays = overlays.into_iter().map(|c| (c.normalized(), c)).collect();
         Ok(StateView { db: self, txn, block, tip, overlays, state: std::cell::OnceCell::new() })
     }

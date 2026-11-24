@@ -56,6 +56,9 @@ impl Node {
         chain: &'d Chain,
         block: &StoredBlock,
     ) -> Result<RpcState<'d>, RpcError> {
+        if block.number() < chain.earliest_state() && chain.is_canonical(&block.hash) {
+            return Err(Self::pruned(block.number(), chain.earliest_state()));
+        }
         Ok(RpcState {
             local: chain.state_after(block).map_err(RpcError::internal)?,
             upstream: self.upstream.as_ref(),

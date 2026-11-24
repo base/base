@@ -73,6 +73,10 @@ for how the consensus node drives the execution layer.
   persisted chain with change sets and applies the new branch; restarts reopen the same state.
 - History: state at any past block for `eth_call`, `eth_getBalance` and friends, and
   `eth_getProof` at past blocks (base-reth's default is an archive node; pruning is out).
+  A datadir base-reth pruned (`--full`) opens as it is: tiger does not prune further and writes
+  no senders segment where reth wrote none (`sender_recovery = "full"`; senders are recovered
+  from signatures). Blocks below the first stored body and state below the history prune
+  checkpoint answer reth's `4444 pruned history unavailable`, never a value.
 
 ### Ways to start a node
 

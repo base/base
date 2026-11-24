@@ -163,6 +163,22 @@ impl Datadir {
         }
     }
 
+    /// The highest block whose account or storage history base-reth's pruner removed (its
+    /// `AccountHistory` and `StorageHistory` prune checkpoints), `None` when history is whole.
+    /// The state after a block below it cannot be rebuilt; reth serves the state after this
+    /// block and later ones.
+    pub fn history_pruned_to(&self) -> Result<Option<u64>, StoreError> {
+        let txn = self.db.read()?;
+        let mut highest = None;
+        // reth's `PruneSegment::AccountHistory` and `StorageHistory`.
+        for segment in [4u8, 5] {
+            if let Some(bytes) = txn.get(self.db.dbi(Table::PruneCheckpoints), &[segment])? {
+                highest = highest.max(prune_checkpoint_block(bytes)?);
+            }
+        }
+        Ok(highest)
+    }
+
     /// Begins the write transaction.
     pub fn write(&self) -> Result<WriteTxn<'_>, StoreError> {
         Ok(WriteTxn {
@@ -361,6 +377,19 @@ impl Drop for WriteTxn<'_> {
     }
 }
 
+/// The `block_number` of reth's compact `PruneCheckpoint`: a flags byte (bit 0: block number
+/// present), then a one-byte length and the big-endian number.
+fn prune_checkpoint_block(bytes: &[u8]) -> Result<Option<u64>, StoreError> {
+    let bad = || StoreError::Corrupt("bad prune checkpoint".into());
+    let (&flags, rest) = bytes.split_first().ok_or_else(bad)?;
+    if flags & 1 == 0 {
+        return Ok(None);
+    }
+    let (&len, rest) = rest.split_first().ok_or_else(bad)?;
+    let number = rest.get(..len as usize).filter(|n| n.len() <= 8).ok_or_else(bad)?;
+    Ok(Some(number.iter().fold(0u64, |acc, b| (acc << 8) | u64::from(*b))))
+}
+
 /// The bytes of a SCALE-encoded `Vec<u8>` (compact length prefix), if well formed.
 pub fn scale_bytes(bytes: &[u8]) -> Option<&[u8]> {
     let first = *bytes.first()?;
@@ -403,6 +432,22 @@ mod tests {
         let mut out = Vec::new();
         put_scale_bytes(&mut out, STORAGE_SETTINGS.as_bytes());
         assert_eq!(out[0], 0x4c, "reth's fixture starts with L");
+    }
+
+    /// Checkpoints copied from a Base mainnet base-reth full node's `PruneCheckpoints`.
+    #[test]
+    fn prune_checkpoint_block_numbers() {
+        // AccountHistory: block 47859141, Distance(14000000).
+        assert_eq!(prune_checkpoint_block(&hex("010402da45c501d59f80")).unwrap(), Some(47_859_141));
+        // Receipts: block 47999999 with a transaction number, Distance(13392000).
+        assert_eq!(prune_checkpoint_block(&hex("030402dc6bff0501981db2ca01cc5880")).unwrap(), Some(47_999_999));
+        // No block pruned yet, Full.
+        assert_eq!(prune_checkpoint_block(&[0, 0]).unwrap(), None);
+        assert!(prune_checkpoint_block(&hex("0104")).is_err());
+    }
+
+    fn hex(text: &str) -> Vec<u8> {
+        (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap()).collect()
     }
 
     /// Opens a base-reth datadir (set `TIGER_RETH_DATADIR`; it is healed, so use a copy).

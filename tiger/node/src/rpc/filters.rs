@@ -108,12 +108,12 @@ impl Node {
 
     /// The logs of the block with hash `hash`; unknown is `-32001`.
     fn logs_at_hash(&self, filter: &Filter, hash: B256) -> Result<Value, RpcError> {
-        let block = self
-            .chain
-            .read()
-            .expect("chain lock")
-            .block(&hash)
-            .ok_or_else(|| RpcError::new(-32001, format!("block not found: hash {hash}")))?;
+        let chain = self.chain.read().expect("chain lock");
+        if let Some(number) = chain.expired(&hash) {
+            return Err(Self::pruned(number, chain.earliest()));
+        }
+        let block = chain.block(&hash).ok_or_else(|| RpcError::new(-32001, format!("block not found: hash {hash}")))?;
+        drop(chain);
         Ok(json!(Self::block_logs(filter, &block)))
     }
 
@@ -153,6 +153,10 @@ impl Node {
             return Err(RpcError::invalid_params(format!(
                 "query exceeds max block range {MAX_BLOCKS_PER_FILTER}"
             )));
+        }
+        let earliest = self.chain.read().expect("chain lock").earliest();
+        if range.from < earliest {
+            return Err(Self::pruned(range.from, earliest));
         }
         // reth reads headers in windows of `HEADER_WINDOW + 1` blocks (its range iterator's end
         // is inclusive); a window yields the blocks from its start up to the first one it does

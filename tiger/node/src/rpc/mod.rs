@@ -217,6 +217,17 @@ impl Node {
             None => None,
             Some(tag) => serde_json::from_value(tag.clone()).map_err(|error| RpcError::invalid_params(error.to_string()))?,
         };
+        let expired = match id {
+            Some(BlockId::Number(BlockNumberOrTag::Earliest)) => (chain.earliest() > 0).then_some(0),
+            Some(BlockId::Number(BlockNumberOrTag::Number(number))) => {
+                (number < chain.earliest() && number <= chain.head().number()).then_some(number)
+            }
+            Some(BlockId::Hash(hash)) => chain.expired(&hash.block_hash),
+            _ => None,
+        };
+        if let Some(number) = expired {
+            return Err(Self::pruned(number, chain.earliest()));
+        }
         Ok(match id {
             None => Some(chain.head()),
             Some(BlockId::Number(tag)) => match tag {
@@ -240,10 +251,20 @@ impl Node {
         let invalid = |error: serde_json::Error| RpcError::invalid_params(error.to_string());
         if by_hash {
             let hash: B256 = serde_json::from_value(param).map_err(invalid)?;
-            return Ok(self.chain.read().expect("chain lock").block(&hash));
+            let chain = self.chain.read().expect("chain lock");
+            if let Some(number) = chain.expired(&hash) {
+                return Err(Self::pruned(number, chain.earliest()));
+            }
+            return Ok(chain.block(&hash));
         }
         let tag: BlockNumberOrTag = serde_json::from_value(param).map_err(invalid)?;
         self.find_block(Some(&json!(tag)))
+    }
+
+    /// reth's `PrunedHistoryUnavailable` (EIP-4444): block `requested` is below the first block
+    /// whose body the datadir holds.
+    pub fn pruned(requested: u64, earliest: u64) -> RpcError {
+        RpcError::new(4444, format!("pruned history unavailable: requested {requested}, earliest available {earliest}"))
     }
 
     /// The block whose post-state a state read uses; an unknown block is an error.
