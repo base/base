@@ -8,6 +8,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap},
     rc::Rc,
+    sync::Arc,
 };
 
 use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, keccak256};
@@ -44,10 +45,47 @@ impl core::fmt::Display for WitnessError {
 
 impl std::error::Error for WitnessError {}
 
-/// Trie node preimages by hash, remembering the first node a read needed and did not find.
+/// Where trie nodes and bytecodes come from: a request's witness, or the node's own store.
+///
+/// Every value is addressed by its keccak hash, so a source can withhold data but not change it.
+pub trait NodeSource: core::fmt::Debug {
+    /// The RLP encoding of the trie node with hash `hash`.
+    fn trie_node(&self, hash: &B256) -> Option<Bytes>;
+    /// The bytecode with hash `hash`.
+    fn code(&self, hash: &B256) -> Option<Bytes>;
+}
+
+/// The nodes and codes of one stateless witness, keyed by their hashes.
 #[derive(Debug, Default)]
+pub struct WitnessNodes {
+    nodes: HashMap<B256, Bytes>,
+    codes: HashMap<B256, Bytes>,
+}
+
+impl WitnessNodes {
+    /// Indexes witness trie nodes and bytecodes by hash.
+    pub fn new(nodes: &[Bytes], codes: &[Bytes]) -> Self {
+        Self {
+            nodes: nodes.iter().map(|node| (keccak256(node), node.clone())).collect(),
+            codes: codes.iter().map(|code| (keccak256(code), code.clone())).collect(),
+        }
+    }
+}
+
+impl NodeSource for WitnessNodes {
+    fn trie_node(&self, hash: &B256) -> Option<Bytes> {
+        self.nodes.get(hash).cloned()
+    }
+
+    fn code(&self, hash: &B256) -> Option<Bytes> {
+        self.codes.get(hash).cloned()
+    }
+}
+
+/// Trie node preimages by hash, remembering the first node a read needed and did not find.
+#[derive(Debug)]
 struct Nodes {
-    by_hash: HashMap<B256, Bytes>,
+    source: Arc<dyn NodeSource + Send + Sync>,
     missing: RefCell<Option<WitnessError>>,
 }
 
@@ -75,12 +113,12 @@ impl Nodes {
         .transpose()
     }
 
-    /// Applies slot writes (hashed slot, value; zero deletes) to `trie` and returns its root.
+    /// Applies slot writes (hashed slot, value; zero deletes) to `trie`.
     fn apply_storage(
         &self,
-        mut trie: TrieNode,
+        trie: &mut TrieNode,
         writes: &BTreeMap<B256, U256>,
-    ) -> Result<B256, WitnessError> {
+    ) -> Result<(), WitnessError> {
         for (slot, value) in writes {
             let path = Nibbles::unpack(slot);
             if value.is_zero() {
@@ -93,15 +131,44 @@ impl Nodes {
                     .map_err(|error| self.trie_error(error))?;
             }
         }
-        Ok(trie.blind())
+        Ok(())
     }
+}
+
+/// Appends to `out` the encoding of every unblinded node of `node` that its parent references
+/// by hash (encodings of 32 bytes or more), and of the root itself.
+fn collect_nodes(node: &TrieNode, root: bool, out: &mut Vec<Bytes>) {
+    match node {
+        TrieNode::Empty | TrieNode::Blinded { .. } => return,
+        TrieNode::Leaf { .. } => {}
+        TrieNode::Extension { node: child, .. } => collect_nodes(child, false, out),
+        TrieNode::Branch { stack } => {
+            for child in stack {
+                collect_nodes(child, false, out);
+            }
+        }
+    }
+    let encoded = alloy_rlp::encode(node);
+    if root || encoded.len() >= 32 {
+        out.push(encoded.into());
+    }
+}
+
+/// The state after a block: its root, and the trie nodes it references that the parent state
+/// may not hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateUpdate {
+    /// The state root.
+    pub root: B256,
+    /// Encodings of the account and storage trie nodes on the paths the block read or wrote.
+    pub nodes: Vec<Bytes>,
 }
 
 impl TrieProvider for Nodes {
     type Error = WitnessError;
 
     fn trie_node_by_hash(&self, key: B256) -> Result<TrieNode, WitnessError> {
-        let Some(node) = self.by_hash.get(&key) else {
+        let Some(node) = self.source.trie_node(&key) else {
             return Err(self.record(WitnessError::MissingTrieNode(key)));
         };
         TrieNode::decode(&mut node.as_ref())
@@ -120,28 +187,22 @@ struct Tries {
 #[derive(Debug)]
 pub struct WitnessState {
     nodes: Nodes,
-    codes: HashMap<B256, Bytes>,
     block_hashes: HashMap<u64, B256>,
     tries: RefCell<Tries>,
 }
 
 impl WitnessState {
-    /// Creates the parent state rooted at `state_root`. `storage_roots` are parent storage roots
-    /// known without reading the account trie (the Isthmus `L2ToL1MessagePasser` root in the
-    /// parent header).
+    /// Creates the parent state rooted at `state_root`, reading nodes and codes from `source`.
+    /// `storage_roots` are parent storage roots known without reading the account trie (the
+    /// Isthmus `L2ToL1MessagePasser` root in the parent header).
     pub fn new(
         state_root: B256,
-        nodes: &[Bytes],
-        codes: &[Bytes],
+        source: Arc<dyn NodeSource + Send + Sync>,
         block_hashes: impl IntoIterator<Item = (u64, B256)>,
         storage_roots: impl IntoIterator<Item = (Address, B256)>,
     ) -> Self {
         Self {
-            nodes: Nodes {
-                by_hash: nodes.iter().map(|node| (keccak256(node), node.clone())).collect(),
-                missing: RefCell::new(None),
-            },
-            codes: codes.iter().map(|code| (keccak256(code), code.clone())).collect(),
+            nodes: Nodes { source, missing: RefCell::new(None) },
             block_hashes: block_hashes.into_iter().collect(),
             tries: RefCell::new(Tries {
                 accounts: TrieNode::new_blinded(state_root),
@@ -189,9 +250,9 @@ impl WitnessState {
         if *code_hash == KECCAK256_EMPTY {
             return Ok(Bytes::new());
         }
-        self.codes
-            .get(code_hash)
-            .cloned()
+        self.nodes
+            .source
+            .code(code_hash)
             .ok_or_else(|| self.nodes.record(WitnessError::MissingCode(*code_hash)))
     }
 
@@ -226,7 +287,7 @@ impl WitnessState {
     ) -> Result<B256, WitnessError> {
         let hashed_address = keccak256(address);
         let wiped = changes.storage_wipes().any(|wiped| wiped == address);
-        let trie = if wiped {
+        let mut trie = if wiped {
             TrieNode::new_blinded(EMPTY_ROOT_HASH)
         } else {
             self.parent_storage_trie(hashed_address)?
@@ -236,11 +297,15 @@ impl WitnessState {
             .filter(|(key, _)| key.address() == address)
             .map(|(key, slot)| (keccak256(key.key().to_be_bytes::<32>()), slot.current))
             .collect();
-        self.nodes.apply_storage(trie, &writes)
+        self.nodes.apply_storage(&mut trie, &writes)?;
+        Ok(trie.blind())
     }
 
-    /// The state root after `changes`, applied to the parent state.
-    pub fn state_root_after(&self, changes: &BlockStateAccumulator) -> Result<B256, WitnessError> {
+    /// The state after `changes`, applied to the parent state.
+    pub fn state_root_after(
+        &self,
+        changes: &BlockStateAccumulator,
+    ) -> Result<StateUpdate, WitnessError> {
         let mut writes: BTreeMap<B256, BTreeMap<B256, U256>> = BTreeMap::new();
         for (key, slot) in changes.storage() {
             writes
@@ -258,6 +323,7 @@ impl WitnessState {
 
         let mut accounts = self.tries.borrow().accounts.clone();
         let nodes = &self.nodes;
+        let mut new_nodes = Vec::new();
         for hashed_address in touched {
             let path = Nibbles::unpack(hashed_address);
             let parent = nodes.open_account(&mut accounts, hashed_address)?;
@@ -274,18 +340,23 @@ impl WitnessState {
             };
             let empty = BTreeMap::new();
             let slot_writes = writes.get(&hashed_address).unwrap_or(&empty);
-            let storage_root = if wiped.contains(&hashed_address) {
-                nodes.apply_storage(TrieNode::new_blinded(EMPTY_ROOT_HASH), slot_writes)?
-            } else if slot_writes.is_empty() {
+            let storage_root = if !wiped.contains(&hashed_address) && slot_writes.is_empty() {
                 parent.map_or(EMPTY_ROOT_HASH, |account| account.storage_root)
             } else {
-                let trie = self.parent_storage_trie(hashed_address)?;
-                nodes.apply_storage(trie, slot_writes)?
+                let mut trie = if wiped.contains(&hashed_address) {
+                    TrieNode::new_blinded(EMPTY_ROOT_HASH)
+                } else {
+                    self.parent_storage_trie(hashed_address)?
+                };
+                nodes.apply_storage(&mut trie, slot_writes)?;
+                collect_nodes(&trie, true, &mut new_nodes);
+                trie.blind()
             };
             let leaf = alloy_rlp::encode(TrieAccount { nonce, balance, storage_root, code_hash });
             accounts.insert(&path, leaf.into(), nodes).map_err(|error| nodes.trie_error(error))?;
         }
-        Ok(accounts.blind())
+        collect_nodes(&accounts, true, &mut new_nodes);
+        Ok(StateUpdate { root: accounts.blind(), nodes: new_nodes })
     }
 }
 

@@ -11,27 +11,28 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
     slice,
+    sync::Arc,
 };
 
 use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header};
 use alloy_primitives::{Address, B64, B256, U256};
-use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope as SignedTx, Predeploys};
+use base_common_consensus::{BaseReceiptEnvelope, Predeploys};
 use base_common_genesis::{BaseFeature, SystemConfig};
 use base_tiger_evm::{
-    BaseBlockExecutor, BlockEnvInput, BlockRules, ChainSpec, Transactions, assemble_header,
-    computed_header,
+    BlockEnvInput, BlockRules, ChainSpec,
 };
 use evm2::{
     BlockStateAccumulator,
-    evm::Db,
-    registry::HandlerError,
 };
 use protocol::{
     ConfigLogOutcome, ConfigLogResult, HeaderResults, Log, Mode, PostAccount, Receipt, Rejected,
     Request, Response, SystemConfigOutput, SystemConfigValues,
 };
 
-use crate::witness::{WitnessDb, WitnessState};
+use crate::{
+    exec::BlockExecution,
+    witness::{WitnessNodes, WitnessState},
+};
 
 /// The only chain the protocol defines today.
 const BASE_MAINNET: &str = "base-mainnet";
@@ -167,8 +168,7 @@ impl Adapter {
             .map(|root| (Predeploys::L2_TO_L1_MESSAGE_PASSER, root));
         let state = Rc::new(WitnessState::new(
             synthetic_root.unwrap_or(parent.state_root),
-            &request.witness.state,
-            &request.witness.codes,
+            Arc::new(WitnessNodes::new(&request.witness.state, &request.witness.codes)),
             ancestors.iter().map(|(header, hash)| (header.number, *hash)).chain(before_genesis),
             message_passer_root,
         ));
@@ -231,45 +231,28 @@ impl Adapter {
         env: &BlockEnvInput,
         state: &Rc<WitnessState>,
     ) -> Result<Outcome, String> {
-        let database = Db::new(WitnessDb(Rc::clone(state)));
-        let mut executor = match BaseBlockExecutor::for_block(&self.chain, env, database) {
-            Ok(executor) => executor,
-            Err(error) => return Ok(Outcome::invalid(format!("pre-execution changes: {error}"))),
-        };
-        let mut rejected = Vec::new();
-        let mut included = Vec::new();
-        for (index, raw) in request.transactions.iter().enumerate() {
-            let (signed, tx) = match Transactions::decode(raw) {
-                Ok(decoded) => decoded,
-                Err(error) => {
-                    rejected.push(Rejected { index, error });
-                    continue;
-                }
-            };
-            match executor.execute_transaction(&tx) {
-                Ok(()) => included.push(signed),
-                Err(HandlerError::Fatal(code)) => {
-                    return Ok(Outcome::invalid(format!("transaction {index}: fatal {code:?}")));
-                }
-                Err(error) => rejected.push(Rejected { index, error: error.to_string() }),
-            }
-        }
-        let (_, result, changes) = executor.finish();
         let input = &request.header;
-        let computed = self.computed(env.timestamp, &included, &result, &changes, state)?;
-        let header =
-            assemble_header(&self.chain, env, input.extra_data.clone(), input.excess_blob_gas, &computed);
+        let built = BlockExecution { chain: &self.chain }.build(
+            env,
+            input.extra_data.clone(),
+            input.excess_blob_gas,
+            &request.transactions,
+            true,
+            state,
+        )?;
+        let Some(executed) = built.executed else {
+            return Ok(Outcome::invalid(built.invalid.unwrap_or_default()));
+        };
         Ok(Outcome {
             invalid_reason: None,
-            rejected,
-            header: Some(Self::header_results(&header)),
-            receipts: result.receipts.iter().map(Self::receipt).collect(),
-            post: Self::post_state(&changes, state)?,
+            rejected: built.rejected.into_iter().map(|(index, error)| Rejected { index, error }).collect(),
+            header: Some(Self::header_results(&executed.header)),
+            receipts: executed.receipts.iter().map(Self::receipt).collect(),
+            post: Self::post_state(&executed.changes, state)?,
         })
     }
 
-    /// Imports the canonical block on the node's validation path: header checks against the
-    /// parent, pre-execution checks, execution, post-execution checks.
+    /// Imports the canonical block on the node's validation path.
     fn validate(
         &self,
         request: &Request,
@@ -279,17 +262,6 @@ impl Adapter {
     ) -> Result<Outcome, String> {
         let input = &request.header;
         let canonical = input.results.as_ref().ok_or("validate request without header results")?;
-        let mut signed = Vec::with_capacity(request.transactions.len());
-        let mut recovered = Vec::with_capacity(request.transactions.len());
-        for (index, raw) in request.transactions.iter().enumerate() {
-            match Transactions::decode(raw) {
-                Ok((tx, sender)) => {
-                    signed.push(tx);
-                    recovered.push(sender);
-                }
-                Err(error) => return Ok(Outcome::invalid(format!("transaction {index}: {error}"))),
-            }
-        }
         let header = Header {
             parent_hash: env.parent_hash,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
@@ -315,84 +287,21 @@ impl Adapter {
             block_access_list_hash: None,
             slot_number: None,
         };
-
-        // The first failure decides validity; execution continues so every computed field is
-        // still reported.
-        let mut invalid: Option<String> = None;
-        let mut note = |stage: &str, result: Result<(), String>| {
-            if let Err(error) = result {
-                invalid.get_or_insert_with(|| format!("{stage}: {error}"));
-            }
-        };
         let hash = header.hash_slow();
-        note(
-            "payload",
-            if hash == canonical.hash {
-                Ok(())
-            } else {
-                Err(format!("block hash {hash} is not {}", canonical.hash))
-            },
-        );
-        let rules = BlockRules { chain: &self.chain };
-        note("header", rules.validate_header(&header));
-        note("header against parent", rules.validate_against_parent(&header, parent));
-        let withdrawals = self.chain.is_active(BaseFeature::Withdrawals, input.timestamp).then(Vec::new);
-        let transactions_root = alloy_consensus::proofs::calculate_transaction_root(&signed);
-        note(
-            "pre-execution",
-            rules.validate_pre_execution(&header, &signed, transactions_root, withdrawals.as_deref()),
-        );
-
-        let database = Db::new(WitnessDb(Rc::clone(state)));
-        let mut executor = match BaseBlockExecutor::for_block(&self.chain, env, database) {
-            Ok(executor) => executor,
-            Err(error) => {
-                return Ok(Outcome::invalid(
-                    invalid.unwrap_or_else(|| format!("execution: pre-execution: {error}")),
-                ));
-            }
+        let hash_invalid = (hash != canonical.hash)
+            .then(|| format!("payload: block hash {hash} is not {}", canonical.hash));
+        let validated =
+            BlockExecution { chain: &self.chain }.validate(&header, &request.transactions, parent, state)?;
+        let invalid_reason = hash_invalid.or(validated.invalid);
+        let Some(executed) = validated.executed else {
+            return Ok(Outcome { invalid_reason, ..Outcome::default() });
         };
-        for (index, tx) in recovered.iter().enumerate() {
-            if let Err(error) = executor.execute_transaction(tx) {
-                return Ok(Outcome::invalid(
-                    invalid.unwrap_or_else(|| format!("execution: transaction {index}: {error}")),
-                ));
-            }
-        }
-        let (_, result, changes) = executor.finish();
-        let computed = self.computed(env.timestamp, &signed, &result, &changes, state)?;
-        if let Err(error) = rules.validate_post_execution(&header, &computed) {
-            invalid.get_or_insert_with(|| format!("post-execution: {error}"));
-        }
-        let assembled = assemble_header(
-            &self.chain,
-            env,
-            input.extra_data.clone(),
-            input.excess_blob_gas,
-            &computed,
-        );
         Ok(Outcome {
-            invalid_reason: invalid,
+            invalid_reason,
             rejected: Vec::new(),
-            header: Some(Self::header_results(&assembled)),
-            receipts: result.receipts.iter().map(Self::receipt).collect(),
-            post: Self::post_state(&changes, state)?,
-        })
-    }
-
-    fn computed(
-        &self,
-        timestamp: u64,
-        transactions: &[SignedTx],
-        result: &base_tiger_evm::BlockExecutionResult,
-        changes: &BlockStateAccumulator,
-        state: &WitnessState,
-    ) -> Result<base_tiger_evm::ComputedHeader, String> {
-        let state_root = state.state_root_after(changes).map_err(|error| error.to_string())?;
-        computed_header(&self.chain, timestamp, transactions, result, state_root, || {
-            state
-                .storage_root_after(Predeploys::L2_TO_L1_MESSAGE_PASSER, changes)
-                .map_err(|error| error.to_string())
+            header: Some(Self::header_results(&executed.header)),
+            receipts: executed.receipts.iter().map(Self::receipt).collect(),
+            post: Self::post_state(&executed.changes, state)?,
         })
     }
 

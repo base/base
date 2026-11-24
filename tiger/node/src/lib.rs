@@ -4,7 +4,10 @@ mod adapter;
 pub use adapter::Adapter;
 
 mod witness;
-pub use witness::{WitnessDb, WitnessError, WitnessState};
+pub use witness::{NodeSource, StateUpdate, WitnessDb, WitnessError, WitnessNodes, WitnessState};
+
+mod exec;
+pub use exec::{BlockExecution, Built, Executed, Validated};
 
 #[cfg(feature = "edge-coverage")]
 mod edges;
