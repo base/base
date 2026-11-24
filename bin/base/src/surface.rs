@@ -42,7 +42,7 @@ impl CliSurface {
         ("discovery.", "execution.p2p.discovery."),
         ("rollup.txpool-", "txpool."),
         ("rollup.mempool-", "txpool."),
-        ("rollup.validity-pool-", "txpool.validity-pool-"),
+        ("rollup.validity-", "txpool.validity-"),
         ("validity-", "validity."),
         ("tx-forwarding-", "tx-forwarding."),
         ("rpc.", "execution.rpc."),
@@ -304,6 +304,7 @@ impl CliSurface {
         "sequencer.shadow-funding-amount-eth",
         "rollup.sequencer",
         "rollup.sequencer-headers",
+        "txpool.validity-dormancy",
     ];
 
     /// Every builder flag bounds or records block production, so `base sequencer` supports the
@@ -1076,6 +1077,8 @@ mod tests {
             "7",
             "--rollup.mempool-payer-limit",
             "8",
+            "--rollup.validity-dormancy",
+            "pool",
             "--sequencer.isolated",
             "--checkpoint.path",
             "/data/checkpoint",
@@ -1090,6 +1093,7 @@ mod tests {
         assert_eq!(sequencer.builder.predicate_eval_hard_cutoff_ms, 25);
         assert_eq!(sequencer.builder.rollup_args.max_inflight_delegated_slots, 7);
         assert_eq!(sequencer.builder.rollup_args.mempool_payer_limit, 8);
+        assert_eq!(sequencer.builder.rollup_args.validity_dormancy.to_string(), "pool");
 
         let cli = parse(&[
             "base",
