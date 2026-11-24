@@ -13,6 +13,7 @@ use jsonrpsee::{
         ClientError,
         client::{BatchResponse, ClientT},
         params::{ArrayParams, BatchRequestBuilder},
+        traits::ToRpcParams,
     },
     http_client::HttpClient,
     types::{ErrorObject, ErrorObjectOwned},
@@ -25,6 +26,17 @@ use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::Forward
 
 /// Builder method that inserts a whole batch of validated transactions in one call.
 const INSERT_BATCH_METHOD: &str = "base_insertValidatedTransactions";
+
+const CALL_ENVELOPE_BYTES: usize = 64;
+
+fn encoded_len<R: ForwardRequest>(request: &R) -> usize {
+    let params = request
+        .params()
+        .ok()
+        .and_then(|params| params.to_rpc_params().ok().flatten())
+        .map_or(0, |params| params.get().len());
+    CALL_ENVELOPE_BYTES + request.method().len() + params
+}
 
 /// Token-bucket rate limiter: a bucket of `max_rps` sends, refilled at `max_rps` per second.
 ///
@@ -247,11 +259,22 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
     }
 
     async fn flush_buffer(&mut self) {
-        let batch_size = if self.config.max_batch_size == 0 {
+        let count_limit = if self.config.max_batch_size == 0 {
             self.buffer.len()
         } else {
             self.buffer.len().min(self.config.max_batch_size)
         };
+        let max_request_size = self.config.max_request_size as usize;
+        let mut request_size = 0usize;
+        let batch_size = self.buffer[..count_limit]
+            .iter()
+            .take_while(|request| {
+                request_size = request_size.saturating_add(encoded_len(*request));
+                request_size <= max_request_size
+            })
+            .count()
+            .max(1)
+            .min(count_limit);
         let batch: Vec<R> = self.buffer.drain(..batch_size).collect();
         ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
 
@@ -502,7 +525,9 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_execution_txpool::{NoExtensions, ValidatedTransaction};
-    use jsonrpsee::{RpcModule, http_client::HttpClientBuilder, server::Server};
+    use jsonrpsee::{
+        RpcModule, core::TEN_MB_SIZE_BYTES, http_client::HttpClientBuilder, server::Server,
+    };
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
 
@@ -574,6 +599,7 @@ mod tests {
         Arc::new(ForwarderConfig {
             max_rps,
             max_batch_size,
+            max_request_size: TEN_MB_SIZE_BYTES,
             max_retries: 0,
             retry_backoff: Duration::ZERO,
             request_timeout: Duration::from_secs(1),
@@ -795,6 +821,30 @@ mod tests {
 
         forwarder.flush_buffer().await;
         assert!(forwarder.buffer.is_empty());
+        assert_eq!(received.lock().unwrap().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn flush_buffer_closes_batches_at_the_request_size_limit() {
+        let (url, received, _server) = rpc_server().await;
+        let (_sender, receiver) = mpsc::channel(1);
+        let config = Arc::new(ForwarderConfig {
+            max_request_size: 2 * 1024 * 1024,
+            ..(*config(0, 100)).clone()
+        });
+        let mut forwarder =
+            forwarder::<InsertValidatedTransaction<NoExtensions>>(url, receiver, config);
+        for nonce in 0..5 {
+            let mut request = transaction(nonce);
+            request.transaction.raw = Bytes::from(vec![nonce as u8; 400 * 1024]);
+            assert!(!forwarder.handle_recv(Some(request)));
+        }
+
+        forwarder.flush_buffer().await;
+        assert_eq!(forwarder.buffer.len(), 3);
+        assert_eq!(received.lock().unwrap().len(), 2);
+
+        forwarder.flush_remaining().await;
         assert_eq!(received.lock().unwrap().len(), 5);
     }
 

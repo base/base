@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use jsonrpsee::core::TEN_MB_SIZE_BYTES;
+
 use crate::config::{DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS};
 
 /// Internal buffer cap used when RPC batch size is configured as unlimited.
@@ -20,6 +22,8 @@ pub(crate) struct ForwarderConfig {
     pub(crate) max_rps: u32,
     /// Maximum transactions per RPC request. 0 = unlimited.
     pub(crate) max_batch_size: usize,
+    /// Maximum encoded size of one RPC request in bytes, enforced by the HTTP client.
+    pub(crate) max_request_size: u32,
     /// Maximum RPC send retries before dropping a batch.
     pub(crate) max_retries: u32,
     /// Base delay between retries (doubles each attempt).
@@ -44,6 +48,7 @@ impl Default for ForwarderConfig {
         Self {
             max_rps: DEFAULT_MAX_RPS,
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
+            max_request_size: TEN_MB_SIZE_BYTES,
             max_retries: 3,
             retry_backoff: Duration::from_millis(100),
             request_timeout: Duration::from_secs(1),
@@ -61,6 +66,7 @@ mod tests {
         let config = ForwarderConfig::default();
         assert_eq!(config.max_rps, DEFAULT_MAX_RPS);
         assert_eq!(config.max_batch_size, DEFAULT_MAX_BATCH_SIZE);
+        assert_eq!(config.max_request_size, TEN_MB_SIZE_BYTES);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_backoff, Duration::from_millis(100));
         assert_eq!(config.request_timeout, Duration::from_secs(1));
