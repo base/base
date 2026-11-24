@@ -402,8 +402,16 @@ impl StateSession {
     /// Runs one operation. Divergences are returned; `Err` is a harness failure (the adapter
     /// could not build a block, a node could not be reached for a reason that is not the
     /// node's).
+    ///
+    /// When an injected fault crashed a node during the operation, what the operation saw on
+    /// that node is dropped: the result is the node's recovery (see [`Self::recover_faults`]).
     pub fn run(&mut self, op: &StateOp) -> eyre::Result<Vec<Divergence>> {
         self.history.push(op.clone());
+        let result = self.run_op(op);
+        self.recover_faults().map_or(result, Ok)
+    }
+
+    fn run_op(&mut self, op: &StateOp) -> eyre::Result<Vec<Divergence>> {
         match op {
             StateOp::Extend { blocks, stress, salt, fcu_each } => {
                 self.extend(*blocks, stress, *salt, *fcu_each)
@@ -413,6 +421,18 @@ impl StateSession {
             }
             StateOp::Switch { tip } => self.switch(*tip),
             StateOp::Restart { kill, nodes } => Ok(self.restart(*kill, *nodes)),
+            StateOp::Fault { writes, lose_unsynced, seed } => {
+                let mode = if *lose_unsynced { "lose_unsynced" } else { "torn" };
+                let fault = format!("seed={seed},crash_after_writes={writes},mode={mode}");
+                for proc in &mut self.procs {
+                    proc.fault = Some(fault.clone());
+                }
+                let divergences = self.restart(false, 0);
+                for proc in &mut self.procs {
+                    proc.fault = None;
+                }
+                Ok(divergences)
+            }
             StateOp::BadRoot { kind, salt } => self.bad_root(*kind, *salt),
             StateOp::Check { heights, seed } => Ok(self.check(*heights, *seed)),
         }
@@ -838,7 +858,7 @@ impl StateSession {
 
     /// The forkchoice state for head `head`: safe and finalized trail it by the lag, and the
     /// finalized block never moves back.
-    fn forkchoice_state(&mut self, head: B256) -> Value {
+    pub fn forkchoice_state(&mut self, head: B256) -> Value {
         let number = self.tree.block(&head).number;
         let genesis = self.tree.block(&self.tree.genesis).number;
         let at = |lag: u64| number.saturating_sub(lag).max(genesis);
@@ -1425,6 +1445,65 @@ impl StateSession {
         }
         transient.extend(divergences);
         Ok(transient)
+    }
+
+    /// Restarts every node an injected fault crashed (see [`NodeProcess::injected_crash`]),
+    /// with fault injection off for that run, and moves it back to the head, resending the
+    /// blocks it lost. Returns `None` when no node crashed that way, otherwise the recovery's
+    /// divergences: a node that cannot reopen its datadir, rejects the head, or reads back
+    /// different state is a finding.
+    pub fn recover_faults(&mut self) -> Option<Vec<Divergence>> {
+        let crashed: Vec<(usize, String)> = self
+            .procs
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(i, proc)| proc.injected_crash().map(|line| (i, line)))
+            .collect();
+        if crashed.is_empty() {
+            return None;
+        }
+        let mut divergences = Vec::new();
+        for (index, line) in crashed {
+            let name = self.nodes[index].name.clone();
+            // Group by the phase the crash hit: `commit <n> <step> ...` without the numbers.
+            let phase = line
+                .split("phase=\"")
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .map(|phase| {
+                    phase
+                        .split(' ')
+                        .filter(|w| w.parse::<u64>().is_err())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            let mode = if line.contains("LoseUnsynced") { "lose_unsynced" } else { "torn" };
+            *self.observations.entry(format!("{name}: fault crash {mode} {phase}")).or_default() +=
+                1;
+            self.trace.push(json!({ "kind": "fault", "node": name, "line": line }));
+            let proc = &mut self.procs[index];
+            proc.stop(true);
+            let started = proc.spawn(false).and_then(|()| proc.wait_ready(&self.nodes[index]));
+            if let Err(error) = started {
+                let tail = fs::read_to_string(proc.log_path())
+                    .map(|text| text.lines().rev().take(30).collect::<Vec<_>>().join("\n"))
+                    .unwrap_or_default();
+                divergences.push(Divergence::new(
+                    "restart",
+                    &name,
+                    "start after injected fault",
+                    Some(self.tree.head().number),
+                    json!("answers JSON-RPC"),
+                    json!({ "error": format!("{error:#}"), "fault": line, "logTail": tail }),
+                ));
+            }
+        }
+        if divergences.is_empty() {
+            let head = self.tree.head;
+            divergences = self.forkchoice_resync(head, "fault");
+        }
+        Some(divergences)
     }
 
     /// Fails unless every node process is still running.

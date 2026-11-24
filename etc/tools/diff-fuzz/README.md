@@ -52,6 +52,8 @@ named or open payer, delegation changes, multi-phase calls).
   finding's `minimized-case.json`.
 - `state --launch <script> --root <dir> --node name=http,auth ...`: differential state fuzzing of
   real nodes through reorgs and restarts (below).
+- `sync --launch <script> --root <dir> --source name=http,auth --target name=http,auth`: checks
+  that a target node syncs over devp2p from a source node (below).
 - `trie-fuzz --duration 2h [--unguided]`: coverage-guided differential fuzzing of state root
   code in process (below); `trie-run [--minimize N] <case.json>...` reruns saved trie cases.
 
@@ -305,6 +307,13 @@ An input is a short sequence of chain operations:
   the same datadir; blocks a node lost are sent again, and counted;
 - `badRoot`: submit the next block with a wrong state root (random, the parent's, one bit flipped,
   or a sibling's), which every node must answer `INVALID`;
+- `fault`: restart every node cleanly with fault injection armed for that run: the launch script
+  gets `BASE_DIFF_FAULT=seed=N,crash_after_writes=K,mode=torn|lose_unsynced` (tiger's
+  `TIGER_FAULT` syntax; other clients ignore it). The node crashes at its `K`-th store write,
+  tearing that write or losing the writes since the file's last fsync. When a node's log shows
+  the crash line, what the operation saw on it is dropped: the harness restarts it unarmed on
+  the same datadir and moves it back to the head, so the reopened chain and state must be intact
+  (`observations` count the crashes and recoveries);
 - `check`: read state back at several heights.
 
 Blocks carry state-stress traffic (`StressPlan`, per operation) besides ordinary transactions:
@@ -344,3 +353,18 @@ spliced from another input, reseeded, retuned (one stress knob or a fresh plan),
 `--unguided` runs only fresh inputs and still reads coverage. `<out>/state-summary.json` holds
 operation counts, blocks, wipes, findings, observations, features, edges per node, corpus size,
 kept inputs by origin and operator, and a timeline.
+
+## Execution-layer sync check
+
+`sync` checks that a node downloads and executes a chain from a peer over the eth protocol when
+it only hears forkchoice updates. The source node (`--source`, which must serve
+`admin_nodeInfo`) is fed a synthetic state-stress chain of `--blocks` blocks over the Engine API,
+as in `state`. Then the target (`--target`) starts on a wiped datadir with the source's enode in
+`BASE_DIFF_PEERS` (the launch script passes it as trusted peers) and gets a forkchoice update to
+the source's head. Once it has downloaded its first block (or after `--reorg-after-ms`), the
+source reorganizes, and the target gets the new head. Later phases add a 40-block gap, a 5-block
+reorg, a 30-block reorg to a lower height, and a 50-block gap across a killed restart of the
+target. In each phase the target must reach `VALID` within `--timeout`. Then every height is
+compared with the source (block hash, state, receipts, and transactions roots, logs bloom), plus
+the balance, nonce, and code of the head block's accounts. The report (`--out`) lists, per phase,
+the statuses seen, the target's height when the reorg happened, the time taken, and any mismatches.

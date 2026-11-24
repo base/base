@@ -24,7 +24,13 @@ pub struct NodeProcess {
     pub launch: PathBuf,
     /// Directory holding every node's datadir and log.
     pub root: PathBuf,
+    /// Fault injection the next launch arms (see [`Self::FAULT_ENV`]).
+    pub fault: Option<String>,
+    /// Peers the next launch connects to (see [`Self::PEERS_ENV`]).
+    pub peers: Option<String>,
     child: Option<Child>,
+    /// Length of the log when the running process was launched.
+    log_start: u64,
 }
 
 impl NodeProcess {
@@ -35,7 +41,35 @@ impl NodeProcess {
 
     /// A process handle for node `name`; nothing is started.
     pub const fn new(name: String, launch: PathBuf, root: PathBuf) -> Self {
-        Self { name, launch, root, child: None }
+        Self { name, launch, root, fault: None, peers: None, child: None, log_start: 0 }
+    }
+
+    /// Environment variable passed to the launch script: the fault injection to arm for this
+    /// run, in tiger's `TIGER_FAULT` syntax (`seed=N,crash_after_writes=K,mode=torn|lose_unsynced`),
+    /// or empty for none. Clients without fault injection ignore it.
+    pub const FAULT_ENV: &str = "BASE_DIFF_FAULT";
+    /// Environment variable passed to the launch script: comma-separated enodes the node
+    /// should peer with (the sync check's source), or empty for none.
+    pub const PEERS_ENV: &str = "BASE_DIFF_PEERS";
+    /// Line prefix a node prints when an injected fault crashes it (tiger's `TIGER_FAULT`).
+    pub const FAULT_LINE: &str = "tiger-fault: crash at write";
+
+    /// The log path.
+    pub fn log_path(&self) -> PathBuf {
+        self.root.join(format!("{}.log", self.name))
+    }
+
+    /// The fault line the current run printed before it died, if an injected fault killed it.
+    pub fn injected_crash(&mut self) -> Option<String> {
+        if self.child.is_none() || self.alive() {
+            return None;
+        }
+        let text = fs::read(self.log_path()).ok()?;
+        let since = text.get(self.log_start as usize..)?;
+        String::from_utf8_lossy(since)
+            .lines()
+            .find(|line| line.contains(Self::FAULT_LINE))
+            .map(str::to_owned)
     }
 
     /// The node's datadir.
@@ -55,14 +89,14 @@ impl NodeProcess {
             fs::remove_dir_all(&dir).wrap_err_with(|| format!("wiping {}", dir.display()))?;
         }
         fs::create_dir_all(&dir)?;
-        let log = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.root.join(format!("{}.log", self.name)))?;
+        let log = fs::OpenOptions::new().create(true).append(true).open(self.log_path())?;
+        self.log_start = log.metadata()?.len();
         let mut command = Command::new(&self.launch);
         command
             .arg(&self.name)
             .arg(&dir)
+            .env(Self::FAULT_ENV, self.fault.as_deref().unwrap_or_default())
+            .env(Self::PEERS_ENV, self.peers.as_deref().unwrap_or_default())
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)

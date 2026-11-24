@@ -61,6 +61,20 @@ pub enum StateOp {
         /// Randomness of the block.
         salt: u64,
     },
+    /// Restarts every node cleanly with fault injection armed for that run (tiger's
+    /// `TIGER_FAULT`): the node crashes at its `writes`-th store write after the restart,
+    /// tearing that write or losing the writes since its last fsync. The crash comes during
+    /// later operations (or never, before the next restart); the harness then restarts the node
+    /// unarmed and moves it back to the head, so it must reopen to an intact chain and state.
+    #[serde(rename_all = "camelCase")]
+    Fault {
+        /// Store write (counted from the restart) that crashes the node.
+        writes: u16,
+        /// Lose unsynced writes instead of tearing the crashing write.
+        lose_unsynced: bool,
+        /// Randomness of what is torn or lost.
+        seed: u32,
+    },
     /// Reads state back at `heights` canonical heights.
     Check {
         /// Heights to read (head first).
@@ -83,13 +97,14 @@ impl StateOp {
             Self::Restart { kill: false, .. } => "restart",
             Self::Restart { kill: true, .. } => "kill",
             Self::BadRoot { .. } => "badRoot",
+            Self::Fault { .. } => "fault",
             Self::Check { .. } => "check",
         }
     }
 
     /// A random operation. Restarts are rarer than the rest: they take seconds.
     pub fn random(rng: &mut Rng, max_depth: u8) -> Self {
-        match rng.weighted(&[40, 22, 8, 7, 7, 10]) {
+        match rng.weighted(&[40, 22, 8, 7, 7, 10, 6]) {
             0 => Self::Extend {
                 blocks: Self::blocks(rng),
                 stress: StressPlan::random(rng),
@@ -109,8 +124,20 @@ impl StateOp {
                 nodes: if rng.chance(50) { 0 } else { 1 << rng.below(3) },
             },
             4 => Self::BadRoot { kind: rng.below(4) as u8, salt: rng.next_u64() },
+            6 => Self::Fault {
+                writes: Self::fault_writes(rng),
+                lose_unsynced: rng.chance(50),
+                seed: rng.next_u64() as u32,
+            },
             _ => Self::Check { heights: rng.range(1, 6) as u8, seed: rng.next_u64() },
         }
+    }
+
+    /// A crash point: mostly within the first blocks after the restart (the reopen and its
+    /// heal, then a few commits), sometimes later.
+    fn fault_writes(rng: &mut Rng) -> u16 {
+        let limit = *rng.pick(&[40, 300, 2_000]);
+        rng.range(1, limit) as u16
     }
 
     fn blocks(rng: &mut Rng) -> u8 {
@@ -233,6 +260,7 @@ impl StateMutator {
             | StateOp::Check { seed: salt, .. } => *salt = rng.next_u64(),
             StateOp::Switch { tip } => *tip = rng.below(4) as u8,
             StateOp::Restart { nodes, .. } => *nodes = rng.below(8) as u8,
+            StateOp::Fault { seed, .. } => *seed = rng.next_u64() as u32,
         }
     }
 
@@ -288,6 +316,13 @@ impl StateMutator {
                 }
             }
             StateOp::BadRoot { kind, .. } => *kind = (*kind + 1) % 4,
+            StateOp::Fault { writes, lose_unsynced, .. } => {
+                if rng.chance(50) {
+                    *lose_unsynced = !*lose_unsynced;
+                } else {
+                    *writes = StateOp::fault_writes(rng);
+                }
+            }
             StateOp::Check { heights, .. } => *heights = rng.range(1, 6) as u8,
         }
     }

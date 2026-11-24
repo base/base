@@ -6,8 +6,8 @@ use base_diff_fuzz::{
     Adapter, AdapterSpec, Campaign, ChainDriver, ChainFollower, ChainFuzzer, ConfigLogs, Era,
     FuzzConfig, Fuzzer, Generator, GeneratorOptions, Lag, MainFuzzConfig, MainFuzzer,
     MainnetFetcher, MainnetReplay, NodeClient, NodeProcess, Request, RpcCampaign, RpcConfig,
-    RpcExclude, StateCampaign, StateConfig, StateOp, StateSession, TrieCase, TrieCompare,
-    TrieFuzzConfig, TrieFuzzer,
+    RpcExclude, StateCampaign, StateConfig, StateOp, StateSession, SyncCheck, SyncConfig, TrieCase,
+    TrieCompare, TrieFuzzConfig, TrieFuzzer,
 };
 use clap::{Args, Parser, Subcommand};
 use eyre::WrapErr;
@@ -450,6 +450,43 @@ enum Command {
         #[arg(long)]
         replay: Option<PathBuf>,
     },
+    /// Checks that a target node syncs a synthetic chain from a source node over devp2p (the
+    /// eth protocol) when it only hears forkchoice updates: a full sync with a reorg while it
+    /// runs, then gaps, reorgs, and a killed restart. Compares every header and the head state.
+    Sync {
+        /// Chain seed.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Reference adapter that builds the chain, as `name=command args...`.
+        #[arg(long)]
+        adapter: String,
+        /// Source node (fed over the Engine API, serves the chain) as `name=http_url,auth_url`;
+        /// it must serve `admin_nodeInfo`.
+        #[arg(long)]
+        source: String,
+        /// Target node (syncs from the source) as `name=http_url,auth_url`.
+        #[arg(long)]
+        target: String,
+        /// Launch script, as for `state`; it gets the source's enode in `BASE_DIFF_PEERS`.
+        #[arg(long)]
+        launch: PathBuf,
+        /// Directory of the datadirs, logs, `genesis.json`, and `jwt.hex`.
+        #[arg(long)]
+        root: PathBuf,
+        /// Blocks the source has before the target starts.
+        #[arg(long, default_value_t = 1500)]
+        blocks: u64,
+        /// Longest wait, in milliseconds after the target's first forkchoice update, for the
+        /// target to download its first block before the source reorganizes anyway.
+        #[arg(long, default_value_t = 60000)]
+        reorg_after_ms: u64,
+        /// How long the target may take to reach one head.
+        #[arg(long, default_value = "10m", value_parser = parse_duration)]
+        timeout: Duration,
+        /// Report file.
+        #[arg(long, default_value = "sync-report.json")]
+        out: PathBuf,
+    },
 }
 
 /// Eras of the chains real nodes follow: the Engine API payloads they take start at Isthmus.
@@ -678,6 +715,43 @@ fn main() -> eyre::Result<()> {
             };
             let summary = StateCampaign::run(&mut session, &config)?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
+        }
+        Command::Sync {
+            seed,
+            adapter,
+            source,
+            target,
+            launch,
+            root,
+            blocks,
+            reorg_after_ms,
+            timeout,
+            out,
+        } => {
+            fs::create_dir_all(&root)?;
+            let jwt = root.join("jwt.hex");
+            if !jwt.exists() {
+                fs::write(&jwt, alloy_primitives::hex::encode(alloy_primitives::B256::random()))?;
+            }
+            let source = NodeClient::parse(&source, &jwt)?;
+            let target = NodeClient::parse(&target, &jwt)?;
+            let procs = vec![NodeProcess::new(source.name.clone(), launch.clone(), root.clone())];
+            let proc = NodeProcess::new(target.name.clone(), launch, root);
+            let adapter = Adapter::new(AdapterSpec::parse(&adapter)?, Duration::from_secs(300));
+            let session = StateSession::start(
+                seed,
+                state_chain_options(),
+                adapter,
+                vec![source],
+                procs,
+                Lag { safe: 4, finalized: 64 },
+                40,
+            )?;
+            let config =
+                SyncConfig { blocks, reorg_after: Duration::from_millis(reorg_after_ms), timeout };
+            let report = SyncCheck::new(session, target, proc, config).run()?;
+            fs::write(&out, serde_json::to_string_pretty(&report)?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Run { common, paths } => {
             let saved = Saved::collect(&paths)?;

@@ -61,5 +61,5 @@ pub use nodes::{
     NodeProcess, PathStep, Reply, RpcCampaign, RpcCase, RpcCompare, RpcConfig, RpcDifference,
     RpcExclude, RpcFinding, RpcGen, RpcGuide, RpcMutator, RpcSummary, RpcVerdict, StateCampaign,
     StateConfig, StateFinding, StateInput, StateMutator, StateOp, StateSession, StateSummary,
-    TreeBlock,
+    SyncCheck, SyncConfig, SyncPhase, SyncReport, TreeBlock,
 };

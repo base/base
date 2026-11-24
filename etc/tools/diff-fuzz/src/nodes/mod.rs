@@ -36,3 +36,6 @@ pub use state_session::{ChainTree, Divergence, StateSession, TreeBlock};
 
 mod state_campaign;
 pub use state_campaign::{StateCampaign, StateConfig, StateFinding, StateSummary};
+
+mod sync;
+pub use sync::{SyncCheck, SyncConfig, SyncPhase, SyncReport};
