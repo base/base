@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 
 use crate::{Node, RpcError, chain::StoredBlock};
 
+mod blocks;
+mod receipts;
+
 fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result<T, RpcError> {
     let value = params.get(index).cloned().unwrap_or(Value::Null);
     serde_json::from_value(value).map_err(|error| RpcError::invalid_params(format!("invalid params: {error}")))
@@ -18,7 +21,13 @@ fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result
 impl Node {
     /// Answers one non-Engine JSON-RPC method.
     pub fn rpc(&self, method: &str, p: &Value) -> Result<Value, RpcError> {
+        if let Some(result) = self.rpc_blocks(method, p) {
+            return result;
+        }
         match method {
+            "rpc_modules" => Ok(json!({
+                "debug": "1.0", "web3": "1.0", "rpc": "1.0", "txpool": "1.0", "trace": "1.0", "net": "1.0", "eth": "1.0"
+            })),
             "eth_chainId" => Ok(json!(U64::from(self.spec.chain_id))),
             "net_version" => Ok(json!(self.spec.chain_id.to_string())),
             "web3_clientVersion" => Ok(json!(concat!("tiger/v", env!("CARGO_PKG_VERSION")))),
@@ -70,6 +79,19 @@ impl Node {
                 let block = chain.canonical_block(number).expect("indexed transactions are canonical");
                 Ok(self.transaction_json(&block, index))
             }
+            "eth_getTransactionReceipt" => {
+                let hash: B256 = param(p, 0)?;
+                let block = {
+                    let chain = self.chain.read().expect("chain lock");
+                    let Some((number, index)) = chain.transaction(&hash) else { return Ok(Value::Null) };
+                    (chain.canonical_block(number).expect("indexed transactions are canonical"), index)
+                };
+                self.transaction_receipt(&block.0, block.1)
+            }
+            "eth_getBlockReceipts" => match self.find_block(p.get(0))? {
+                Some(block) => Ok(Value::Array(self.block_receipts(&block)?)),
+                None => Ok(Value::Null),
+            },
             #[cfg(feature = "edge-coverage")]
             "fuzz_coverage" => {
                 let edges = crate::EdgeCounters::with_edges(Default::default());
@@ -172,20 +194,15 @@ impl Node {
             },
         );
         let recovered = Recovered::new_unchecked(tx, block.senders[index]);
-        json!(base_common_rpc_types::Transaction::from_transaction(recovered, info))
+        let mut transaction = base_common_rpc_types::Transaction::from_transaction(recovered, info);
+        transaction.block_timestamp_ms = Self::timestamp_ms(block);
+        json!(transaction)
     }
 
     /// The RPC form of `block`, with full transactions or their hashes.
     pub fn block_json(&self, block: &StoredBlock, full: bool) -> Value {
         let header = &block.header;
-        let size = alloy_rlp::Encodable::length(&alloy_consensus::Block {
-            header: header.clone(),
-            body: alloy_consensus::BlockBody {
-                transactions: block.transactions.clone(),
-                ommers: Vec::new(),
-                withdrawals: header.withdrawals_root.map(|_| Default::default()),
-            },
-        });
+        let size = alloy_rlp::Encodable::length(&Self::consensus_block(block));
         let transactions: Vec<Value> = if full {
             (0..block.transactions.len()).map(|index| self.transaction_json(block, index)).collect()
         } else {
@@ -194,10 +211,13 @@ impl Node {
         let mut value = json!(alloy_rpc_types_eth::Header {
             hash: block.hash,
             inner: header.clone(),
-            total_difficulty: Some(U256::ZERO),
+            total_difficulty: None,
             size: Some(U256::from(size)),
         });
         let object = value.as_object_mut().expect("headers serialize to objects");
+        if let Some(timestamp_ms) = Self::timestamp_ms(block) {
+            object.insert("timestampMs".into(), json!(U64::from(timestamp_ms)));
+        }
         object.insert("uncles".into(), json!([]));
         object.insert("transactions".into(), Value::Array(transactions));
         if header.withdrawals_root.is_some() {
