@@ -110,8 +110,10 @@ impl BaseEvmTypes {
         // at nonce u64::MAX cannot bump the nonce, and revm's create frame then returns success
         // with all its gas left and no account created. The deposit succeeds, uses only its
         // intrinsic gas (or the EIP-7623 floor), and the nonce stays at u64::MAX. Only deposits
-        // reach this: other transactions reject a sender at u64::MAX before execution.
-        if tx.to.is_create() && nonce == u64::MAX {
+        // reach this: other transactions reject a sender at u64::MAX before execution. revm's
+        // create frame checks the caller can afford `value` before bumping the nonce, so an
+        // unaffordable value still fails the deposit below.
+        if tx.to.is_create() && nonce == u64::MAX && Self::sender_balance(host, tx)? >= tx.value {
             return Ok(TxResult::<Self> {
                 status: true,
                 total_gas_spent: intrinsic,
@@ -201,6 +203,12 @@ impl BaseEvmTypes {
         let nonce = account.nonce();
         account.bump_nonce();
         Ok(nonce)
+    }
+
+    /// The sender's balance (after the mint).
+    fn sender_balance(host: &mut Evm<'_, Self>, tx: &TxDeposit) -> HandlerResult<U256> {
+        let account = host.state_mut().account(&tx.from, false).map_err(HandlerError::Fatal)?;
+        Ok(account.balance())
     }
 
     /// Builds the result for a failed deposit: status `false`, the full gas limit charged, and
@@ -365,6 +373,29 @@ mod tests {
         assert_eq!(nonce(&mut evm, SENDER), u64::MAX);
         assert_eq!(balance(&mut evm, SENDER), U256::from(1_000));
         assert_eq!(evm.state_mut().account_info_untracked(&SENDER.create(u64::MAX)).unwrap(), None);
+    }
+
+    #[test]
+    fn create_deposit_from_max_nonce_sender_with_unaffordable_value_fails() {
+        // From diff-fuzz gen seed 3 case 1709 (Granite): revm checks the value transfer before
+        // the nonce bump, so base-reth fails the deposit and charges the whole gas limit.
+        let spec = BaseSpecId::new(BaseUpgrade::Granite);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(&SENDER, evm2::AccountInfo { nonce: u64::MAX, ..Default::default() });
+        let mut evm = Evm::new(
+            spec,
+            BlockEnv::<BaseEvmTypes>::default(),
+            BaseEvmTypes::tx_registry(spec),
+            db,
+            Precompiles::base(spec.into()),
+        );
+        let mut tx = deposit(TxKind::Create, 1_000, U256::from(1_001), Bytes::from_static(&[0x00]), false);
+        tx.gas_limit = 0x1a432;
+        let result = run(&mut evm, tx);
+        assert!(!result.status);
+        assert_eq!(result.tx_gas_used(), 0x1a432);
+        assert_eq!(nonce(&mut evm, SENDER), u64::MAX);
+        assert_eq!(balance(&mut evm, SENDER), U256::from(1_000));
     }
 
     #[test]
