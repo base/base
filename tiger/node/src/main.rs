@@ -17,6 +17,7 @@ const USAGE: &str = "usage:
              [--authrpc.addr <ip>] [--authrpc.port <port>] [--authrpc.jwtsecret <file>]
              [--http.api <modules>] [--rpc.eth-proof-window <blocks>] [--rollup.sequencer-http <url>]
              [--stateless.upstream <http-url>] [--stateless.start <block|tag>]
+             [--engine.persistence-threshold <blocks>] [--engine.memory-block-buffer-target <blocks>]
              [--port <port>] [--discovery.port <port>] [--disable-discovery]
              [--bootnodes <enode,...>] [--trusted-peers <enode,...>] [--p2p-secret-key <file>]
              [--max-outbound-peers <n>] [--max-inbound-peers <n>] [--nat extip:<ip>]
@@ -34,6 +35,8 @@ struct NodeArgs {
     net: NetArgs,
     /// `--stateless.upstream` and `--stateless.start`.
     stateless: Option<(base_tiger::Upstream, String)>,
+    /// `--engine.persistence-threshold` and `--engine.memory-block-buffer-target`.
+    persistence: (u64, u64),
 }
 
 /// Peer-to-peer options, named as base-reth names them.
@@ -60,8 +63,6 @@ impl NodeArgs {
         "--log.file.directory",
         "--rpc.gascap",
         "--txpool.max-account-slots",
-        "--engine.persistence-threshold",
-        "--engine.memory-block-buffer-target",
         "--verbosity",
         "--log.stdout.format",
     ];
@@ -73,6 +74,7 @@ impl NodeArgs {
         let (mut chain, mut datadir, mut jwt_secret) = (None, None, None);
         let (mut upstream, mut start) = (None, "finalized".to_owned());
         let mut rpc = base_tiger::RpcConfig::default();
+        let mut persistence = (base_tiger::PERSISTENCE_THRESHOLD, base_tiger::MEMORY_BLOCK_BUFFER_TARGET);
         let (mut http_addr, mut http_port) = (localhost, 8545u16);
         let (mut auth_addr, mut auth_port) = (localhost, 8551u16);
         let mut net = NetArgs {
@@ -122,6 +124,12 @@ impl NodeArgs {
                     let blocks = text.parse::<u64>().map_err(|error| format!("--rpc.eth-proof-window {text}: {error}"))?;
                     rpc = rpc.with_eth_proof_window(blocks)?;
                 }
+                "--engine.persistence-threshold" => {
+                    persistence.0 = value()?.parse().map_err(|error| format!("{flag}: {error}"))?;
+                }
+                "--engine.memory-block-buffer-target" => {
+                    persistence.1 = value()?.parse().map_err(|error| format!("{flag}: {error}"))?;
+                }
                 "--stateless.upstream" => upstream = Some(base_tiger::Upstream::new(&value()?)?),
                 "--stateless.start" => start = value()?,
                 "--port" => net.port = parse_port(value()?)?,
@@ -161,6 +169,7 @@ impl NodeArgs {
             rpc,
             net,
             stateless: upstream.map(|upstream| (upstream, start)),
+            persistence,
         })
     }
 
@@ -174,6 +183,7 @@ impl NodeArgs {
         let jwt = JwtSecret::load_or_create(&jwt_path)?;
         let mut node = Node::open(&self.datadir, genesis, self.stateless)?;
         node.rpc_config = self.rpc;
+        node.chain.get_mut().expect("chain lock").set_persistence(self.persistence.0, self.persistence.1)?;
         let node = Arc::new(node);
         {
             let chain = node.chain.read().expect("chain lock");
@@ -185,6 +195,7 @@ impl NodeArgs {
         eprintln!("tiger: p2p on port {}", self.net.port);
         node.start_sync(config)?;
         node.start_prewarm();
+        node.start_persistence()?;
         base_tiger::serve(Arc::clone(&node), self.auth, Some(jwt))?;
         base_tiger::serve(node, self.http, None)?;
         eprintln!("tiger: serving http on {} and the Engine API on {}", self.http, self.auth);

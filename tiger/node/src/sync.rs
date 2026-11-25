@@ -181,6 +181,7 @@ impl Node {
         for (header, hash, transactions) in blocks {
             imported += self.import_one(header, hash, &transactions)?;
             self.advance_canonical(hash)?;
+            self.persistence_backpressure();
         }
         Ok(Some(imported))
     }
@@ -287,6 +288,7 @@ impl Node {
         for (header, body) in headers.iter().zip(bodies) {
             imported += self.import_one(header.header.clone(), header.hash, &body.transactions)?;
             self.advance_canonical(header.hash)?;
+            self.persistence_backpressure();
         }
         Ok(imported)
     }

@@ -15,6 +15,7 @@ pub use node_iter::{HashedCursor, TrieElement, TrieNodeIter};
 mod cursor;
 pub use cursor::{
     AccountTrieCursor, EmptyCursor, HashedAccountCursor, HashedStorageCursor, OverlayCursor, StorageTrieCursor,
+    TrieOverlayCursor,
 };
 
 mod root;
@@ -30,4 +31,4 @@ mod write;
 pub use write::StateWriter;
 
 mod state_db;
-pub use state_db::{AccountInfo, BlockChanges, PreparedRoot, StateDb, StateView};
+pub use state_db::{AccountInfo, BlockChanges, MemState, PreparedRoot, StateDb, StateView};

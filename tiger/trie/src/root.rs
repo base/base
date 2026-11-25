@@ -6,9 +6,9 @@ use alloy_trie::{EMPTY_ROOT_HASH, HashBuilder, Nibbles, proof::ProofRetainer};
 use base_tiger_store::{Account, Db, Txn};
 
 use crate::{
-    AccountTrieCursor, HashedAccountCursor, HashedCursor, HashedState, HashedStorage, HashedStorageCursor, OverlayCursor,
-    PrefixSet, StorageTrieCursor, StorageTrieUpdates, TrieElement, TrieError, TrieNodeIter, TrieUpdates, TrieWalker,
-    account_leaf, nibble_keys, storage_leaf,
+    AccountTrieCursor, HashedAccountCursor, HashedCursor, HashedState, HashedStorage, HashedStorageCursor, MemState,
+    OverlayCursor, PrefixSet, StorageTrieCursor, StorageTrieUpdates, TrieElement, TrieError, TrieNodeIter,
+    TrieOverlayCursor, TrieUpdates, TrieWalker, account_leaf, nibble_keys, storage_leaf,
 };
 
 /// An account proof with its storage proofs (`eth_getProof`).
@@ -46,26 +46,51 @@ pub struct TrieView<'t, K> {
     pub db: &'t Db,
     /// Hashed state changes over the tables.
     pub state: &'t HashedState,
+    /// The in-memory canonical blocks between the tables and `state`.
+    pub mem: Option<&'t MemState>,
+}
+
+/// Sorted overlay entries of one account's storage changes (zero removes).
+fn slot_overlay(changes: Option<&HashedStorage>) -> Vec<(B256, Option<U256>)> {
+    changes.map(|s| s.slots.iter().map(|(k, v)| (*k, (!v.is_zero()).then_some(*v))).collect()).unwrap_or_default()
 }
 
 impl<'t, K> TrieView<'t, K> {
     /// A view of `txn` with `state` on top.
     pub const fn new(txn: &'t Txn<K>, db: &'t Db, state: &'t HashedState) -> Self {
-        Self { txn, db, state }
+        Self { txn, db, state, mem: None }
     }
 
-    fn account_cursor(&self) -> Result<OverlayCursor<HashedAccountCursor<'t, K>>, TrieError> {
+    /// This view with the in-memory layer `mem` between the tables and its state.
+    pub const fn with_mem(self, mem: Option<&'t MemState>) -> Self {
+        Self { mem, ..self }
+    }
+
+    fn account_cursor(&self) -> Result<OverlayCursor<OverlayCursor<HashedAccountCursor<'t, K>>>, TrieError> {
+        let mem = self.mem.map(|m| m.hashed.accounts.iter().map(|(k, a)| (*k, *a)).collect()).unwrap_or_default();
+        let base = OverlayCursor::new(HashedAccountCursor::new(self.txn, self.db)?, false, mem);
         let overlay = self.state.accounts.iter().map(|(k, a)| (*k, *a)).collect();
-        Ok(OverlayCursor::new(HashedAccountCursor::new(self.txn, self.db)?, false, overlay))
+        Ok(OverlayCursor::new(base, false, overlay))
     }
 
-    fn storage_cursor(&self, address: B256) -> Result<OverlayCursor<HashedStorageCursor<'t, K>>, TrieError> {
+    fn storage_cursor(&self, address: B256) -> Result<OverlayCursor<OverlayCursor<HashedStorageCursor<'t, K>>>, TrieError> {
+        let mem = self.mem.and_then(|m| m.hashed.storages.get(&address));
+        let base = OverlayCursor::new(
+            HashedStorageCursor::new(self.txn, self.db, address)?,
+            mem.is_some_and(|s| s.wiped),
+            slot_overlay(mem),
+        );
         let changes = self.state.storages.get(&address);
-        let wiped = changes.is_some_and(|s| s.wiped);
-        let overlay = changes
-            .map(|s| s.slots.iter().map(|(k, v)| (*k, (!v.is_zero()).then_some(*v))).collect())
-            .unwrap_or_default();
-        Ok(OverlayCursor::new(HashedStorageCursor::new(self.txn, self.db, address)?, wiped, overlay))
+        Ok(OverlayCursor::new(base, changes.is_some_and(|s| s.wiped), slot_overlay(changes)))
+    }
+
+    /// The trie nodes of `address`'s storage: the stored ones (unless a wipe in memory or in the
+    /// view's state dropped them) with the in-memory changes on top.
+    fn storage_trie_cursor(&self, address: B256, wiped: bool) -> Result<TrieOverlayCursor<StorageTrieCursor<'t, K>>, TrieError> {
+        let mem = self.mem.and_then(|m| m.trie.storage_tries.get(&address)).filter(|_| !wiped);
+        let empty = wiped || mem.is_some_and(|m| m.wiped);
+        let overlay = mem.map(|m| m.nodes.iter().map(|(p, n)| (*p, n.clone())).collect()).unwrap_or_default();
+        Ok(TrieOverlayCursor::new(StorageTrieCursor::new(self.txn, self.db, address, empty)?, overlay))
     }
 
     fn storage_prefix_set(&self, address: B256, extra: &[B256]) -> PrefixSet {
@@ -90,7 +115,7 @@ impl<'t, K> TrieView<'t, K> {
         if cursor.seek(B256::ZERO)?.is_none() && (!retain || prefix_set.is_empty()) && targets.is_empty() {
             return Ok((EMPTY_ROOT_HASH, updates, Vec::new()));
         }
-        let trie_cursor = StorageTrieCursor::new(self.txn, self.db, address, wiped)?;
+        let trie_cursor = self.storage_trie_cursor(address, wiped)?;
         let walker = TrieWalker::new(trie_cursor, prefix_set, retain)?;
         let mut builder = HashBuilder::default().with_updates(retain);
         let target_paths = nibble_keys(targets);
@@ -164,7 +189,9 @@ impl<'t, K> TrieView<'t, K> {
         if let Some((key, _)) = &target {
             changed.push(key);
         }
-        let walker = TrieWalker::new(AccountTrieCursor::new(self.txn, self.db)?, PrefixSet::new(nibble_keys(changed)), retain)?;
+        let mem = self.mem.map(|m| m.trie.account_nodes.iter().map(|(p, n)| (*p, n.clone())).collect()).unwrap_or_default();
+        let cursor = TrieOverlayCursor::new(AccountTrieCursor::new(self.txn, self.db)?, mem);
+        let walker = TrieWalker::new(cursor, PrefixSet::new(nibble_keys(changed)), retain)?;
         let mut builder = HashBuilder::default().with_updates(retain);
         if let Some((key, _)) = &target {
             builder = builder.with_proof_retainer(ProofRetainer::new(vec![Nibbles::unpack(*key)]));

@@ -73,6 +73,8 @@ pub struct Node {
     pub witnesses: Option<crate::Witnesses>,
     /// The prewarm queue of a stateless node, once started.
     pub prewarm: OnceLock<crate::Prewarm>,
+    /// The persistence thread of a full state, once started.
+    pub persistence: crate::Persistence,
 }
 
 impl Node {
@@ -90,6 +92,7 @@ impl Node {
             filters: crate::RpcFilters::default(),
             rpc_config: crate::RpcConfig::default(),
             prewarm: OnceLock::new(),
+            persistence: crate::Persistence::default(),
             witnesses: upstream.as_ref().map(|(upstream, _)| crate::Witnesses::new(upstream)),
             upstream: upstream.map(|(upstream, _)| upstream),
         })

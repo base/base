@@ -66,6 +66,41 @@ pub struct BlockChanges {
     pub codes: Vec<(B256, Bytes)>,
 }
 
+/// The canonical blocks held in memory above the stored tip, merged into one layer that reads
+/// check before the datadir: the latest value of every account and slot they changed, their code,
+/// and the trie node changes that move the stored trie to their state, as base-reth's in-memory
+/// state does. Reads through it cost the same at any depth.
+///
+/// A layer stays valid while the datadir only gains blocks it covers (blocks it merged, committed
+/// by the persistence thread), since it holds the latest value of everything they change.
+#[derive(Debug, Clone, Default)]
+pub struct MemState {
+    /// The last block merged (the canonical head).
+    pub head: u64,
+    /// Account and storage changes in hashed-key space.
+    pub hashed: HashedState,
+    /// Trie node changes over the stored trie.
+    pub trie: TrieUpdates,
+    /// Code by hash.
+    pub codes: std::collections::HashMap<B256, Bytes>,
+}
+
+impl MemState {
+    /// An empty layer over stored block `head`.
+    pub fn new(head: u64) -> Self {
+        Self { head, ..Self::default() }
+    }
+
+    /// Merges block `number` on top: its hashed changes, the trie node changes of its state root
+    /// computed over this layer, and its code.
+    pub fn extend(&mut self, number: u64, hashed: &HashedState, trie: &TrieUpdates, codes: &[(B256, Bytes)]) {
+        self.head = number;
+        self.hashed.extend(hashed);
+        self.trie.extend(trie);
+        self.codes.extend(codes.iter().cloned());
+    }
+}
+
 /// [`BlockChanges`] with duplicates resolved, sorted.
 #[derive(Debug, Clone, Default)]
 struct Normalized {
@@ -185,6 +220,24 @@ pub struct PreparedRoot {
     block: u64,
     /// `None` when the view was not the stored tip.
     trie: Option<PreparedTrie>,
+    /// Computed over an in-memory layer ([`StateDb::view_mem`]): the trie changes apply on top
+    /// of block `block`, wherever the datadir held its tip then.
+    layered: bool,
+}
+
+impl PreparedRoot {
+    /// The block's changes in hashed-key space.
+    pub const fn hashed(&self) -> &HashedState {
+        &self.state
+    }
+
+    /// The trie node changes of the block's root over the state after its parent, when kept.
+    pub fn trie_updates(&self) -> Option<&TrieUpdates> {
+        match &self.trie {
+            Some(PreparedTrie::Full(_, updates)) => Some(updates),
+            _ => None,
+        }
+    }
 }
 
 /// The state database over a datadir.
@@ -353,7 +406,7 @@ impl StateDb {
         w: &mut WriteTxn<'_>,
         number: u64,
         changes: &BlockChanges,
-        prepared: Option<PreparedRoot>,
+        prepared: Option<&PreparedRoot>,
     ) -> Result<B256, TrieError> {
         let datadir = w.datadir;
         let db = &datadir.db;
@@ -415,14 +468,22 @@ impl StateDb {
         }
         // Trie and flat state.
         let state = changes.hashed();
+        // A layered root's changes apply on its parent's state, which the caller keeps on the
+        // canonical chain; a root over the datadir applies only on the snapshot it was computed on.
         let reusable = match prepared {
-            Some(p) if p.state == state && txn.id() == p.txn_id + 1 && Datadir::tip_in(txn, db)? == Some(p.block) => p.trie,
+            Some(p)
+                if p.state == state
+                    && (p.layered || txn.id() == p.txn_id + 1)
+                    && Datadir::tip_in(txn, db)? == Some(p.block) =>
+            {
+                p.trie.as_ref()
+            }
             _ => None,
         };
         let root = match reusable {
             Some(PreparedTrie::Full(root, updates)) => {
-                StateWriter::write_trie_updates(txn, db, &updates)?;
-                root
+                StateWriter::write_trie_updates(txn, db, updates)?;
+                *root
             }
             Some(PreparedTrie::Partial(tries)) => {
                 tries.write(txn, db, Some(number))?;
@@ -604,7 +665,17 @@ impl StateDb {
             return Err(TrieError::Corrupt(format!("view at {block} below the history pruned up to block {pruned}")));
         }
         let overlays = overlays.into_iter().map(|c| (c.normalized(), c)).collect();
-        Ok(StateView { db: self, txn, block, tip, overlays, state: std::cell::OnceCell::new() })
+        Ok(StateView { db: self, txn, block, tip, mem: None, overlays, state: std::cell::OnceCell::new() })
+    }
+
+    /// A read view of the state after the canonical blocks merged in `mem` (over the stored tip)
+    /// with `overlays` (blocks after them, oldest first) on top. Full states only.
+    pub fn view_mem(&self, mem: std::sync::Arc<MemState>, overlays: Vec<BlockChanges>) -> Result<StateView<'_>, TrieError> {
+        assert!(!self.partial, "a partial state keeps no in-memory layer");
+        let txn = self.datadir.db.read()?;
+        let tip = Datadir::tip_in(&txn, &self.datadir.db)?.ok_or_else(|| TrieError::Corrupt("empty datadir".into()))?;
+        let overlays = overlays.into_iter().map(|c| (c.normalized(), c)).collect();
+        Ok(StateView { db: self, txn, block: tip, tip, mem: Some(mem), overlays, state: std::cell::OnceCell::new() })
     }
 }
 
@@ -615,6 +686,8 @@ pub struct StateView<'d> {
     txn: Txn<Ro>,
     block: u64,
     tip: u64,
+    /// The in-memory canonical blocks between the stored tip and the overlays.
+    mem: Option<std::sync::Arc<MemState>>,
     overlays: Vec<(Normalized, BlockChanges)>,
     /// Reverts to `block` plus the overlays, in hashed space, built on first use.
     state: std::cell::OnceCell<HashedState>,
@@ -646,6 +719,9 @@ impl StateView<'_> {
             }
         }
         let key = hash_key(address.as_slice());
+        if let Some(account) = self.mem.as_ref().and_then(|mem| mem.hashed.accounts.get(&key)) {
+            return Ok(account.map(AccountInfo::from_account));
+        }
         if self.block < self.tip {
             let rocks = &self.db.datadir.rocks;
             let change = History::first_change_after(rocks, RocksTable::AccountsHistory, address.as_slice(), self.block)
@@ -677,6 +753,14 @@ impl StateView<'_> {
         }
         let key = hash_key(address.as_slice());
         let hashed_slot = hash_key(slot.as_slice());
+        if let Some(storage) = self.mem.as_ref().and_then(|mem| mem.hashed.storages.get(&key)) {
+            if let Some(value) = storage.slots.get(&hashed_slot) {
+                return Ok(*value);
+            }
+            if storage.wiped {
+                return Ok(U256::ZERO);
+            }
+        }
         if self.block < self.tip {
             let rocks = &self.db.datadir.rocks;
             let prefix = [address.as_slice(), slot.as_slice()].concat();
@@ -733,6 +817,9 @@ impl StateView<'_> {
                 return Ok(Some(code.clone()));
             }
         }
+        if let Some(code) = self.mem.as_ref().and_then(|mem| mem.codes.get(&hash)) {
+            return Ok(Some(code.clone()));
+        }
         match self.txn.get(self.dbs().dbi(Table::Bytecodes), hash.as_slice())? {
             Some(bytes) => Ok(Some(BytecodeCodec::decode(bytes)?.into())),
             None if self.db.partial => Err(TrieError::Unknown(format!("code {hash}"))),
@@ -756,7 +843,12 @@ impl StateView<'_> {
         if let Some(root) = self.db.partial_root(&self.txn)? {
             return Ok(StateTries::apply(&self.nodes(), root, state)?.root);
         }
-        Ok(TrieView::new(&self.txn, self.dbs(), state).state_root(false)?.0)
+        Ok(self.trie_view(state).state_root(false)?.0)
+    }
+
+    /// Trie computations over this view's tables and in-memory layer with `state` on top.
+    fn trie_view<'s>(&'s self, state: &'s HashedState) -> TrieView<'s, Ro> {
+        TrieView::new(&self.txn, self.dbs(), state).with_mem(self.mem.as_deref())
     }
 
     /// The state root after `extra` with the trie changes that produce it, for
@@ -765,7 +857,13 @@ impl StateView<'_> {
         let changes = extra.hashed();
         let reusable = self.block == self.tip && self.overlays.is_empty();
         if !reusable {
-            return Ok(PreparedRoot { root: self.state_root(Some(extra))?, state: changes, txn_id: 0, block: 0, trie: None });
+            let root = self.state_root(Some(extra))?;
+            return Ok(PreparedRoot { root, state: changes, txn_id: 0, block: 0, trie: None, layered: false });
+        }
+        if let Some(mem) = &self.mem {
+            let (root, updates) = self.trie_view(&changes).state_root(true)?;
+            let trie = Some(PreparedTrie::Full(root, updates));
+            return Ok(PreparedRoot { root, state: changes, txn_id: 0, block: mem.head, trie, layered: true });
         }
         let (root, trie) = match self.db.partial_root(&self.txn)? {
             Some(root) => {
@@ -777,7 +875,7 @@ impl StateView<'_> {
                 (root, PreparedTrie::Full(root, updates))
             }
         };
-        Ok(PreparedRoot { root, state: changes, txn_id: self.txn.id(), block: self.block, trie: Some(trie) })
+        Ok(PreparedRoot { root, state: changes, txn_id: self.txn.id(), block: self.block, trie: Some(trie), layered: false })
     }
 
     fn nodes(&self) -> DbNodes<'_, Ro> {
@@ -789,7 +887,7 @@ impl StateView<'_> {
         if let Some(root) = self.db.partial_root(&self.txn)? {
             return StateTries::apply(&self.nodes(), root, state)?.storage_root(&self.nodes(), key);
         }
-        TrieView::new(&self.txn, self.dbs(), state).storage_root(key)
+        self.trie_view(state).storage_root(key)
     }
 
     /// The trie nodes a root computation of `extra` over this view loads: the nodes on the path
@@ -808,7 +906,7 @@ impl StateView<'_> {
             return Ok(recording.seen.into_inner().into_values().collect());
         }
         let base = self.hashed()?;
-        let view = TrieView::new(&self.txn, self.dbs(), base);
+        let view = self.trie_view(base);
         let root = view.state_root(false)?.0;
         let source = ProofNodes { view: &view };
         let recording = Recording { inner: &source, seen: Default::default() };
@@ -838,7 +936,7 @@ impl StateView<'_> {
         if let Some(root) = self.db.partial_root(&self.txn)? {
             return StateTries::apply(&self.nodes(), root, self.hashed()?)?.proof(&self.nodes(), key, slots);
         }
-        TrieView::new(&self.txn, self.dbs(), self.hashed()?).proof(key, slots)
+        self.trie_view(self.hashed()?).proof(key, slots)
     }
 
     /// The `eth_getProof` proof of `address` and `slots`.
@@ -851,6 +949,9 @@ impl StateView<'_> {
     /// view's overlay).
     pub fn account_hashed(&self, key: B256) -> Result<Option<Account>, TrieError> {
         if let Some(account) = self.hashed()?.accounts.get(&key) {
+            return Ok(*account);
+        }
+        if let Some(account) = self.mem.as_ref().and_then(|mem| mem.hashed.accounts.get(&key)) {
             return Ok(*account);
         }
         self.db.tip_account(&self.txn, key)

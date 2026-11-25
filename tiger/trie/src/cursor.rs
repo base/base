@@ -249,6 +249,81 @@ impl<C: HashedCursor> HashedCursor for OverlayCursor<C> {
     }
 }
 
+/// Trie node changes over a base trie cursor: overlay nodes (`None` removes) replace base nodes
+/// at the same path. The node changes of the canonical blocks held in memory above the stored
+/// tip ([`crate::MemState`]).
+#[derive(Debug)]
+pub struct TrieOverlayCursor<C> {
+    /// The base cursor.
+    pub base: C,
+    /// Sorted changes.
+    pub overlay: Vec<(Nibbles, Option<BranchNodeCompact>)>,
+    index: usize,
+    base_next: Option<(Nibbles, BranchNodeCompact)>,
+    current: Option<Nibbles>,
+}
+
+impl<C: TrieCursor> TrieOverlayCursor<C> {
+    /// An overlay of sorted `overlay` changes over `base`.
+    pub const fn new(base: C, overlay: Vec<(Nibbles, Option<BranchNodeCompact>)>) -> Self {
+        Self { base, overlay, index: 0, base_next: None, current: None }
+    }
+
+    fn merged(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, TrieError> {
+        loop {
+            let overlay_key = self.overlay.get(self.index).map(|(k, _)| *k);
+            let base_key = self.base_next.as_ref().map(|(k, _)| *k);
+            let entry = match (overlay_key, base_key) {
+                (None, None) => None,
+                (Some(o), b) if b.is_none_or(|b| o <= b) => {
+                    let node = self.overlay[self.index].1.clone();
+                    self.index += 1;
+                    if b == Some(o) {
+                        self.base_next = self.base.next()?;
+                    }
+                    match node {
+                        Some(node) => Some((o, node)),
+                        None => continue,
+                    }
+                }
+                _ => {
+                    let entry = self.base_next.take();
+                    self.base_next = self.base.next()?;
+                    entry
+                }
+            };
+            self.current = entry.as_ref().map(|(k, _)| *k);
+            return Ok(entry);
+        }
+    }
+}
+
+impl<C: TrieCursor> TrieCursor for TrieOverlayCursor<C> {
+    fn seek_exact(&mut self, key: Nibbles) -> Result<Option<(Nibbles, BranchNodeCompact)>, TrieError> {
+        match self.seek(key)? {
+            Some((path, node)) if path == key => Ok(Some((path, node))),
+            _ => {
+                self.current = None;
+                Ok(None)
+            }
+        }
+    }
+
+    fn seek(&mut self, key: Nibbles) -> Result<Option<(Nibbles, BranchNodeCompact)>, TrieError> {
+        self.base_next = self.base.seek(key)?;
+        self.index = self.overlay.partition_point(|(k, _)| *k < key);
+        self.merged()
+    }
+
+    fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, TrieError> {
+        self.merged()
+    }
+
+    fn current(&mut self) -> Result<Option<Nibbles>, TrieError> {
+        Ok(self.current)
+    }
+}
+
 /// A hashed cursor with no entries.
 #[derive(Debug, Default)]
 pub struct EmptyCursor<V>(pub std::marker::PhantomData<V>);

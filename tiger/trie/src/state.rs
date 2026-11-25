@@ -143,6 +143,19 @@ pub struct TrieUpdates {
 }
 
 impl TrieUpdates {
+    /// Applies `later` (node changes made on top of the trie these lead to) on top of `self`.
+    pub fn extend(&mut self, later: &Self) {
+        self.account_nodes.extend(later.account_nodes.iter().map(|(path, node)| (*path, node.clone())));
+        for (address, storage) in &later.storage_tries {
+            if storage.wiped {
+                self.storage_tries.insert(*address, storage.clone());
+            } else {
+                let entry = self.storage_tries.entry(*address).or_default();
+                entry.nodes.extend(storage.nodes.iter().map(|(path, node)| (*path, node.clone())));
+            }
+        }
+    }
+
     /// Merges a hash builder's updated nodes and a walker's stale paths as reth's
     /// `finalize` + `into_sorted` do: updated nodes win over removals, and the root path is
     /// never stored.

@@ -71,6 +71,13 @@ for how the consensus node drives the execution layer.
   computes roots over a stateless witness (the adapter) and over the database (the node).
 - Side blocks validated against any known parent; forkchoice to a different branch unwinds the
   persisted chain with change sets and applies the new branch; restarts reopen the same state.
+- Persistence off the import path, as in base-reth's engine tree: a full node keeps validated
+  canonical blocks in memory, merged into one in-memory state that reads check before the
+  datadir, and a persistence thread commits them in batches (`--engine.persistence-threshold`,
+  default 70, and `--engine.memory-block-buffer-target`, default 5) without holding the engine
+  or chain lock; the Engine API waits once 160 blocks beyond the buffer target are unpersisted.
+  A crash reopens at the last batch and the consensus node sends the rest again. A stateless
+  node commits each canonical block at once (its proofs are fetched at the stored tip).
 - History: state at any past block for `eth_call`, `eth_getBalance` and friends, and
   `eth_getProof` at past blocks (base-reth's default is an archive node; pruning is out).
   A datadir base-reth pruned (`--full`) opens as it is: tiger does not prune further and writes

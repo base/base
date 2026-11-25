@@ -149,6 +149,9 @@ impl Node {
     /// Answers one `engine_*` method.
     pub fn engine(&self, method: &str, params_value: &Value) -> Result<Value, RpcError> {
         let p = params_value;
+        if method.starts_with("engine_newPayload") || method.starts_with("engine_forkchoiceUpdated") {
+            self.persistence_backpressure();
+        }
         match method {
             "engine_exchangeCapabilities" => Ok(json!(Self::CAPABILITIES)),
             "engine_getClientVersionV1" => Ok(json!([{

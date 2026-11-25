@@ -19,7 +19,10 @@ mod state;
 pub use state::{Misses, NodeDb, NodeState, ParentState, StateReadError, block_changes};
 
 mod chain;
-pub use chain::{BLOCK_HASH_WINDOW, Chain, Forkchoice, StatelessStart, StoredBlock, Validation};
+pub use chain::{
+    BLOCK_HASH_WINDOW, Chain, Forkchoice, MEMORY_BLOCK_BUFFER_TARGET, PERSISTENCE_BACKPRESSURE_THRESHOLD, PERSISTENCE_THRESHOLD, PersistBatch, StatelessStart,
+    StoredBlock, Validation,
+};
 
 mod upstream;
 pub use upstream::{BlockKeys, ExecutionWitness, Upstream, Witnesses};
@@ -29,6 +32,9 @@ pub use engine::{EngineState, Imported, Proofs, Version as EngineVersion};
 
 mod prewarm;
 pub use prewarm::Prewarm;
+
+mod persist;
+pub use persist::Persistence;
 
 mod sync;
 pub use sync::{BACKFILL_THRESHOLD, Sync};
