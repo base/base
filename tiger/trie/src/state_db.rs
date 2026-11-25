@@ -460,8 +460,10 @@ impl StateDb {
                 && self.tip_storage_root(txn, root, key)? != EMPTY_ROOT
             {
                 // A partial state cannot record what the wipe removes. Base wipes only empty
-                // storage: EIP-6780 deletes only accounts created in the same transaction, and
-                // EIP-7610 forbids creating over storage.
+                // storage: EIP-6780 deletes only accounts created in the same transaction,
+                // EIP-7610 forbids creating over storage, and an empty account (touched and
+                // deleted by EIP-161) can hold storage only as a genesis allocation, which Base
+                // mainnet has none of (SCOPE.md, accepted differences).
                 return Err(TrieError::Unknown(format!("storage of {address} wiped by block {number}")));
             }
             let slots = read_storage(txn, db, key)?;
