@@ -83,7 +83,13 @@ impl Node {
         if p.get(0).and_then(Value::as_str) == Some("pending") {
             return Err(RpcError::new(-32001, "block not found: pending"));
         }
-        self.find_block(p.get(0))?.ok_or_else(|| RpcError::new(-32001, "block not found"))
+        // An unset `safe` or `finalized` fails reth's block number conversion first.
+        for tag in ["safe", "finalized"] {
+            if p.get(0).and_then(Value::as_str) == Some(tag) && self.find_block(p.get(0))?.is_none() {
+                return Err(RpcError::internal(format!("{tag} block does not exist")));
+            }
+        }
+        self.find_block(p.get(0))?.ok_or_else(|| Self::block_not_found(p.get(0)))
     }
 
     /// The consensus block (header and body) of `block`.

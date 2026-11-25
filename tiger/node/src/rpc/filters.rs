@@ -99,8 +99,10 @@ impl Node {
         }
         let from = from.map(|tag| self.convert_block_number(tag)).transpose()?;
         let to = to.map(|tag| self.convert_block_number(tag)).transpose()?;
-        if to.is_some_and(|to| to > best) {
-            return Err(RpcError::invalid_params("block range extends beyond current head block".into()));
+        if let Some(to) = to.filter(|to| *to > best) {
+            return Err(RpcError::invalid_params(format!(
+                "block range extends beyond current head block: requested {to}, head {best}"
+            )));
         }
         let range = Self::filter_block_range(from, to, best, best)?;
         self.logs_in_range(filter, range).map(|logs| json!(logs))
@@ -142,7 +144,9 @@ impl Node {
             return Err(RpcError::invalid_params("invalid block range params".into()));
         }
         if to > best {
-            return Err(RpcError::invalid_params("block range extends beyond current head block".into()));
+            return Err(RpcError::invalid_params(format!(
+                "block range extends beyond current head block: requested {to}, head {best}"
+            )));
         }
         Ok(Range { from, to })
     }

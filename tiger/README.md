@@ -60,7 +60,7 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `rocksdb` | base-reth storage v2 keeps five tables (history indices, transaction hash numbers, block access lists) in RocksDB; tiger must read and write the same files. Features `lz4`, `zstd` (reth's column family compression), `bindgen-runtime`. |
 | `zstd` | base-reth's compact transaction and receipt encodings in static files are zstd-compressed with reth's dictionaries. |
 | `base-common-consensus` (store) | The Base transaction and receipt types the static-file codecs encode. |
-| `alloy-sol-types` | Solidity ABI encoding and decoding of the native precompile interfaces (`sol!`). |
+| `alloy-sol-types` | Solidity ABI encoding and decoding of the native precompile interfaces (`sol!`), and the node's decoding of revert reasons into RPC error messages as reth does. |
 | `syn`, `quote`, `proc-macro2` | Parsing and generating code in `base-tiger-precompile-macros`. |
 | `k256` (dev) | Signing EIP-2612 permits in the B-20 permit tests (already in the tree through `alloy-primitives/k256`). |
 | `rstest`, `proptest` (dev) | Parameterized and property tests carried over unchanged from the base/base precompile crates. |

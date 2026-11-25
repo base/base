@@ -32,9 +32,9 @@ impl RpcError {
         Self::new(-32602, message)
     }
 
-    /// `-32601`.
-    pub fn method_not_found(method: &str) -> Self {
-        Self::new(-32601, format!("the method {method} does not exist/is not available"))
+    /// jsonrpsee's `-32601` for `method`: `Method not found`, which does not name it.
+    pub fn method_not_found(_method: &str) -> Self {
+        Self::new(-32601, "Method not found")
     }
 
     /// `-32603`.

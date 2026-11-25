@@ -93,7 +93,7 @@ impl Node {
             BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => best,
             BlockNumberOrTag::Earliest => 0,
             BlockNumberOrTag::Number(number) if number > best => {
-                return Err(RpcError::invalid_params("request beyond head block".into()));
+                return Err(RpcError::invalid_params(format!("request beyond head block: requested {number}, head {best}")));
             }
             BlockNumberOrTag::Number(number) => number,
             BlockNumberOrTag::Safe | BlockNumberOrTag::Finalized => {
@@ -107,7 +107,7 @@ impl Node {
         let blocks: Vec<_> = (start..=end).filter_map(|number| chain.canonical_block(number)).collect();
         drop(chain);
         if blocks.len() as u64 != count {
-            return Err(RpcError::invalid_params("invalid block range params".into()));
+            return Err(RpcError::invalid_params("invalid block range".into()));
         }
         // reth's cache holds the blocks imported since it started, never genesis.
         let genesis = self.spec.genesis_number;

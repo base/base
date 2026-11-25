@@ -91,6 +91,7 @@ mod envelope;
 mod fees;
 mod filters;
 pub use filters::RpcFilters;
+mod params;
 mod receipts;
 mod sequencer;
 mod shared;
@@ -98,7 +99,7 @@ mod state;
 
 fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result<T, RpcError> {
     let value = params.get(index).cloned().unwrap_or(Value::Null);
-    serde_json::from_value(value).map_err(|error| RpcError::invalid_params(format!("invalid params: {error}")))
+    serde_json::from_value(value).map_err(params::invalid_params)
 }
 
 impl Node {
@@ -168,7 +169,8 @@ impl Node {
                     Some(Ok(BlockId::Number(BlockNumberOrTag::Pending))) => {
                         return Err(RpcError::new(-32001, "block not found: pending"));
                     }
-                    _ => self.state_block(p.get(2))?.number(),
+                    // A hash is looked up as given, so an unknown one keeps `canonical`.
+                    _ => self.find_block(p.get(2))?.ok_or_else(|| Self::block_not_found(p.get(2)))?.number(),
                 };
                 let head = self.chain.read().expect("chain lock").head().number();
                 if head.saturating_sub(target) > self.rpc_config.eth_proof_window {
@@ -275,9 +277,18 @@ impl Node {
         RpcError::new(4444, format!("pruned history unavailable: requested {requested}, earliest available {earliest}"))
     }
 
-    /// The block whose post-state a state read uses; an unknown block is an error.
+    /// The block whose post-state a state read uses. An unknown block is reth's state provider
+    /// error, which drops `requireCanonical` and names `earliest` by its number (0).
     pub fn state_block(&self, tag: Option<&Value>) -> Result<Arc<StoredBlock>, RpcError> {
-        self.find_block(tag)?.ok_or_else(|| RpcError::new(-32001, "block not found"))
+        self.find_block(tag)?.ok_or_else(|| {
+            let id = tag.and_then(|tag| serde_json::from_value::<BlockId>(tag.clone()).ok()).unwrap_or_default();
+            let id = match id {
+                BlockId::Number(BlockNumberOrTag::Earliest) => BlockId::number(0),
+                BlockId::Hash(hash) => BlockId::hash(hash.block_hash),
+                id => id,
+            };
+            RpcError::new(-32001, format!("block not found: {id}"))
+        })
     }
 
     /// base-reth's `ChannelNonceReader`: the Base transaction channel nonce of `address` under

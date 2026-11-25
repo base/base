@@ -41,6 +41,7 @@ evm2-inspectors.workspace = true
 
 # alloy
 alloy-rlp = { workspace = true, features = ["derive"] }
+alloy-sol-types.workspace = true
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std", "serde"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
@@ -61,7 +62,7 @@ webpki-roots.workspace = true
 
 # serialization
 serde = { workspace = true, features = ["std", "derive"] }
-serde_json = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std", "raw_value", "preserve_order"] }
 
 [features]
 # Edge coverage for guided fuzzing; build with `RUSTC_WRAPPER=etc/tools/diff-adapter/sancov-rustc.sh`

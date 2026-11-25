@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use alloy_consensus::{TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702, TxLegacy};
-use alloy_eips::{eip2930::AccessList, eip4844::VERSIONED_HASH_VERSION_KZG};
+use alloy_eips::{BlockId, eip2930::AccessList, eip4844::VERSIONED_HASH_VERSION_KZG};
 use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, TxKind, U64, U256, keccak256};
 use alloy_rpc_types_eth::{BlockOverrides, TransactionRequest, state::StateOverride};
 use base_common_genesis::BaseFeature;
@@ -23,7 +23,10 @@ use evm2::{
 use evm2_inspectors::access_list::AccessListInspector;
 use serde_json::{Value, json};
 
-use super::{param, shared::Shared};
+use super::{
+    param,
+    shared::{LastStep, Shared},
+};
 use super::state::{RpcDb, RpcState};
 use crate::{Chain, Node, RpcError, chain::StoredBlock};
 
@@ -268,17 +271,10 @@ impl Node {
         Ok(CallBlock { parent, env, spec_timestamp })
     }
 
-    /// reth's `-32001 block not found: <id>`.
+    /// reth's `-32001 block not found: <id>` for a block a request named, printed as alloy's
+    /// `BlockId` prints it: `0x1a`, a tag, or `[canonical ]hash 0x…`. A missing tag is `latest`.
     pub(super) fn block_not_found(tag: Option<&Value>) -> RpcError {
-        let id = match tag {
-            Some(Value::String(text)) => text.clone(),
-            Some(Value::Object(object)) => match (object.get("blockHash"), object.get("blockNumber")) {
-                (Some(hash), _) => format!("hash {}", hash.as_str().unwrap_or_default()),
-                (None, Some(number)) => number.as_str().unwrap_or_default().to_owned(),
-                _ => String::new(),
-            },
-            _ => "latest".to_owned(),
-        };
+        let id = tag.and_then(|tag| serde_json::from_value::<BlockId>(tag.clone()).ok()).unwrap_or_default();
         RpcError::new(-32001, format!("block not found: {id}"))
     }
 
@@ -663,6 +659,14 @@ impl Node {
             HandlerError::EmptyAuthorizationList => (-32003, "EIP-7702 authorization list has invalid fields".to_owned()),
             HandlerError::InsufficientFunds => (-32003, "insufficient funds for gas * price + value".to_owned()),
             HandlerError::RejectCallerWithCode => (-32003, "sender is not an EOA".to_owned()),
+            HandlerError::BlobFeeCapLessThanBlobBaseFee { .. } => {
+                (-32003, "max fee per blob gas less than block blob gas fee".to_owned())
+            }
+            HandlerError::EmptyBlobs => (-32003, "blob transaction missing blob hashes".to_owned()),
+            HandlerError::TooManyBlobs { have, .. } => {
+                (-32003, format!("blob transaction exceeds max blobs per block; got {have}"))
+            }
+            HandlerError::BlobVersionNotSupported => (-32003, "blob hash version mismatch".to_owned()),
             HandlerError::Fatal(_) => (-32603, error.to_string()),
             _ => (-32003, error.to_string()),
         };
@@ -680,10 +684,70 @@ impl Node {
             let mut error = RpcError::new(3, "execution reverted");
             if !result.output.is_empty() {
                 error.data = Some(json!(result.output));
+                // reth's `RevertError`: `Error(string)`, `Panic(uint256)` or UTF-8 output.
+                if let Some(reason) = alloy_sol_types::RevertReason::decode(&result.output) {
+                    let text = reason.to_string();
+                    let text = if reason.is_revert() { text.trim_start_matches("revert: ") } else { text.as_str() };
+                    error.message = format!("execution reverted: {text}");
+                }
             }
             return error;
         }
         RpcError::new(-32003, Self::halt_message(result.stop, gas))
+    }
+
+    /// [`Self::failure`] for a result of `tx` on `evm`, telling evm2's single `InvalidOpcode`
+    /// apart as revm does: re-running the call finds the halting opcode.
+    pub(super) fn failure_on(
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        tx: &alloy_consensus::transaction::Recovered<BaseTxEnvelope>,
+        result: &TxResult<BaseEvmTypes>,
+        gas: u64,
+    ) -> RpcError {
+        if result.stop != InstrStop::InvalidOpcode {
+            return Self::failure(result, gas);
+        }
+        let last = Shared::new(LastStep::default());
+        evm.set_inspector(last.handle());
+        let rerun = evm.call_tx(tx);
+        evm.clear_inspector();
+        drop(rerun);
+        // The top frame's halt ends the call, so its opcode is the last one stepped.
+        let message = match last.into_inner().0 {
+            Some((0xfe, _)) => "EVM error: InvalidFEOpcode".to_owned(),
+            Some((opcode, remaining)) if Self::revm_defines(opcode) => {
+                // revm charges a gated opcode's static gas before it checks the fork.
+                if remaining < Self::gated_static_gas(opcode) {
+                    format!("out of gas: gas required exceeds: {gas}")
+                } else {
+                    "EVM error: NotActivated".to_owned()
+                }
+            }
+            _ => "EVM error: OpcodeNotFound".to_owned(),
+        };
+        RpcError::new(-32003, message)
+    }
+
+    /// Whether revm 43 defines `opcode` on some fork: evm2 halts with `InvalidOpcode` on those
+    /// when the fork has not activated them (revm `NotActivated`), and on every other byte (revm
+    /// `OpcodeNotFound`).
+    fn revm_defines(opcode: u8) -> bool {
+        !matches!(
+            opcode,
+            0x0c..=0x0f | 0x1f | 0x21..=0x2f | 0x4c..=0x4f | 0xa5..=0xe5 | 0xe9..=0xef | 0xf6..=0xf9 | 0xfb | 0xfc
+        )
+    }
+
+    /// revm's static gas of an opcode a Base fork can leave inactive (Cancun and later; Base
+    /// starts at Bedrock).
+    fn gated_static_gas(opcode: u8) -> u64 {
+        match opcode {
+            0x1e => 5,
+            0x49 | 0x5e | 0xe6..=0xe8 => 3,
+            0x5c | 0x5d => 100,
+            0x4a | 0x4b => 2,
+            _ => 0,
+        }
     }
 
     /// reth's message for a halt.
@@ -709,11 +773,12 @@ impl Node {
         let (mut evm, tx, gas, nonce) =
             self.prepare_call(&chain, &state, &request, &mut block, state_overrides.as_ref(), block_overrides.as_ref())
                 .map_err(|error| state.read_error(error))?;
-        let result = Self::run(&mut evm, &tx, gas, nonce).map_err(|error| state.read_error(error))?;
+        let recovered = tx.recovered(gas, nonce)?;
+        let result = evm.call_tx(&recovered).map_err(Self::handler_error).map_err(|error| state.read_error(error))?;
         if result.status {
             return Ok(json!(result.output));
         }
-        Err(Self::failure(&result, result.tx_gas_used()))
+        Err(Self::failure_on(&mut evm, &recovered, &result, result.tx_gas_used()))
     }
 
     fn estimate_gas(&self, p: &Value) -> Result<Value, RpcError> {
@@ -775,7 +840,7 @@ impl Node {
                 if Self::is_revert(&result) && explicit {
                     return self.out_of_gas_error(&mut evm, &tx, gas, max_gas_limit, nonce);
                 }
-                return Err(Self::failure(&result, gas));
+                return Err(Self::failure_on(&mut evm, &tx.recovered(gas, nonce)?, &result, gas));
             }
             let refund = Self::final_refund(&result);
             highest = gas;
@@ -832,7 +897,7 @@ impl Node {
         if result.status {
             return Err(RpcError::new(-32003, format!("out of gas: gas required exceeds: {gas}")));
         }
-        Err(Self::failure(&result, gas))
+        Err(Self::failure_on(evm, &tx.recovered(max_gas_limit, nonce)?, &result, gas))
     }
 
     fn create_access_list(&self, p: &Value) -> Result<Value, RpcError> {
@@ -881,17 +946,18 @@ impl Node {
                 return Ok(json!({
                     "accessList": list,
                     "gasUsed": U256::from(first.tx_gas_used()),
-                    "error": Self::failure(&first, first.tx_gas_used()).message,
+                    "error": Self::failure_on(&mut evm, &recovered, &first, first.tx_gas_used()).message,
                 }));
             }
             tx.access_list = list.clone();
             if tx.ty == 0 {
                 tx.ty = 1;
             }
-            let second = Self::run(&mut evm, &tx, gas, nonce)?;
+            let recovered = tx.recovered(gas, nonce)?;
+            let second = evm.call_tx(&recovered).map_err(Self::handler_error)?;
             let mut out = json!({ "accessList": list, "gasUsed": U256::from(second.tx_gas_used()) });
             if !second.status {
-                out["error"] = json!(Self::failure(&second, second.tx_gas_used()).message);
+                out["error"] = json!(Self::failure_on(&mut evm, &recovered, &second, second.tx_gas_used()).message);
             }
             Ok(out)
         };
@@ -956,6 +1022,25 @@ mod tests {
         assert_eq!(call(&node, "eth_call", json!([underpaid]))["error"]["code"], json!(-32003));
                 // An unknown block is -32001.
         assert_eq!(call(&node, "eth_call", json!([{ "to": REVERTER }, "0x5"]))["error"]["code"], json!(-32001));
+    }
+
+    #[test]
+    fn failures_carry_reths_messages() {
+        let node = node();
+        let callee = "0x000000000000000000000000000000000000c0de";
+        let message = |method: &str, code: &str| {
+            let params = json!([{ "to": callee }, "latest", { callee: { "code": code } }]);
+            call(&node, method, params)["error"]["message"].clone()
+        };
+        // evm2's one `InvalidOpcode` is split by the byte as revm does: 0xFE, an opcode a later
+        // fork adds (SLOTNUM at Jovian), the same with too little gas for it, and an undefined byte.
+        assert_eq!(message("eth_call", "0xfe"), json!("EVM error: InvalidFEOpcode"));
+        assert_eq!(message("eth_call", "0x4b"), json!("EVM error: NotActivated"));
+        assert_eq!(message("eth_estimateGas", "0x0c"), json!("EVM error: OpcodeNotFound"));
+        let starved = json!([{ "to": callee, "gas": "0x5209" }, "latest", { callee: { "code": "0x4b" } }]);
+        assert_eq!(call(&node, "eth_call", starved)["error"]["message"], json!("out of gas: gas required exceeds: 21001"));
+        // Revert output that is UTF-8 is the reason.
+        assert_eq!(message("eth_call", "0x6468656c6c6f5f526005601bfd"), json!("execution reverted: hello"));
     }
 
     #[test]

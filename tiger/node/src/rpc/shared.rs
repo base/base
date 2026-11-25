@@ -73,3 +73,13 @@ impl<T: EvmTypesHost, I: Inspector<T>> Inspector<T> for Shared<I> {
         self.0.borrow_mut().selfdestruct(contract, target, value, host);
     }
 }
+
+/// The opcode and remaining gas of the last instruction stepped.
+#[derive(Debug, Default)]
+pub(super) struct LastStep(pub(super) Option<(u8, u64)>);
+
+impl<T: EvmTypesHost> Inspector<T> for LastStep {
+    fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
+        self.0 = Some((interp.opcode(), interp.gas().remaining()));
+    }
+}

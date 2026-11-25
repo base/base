@@ -2,14 +2,22 @@
 //! requests, notifications, invalid requests or parse errors, how batches are answered, and how
 //! positional parameters are checked before a method runs.
 
-use serde_json::{Value, json};
+use serde::Deserialize;
+use serde_json::{Value, json, value::RawValue};
 
 use crate::{Node, RpcError};
+
+/// The raw text of a request's `params`, which jsonrpsee decodes parameters from.
+#[derive(Deserialize)]
+struct RawParams<'a> {
+    #[serde(borrow, default)]
+    params: Option<&'a RawValue>,
+}
 
 /// How one object of a body parses.
 enum Envelope<'a> {
     /// A request to answer.
-    Request { id: Value, method: &'a str, params: Value },
+    Request { id: Value, method: &'a str, params: Value, raw: Option<&'a str> },
     /// A notification: no reply, and jsonrpsee does not run the method.
     Notification,
     /// An object with a valid `id` that is not a request.
@@ -30,6 +38,16 @@ impl Node {
         let Some(request) = parsed else {
             return Some(Self::response(Value::Null, Err(RpcError::new(-32700, "Parse error"))));
         };
+        // The body parsed as JSON, so it is UTF-8.
+        let text = std::str::from_utf8(body).expect("JSON is UTF-8");
+        let raw_objects: Vec<&RawValue> = match &request {
+            Value::Array(_) => serde_json::from_str(text).unwrap_or_default(),
+            _ => serde_json::from_str(text).map(|one| vec![one]).unwrap_or_default(),
+        };
+        let raw_params = |index: usize| {
+            let object = raw_objects.get(index)?;
+            serde_json::from_str::<RawParams<'_>>(object.get()).ok()?.params.map(RawValue::get)
+        };
         match request {
             Value::Array(batch) if batch.is_empty() => {
                 Some(Self::response(Value::Null, Err(RpcError::new(-32600, "Invalid request"))))
@@ -37,9 +55,10 @@ impl Node {
             Value::Array(batch) => {
                 let responses: Vec<Value> = batch
                     .iter()
-                    .filter_map(|one| match Self::envelope(one) {
-                        Envelope::Request { id, method, params } => {
-                            Some(Self::response(id, self.dispatch(method, &params, authenticated)))
+                    .enumerate()
+                    .filter_map(|(index, one)| match Self::envelope(one, raw_params(index)) {
+                        Envelope::Request { id, method, params, raw } => {
+                            Some(Self::response(id, self.dispatch(method, &params, raw, authenticated)))
                         }
                         Envelope::Notification => None,
                         Envelope::Invalid(id) => Some(Self::invalid_request(id)),
@@ -48,9 +67,9 @@ impl Node {
                     .collect();
                 (!responses.is_empty()).then_some(Value::Array(responses))
             }
-            one => match Self::envelope(&one) {
-                Envelope::Request { id, method, params } => {
-                    Some(Self::response(id, self.dispatch(method, &params, authenticated)))
+            one => match Self::envelope(&one, raw_params(0)) {
+                Envelope::Request { id, method, params, raw } => {
+                    Some(Self::response(id, self.dispatch(method, &params, raw, authenticated)))
                 }
                 Envelope::Notification => None,
                 Envelope::Invalid(id) => Some(Self::invalid_request(id)),
@@ -62,7 +81,7 @@ impl Node {
     }
 
     /// jsonrpsee's three parses of an object: request, notification, then `{id}`.
-    fn envelope(value: &Value) -> Envelope<'_> {
+    fn envelope<'a>(value: &'a Value, raw: Option<&'a str>) -> Envelope<'a> {
         let Value::Object(object) = value else { return Envelope::Unparsable };
         let version_ok = object.get("jsonrpc").and_then(Value::as_str) == Some("2.0");
         let method = object.get("method").and_then(Value::as_str);
@@ -72,6 +91,7 @@ impl Node {
                 id: id.clone(),
                 method,
                 params: object.get("params").cloned().unwrap_or(Value::Null),
+                raw,
             },
             (true, Some(_), None) => Envelope::Notification,
             (_, _, Some(id)) => Envelope::Invalid(id.clone()),
@@ -99,29 +119,16 @@ impl Node {
         }
     }
 
-    /// Checks the parameter list's shape as jsonrpsee's generated code does, then runs the
+    /// Decodes the parameters as base-reth's signature for the method does, then runs the
     /// method (catching a panic as an internal error).
-    fn dispatch(&self, method: &str, params: &Value, authenticated: bool) -> Result<Value, RpcError> {
+    fn dispatch(&self, method: &str, params: &Value, raw: Option<&str>, authenticated: bool) -> Result<Value, RpcError> {
         if !authenticated && !self.rpc_config.serves(method) {
             return Err(RpcError::method_not_found(method));
         }
-        let params = match (Self::arity(method), params) {
-            // A method without parameters never looks at them.
-            (Some((0, _)), _) => Value::Array(Vec::new()),
-            (_, Value::Null) => Value::Array(Vec::new()),
-            (_, Value::Array(_)) => params.clone(),
-            // An object is matched by argument name; with every argument optional, unknown names
-            // leave them all unset.
-            (Some((_, 0)), Value::Object(_)) => Value::Array(Vec::new()),
-            (Some(_), _) => return Err(RpcError::invalid_params("Invalid params".into())),
-            (None, _) => params.clone(),
+        let params = match Self::reth_params(method, raw) {
+            Some(decoded) => Value::Array(decoded?),
+            None => params.clone(),
         };
-        // Required arguments are not `Option`s: a missing or `null` one does not deserialize.
-        if let (Some((_, required)), Value::Array(items)) = (Self::arity(method), &params)
-            && (items.len() < required || items[..required].iter().any(Value::is_null))
-        {
-            return Err(RpcError::invalid_params("Invalid params".into()));
-        }
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.call(method, &params, authenticated)))
             .unwrap_or_else(|panic| {
                 let message = panic
@@ -134,54 +141,6 @@ impl Node {
             })
     }
 
-    /// `(parameters, required parameters)` of each method base-reth serves, from its RPC trait
-    /// signatures; `None` for methods tiger does not know.
-    fn arity(method: &str) -> Option<(usize, usize)> {
-        Some(match method {
-            "eth_chainId" | "eth_blockNumber" | "net_version" | "eth_syncing" | "web3_clientVersion"
-            | "eth_gasPrice" | "eth_maxPriorityFeePerGas" | "eth_blobBaseFee" | "eth_newBlockFilter"
-            | "rpc_modules" | "eth_config" => (0, 0),
-            "eth_getBalance" => (2, 1),
-            "eth_getCode" => (2, 1),
-            "eth_getTransactionCount" => (3, 1),
-            "eth_getStorageAt" | "eth_getProof" => (3, 2),
-            "eth_getBlockByNumber" | "eth_getBlockByHash" => (2, 2),
-            "eth_getUncleByBlockNumberAndIndex"
-            | "eth_getUncleByBlockHashAndIndex"
-            | "eth_getTransactionByBlockHashAndIndex"
-            | "eth_getTransactionByBlockNumberAndIndex"
-            | "eth_getRawTransactionByBlockHashAndIndex"
-            | "eth_getRawTransactionByBlockNumberAndIndex"
-            | "eth_getTransactionBySenderAndNonce" => (2, 2),
-            "eth_getTransactionByHash"
-            | "eth_getTransactionReceipt"
-            | "eth_getBlockReceipts"
-            | "eth_getBlockTransactionCountByNumber"
-            | "eth_getBlockTransactionCountByHash"
-            | "eth_getUncleCountByBlockNumber"
-            | "eth_getUncleCountByBlockHash"
-            | "eth_getRawTransactionByHash"
-            | "debug_getRawTransaction"
-            | "debug_getRawHeader"
-            | "debug_getRawBlock"
-            | "debug_getRawReceipts"
-            | "eth_getLogs"
-            | "eth_newFilter"
-            | "eth_getFilterChanges"
-            | "eth_getFilterLogs"
-            | "eth_uninstallFilter"
-            | "trace_block"
-            | "trace_transaction"
-            | "base_transactionStatus"
-            | "eth_sendRawTransaction" => (1, 1),
-            "eth_call" | "eth_estimateGas" => (4, 1),
-            "eth_createAccessList" | "debug_traceCall" => (3, 1),
-            "eth_simulateV1" => (2, 1),
-            "eth_feeHistory" => (3, 2),
-            "debug_traceTransaction" | "debug_traceBlockByNumber" | "debug_traceBlockByHash" => (2, 1),
-            _ => return None,
-        })
-    }
 }
 
 #[cfg(test)]
@@ -216,5 +175,19 @@ mod tests {
         assert_eq!(scalar["result"], json!("0x0"), "a method without parameters ignores them");
         let scalar = reply(&node, r#"{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","params":"latest"}"#).unwrap();
         assert_eq!(scalar["error"]["code"], json!(-32602));
+        // Decode errors are jsonrpsee's: `Invalid params` with the decoder's text as `data`,
+        // serde positions included, and objects matched by reth's argument names.
+        let data = |body: &str| reply(&node, body).unwrap()["error"]["data"].clone();
+        assert_eq!(data(r#"{"jsonrpc":"2.0","id":1,"method":"eth_getBlockReceipts","params":[]}"#), json!("No more params"));
+        assert_eq!(
+            data(r#"{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","params":"latest"}"#),
+            json!("Invalid params. Expected one of '[', ']' or ',' but found \"\\\"latest\\\"\"")
+        );
+        assert_eq!(
+            data(r#"{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionByHash","params":{"0":"0x00"}}"#),
+            json!("missing field `hash` at line 1 column 12")
+        );
+        let unknown = reply(&node, r#"{"jsonrpc":"2.0","id":1,"method":"ETH_CHAINID","params":[]}"#).unwrap();
+        assert_eq!(unknown["error"], json!({ "code": -32601, "message": "Method not found" }));
     }
 }
