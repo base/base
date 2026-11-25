@@ -67,7 +67,11 @@ parking_lot.workspace = true
 clap = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
-reth-provider.workspace = true
+alloy-signer.workspace = true
+base-test-utils.workspace = true
+alloy-signer-local.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
 reth-ethereum-forks.workspace = true
 metrics-exporter-prometheus.workspace = true
 base-execution-chainspec.workspace = true
@@ -86,6 +90,10 @@ harness = false
 
 [[bench]]
 name = "native_resting_sweep"
+harness = false
+
+[[bench]]
+name = "native_mainnet_shape"
 harness = false
 
 [features]
