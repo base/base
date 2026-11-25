@@ -415,13 +415,19 @@ impl RpcCampaign {
             .collect()
     }
 
+    /// Times the reference is asked again before a disagreement counts as deterministic. Some
+    /// answers vary only now and then, such as which of several invalid overrides base-reth
+    /// names (it iterates a randomly seeded map).
+    pub const REFERENCE_RETRIES: usize = 3;
+
     /// Compares the replies to one case and records the outcome.
     ///
     /// `serving` are the nodes that answered, in `replies` order; with them, a disagreement is
-    /// checked and shrunk. The request is sent to the reference again, and if its two answers
-    /// differ the answer is not deterministic (such as a `pending` block's random `prevRandao`)
-    /// and the case is counted in `nondeterministic` instead of becoming a finding. The first
-    /// case of a new signature is minimized (see [`Self::minimize`]).
+    /// checked and shrunk. The request is sent to the reference again (up to
+    /// [`Self::REFERENCE_RETRIES`] times), and if any answer differs the answer is not
+    /// deterministic (such as a `pending` block's random `prevRandao`) and the case is counted
+    /// in `nondeterministic` instead of becoming a finding. The first case of a new signature
+    /// is minimized (see [`Self::minimize`]).
     pub fn record(
         case: &RpcCase,
         replies: &[(String, Reply)],
@@ -477,8 +483,11 @@ impl RpcCampaign {
         if !verdict.agree
             && failed.is_empty()
             && let Some(reference) = serving.first()
-            && let again = reference.send(&case.body)
-            && RpcCompare::normalize(&case.method, &again, config.strict_errors) != normalized[0].1
+            && let Some(again) =
+                (0..Self::REFERENCE_RETRIES).map(|_| reference.send(&case.body)).find(|again| {
+                    RpcCompare::normalize(&case.method, again, config.strict_errors)
+                        != normalized[0].1
+                })
         {
             let mut s = summary.lock().expect("lock");
             s.requests += 1;
