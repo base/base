@@ -281,11 +281,32 @@ defaults to `<benchmark-run>-<timestamp>` when omitted. Upload the metrics and a
 `metadata.json` when publishing to the report service because metadata is its completion signal.
 
 The native builder produces every canonical block at both cadences, so read
-`reth_base_builder_native_payload_{build,execution,state_root}_duration_avg` for build timing.
+`reth_base_builder_native_payload_*_duration_avg` for build timing. `build` splits into four
+consecutive stages that sum to it: `execution` (pre-execution changes, all transactions, and
+starting the end-of-block resting sweep),
+`state_root_wait` (blocked on the parallel state-root job after execution), `finish`
+(`BlockBuilder::finish`: post-execution changes, hashed post-state, block assembly, and the
+synchronous state root when no job produced one) and `seal` (block hash through payload
+construction). `state_root` is the last three together. The builder also logs each block's stages
+in microseconds at `debug` as `native payload build timings` (target `payload_builder`).
 `reth_base_builder_txs_included_per_block_flow_*_avg` and
 `reth_base_builder_tx_gas_used_per_block_flow_*_avg` count pool transactions, excluding sequencer
 transactions. Like every histogram average they span
 the scrape interval; `transactions/per_block` and `gas/per_block` are exact per block.
+
+### Compare two builds
+
+`etc/scripts/local/bench_ab_report.py` summarizes snapshot output directories: sequencer and
+validator gas/s, the build stages and their sum check, engine insert time, and persistence per
+block (save time over batch size) against the block interval. Pass one arm's directories, or two
+arms with `--b`, to get per-arm medians and B's change from A. For a comparison that holds,
+alternate the two binaries (A B B A, at least two rounds) on the same host, snapshot, restored
+datadirs and load-test YAML, restore the datadirs before every run, and give each run its own
+`--output-dir`:
+
+```bash
+etc/scripts/local/bench_ab_report.py results/a-1 results/a-2 --b results/b-1 results/b-2
+```
 
 For a saturated Blake2f comparison with equal 60-second measured windows, provide separate 2s and
 200ms YAMLs with 30 and 300 measured blocks, respectively. Both should issue one fixed 50,000-round

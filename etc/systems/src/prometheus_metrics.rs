@@ -18,7 +18,10 @@ use url::Url;
 const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_native_payload_build_duration_avg",
     "reth_base_builder_native_payload_execution_duration_avg",
+    "reth_base_builder_native_payload_finish_duration_avg",
+    "reth_base_builder_native_payload_seal_duration_avg",
     "reth_base_builder_native_payload_state_root_duration_avg",
+    "reth_base_builder_native_payload_state_root_wait_duration_avg",
     "reth_base_builder_predicate_accounts_loaded_total_avg",
     "reth_base_builder_predicate_accounts_loaded_unique_avg",
     "reth_base_builder_predicate_buckets_avg",

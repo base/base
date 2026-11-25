@@ -60,12 +60,12 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
-    HoldInterrupt, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
-    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    HoldInterrupt, InclusionTracker, MeteringProvider, NativeBuildTimings,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
+    RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
+    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -636,11 +636,13 @@ impl<Txs> Builder<'_, Txs> {
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
         }
-        let execution_duration = build_start.elapsed();
         // Start the end-of-block sweep now so it overlaps the state root.
         let resting = resting
             .zip(resting_predicates.as_ref())
             .map(|(resting, store)| store.finish(resting.take_predicates()));
+        // Consecutive instants bound each stage, so the stages sum to the whole build. Execution
+        // ends after the sweep starts, so the state-root wait counts only the state-root job.
+        let execution_end = Instant::now();
 
         let block_num = ctx.parent().number().saturating_add(1);
         let state_root = state_root_handle.and_then(|mut task| {
@@ -668,6 +670,8 @@ impl<Txs> Builder<'_, Txs> {
                 }
             }
         });
+        let state_root_end = Instant::now();
+        let state_root_from_job = state_root.is_some();
         let BlockBuilderOutcome {
             execution_result,
             hashed_state,
@@ -676,9 +680,11 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list,
         } = debug_span!("finish_payload", block_num)
             .in_scope(|| builder.finish(state_provider, state_root))?;
+        let finish_end = Instant::now();
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
+        let gas_used = sealed_block.header().gas_used();
         if let (Some(resting), Some(store)) = (resting, resting_predicates) {
             store.put(resting, sealed_block.hash());
         }
@@ -711,7 +717,25 @@ impl<Txs> Builder<'_, Txs> {
         // records its inclusion.
         if !no_tx_pool {
             BuilderMetrics::record_inclusion(&info.inclusion);
-            BuilderMetrics::record_native_build(execution_duration, build_start.elapsed());
+            let timings = NativeBuildTimings {
+                execution: execution_end - build_start,
+                state_root_wait: state_root_end - execution_end,
+                finish: finish_end - state_root_end,
+                seal: finish_end.elapsed(),
+            };
+            BuilderMetrics::record_native_build(&timings);
+            debug!(
+                target: "payload_builder",
+                block_number = block_num,
+                gas_used,
+                state_root_from_job,
+                build_us = timings.total().as_micros() as u64,
+                execution_us = timings.execution.as_micros() as u64,
+                state_root_wait_us = timings.state_root_wait.as_micros() as u64,
+                finish_us = timings.finish.as_micros() as u64,
+                seal_us = timings.seal.as_micros() as u64,
+                "native payload build timings"
+            );
         }
 
         if no_tx_pool || ctx.is_one_shot_building_active() {
@@ -2052,11 +2076,24 @@ mod tests {
             rendered.contains(r#"base_builder_txs_included_per_block_count{flow="standard"} 1"#)
         );
         assert!(rendered.contains(r#"base_builder_txs_included_per_block_sum{flow="standard"} 1"#));
-        for stage in ["build", "execution", "state_root"] {
+        for stage in ["build", "execution", "state_root", "state_root_wait", "finish", "seal"] {
             assert!(
                 rendered.contains(&format!("base_builder_native_payload_{stage}_duration_count 1"))
             );
         }
+        // The stages partition the build, so their recorded times add up to the whole build.
+        let sum = |stage: &str| -> f64 {
+            let prefix = format!("base_builder_native_payload_{stage}_duration_sum ");
+            rendered
+                .lines()
+                .find_map(|line| line.strip_prefix(prefix.as_str()))
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_else(|| panic!("missing {stage} sum"))
+        };
+        let stages: f64 =
+            ["execution", "state_root_wait", "finish", "seal"].into_iter().map(sum).sum();
+        assert!((sum("build") - stages).abs() < 1e-6, "stages {stages} != build {}", sum("build"));
+        assert!((sum("state_root") - (stages - sum("execution"))).abs() < 1e-6);
     }
 
     const DENIM_TIMESTAMP: u64 = 1;
