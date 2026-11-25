@@ -73,13 +73,17 @@ the consensus node sees, p50 / p90 / p99 in ms:
 | 08:40 | 26.3 / 89 / 344 | 17.5 / 44 / 108 | 1.5× |
 | 11:32 | 22.2 / 75 / 258 | 16.5 / 47 / 139 | 1.35× |
 | 15:48 (state root reads fewer pages) | 25.1 / 92 / 299 | 20.3 / 56 / 169 | 1.24× |
+| 17:38 (fewer trie reads, in-memory trie answers) | 21.9 / 85 / 262 | 22.5 / 69 / 206 | 0.97× |
 
-- In the 15:48 window the host was busier (base-reth's p50 above its usual 12 to 18 ms), so
-  compare the ratios; tiger's state root p50 there was 10.8 ms, down from 17.3 ms two hours
-  earlier, after the walker stopped reading hashed-state pages it would discard.
+- In the 15:48 and 17:38 windows the host was busier (base-reth's p50 above its usual 12 to
+  18 ms), so compare the ratios. tiger's state root p50 went from 17.3 ms (14:06) to 10.8 ms
+  (15:48) to 7.0 ms (17:38) as the walker stopped reading hashed-state pages it would discard
+  and stopped reading stored trie rows the in-memory blocks already answer. At 17:38 tiger
+  matched base-reth at p50; its p90 and p99 are 1.2 to 1.3× base-reth's, from execution's cold
+  reads (exec p99 205 ms).
 - Execution alone is at parity with base-reth (p50 8.8 ms vs about 9).
-- On the warm replay bench, validation (execution plus state root) takes p50 3.8 ms per block,
-  with the state root at 1.6 ms.
+- On the warm replay bench, validation (execution plus state root) takes p50 3.4 ms per block,
+  with the state root at 1.2 ms.
 - The remaining live gap is cold reads: sampled live, the validating thread waits on disk reads
   78% of its time. Most of those reads are the state root's trie and hashed-state pages; work
   continues there.
