@@ -911,10 +911,17 @@ impl Node {
     }
 
     fn create_access_list(&self, p: &Value) -> Result<Value, RpcError> {
-        // reth resolves the block before the request turns into a transaction environment.
-        param::<BaseTransactionRequest>(p, 0)?;
+        // reth resolves the block and applies the state overrides before the request turns
+        // into a transaction environment, which is where a Base transaction is rejected.
+        let base_tx = param::<BaseTransactionRequest>(p, 0)?.as_base_tx().is_some();
         let state_overrides: Option<StateOverride> = param(p, 2)?;
         let mut block = self.call_block(p.get(1), false)?;
+        if let (true, Some(overrides)) = (base_tx, &state_overrides) {
+            let chain = self.chain.read().expect("chain lock");
+            let state = self.rpc_state(&chain, &block.parent)?;
+            let mut evm = self.call_evm(&chain, &state, &block, CallKind::Call);
+            Self::apply_state_overrides(&mut evm, overrides).map_err(|error| state.read_error(error))?;
+        }
         let request = self.plain_request(p, p.get(1), "eth_createAccessList")?;
         let initial = request.access_list.clone().unwrap_or_default();
         let chain = self.chain.read().expect("chain lock");
@@ -1050,6 +1057,10 @@ mod tests {
         // revm reports DUPn on a short stack as an overflow; other underflows stay underflows.
         assert_eq!(message("eth_call", "0x8f"), json!("EVM error: StackOverflow"));
         assert_eq!(message("eth_call", "0x50"), json!("EVM error: StackUnderflow"));
+        // createAccessList applies the state overrides before it rejects a Base transaction.
+        let both = json!({ callee: { "state": {}, "stateDiff": {} } });
+        let base_tx = call(&node, "eth_createAccessList", json!([{ "type": "0x79" }, "latest", both]));
+        assert_eq!(base_tx["error"]["message"], json!(format!("account {callee} has both 'state' and 'stateDiff'")));
         let starved = json!([{ "to": callee, "gas": "0x5209" }, "latest", { callee: { "code": "0x4b" } }]);
         assert_eq!(call(&node, "eth_call", starved)["error"]["message"], json!("out of gas: gas required exceeds: 21001"));
         // Revert output that is UTF-8 is the reason.
