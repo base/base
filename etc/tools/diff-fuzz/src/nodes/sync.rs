@@ -78,6 +78,9 @@ pub struct SyncReport {
     /// it from. Allowed (a clear error, never a wrong value), and counted. A refusal the source
     /// could have proven is a mismatch.
     pub partial_state_errors: Vec<String>,
+    /// Accepted differences the target ran into, after which the remaining phases are skipped.
+    /// Only [`SyncCheck::accepted_wipe`]: tiger's finding S2, accepted as unreachable on Base.
+    pub accepted: Vec<String>,
 }
 
 /// A source node driven by a state session and a target node that syncs from it.
@@ -122,6 +125,7 @@ impl SyncCheck {
                 source_finalized_at_start: None,
                 first_block: None,
                 partial_state_errors: Vec::new(),
+                accepted: Vec::new(),
             },
         }
     }
@@ -349,6 +353,38 @@ impl SyncCheck {
         status
     }
 
+    /// tiger's accepted finding S2, if the target's log shows it: a stateless node cannot
+    /// commit a block whose EIP-161 deletion wipes the storage of an empty account it holds
+    /// only partly, and retries forever. Only an empty account with storage can be wiped that
+    /// way, and only a genesis allocation can be such an account (storage needs code
+    /// otherwise); Base mainnet and Sepolia allocate none. So the error must name an account
+    /// that this chain's genesis allocates with storage and without code or nonce.
+    fn accepted_wipe(&self) -> Option<String> {
+        const PREFIX: &str = "state not held locally: storage of ";
+        let log = std::fs::read_to_string(self.proc.log_path()).ok()?;
+        let line = log.lines().rev().find(|line| line.contains(PREFIX))?;
+        let rest = line.split(PREFIX).nth(1)?;
+        let address = rest.split(' ').next()?.to_lowercase();
+        let genesis: Value =
+            serde_json::from_slice(&std::fs::read(self.proc.root.join("genesis.json")).ok()?)
+                .ok()?;
+        let alloc = genesis["alloc"].as_object()?.iter().find_map(|(key, account)| {
+            let key = key.to_lowercase();
+            let key = if key.starts_with("0x") { key } else { format!("0x{key}") };
+            (key == address).then_some(account)
+        })?;
+        let zero = |v: &Value| {
+            v.is_null()
+                || v.as_str()
+                    .is_some_and(|s| s.trim_start_matches("0x").trim_start_matches('0').is_empty())
+                || v.as_u64() == Some(0)
+        };
+        let empty_with_storage = alloc["storage"].as_object().is_some_and(|s| !s.is_empty())
+            && zero(&alloc["code"])
+            && zero(&alloc["nonce"]);
+        empty_with_storage.then(|| format!("S2 (accepted, unreachable on Base): {rest}"))
+    }
+
     /// Moves the target to the source head, waits for `VALID`, and compares every height.
     fn phase(
         &mut self,
@@ -361,9 +397,21 @@ impl SyncCheck {
         let head = (head.number, head.hash);
         let mut mismatches = Vec::new();
         loop {
+            if !self.report.accepted.is_empty() {
+                statuses.push("skipped after an accepted difference".to_owned());
+                break;
+            }
             let status = self.send_forkchoice(&mut statuses);
             if status == "VALID" {
                 break;
+            }
+            if status == "SYNCING"
+                && self.config.stateless_start.is_some()
+                && let Some(accepted) = self.accepted_wipe()
+            {
+                eprintln!("sync: accepted: {accepted}");
+                self.report.accepted.push(accepted);
+                continue;
             }
             if status != "SYNCING" && status != "ACCEPTED" {
                 mismatches.push(format!("forkchoice answered {status}"));
@@ -380,7 +428,11 @@ impl SyncCheck {
             thread::sleep(Duration::from_millis(500));
         }
         let millis = started.elapsed().as_millis();
-        let heights = if mismatches.is_empty() { self.compare(head, &mut mismatches)? } else { 0 };
+        let heights = if mismatches.is_empty() && self.report.accepted.is_empty() {
+            self.compare(head, &mut mismatches)?
+        } else {
+            0
+        };
         eprintln!(
             "sync: {name} head {} {} in {millis} ms, {} mismatches",
             head.0,
