@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 
 use crate::{Chain, Genesis, engine::EngineState};
 
+/// A call at least this long is logged under `TIGER_VALIDATION_LOG`.
+const SLOW_CALL: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// A JSON-RPC error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcError {
@@ -100,13 +103,20 @@ impl Node {
 
     /// Answers one JSON-RPC call. `authenticated` calls (the auth port) may use `engine_*`.
     pub fn call(&self, method: &str, params: &Value, authenticated: bool) -> Result<Value, RpcError> {
-        if method.starts_with("engine_") {
-            if !authenticated {
-                return Err(RpcError::method_not_found(method));
-            }
-            return self.engine(method, params);
+        let started = std::time::Instant::now();
+        let result = if !method.starts_with("engine_") {
+            self.rpc(method, params)
+        } else if authenticated {
+            self.engine(method, params)
+        } else {
+            Err(RpcError::method_not_found(method))
+        };
+        // Most calls hold the chain read lock throughout, which a block's insert waits for.
+        let elapsed = started.elapsed();
+        if elapsed >= SLOW_CALL && std::env::var_os("TIGER_VALIDATION_LOG").is_some() {
+            crate::Log::line(format!("tiger: slow call {method} {:.1}ms", elapsed.as_secs_f64() * 1e3));
         }
-        self.rpc(method, params)
+        result
     }
 
     /// Answers one JSON-RPC request object (or batch), returning the response, or `None` for a
