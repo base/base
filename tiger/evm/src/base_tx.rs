@@ -1095,8 +1095,8 @@ impl TxBaseExecutor {
             .map_err(HandlerError::Fatal)?
             .load_code()
             .map_err(HandlerError::Fatal)?;
-        let mut code_address = to;
-        let mut disable_precompiles = false;
+        // As in revm, the code address stays `to`: a precompile there runs whatever delegation
+        // its account holds, and a delegate that is a precompile runs its (empty) account code.
         if let Some(delegate) = code.eip7702_address() {
             code = evm
                 .state_mut()
@@ -1104,8 +1104,6 @@ impl TxBaseExecutor {
                 .map_err(HandlerError::Fatal)?
                 .load_code()
                 .map_err(HandlerError::Fatal)?;
-            code_address = delegate;
-            disable_precompiles = true;
         }
         Ok(Message::<BaseEvmTypes> {
             kind: MessageKind::Call,
@@ -1117,8 +1115,8 @@ impl TxBaseExecutor {
             input: data,
             value,
             code,
-            code_address,
-            disable_precompiles,
+            code_address: to,
+            disable_precompiles: false,
             caller_is_static: false,
             salt: B256::ZERO,
             ext: (),
