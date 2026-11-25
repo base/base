@@ -1,5 +1,7 @@
 //! Block assembly: transaction decoding and the header fields a block's execution determines.
 
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, mpsc};
+
 use alloy_consensus::{
     EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs, transaction::Recovered,
     transaction::SignerRecoverable,
@@ -16,11 +18,41 @@ use evm2::ethereum::TxEnvelope;
 
 use crate::{BaseTxEnvelope, BlockEnvInput, ChainSpec, ComputedHeader};
 
-/// Most threads [`Transactions::decode_all`] recovers a block's senders on.
+/// Most threads [`Transactions::decode_all`] recovers a block's senders on: the caller and
+/// the decode threads.
 const DECODE_THREADS: usize = 8;
-/// Fewest transactions a [`Transactions::decode_all`] thread decodes: below that, starting a
-/// thread costs more than it saves.
+/// Fewest transactions a [`Transactions::decode_all`] thread decodes: below that, handing them
+/// to a thread costs more than it saves.
 const DECODE_CHUNK: usize = 4;
+
+/// One decoded transaction: the signed transaction and its execution form.
+type Decoded = Result<(SignedTx, Recovered<BaseTxEnvelope>), String>;
+/// A chunk of a block's transactions for a decode thread: its index, the transactions, and where
+/// the decoded chunk goes (or the decoding's panic).
+type DecodeJob = (usize, Vec<Bytes>, mpsc::Sender<(usize, std::thread::Result<Vec<Decoded>>)>);
+
+/// The decode threads, started on first use and kept, so a block does not start and join
+/// threads (which cost as much as the recovery they saved).
+fn decode_threads() -> &'static mpsc::Sender<DecodeJob> {
+    static THREADS: OnceLock<mpsc::Sender<DecodeJob>> = OnceLock::new();
+    THREADS.get_or_init(|| {
+        let (jobs, receiver) = mpsc::channel::<DecodeJob>();
+        let receiver = Arc::new(Mutex::new(receiver));
+        for _ in 1..DECODE_THREADS {
+            let receiver = Arc::clone(&receiver);
+            let decode = move || {
+                loop {
+                    let job = receiver.lock().unwrap_or_else(PoisonError::into_inner).recv();
+                    let Ok((index, txs, done)) = job else { return };
+                    let decoded = std::panic::catch_unwind(|| txs.iter().map(Transactions::decode).collect());
+                    let _ = done.send((index, decoded));
+                }
+            };
+            std::thread::Builder::new().name("tiger-decode".into()).spawn(decode).expect("decode thread");
+        }
+        jobs
+    })
+}
 
 /// Decodes block-body transactions and recovers their senders.
 #[derive(Clone, Copy, Debug, Default)]
@@ -45,22 +77,23 @@ impl Transactions {
 
     /// Decodes a block's transactions as [`Self::decode`] does, in order, recovering senders on
     /// up to [`DECODE_THREADS`] threads: signature recovery is most of a block's decoding.
-    pub fn decode_all(raw: &[Bytes]) -> Vec<Result<(SignedTx, Recovered<BaseTxEnvelope>), String>> {
+    pub fn decode_all(raw: &[Bytes]) -> Vec<Decoded> {
         let chunk = raw.len().div_ceil(DECODE_THREADS).max(DECODE_CHUNK);
         if raw.len() <= chunk {
             return raw.iter().map(Self::decode).collect();
         }
-        std::thread::scope(|scope| {
-            let rest: Vec<_> = raw[chunk..]
-                .chunks(chunk)
-                .map(|txs| scope.spawn(move || txs.iter().map(Self::decode).collect::<Vec<_>>()))
-                .collect();
-            let mut decoded: Vec<_> = raw[..chunk].iter().map(Self::decode).collect();
-            for handle in rest {
-                decoded.extend(handle.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)));
-            }
-            decoded
-        })
+        let (done, finished) = mpsc::channel();
+        let chunks = raw[chunk..].chunks(chunk).len();
+        for (index, txs) in raw[chunk..].chunks(chunk).enumerate() {
+            decode_threads().send((index, txs.to_vec(), done.clone())).expect("decode threads run");
+        }
+        let mut decoded: Vec<_> = raw[..chunk].iter().map(Self::decode).collect();
+        let mut rest: Vec<Option<Vec<Decoded>>> = vec![None; chunks];
+        for (index, chunk) in finished.iter().take(chunks) {
+            rest[index] = Some(chunk.unwrap_or_else(|panic| std::panic::resume_unwind(panic)));
+        }
+        decoded.extend(rest.into_iter().flat_map(|chunk| chunk.expect("every chunk decoded")));
+        decoded
     }
 
     /// The evm2 form of a signed transaction, carrying its encoding for the L1 fee.
