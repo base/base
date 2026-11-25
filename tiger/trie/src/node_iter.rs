@@ -1,7 +1,8 @@
 //! Merges the walker's skippable subtrees with hashed leaves, in key order, for the hash builder.
 //!
 //! Ported from reth's `reth-trie` `node_iter.rs` at base/reth 2b20e42 (MIT/Apache-2.0), without
-//! metrics and the seek-caching optimizations.
+//! metrics and the seek-caching optimizations, and without the hashed seek after a skipped
+//! subtree when no changed key can lie before the walker's next node.
 
 use alloy_primitives::B256;
 use alloy_trie::Nibbles;
@@ -68,7 +69,15 @@ impl<C: TrieCursor, H: HashedCursor> TrieNodeIter<C, H> {
             let Some((seek_key, seek_prefix)) = self.walker.next_unprocessed_key() else { break };
             let can_skip_node = self.walker.can_skip_current_node;
             self.walker.advance()?;
-            if can_skip_node && self.walker.key() == Some(&seek_prefix) && self.walker.children_are_in_trie() {
+            // After a skipped subtree, the seek finds nothing before the walker's next node when
+            // that node starts right where the subtree ended (reth's check), or when the walker
+            // stepped to it through stored branches' masks: keys between the two can then only be
+            // ones changed since the rows were stored, and the prefix set has none there (reth
+            // seeks anyway and drops what it finds).
+            let next_is_adjacent = self.walker.key() == Some(&seek_prefix) && self.walker.children_are_in_trie();
+            let gap_is_empty =
+                !self.walker.left_stored_masks && !self.walker.changes.any_in(&seek_prefix, self.walker.key());
+            if can_skip_node && (next_is_adjacent || gap_is_empty) {
                 self.should_check_walker_key = false;
                 continue;
             }

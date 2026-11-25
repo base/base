@@ -53,6 +53,16 @@ impl PrefixSet {
         !self.all && self.keys.is_empty()
     }
 
+    /// Whether some changed key `k` has `start <= k < end` (`end` `None`: unbounded), in
+    /// nibble order, where a path sorts before every key under it.
+    pub fn any_in(&self, start: &Nibbles, end: Option<&Nibbles>) -> bool {
+        if self.all {
+            return true;
+        }
+        let first = self.keys.partition_point(|key| key < start);
+        self.keys.get(first).is_some_and(|key| end.is_none_or(|end| key < end))
+    }
+
     /// Whether some changed key starts with `prefix`.
     pub fn contains(&mut self, prefix: &Nibbles) -> bool {
         if self.all {
@@ -220,6 +230,11 @@ pub struct TrieWalker<C> {
     pub changes: PrefixSet,
     /// Stored node paths the walk found stale, when retained.
     pub removed_keys: Option<Vec<Nibbles>>,
+    /// Whether the last [`Self::advance`] went through a position with no stored branch (the
+    /// root, which is never stored), where it seeks the next stored branch instead of stepping
+    /// through a stored branch's masks: keys may then lie between the old and new positions
+    /// that no mask records.
+    pub left_stored_masks: bool,
 }
 
 impl<C: TrieCursor> TrieWalker<C> {
@@ -231,6 +246,7 @@ impl<C: TrieCursor> TrieWalker<C> {
             stack: vec![CursorSubNode::default()],
             can_skip_current_node: false,
             removed_keys: retain_removed.then(Vec::new),
+            left_stored_masks: false,
         };
         if let Some((key, value)) = this.node(true)? {
             this.stack[0] = CursorSubNode::new(key, Some(value));
@@ -271,6 +287,7 @@ impl<C: TrieCursor> TrieWalker<C> {
 
     /// Moves to the next position to process.
     pub fn advance(&mut self) -> Result<(), TrieError> {
+        self.left_stored_masks = false;
         if let Some(last) = self.stack.last() {
             if !self.can_skip_current_node && self.children_are_in_trie() {
                 match last.position {
@@ -327,6 +344,7 @@ impl<C: TrieCursor> TrieWalker<C> {
     fn move_to_next_sibling(&mut self, mut allow_root_to_child_nibble: bool) -> Result<(), TrieError> {
         loop {
             let Some(subnode) = self.stack.last_mut() else { return Ok(()) };
+            self.left_stored_masks |= subnode.node.is_none();
             if subnode.position.is_last_child() || (subnode.position.is_parent() && !allow_root_to_child_nibble) {
                 self.stack.pop();
                 allow_root_to_child_nibble = false;
