@@ -473,11 +473,31 @@ impl RpcCampaign {
         if !verdict.agree
             && failed.is_empty()
             && let Some(reference) = serving.first()
-            && RpcCompare::normalize(&case.method, &reference.send(&case.body)) != normalized[0].1
+            && let again = reference.send(&case.body)
+            && RpcCompare::normalize(&case.method, &again) != normalized[0].1
         {
             let mut s = summary.lock().expect("lock");
             s.requests += 1;
-            *s.nondeterministic.entry(case.method.clone()).or_default() += 1;
+            let count = s.nondeterministic.entry(case.method.clone()).or_default();
+            *count += 1;
+            let count = *count;
+            drop(s);
+            // Kept so each nondeterministic class can be explained, not only counted.
+            if count as usize <= config.examples
+                && let Ok(mut file) = fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(config.out.join("nondeterministic.jsonl"))
+            {
+                let line = json!({
+                    "method": case.method,
+                    "head": head,
+                    "request": serde_json::from_str::<Value>(&case.body).unwrap_or_else(|_| json!(case.body)),
+                    "responses": Self::raw(replies),
+                    "referenceAgain": Self::raw(&[(serving[0].name.clone(), again)]),
+                });
+                let _ = writeln!(file, "{line}");
+            }
             return verdict;
         }
         let all_errors = normalized.iter().all(|(_, v)| v.get("error").is_some());
