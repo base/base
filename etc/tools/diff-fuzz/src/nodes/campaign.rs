@@ -455,7 +455,8 @@ impl RpcCampaign {
             })
             .flatten()
             .or_else(|| Self::persisted_blockhash(case, head, &normalized))
-            .or_else(|| Self::override_order(case, &replies));
+            .or_else(|| Self::override_order(case, &replies))
+            .or_else(|| Self::precompile_delegation(case, &normalized));
         if Self::simulate_encoding_only(case, &normalized) {
             *summary
                 .lock()
@@ -648,6 +649,11 @@ impl RpcCampaign {
     /// When several state-override accounts set both `state` and `stateDiff`, base/base names a
     /// random one of them: it checks them in the order of a randomly seeded map.
     pub const KNOWN_BASE_OVERRIDE_ORDER: &str = "base: names a random invalid override account";
+    /// A state override giving a precompile address 7702 delegation code: base/base (revm) runs
+    /// the precompile, tiger (evm2) follows the delegation. Only overrides reach it (no one can
+    /// sign an authorization for a precompile address); accepted as won't-fix (finding R7).
+    pub const ACCEPTED_PRECOMPILE_DELEGATION: &str =
+        "accepted: 7702 delegation on a precompile (R7, won't fix)";
     /// base/base accepts a JSON number as a call's `type`.
     pub const KNOWN_BASE_INTEGER_TYPE: &str = "base: integer type accepted";
 
@@ -996,6 +1002,39 @@ impl RpcCampaign {
         let names: Vec<String> =
             replies.iter().map(|(_, reply)| named(reply)).collect::<Option<_>>()?;
         names.iter().any(|n| *n != names[base]).then_some((Self::KNOWN_BASE_OVERRIDE_ORDER, base))
+    }
+
+    /// [`Self::ACCEPTED_PRECOMPILE_DELEGATION`] with base's index, when the nodes disagree on
+    /// an eth\_call, eth\_estimateGas or eth\_createAccessList whose state overrides give a
+    /// precompile address (0x01 to 0x11, or 0x100) code `0xef0100` followed by an address.
+    pub fn precompile_delegation(
+        case: &RpcCase,
+        normalized: &[(String, Value)],
+    ) -> Option<(&'static str, usize)> {
+        let base = normalized.iter().position(|(n, _)| n == "base")?;
+        if normalized.iter().all(|(_, v)| *v == normalized[base].1)
+            || !matches!(
+                case.method.as_str(),
+                "eth_call" | "eth_estimateGas" | "eth_createAccessList"
+            )
+        {
+            return None;
+        }
+        let body: Value = serde_json::from_str(&case.body).ok()?;
+        let delegated = body["params"][2].as_object()?.iter().any(|(address, o)| {
+            let precompile = address
+                .strip_prefix("0x")
+                .filter(|hex| hex.len() == 40)
+                .and_then(|hex| {
+                    u64::from_str_radix(&hex[24..], 16)
+                        .ok()
+                        .filter(|_| hex[..24].bytes().all(|b| b == b'0'))
+                })
+                .is_some_and(|n| (0x01..=0x11).contains(&n) || n == 0x100);
+            let code = o["code"].as_str().unwrap_or_default().to_lowercase();
+            precompile && code.len() == 2 + 46 && code.starts_with("0xef0100")
+        });
+        delegated.then_some((Self::ACCEPTED_PRECOMPILE_DELEGATION, base))
     }
 
     /// [`Self::SETTLED_UNFUNDED_FEE`] with Nethermind's index, when it explains `case`: a priced
@@ -1780,5 +1819,40 @@ mod tests {
         assert_eq!(RpcCampaign::override_order(&case, &replies(a, c)), None);
         // The same account named by both is no disagreement to explain.
         assert_eq!(RpcCampaign::override_order(&case, &replies(a, a)), None);
+    }
+
+    #[test]
+    fn precompile_delegation_needs_delegation_code_on_a_precompile() {
+        let ok = vec![
+            ("base".to_owned(), json!({"id":1,"result":"0x1234"})),
+            ("tiger".to_owned(), json!({"id":1,"result":"0x2a"})),
+        ];
+        let same = vec![ok[0].clone(), ("tiger".to_owned(), ok[0].1.clone())];
+        let delegation = format!("0xef0100{}", "aa".repeat(20));
+        let case = |address: &str, code: &str| {
+            RpcCase::new(
+                "call",
+                "eth_call",
+                json!([{"to": address}, "latest", {address: {"code": code}}]),
+            )
+        };
+        let identity = "0x0000000000000000000000000000000000000004";
+        assert_eq!(
+            RpcCampaign::precompile_delegation(&case(identity, &delegation), &ok),
+            Some((RpcCampaign::ACCEPTED_PRECOMPILE_DELEGATION, 0))
+        );
+        let p256 = "0x0000000000000000000000000000000000000100";
+        assert!(RpcCampaign::precompile_delegation(&case(p256, &delegation), &ok).is_some());
+        // Agreeing nodes need no explanation.
+        assert_eq!(RpcCampaign::precompile_delegation(&case(identity, &delegation), &same), None);
+        // Not accepted: delegation on an ordinary account, other code on a precompile, or an
+        // address past the precompiles.
+        let plain = "0x00000000000000000000000000000000000000aa";
+        assert_eq!(RpcCampaign::precompile_delegation(&case(plain, &delegation), &ok), None);
+        assert_eq!(RpcCampaign::precompile_delegation(&case(identity, "0x602a"), &ok), None);
+        let past = "0x0000000000000000000000000000000000000012";
+        assert_eq!(RpcCampaign::precompile_delegation(&case(past, &delegation), &ok), None);
+        let high = "0x1000000000000000000000000000000000000004";
+        assert_eq!(RpcCampaign::precompile_delegation(&case(high, &delegation), &ok), None);
     }
 }
