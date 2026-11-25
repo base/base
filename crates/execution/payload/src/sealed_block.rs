@@ -13,10 +13,9 @@ use crate::ResourceMeteringDimension;
 /// State-root time at or above which a sealed block's observation logs at `warn` instead of
 /// `debug`.
 ///
-/// On Mainnet the builder's p99 is about 140 ms, and about 2% of sampled follower blocks reach
-/// 100 ms. A 50 ms threshold therefore warns on more than 1% of blocks, covering the whole slow
-/// tail that resource metering should explain rather than only its worst blocks, while most
-/// blocks stay at `debug`.
+/// A warning marks a rare stall on the Mainnet native builder canary: no observed block reached
+/// 50 ms over a 24-hour sample of about one million blocks, and the maximum was about 15 ms.
+/// About 1–2% of sampled follower validation timings reached 50 ms; those are not builder timings.
 pub const SLOW_BLOCK_STATE_ROOT: Duration = Duration::from_millis(50);
 
 /// How a sealed block's state root was computed.
