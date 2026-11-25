@@ -132,14 +132,14 @@ pub(crate) struct Request {
 
 impl RequestHeader {
     /// Whether every field is unset, as in a `systemConfig` request.
-    pub fn is_absent(&self) -> bool {
+    pub(super) fn is_absent(&self) -> bool {
         *self == Self::default()
     }
 }
 
 impl Witness {
     /// Whether the witness has no nodes and no codes, as in a `systemConfig` request.
-    pub const fn is_absent(&self) -> bool {
+    pub(super) const fn is_absent(&self) -> bool {
         self.state.is_empty() && self.codes.is_empty()
     }
 }

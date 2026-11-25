@@ -77,7 +77,6 @@ impl ExecCache {
         self.shard(address[19] ^ slot.byte(0))
     }
 
-    /// The cached account at `address` (`Some(None)`: cached as absent).
     /// The cache's current generation, for a state created at its head now.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::SeqCst)
@@ -87,6 +86,8 @@ impl ExecCache {
         self.generation.load(Ordering::SeqCst) == generation
     }
 
+    /// The cached account at `address` (`Some(None)`: cached as absent), while `generation` is
+    /// current.
     pub fn account(&self, generation: u64, address: &Address) -> Option<Option<AccountInfo>> {
         let shard = self.shard(address[19]);
         if !self.current(generation) {
