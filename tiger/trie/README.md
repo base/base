@@ -15,7 +15,8 @@ Merkle Patricia trie code and the state database of the tiger client.
   partial state's roots and proofs use it, and so does `StateView::trie_witness`, which lists the
   nodes a block's root computation needs.
 - `TrieView::state_root_parallel` walks the account trie as 16 subtrees, each first computing
-  the changed storage roots of its accounts, on the calling thread and the idle threads of `WorkerPool` (`src/pool.rs`), threads
+  the changed storage roots of its accounts (storages with over 32 changed slots on jobs of their
+  own, so two under one subtree are not hashed one after the other), on the calling thread and the idle threads of `WorkerPool` (`src/pool.rs`), threads
   started once and kept: a root waits only for jobs a worker claimed, never for a thread to be
   scheduled, so a busy machine slows it to at worst one thread's time.
 - `LiveTrie` / `LiveState` (`src/live.rs`) keep the trie nodes blocks touched in memory across

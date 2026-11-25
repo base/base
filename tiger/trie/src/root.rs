@@ -1,7 +1,13 @@
 //! State roots, storage roots, trie updates and proofs over the datadir's tables with hashed
 //! state changes layered on top, as reth's `StateRoot`, `StorageRoot` and `Proof` compute them.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use alloy_primitives::{B256, Bytes, U256, keccak256};
 use alloy_trie::{
@@ -282,9 +288,56 @@ impl<'t, K> TrieView<'t, K> {
 /// Most threads a parallel state root uses: one per account-trie partition.
 const MAX_ROOT_THREADS: usize = 16;
 
+/// Changed storages with more changed slots than this get their own parallel job, so two of
+/// them under the same account subtree are not hashed one after the other.
+const OWN_JOB_SLOTS: usize = 32;
+
 /// The storage roots and storage trie changes of accounts whose storage changed, by hashed
 /// address, as [`TrieView::state_root`] computes them with `retain`.
 type StorageRoots = HashMap<B256, (B256, StorageTrieUpdates)>;
+
+/// A large changed storage hashed by its own job (see [`OWN_JOB_SLOTS`]) for the subtree
+/// walking its account. Whichever claims it first computes it: its own job, or the subtree
+/// when that job could not run (its worker saw another state).
+#[derive(Debug)]
+struct OwnJob {
+    address: B256,
+    claimed: AtomicBool,
+    result: Mutex<Option<Result<(B256, StorageTrieUpdates), TrieError>>>,
+    ready: Condvar,
+}
+
+impl OwnJob {
+    /// Computes the storage root here unless already claimed.
+    fn run(&self, view: &TrieView<'_, Ro>) {
+        if self.claimed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        // Filled even if the computation panics, so the subtree waiting for it does not hang.
+        struct Fill<'a>(&'a OwnJob, Option<Result<(B256, StorageTrieUpdates), TrieError>>);
+        impl Drop for Fill<'_> {
+            fn drop(&mut self) {
+                let result = self.1.take().unwrap_or_else(|| Err(TrieError::Unknown("a storage root job panicked".into())));
+                *self.0.result.lock().expect("unpoisoned") = Some(result);
+                self.0.ready.notify_all();
+            }
+        }
+        let mut fill = Fill(self, None);
+        fill.1 = Some(view.storage_root_updates(self.address));
+    }
+
+    /// The storage root, computed here when no one claimed it yet, else waited for.
+    fn take(&self, view: &TrieView<'_, Ro>) -> Result<(B256, StorageTrieUpdates), TrieError> {
+        self.run(view);
+        let mut result = self.result.lock().expect("unpoisoned");
+        loop {
+            match result.take() {
+                Some(result) => return result,
+                None => result = self.ready.wait(result).expect("unpoisoned"),
+            }
+        }
+    }
+}
 
 /// One account-trie partition's part of a parallel state root: the subtree of the keys starting
 /// with one nibble.
@@ -373,8 +426,8 @@ impl<H: HashedCursor> HashedCursor for NibbleHashedCursor<H> {
 impl<'t> TrieView<'t, Ro> {
     /// [`Self::state_root`] with `retain`, computed on worker threads, with the same root and the
     /// same trie updates. The account trie is walked as 16 independent subtrees (one per first
-    /// nibble) in parallel, each first hashing the changed storage tries of its accounts; their
-    /// top nodes make the root branch. Each worker reads through its own read transaction, which must see the same state
+    /// nibble) in parallel, each first hashing the changed storage tries of its accounts (large
+    /// ones on jobs of their own); their top nodes make the root branch. Each worker reads through its own read transaction, which must see the same state
     /// as this view's: the same snapshot, or with an in-memory layer, any snapshot whose tip the
     /// layer covers (the datadir only gains blocks it merged). When one does not, or the trie has
     /// fewer than two subtrees, the root is computed here on one thread.
@@ -383,13 +436,34 @@ impl<'t> TrieView<'t, Ro> {
         if threads < 2 {
             return self.state_root(true);
         }
-        // A subtree's walk waits only for its own storage roots, not for every subtree's.
-        let Some(results) = self.parallel(threads, 16, |view, nibble| view.partition_with_storage(nibble as u8))? else {
+        // Large storages first, each as its own job, then one job per subtree, which hashes its
+        // other changed storages itself and walks: a walk waits only for its own storages. Jobs
+        // are claimed in order, so every large storage is claimed before any subtree waits.
+        let mut large: Vec<(usize, B256)> = (self.state.storages.iter())
+            .filter(|(_, storage)| storage.slots.len() > OWN_JOB_SLOTS)
+            .map(|(address, storage)| (storage.slots.len(), *address))
+            .collect();
+        large.sort_by(|a, b| b.cmp(a));
+        let own: Arc<Vec<OwnJob>> = Arc::new(
+            (large.into_iter())
+                .map(|(_, address)| OwnJob { address, claimed: AtomicBool::new(false), result: Mutex::new(None), ready: Condvar::new() })
+                .collect(),
+        );
+        let first = own.len();
+        let jobs = Arc::clone(&own);
+        let Some(results) = self.parallel(threads, first + 16, move |view, index| match index.checked_sub(first) {
+            None => {
+                jobs[index].run(view);
+                Ok(None)
+            }
+            Some(nibble) => view.partition_with_storage(nibble as u8, &jobs).map(Some),
+        })?
+        else {
             return self.state_root(true);
         };
         let mut roots = StorageRoots::new();
         let mut partitions = Vec::with_capacity(16);
-        for (partition, partition_roots) in results {
+        for (partition, partition_roots) in results.into_iter().flatten() {
             roots.extend(partition_roots);
             partitions.push(partition);
         }
@@ -453,12 +527,19 @@ impl<'t> TrieView<'t, Ro> {
         Ok(results.into_iter().collect())
     }
 
-    /// The storage roots of the changed storages whose keys start with `nibble`, then that
-    /// account subtree's walk over them (see [`Self::walk_partition`]).
-    fn partition_with_storage(&self, nibble: u8) -> Result<(Partition, StorageRoots), TrieError> {
+    /// The storage roots of the changed storages whose keys start with `nibble` (from their own
+    /// job in `own` for large ones), then that account subtree's walk over them (see
+    /// [`Self::walk_partition`]).
+    fn partition_with_storage(&self, nibble: u8, own: &[OwnJob]) -> Result<(Partition, StorageRoots), TrieError> {
         let mut roots = StorageRoots::new();
-        for address in self.state.storages.keys().filter(|key| key[0] >> 4 == nibble) {
-            roots.insert(*address, self.storage_root_updates(*address)?);
+        let mine = |key: &B256| key[0] >> 4 == nibble;
+        for address in self.state.storages.keys().filter(|key| mine(key)) {
+            if !own.iter().any(|job| job.address == *address) {
+                roots.insert(*address, self.storage_root_updates(*address)?);
+            }
+        }
+        for job in own.iter().filter(|job| mine(&job.address)) {
+            roots.insert(job.address, job.take(self)?);
         }
         let hashes = roots.iter().map(|(address, (root, _))| (*address, *root)).collect();
         Ok((self.walk_partition(nibble, &hashes)?, roots))
@@ -774,6 +855,17 @@ mod tests {
                             next.remove(&key);
                         }
                         _ => {}
+                    }
+                }
+                // Now and then many slots of a few accounts, so large storages get their own
+                // parallel jobs, at times two under one account subtree.
+                let existing: Vec<B256> = next.keys().copied().collect();
+                for _ in 0..(if existing.is_empty() || rng.below(3) > 0 { 0 } else { 1 + rng.below(3) }) {
+                    let key = existing[rng.below(existing.len() as u64) as usize];
+                    for _ in 0..OWN_JOB_SLOTS as u64 + 1 + rng.below(40) {
+                        let (slot, value) = (rng.key(1), U256::from(1 + rng.below(5)));
+                        state.set_slot(key, slot, value);
+                        next.get_mut(&key).unwrap().1.insert(slot, value);
                     }
                 }
                 model = next;
