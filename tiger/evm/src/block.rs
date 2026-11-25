@@ -16,6 +16,12 @@ use evm2::ethereum::TxEnvelope;
 
 use crate::{BaseTxEnvelope, BlockEnvInput, ChainSpec, ComputedHeader};
 
+/// Most threads [`Transactions::decode_all`] recovers a block's senders on.
+const DECODE_THREADS: usize = 8;
+/// Fewest transactions a [`Transactions::decode_all`] thread decodes: below that, starting a
+/// thread costs more than it saves.
+const DECODE_CHUNK: usize = 4;
+
 /// Decodes block-body transactions and recovers their senders.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Transactions;
@@ -35,6 +41,26 @@ impl Transactions {
         let signer = signed.recover_signer().map_err(|error| format!("recovering signer: {error}"))?;
         let tx = Self::execution_form(&signed, raw.clone());
         Ok((signed, Recovered::new_unchecked(tx, signer)))
+    }
+
+    /// Decodes a block's transactions as [`Self::decode`] does, in order, recovering senders on
+    /// up to [`DECODE_THREADS`] threads: signature recovery is most of a block's decoding.
+    pub fn decode_all(raw: &[Bytes]) -> Vec<Result<(SignedTx, Recovered<BaseTxEnvelope>), String>> {
+        let chunk = raw.len().div_ceil(DECODE_THREADS).max(DECODE_CHUNK);
+        if raw.len() <= chunk {
+            return raw.iter().map(Self::decode).collect();
+        }
+        std::thread::scope(|scope| {
+            let rest: Vec<_> = raw[chunk..]
+                .chunks(chunk)
+                .map(|txs| scope.spawn(move || txs.iter().map(Self::decode).collect::<Vec<_>>()))
+                .collect();
+            let mut decoded: Vec<_> = raw[..chunk].iter().map(Self::decode).collect();
+            for handle in rest {
+                decoded.extend(handle.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)));
+            }
+            decoded
+        })
     }
 
     /// The evm2 form of a signed transaction, carrying its encoding for the L1 fee.

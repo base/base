@@ -144,8 +144,8 @@ impl BlockExecution<'_> {
     ) -> Result<Validated, String> {
         let mut signed = Vec::with_capacity(raw.len());
         let mut recovered = Vec::with_capacity(raw.len());
-        for (index, tx) in raw.iter().enumerate() {
-            match Transactions::decode(tx) {
+        for (index, decoded) in Transactions::decode_all(raw).into_iter().enumerate() {
+            match decoded {
                 Ok((tx, sender)) => {
                     signed.push(tx);
                     recovered.push(sender);
