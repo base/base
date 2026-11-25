@@ -454,7 +454,8 @@ impl RpcCampaign {
                     .or_else(|| Self::settled_unfunded_fee(case, &replies, &normalized))
             })
             .flatten()
-            .or_else(|| Self::persisted_blockhash(case, head, &normalized));
+            .or_else(|| Self::persisted_blockhash(case, head, &normalized))
+            .or_else(|| Self::override_order(case, &replies));
         if Self::simulate_encoding_only(case, &normalized) {
             *summary
                 .lock()
@@ -644,6 +645,9 @@ impl RpcCampaign {
     /// grows past 51 (seen at more than 60). Tiger answers the hash up to head−51, zero above.
     pub const KNOWN_BASE_PERSISTED_BLOCKHASH: &str =
         "base: blockhash above the state block depends on persistence";
+    /// When several state-override accounts set both `state` and `stateDiff`, base/base names a
+    /// random one of them: it checks them in the order of a randomly seeded map.
+    pub const KNOWN_BASE_OVERRIDE_ORDER: &str = "base: names a random invalid override account";
     /// base/base accepts a JSON number as a call's `type`.
     pub const KNOWN_BASE_INTEGER_TYPE: &str = "base: integer type accepted";
 
@@ -964,6 +968,34 @@ impl RpcCampaign {
         let low = state + 1;
         let high = head.saturating_sub(5).min(over.saturating_sub(1));
         (low <= high && high + 256 >= over).then_some((Self::KNOWN_BASE_PERSISTED_BLOCKHASH, base))
+    }
+
+    /// [`Self::KNOWN_BASE_OVERRIDE_ORDER`] with base's index, when every node refused `case` by
+    /// naming an account that sets both `state` and `stateDiff` in its overrides, and the names
+    /// differ.
+    pub fn override_order(
+        case: &RpcCase,
+        replies: &[(String, Reply)],
+    ) -> Option<(&'static str, usize)> {
+        let base = replies.iter().position(|(n, _)| n == "base")?;
+        let body: Value = serde_json::from_str(&case.body).ok()?;
+        let overrides = body["params"][2].as_object()?;
+        let named = |reply: &Reply| -> Option<String> {
+            let Reply::Body(reply) = reply else { return None };
+            let message = reply["error"]["message"].as_str()?;
+            let account = message
+                .strip_prefix("account ")?
+                .strip_suffix(" has both 'state' and 'stateDiff'")?;
+            let invalid = overrides.iter().any(|(address, o)| {
+                address.eq_ignore_ascii_case(account)
+                    && o.get("state").is_some()
+                    && o.get("stateDiff").is_some()
+            });
+            invalid.then(|| account.to_lowercase())
+        };
+        let names: Vec<String> =
+            replies.iter().map(|(_, reply)| named(reply)).collect::<Option<_>>()?;
+        names.iter().any(|n| *n != names[base]).then_some((Self::KNOWN_BASE_OVERRIDE_ORDER, base))
     }
 
     /// [`Self::SETTLED_UNFUNDED_FEE`] with Nethermind's index, when it explains `case`: a priced
@@ -1715,5 +1747,38 @@ mod tests {
         );
         let fewer = counts(json!({"0xa9059cbb-68":2}));
         assert_eq!(classify(&four, counts(json!({})), fewer.clone(), fewer), None);
+    }
+
+    #[test]
+    fn override_order_needs_every_named_account_to_be_invalid() {
+        let (a, b, c) = (
+            "0x00000000000000000000000000000000000000aa",
+            "0x00000000000000000000000000000000000000bb",
+            "0x00000000000000000000000000000000000000cc",
+        );
+        let case = RpcCase::new(
+            "call",
+            "eth_call",
+            json!([{}, "latest", {
+                a: {"state": {}, "stateDiff": {}},
+                b: {"state": {}, "stateDiff": {}},
+                c: {"stateDiff": {}},
+            }]),
+        );
+        let named = |account: &str| {
+            Reply::Body(json!({"id":1,"error":{"code":-32602,
+                "message": format!("account {account} has both 'state' and 'stateDiff'")}}))
+        };
+        let replies = |base: &str, tiger: &str| {
+            vec![("base".to_owned(), named(base)), ("tiger".to_owned(), named(tiger))]
+        };
+        assert_eq!(
+            RpcCampaign::override_order(&case, &replies(a, b)),
+            Some((RpcCampaign::KNOWN_BASE_OVERRIDE_ORDER, 0))
+        );
+        // Tiger naming an account that sets only `stateDiff` is a real difference.
+        assert_eq!(RpcCampaign::override_order(&case, &replies(a, c)), None);
+        // The same account named by both is no disagreement to explain.
+        assert_eq!(RpcCampaign::override_order(&case, &replies(a, a)), None);
     }
 }
