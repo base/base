@@ -14,6 +14,10 @@ Merkle Patricia trie code and the state database of the tiger client.
 - `SparseTrie` (`src/sparse.rs`) loads nodes lazily from a witness, the database, or proofs. The
   partial state's roots and proofs use it, and so does `StateView::trie_witness`, which lists the
   nodes a block's root computation needs.
+- `TrieView::state_root_parallel` computes changed storage roots, then the account trie as 16
+  subtrees, on the calling thread and the idle threads of `WorkerPool` (`src/pool.rs`), threads
+  started once and kept: a root waits only for jobs a worker claimed, never for a thread to be
+  scheduled, so a busy machine slows it to at worst one thread's time.
 - `LiveTrie` / `LiveState` (`src/live.rs`) keep the trie nodes blocks touched in memory across
   blocks, revealed lazily from the stored branch rows and flat leaves, in 16 shards per trie. A
   block's root hashes only what changed, and its trie updates are the stored rows that change.

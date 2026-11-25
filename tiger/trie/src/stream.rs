@@ -74,7 +74,7 @@ struct WorkerSource<'b> {
 
 impl WorkerSource<'_> {
     fn view(&self) -> TrieView<'_, Ro> {
-        TrieView::new(&self.txn, &self.base.db, &NO_CHANGES).with_mem(self.base.mem.as_deref())
+        TrieView::new(&self.txn, &self.base.db, &NO_CHANGES).with_mem(self.base.mem.as_ref())
     }
 }
 

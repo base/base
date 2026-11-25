@@ -1,10 +1,7 @@
 //! State roots, storage roots, trie updates and proofs over the datadir's tables with hashed
 //! state changes layered on top, as reth's `StateRoot`, `StorageRoot` and `Proof` compute them.
 
-use std::{
-    collections::HashMap,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use alloy_primitives::{B256, Bytes, U256, keccak256};
 use alloy_trie::{
@@ -17,7 +14,7 @@ use base_tiger_store::{Account, Datadir, Db, Ro, Txn};
 use crate::{
     AccountTrieCursor, HashedAccountCursor, HashedCursor, HashedState, HashedStorage, HashedStorageCursor, LiveSource, MemState,
     OverlayCursor, PrefixSet, StorageTrieCursor, StorageTrieUpdates, TrieCursor, TrieElement, TrieError, TrieNodeIter,
-    TrieOverlayCursor, TrieUpdates, TrieWalker, account_leaf, nibble_keys, storage_leaf,
+    TrieOverlayCursor, TrieUpdates, TrieWalker, WorkerPool, account_leaf, nibble_keys, storage_leaf,
 };
 
 /// An account proof with its storage proofs (`eth_getProof`).
@@ -56,7 +53,7 @@ pub struct TrieView<'t, K> {
     /// Hashed state changes over the tables.
     pub state: &'t HashedState,
     /// The in-memory canonical blocks between the tables and `state`.
-    pub mem: Option<&'t MemState>,
+    pub mem: Option<&'t Arc<MemState>>,
 }
 
 /// An account overlay entry as the hashed cursor reads it (`None` deletes).
@@ -82,7 +79,7 @@ impl<'t, K> TrieView<'t, K> {
     }
 
     /// This view with the in-memory layer `mem` between the tables and its state.
-    pub const fn with_mem(self, mem: Option<&'t MemState>) -> Self {
+    pub const fn with_mem(self, mem: Option<&'t Arc<MemState>>) -> Self {
         Self { mem, ..self }
     }
 
@@ -289,9 +286,6 @@ const MAX_ROOT_THREADS: usize = 16;
 /// address, as [`TrieView::state_root`] computes them with `retain`.
 type StorageRoots = HashMap<B256, (B256, StorageTrieUpdates)>;
 
-/// One root worker's results by job index, `None` when its transaction saw another state.
-type WorkerResult<R> = Result<Option<Vec<(usize, R)>>, TrieError>;
-
 /// One account-trie partition's part of a parallel state root: the subtree of the keys starting
 /// with one nibble.
 #[derive(Debug, Default)]
@@ -422,63 +416,48 @@ impl<'t> TrieView<'t, Ro> {
     }
 
     /// Runs `job(view, index)` for every index below `jobs` on `threads` threads, each over a
-    /// view through its own read transaction; `None` when one of them sees another state.
-    fn parallel<R: Send>(
+    /// view through its own read transaction; `None` when one of them sees another state. The
+    /// calling thread works too, with idle [`WorkerPool`] threads.
+    fn parallel<R: Send + 'static>(
         &self,
         threads: usize,
         jobs: usize,
-        job: impl Fn(&TrieView<'_, Ro>, usize) -> Result<R, TrieError> + Sync,
+        job: impl Fn(&TrieView<'_, Ro>, usize) -> Result<R, TrieError> + Send + Sync + 'static,
     ) -> Result<Option<Vec<R>>, TrieError> {
-        let next = AtomicUsize::new(0);
-        let (db, state, mem, snapshot) = (self.db, self.state, self.mem, self.txn.id());
-        let results: Vec<WorkerResult<R>> = std::thread::scope(|scope| {
-            let workers: Vec<_> = (0..threads.min(jobs))
-                .map(|_| {
-                    scope.spawn(|| {
-                        let txn = db.read()?;
-                        // The same state: the same snapshot, or one whose tip the in-memory layer
-                        // covers.
-                        let same = match mem {
-                            Some(mem) => Datadir::tip_in(&txn, db)?.is_some_and(|tip| tip <= mem.head),
-                            None => txn.id() == snapshot,
-                        };
-                        if !same {
-                            return Ok(None);
-                        }
-                        let view = TrieView { txn: &txn, db, state, mem };
-                        let mut done = Vec::new();
-                        loop {
-                            let index = next.fetch_add(1, Ordering::Relaxed);
-                            if index >= jobs {
-                                return Ok(Some(done));
-                            }
-                            done.push((index, job(&view, index)?));
-                        }
-                    })
-                })
-                .collect();
-            workers.into_iter().map(|worker| worker.join().expect("root worker panicked")).collect()
-        });
-        let mut out: Vec<Option<R>> = (0..jobs).map(|_| None).collect();
-        for result in results {
-            let Some(done) = result? else { return Ok(None) };
-            for (index, value) in done {
-                out[index] = Some(value);
+        let (db, mem, snapshot) = (self.db.clone(), self.mem.cloned(), self.txn.id());
+        let state = Arc::new(self.state.clone());
+        let open = {
+            let (db, mem) = (db.clone(), mem.clone());
+            move || -> Result<Option<Txn<Ro>>, TrieError> {
+                let txn = db.read()?;
+                // The same state: the same snapshot, or one whose tip the in-memory layer covers.
+                let same = match &mem {
+                    Some(mem) => Datadir::tip_in(&txn, &db)?.is_some_and(|tip| tip <= mem.head),
+                    None => txn.id() == snapshot,
+                };
+                Ok(same.then_some(txn))
             }
-        }
-        Ok(Some(out.into_iter().map(|value| value.expect("every job ran")).collect()))
+        };
+        let results = WorkerPool::global().run(jobs, threads - 1, open, move |txn: &mut Option<Txn<Ro>>, index| {
+            let Some(txn) = txn else { return Ok(None) };
+            let view = TrieView { txn, db: &db, state: &state, mem: mem.as_ref() };
+            job(&view, index).map(Some)
+        })?;
+        Ok(results.into_iter().collect())
     }
 
     /// The storage root and storage trie changes of every account whose storage changed.
     fn storage_roots_parallel(&self, threads: usize) -> Result<Option<StorageRoots>, TrieError> {
         let keys: Vec<B256> = self.state.storages.keys().copied().collect();
-        let roots = self.parallel(threads, keys.len(), |view, index| view.storage_root_updates(keys[index]))?;
+        let jobs = keys.clone();
+        let roots = self.parallel(threads, keys.len(), move |view, index| view.storage_root_updates(jobs[index]))?;
         Ok(roots.map(|roots| keys.into_iter().zip(roots).collect()))
     }
 
     /// The 16 subtrees of the account trie, walked in parallel.
     fn partitions_parallel(&self, threads: usize, roots: &StorageRoots) -> Result<Option<Vec<Partition>>, TrieError> {
-        self.parallel(threads, 16, |view, nibble| view.walk_partition(nibble as u8, roots))
+        let roots: Arc<HashMap<B256, B256>> = Arc::new(roots.iter().map(|(address, (root, _))| (*address, *root)).collect());
+        self.parallel(threads, 16, move |view, nibble| view.walk_partition(nibble as u8, &roots))
     }
 
     /// Walks the subtree of the account keys starting with `nibble` as [`Self::state_root`] walks
@@ -486,7 +465,7 @@ impl<'t> TrieView<'t, Ro> {
     /// at a neighboring nibble makes the hash builder treat the subtree as a child of a root
     /// branch, so it builds, stores and references the subtree's nodes exactly as in a walk of
     /// the whole trie; the subtree's top node is the one it retains at the nibble's path.
-    fn walk_partition(&self, nibble: u8, roots: &StorageRoots) -> Result<Partition, TrieError> {
+    fn walk_partition(&self, nibble: u8, roots: &HashMap<B256, B256>) -> Result<Partition, TrieError> {
         let prefix = Nibbles::from_nibbles([nibble]);
         let mine = |key: &&B256| key[0] >> 4 == nibble;
         let changed = self.state.accounts.keys().chain(self.state.storages.keys()).filter(mine);
@@ -512,7 +491,7 @@ impl<'t> TrieView<'t, Ro> {
                 }
                 TrieElement::Leaf(address, account) => {
                     let storage_root = match roots.get(&address) {
-                        Some((root, _)) => {
+                        Some(root) => {
                             partition.storage_leaves.push(address);
                             *root
                         }
@@ -889,7 +868,7 @@ mod tests {
             StateWriter::write_trie_updates(&mut w, &db, &updates).unwrap();
             set_tip(&mut w, &db, 0);
             w.commit().unwrap();
-            let mut mem = MemState::new(0);
+            let mut mem = Arc::new(MemState::new(0));
             let mut persisted = 0;
             for block in 1..40u64 {
                 let state = random_state(&mut rng, &mut keys);
@@ -906,7 +885,7 @@ mod tests {
                 let view = TrieView::new(&ro, &db, &state).with_mem(Some(&mem));
                 let sequential = view.state_root(true).unwrap();
                 assert_eq!(view.state_root_parallel().unwrap(), sequential, "seed {seed} block {block}");
-                mem.extend(block, &state, &sequential.1, &[]);
+                Arc::make_mut(&mut mem).extend(block, &state, &sequential.1, &[]);
             }
             assert!(persisted > 0);
             let _ = std::fs::remove_dir_all(dir);

@@ -884,7 +884,7 @@ impl StateView<'_> {
 
     /// Trie computations over this view's tables and in-memory layer with `state` on top.
     fn trie_view<'s>(&'s self, state: &'s HashedState) -> TrieView<'s, Ro> {
-        TrieView::new(&self.txn, self.dbs(), state).with_mem(self.mem.as_deref())
+        TrieView::new(&self.txn, self.dbs(), state).with_mem(self.mem.as_ref())
     }
 
     /// The state root after `extra` with the trie changes that produce it, for

@@ -30,6 +30,8 @@ pub use partial::{DbNodes, PARTIAL_ROOT_KEY, PartialState, ProofNodes, Recording
 mod live;
 pub use live::{LeafChange, LeafFn, LiveSource, LiveState, LiveTrie, NodeUpdates, Originals, SourceFn, Sources};
 
+mod pool;
+pub use pool::WorkerPool;
 mod stream;
 pub use stream::{LIVE_MAX_NODES, LiveBase, LiveSession, LiveSlot, NO_CHANGES};
 
