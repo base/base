@@ -107,3 +107,10 @@ lto = "thin"
 debug = "none"
 panic = "unwind"
 codegen-units = 16
+
+# Fat LTO and one codegen unit: slower to build, about 4% fewer instructions per replayed block
+# than release (README.md, "Optimized builds"). `pgo.sh` builds with it by default.
+[profile.maxperf]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

@@ -27,13 +27,54 @@ example) replays the same blocks again.
 # The replay set: the 2,000 blocks after the datadir's tip, from any base mainnet RPC that serves
 # debug_getRawBlock (base-reth does). On eagle: tip 61,858,621 (snapshot tiger-20261124).
 tiger bench fetch --rpc http://127.0.0.1:8545 --from 61858622 --count 2000 --out blocks.bin
-tiger bench replay --chain base --datadir <datadir> --blocks blocks.bin [--count N] [--no-prewarm] [--no-cache]
+tiger bench replay --chain base --datadir <datadir> --blocks blocks.bin [--skip N] [--count N] [--no-prewarm] [--no-cache]
 ```
 
 A run's numbers depend on the page cache: the first replay of a block range reads the datadir
 from disk, later ones from memory. Compare builds on the same range back to back, and say which
 kind of run a number comes from. `TIGER_VALIDATION_LOG=1` prints the same execution and state
 root split for every block a running node validates.
+
+`--skip N` replays N blocks before the timed ones, so two runs can measure different block
+ranges. With `TIGER_BENCH_PERF_CTL=<fifo>` the replay enables and disables
+`perf stat -D -1 --control fifo:<fifo>` around the timed blocks, so the counters (user cycles and
+instructions, which load on a shared host disturbs far less than wall time) cover only them.
+
+## Optimized builds
+
+`cargo build --release` is the plain, reproducible build. Two opt-in builds do less work per
+block:
+
+- `cargo build --profile maxperf`: fat LTO and one codegen unit. Reproducible like `release`;
+  the final link takes a few minutes longer.
+- `./pgo.sh --datadir <datadir> --blocks blocks.bin`: profile-guided `maxperf`, trained on
+  `tiger bench replay` of the first 500 blocks after the datadir's tip (`--count`, `--profile
+  release`). Needs `rustup component add llvm-tools`; writes
+  `target/pgo-use/<host>/maxperf/tiger`. The profile data stays under `target/`. A PGO build is
+  reproducible only from the same profile, so keep the `.profdata` file next to a binary you
+  deploy.
+
+Measured on eagle (Ryzen AI Max+ 395) at 5b7a0af3c, warm, on blocks 501–1000 after the snapshot
+tip while PGO trained on blocks 1–500: 11 rounds, the builds in rotated order, counters only over
+the timed blocks, each build's ratio to `release` in the same round (median):
+
+| Build | User instructions | User cycles | Validate p50 | Exec p50 |
+| --- | --- | --- | --- | --- |
+| `release` again (control) | 1.000 | 0.99 | 1.00 | 0.99 |
+| PGO (`release`) | 0.929 | 0.94 | 0.90 | 0.89 |
+| `maxperf` | 0.964 | 0.92 | 0.84 | 0.86 |
+| PGO (`maxperf`) | 0.914 | 0.93 | 0.79 | 0.84 |
+| `-Ctarget-cpu=native` | 0.932 | 0.96 | 0.96 | 0.96 |
+
+User instructions vary by about ±0.5% between runs of one binary, and every optimized build ran
+fewer in all 11 of 11 rounds: PGO (`maxperf`) 0.914, about 8.6% less work per block. Cycles and
+wall times also came out lower in most rounds (PGO `maxperf` in 8 of 11), but eagle was shared
+with other work and those differences were not significant there; a wall-clock gain is likely
+but unproven.
+`-Ctarget-cpu=native` makes a binary that runs only on CPUs like the build host. On Zen 5 it
+leaves keccak on the scalar code (`sha3-asm` picks its AVX-512 code only for other AVX-512 CPUs),
+so it was not measured further. `GLIBC_TUNABLES=glibc.malloc.hugetlb=1` (transparent huge pages
+for malloc) made exec p90 slower in every round.
 
 ## Layout
 
