@@ -149,7 +149,7 @@ fn replay(options: &Replay) -> Result<(), String> {
     let node = Node::open(&options.datadir, Genesis::load(&options.chain)?, None)?;
     {
         let mut chain = node.chain.write().expect("chain lock");
-        chain.set_persistence(u64::MAX, 0)?;
+        chain.set_persistence(u64::MAX, 0, None)?;
         chain.set_exec_cache(options.cache);
         if options.full_cache {
             fill_exec_cache(chain.exec_cache());

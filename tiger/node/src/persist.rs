@@ -85,7 +85,7 @@ impl Node {
     fn persist_and_exit(&self) -> ! {
         // Holding the engine lock keeps the Engine API and the sync thread from moving the head.
         let _engine = self.engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let unbatched = self.chain.write().expect("chain lock").set_persistence(0, 0);
+        let unbatched = self.chain.write().expect("chain lock").set_persistence(0, 0, None);
         let drained = unbatched.and_then(|()| {
             while self.persist_once()? {}
             Ok(self.chain.read().expect("chain lock").unpersisted())

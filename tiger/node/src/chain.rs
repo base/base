@@ -56,8 +56,8 @@ pub const PERSISTENCE_THRESHOLD: u64 = 70;
 /// A persistence batch leaves this many canonical blocks below the head in memory: the default
 /// of `--engine.memory-block-buffer-target`, as in base-reth.
 pub const MEMORY_BLOCK_BUFFER_TARGET: u64 = 5;
-/// The Engine API waits for persistence while this many blocks beyond the buffer target are in
-/// memory (base-reth's `--engine.persistence-backpressure-threshold` default).
+/// The least default of `--engine.persistence-backpressure-threshold`: base-reth defaults it to
+/// the larger of this and twice `--engine.persistence-threshold`.
 pub const PERSISTENCE_BACKPRESSURE_THRESHOLD: u64 = 160;
 /// The `TigerForkchoice` key of the forkchoice heads.
 /// Most blocks below the head whose trie-node journal a stateless node keeps, even when the
@@ -185,6 +185,7 @@ pub struct Chain {
     /// [`PERSISTENCE_THRESHOLD`] and [`MEMORY_BLOCK_BUFFER_TARGET`] unless set.
     persistence_threshold: u64,
     memory_block_buffer_target: u64,
+    persistence_backpressure_threshold: u64,
     /// The cross-block execution cache (full states), holding the state after `cache_head`.
     exec_cache: Arc<crate::ExecCache>,
     cache_head: B256,
@@ -348,6 +349,7 @@ impl Chain {
             epoch: Arc::new(AtomicU64::new(0)),
             persistence_threshold: PERSISTENCE_THRESHOLD,
             memory_block_buffer_target: MEMORY_BLOCK_BUFFER_TARGET,
+            persistence_backpressure_threshold: PERSISTENCE_BACKPRESSURE_THRESHOLD,
             exec_cache: Arc::default(),
             cache_head: genesis.hash,
             exec_cache_enabled: true,
@@ -772,14 +774,24 @@ impl Chain {
     }
 
     /// Sets when canonical blocks are persisted (`--engine.persistence-threshold` and
-    /// `--engine.memory-block-buffer-target`).
-    pub fn set_persistence(&mut self, threshold: u64, buffer_target: u64) -> Result<(), String> {
+    /// `--engine.memory-block-buffer-target`) and when the Engine API waits for persistence
+    /// (`--engine.persistence-backpressure-threshold`, by default the larger of
+    /// [`PERSISTENCE_BACKPRESSURE_THRESHOLD`] and twice the threshold, as in base-reth).
+    pub fn set_persistence(&mut self, threshold: u64, buffer_target: u64, backpressure: Option<u64>) -> Result<(), String> {
         if buffer_target > threshold {
             return Err(format!(
                 "--engine.memory-block-buffer-target {buffer_target} is above --engine.persistence-threshold {threshold}"
             ));
         }
-        (self.persistence_threshold, self.memory_block_buffer_target) = (threshold, buffer_target);
+        if let Some(backpressure) = backpressure.filter(|backpressure| *backpressure <= threshold) {
+            return Err(format!(
+                "--engine.persistence-backpressure-threshold {backpressure} must be above --engine.persistence-threshold {threshold}"
+            ));
+        }
+        self.persistence_threshold = threshold;
+        self.memory_block_buffer_target = buffer_target;
+        self.persistence_backpressure_threshold =
+            backpressure.unwrap_or(PERSISTENCE_BACKPRESSURE_THRESHOLD.max(threshold.saturating_mul(2)));
         Ok(())
     }
 
@@ -794,9 +806,9 @@ impl Chain {
     }
 
     /// Whether the Engine API should wait for persistence: the canonical blocks in memory are
-    /// [`PERSISTENCE_BACKPRESSURE_THRESHOLD`] beyond the buffer target.
+    /// the backpressure threshold beyond the buffer target.
     pub fn persistence_backlogged(&self) -> bool {
-        self.unpersisted().saturating_sub(self.memory_block_buffer_target) >= PERSISTENCE_BACKPRESSURE_THRESHOLD
+        self.unpersisted().saturating_sub(self.memory_block_buffer_target) >= self.persistence_backpressure_threshold
     }
 
     /// The branch from `head` down to the canonical chain, oldest first, and the canonical block
@@ -1234,5 +1246,18 @@ mod tests {
         for (block, parent) in [(a1, genesis), (b1, genesis), (a2, a1), (b2, b1), (a2, a1), (b2, b1)] {
             check(block, parent);
         }
+    }
+
+    /// The backpressure threshold follows base-reth: the larger of 160 and twice the persistence
+    /// threshold unless set, and an explicit value must be above the persistence threshold.
+    #[test]
+    fn backpressure_threshold_follows_the_persistence_threshold() {
+        let node = node();
+        let mut chain = node.chain.write().unwrap();
+        for (threshold, backpressure, expected) in [(70, None, 160), (2048, None, 4096), (2048, Some(2049), 2049)] {
+            chain.set_persistence(threshold, 5, backpressure).unwrap();
+            assert_eq!(chain.persistence_backpressure_threshold, expected, "threshold {threshold}");
+        }
+        assert!(chain.set_persistence(2048, 5, Some(2048)).is_err());
     }
 }

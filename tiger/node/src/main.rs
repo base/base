@@ -18,6 +18,7 @@ const USAGE: &str = "usage:
              [--http.api <modules>] [--rpc.eth-proof-window <blocks>] [--rollup.sequencer-http <url>]
              [--stateless.upstream <http-url>] [--stateless.start <block|tag>]
              [--engine.persistence-threshold <blocks>] [--engine.memory-block-buffer-target <blocks>]
+             [--engine.persistence-backpressure-threshold <blocks>]
              [--port <port>] [--discovery.port <port>] [--disable-discovery]
              [--bootnodes <enode,...>] [--trusted-peers <enode,...>] [--p2p-secret-key <file>]
              [--max-outbound-peers <n>] [--max-inbound-peers <n>] [--nat extip:<ip>]
@@ -36,8 +37,9 @@ struct NodeArgs {
     net: NetArgs,
     /// `--stateless.upstream` and `--stateless.start`.
     stateless: Option<(base_tiger::Upstream, String)>,
-    /// `--engine.persistence-threshold` and `--engine.memory-block-buffer-target`.
-    persistence: (u64, u64),
+    /// `--engine.persistence-threshold`, `--engine.memory-block-buffer-target` and
+    /// `--engine.persistence-backpressure-threshold`.
+    persistence: (u64, u64, Option<u64>),
 }
 
 /// Peer-to-peer options, named as base-reth names them.
@@ -75,7 +77,7 @@ impl NodeArgs {
         let (mut chain, mut datadir, mut jwt_secret) = (None, None, None);
         let (mut upstream, mut start) = (None, "finalized".to_owned());
         let mut rpc = base_tiger::RpcConfig::default();
-        let mut persistence = (base_tiger::PERSISTENCE_THRESHOLD, base_tiger::MEMORY_BLOCK_BUFFER_TARGET);
+        let mut persistence = (base_tiger::PERSISTENCE_THRESHOLD, base_tiger::MEMORY_BLOCK_BUFFER_TARGET, None);
         let (mut http_addr, mut http_port) = (localhost, 8545u16);
         let (mut auth_addr, mut auth_port) = (localhost, 8551u16);
         let mut net = NetArgs {
@@ -131,6 +133,9 @@ impl NodeArgs {
                 "--engine.memory-block-buffer-target" => {
                     persistence.1 = value()?.parse().map_err(|error| format!("{flag}: {error}"))?;
                 }
+                "--engine.persistence-backpressure-threshold" => {
+                    persistence.2 = Some(value()?.parse().map_err(|error| format!("{flag}: {error}"))?);
+                }
                 "--stateless.upstream" => upstream = Some(base_tiger::Upstream::new(&value()?)?),
                 "--stateless.start" => start = value()?,
                 "--port" => net.port = parse_port(value()?)?,
@@ -184,7 +189,7 @@ impl NodeArgs {
         let jwt = JwtSecret::load_or_create(&jwt_path)?;
         let mut node = Node::open(&self.datadir, genesis, self.stateless)?;
         node.rpc_config = self.rpc;
-        node.chain.get_mut().expect("chain lock").set_persistence(self.persistence.0, self.persistence.1)?;
+        node.chain.get_mut().expect("chain lock").set_persistence(self.persistence.0, self.persistence.1, self.persistence.2)?;
         let node = Arc::new(node);
         {
             let chain = node.chain.read().expect("chain lock");
