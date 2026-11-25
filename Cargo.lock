@@ -3993,6 +3993,7 @@ dependencies = [
  "redb",
  "reqwest 0.13.4",
  "revm",
+ "revm-primitives",
  "rstest",
  "serde",
  "serde_json",
