@@ -344,75 +344,75 @@ alloy-network-primitives = { version = "2.3.0", default-features = false }
 reth-zstd-compressors = { version = "0.6.0", default-features = false }
 reth-primitives-traits = { version = "0.6.0", default-features = false }
 reth-codecs = { version = "0.6.0", default-features = false, features = ["alloy"] }
-reth-db = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-cli = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-ipc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-evm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-rpc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-revm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-config = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-trie = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-exex = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-tasks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-ecies = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-db-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-discv4 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-discv5 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-trie-db = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-rpc-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-network = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-net-nat = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-tracing = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-eth-wire = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-provider = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-cli-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-node-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-db-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-rpc-layer = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-node-core = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-consensus = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-chainspec = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-cli-runner = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-rpc-convert = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-network-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-network-p2p = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-storage-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-rpc-eth-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-chain-state = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-trie-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-engine-tree = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-payload-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-node-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-node-metrics = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-cli-commands = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-evm-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-tracing-otlp = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-testing-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-rpc-eth-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-network-peers = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-node-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-rpc-engine-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-e2e-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-eth-wire-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-execution-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-execution-cache = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-exex-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-rpc-server-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-transaction-pool = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-execution-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-payload-validator = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-payload-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-ethereum-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-basic-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-payload-builder-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
-reth-prune-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11", default-features = false }
-reth-stages-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11", default-features = false }
-reth-storage-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11", default-features = false }
-reth-ethereum-forks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11", default-features = false }
-reth-consensus-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11", default-features = false }
-reth-trie-parallel = { git = "https://github.com/base/reth", tag = "base-v2.5.2.11" }
+reth-db = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-cli = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-ipc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-evm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-rpc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-revm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-config = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-trie = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-exex = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-tasks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-ecies = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-db-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-discv4 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-discv5 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-trie-db = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-rpc-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-network = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-net-nat = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-tracing = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-eth-wire = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-provider = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-cli-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-node-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-db-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-rpc-layer = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-node-core = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-consensus = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-chainspec = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-cli-runner = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-rpc-convert = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-network-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-network-p2p = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-storage-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-rpc-eth-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-chain-state = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-trie-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-engine-tree = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-payload-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-node-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-node-metrics = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-cli-commands = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-evm-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-tracing-otlp = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-testing-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-rpc-eth-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-network-peers = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-node-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-rpc-engine-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-e2e-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-eth-wire-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-execution-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-execution-cache = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-exex-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-rpc-server-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-transaction-pool = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-execution-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-payload-validator = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-payload-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-ethereum-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-basic-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-payload-builder-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
+reth-prune-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12", default-features = false }
+reth-stages-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12", default-features = false }
+reth-storage-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12", default-features = false }
+reth-ethereum-forks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12", default-features = false }
+reth-consensus-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12", default-features = false }
+reth-trie-parallel = { git = "https://github.com/base/reth", tag = "base-v2.5.2.12" }
 
 # tokio
 tokio = "1.53.1"
