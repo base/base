@@ -14,7 +14,7 @@ use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use reth_evm::execute::ProviderError;
 use reth_rpc_eth_api::{AsEthApiError, EthTxEnvError, TransactionConversionError};
 use reth_rpc_eth_types::{
-    EthApiError,
+    EthApiError, RpcInvalidTransactionError,
     error::api::{FromEvmHalt, FromRevert},
 };
 use reth_rpc_server_types::result::{internal_rpc_err, rpc_err};
@@ -59,6 +59,18 @@ impl AsEthApiError for BaseEthApiError {
 impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
     fn from(err: BaseEthApiError) -> Self {
         match err {
+            // geth and Nethermind answer an unknown block with -32000 "header not found", not
+            // EIP-1474's -32001. Missing receipts (gas oracle, otterscan) keep reth's answer.
+            BaseEthApiError::Eth(EthApiError::HeaderNotFound(_)) => {
+                rpc_err(EthRpcErrorCode::InvalidInput.code(), "header not found", None)
+            }
+            BaseEthApiError::Eth(err @ EthApiError::HeaderRangeNotFound(..)) => {
+                rpc_err(EthRpcErrorCode::InvalidInput.code(), err.to_string(), None)
+            }
+            // As in geth and Nethermind, not EIP-1474's -32003.
+            BaseEthApiError::Eth(
+                err @ EthApiError::InvalidTransaction(RpcInvalidTransactionError::TipAboveFeeCap),
+            ) => rpc_err(EthRpcErrorCode::InvalidInput.code(), err.to_string(), None),
             BaseEthApiError::Eth(err) => err.into(),
             BaseEthApiError::InvalidTransaction(err) => err.into(),
             BaseEthApiError::Evm(_)
@@ -204,7 +216,7 @@ impl From<BaseTxEnvError> for BaseEthApiError {
     fn from(value: BaseTxEnvError) -> Self {
         match value {
             BaseTxEnvError::Eth(error) => error.into(),
-            BaseTxEnvError::TxBaseUnsupported => {
+            BaseTxEnvError::TxBaseUnsupported | BaseTxEnvError::DepositUnsupported => {
                 Self::Eth(EthApiError::InvalidParams(value.to_string()))
             }
         }
@@ -226,5 +238,42 @@ impl From<BlockError> for BaseEthApiError {
 impl From<Infallible> for BaseEthApiError {
     fn from(value: Infallible) -> Self {
         match value {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::B256;
+    use alloy_rpc_types_eth::BlockId;
+    use jsonrpsee_types::ErrorObject;
+
+    use super::*;
+
+    #[test]
+    fn unknown_block_is_header_not_found() {
+        let error: ErrorObject<'static> =
+            BaseEthApiError::Eth(EthApiError::HeaderNotFound(BlockId::number(0xffff_ffff))).into();
+        assert_eq!((error.code(), error.message()), (-32000, "header not found"));
+        // Missing receipts of an existing block are not an unknown block.
+        let receipts: ErrorObject<'static> = BaseEthApiError::Eth(EthApiError::ReceiptsNotFound(
+            BlockId::hash(B256::repeat_byte(0x11)),
+        ))
+        .into();
+        assert_eq!(receipts.code(), -32001);
+        let range: ErrorObject<'static> =
+            BaseEthApiError::Eth(EthApiError::HeaderRangeNotFound(1.into(), 2.into())).into();
+        assert_eq!(range.code(), -32000);
+        let tip: ErrorObject<'static> = BaseEthApiError::Eth(EthApiError::InvalidTransaction(
+            RpcInvalidTransactionError::TipAboveFeeCap,
+        ))
+        .into();
+        assert_eq!(tip.code(), -32000);
+        // Halts keep EIP-1474's -32003, as Nethermind answers them.
+        let halt: ErrorObject<'static> = BaseEthApiError::Eth(EthApiError::from_evm_halt(
+            revm::context_interface::result::HaltReason::OpcodeNotFound,
+            0,
+        ))
+        .into();
+        assert_eq!(halt.code(), -32003);
     }
 }
