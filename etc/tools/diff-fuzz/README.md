@@ -312,8 +312,13 @@ An input is a short sequence of chain operations:
   `TIGER_FAULT` syntax; other clients ignore it). The node crashes at its `K`-th store write,
   tearing that write or losing the writes since the file's last fsync. When a node's log shows
   the crash line, what the operation saw on it is dropped: the harness restarts it unarmed on
-  the same datadir and moves it back to the head, so the reopened chain and state must be intact
+  the same datadir and moves it to the head of the forkchoice update the crash interrupted (as a
+  consensus node retries an unanswered update) or else the head, so the reopened chain and state
+  must be intact
   (`observations` count the crashes and recoveries);
+- `ancestor`: a forkchoice update naming a canonical ancestor of the head (not below finalized,
+  with safe and finalized at or below it); every node must answer `VALID` with that block as the
+  latest valid hash and keep its head, as base-reth does;
 - `check`: read state back at several heights.
 
 Blocks carry state-stress traffic (`StressPlan`, per operation) besides ordinary transactions:

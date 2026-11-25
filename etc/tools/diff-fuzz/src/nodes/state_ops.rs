@@ -75,6 +75,13 @@ pub enum StateOp {
         /// Randomness of what is torn or lost.
         seed: u32,
     },
+    /// Sends a forkchoice update naming the head's ancestor `depth` blocks back (never below the
+    /// finalized block), with safe and finalized at or below it. Every node must answer `VALID`
+    /// with that block as the latest valid hash and keep its head, as base-reth does.
+    Ancestor {
+        /// Blocks below the head.
+        depth: u8,
+    },
     /// Reads state back at `heights` canonical heights.
     Check {
         /// Heights to read (head first).
@@ -98,13 +105,14 @@ impl StateOp {
             Self::Restart { kill: true, .. } => "kill",
             Self::BadRoot { .. } => "badRoot",
             Self::Fault { .. } => "fault",
+            Self::Ancestor { .. } => "ancestor",
             Self::Check { .. } => "check",
         }
     }
 
     /// A random operation. Restarts are rarer than the rest: they take seconds.
     pub fn random(rng: &mut Rng, max_depth: u8) -> Self {
-        match rng.weighted(&[40, 22, 8, 7, 7, 10, 6]) {
+        match rng.weighted(&[40, 22, 8, 7, 7, 10, 6, 4]) {
             0 => Self::Extend {
                 blocks: Self::blocks(rng),
                 stress: StressPlan::random(rng),
@@ -129,6 +137,7 @@ impl StateOp {
                 lose_unsynced: rng.chance(50),
                 seed: rng.next_u64() as u32,
             },
+            7 => Self::Ancestor { depth: Self::depth(rng, max_depth) },
             _ => Self::Check { heights: rng.range(1, 6) as u8, seed: rng.next_u64() },
         }
     }
@@ -261,6 +270,7 @@ impl StateMutator {
             StateOp::Switch { tip } => *tip = rng.below(4) as u8,
             StateOp::Restart { nodes, .. } => *nodes = rng.below(8) as u8,
             StateOp::Fault { seed, .. } => *seed = rng.next_u64() as u32,
+            StateOp::Ancestor { depth } => *depth = rng.range(1, 64) as u8,
         }
     }
 
@@ -324,6 +334,7 @@ impl StateMutator {
                 }
             }
             StateOp::Check { heights, .. } => *heights = rng.range(1, 6) as u8,
+            StateOp::Ancestor { depth } => *depth = StateOp::depth(rng, max_depth),
         }
     }
 }

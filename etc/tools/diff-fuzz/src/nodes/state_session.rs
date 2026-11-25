@@ -266,6 +266,10 @@ pub struct StateSession {
     set_aside: Vec<(usize, NodeClient, NodeProcess)>,
     /// The fork point of the last reorg, a height worth reading.
     last_fork: Option<B256>,
+    /// Head of the forkchoice update being sent, until every node has answered. A node that an
+    /// injected fault crashed during it never answered, so recovery retries this head, as a
+    /// consensus node retries an unanswered forkchoice.
+    inflight_head: Option<B256>,
     rng: Rng,
 }
 
@@ -302,6 +306,7 @@ impl StateSession {
             names: Vec::new(),
             set_aside: Vec::new(),
             last_fork: None,
+            inflight_head: None,
             rng: Rng::new(&[seed, 0x57a7_e5e5]),
         };
         session.names = session.nodes.iter().map(|n| n.name.clone()).collect();
@@ -386,6 +391,7 @@ impl StateSession {
             touched: BTreeMap::new(),
         });
         self.history.clear();
+        self.inflight_head = None;
         self.trace.clear();
         self.last_fork = None;
         for node in &self.nodes {
@@ -434,6 +440,7 @@ impl StateSession {
                 Ok(divergences)
             }
             StateOp::BadRoot { kind, salt } => self.bad_root(*kind, *salt),
+            StateOp::Ancestor { depth } => Ok(self.ancestor(*depth)),
             StateOp::Check { heights, seed } => Ok(self.check(*heights, *seed)),
         }
     }
@@ -547,6 +554,62 @@ impl StateSession {
         }
         self.last_fork = Some(at);
         Ok(self.forkchoice(target))
+    }
+
+    /// [`StateOp::Ancestor`]: a forkchoice update to a canonical ancestor of the head.
+    fn ancestor(&mut self, depth: u8) -> Vec<Divergence> {
+        let head = self.tree.head;
+        let floor = self.tree.block(&self.tree.finalized).number;
+        let depth = u64::from(depth).min(self.tree.head().number.saturating_sub(floor));
+        if depth == 0 {
+            return Vec::new();
+        }
+        let target = self.tree.ancestor(head, depth);
+        let state = self.forkchoice_state(target);
+        let method = "engine_forkchoiceUpdatedV3";
+        self.trace.push(json!({ "kind": "engine", "method": method, "params": state }));
+        let number = self.tree.block(&target).number;
+        let statuses = self.each_node(|node| Self::engine_status(node, method, &state));
+        let mut divergences = Vec::new();
+        let expected = json!({ "status": "VALID", "latestValidHash": target });
+        for (node, status) in self.nodes.iter().zip(statuses) {
+            let got = status.map_or_else(
+                |e| json!(e),
+                |s| {
+                    json!({
+                        "status": s["payloadStatus"]["status"],
+                        "latestValidHash": s["payloadStatus"]["latestValidHash"],
+                    })
+                },
+            );
+            if got != expected {
+                divergences.push(Divergence::new(
+                    "forkchoice",
+                    &node.name,
+                    "ancestor",
+                    Some(number),
+                    expected.clone(),
+                    got,
+                ));
+            }
+        }
+        let heads = self.each_node(|node| {
+            node.result("eth_getBlockByNumber", &json!(["latest", false]))
+                .map_or_else(|e| json!(format!("{e:#}")), |b| b["hash"].clone())
+        });
+        for (node, got) in self.nodes.iter().zip(heads) {
+            if got != json!(head) {
+                divergences.push(Divergence::new(
+                    "head",
+                    &node.name,
+                    "latest after ancestor forkchoice",
+                    Some(number),
+                    json!(head),
+                    got,
+                ));
+            }
+        }
+        divergences
     }
 
     fn restart(&mut self, kill: bool, mask: u8) -> Vec<Divergence> {
@@ -887,7 +950,11 @@ impl StateSession {
         let method = "engine_forkchoiceUpdatedV3";
         self.trace.push(json!({ "kind": "engine", "method": method, "params": state }));
         let number = self.tree.block(&head).number;
+        self.inflight_head = Some(head);
         let statuses = self.each_node(|node| Self::engine_status(node, method, &state));
+        if self.procs.iter_mut().all(|proc| proc.injected_crash().is_none()) {
+            self.inflight_head = None;
+        }
         let mut divergences = Vec::new();
         for (index, mut status) in statuses.into_iter().enumerate() {
             let syncing =
@@ -1500,7 +1567,7 @@ impl StateSession {
             }
         }
         if divergences.is_empty() {
-            let head = self.tree.head;
+            let head = self.inflight_head.take().unwrap_or(self.tree.head);
             divergences = self.forkchoice_resync(head, "fault");
         }
         Some(divergences)
