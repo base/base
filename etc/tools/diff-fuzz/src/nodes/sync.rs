@@ -411,11 +411,17 @@ impl SyncCheck {
         }
         let mut first = 0;
         if self.config.stateless_start.is_some() {
+            // Absent is null, or reth's "pruned history unavailable" (4444).
             while first <= head.0
-                && self
+                && match self
                     .target
-                    .result("eth_getBlockByNumber", &json!([format!("{first:#x}"), false]))?
-                    .is_null()
+                    .call("eth_getBlockByNumber", &json!([format!("{first:#x}"), false]))
+                {
+                    Reply::Body(body) => {
+                        body["result"].is_null() || body["error"]["code"] == json!(4444)
+                    }
+                    Reply::Transport(_) => false,
+                }
             {
                 first += 1;
             }
