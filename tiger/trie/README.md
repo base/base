@@ -14,8 +14,8 @@ Merkle Patricia trie code and the state database of the tiger client.
 - `SparseTrie` (`src/sparse.rs`) loads nodes lazily from a witness, the database, or proofs. The
   partial state's roots and proofs use it, and so does `StateView::trie_witness`, which lists the
   nodes a block's root computation needs.
-- `TrieView::state_root_parallel` computes changed storage roots, then the account trie as 16
-  subtrees, on the calling thread and the idle threads of `WorkerPool` (`src/pool.rs`), threads
+- `TrieView::state_root_parallel` walks the account trie as 16 subtrees, each first computing
+  the changed storage roots of its accounts, on the calling thread and the idle threads of `WorkerPool` (`src/pool.rs`), threads
   started once and kept: a root waits only for jobs a worker claimed, never for a thread to be
   scheduled, so a busy machine slows it to at worst one thread's time.
 - `LiveTrie` / `LiveState` (`src/live.rs`) keep the trie nodes blocks touched in memory across
@@ -69,4 +69,7 @@ Contract and assumptions:
 - No branch node encodes to under 32 bytes (that needs two keys sharing 62 or more nibbles of
   their keccak); `HashBuilder` panics on it too.
 - keccak (alloy-primitives), RLP headers (alloy-rlp) and alloy-trie's node encodings are trusted.
+  A Kani proof that an account leaf's storage root sits at a fixed offset from its end (which
+  `LiveState` overwrites in place) runs CBMC out of memory (over 28 GB) on alloy-rlp's `U256`
+  encoding even with nonce and balance below 256; it is covered by the `LiveState` tests.
 - Streamed values are never trusted: the final changes decide the result.

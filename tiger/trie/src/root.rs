@@ -372,9 +372,9 @@ impl<H: HashedCursor> HashedCursor for NibbleHashedCursor<H> {
 
 impl<'t> TrieView<'t, Ro> {
     /// [`Self::state_root`] with `retain`, computed on worker threads, with the same root and the
-    /// same trie updates. Changed storage tries are hashed in parallel, then the account trie is
-    /// walked as 16 independent subtrees (one per first nibble) whose top nodes make the root
-    /// branch. Each worker reads through its own read transaction, which must see the same state
+    /// same trie updates. The account trie is walked as 16 independent subtrees (one per first
+    /// nibble) in parallel, each first hashing the changed storage tries of its accounts; their
+    /// top nodes make the root branch. Each worker reads through its own read transaction, which must see the same state
     /// as this view's: the same snapshot, or with an in-memory layer, any snapshot whose tip the
     /// layer covers (the datadir only gains blocks it merged). When one does not, or the trie has
     /// fewer than two subtrees, the root is computed here on one thread.
@@ -383,8 +383,16 @@ impl<'t> TrieView<'t, Ro> {
         if threads < 2 {
             return self.state_root(true);
         }
-        let Some(roots) = self.storage_roots_parallel(threads)? else { return self.state_root(true) };
-        let Some(partitions) = self.partitions_parallel(threads, &roots)? else { return self.state_root(true) };
+        // A subtree's walk waits only for its own storage roots, not for every subtree's.
+        let Some(results) = self.parallel(threads, 16, |view, nibble| view.partition_with_storage(nibble as u8))? else {
+            return self.state_root(true);
+        };
+        let mut roots = StorageRoots::new();
+        let mut partitions = Vec::with_capacity(16);
+        for (partition, partition_roots) in results {
+            roots.extend(partition_roots);
+            partitions.push(partition);
+        }
         let mut state_mask = TrieMask::default();
         let mut stack = Vec::with_capacity(16);
         for (nibble, partition) in partitions.iter().enumerate() {
@@ -399,7 +407,6 @@ impl<'t> TrieView<'t, Ro> {
         }
         let root = keccak256(alloy_rlp::encode(BranchNode { stack, state_mask }));
         let mut updates = TrieUpdates::default();
-        let mut roots = roots;
         for partition in partitions {
             for address in partition.storage_leaves {
                 let (_, storage) = roots.remove(&address).expect("every changed storage has a root");
@@ -446,18 +453,15 @@ impl<'t> TrieView<'t, Ro> {
         Ok(results.into_iter().collect())
     }
 
-    /// The storage root and storage trie changes of every account whose storage changed.
-    fn storage_roots_parallel(&self, threads: usize) -> Result<Option<StorageRoots>, TrieError> {
-        let keys: Vec<B256> = self.state.storages.keys().copied().collect();
-        let jobs = keys.clone();
-        let roots = self.parallel(threads, keys.len(), move |view, index| view.storage_root_updates(jobs[index]))?;
-        Ok(roots.map(|roots| keys.into_iter().zip(roots).collect()))
-    }
-
-    /// The 16 subtrees of the account trie, walked in parallel.
-    fn partitions_parallel(&self, threads: usize, roots: &StorageRoots) -> Result<Option<Vec<Partition>>, TrieError> {
-        let roots: Arc<HashMap<B256, B256>> = Arc::new(roots.iter().map(|(address, (root, _))| (*address, *root)).collect());
-        self.parallel(threads, 16, move |view, nibble| view.walk_partition(nibble as u8, &roots))
+    /// The storage roots of the changed storages whose keys start with `nibble`, then that
+    /// account subtree's walk over them (see [`Self::walk_partition`]).
+    fn partition_with_storage(&self, nibble: u8) -> Result<(Partition, StorageRoots), TrieError> {
+        let mut roots = StorageRoots::new();
+        for address in self.state.storages.keys().filter(|key| key[0] >> 4 == nibble) {
+            roots.insert(*address, self.storage_root_updates(*address)?);
+        }
+        let hashes = roots.iter().map(|(address, (root, _))| (*address, *root)).collect();
+        Ok((self.walk_partition(nibble, &hashes)?, roots))
     }
 
     /// Walks the subtree of the account keys starting with `nibble` as [`Self::state_root`] walks
