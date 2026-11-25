@@ -1,10 +1,10 @@
 //! Initialization job for proofs storage. Handles storing the existing state into the proofs
 //! storage.
 
-use std::{collections::HashMap, marker::PhantomData, time::Instant};
+use std::{marker::PhantomData, time::Instant};
 
 use alloy_eips::BlockNumHash;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use derive_more::Constructor;
 use reth_db::{
     DatabaseError,
@@ -22,7 +22,7 @@ use reth_trie_db::{
 use tracing::{debug, info};
 
 use crate::{
-    BaseProofsStorageError, BaseProofsStore,
+    BaseProofsStorageError,
     api::{BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus},
     db::{HashedStorageKey, StorageTrieKey},
 };
@@ -44,7 +44,7 @@ pub enum RethTrieStorageLayout {
 
 /// Initialization job for external storage.
 #[derive(Debug, Constructor)]
-pub struct InitializationJob<Tx: DbTx, S: BaseProofsStore + Send> {
+pub struct InitializationJob<Tx: DbTx, S: BaseProofsInitialStateStore> {
     storage: S,
     tx: Tx,
     trie_layout: RethTrieStorageLayout,
@@ -91,14 +91,12 @@ macro_rules! define_dup_cursor_iter {
                     return Some(res);
                 }
 
-                // If no more duplicates, find the next key with values
-                let Some(Ok((next_key, _))) = self.0.next_no_dup().transpose() else {
-                    // If no more entries, return None
-                    return None;
-                };
-
-                // If found, seek to the first duplicate for this key
-                return self.0.seek(next_key).transpose();
+                // If no more duplicates, seek to the first duplicate of the next key
+                match self.0.next_no_dup() {
+                    Ok(Some((next_key, _))) => self.0.seek(next_key).transpose(),
+                    Ok(None) => None,
+                    Err(err) => Some(Err(err)),
+                }
             }
         }
     };
@@ -206,9 +204,7 @@ impl CompletionEstimatable for StoredNibbles {
     }
 }
 
-impl<Tx: DbTx + Sync, S: BaseProofsStore + BaseProofsInitialStateStore + Send>
-    InitializationJob<Tx, S>
-{
+impl<Tx: DbTx + Sync, S: BaseProofsInitialStateStore> InitializationJob<Tx, S> {
     /// Initialize a table from a source iterator to a storage function. Handles batching and
     /// logging.
     fn initialize<
@@ -502,14 +498,9 @@ impl<C> InitTable for HashedStoragesInit<C> {
         store: &impl BaseProofsInitialStateStore,
         entries: impl IntoIterator<Item = (Self::Key, Self::Value)>,
     ) -> Result<(), BaseProofsStorageError> {
-        let entries_iter = entries.into_iter();
-        let mut by_address: HashMap<B256, Vec<(B256, U256)>> =
-            HashMap::with_capacity(entries_iter.size_hint().0);
-
-        for (address, entry) in entries_iter {
-            by_address.entry(address).or_default().push((entry.key, entry.value));
-        }
-        store.store_hashed_storages_bulk(by_address.into_iter().collect())?;
+        store.store_hashed_storages_bulk(group_by_address(
+            entries.into_iter().map(|(address, entry)| (address, (entry.key, entry.value))),
+        ))?;
 
         Ok(())
     }
@@ -541,24 +532,52 @@ impl<C, A> InitTable for StoragesTrieInit<C, A> {
         store: &impl BaseProofsInitialStateStore,
         entries: impl IntoIterator<Item = (Self::Key, Self::Value)>,
     ) -> Result<(), BaseProofsStorageError> {
-        let entries_iter = entries.into_iter();
-        let mut by_address: HashMap<B256, Vec<(Nibbles, Option<BranchNodeCompact>)>> =
-            HashMap::with_capacity(entries_iter.size_hint().0);
-
-        for (hashed_address, storage_entry) in entries_iter {
-            by_address
-                .entry(hashed_address)
-                .or_default()
-                .push((storage_entry.nibbles.0, Some(storage_entry.node)));
-        }
-        store.store_storage_branches_bulk(by_address.into_iter().collect())?;
+        store.store_storage_branches_bulk(group_by_address(entries.into_iter().map(
+            |(hashed_address, entry)| (hashed_address, (entry.nibbles.0, Some(entry.node))),
+        )))?;
 
         Ok(())
     }
 }
 
+/// Groups consecutive entries by address, preserving input order.
+///
+/// `entries` must be sorted by address, as source cursors yield them. The output stays in
+/// ascending address order, which the default bulk store relies on for crash-safe resume.
+fn group_by_address<V>(entries: impl IntoIterator<Item = (B256, V)>) -> Vec<(B256, Vec<V>)> {
+    let mut groups: Vec<(B256, Vec<V>)> = Vec::new();
+    for (address, value) in entries {
+        match groups.last_mut() {
+            Some((last, values)) if *last == address => values.push(value),
+            last => {
+                debug_assert!(
+                    last.is_none_or(|(last, _)| *last < address),
+                    "entries must be sorted by address"
+                );
+                groups.push((address, vec![value]));
+            }
+        }
+    }
+    groups
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use alloy_primitives::U256;
+    use reth_db::{
+        Database, cursor::DbCursorRW, test_utils::create_test_rw_db, transaction::DbTxMut,
+    };
+    use reth_trie::{TrieMask, hashed_cursor::HashedCursor, trie_cursor::TrieCursor};
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::{BaseProofsStorageResult, BaseProofsStore, MdbxProofsStorage};
+
     macro_rules! proof_storage_init_tests {
         ($mod_name:ident, $storage:ident) => {
             mod $mod_name {
@@ -568,7 +587,8 @@ mod tests {
                 use reth_db::{
                     Database, DatabaseEnv,
                     cursor::DbCursorRW,
-                    table::{Decode, Encode},
+                    table::{Decode, DupSort, Encode},
+                    tables::{RawDupSort, RawKey, RawValue},
                     test_utils::{TempDatabase, create_test_rw_db},
                     transaction::DbTxMut,
                 };
@@ -582,7 +602,7 @@ mod tests {
                 use tempfile::TempDir;
 
                 use super::super::*;
-                use crate::$storage;
+                use crate::{BaseProofsStore, $storage};
 
                 /// Helper function to create a key
                 fn k(b: u8) -> B256 {
@@ -1068,6 +1088,55 @@ mod tests {
                     );
                 }
 
+                /// Writes a valid row, then a row whose 31-byte key cannot decode as `B256`, and
+                /// checks that init fails without marking the store complete.
+                fn assert_run_fails_on_corrupt_key<T: DupSort<Key = B256>>(value: T::Value)
+                where
+                    T::Value: Clone,
+                {
+                    let db = create_test_rw_db();
+                    let dir = TempDir::new().unwrap();
+                    let storage = Arc::new($storage::new(dir.path()).expect("env"));
+                    {
+                        let tx = db.tx_mut().unwrap();
+                        let mut cursor = tx.cursor_dup_write::<RawDupSort<T>>().unwrap();
+                        cursor
+                            .upsert(RawKey::new(B256::ZERO), &RawValue::new(value.clone()))
+                            .unwrap();
+                        cursor
+                            .upsert(RawKey::from_vec(vec![0xff; 31]), &RawValue::new(value))
+                            .unwrap();
+                        drop(cursor);
+                        tx.commit().unwrap();
+                    }
+
+                    let result = InitializationJob::new(
+                        Arc::clone(&storage),
+                        db.tx().unwrap(),
+                        RethTrieStorageLayout::Legacy,
+                    )
+                    .run(100, B256::repeat_byte(0x42));
+
+                    assert!(result.is_err(), "corrupt source row must fail init, got {result:?}");
+                    assert_eq!(storage.get_earliest_block_number().unwrap(), None);
+                }
+
+                #[test]
+                fn test_run_fails_on_corrupt_hashed_storages_key() {
+                    assert_run_fails_on_corrupt_key::<tables::HashedStorages>(StorageEntry {
+                        key: B256::ZERO,
+                        value: U256::from(1),
+                    });
+                }
+
+                #[test]
+                fn test_run_fails_on_corrupt_storages_trie_key() {
+                    assert_run_fails_on_corrupt_key::<tables::StoragesTrie>(StorageTrieEntry {
+                        nibbles: StoredNibblesSubKey(Nibbles::from_nibbles_unchecked(vec![1])),
+                        node: create_test_branch_node(),
+                    });
+                }
+
                 /// Creates a source DB and a proofs store anchored at genesis for resume tests.
                 fn resume_setup() -> (Arc<TempDatabase<DatabaseEnv>>, TempDir, Arc<$storage>) {
                     let db = create_test_rw_db();
@@ -1421,4 +1490,146 @@ mod tests {
 
     proof_storage_init_tests!(mdbx_tests, MdbxProofsStorage);
     proof_storage_init_tests!(rocksdb_tests, RocksdbProofsStorage);
+
+    /// MDBX store that fails every per-address storage write once its write budget runs out,
+    /// simulating a process crash partway through an init batch.
+    ///
+    /// Hand-rolled because it delegates to a real backend and must keep the trait's default
+    /// `store_*_bulk` loops, which `automock` would replace.
+    #[derive(Debug)]
+    struct CrashingStore {
+        inner: Arc<MdbxProofsStorage>,
+        writes_left: AtomicUsize,
+    }
+
+    impl CrashingStore {
+        fn new(inner: &Arc<MdbxProofsStorage>, writes: usize) -> Self {
+            Self { inner: Arc::clone(inner), writes_left: AtomicUsize::new(writes) }
+        }
+
+        fn spend_write(&self) -> BaseProofsStorageResult<()> {
+            self.writes_left
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| left.checked_sub(1))
+                .map(drop)
+                .map_err(|_| DatabaseError::Other("simulated crash".to_string()).into())
+        }
+    }
+
+    impl BaseProofsInitialStateStore for CrashingStore {
+        fn initial_state_anchor(&self) -> BaseProofsStorageResult<InitialStateAnchor> {
+            self.inner.initial_state_anchor()
+        }
+
+        fn set_initial_state_anchor(&self, anchor: BlockNumHash) -> BaseProofsStorageResult<()> {
+            self.inner.set_initial_state_anchor(anchor)
+        }
+
+        fn store_account_branches(
+            &self,
+            account_nodes: Vec<(Nibbles, Option<BranchNodeCompact>)>,
+        ) -> BaseProofsStorageResult<()> {
+            self.inner.store_account_branches(account_nodes)
+        }
+
+        fn store_storage_branches(
+            &self,
+            hashed_address: B256,
+            storage_nodes: Vec<(Nibbles, Option<BranchNodeCompact>)>,
+        ) -> BaseProofsStorageResult<()> {
+            self.spend_write()?;
+            self.inner.store_storage_branches(hashed_address, storage_nodes)
+        }
+
+        fn store_hashed_accounts(
+            &self,
+            accounts: Vec<(B256, Option<Account>)>,
+        ) -> BaseProofsStorageResult<()> {
+            self.inner.store_hashed_accounts(accounts)
+        }
+
+        fn store_hashed_storages(
+            &self,
+            hashed_address: B256,
+            storages: Vec<(B256, U256)>,
+        ) -> BaseProofsStorageResult<()> {
+            self.spend_write()?;
+            self.inner.store_hashed_storages(hashed_address, storages)
+        }
+
+        fn commit_initial_state(&self) -> BaseProofsStorageResult<BlockNumHash> {
+            self.inner.commit_initial_state()
+        }
+    }
+
+    #[test]
+    fn test_run_resumes_after_crash_without_skipping_storage() {
+        const WRITES_PER_RUN: usize = 10;
+
+        let addresses: Vec<B256> = (0u8..32).map(B256::with_last_byte).collect();
+        let slots = vec![B256::with_last_byte(1), B256::with_last_byte(2)];
+        let paths =
+            vec![Nibbles::from_nibbles_unchecked([1]), Nibbles::from_nibbles_unchecked([2])];
+        let mut state_mask = TrieMask::default();
+        state_mask.set_bit(0);
+        let node = BranchNodeCompact { state_mask, ..Default::default() };
+
+        let db = create_test_rw_db();
+        {
+            let tx = db.tx_mut().unwrap();
+            let mut storages = tx.cursor_dup_write::<tables::HashedStorages>().unwrap();
+            let mut tries = tx.cursor_dup_write::<tables::StoragesTrie>().unwrap();
+            for address in &addresses {
+                for (slot, path) in slots.iter().zip(&paths) {
+                    storages
+                        .upsert(*address, &StorageEntry { key: *slot, value: U256::from(1) })
+                        .unwrap();
+                    tries
+                        .upsert(
+                            *address,
+                            &StorageTrieEntry {
+                                nibbles: StoredNibblesSubKey(*path),
+                                node: node.clone(),
+                            },
+                        )
+                        .unwrap();
+                }
+            }
+            drop((storages, tries));
+            tx.commit().unwrap();
+        }
+
+        let dir = TempDir::new().unwrap();
+        let store = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let (best_number, best_hash) = (100, B256::repeat_byte(0x42));
+        let mut crashes = 0;
+        while InitializationJob::new(
+            CrashingStore::new(&store, WRITES_PER_RUN),
+            db.tx().unwrap(),
+            RethTrieStorageLayout::Legacy,
+        )
+        .run(best_number, best_hash)
+        .is_err()
+        {
+            crashes += 1;
+            assert!(crashes < addresses.len(), "init stopped making progress");
+        }
+        assert!(crashes > 0, "the write budget must force at least one crash");
+        assert_eq!(store.get_earliest_block_number().unwrap(), Some((best_number, best_hash)));
+
+        for address in &addresses {
+            let mut cursor = store.storage_hashed_cursor(*address, best_number).unwrap();
+            let mut stored_slots = Vec::new();
+            while let Some((slot, _)) = cursor.next().unwrap() {
+                stored_slots.push(slot);
+            }
+            assert_eq!(stored_slots, slots, "hashed storage of {address}");
+
+            let mut cursor = store.storage_trie_cursor(*address, best_number).unwrap();
+            let mut stored_paths = Vec::new();
+            while let Some((path, _)) = cursor.next().unwrap() {
+                stored_paths.push(path);
+            }
+            assert_eq!(stored_paths, paths, "storage trie of {address}");
+        }
+    }
 }
