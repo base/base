@@ -273,14 +273,9 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                 request_size <= max_request_size
             })
             .count()
-            .max(1)
-            .min(count_limit);
+            .max(1);
         let batch: Vec<R> = self.buffer.drain(..batch_size).collect();
         ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
-
-        if batch.is_empty() {
-            return;
-        }
 
         ForwarderMetrics::batch_size(Arc::clone(&self.url_label)).record(batch.len() as f64);
 
