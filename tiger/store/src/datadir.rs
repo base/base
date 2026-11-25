@@ -366,8 +366,11 @@ impl WriteTxn<'_> {
             }
             return Err(error);
         }
-        if self.heal_after {
-            datadir.heal()?;
+        // The MDBX commit is the commit point: from here on the transaction committed. A failed
+        // heal (a full disk) leaves static files and RocksDB ahead of the MDBX tip, as a crash
+        // would, and the next write heals them first.
+        if self.heal_after && datadir.heal().is_err() {
+            datadir.unhealed.store(true, Ordering::SeqCst);
         }
         Ok(())
     }

@@ -831,10 +831,9 @@ impl Chain {
         let tip = base_tiger_store::Datadir::tip_in(w.txn(), &self.db.datadir.db)
             .map_err(|error| error.to_string())?
             .ok_or("empty datadir")?;
-        let mut canon: Vec<Arc<StoredBlock>> = std::mem::take(&mut self.canon)
-            .into_iter()
-            .filter(|block| block.number() > tip && block.number() <= fork_number)
-            .collect();
+        // Cloned, not taken: a failed unwind (a full disk) leaves the chain as it was.
+        let mut canon: Vec<Arc<StoredBlock>> =
+            self.canon.iter().filter(|block| block.number() > tip && block.number() <= fork_number).cloned().collect();
         if tip > fork_number {
             self.db
                 .unwind_in(&mut w, fork_number)
