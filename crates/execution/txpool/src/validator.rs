@@ -586,7 +586,7 @@ where
                     .and_then(|()| {
                         self.validate_base_tx_pool_policy(origin, transaction.sender(), signed)
                     })
-                    .and_then(|()| self.validate_base_tx_full(signed))
+                    .and_then(|()| self.validate_base_tx_full(signed, transaction.sender()))
             };
             let state = match validation {
                 Ok(state) => state,
@@ -663,9 +663,15 @@ where
     /// The `validate_one_with_state` snapshot is only an `AccountInfoReader`; Base transactions
     /// need storage/code reads for nonce channels and delegation checks, so this path takes its own
     /// full state snapshot.
+    ///
+    /// `sender` is the pool transaction's sender, recovered from `signed` at
+    /// decode (or, on a builder, by the forwarding mempool node, whose sender the
+    /// pool trusts for every transaction type), so the pool never recovers it
+    /// again.
     fn validate_base_tx_full(
         &self,
         signed: &TxBaseSigned,
+        sender: Address,
     ) -> Result<TxBaseValidationState, InvalidPoolTransactionError> {
         let classification_generation = self.limit_class_generation();
         let local_chain_id = self.inner.chain_spec().chain().id();
@@ -673,10 +679,11 @@ where
         let now_ms = self.block_timestamp_ms();
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
 
-        // Authorization is stateless, as in block execution: the sender and payer
-        // are recovered from their secp256k1 signatures.
+        // Authorization is stateless, as in block execution: the payer is
+        // recovered from its secp256k1 signature, and the EOA sender is the one
+        // recovered at decode.
         let auth_start = Instant::now();
-        let auth_result = ResolvedSender::resolve(signed)
+        let auth_result = ResolvedSender::assume_recovered(signed, sender)
             .and_then(|sender| TransactionAuthorizer::authorize(signed, sender));
         ValidatorMetrics::auth_seconds().record(auth_start.elapsed().as_secs_f64());
         let authorized = auth_result.map_err(Self::map_tx_auth_error)?;
@@ -1065,8 +1072,8 @@ where
         signed
             .validate_timestamp(now_ms)
             .map_err(|error| Self::map_timestamp_error(error, signed, now_ms))?;
-        // The EOA sender signature is recovered once, by `ResolvedSender::resolve`
-        // in full validation.
+        // The pool never recovers the EOA sender: full validation checks the
+        // signature's encoding and takes the sender recovered at decode.
         Ok(())
     }
 
@@ -1427,12 +1434,12 @@ mod tests {
         let funded = ExtendedAccount::new(0, U256::from(1_000_000_000_000u64));
 
         let ordinary = build_test_validator_with_account(sender, funded.clone())
-            .validate_base_tx_full(&signed)
+            .validate_base_tx_full(&signed, pool_sender(&signed))
             .unwrap();
         assert!(!ordinary.payer_allowlisted);
         let validator =
             build_test_validator_with_account(sender, funded).with_allowlisted_payers([sender]);
-        let allowlisted = validator.validate_base_tx_full(&signed).unwrap();
+        let allowlisted = validator.validate_base_tx_full(&signed, pool_sender(&signed)).unwrap();
         assert!(allowlisted.payer_allowlisted, "the self-paying sender is its own payer");
         assert!(
             validator.allowlisted_validations.write().remove(&sender),
@@ -1447,6 +1454,12 @@ mod tests {
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let sig_bytes: Bytes = signature.as_bytes().to_vec().into();
         TxBaseSigned::new(tx, sig_bytes, Bytes::new())
+    }
+
+    /// The sender a pool transaction carries for `signed`: recovered from its
+    /// signature, as decode does.
+    fn pool_sender(signed: &TxBaseSigned) -> Address {
+        signed.recover_sender().expect("test transaction signature recovers")
     }
 
     /// Returns a minimal, structurally valid EOA-path [`TxBase`] bound to the
@@ -1615,14 +1628,14 @@ mod tests {
     }
 
     /// An unrecoverable EOA signature passes the stateless checks and is rejected
-    /// by full validation's single sender recovery.
+    /// by full validation's encoding check, whatever sender the pool carries.
     #[test]
     fn unrecoverable_eoa_signature_is_rejected_by_full_validation() {
         let validator = build_test_validator();
         let unrecoverable =
             TxBaseSigned::new(minimal_valid_eoa_tx(), Bytes::from(vec![0xff; 65]), Bytes::new());
         assert!(validator.validate_base_tx_structural(&unrecoverable).is_ok());
-        let error = validator.validate_base_tx_full(&unrecoverable).unwrap_err();
+        let error = validator.validate_base_tx_full(&unrecoverable, Address::ZERO).unwrap_err();
         assert!(error.to_string().contains("EOA sender recovery failed"), "{error}");
     }
 
@@ -2124,8 +2137,9 @@ mod tests {
         .into();
         validator.update_l1_block_info(&header, &[l1_info_tx]);
 
-        let state =
-            validator.validate_base_tx_full(&signed).expect("valid funded Base transaction tx");
+        let state = validator
+            .validate_base_tx_full(&signed, pool_sender(&signed))
+            .expect("valid funded Base transaction tx");
         let encoded = validator.base_tx_encoded(&signed);
         // Self-pay: no payer authentication gas.
         let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, 0);
@@ -2162,10 +2176,10 @@ mod tests {
             build_test_validator_with_account(sender, ExtendedAccount::new(0, U256::from(BALANCE)));
 
         let without_value = validator
-            .validate_base_tx_full(&signed_with_value(U256::ZERO))
+            .validate_base_tx_full(&signed_with_value(U256::ZERO), sender)
             .expect("fees are affordable");
         let with_value = validator
-            .validate_base_tx_full(&signed_with_value(U256::from(BALANCE) * U256::from(10)))
+            .validate_base_tx_full(&signed_with_value(U256::from(BALANCE) * U256::from(10)), sender)
             .expect("call value beyond the balance does not block admission");
         assert_eq!(with_value.payer_max_cost, without_value.payer_max_cost);
         assert_eq!(with_value.manifest.payer_max_cost(), with_value.payer_max_cost);
@@ -2188,10 +2202,10 @@ mod tests {
         );
 
         validator
-            .validate_base_tx_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA))
+            .validate_base_tx_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA), sender)
             .expect("gas at the cap is admitted");
         let err = validator
-            .validate_base_tx_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA + 1))
+            .validate_base_tx_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA + 1), sender)
             .expect_err("gas above the cap is rejected");
         assert!(
             matches!(
@@ -2241,7 +2255,8 @@ mod tests {
             let signed =
                 TxBaseSigned::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
 
-            let state = validator.validate_base_tx_full(&signed).expect("valid tx");
+            let state =
+                validator.validate_base_tx_full(&signed, pool_sender(&signed)).expect("valid tx");
             let deadline = UnixMillis::from_millis(deadline);
             assert_eq!(state.manifest.effective_expiry(), deadline);
             assert!(state.watch_set.contains(&InvalidationKey::Expiry(deadline)));
@@ -2308,7 +2323,7 @@ mod tests {
         assert_eq!(sender, signer.address());
 
         assert_base_tx_validation_reason(
-            validator.validate_base_tx_full(&signed),
+            validator.validate_base_tx_full(&signed, pool_sender(&signed)),
             "delegation sender has non-delegation code",
         );
     }
@@ -2320,7 +2335,7 @@ mod tests {
         assert_eq!(sender, signer.address());
 
         let state = validator
-            .validate_base_tx_full(&signed)
+            .validate_base_tx_full(&signed, pool_sender(&signed))
             .expect("empty sender code must accept delegation");
         assert_eq!(state.sender, sender);
         assert_eq!(state.payer, sender);
@@ -2347,7 +2362,7 @@ mod tests {
             let signed = TxBaseSigned::new(tx, sender_auth, Bytes::new());
 
             assert_base_tx_validation_reason(
-                validator.validate_base_tx_full(&signed),
+                validator.validate_base_tx_full(&signed, pool_sender(&signed)),
                 "delegation requires the protocol nonce",
             );
         }
@@ -2363,7 +2378,7 @@ mod tests {
         assert_eq!(sender, signer.address());
 
         let state = validator
-            .validate_base_tx_full(&signed)
+            .validate_base_tx_full(&signed, pool_sender(&signed))
             .expect("existing delegation indicator must accept a target update");
         assert_eq!(state.sender, sender);
         assert_eq!(state.payer, sender);
@@ -2392,7 +2407,7 @@ mod tests {
         let validator = build_test_validator_with_account(sender, account);
 
         let state = validator
-            .validate_base_tx_full(&signed)
+            .validate_base_tx_full(&signed, pool_sender(&signed))
             .expect("a sender with code may send a Base transaction");
         assert_eq!(state.sender_bytecode_hash, None);
     }
