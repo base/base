@@ -11,4 +11,14 @@ pub enum BaseBlockExecutionError {
         /// The available block DA footprint.
         available_block_da_footprint: u64,
     },
+    /// Block DA footprint exceeds the block gas limit.
+    #[error(
+        "block DA footprint exceeds block gas limit. da_footprint_used: {da_footprint_used}, gas_limit: {gas_limit}"
+    )]
+    BlockDaFootprintAboveGasLimit {
+        /// The DA footprint of the block.
+        da_footprint_used: u64,
+        /// The block gas limit, which is also its DA footprint limit.
+        gas_limit: u64,
+    },
 }

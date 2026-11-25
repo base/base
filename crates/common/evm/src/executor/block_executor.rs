@@ -50,6 +50,9 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     /// This is only set for blocks post-Jovian activation.
     /// See [DA footprint block limit spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit)
     pub da_footprint_used: u64,
+    /// Estimated DA size of the transactions whose results were reused from prewarm execution,
+    /// see [`BaseTxResult::reused_da_size`]. Their DA footprint is added when the block finishes.
+    pub reused_da_size: u64,
     /// Whether deposit transactions reserve gas against the block limit.
     pub deposit_gas_accounting: bool,
     /// Whether deposit receipts include the sender nonce.
@@ -85,6 +88,7 @@ where
             receipts: Vec::new(),
             gas_used: 0,
             da_footprint_used: 0,
+            reused_da_size: 0,
             ctx,
         }
     }
@@ -279,6 +283,7 @@ where
             sender: *tx.signer(),
             depositor,
             base_tx_committed_phases,
+            reused_da_size: None,
         })
     }
 
@@ -289,6 +294,7 @@ where
             sender: _,
             depositor,
             base_tx_committed_phases,
+            reused_da_size,
         } = output;
 
         let tx_gas_used = result.tx_gas_used();
@@ -302,6 +308,9 @@ where
         ) && !is_deposit
         {
             self.da_footprint_used = self.da_footprint_used.saturating_add(blob_gas_used);
+            if let Some(size) = reused_da_size {
+                self.reused_da_size = self.reused_da_size.saturating_add(size);
+            }
         }
 
         self.receipts.push(
@@ -356,13 +365,38 @@ where
         let legacy_gas_used =
             self.receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or_default();
 
+        let mut da_footprint_used = self.da_footprint_used;
+        if self.reused_da_size > 0 {
+            // Executed transactions were admitted against a DA footprint without the reused
+            // results. The footprint only grows, so a block within the limit admits every
+            // transaction, and one above it would have failed some transaction's admission.
+            self.evm
+                .db_mut()
+                .basic(Predeploys::L1_BLOCK_INFO)
+                .map_err(BlockExecutionError::other)?;
+            let da_footprint_gas_scalar =
+                L1BlockInfo::fetch_da_footprint_gas_scalar(self.evm.db_mut())
+                    .map_err(BlockExecutionError::other)?;
+            da_footprint_used = da_footprint_used
+                .saturating_add(self.reused_da_size.saturating_mul(da_footprint_gas_scalar.into()));
+            let gas_limit = self.evm.block().gas_limit();
+            if da_footprint_used > gas_limit {
+                return Err(BlockExecutionError::Validation(BlockValidationError::Other(
+                    Box::new(BaseBlockExecutionError::BlockDaFootprintAboveGasLimit {
+                        da_footprint_used,
+                        gas_limit,
+                    }),
+                )));
+            }
+        }
+
         Ok((
             self.evm,
             BlockExecutionResult {
                 receipts: self.receipts,
                 requests: Default::default(),
                 gas_used: legacy_gas_used,
-                blob_gas_used: self.da_footprint_used,
+                blob_gas_used: da_footprint_used,
             },
         ))
     }
@@ -680,6 +714,69 @@ mod tests {
         assert_eq!(result.blob_gas_used, expected_da_footprint);
         assert_eq!(result.gas_used, gas_used_tx.tx_gas_used());
         assert!(result.blob_gas_used > result.gas_used);
+    }
+
+    /// Committing a transaction's prewarm result instead of executing it gives the block the
+    /// same DA footprint, and a DA footprint above the block limit rejects the block either way.
+    #[rstest::rstest]
+    #[case::within_limit(7)]
+    #[case::above_limit(u16::MAX)]
+    fn reused_result_matches_executed_da_footprint(#[case] da_footprint_gas_scalar: u16) {
+        const GAS_LIMIT: u64 = 100_000;
+        const JOVIAN_TIMESTAMP: u64 = 1746806402;
+
+        let base_chain_upgrades = ChainUpgrades::new(
+            BaseUpgrade::mainnet()
+                .into_iter()
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+        );
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let tx = Recovered::new_unchecked(
+            BaseTxEnvelope::Legacy(
+                TxLegacy {
+                    gas_limit: GAS_LIMIT,
+                    to: TxKind::Call(Address::repeat_byte(0x11)),
+                    ..Default::default()
+                }
+                .into_signed(Signature::new(
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                )),
+            ),
+            Address::ZERO,
+        );
+
+        let mut db = prepare_jovian_db(da_footprint_gas_scalar);
+        let mut executor = build_executor(
+            &mut db,
+            &receipt_builder,
+            &base_chain_upgrades,
+            GAS_LIMIT,
+            JOVIAN_TIMESTAMP,
+        );
+        let executed = match executor.execute_transaction(&tx) {
+            Ok(_) => Some(executor.finish().expect("block should finish").1.blob_gas_used),
+            Err(_) => None,
+        };
+
+        let mut db = prepare_jovian_db(da_footprint_gas_scalar);
+        let mut executor = build_executor(
+            &mut db,
+            &receipt_builder,
+            &base_chain_upgrades,
+            GAS_LIMIT,
+            JOVIAN_TIMESTAMP,
+        );
+        let tx_env: crate::BaseTransaction<revm::context::TxEnv> = tx.to_tx_env();
+        let prewarmed = executor.evm_mut().transact(tx_env).expect("prewarm executes");
+        let reused = BaseTxResult::from_prewarm(tx.inner(), prewarmed)
+            .expect("the caller can pay for the transaction");
+        executor.commit_transaction(reused);
+        let reused = executor.finish().ok().map(|(_, result)| result.blob_gas_used);
+
+        assert_eq!(reused, executed);
+        assert_eq!(executed.is_some(), da_footprint_gas_scalar != u16::MAX);
     }
 
     /// Builds a signed Base transaction with the given `gas_limit`. When

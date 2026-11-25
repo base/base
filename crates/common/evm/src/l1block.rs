@@ -266,6 +266,11 @@ impl L1BlockInfo {
         self.tx_l1_cost = None;
     }
 
+    /// Marks the info stale, so the next transaction reloads it from the database.
+    pub const fn invalidate(&mut self) {
+        self.l2_block = None;
+    }
+
     /// Calculate additional transaction cost with `BaseTxTr`.
     ///
     /// Internally calls [`L1BlockInfo::tx_cost`].
