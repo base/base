@@ -9,8 +9,9 @@
 //! block, or a stateless (partial) datadir never sees it.
 //!
 //! It is bounded by entry counts (code by bytes), about twice base-reth's working set on Base
-//! mainnet (32k accounts, 0.5M slots, 5k codes); a full shard evicts a batch of arbitrary
-//! entries. At its caps it holds about 8 MB of accounts, 100 MB of slots and 64 MiB of code.
+//! mainnet (32k accounts, 0.5M slots, 5k codes); when the head moves, a shard over its cap drops
+//! entries spread evenly over its table. At its caps it holds about 8 MB of accounts, 100 MB of
+//! slots and 64 MiB of code.
 
 use std::{
     collections::HashMap,
@@ -41,17 +42,33 @@ struct Shard {
     code_bytes: usize,
 }
 
-/// Entries a full shard evicts at once. Each eviction scans the table from its start past the
-/// slots earlier evictions emptied, so evicting one entry per insert costs a full cache several
-/// times more per insert than a batch does.
-const EVICT_BATCH: usize = 64;
+/// A shard over its cap drops its excess and this fraction of its cap when the head moves.
+const EVICT_FRACTION: usize = 64;
+/// Between head moves a shard takes entries up to its cap and this fraction of it more, so it
+/// stays bounded however much a block reads, with room for a block's reads at any shard count.
+const OVERSHOOT_FRACTION: usize = 8;
 
-/// Inserts into `map`, first evicting [`EVICT_BATCH`] arbitrary entries when it holds `cap`.
+/// Inserts into `map` unless it is full beyond its overshoot (see [`OVERSHOOT_FRACTION`]) until
+/// [`ExecCache::apply`] trims it.
 fn bounded_insert<K: std::hash::Hash + Eq, V>(map: &mut HashMap<K, V>, cap: usize, key: K, value: V) {
-    if map.len() >= cap && !map.contains_key(&key) {
-        map.extract_if(|_, _| true).take(EVICT_BATCH).for_each(drop);
+    if map.len() < cap + cap / OVERSHOOT_FRACTION || map.contains_key(&key) {
+        map.insert(key, value);
     }
-    map.insert(key, value);
+}
+
+/// Trims `map` to below `cap` by dropping every n-th entry in table order. Table order is hash
+/// order, so entries of every age go alike. (Taking the first entries instead takes mostly the
+/// newest: the scan starts where earlier evictions emptied the table, where new entries land.)
+fn trim<K, V>(map: &mut HashMap<K, V>, cap: usize) {
+    if map.len() <= cap {
+        return;
+    }
+    let every = map.len() / (map.len() - cap + cap / EVICT_FRACTION);
+    let mut index = 0;
+    map.retain(|_, _| {
+        index += 1;
+        index % every != 0
+    });
 }
 
 /// The cache (see the module documentation).
@@ -175,6 +192,12 @@ impl ExecCache {
         for (hash, code) in &changes.codes {
             self.put_code(*hash, Bytecode::new_raw(code.clone()));
         }
+        // Off the execution path: the block is validated and the next one not started.
+        for shard in &self.shards {
+            let mut shard = shard.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            trim(&mut shard.accounts, MAX_ACCOUNTS / SHARDS);
+            trim(&mut shard.storage, MAX_SLOTS / SHARDS);
+        }
     }
 
     /// Empties the cache.
@@ -191,7 +214,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
     use base_tiger_trie::{AccountInfo, BlockChanges};
 
-    use super::{EVICT_BATCH, ExecCache, MAX_ACCOUNTS, SHARDS};
+    use super::{EVICT_FRACTION, ExecCache, MAX_ACCOUNTS};
 
     fn account(nonce: u64) -> Option<AccountInfo> {
         Some(AccountInfo { nonce, ..AccountInfo::default() })
@@ -248,17 +271,39 @@ mod tests {
         assert_eq!(cache.storage(now, &a, &slot), Some(U256::from(11)));
     }
 
-    /// Each shard holds at most its share of the cap.
+    fn address(index: u64) -> Address {
+        let mut address = Address::ZERO;
+        address[12..].copy_from_slice(&index.to_be_bytes());
+        address
+    }
+
+    /// When the head moves, each shard is trimmed to its share of the cap, dropping old and new
+    /// entries alike: the entries cached since the last trim survive about as well as older ones.
     #[test]
     fn bounded() {
         let cache = ExecCache::default();
-        for index in 0..(MAX_ACCOUNTS + 1000) as u64 {
-            let mut address = Address::ZERO;
-            address[12..].copy_from_slice(&index.to_be_bytes());
-            cache.put_account(cache.generation(), address, account(index));
+        let filled = MAX_ACCOUNTS as u64 + 1000;
+        for index in 0..filled {
+            cache.put_account(cache.generation(), address(index), account(index));
         }
+        cache.apply(&BlockChanges::default());
         let held: usize = cache.shards.iter().map(|shard| shard.lock().unwrap().accounts.len()).sum();
         assert!(held <= MAX_ACCOUNTS, "{held} accounts cached");
-        assert!(held > MAX_ACCOUNTS - SHARDS * EVICT_BATCH, "the cache fills: {held}");
+        assert!(held > MAX_ACCOUNTS - 2 * MAX_ACCOUNTS / EVICT_FRACTION, "the cache fills: {held}");
+        // Twenty rounds of 1000 new accounts, each followed by a head move.
+        for index in filled..filled + 20_000 {
+            cache.put_account(cache.generation(), address(index), account(index));
+            if index % 1000 == 0 {
+                cache.apply(&BlockChanges::default());
+            }
+        }
+        cache.apply(&BlockChanges::default());
+        let survived = |range: std::ops::Range<u64>| {
+            let len = range.end - range.start;
+            let held = range.filter(|index| cache.account(cache.generation(), &address(*index)).is_some()).count();
+            held as f64 / len as f64
+        };
+        let (newest, oldest) = (survived(filled + 19_000..filled + 20_000), survived(0..filled));
+        assert!(newest > 0.9 && newest >= oldest, "newest {newest}, oldest {oldest}");
     }
 }
