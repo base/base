@@ -120,8 +120,9 @@ pub struct Datadir {
     pub rocks: Rocks,
     /// A failed commit's heal failed too (such as on a full disk): the next write heals first.
     unhealed: AtomicBool,
-    /// How long the last commit spent on static files, RocksDB and MDBX, for logs.
-    pub commit_phases: std::sync::Mutex<[std::time::Duration; 3]>,
+    /// How long the last commit spent on static files, RocksDB and MDBX, and MDBX's own
+    /// accounting of its part, for logs.
+    pub commit_phases: std::sync::Mutex<([std::time::Duration; 3], crate::CommitStats)>,
 }
 
 impl Datadir {
@@ -365,9 +366,10 @@ impl WriteTxn<'_> {
             self.write_rocks()?;
             let rocks = started.elapsed() - static_files;
             Fault::phase(self.label, "mdbx");
-            self.txn.take().expect("open transaction").commit()?;
+            let stats = self.txn.take().expect("open transaction").commit()?;
             let mdbx = started.elapsed() - static_files - rocks;
-            *datadir.commit_phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = [static_files, rocks, mdbx];
+            *datadir.commit_phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                ([static_files, rocks, mdbx], stats);
             Ok(())
         })();
         if let Err(error) = committed {

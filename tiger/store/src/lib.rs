@@ -14,7 +14,7 @@
 mod mdbx_sys;
 
 mod mdbx;
-pub use mdbx::{Cursor, Dbi, Entry, Env, EnvInner, EnvOptions, MdbxError, Ro, Rw, Txn};
+pub use mdbx::{CommitStats, Cursor, Dbi, Entry, Env, EnvInner, EnvOptions, MdbxError, Ro, Rw, Txn};
 
 mod fault;
 pub use fault::{Fault, FaultConfig, FaultMode};

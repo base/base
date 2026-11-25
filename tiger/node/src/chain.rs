@@ -286,11 +286,15 @@ impl PersistBatch {
         let written = started.elapsed();
         w.commit().map_err(|error| error.to_string())?;
         if std::env::var_os("TIGER_PERSIST_LOG").is_some() {
-            let [static_files, rocks, mdbx] =
+            let ([static_files, rocks, mdbx], stats) =
                 *self.db.datadir.commit_phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             crate::Log::line(format!(
-                "tiger: persist commit of {} blocks: writes {written:?}, static files {static_files:?}, rocksdb {rocks:?}, mdbx commit {mdbx:?}",
-                self.blocks.len()
+                "tiger: persist commit of {} blocks: writes {written:?}, static files {static_files:?}, rocksdb {rocks:?}, mdbx commit {mdbx:?} (dirty {} KiB, gc {:?}, write {:?}, sync {:?})",
+                self.blocks.len(),
+                stats.dirty_bytes / 1024,
+                stats.gc,
+                stats.write,
+                stats.sync,
             ));
         }
         Ok(true)
