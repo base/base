@@ -696,15 +696,16 @@ impl Node {
         RpcError::new(-32003, Self::halt_message(result.stop, gas))
     }
 
-    /// [`Self::failure`] for a result of `tx` on `evm`, telling evm2's single `InvalidOpcode`
-    /// apart as revm does: re-running the call finds the halting opcode.
+    /// [`Self::failure`] for a result of `tx` on `evm`, naming the halts whose revm reason
+    /// depends on the opcode (re-running the call finds it): evm2's single `InvalidOpcode`, and
+    /// `DUPn` on a short stack, which revm reports as `StackOverflow`.
     pub(super) fn failure_on(
         evm: &mut Evm<'_, BaseEvmTypes>,
         tx: &alloy_consensus::transaction::Recovered<BaseTxEnvelope>,
         result: &TxResult<BaseEvmTypes>,
         gas: u64,
     ) -> RpcError {
-        if result.stop != InstrStop::InvalidOpcode {
+        if !matches!(result.stop, InstrStop::InvalidOpcode | InstrStop::StackUnderflow) {
             return Self::failure(result, gas);
         }
         let last = Shared::new(LastStep::default());
@@ -714,6 +715,15 @@ impl Node {
         drop(rerun);
         // The top frame's halt ends the call, so its opcode is the last one stepped.
         let message = match last.into_inner().0 {
+            // revm's DUPn charges its 3 gas, then halts with `StackOverflow` when `dup` fails.
+            Some((0x80..=0x8f, remaining)) if result.stop == InstrStop::StackUnderflow => {
+                if remaining < 3 {
+                    format!("out of gas: gas required exceeds: {gas}")
+                } else {
+                    "EVM error: StackOverflow".to_owned()
+                }
+            }
+            _ if result.stop == InstrStop::StackUnderflow => return Self::failure(result, gas),
             Some((0xfe, _)) => "EVM error: InvalidFEOpcode".to_owned(),
             Some((opcode, remaining)) if Self::revm_defines(opcode) => {
                 // revm charges a gated opcode's static gas before it checks the fork.
@@ -1037,6 +1047,9 @@ mod tests {
         assert_eq!(message("eth_call", "0xfe"), json!("EVM error: InvalidFEOpcode"));
         assert_eq!(message("eth_call", "0x4b"), json!("EVM error: NotActivated"));
         assert_eq!(message("eth_estimateGas", "0x0c"), json!("EVM error: OpcodeNotFound"));
+        // revm reports DUPn on a short stack as an overflow; other underflows stay underflows.
+        assert_eq!(message("eth_call", "0x8f"), json!("EVM error: StackOverflow"));
+        assert_eq!(message("eth_call", "0x50"), json!("EVM error: StackUnderflow"));
         let starved = json!([{ "to": callee, "gas": "0x5209" }, "latest", { callee: { "code": "0x4b" } }]);
         assert_eq!(call(&node, "eth_call", starved)["error"]["message"], json!("out of gas: gas required exceeds: 21001"));
         // Revert output that is UTF-8 is the reason.
