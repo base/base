@@ -59,7 +59,7 @@ request is pruned:
 | `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_getBlockReceipts`, `eth_getTransactionByBlock{Hash,Number}AndIndex` | The node answered 4444, or returned `null` for a pruned number, or its answer is visibly incomplete over pruned data: a deposit lacks a field its fork requires (`depositNonce` from Regolith, `depositReceiptVersion` from Canyon; Base defaults both when the receipt is gone) and a fresh retention read shows its receipts or lookup pruned. A complete answer is served as is, with no retention read. A `null` for a hash counts only once the node pruned something hash-addressable. | Hash locator (if needed), then the verified block |
 | `eth_getBlockTransactionCountBy{Number,Hash}` | 4444 or `null` for a pruned number, against the earliest body only | Same |
 | `eth_getTransactionByHash`, `eth_getTransactionReceipt` | As for blocks. A `null` stays local without a store call when the hash is in the local pool or the node's `TransactionLookup` is unpruned and has no entry for it, so pending-transaction polling never reaches the store; a transaction the node still places is read at that block. | Tx locator, then the verified block |
-| `eth_getLogs` | The node answered 4444 | Blocks below the node's first complete block from the archive, the rest from the node's filter, no gap. reth's `--rpc.max-blocks-per-filter` and `--rpc.max-logs-per-response` apply to the combined result with reth's errors. |
+| `eth_getLogs` | The node answered 4444 | Blocks below the node's first complete block from the archive, the rest from the node's filter, no gap. reth's `--rpc.max-blocks-per-filter` and `--rpc.max-logs-per-response` apply to the combined result with reth's errors; the archive reader stops after the 32-block chunk that crosses the log cap. |
 | `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode` | The block (number, hash, `earliest`; EIP-1898 objects included) is at or below the `AccountHistory` checkpoint, or the node refused the read as pruned | State history seek, else the node's state at the archive head `H` |
 | `eth_getStorageAt` | Same, against `StorageHistory` | Same |
 
@@ -78,6 +78,10 @@ Errors map once, in `ArchiveRpcBoundary`:
   a pending transaction does not turn into errors during an outage.
 - Log query limits are `-32602` with reth's messages.
 
+A local read that fails with a server error (reth's static-file pruner can delete a file
+under an in-flight read) rereads retention fresh: if the block is now below the node's
+boundary the archive answers under the same rules, otherwise the node's error is returned
+unchanged.
 A node that lacks the canonical hash of an archived block cannot verify it and answers 4444.
 Deposit nonces of the Regolith window (`depositNonce` in transactions and receipts) are
 trusted-store fields, like state and log completeness: the receipt root does not cover them and

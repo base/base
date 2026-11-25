@@ -63,7 +63,7 @@ mod reader;
 pub use reader::{
     ArchiveReader, ArchiveRequest, ArchiveSnapshot, ArchivedBlock, ArchivedLog,
     ArchivedTransaction, DEFAULT_MAX_LOG_ALTERNATIVES, DEFAULT_MAX_LOG_CANDIDATES, HEADER_PAGE,
-    LogFilter, ReaderLimits,
+    LOG_BLOCKS_PER_READ, LogFilter, ReaderLimits,
 };
 
 mod audit;

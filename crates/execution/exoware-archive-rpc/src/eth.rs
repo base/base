@@ -212,9 +212,14 @@ impl ArchiveRpcBoundary {
         if from == to || logs.len() <= max {
             return Ok(());
         }
-        let crossing = logs[max].inner.block_number.unwrap_or(from);
+        Err(Self::crossed_max_logs(max, from, logs[max].inner.block_number.unwrap_or(from)))
+    }
+
+    /// reth's max-logs error for a query from `from` whose first log past `max` is in block
+    /// `crossing`: retry up to the block before it, or just `from` when `from` crosses.
+    pub fn crossed_max_logs(max: usize, from: u64, crossing: u64) -> ErrorObjectOwned {
         let retry_to = if crossing == from { from } else { crossing - 1 };
-        Err(Self::too_many_logs(max, from, retry_to))
+        Self::too_many_logs(max, from, retry_to)
     }
 
     /// The block reth names in a "query exceeds max results …, retry with the range a-b" error.
@@ -230,6 +235,23 @@ impl ArchiveRpcBoundary {
     /// Whether the node answered with the EIP-4444 "pruned history" error.
     pub fn is_pruned(err: &ErrorObjectOwned) -> bool {
         err.code() == EthRpcErrorCode::PrunedHistory.code()
+    }
+
+    /// Whether a local read of block `number` that failed with `err` raced the node's pruner:
+    /// a server-side failure (not 4444, not invalid params) after which a fresh retention read
+    /// (bypassing the cache) puts `number`'s `needs` data below the node's boundaries. reth's
+    /// static-file pruner can delete a file under an in-flight read, which surfaces as an
+    /// internal I/O error. Any other failure keeps the node's error unchanged.
+    pub fn raced_prune(
+        err: &ErrorObjectOwned,
+        number: u64,
+        needs: AnswerNeeds,
+        retention: &RetentionCache,
+        read: impl FnOnce() -> LocalRetention,
+    ) -> bool {
+        !Self::is_pruned(err)
+            && err.code() != INVALID_PARAMS_CODE
+            && retention.refresh(read).incomplete(number, needs)
     }
 
     /// Whether the node refused a state read at `number` because its historical state
@@ -335,6 +357,20 @@ where
     /// The node's retention read now, bypassing the cache.
     pub fn fresh_retention(&self) -> LocalRetention {
         self.retention.refresh(|| LocalRetention::read(&self.provider))
+    }
+
+    /// [`ArchiveRpcBoundary::raced_prune`] against this node's provider.
+    pub fn raced_prune(&self, err: &ErrorObjectOwned, number: u64, needs: AnswerNeeds) -> bool {
+        let raced = ArchiveRpcBoundary::raced_prune(err, number, needs, &self.retention, || {
+            LocalRetention::read(&self.provider)
+        });
+        if raced {
+            debug!(
+                number,
+                "local read failed while the node pruned the block; serving from the archive"
+            );
+        }
+        raced
     }
 
     /// Whether the node's `needs` data for block `number` is pruned now. The cached boundary
@@ -507,7 +543,9 @@ where
     /// Routes a block-level read. A local success is kept unless `incomplete` finds it visibly
     /// incomplete (a deposit lacking a field its fork requires; it returns the block number);
     /// only then are the boundaries checked, fresh, and a pruned answer is never reused: the
-    /// archive answers or the request is 4444. Complete answers cost no retention read. A local miss or pruned refusal goes to the archive at
+    /// archive answers or the request is 4444. Complete answers cost no retention read. A local
+    /// miss, a pruned refusal, or a failure that raced the pruner
+    /// ([`ArchiveRpcBoundary::raced_prune`]) goes to the archive at
     /// the node's identity for the block, or, for a hash the node does not know, through the
     /// archive's locator.
     pub async fn routed<T>(
@@ -544,7 +582,11 @@ where
         let miss = match &local {
             Ok(None) => true,
             Err(err) if ArchiveRpcBoundary::is_pruned(err) => false,
-            Ok(Some(_)) | Err(_) => return local,
+            Err(err) => match identity {
+                Some(id) if self.raced_prune(err, id.number, needs) => false,
+                _ => return local,
+            },
+            Ok(Some(_)) => return local,
         };
         match (identity, named) {
             (Some(id), _) => {
@@ -615,7 +657,21 @@ where
             }
             Ok(None) => true,
             Err(err) if ArchiveRpcBoundary::is_pruned(err) => false,
-            Err(_) => return local,
+            Err(err) => {
+                let meta = self.provider.transaction_by_hash_with_meta(hash).ok().flatten();
+                return match meta {
+                    Some((_, meta))
+                        if self.raced_prune(err, meta.block_number, AnswerNeeds::Deposits) =>
+                    {
+                        let id = LocalIdentity {
+                            number: meta.block_number,
+                            hash: Some(meta.block_hash),
+                        };
+                        self.answer_transaction_at(id, hash, build).await
+                    }
+                    _ => local,
+                };
+            }
         };
         let meta = if miss && self.pool.contains(&hash) {
             None
@@ -739,18 +795,31 @@ where
         }
     }
 
-    /// Archived logs of `filter` over `[from, to]`.
+    /// Archived logs of `filter` over `[from, to]`. With `cap = Some((max, query_from, held))`
+    /// (reth's `max`, the combined query's start and the logs it already holds), the reader
+    /// stops once the archived part crosses the remaining allowance, and the error is reth's
+    /// max-logs error for the combined query, exactly as
+    /// [`ArchiveRpcBoundary::check_max_logs`] would report it.
     pub async fn archived_log_range(
         &self,
         filter: &Filter,
         from: u64,
         to: u64,
+        cap: Option<(usize, u64, usize)>,
     ) -> RpcResult<Vec<BaseLogResponse>> {
         let log_filter = Self::log_filter(filter, from, to);
+        let allowance = cap.map(|(max, _, held)| max.saturating_sub(held));
         let logs = self
-            .archive_request(async |reader, request| reader.logs_in(request, &log_filter).await)
+            .archive_request(async |reader, request| {
+                reader.logs_in(request, &log_filter, allowance).await
+            })
             .await
-            .map_err(ArchiveRpcBoundary::error)?;
+            .map_err(|err| match (err, cap) {
+                (ArchiveError::TooManyLogs { crossing, .. }, Some((max, query_from, _))) => {
+                    ArchiveRpcBoundary::crossed_max_logs(max, query_from, crossing)
+                }
+                (err, _) => ArchiveRpcBoundary::error(err),
+            })?;
         Ok(logs.iter().map(ArchiveConverter::log).collect())
     }
 
@@ -777,7 +846,7 @@ where
             })
         };
         if let Some(number) = self.provider.block_number(hash).ok().flatten() {
-            let logs = self.archived_log_range(filter, number, number).await?;
+            let logs = self.archived_log_range(filter, number, number, None).await?;
             return check(logs).map_err(ArchiveRpcBoundary::error);
         }
         let mut resolved = false;
@@ -788,8 +857,9 @@ where
                 };
                 resolved = true;
                 reader.verify_located_block_in(request, hash, number).await?;
-                let logs =
-                    reader.logs_in(request, &Self::log_filter(filter, number, number)).await?;
+                let logs = reader
+                    .logs_in(request, &Self::log_filter(filter, number, number), None)
+                    .await?;
                 Ok(Some(logs.iter().map(ArchiveConverter::log).collect::<Vec<_>>()))
             })
             .await
@@ -837,7 +907,9 @@ where
             let archive_from = archived_to.map_or(from, |n| n + 1);
             if archive_from < first_local && archive_from <= to {
                 let archive_to = to.min(first_local - 1);
-                out.extend(self.archived_log_range(&filter, archive_from, archive_to).await?);
+                // reth exempts single-block queries from the cap, so the reader gets none.
+                let cap = max_logs.filter(|_| from != to).map(|max| (max, from, out.len()));
+                out.extend(self.archived_log_range(&filter, archive_from, archive_to, cap).await?);
                 ArchiveRpcBoundary::check_max_logs(max_logs, &out, from, to)?;
                 archived_to = Some(archive_to);
             }
@@ -1171,7 +1243,114 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Mutex, time::Duration};
+
     use super::*;
+
+    /// Test hook for the static-file race: the node's first local read fails with reth's
+    /// internal I/O error while its pruner moves the boundaries to `pruned`; retention reads
+    /// are counted.
+    struct RacingNode {
+        retention: Mutex<LocalRetention>,
+        pruned: LocalRetention,
+        failed: std::sync::atomic::AtomicBool,
+        retention_reads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl RacingNode {
+        /// A node at `before` whose pruner reaches `pruned` during the first local read.
+        fn new(before: LocalRetention, pruned: LocalRetention) -> Self {
+            Self {
+                retention: Mutex::new(before),
+                pruned,
+                failed: std::sync::atomic::AtomicBool::new(false),
+                retention_reads: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        /// A local block read: fails once, as the pruner deletes the file under it.
+        fn read_block(&self) -> RpcResult<Option<u64>> {
+            if self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return Ok(Some(1));
+            }
+            *self.retention.lock().unwrap() = self.pruned;
+            Err(ErrorObjectOwned::owned(
+                jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                "No such file or directory (os error 2)",
+                None::<()>,
+            ))
+        }
+
+        /// The node's retention now.
+        fn read_retention(&self) -> LocalRetention {
+            self.retention_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.retention.lock().unwrap()
+        }
+
+        /// Retention reads so far.
+        fn reads(&self) -> usize {
+            self.retention_reads.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    /// A local read that fails with an internal error while the pruner advances is detected
+    /// through a fresh retention read (the warm cache is bypassed) and goes to the archive;
+    /// a failure for a block still above the boundary, a pruned refusal and invalid params
+    /// keep the node's error unchanged, the latter two without a retention read.
+    #[test]
+    fn local_failures_that_raced_the_pruner_go_to_the_archive() {
+        let before = LocalRetention::default();
+        let pruned = LocalRetention { earliest_body: 5, receipts_pruned: Some(4), ..before };
+        let cache = RetentionCache::new(Duration::from_secs(3600));
+        let node = RacingNode::new(before, pruned);
+        assert_eq!(cache.get(|| node.read_retention()), before, "the cache is warm and stale");
+        assert_eq!(node.reads(), 1, "one warm-up read");
+
+        let err = node.read_block().expect_err("the hook fails the first read");
+        let original = err.clone();
+        assert!(
+            ArchiveRpcBoundary::raced_prune(&err, 1, AnswerNeeds::Body, &cache, || node
+                .read_retention()),
+            "block 1 is below the fresh earliest body: serve from the archive"
+        );
+        assert_eq!(node.reads(), 2, "exactly one fresh read, despite the warm cache");
+        assert_eq!(
+            cache.get(|| node.read_retention()),
+            pruned,
+            "the fresh read refreshed the cache"
+        );
+        assert_eq!(node.reads(), 2, "the refreshed cache answers without a read");
+        assert!(
+            ArchiveRpcBoundary::raced_prune(&err, 4, AnswerNeeds::Deposits, &cache, || node
+                .read_retention()),
+            "block 4's receipts are pruned now"
+        );
+        assert!(
+            !ArchiveRpcBoundary::raced_prune(&err, 7, AnswerNeeds::Deposits, &cache, || node
+                .read_retention()),
+            "block 7 is above every boundary: the local error stands"
+        );
+        assert_eq!(node.reads(), 4, "each failed read checks fresh retention once");
+        assert_eq!(
+            (err.code(), err.message()),
+            (original.code(), original.message()),
+            "the node's error is unchanged"
+        );
+        assert_eq!(node.read_block(), Ok(Some(1)), "the hook fails only once");
+
+        let refused = ArchiveRpcBoundary::error(ArchiveError::Pruned { block: 1, earliest: 8 });
+        let invalid =
+            ErrorObjectOwned::owned(INVALID_PARAMS_CODE, "invalid block range params", None::<()>);
+        for other in [refused, invalid] {
+            assert!(
+                !ArchiveRpcBoundary::raced_prune(&other, 1, AnswerNeeds::Body, &cache, || node
+                    .read_retention()),
+                "{} is not a raced failure",
+                other.message()
+            );
+        }
+        assert_eq!(node.reads(), 4, "pruned refusals and invalid params read no retention");
+    }
 
     /// Only log-limit violations are invalid params; every other archive failure is 4444 with
     /// the reason, never data.
@@ -1268,6 +1447,17 @@ mod tests {
             ArchiveRpcBoundary::check_max_logs(Some(1), &logs[..2], 3, 3).is_ok(),
             "single block is exempt"
         );
+        for (max, from) in [(2, 1), (1, 3), (0, 1), (3, 1)] {
+            let checked =
+                ArchiveRpcBoundary::check_max_logs(Some(max), &logs, from, 10).unwrap_err();
+            let crossing = logs[max].inner.block_number.unwrap();
+            let early = ArchiveRpcBoundary::crossed_max_logs(max, from, crossing);
+            assert_eq!(
+                (early.code(), early.message()),
+                (checked.code(), checked.message()),
+                "the reader's early stop at block {crossing} renders the same error (max {max}, from {from})"
+            );
+        }
     }
 
     /// reth's `InsufficientChangesets` with an empty available range surfaces as an internal

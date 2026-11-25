@@ -524,6 +524,8 @@ pub struct FaultyStore<S> {
     pub puts: Mutex<usize>,
     /// Remaining reads (through any session) that fail.
     pub failing_reads: Arc<AtomicUsize>,
+    /// Key counts of every `get_many` (through any session), in call order.
+    pub get_many_keys: Arc<Mutex<Vec<usize>>>,
     /// Barrier the first put waits on.
     pub first_put_barrier: Option<Arc<tokio::sync::Barrier>>,
     /// Whether the first put has passed the barrier.
@@ -538,6 +540,7 @@ impl<S> FaultyStore<S> {
             faults: Mutex::new(faults),
             puts: Mutex::new(0),
             failing_reads: Arc::new(AtomicUsize::new(0)),
+            get_many_keys: Arc::new(Mutex::new(Vec::new())),
             first_put_barrier: None,
             barrier_passed: AtomicBool::new(false),
         }
@@ -554,6 +557,11 @@ impl<S> FaultyStore<S> {
         self.failing_reads.store(reads, Ordering::SeqCst);
     }
 
+    /// Takes the key counts of the `get_many` calls seen since the last take.
+    pub fn take_get_many(&self) -> Vec<usize> {
+        std::mem::take(&mut *self.get_many_keys.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
     /// Puts seen so far.
     pub fn put_count(&self) -> usize {
         *self.puts.lock().unwrap_or_else(PoisonError::into_inner)
@@ -567,6 +575,8 @@ pub struct FaultySession<Sess> {
     pub inner: Sess,
     /// Shared failing-read budget.
     pub failing_reads: Arc<AtomicUsize>,
+    /// Shared `get_many` key-count log.
+    pub get_many_keys: Arc<Mutex<Vec<usize>>>,
 }
 
 impl<Sess> FaultySession<Sess> {
@@ -588,6 +598,7 @@ impl<Sess: StoreSession> StoreSession for FaultySession<Sess> {
     }
 
     async fn get_many(&self, keys: &[Bytes]) -> Result<Vec<Option<Bytes>>, ArchiveError> {
+        self.get_many_keys.lock().unwrap_or_else(PoisonError::into_inner).push(keys.len());
         self.fail("get_many")?;
         self.inner.get_many(keys).await
     }
@@ -612,6 +623,7 @@ impl<S: ArchiveStore> ArchiveStore for FaultyStore<S> {
         FaultySession {
             inner: self.inner.session(),
             failing_reads: Arc::clone(&self.failing_reads),
+            get_many_keys: Arc::clone(&self.get_many_keys),
         }
     }
 

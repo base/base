@@ -41,6 +41,12 @@ pub const DEFAULT_MAX_LOG_CANDIDATES: usize = 10_000;
 /// Headers read per range page of a wildcard log scan.
 pub const HEADER_PAGE: u64 = 1_024;
 
+/// Candidate blocks whose header, body and receipts a log query reads per `get_many`. Each
+/// chunk is decoded, verified and filtered, then dropped, so a query holds at most this many
+/// blocks of rows at once whatever its candidate count, and a `max_logs` cap stops reading
+/// after the chunk that crossed it.
+pub const LOG_BLOCKS_PER_READ: usize = 32;
+
 /// Reader limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReaderLimits {
@@ -992,21 +998,56 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         Ok(out)
     }
 
-    /// Logs matching `filter`, exactly filtered on verified receipts.
+    /// Logs matching `filter`, exactly filtered on verified receipts. Candidates are read in
+    /// chunks of [`LOG_BLOCKS_PER_READ`] blocks; with `max_logs`, a query whose matches exceed
+    /// it fails with [`ArchiveError::TooManyLogs`] after the chunk that crossed it, without
+    /// reading the rest.
     pub async fn logs_in(
         &self,
         request: &ArchiveRequest<S::Session>,
         filter: &LogFilter,
+        max_logs: Option<usize>,
+    ) -> Result<Vec<ArchivedLog>, ArchiveError> {
+        self.logs_in_chunks(request, filter, max_logs, LOG_BLOCKS_PER_READ).await
+    }
+
+    /// [`Self::logs_in`] with `chunk_blocks` candidate blocks per `get_many` (at least one).
+    pub async fn logs_in_chunks(
+        &self,
+        request: &ArchiveRequest<S::Session>,
+        filter: &LogFilter,
+        max_logs: Option<usize>,
+        chunk_blocks: usize,
     ) -> Result<Vec<ArchivedLog>, ArchiveError> {
         let candidates = self.log_candidates_in(request, filter).await?;
+        let mut out = Vec::new();
+        for chunk in candidates.chunks(chunk_blocks.max(1)) {
+            self.chunk_logs(request, filter, chunk, &mut out).await?;
+            if let Some(max) = max_logs
+                && out.len() > max
+            {
+                return Err(ArchiveError::TooManyLogs { max, crossing: out[max].block_number });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Reads, verifies and filters the candidate blocks `chunk` in one `get_many`, appending
+    /// their matching logs to `out`.
+    pub async fn chunk_logs(
+        &self,
+        request: &ArchiveRequest<S::Session>,
+        filter: &LogFilter,
+        chunk: &[u64],
+        out: &mut Vec<ArchivedLog>,
+    ) -> Result<(), ArchiveError> {
         let families = [Family::Header, Family::Body, Family::Receipts];
-        let keys: Vec<Bytes> = candidates
+        let keys: Vec<Bytes> = chunk
             .iter()
             .flat_map(|n| families.iter().map(move |f| ArchiveKey::block(*f, *n)))
             .collect();
         let values = request.session.get_many(&keys).await?;
-        let mut out = Vec::new();
-        for (number, rows) in candidates.iter().zip(values.chunks_exact(families.len())) {
+        for (number, rows) in chunk.iter().zip(values.chunks_exact(families.len())) {
             let number = *number;
             let header = BlockCodec::decode_header(&Self::require_row(
                 rows[0].clone(),
@@ -1051,7 +1092,7 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
                 }
             }
         }
-        Ok(out)
+        Ok(())
     }
 
     /// Reads and verifies block `number` in its own request.
@@ -1118,7 +1159,7 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
     /// Logs matching `filter`, in their own request.
     pub async fn logs(&self, filter: &LogFilter) -> Result<Vec<ArchivedLog>, ArchiveError> {
         let request = self.begin().await?;
-        let result = self.logs_in(&request, filter).await;
+        let result = self.logs_in(&request, filter, None).await;
         self.conclude(&request, result).await
     }
 }
@@ -1129,8 +1170,8 @@ mod tests {
     use crate::{
         AuditFinding, BlockCodec, ExowareStore, SegmentAuditor,
         test_utils::{
-            CONTRACT_CODE, ChainFixture, FixtureNode, SPARSE_BLOCKS, SPARSE_SLOT, TEST_N,
-            TEST_TIMEOUT, TestSimulator, publish_through, publisher, reader,
+            CONTRACT_CODE, ChainFixture, FaultyStore, FixtureNode, SPARSE_BLOCKS, SPARSE_SLOT,
+            TEST_N, TEST_TIMEOUT, TestSimulator, publish_through, publisher, reader,
         },
     };
 
@@ -1575,6 +1616,115 @@ mod tests {
             assert!(
                 matches!(tight.logs(&dense).await, Err(ArchiveError::LimitExceeded { .. })),
                 "two candidates exceed one"
+            );
+        })
+        .await;
+    }
+
+    /// M2: reading log candidates in chunks of 1, 3 or [`LOG_BLOCKS_PER_READ`] blocks gives
+    /// the same logs as the fixture oracle, and each `get_many` holds at most one chunk.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn chunked_logs_match_the_whole_read() {
+        bounded(async {
+            let sim = TestSimulator::start().await;
+            let (fixture, archive) = published(&sim, "t-chunk/").await;
+            let faulty = Arc::new(FaultyStore::new(Arc::clone(&archive.store), vec![]));
+            let r = reader(
+                ExowareArchive::new(Arc::clone(&faulty)),
+                FixtureNode::new(Arc::clone(&fixture)),
+            )
+            .await;
+            let filter =
+                LogFilter { from: 0, to: 31, addresses: vec![], topics: Default::default() };
+            let expected = fixture.expected_logs(&filter);
+            assert!(expected.len() > 3, "the wildcard filter matches logs in many blocks");
+            let request = r.begin().await.unwrap();
+            let candidates = r.log_candidates_in(&request, &filter).await.unwrap();
+            for chunk in [1, 3, LOG_BLOCKS_PER_READ] {
+                faulty.take_get_many();
+                let logs = r.logs_in_chunks(&request, &filter, None, chunk).await.unwrap();
+                let got: Vec<_> =
+                    logs.iter().map(|l| (l.block_number, l.log_index, l.log.clone())).collect();
+                assert_eq!(got, expected, "chunks of {chunk} blocks give the oracle's logs");
+                let calls = faulty.take_get_many();
+                assert_eq!(
+                    calls.len(),
+                    candidates.len().div_ceil(chunk),
+                    "one get_many per chunk of {chunk}"
+                );
+                assert!(
+                    calls.iter().all(|keys| *keys <= 3 * chunk),
+                    "a get_many holds at most {chunk} blocks: {calls:?}"
+                );
+                assert_eq!(
+                    calls.iter().sum::<usize>(),
+                    3 * candidates.len(),
+                    "every candidate read once"
+                );
+            }
+            let full = r.logs_in(&request, &filter, None).await.unwrap();
+            let one = r.logs_in_chunks(&request, &filter, None, 1).await.unwrap();
+            assert_eq!(full, one, "default chunking equals block-by-block reads, field for field");
+            assert_eq!(r.conclude(&request, Ok(())).await, Ok(()), "request concludes");
+        })
+        .await;
+    }
+
+    /// M2: with `max_logs`, reading stops after the chunk whose logs crossed the cap and
+    /// reports the block of the first log past it; a cap the query fits in changes nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn log_cap_stops_after_the_crossing_chunk() {
+        bounded(async {
+            let sim = TestSimulator::start().await;
+            let (fixture, archive) = published(&sim, "t-cap/").await;
+            let faulty = Arc::new(FaultyStore::new(Arc::clone(&archive.store), vec![]));
+            let r = reader(
+                ExowareArchive::new(Arc::clone(&faulty)),
+                FixtureNode::new(Arc::clone(&fixture)),
+            )
+            .await;
+            let filter =
+                LogFilter { from: 0, to: 31, addresses: vec![], topics: Default::default() };
+            let expected = fixture.expected_logs(&filter);
+            let request = r.begin().await.unwrap();
+            let candidates = r.log_candidates_in(&request, &filter).await.unwrap();
+            let chunk = 4;
+            let max = 3;
+            let crossing = expected[max].0;
+            let crossing_chunk =
+                candidates.iter().position(|n| *n == crossing).expect("crossing is a candidate")
+                    / chunk;
+            assert!(
+                crossing_chunk + 1 < candidates.len().div_ceil(chunk),
+                "chunks remain after the crossing one"
+            );
+            faulty.take_get_many();
+            assert_eq!(
+                r.logs_in_chunks(&request, &filter, Some(max), chunk).await,
+                Err(ArchiveError::TooManyLogs { max, crossing }),
+                "the cap error names the block of log {max}"
+            );
+            assert_eq!(
+                faulty.take_get_many().len(),
+                crossing_chunk + 1,
+                "no get_many after the crossing chunk"
+            );
+            let fits =
+                r.logs_in_chunks(&request, &filter, Some(expected.len()), chunk).await.unwrap();
+            assert_eq!(
+                fits.len(),
+                expected.len(),
+                "a cap equal to the match count is not exceeded"
+            );
+            assert_eq!(
+                faulty.take_get_many().len(),
+                candidates.len().div_ceil(chunk),
+                "every chunk read under a fitting cap"
+            );
+            assert_eq!(
+                r.logs_in_chunks(&request, &filter, Some(0), chunk).await,
+                Err(ArchiveError::TooManyLogs { max: 0, crossing: expected[0].0 }),
+                "a zero cap fails at the first matching block"
             );
         })
         .await;

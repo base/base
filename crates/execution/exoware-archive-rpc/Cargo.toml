@@ -64,3 +64,7 @@ alloy-genesis.workspace = true
 alloy-rpc-client.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = []
+metrics = [ "base-exoware-archive/metrics" ]

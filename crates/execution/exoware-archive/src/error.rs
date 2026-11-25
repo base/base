@@ -158,6 +158,15 @@ pub enum ArchiveError {
         /// Which limit.
         reason: String,
     },
+    /// A log query matched more than the caller's `max` logs; reading stopped at the chunk
+    /// of blocks that crossed it. The caller renders its own "max results" error.
+    #[error("log query matched more than {max} logs (first crossing at block {crossing})")]
+    TooManyLogs {
+        /// The caller's cap.
+        max: usize,
+        /// Block of the first log past the cap.
+        crossing: u64,
+    },
 }
 
 impl ArchiveError {

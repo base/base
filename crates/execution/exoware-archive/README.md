@@ -91,3 +91,10 @@ quarantine checks are unchanged. Peak block memory is one batch: with the defaul
 of an 8192-block segment, 1/32 of the previous whole-segment load. Index memory grows with the
 segment's distinct transactions, touched accounts and slots, and log addresses and topics, not
 with block bodies. The audit reads stored block rows in batches of the same size.
+
+## Log reads
+
+A log query's candidate blocks (at most `max_log_candidates`, default 10,000) are read in
+chunks of `LOG_BLOCKS_PER_READ` (32) blocks: one `get_many` of header, body and receipts per
+chunk, decoded, verified and filtered, then dropped. With a `max_logs` cap the reader stops
+after the chunk whose matches crossed it and returns `TooManyLogs` with the crossing block.
