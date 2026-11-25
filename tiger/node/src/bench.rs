@@ -3,11 +3,13 @@
 //!
 //! - `tiger bench fetch --rpc <url> --from <n> --count <n> --out <file>` saves canonical blocks
 //!   (`debug_getRawBlock`) to a file, each as a little-endian `u32` length and the block's RLP.
-//! - `tiger bench replay --chain <chain> --datadir <dir> --blocks <file> [--count <n>]
+//! - `tiger bench replay --chain <chain> --datadir <dir> --blocks <file> [--skip <n>] [--count <n>]
 //!   [--no-prewarm] [--no-cache]` validates the blocks after the datadir's tip in order, the
 //!   way the Engine API does on a full node (prewarm, the cross-block execution cache, the
 //!   in-memory layer), checks each state root, makes each block canonical in memory, and prints
-//!   per-phase percentiles. It never persists: the datadir is opened but not written, so the
+//!   per-phase percentiles. `--skip` replays that many blocks first without timing them, so a run
+//!   can measure a block range other than another run's (PGO trains on one range and is measured
+//!   on the next). It never persists: the datadir is opened but not written, so the
 //!   same datadir replays the same blocks again (with a warmer page cache).
 
 use std::{
@@ -42,6 +44,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             chain: required("--chain")?.to_owned(),
             datadir: PathBuf::from(required("--datadir")?),
             blocks: PathBuf::from(required("--blocks")?),
+            skip: value("--skip").map(str::parse).transpose().map_err(|error| format!("--skip: {error}"))?.unwrap_or(0),
             count: value("--count").map(str::parse).transpose().map_err(|error| format!("--count: {error}"))?,
             prewarm: !flag("--no-prewarm"),
             cache: !flag("--no-cache"),
@@ -72,6 +75,9 @@ struct Replay {
     chain: String,
     datadir: PathBuf,
     blocks: PathBuf,
+    /// Blocks replayed before the timed ones.
+    skip: usize,
+    /// Timed blocks.
     count: Option<usize>,
     prewarm: bool,
     cache: bool,
@@ -113,20 +119,27 @@ fn replay(options: &Replay) -> Result<(), String> {
         chain.set_exec_cache(options.cache);
     }
     let tip = node.chain.read().expect("chain lock").head().number();
-    let todo: Vec<_> = blocks.into_iter().filter(|block| block.header.number > tip).take(options.count.unwrap_or(usize::MAX)).collect();
+    let todo: Vec<_> = blocks.into_iter().filter(|block| block.header.number > tip).take(options.count.map_or(usize::MAX, |count| options.skip + count)).collect();
     let first = todo.first().ok_or_else(|| format!("no blocks after the datadir tip {tip}"))?.header.number;
     if first != tip + 1 {
         return Err(format!("the blocks start at {first}, the datadir tip is {tip}"));
     }
+    if todo.len() <= options.skip {
+        return Err(format!("--skip {} leaves none of the {} blocks to time", options.skip, todo.len()));
+    }
     eprintln!(
-        "tiger bench: replaying {} blocks from {first} (prewarm {}, execution cache {})",
+        "tiger bench: replaying {} blocks from {first}, timing the last {} (prewarm {}, execution cache {})",
         todo.len(),
+        todo.len() - options.skip,
         options.prewarm,
         options.cache
     );
-    let started = Instant::now();
+    let mut started = Instant::now();
     let mut timings = Vec::with_capacity(todo.len());
-    for block in todo {
+    for (index, block) in todo.into_iter().enumerate() {
+        if index == options.skip {
+            started = Instant::now();
+        }
         let header = block.header;
         let hash = header.hash_slow();
         let transactions: Vec<Bytes> = block.body.transactions.iter().map(|tx| tx.encoded_2718().into()).collect();
@@ -155,6 +168,9 @@ fn replay(options: &Replay) -> Result<(), String> {
         chain.insert(hash, &executed, prepared)?;
         chain.set_canonical(hash)?;
         drop(chain);
+        if index < options.skip {
+            continue;
+        }
         timings.push(Timing { exec: validation - root, root, canonical: canonical_started.elapsed(), gas });
     }
     let elapsed = started.elapsed();
