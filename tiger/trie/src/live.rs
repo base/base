@@ -703,6 +703,38 @@ impl LiveTrie {
         self.shards[0].epoch
     }
 
+    /// Counts in `freed` how many of this trie's nodes each cutoff frees: a node goes with the
+    /// nearest branch above it, which [`Self::prune`] blinds when its last use is below the
+    /// cutoff (uses only grow toward the top), or with the whole trie (last used in `whole`,
+    /// `u32::MAX` when it is never dropped).
+    pub fn freed_by(&self, whole: u32, freed: &mut BTreeMap<u32, usize>) {
+        for shard in self.shards.iter() {
+            let Some(top) = shard.top else { continue };
+            let mut stack = vec![(top, whole)];
+            while let Some((i, above)) = stack.pop() {
+                if i == EMPTY {
+                    continue;
+                }
+                let entry = &shard.arena[i as usize];
+                // A blinded branch stays (as a blinded node); what is below it goes.
+                if above != u32::MAX {
+                    *freed.entry(above).or_default() += 1;
+                }
+                let goes = match entry.node {
+                    Node::Branch { .. } => entry.used.min(above),
+                    _ => above,
+                };
+                match &entry.node {
+                    Node::Branch { children, .. } => {
+                        stack.extend(children.iter().map(|c| (*c, goes)))
+                    }
+                    Node::Ext { child, .. } => stack.push((*child, goes)),
+                    _ => {}
+                }
+            }
+        }
+    }
+
     /// Blinds the hashed branches last used before epoch `cutoff`, keeping their references, so
     /// the trie holds fewer nodes; what they held is revealed again from the source when needed.
     /// Call it only between roots (every node hashed) and only when the source will hold the
@@ -1227,24 +1259,36 @@ impl LiveState {
 
     /// Ends a block whose root this state computed: later nodes are stamped with the next
     /// epoch, and when more than `max` nodes are held, the least recently used are blinded
-    /// (storage tries unused for as long are dropped) until at most half of `max` remain: those
-    /// unused for the last 256 blocks, then 128, and so on down to every one unused this block.
-    /// The source of the next block must hold the state this one computed.
+    /// (storage tries unused for as long are dropped): those unused since the latest epoch that
+    /// leaves at most three quarters of `max`. The source of the next block must hold the state
+    /// this one computed.
     pub fn end_block(&mut self, max: usize) {
         self.epoch += 1;
-        if self.len() <= max {
+        let held = self.len();
+        if held <= max {
             return;
         }
-        let mut age = 256;
-        while age > 0 && self.len() > max / 2 {
-            let cutoff = self.epoch.saturating_sub(age);
-            self.storages.retain(|_, trie| trie.epoch() >= cutoff);
-            for trie in self.storages.values_mut() {
-                trie.prune(cutoff);
-            }
-            self.accounts.prune(cutoff);
-            age /= 2;
+        // Nodes a cutoff frees, by the epoch below which they go (see `LiveTrie::freed_by`).
+        let mut freed: BTreeMap<u32, usize> = BTreeMap::new();
+        self.accounts.freed_by(u32::MAX, &mut freed);
+        for trie in self.storages.values() {
+            trie.freed_by(trie.epoch(), &mut freed);
         }
+        let need = held - max / 4 * 3;
+        let mut total = 0;
+        let mut cutoff = self.epoch;
+        for (epoch, count) in &freed {
+            if total >= need {
+                cutoff = *epoch;
+                break;
+            }
+            total += count;
+        }
+        self.storages.retain(|_, trie| trie.epoch() >= cutoff);
+        for trie in self.storages.values_mut() {
+            trie.prune(cutoff);
+        }
+        self.accounts.prune(cutoff);
     }
 
     /// Whether nothing is held.

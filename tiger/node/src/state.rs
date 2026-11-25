@@ -388,7 +388,11 @@ impl ParentState for NodeState<'_> {
     ) -> Result<B256, String> {
         // The message passer's account is read only for its storage root, not by execution.
         let started = std::time::Instant::now();
-        let root = self.view.storage_root_after(address, &block_changes(changes));
+        // The block's root, computed just before over the same changes, already hashed them.
+        let root = match &*self.prepared.borrow() {
+            Some(prepared) => self.view.storage_root_after_hashed(address, prepared.hashed()),
+            None => self.view.storage_root_after(address, &block_changes(changes)),
+        };
         self.root_time.set(self.root_time.get() + started.elapsed());
         root.map_err(|error| {
             self.collect(&error, |misses| _ = misses.accounts.insert(address));

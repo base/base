@@ -896,8 +896,17 @@ impl StateView<'_> {
     /// [`Self::prepare_root`] finishing `session`, which streamed the block's transactions (see
     /// [`Self::live_session`]).
     pub fn prepare_root_with(&self, extra: &BlockChanges, session: Option<LiveSession>) -> Result<PreparedRoot, TrieError> {
+        let started = std::time::Instant::now();
         let changes = extra.hashed();
+        let hashed_us = started.elapsed().as_micros();
+        let streaming = session.is_some();
         let mut streamed = session.and_then(|session| session.finish(&changes));
+        if streaming && LiveBase::stats_enabled() {
+            eprintln!(
+                "tiger: live root prepare hashed_us={hashed_us} waited_us={}",
+                started.elapsed().as_micros() - hashed_us
+            );
+        }
         let reusable = self.block == self.tip && self.overlays.is_empty();
         if !reusable {
             let root = self.state_root(Some(extra))?;
@@ -1012,9 +1021,26 @@ impl StateView<'_> {
 
     /// The storage root of `address` with `extra` applied on top (nothing is written).
     pub fn storage_root_after(&self, address: Address, extra: &BlockChanges) -> Result<B256, TrieError> {
-        let mut state = self.hashed()?.clone();
-        state.extend(&extra.hashed());
-        self.storage_root_in(&state, hash_key(address.as_slice()))
+        self.storage_root_after_hashed(address, &extra.hashed())
+    }
+
+    /// [`Self::storage_root_after`] with the changes already hashed (such as a
+    /// [`PreparedRoot::hashed`] of them).
+    pub fn storage_root_after_hashed(&self, address: Address, extra: &HashedState) -> Result<B256, TrieError> {
+        let started = std::time::Instant::now();
+        let key = hash_key(address.as_slice());
+        let ours = self.hashed()?;
+        let root = if ours.is_empty() {
+            self.storage_root_in(extra, key)
+        } else {
+            let mut state = ours.clone();
+            state.extend(extra);
+            self.storage_root_in(&state, key)
+        };
+        if LiveBase::stats_enabled() {
+            eprintln!("tiger: storage root after us={}", started.elapsed().as_micros());
+        }
+        root
     }
 
     /// The storage root of the account with hashed address `key`.

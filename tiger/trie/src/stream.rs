@@ -154,7 +154,7 @@ impl LiveBase {
     }
 
     /// Whether `TIGER_LIVE_STATS=1` asks for a line per streamed block.
-    fn stats_enabled() -> bool {
+    pub fn stats_enabled() -> bool {
         static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *ENABLED.get_or_init(|| std::env::var("TIGER_LIVE_STATS").is_ok_and(|v| v == "1"))
     }
