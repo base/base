@@ -39,6 +39,12 @@ answers detect false positives only. Their completeness relies on a store that i
 and not corrupt, plus on-demand `SegmentAuditor::audit_segment`, which recomputes the digest
 over every row of a segment.
 
+Sender recovery on read is a deliberate cost: every block read recovers each transaction's
+signer (one secp256k1 recovery per non-deposit transaction, on the order of tens of
+microseconds each) and compares it with the archived senders, so a full block of a few hundred
+transactions adds milliseconds of CPU per request. Hash and root checks alone would not catch
+a corrupt sender row.
+
 ## Pruning
 
 Grace defaults to 2 segments and must be at least 1. Every request re-reads the marker after

@@ -193,7 +193,7 @@ mod tests {
             let fixture = Arc::new(ChainFixture::standard());
             let config = fixture.config(TEST_N, 0, Some(2));
             let archive = sim.archive("t9/", &config).await;
-            let neighbor = sim.archive("t9/x", &config).await;
+            let neighbor = sim.archive("t9-x/", &config).await;
             publish_through(&archive, &fixture, config, 4).await;
             publish_through(&neighbor, &fixture, config, 4).await;
             let neighbor_before = dump(neighbor.store.as_ref()).await;
@@ -208,13 +208,7 @@ mod tests {
                 }
             }
             expected.sort();
-            // "t9/" is a byte prefix of "t9/x", so an unbounded range over "t9/" also returns the
-            // neighbor's rows (as keys starting with `x`). Keep only this archive's keys.
-            let after: Vec<_> = dump(archive.store.as_ref())
-                .await
-                .into_iter()
-                .filter(|(k, _)| k.first() != Some(&b'x'))
-                .collect();
+            let after = dump(archive.store.as_ref()).await;
             for family in Family::INDEX.into_iter().chain(Family::BLOCK) {
                 let left = |rows: &[(Bytes, Bytes)]| rows.iter().filter(|(k, _)| ArchiveKey::family(k) == Some(family)).count();
                 assert_eq!(left(&after), left(&expected), "{family:?} rows after prune");
@@ -223,8 +217,7 @@ mod tests {
             assert!(after == expected, "store holds exactly config, all markers and segments 2..=4");
             assert!(dump(neighbor.store.as_ref()).await == neighbor_before, "neighboring namespace untouched");
             assert_eq!(archive.prune(&config, Some(4), 1).await.unwrap(), Some(2), "repeat is idempotent");
-            let again: Vec<_> =
-                dump(archive.store.as_ref()).await.into_iter().filter(|(k, _)| k.first() != Some(&b'x')).collect();
+            let again = dump(archive.store.as_ref()).await;
             assert!(again == expected, "repeat deletes nothing more");
         })
         .await

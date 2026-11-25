@@ -4,6 +4,13 @@
 //! audit verifies header linkage and roots, rebuilds the segment deterministically, compares
 //! every rebuilt row with the stored one (so a deleted or altered posting is found) and
 //! recomputes the digest against the marker.
+//!
+//! Block families (`0x10`–`0x15`) are keyed by block number, so the audit enumerates every
+//! stored key of the segment's block range and reports keys that the rebuild does not produce.
+//! Hash-led families (`0x01`–`0x05`) put the segment number after the hash or address, so the
+//! keys of one segment are not a contiguous range: an extra locator or posting can only be found
+//! by scanning the whole family. The audit checks every expected hash-led row but cannot report
+//! extras there.
 
 use alloy_primitives::{B256, hex};
 use bytes::Bytes;
@@ -48,6 +55,13 @@ pub enum AuditFinding {
     /// A stored row differs from the rebuilt one.
     RowMismatch {
         /// Family.
+        family: Family,
+        /// Hex key.
+        key: String,
+    },
+    /// A stored key in an enumerable family that the rebuild does not produce.
+    UnexpectedRow {
+        /// Family of the scanned range.
         family: Family,
         /// Hex key.
         key: String,
@@ -112,15 +126,20 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
         let first = self.config.first_block(segment);
         let last = self.config.last_block(segment);
         let n = self.config.blocks_per_segment as usize;
+        let mut unexpected = Vec::new();
         let mut columns: Vec<Vec<Option<Bytes>>> = Vec::with_capacity(Family::BLOCK.len());
         for family in Family::BLOCK {
+            // The limit leaves room for malformed keys between the expected ones.
             let rows = session
-                .range(&ArchiveKey::block(family, first), &ArchiveKey::block(family, last), n, RangeMode::Forward)
+                .range(&ArchiveKey::block(family, first), &ArchiveKey::block(family, last), n.saturating_mul(2), RangeMode::Forward)
                 .await?;
             let mut column = vec![None; n];
             for (key, value) in rows {
-                if let Some(number) = ArchiveKey::number(&key).filter(|b| (first..=last).contains(b)) {
-                    column[(number - first) as usize] = Some(value);
+                match ArchiveKey::number(&key)
+                    .filter(|b| (first..=last).contains(b) && ArchiveKey::family(&key) == Some(family))
+                {
+                    Some(number) => column[(number - first) as usize] = Some(value),
+                    None => unexpected.push(AuditFinding::UnexpectedRow { family, key: hex::encode(&key) }),
                 }
             }
             for (i, value) in column.iter().enumerate() {
@@ -130,6 +149,7 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
             }
             columns.push(column);
         }
+        findings.append(&mut unexpected);
         if !findings.is_empty() {
             return Ok(Self::report(segment, findings));
         }
@@ -250,6 +270,32 @@ mod tests {
             assert_eq!(report.findings[0], AuditFinding::RowMissing { family: Family::LogAddress, key: hex::encode(&key) }, "row");
             assert!(matches!(report.findings[1], AuditFinding::DigestMismatch { .. }), "digest");
             assert!(auditor.audit_segment(0).await.unwrap().is_clean(), "segment 0 clean");
+        })
+        .await
+        .expect("test timed out");
+    }
+
+    /// B7: an extra row inside a block family's key range is reported as unexpected.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn extra_block_family_row_is_found_by_audit() {
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            let sim = TestSimulator::start().await;
+            let fixture = Arc::new(ChainFixture::standard());
+            let config = fixture.config(TEST_N, 0, None);
+            let archive = sim.archive("t-audit-extra/", &config).await;
+            publish_through(&archive, &fixture, config, 1).await;
+            let auditor = SegmentAuditor::new(archive.clone(), config, fixture.verifier());
+            assert!(auditor.audit_segment(1).await.unwrap().is_clean(), "segment 1 clean before the insert");
+            let mut extra = ArchiveKey::block(Family::Receipts, 10).to_vec();
+            extra.push(0);
+            archive.store.put(&[(Bytes::from(extra.clone()), Bytes::from_static(b"x"))]).await.unwrap();
+            let report = auditor.audit_segment(1).await.unwrap();
+            assert_eq!(
+                report.findings,
+                vec![AuditFinding::UnexpectedRow { family: Family::Receipts, key: hex::encode(&extra) }],
+                "exactly the inserted row is reported"
+            );
+            assert!(auditor.audit_segment(0).await.unwrap().is_clean(), "segment 0 unaffected");
         })
         .await
         .expect("test timed out");

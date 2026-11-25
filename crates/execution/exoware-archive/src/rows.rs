@@ -17,6 +17,8 @@ pub struct SegmentRows {
     pub segment: u64,
     /// Rows in key order.
     pub rows: Vec<(Bytes, Bytes)>,
+    /// Parent hash of the segment's first block; must equal marker `segment − 1`'s last hash.
+    pub first_parent_hash: B256,
     /// Marker for these rows.
     pub marker: SegmentMarker,
 }
@@ -126,7 +128,8 @@ impl SegmentRows {
         let rows: Vec<(Bytes, Bytes)> = builder.rows.into_iter().collect();
         let digest = SegmentDigest::of(rows.iter().map(|(k, v)| (k.as_ref(), v.as_ref())));
         let marker = SegmentMarker { last_hash, row_count: rows.len() as u64, digest };
-        Ok(Self { segment, rows, marker })
+        let first_parent_hash = blocks[0].header.parent_hash;
+        Ok(Self { segment, rows, first_parent_hash, marker })
     }
 
     /// Total value bytes.

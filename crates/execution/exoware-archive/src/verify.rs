@@ -3,20 +3,22 @@
 //! The transaction root commits to the body and the OP receipt root (chain-spec aware: the
 //! Regolith window strips the deposit nonce for the root only) commits to the receipts.
 //! Senders are not covered by any root, so they are recovered from the signatures and compared.
+//! In the Regolith window the receipt root does not cover the deposit nonce, so each deposit
+//! nonce is checked against its sender's before-nonce in the account changeset.
 //! Changesets cannot be checked without re-executing the block.
 
 use std::sync::Arc;
 
-use alloy_consensus::{
-    EMPTY_OMMER_ROOT_HASH, Header, proofs::calculate_transaction_root,
-    transaction::SignerRecoverable,
-};
+use alloy_consensus::{Header, transaction::SignerRecoverable};
 use alloy_primitives::{Address, B256};
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_common_chains::{BaseFeature, Upgrades};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceiptExt};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_consensus::calculate_receipt_root_no_memo;
+use base_execution_consensus::{
+    calculate_receipt_root_no_memo, validation::validate_body_against_header_base,
+};
 
-use crate::{ArchiveError, BlockBody, BlockData, Family};
+use crate::{AccountChange, ArchiveError, BlockBody, BlockData, Family};
 
 /// Verifies block data against its header.
 #[derive(Debug, Clone)]
@@ -31,32 +33,19 @@ impl BlockVerifier {
         Self { chain_spec }
     }
 
-    /// Checks the body against the header's transaction root. OP blocks have no ommers and no
-    /// withdrawals; a non-empty withdrawal list is rejected.
+    /// Checks the body against the header with the node's own consensus rule: ommers hash,
+    /// transaction root and the withdrawals list (absent before Canyon, present and empty
+    /// after, root-checked before Isthmus).
     pub fn verify_body(&self, header: &Header, body: &BlockBody) -> Result<(), ArchiveError> {
-        let root = calculate_transaction_root(&body.transactions);
-        if root != header.transactions_root {
-            return Err(ArchiveError::unavailable(
-                Family::Body,
-                format!(
-                    "block {} transaction root {root} does not match header {}",
-                    header.number, header.transactions_root
-                ),
-            ));
-        }
-        if header.ommers_hash != EMPTY_OMMER_ROOT_HASH {
-            return Err(ArchiveError::unavailable(
-                Family::Header,
-                format!("block {} has ommers", header.number),
-            ));
-        }
-        if body.withdrawals.as_ref().is_some_and(|w| !w.is_empty()) {
-            return Err(ArchiveError::unavailable(
-                Family::Body,
-                format!("block {} has withdrawals", header.number),
-            ));
-        }
-        Ok(())
+        let consensus_body = alloy_consensus::BlockBody::<BaseTxEnvelope> {
+            transactions: body.transactions.clone(),
+            ommers: Vec::new(),
+            withdrawals: body.withdrawals.clone(),
+        };
+        validate_body_against_header_base(self.chain_spec.as_ref(), &consensus_body, header)
+            .map_err(|e| {
+                ArchiveError::unavailable(Family::Body, format!("block {}: {e}", header.number))
+            })
     }
 
     /// Checks the receipts against the header's receipt root.
@@ -127,11 +116,62 @@ impl BlockVerifier {
             .collect()
     }
 
-    /// Checks body, receipts and senders of one block.
+    /// Whether the receipt root at `timestamp` leaves the deposit nonce uncovered (Regolith
+    /// active, Canyon not yet).
+    pub fn deposit_nonce_uncovered(&self, timestamp: u64) -> bool {
+        let spec = self.chain_spec.as_ref();
+        spec.is_feature_active_at_timestamp(BaseFeature::DepositNonce, timestamp)
+            && !spec.is_feature_active_at_timestamp(BaseFeature::DepositReceiptVersion, timestamp)
+    }
+
+    /// In the Regolith window, checks each deposit receipt's nonce, which the receipt root does
+    /// not cover: it must equal the sender's nonce before the block (from the account
+    /// changeset) plus the number of earlier transactions of the block from the same sender,
+    /// since every transaction increments its sender's nonce once. A deposit sender absent from
+    /// the changeset is `Unavailable`. Outside the window this is a no-op.
+    pub fn verify_deposit_nonces(
+        &self,
+        header: &Header,
+        senders: &[Address],
+        receipts: &[BaseReceipt],
+        account_changes: &[AccountChange],
+    ) -> Result<(), ArchiveError> {
+        if !self.deposit_nonce_uncovered(header.timestamp) {
+            return Ok(());
+        }
+        let number = header.number;
+        for (index, receipt) in receipts.iter().enumerate() {
+            let Some(deposit) = receipt.as_deposit_receipt() else { continue };
+            let sender = *senders.get(index).ok_or_else(|| {
+                ArchiveError::unavailable(Family::Senders, format!("block {number} lacks sender {index}"))
+            })?;
+            let before = account_changes.iter().find(|c| c.address == sender).ok_or_else(|| {
+                ArchiveError::unavailable(
+                    Family::AccountChanges,
+                    format!("block {number} deposit {index} sender {sender} is not in the account changeset"),
+                )
+            })?;
+            let earlier = senders[..index].iter().filter(|s| **s == sender).count() as u64;
+            let expected = before.before.map_or(0, |a| a.nonce).saturating_add(earlier);
+            if deposit.deposit_nonce != Some(expected) {
+                return Err(ArchiveError::unavailable(
+                    Family::Receipts,
+                    format!(
+                        "block {number} deposit {index} nonce {:?} differs from sender nonce {expected}",
+                        deposit.deposit_nonce
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks body, receipts (including Regolith deposit nonces) and senders of one block.
     pub fn verify_block(&self, block: &BlockData) -> Result<(), ArchiveError> {
         self.verify_body(&block.header, &block.body)?;
         self.verify_receipts(&block.header, block.body.transactions.len(), &block.receipts)?;
-        self.verify_senders(block.number(), &block.body.transactions, &block.senders)
+        self.verify_senders(block.number(), &block.body.transactions, &block.senders)?;
+        self.verify_deposit_nonces(&block.header, &block.senders, &block.receipts, &block.account_changes)
     }
 
     /// Checks that `headers` (consecutive, ascending) chain by parent hash and that the last one
@@ -201,5 +241,62 @@ mod tests {
         let headers: Vec<_> = fixture.blocks[8..16].iter().map(|b| b.header.clone()).collect();
         assert_eq!(BlockVerifier::verify_linkage(&headers, fixture.blocks[15].hash()).unwrap().len(), 8, "segment links");
         assert!(BlockVerifier::verify_linkage(&headers, fixture.blocks[14].hash()).is_err(), "wrong last hash");
+    }
+
+    /// B1: dropping the empty withdrawals list after Canyon or adding one before Canyon is
+    /// rejected, although the transaction root still matches.
+    #[test]
+    fn withdrawals_presence_follows_canyon() {
+        let fixture = ChainFixture::standard();
+        let verifier = fixture.verifier();
+        let mut post = fixture.blocks[20].clone();
+        assert_eq!(post.body.withdrawals, Some(Default::default()), "Canyon block has empty withdrawals");
+        post.body.withdrawals = None;
+        assert!(
+            matches!(verifier.verify_block(&post), Err(ArchiveError::Unavailable { family: Family::Body, .. })),
+            "dropped withdrawals after Canyon rejected"
+        );
+        let mut pre = fixture.blocks[5].clone();
+        assert_eq!(pre.body.withdrawals, None, "pre-Canyon block has no withdrawals");
+        pre.body.withdrawals = Some(Default::default());
+        assert!(
+            matches!(verifier.verify_block(&pre), Err(ArchiveError::Unavailable { family: Family::Body, .. })),
+            "added withdrawals before Canyon rejected"
+        );
+    }
+
+    /// B2: a Regolith-window deposit nonce is not covered by the receipt root, so a nonce-only
+    /// change passes the root check but fails the changeset check; a deposit sender missing
+    /// from the changeset is unavailable. After Canyon the root covers the nonce.
+    #[test]
+    fn regolith_deposit_nonce_is_checked_against_changeset() {
+        let fixture = ChainFixture::standard();
+        let verifier = fixture.verifier();
+        let block = &fixture.blocks[5];
+        assert!(verifier.deposit_nonce_uncovered(block.header.timestamp), "block 5 is in the Regolith window");
+        assert!(!verifier.deposit_nonce_uncovered(fixture.blocks[20].header.timestamp), "block 20 is after Canyon");
+        let mut corrupt = block.clone();
+        corrupt.receipts[0].as_deposit_receipt_mut().expect("deposit").deposit_nonce = Some(99);
+        assert_eq!(
+            verifier.verify_receipts(&corrupt.header, corrupt.body.transactions.len(), &corrupt.receipts),
+            Ok(()),
+            "the receipt root does not see the nonce"
+        );
+        assert!(
+            matches!(verifier.verify_block(&corrupt), Err(ArchiveError::Unavailable { family: Family::Receipts, .. })),
+            "nonce-only corruption rejected"
+        );
+        let mut missing = block.clone();
+        missing.account_changes.retain(|c| c.address != fixture.depositor);
+        assert!(
+            matches!(verifier.verify_block(&missing), Err(ArchiveError::Unavailable { family: Family::AccountChanges, .. })),
+            "deposit sender missing from the changeset"
+        );
+        let mut canyon = fixture.blocks[20].clone();
+        canyon.receipts[0].as_deposit_receipt_mut().expect("deposit").deposit_nonce = Some(99);
+        assert!(
+            matches!(verifier.verify_block(&canyon), Err(ArchiveError::Unavailable { family: Family::Receipts, .. })),
+            "after Canyon the root covers the nonce"
+        );
     }
 }

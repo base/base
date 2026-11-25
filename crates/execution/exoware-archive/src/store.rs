@@ -5,6 +5,7 @@ use std::{fmt, time::Duration};
 use async_trait::async_trait;
 use bytes::Bytes;
 use exoware_sdk::{
+    limits::{MAX_RESPONSE_MESSAGE_BYTES, MAX_VALUE_LEN},
     PrefixedStoreClient, RangeMode, ReadSession, StoreClient, StoreKeyPrefix, StoreWriteBatch,
     prune_policy::PrunePolicy,
 };
@@ -17,8 +18,10 @@ pub const DEFAULT_NAMESPACE: &str = "base-archive/";
 /// Default per-request timeout.
 pub const DEFAULT_STORE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Rows per `GetMany` response frame.
-pub const GET_MANY_BATCH: u32 = 1_024;
+/// Rows per `GetMany` and `Range` response frame. Any row may hold a value of up to
+/// [`MAX_VALUE_LEN`], so a frame of this many rows stays within the SDK's
+/// [`MAX_RESPONSE_MESSAGE_BYTES`] whatever the values are; streams keep reading frames.
+pub const GET_MANY_BATCH: u32 = (MAX_RESPONSE_MESSAGE_BYTES / (MAX_VALUE_LEN + 1024)) as u32;
 
 /// Reads that share one monotonic sequence floor: once a read observes a sequence number,
 /// later reads in the session see every write sequenced at or before it.
@@ -83,9 +86,25 @@ impl ExowareStore {
 
     /// Wraps an existing client under `namespace`.
     pub fn new(client: StoreClient, namespace: &str, timeout: Duration) -> Result<Self, ArchiveError> {
+        Self::validate_namespace(namespace)?;
         let prefix = StoreKeyPrefix::new(Bytes::copy_from_slice(namespace.as_bytes()))
             .map_err(|e| ArchiveError::InvalidConfig { reason: format!("namespace: {e}") })?;
         Ok(Self { client: client.prefixed(prefix), timeout })
+    }
+
+    /// Requires `namespace` to match `^[a-z0-9-]+/$`: one segment of lowercase letters, digits
+    /// and dashes followed by a single trailing slash. No valid namespace is then a byte prefix
+    /// of another, so one archive's ranges and prunes never reach a neighbor's keys.
+    pub fn validate_namespace(namespace: &str) -> Result<(), ArchiveError> {
+        let body = namespace.strip_suffix('/').unwrap_or_default();
+        if body.is_empty()
+            || !body.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        {
+            return Err(ArchiveError::InvalidConfig {
+                reason: format!("namespace {namespace:?} must match ^[a-z0-9-]+/$"),
+            });
+        }
+        Ok(())
     }
 
     /// Runs `fut` under the store timeout.
@@ -161,11 +180,55 @@ impl StoreSession for ExowareSession {
         limit: usize,
         mode: RangeMode,
     ) -> Result<Vec<(Bytes, Bytes)>, ArchiveError> {
-        ExowareStore::bounded(
-            self.timeout,
-            "range",
-            self.session.range_with_mode(start, end, limit, mode),
-        )
+        ExowareStore::bounded(self.timeout, "range", async {
+            self.session
+                .range_stream_with_mode(start, end, limit, GET_MANY_BATCH as usize, mode)
+                .await?
+                .collect()
+                .await
+        })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Frames are bounded by bytes: a worst-case frame of maximum-size values fits the SDK's
+    /// response budget.
+    #[test]
+    fn frame_rows_fit_the_response_budget() {
+        assert_eq!(GET_MANY_BATCH, 15, "15 rows of up to 32 MiB per frame");
+        assert!(
+            GET_MANY_BATCH as usize * (MAX_VALUE_LEN + 1024) <= MAX_RESPONSE_MESSAGE_BYTES,
+            "a worst-case frame fits the response budget"
+        );
+    }
+
+    /// Single-segment lowercase namespaces with one trailing slash are accepted; anything that
+    /// could be a byte prefix of another namespace is rejected.
+    #[test]
+    fn namespace_validation() {
+        for ok in ["base-archive/", "a/", "mainnet-2/", "0/"] {
+            assert_eq!(ExowareStore::validate_namespace(ok), Ok(()), "{ok:?} accepted");
+            assert!(
+                ExowareStore::new(StoreClient::new("http://127.0.0.1:1"), ok, DEFAULT_STORE_TIMEOUT).is_ok(),
+                "{ok:?} accepted by the constructor"
+            );
+        }
+        for bad in ["", "/", "base-archive", "a/b/", "a//", "A/", "a_b/", "a/x", "a b/", "é/"] {
+            assert!(
+                matches!(ExowareStore::validate_namespace(bad), Err(ArchiveError::InvalidConfig { .. })),
+                "{bad:?} rejected"
+            );
+            assert!(
+                matches!(
+                    ExowareStore::new(StoreClient::new("http://127.0.0.1:1"), bad, DEFAULT_STORE_TIMEOUT),
+                    Err(ArchiveError::InvalidConfig { .. })
+                ),
+                "{bad:?} rejected by the constructor"
+            );
+        }
     }
 }

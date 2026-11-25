@@ -62,7 +62,7 @@ pub use publisher::{
 mod reader;
 pub use reader::{
     ArchiveReader, ArchiveRequest, ArchiveSnapshot, ArchivedBlock, ArchivedLog,
-    ArchivedTransaction, DEFAULT_MAX_LOG_ALTERNATIVES, DEFAULT_MAX_LOG_CANDIDATES, LogFilter,
+    ArchivedTransaction, DEFAULT_MAX_LOG_ALTERNATIVES, DEFAULT_MAX_LOG_CANDIDATES, HEADER_PAGE, LogFilter,
     ReaderLimits,
 };
 

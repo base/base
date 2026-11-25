@@ -16,8 +16,9 @@ workspace = true
 # workspace
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
+base-common-chains.workspace = true
 base-metrics.workspace = true
-base-common-consensus = { workspace = true, features = ["std", "k256"] }
+base-common-consensus = { workspace = true, features = ["std", "k256", "reth"] }
 
 # alloy
 alloy-rlp.workspace = true
@@ -43,6 +44,7 @@ thiserror = { workspace = true, features = ["std"] }
 [dev-dependencies]
 mockall.workspace = true
 alloy-signer.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 exoware-simulator.workspace = true
 alloy-signer-local.workspace = true
 base-common-genesis = { workspace = true, features = ["std"] }

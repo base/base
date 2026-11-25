@@ -22,7 +22,7 @@ use alloy_consensus::{Header, constants::KECCAK_EMPTY};
 use alloy_primitives::{Address, B256, Bloom, Bytes as AlloyBytes, Log, U256};
 use bytes::Bytes;
 use exoware_sdk::RangeMode;
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseReceipt, BaseTimeUpdateTx, BaseTxEnvelope};
 use roaring::RoaringBitmap;
 use tracing::{error, warn};
 
@@ -37,6 +37,9 @@ pub const DEFAULT_MAX_LOG_ALTERNATIVES: usize = 100;
 
 /// Default maximum candidate blocks in one log query.
 pub const DEFAULT_MAX_LOG_CANDIDATES: usize = 10_000;
+
+/// Headers read per range page of a wildcard log scan.
+pub const HEADER_PAGE: u64 = 1_024;
 
 /// Reader limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +166,8 @@ pub struct ArchivedLog {
     pub block_hash: B256,
     /// Block timestamp.
     pub block_timestamp: u64,
+    /// `BaseTime` millisecond timestamp, when the block carries one.
+    pub block_timestamp_ms: Option<u64>,
     /// Transaction hash.
     pub transaction_hash: B256,
     /// Transaction index.
@@ -421,6 +426,28 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         Ok((header, hash, body))
     }
 
+    /// In the Regolith window, reads block `number`'s account changeset and checks every
+    /// deposit nonce against it ([`BlockVerifier::verify_deposit_nonces`]); the receipt root
+    /// does not cover that field.
+    pub async fn verify_deposit_nonces_in(
+        &self,
+        request: &ArchiveRequest<S::Session>,
+        header: &Header,
+        senders: &[Address],
+        receipts: &[BaseReceipt],
+    ) -> Result<(), ArchiveError> {
+        if !self.verifier.deposit_nonce_uncovered(header.timestamp)
+            || !receipts.iter().any(|r| matches!(r, BaseReceipt::Deposit(_)))
+        {
+            return Ok(());
+        }
+        let number = header.number;
+        let raw = request.session.get(&ArchiveKey::block(Family::AccountChanges, number)).await?;
+        let changes = BlockCodec::decode_account_changes(&Self::require_row(raw, Family::AccountChanges, number)?)
+            .map_err(Self::integrity)?;
+        self.verifier.verify_deposit_nonces(header, senders, receipts, &changes)
+    }
+
     /// Reads and verifies every block family of block `number` except the changesets.
     pub async fn block_in(
         &self,
@@ -445,6 +472,7 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         self.verifier.verify_body(&header, &body)?;
         self.verifier.verify_receipts(&header, body.transactions.len(), &receipts)?;
         self.verifier.verify_senders(number, &body.transactions, &senders)?;
+        self.verify_deposit_nonces_in(request, &header, &senders, &receipts).await?;
         Ok(ArchivedBlock { hash, header, body, receipts, senders })
     }
 
@@ -465,7 +493,13 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
                 RangeMode::Forward,
             )
             .await?;
-        let Some((key, value)) = rows.into_iter().next() else { return Ok(None) };
+        let Some((key, value)) = rows.into_iter().next() else {
+            // A prune after `begin` can delete the locator, turning a hit into a miss. Record
+            // the whole searched window as touched so `conclude` rejects the miss if retention
+            // advanced over it.
+            request.touch(self.config.first_block(snapshot.earliest_segment));
+            return Ok(None);
+        };
         let segment = ArchiveKey::number(&key)
             .filter(|_| ArchiveKey::fields(&key) == Some(hash.as_slice()))
             .ok_or_else(|| ArchiveError::unavailable(family, "locator range returned a foreign key"))?;
@@ -696,39 +730,50 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         Ok(candidates)
     }
 
-    /// Wildcard candidates: blocks whose header bloom is non-empty.
+    /// Wildcard candidates: blocks whose header bloom is non-empty. Headers are scanned in
+    /// pages of [`HEADER_PAGE`] and the candidate cap is enforced as candidates accumulate, so a
+    /// sparse range is not refused for its length alone.
     pub async fn bloom_candidates(
         &self,
         request: &ArchiveRequest<S::Session>,
         filter: &LogFilter,
     ) -> Result<Vec<u64>, ArchiveError> {
-        let span = filter.to - filter.from + 1;
-        if span > self.limits.max_log_candidates as u64 {
-            return Err(ArchiveError::LimitExceeded {
-                reason: format!("wildcard scan of {span} blocks, limit {}", self.limits.max_log_candidates),
-            });
-        }
-        let rows = request
-            .session
-            .range(
-                &ArchiveKey::block(Family::Header, filter.from),
-                &ArchiveKey::block(Family::Header, filter.to),
-                span as usize,
-                RangeMode::Forward,
-            )
-            .await?;
-        if rows.len() as u64 != span {
-            return Err(ArchiveError::unavailable(Family::Header, format!("{} of {span} headers present", rows.len())));
-        }
         let mut out = Vec::new();
-        for (key, value) in rows {
-            let header = BlockCodec::decode_header(&value).map_err(Self::integrity)?;
-            if ArchiveKey::number(&key) != Some(header.number) {
-                return Err(ArchiveError::unavailable(Family::Header, "header row holds another block"));
+        let mut start = filter.from;
+        while start <= filter.to {
+            let end = filter.to.min(start.saturating_add(HEADER_PAGE - 1));
+            let span = end - start + 1;
+            let rows = request
+                .session
+                .range(
+                    &ArchiveKey::block(Family::Header, start),
+                    &ArchiveKey::block(Family::Header, end),
+                    span as usize,
+                    RangeMode::Forward,
+                )
+                .await?;
+            if rows.len() as u64 != span {
+                return Err(ArchiveError::unavailable(Family::Header, format!("{} of {span} headers present", rows.len())));
             }
-            if header.logs_bloom != Bloom::ZERO {
-                out.push(header.number);
+            for (key, value) in rows {
+                let header = BlockCodec::decode_header(&value).map_err(Self::integrity)?;
+                if ArchiveKey::number(&key) != Some(header.number) {
+                    return Err(ArchiveError::unavailable(Family::Header, "header row holds another block"));
+                }
+                if header.logs_bloom != Bloom::ZERO {
+                    out.push(header.number);
+                    if out.len() > self.limits.max_log_candidates {
+                        return Err(ArchiveError::LimitExceeded {
+                            reason: format!(
+                                "more than {} candidate blocks",
+                                self.limits.max_log_candidates
+                            ),
+                        });
+                    }
+                }
             }
+            let Some(next) = end.checked_add(1) else { break };
+            start = next;
         }
         Ok(out)
     }
@@ -840,6 +885,8 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             let block_hash = self.verify_header(request, number, &header).await?;
             self.verifier.verify_body(&header, &body)?;
             self.verifier.verify_receipts(&header, body.transactions.len(), &receipts)?;
+            let block_timestamp_ms =
+                BaseTimeUpdateTx::extract_timestamp_ms(&body.transactions, number, header.timestamp).ok();
             let mut log_index = 0;
             for (tx_index, (tx, receipt)) in body.transactions.iter().zip(&receipts).enumerate() {
                 for log in &receipt.as_receipt().logs {
@@ -848,6 +895,7 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
                             block_number: number,
                             block_hash,
                             block_timestamp: header.timestamp,
+                            block_timestamp_ms,
                             transaction_hash: tx.tx_hash(),
                             transaction_index: tx_index as u64,
                             log_index,
@@ -923,8 +971,6 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
     use crate::{
         BlockCodec, SegmentAuditor,
@@ -1101,8 +1147,9 @@ mod tests {
         .await;
     }
 
-    /// A2: a request that resolved its snapshot before a prune fails with `Pruned`, never a
-    /// partial answer; a fresh request is refused up front.
+    /// A2 / B9: a request that resolved its snapshot and *successfully* read a block before a
+    /// prune has its answer discarded at `conclude`; a request that read after the prune fails
+    /// with `Pruned` too; a fresh request is refused up front.
     #[tokio::test(flavor = "multi_thread")]
     async fn paused_reader_across_prune() {
         bounded(async {
@@ -1118,16 +1165,117 @@ mod tests {
             let r = reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await;
             let request = r.begin().await.unwrap();
             assert_eq!(request.snapshot.map(|s| s.earliest_segment), Some(1), "E = 1 at start");
+            let answer = r.block_in(&request, 9).await;
+            assert_eq!(answer.as_ref().map(|b| b.hash), Ok(fixture.blocks[9].hash()), "read succeeds before the prune");
+            let late = r.begin().await.unwrap();
             for segment in 2..4 {
                 p.publish_segment(segment).await.unwrap();
             }
             assert_eq!(archive.prune(&config, Some(3), 1).await.unwrap(), Some(2), "segments below 2 pruned");
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let result = r.block_in(&request, 9).await;
+            assert_eq!(
+                r.conclude(&request, answer).await.unwrap_err(),
+                ArchiveError::Pruned { block: 9, earliest: 24 },
+                "successful answer discarded"
+            );
+            let result = r.block_in(&late, 9).await;
             assert!(result.is_err(), "rows are gone");
-            assert_eq!(r.conclude(&request, result).await.unwrap_err(), ArchiveError::Pruned { block: 9, earliest: 24 }, "paused request");
+            assert_eq!(r.conclude(&late, result).await.unwrap_err(), ArchiveError::Pruned { block: 9, earliest: 24 }, "paused request");
             assert_eq!(r.block(9).await.unwrap_err(), ArchiveError::Pruned { block: 9, earliest: 24 }, "fresh request");
             assert_eq!(r.block(24).await.unwrap().hash, fixture.blocks[24].hash(), "retained block");
+        })
+        .await;
+    }
+
+    /// B3: a block or transaction hash whose locator a prune deleted after `begin` is a
+    /// `Pruned` error, not a successful miss; an unknown hash in an unpruned window is `None`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn locator_miss_after_prune_is_rejected() {
+        bounded(async {
+            let sim = TestSimulator::start().await;
+            let fixture = Arc::new(ChainFixture::standard());
+            let config = fixture.config(TEST_N, 0, Some(1));
+            let archive = sim.archive("t-locator/", &config).await;
+            let mut p = publisher(archive.clone(), FixtureNode::new(Arc::clone(&fixture)), config).await;
+            p.options.prune_grace_segments = 1;
+            for segment in 0..2 {
+                p.publish_segment(segment).await.unwrap();
+            }
+            let r = reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await;
+            let block_request = r.begin().await.unwrap();
+            let tx_request = r.begin().await.unwrap();
+            let unknown = r.begin().await.unwrap();
+            assert_eq!(
+                r.conclude(&unknown, r.block_number_by_hash_in(&unknown, B256::repeat_byte(9)).await).await,
+                Ok(None),
+                "unknown hash before any prune is a miss"
+            );
+            for segment in 2..4 {
+                p.publish_segment(segment).await.unwrap();
+            }
+            assert_eq!(archive.prune(&config, Some(3), 1).await.unwrap(), Some(2), "segments below 2 pruned");
+            let block = r.block_number_by_hash_in(&block_request, fixture.blocks[9].hash()).await;
+            assert_eq!(block, Ok(None), "the locator range finds nothing");
+            assert_eq!(
+                r.conclude(&block_request, block).await,
+                Err(ArchiveError::Pruned { block: 8, earliest: 24 }),
+                "block hash miss after prune rejected"
+            );
+            let tx = r.transaction_by_hash_in(&tx_request, fixture.blocks[9].body.transactions[1].tx_hash()).await;
+            assert_eq!(tx, Ok(None), "the tx locator range finds nothing");
+            assert_eq!(
+                r.conclude(&tx_request, tx).await,
+                Err(ArchiveError::Pruned { block: 8, earliest: 24 }),
+                "tx hash miss after prune rejected"
+            );
+        })
+        .await;
+    }
+
+    /// B8: the wildcard candidate cap counts candidates, not scanned headers, so a sparse
+    /// range longer than the cap is served while a dense one is refused.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn wildcard_cap_counts_candidates() {
+        bounded(async {
+            let sim = TestSimulator::start().await;
+            let (fixture, archive) = published(&sim, "t-wild/").await;
+            let tight = ArchiveReader {
+                limits: ReaderLimits { max_log_candidates: 1, ..ReaderLimits::default() },
+                ..reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await
+            };
+            let sparse = LogFilter { from: 0, to: 1, addresses: vec![], topics: Default::default() };
+            assert_eq!(fixture.blocks[0].header.logs_bloom, Bloom::ZERO, "genesis has no logs");
+            let logs = tight.logs(&sparse).await.unwrap();
+            assert_eq!(logs.len(), 2, "two logs of block 1 over a two-block range with one candidate");
+            assert!(logs.iter().all(|l| l.block_number == 1), "both from block 1");
+            let dense = LogFilter { from: 1, to: 2, ..sparse };
+            assert!(matches!(tight.logs(&dense).await, Err(ArchiveError::LimitExceeded { .. })), "two candidates exceed one");
+        })
+        .await;
+    }
+
+    /// B2: a Regolith-window receipts row whose only change is a deposit nonce passes the
+    /// receipt root but is rejected by the reader's changeset check.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn regolith_nonce_corruption_is_rejected_on_read() {
+        bounded(async {
+            let sim = TestSimulator::start().await;
+            let (fixture, archive) = published(&sim, "t-nonce/").await;
+            let r = reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await;
+            assert_eq!(r.block(5).await.unwrap().receipts, fixture.blocks[5].receipts, "intact block reads");
+            let mut receipts = fixture.blocks[5].receipts.clone();
+            match &mut receipts[0] {
+                BaseReceipt::Deposit(deposit) => deposit.deposit_nonce = Some(99),
+                other => panic!("receipt 0 is a deposit, got {other:?}"),
+            }
+            archive
+                .store
+                .put(&[(ArchiveKey::block(Family::Receipts, 5), Bytes::from(BlockCodec::encode_receipts(&receipts)))])
+                .await
+                .unwrap();
+            assert!(
+                matches!(r.block(5).await, Err(ArchiveError::Unavailable { family: Family::Receipts, .. })),
+                "nonce-only corruption rejected"
+            );
         })
         .await;
     }

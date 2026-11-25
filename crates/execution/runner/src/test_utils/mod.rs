@@ -22,7 +22,7 @@ mod harness;
 pub use harness::{PreparedBlock, TestHarness, TestHarnessBuilder};
 
 mod node;
-pub use node::{LocalNode, LocalNodeProvider};
+pub use node::{LocalNode, LocalNodeProvider, LocalNodeRetention};
 
 mod tracing;
 pub use tracing::init_silenced_tracing;

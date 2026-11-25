@@ -59,6 +59,30 @@ pub enum ArchiveError {
         /// Digest of the locally built rows.
         local: B256,
     },
+    /// Segment `k`'s first block does not extend marker `k − 1`: either the local chain or the
+    /// stored predecessor marker is wrong. Export halts and nothing of segment `k` is written.
+    #[error(
+        "segment {segment} first block parent {parent_hash} does not match marker {} last hash {predecessor_hash}; export quarantined",
+        segment.saturating_sub(1)
+    )]
+    LinkageQuarantined {
+        /// Segment being published.
+        segment: u64,
+        /// `last_hash` of marker `segment − 1`.
+        predecessor_hash: B256,
+        /// Parent hash of the segment's first block.
+        parent_hash: B256,
+    },
+    /// The segment ends above the node's finalized block.
+    #[error("segment {segment} ends at block {last_block}, above finalized block {finalized:?}")]
+    NotFinalized {
+        /// Segment number.
+        segment: u64,
+        /// Last block of the segment.
+        last_block: u64,
+        /// Node's finalized block.
+        finalized: Option<u64>,
+    },
     /// A row value exceeds the store's 32 MiB value limit; the segment cannot be published.
     #[error("row {key} of segment {segment} has {len} bytes, above the {max}-byte value limit")]
     ValueTooLarge {

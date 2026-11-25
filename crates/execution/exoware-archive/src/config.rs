@@ -72,6 +72,11 @@ impl ArchiveConfig {
 
     /// Checks value ranges.
     pub fn validate(&self) -> Result<(), ArchiveError> {
+        if self.format != FORMAT_VERSION {
+            return Err(ArchiveError::InvalidConfig {
+                reason: format!("format {} is not supported (expected {FORMAT_VERSION})", self.format),
+            });
+        }
         if self.blocks_per_segment == 0 || self.blocks_per_segment > MAX_BLOCKS_PER_SEGMENT {
             return Err(ArchiveError::InvalidConfig {
                 reason: format!(
@@ -199,6 +204,15 @@ mod tests {
             );
         }
         assert!(ArchiveConfig::new(1, B256::ZERO, 65_536, 0, None).is_ok(), "N=65536 allowed");
+        let other_format = ArchiveConfig { format: FORMAT_VERSION + 1, ..without };
+        assert!(
+            matches!(other_format.validate(), Err(ArchiveError::InvalidConfig { .. })),
+            "unsupported format rejected by validation"
+        );
+        assert!(
+            matches!(ArchiveConfig::decode(&other_format.encode()), Err(ArchiveError::Decode { family: Family::Config, .. })),
+            "unsupported stored format rejected on decode"
+        );
     }
 
     /// Retention arithmetic matches the spec and saturates.

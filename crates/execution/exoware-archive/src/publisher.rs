@@ -8,7 +8,7 @@
 
 use std::{future::Future, ops::Range, sync::Arc, time::{Duration, Instant}};
 
-use alloy_primitives::hex;
+use alloy_primitives::{B256, hex};
 use bytes::Bytes;
 use exoware_sdk::limits::{MAX_REQUEST_MESSAGE_BYTES, MAX_VALUE_LEN};
 use tracing::{debug, error, info, warn};
@@ -233,24 +233,56 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
         .map_err(|e| ArchiveError::Local { reason: format!("segment build task failed: {e}") })?
     }
 
-    /// Publishes `segment` from the local source.
+    /// Node's finalized block, read on the blocking pool.
+    pub async fn finalized(&self) -> Result<Option<u64>, ArchiveError>
+    where
+        B: 'static,
+    {
+        let source = Arc::clone(&self.source);
+        tokio::task::spawn_blocking(move || source.finalized_block_number())
+            .await
+            .map_err(|e| ArchiveError::Local { reason: format!("finalized lookup failed: {e}") })?
+    }
+
+    /// Fails with [`ArchiveError::NotFinalized`] unless the node's finalized block is at or
+    /// above the segment's last block.
+    pub fn require_finalized(&self, segment: u64, finalized: Option<u64>) -> Result<(), ArchiveError> {
+        let last_block = self.config.last_block(segment);
+        if finalized.is_none_or(|finalized| finalized < last_block) {
+            return Err(ArchiveError::NotFinalized { segment, last_block, finalized });
+        }
+        Ok(())
+    }
+
+    /// Publishes `segment` from the local source once the node has finalized it.
     pub async fn publish_segment(&self, segment: u64) -> Result<PublishOutcome, ArchiveError>
     where
         B: 'static,
     {
-        self.require_predecessor(segment).await?;
+        self.require_finalized(segment, self.finalized().await?)?;
+        self.publish_finalized(segment).await
+    }
+
+    /// Publishes `segment` whose finality the caller has checked.
+    pub(crate) async fn publish_finalized(&self, segment: u64) -> Result<PublishOutcome, ArchiveError>
+    where
+        B: 'static,
+    {
+        self.require_predecessor(segment, None).await?;
         let rows = self.build_segment(segment).await?;
         self.publish_rows(&rows).await
     }
 
-    /// Publishes prebuilt rows: checks marker `k`, writes every chunk (replaying identical
-    /// bytes after ambiguous failures), rechecks marker `k`, requires marker `k − 1`, then
-    /// writes marker `k`.
-    pub async fn publish_rows(&self, rows: &SegmentRows) -> Result<PublishOutcome, ArchiveError> {
+    /// Publishes rows built from finalized local data: checks marker `k`, requires marker
+    /// `k − 1` to exist and to end at the parent of the segment's first block, writes every
+    /// chunk (replaying identical bytes after ambiguous failures), rechecks marker `k` and the
+    /// predecessor, then writes marker `k`.
+    pub(crate) async fn publish_rows(&self, rows: &SegmentRows) -> Result<PublishOutcome, ArchiveError> {
         let segment = rows.segment;
         if self.marker_state(segment, &rows.marker).await? == MarkerState::Equal {
             return Ok(PublishOutcome::AlreadyPublished);
         }
+        self.require_predecessor(segment, Some(rows.first_parent_hash)).await?;
         let chunks = self.options.plan_chunks(rows, self.archive.store.key_prefix_len())?;
         let mut puts = 0;
         for chunk in &chunks {
@@ -262,7 +294,7 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
         if self.marker_state(segment, &rows.marker).await? == MarkerState::Equal {
             return Ok(PublishOutcome::AlreadyPublished);
         }
-        self.require_predecessor(segment).await?;
+        self.require_predecessor(segment, Some(rows.first_parent_hash)).await?;
         let marker_row = [(ArchiveKey::marker(segment), Bytes::from(rows.marker.encode()))];
         if self.put_with_recovery(segment, &rows.marker, &marker_row).await?.1 == MarkerState::Equal {
             return Ok(PublishOutcome::AlreadyPublished);
@@ -274,14 +306,36 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
     }
 
     /// Fails with [`ArchiveError::Contiguity`] unless marker `segment − 1` exists or `segment`
-    /// is the start segment.
-    pub async fn require_predecessor(&self, segment: u64) -> Result<(), ArchiveError> {
+    /// is the start segment. With `parent_hash`, the marker's `last_hash` must equal it, else
+    /// export is quarantined with [`ArchiveError::LinkageQuarantined`]; this also catches a
+    /// bogus highest marker.
+    pub async fn require_predecessor(
+        &self,
+        segment: u64,
+        parent_hash: Option<B256>,
+    ) -> Result<(), ArchiveError> {
         if segment <= self.config.start_segment {
             return Ok(());
         }
         let session = self.archive.store.session();
-        if ExowareArchive::<S>::marker(&session, segment - 1).await?.is_none() {
+        let Some(predecessor) = ExowareArchive::<S>::marker(&session, segment - 1).await? else {
             return Err(ArchiveError::Contiguity { segment, missing: segment - 1 });
+        };
+        if let Some(parent_hash) = parent_hash
+            && parent_hash != predecessor.last_hash
+        {
+            ArchiveMetrics::quarantined().set(1.0);
+            error!(
+                segment,
+                predecessor_hash = %predecessor.last_hash,
+                parent_hash = %parent_hash,
+                "segment does not extend the stored predecessor marker; export quarantined"
+            );
+            return Err(ArchiveError::LinkageQuarantined {
+                segment,
+                predecessor_hash: predecessor.last_hash,
+                parent_hash,
+            });
         }
         Ok(())
     }
@@ -309,8 +363,10 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
         }
     }
 
-    /// Writes one chunk. After an ambiguous failure it backs off and rereads marker `segment`:
-    /// an equal marker means the segment is complete; an absent one replays the same rows.
+    /// Writes one chunk. After an ambiguous failure it backs off and rereads marker `segment`
+    /// (retrying the read a bounded number of times): an equal marker means the segment is
+    /// complete; a confirmed absent one replays the same rows. A recheck that keeps failing
+    /// aborts without another `Put`. The marker is rechecked after the last failed attempt too.
     /// Returns the number of `Put`s issued and the marker state that ended the loop.
     pub async fn put_with_recovery(
         &self,
@@ -322,26 +378,47 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
         loop {
             attempt += 1;
             let started = Instant::now();
-            match self.archive.store.put(chunk).await {
+            let err = match self.archive.store.put(chunk).await {
                 Ok(sequence) => {
                     ArchiveMetrics::put_latency().record(started.elapsed().as_secs_f64());
                     debug!(segment, rows = chunk.len(), sequence, "put acknowledged");
                     return Ok((attempt, MarkerState::Absent));
                 }
-                Err(err) if attempt >= self.options.max_put_attempts => {
+                Err(err) => err,
+            };
+            warn!(segment, attempt, error = %err, "put outcome unknown; rechecking marker");
+            tokio::time::sleep(self.options.backoff(attempt)).await;
+            match self.recheck_marker(segment, marker).await? {
+                MarkerState::Equal => return Ok((attempt, MarkerState::Equal)),
+                MarkerState::Absent if attempt >= self.options.max_put_attempts => {
                     warn!(segment, attempt, error = %err, "put failed; giving up for this round");
                     return Err(err);
                 }
+                MarkerState::Absent => ArchiveMetrics::put_retries().increment(1),
+            }
+        }
+    }
+
+    /// Reads marker `segment` for [`Self::put_with_recovery`], retrying failed reads up to
+    /// `max_put_attempts` times. Quarantine and the last read error are returned.
+    pub async fn recheck_marker(
+        &self,
+        segment: u64,
+        marker: &SegmentMarker,
+    ) -> Result<MarkerState, ArchiveError> {
+        let mut read = 0;
+        loop {
+            read += 1;
+            match self.marker_state(segment, marker).await {
+                Ok(state) => return Ok(state),
+                Err(err @ ArchiveError::Quarantined { .. }) => return Err(err),
+                Err(err) if read >= self.options.max_put_attempts => {
+                    warn!(segment, error = %err, "marker recheck failed; aborting without replay");
+                    return Err(err);
+                }
                 Err(err) => {
-                    ArchiveMetrics::put_retries().increment(1);
-                    warn!(segment, attempt, error = %err, "put outcome unknown; rechecking marker");
-                    tokio::time::sleep(self.options.backoff(attempt)).await;
-                    match self.marker_state(segment, marker).await {
-                        Ok(MarkerState::Equal) => return Ok((attempt, MarkerState::Equal)),
-                        Ok(MarkerState::Absent) => {}
-                        Err(err @ ArchiveError::Quarantined { .. }) => return Err(err),
-                        Err(err) => warn!(segment, error = %err, "marker recheck failed"),
-                    }
+                    warn!(segment, read, error = %err, "marker recheck failed; retrying the read");
+                    tokio::time::sleep(self.options.backoff(read)).await;
                 }
             }
         }
@@ -353,18 +430,15 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
         B: 'static,
     {
         let segment = self.next_segment().await?;
-        let source = Arc::clone(&self.source);
-        let finalized = tokio::task::spawn_blocking(move || source.finalized_block_number())
-            .await
-            .map_err(|e| ArchiveError::Local { reason: format!("finalized lookup failed: {e}") })??;
+        let finalized = self.finalized().await?;
         let highest_block = segment.checked_sub(1).map(|s| self.config.last_block(s));
         if let (Some(finalized), Some(highest)) = (finalized, highest_block) {
             ArchiveMetrics::lag_blocks().set(finalized.saturating_sub(highest) as f64);
         }
-        if finalized.is_none_or(|finalized| finalized < self.config.last_block(segment)) {
+        if self.require_finalized(segment, finalized).is_err() {
             return Ok(StepOutcome::Waiting { segment, finalized });
         }
-        let outcome = self.publish_segment(segment).await?;
+        let outcome = self.publish_finalized(segment).await?;
         self.archive.prune(&self.config, Some(segment), self.options.prune_grace_segments).await?;
         Ok(StepOutcome::Advanced { segment, outcome })
     }
@@ -403,11 +477,21 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
                     self.options.idle_interval
                 }
                 Err(err @ (ArchiveError::Quarantined { .. }
+                | ArchiveError::LinkageQuarantined { .. }
                 | ArchiveError::ConfigMismatch { .. }
                 | ArchiveError::ConfigMissing
                 | ArchiveError::ValueTooLarge { .. })) => {
                     error!(error = %err, "archive export halted");
                     return Err(err);
+                }
+                Err(err @ ArchiveError::LocalDataPruned { .. }) => {
+                    failures += 1;
+                    error!(
+                        error = %err,
+                        failures,
+                        "exporter lags the node's retention; the archive has a gap until another node publishes it"
+                    );
+                    self.options.backoff(failures)
                 }
                 Err(err) => {
                     failures += 1;
@@ -453,7 +537,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        ArchiveReader, ArchiveStore, BlockCodec, ExowareStore, Family, LocalAvailability,
+        ArchiveReader, ArchiveStore, BlockCodec, ExowareStore, FORMAT_VERSION, Family, LocalAvailability,
         ProvisionOutcome, ReaderLimits, StoreSession,
         test_utils::{
             ChainFixture, FaultKind, FaultyStore, FixtureNode, PutFault, PutMatch, TEST_N,
@@ -527,7 +611,9 @@ mod tests {
                 expected.sort_by_key(|c| c.address);
                 assert_eq!(accounts, expected, "account changes {n}");
                 let storage = BlockCodec::decode_storage_changes(&session.get(&ArchiveKey::block(Family::StorageChanges, n)).await.unwrap().expect("row")).unwrap();
-                assert_eq!(storage.len(), block.storage_changes.len(), "storage changes {n}");
+                let mut expected = block.storage_changes.clone();
+                expected.sort_by_key(|c| (c.address, c.slot));
+                assert_eq!(storage, expected, "storage changes {n}");
             }
             assert_eq!(
                 reader.block(32).await.unwrap_err(),
@@ -541,8 +627,9 @@ mod tests {
     }
 
     /// Test 4 / A1: two publishers over independently built sources race on the same
-    /// segments; the store ends with exactly one marker per segment and the same logical
-    /// contents as a single-publisher store.
+    /// segments, held at a barrier until both are about to issue their first `Put`; the store
+    /// ends with exactly one marker per segment and the same logical contents as a
+    /// single-publisher store.
     #[tokio::test(flavor = "multi_thread")]
     async fn concurrent_publishers_converge() {
         bounded(async {
@@ -551,9 +638,15 @@ mod tests {
             let fixture_b = Arc::new(ChainFixture::standard());
             let config = fixture_a.config(TEST_N, 0, None);
             let shared = sim.archive("t4-shared/", &config).await;
-            let a = publisher(shared.clone(), FixtureNode::new(Arc::clone(&fixture_a)), config).await;
-            let b = publisher(shared.clone(), FixtureNode::new(Arc::clone(&fixture_b)), config).await;
-            let run = |p: SegmentPublisher<ExowareStore, FixtureNode>| async move {
+            let barrier = Arc::new(tokio::sync::Barrier::new(2));
+            let gated = |fixture: &Arc<ChainFixture>| {
+                let store = FaultyStore::new(Arc::clone(&shared.store), vec![])
+                    .with_first_put_barrier(Arc::clone(&barrier));
+                let archive = ExowareArchive::new(Arc::new(store));
+                publisher(archive, FixtureNode::new(Arc::clone(fixture)), config)
+            };
+            let (a, b) = tokio::join!(gated(&fixture_a), gated(&fixture_b));
+            let run = |p: SegmentPublisher<FaultyStore<ExowareStore>, FixtureNode>| async move {
                 let mut outcomes = Vec::new();
                 for _ in 0..5 {
                     match p.step().await.expect("step succeeds") {
@@ -561,15 +654,27 @@ mod tests {
                         StepOutcome::Waiting { .. } => break,
                     }
                 }
-                outcomes
+                (outcomes, p.archive.store.put_count())
             };
-            let (from_a, from_b) = tokio::join!(run(a), run(b));
-            let published = from_a
-                .iter()
-                .chain(&from_b)
-                .filter(|(_, o)| matches!(o, PublishOutcome::Published { .. }))
-                .count();
-            assert!(published >= 5, "every segment published at least once, got {from_a:?} {from_b:?}");
+            let ((from_a, puts_a), (from_b, puts_b)) = tokio::join!(run(a), run(b));
+            // A writer that falls behind resumes at the shared highest marker + 1, so it may
+            // skip segments the other one already finished; together they cover all five.
+            let mut covered: Vec<u64> = from_a.iter().chain(&from_b).map(|(segment, _)| *segment).collect();
+            covered.sort_unstable();
+            covered.dedup();
+            assert_eq!(covered, vec![0, 1, 2, 3, 4], "the writers advanced through every segment: {from_a:?} {from_b:?}");
+            for outcomes in [&from_a, &from_b] {
+                assert!(
+                    outcomes.windows(2).all(|w| w[0].0 < w[1].0),
+                    "each writer advances strictly upward: {outcomes:?}"
+                );
+            }
+            assert!(puts_a >= 1 && puts_b >= 1, "both writers issued puts after the barrier: {puts_a} {puts_b}");
+            assert_eq!(
+                (from_a[0].0, from_b[0].0),
+                (0, 0),
+                "both writers were inside segment 0's publication when the barrier released them"
+            );
 
             let rows = dump(shared.store.as_ref()).await;
             let markers: Vec<_> = rows.iter().filter(|(k, _)| ArchiveKey::family(k) == Some(Family::Marker)).collect();
@@ -702,8 +807,23 @@ mod tests {
             assert_eq!(open(empty, config).await.unwrap_err(), ArchiveError::ConfigMissing, "no implicit config");
             let archive = sim.archive("t7/", &config).await;
             assert_eq!(archive.provision(&config).await.unwrap(), ProvisionOutcome::AlreadyProvisioned, "idempotent provision");
+            let unsupported = ArchiveConfig { format: FORMAT_VERSION + 1, ..config };
+            assert!(matches!(open(archive.clone(), unsupported).await.unwrap_err(), ArchiveError::InvalidConfig { .. }), "exporter refuses an unsupported format");
+            assert!(matches!(archive.provision(&unsupported).await.unwrap_err(), ArchiveError::InvalidConfig { .. }), "provision refuses an unsupported format");
+            let fresh = ExowareArchive::new(sim.store("t7-fresh/"));
+            assert!(matches!(fresh.provision(&unsupported).await.unwrap_err(), ArchiveError::InvalidConfig { .. }), "fresh provision refuses an unsupported format");
+            assert_eq!(dump(fresh.store.as_ref()).await.len(), 0, "nothing written by a refused provision");
+            let stored_unsupported = ExowareArchive::new(sim.store("t7-unsupported/"));
+            stored_unsupported.store.put(&[(ArchiveKey::config(), Bytes::from(unsupported.encode()))]).await.unwrap();
+            assert!(matches!(stored_unsupported.provision(&config).await.unwrap_err(), ArchiveError::ConfigMismatch { .. }), "provision against a stored unsupported row");
+            assert!(
+                matches!(
+                    ArchiveReader::open(stored_unsupported.clone(), fixture.verifier(), Arc::clone(&node), config.chain_id, config.genesis_hash, ReaderLimits::default()).await.unwrap_err(),
+                    ArchiveError::Decode { family: Family::Config, .. }
+                ),
+                "reader refuses a stored unsupported row"
+            );
             let variants = [
-                ArchiveConfig { format: 2, ..config },
                 ArchiveConfig { blocks_per_segment: 16, ..config },
                 ArchiveConfig { chain_id: 1, ..config },
                 ArchiveConfig { genesis_hash: B256::repeat_byte(1), ..config },
@@ -796,6 +916,91 @@ mod tests {
         .await;
     }
 
+    /// P1: a bogus highest marker (wrong `last_hash`) makes the run loop quarantine before
+    /// writing any row of the next segment, instead of publishing past it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn run_until_quarantines_on_bogus_highest_marker() {
+        bounded(async {
+            let sim = TestSimulator::start().await;
+            let fixture = Arc::new(ChainFixture::standard());
+            let config = fixture.config(TEST_N, 0, None);
+            let archive = sim.archive("t-bogus/", &config).await;
+            publish_through(&archive, &fixture, config, 0).await;
+            let bogus = SegmentMarker { last_hash: B256::repeat_byte(0xbb), row_count: 1, digest: B256::repeat_byte(0xcc) };
+            archive.store.put(&[(ArchiveKey::marker(1), Bytes::from(bogus.encode()))]).await.unwrap();
+            let before = dump(archive.store.as_ref()).await;
+            let p = publisher(archive.clone(), FixtureNode::new(Arc::clone(&fixture)), config).await;
+            let result = p.run_until(std::future::pending()).await;
+            assert_eq!(
+                result,
+                Err(ArchiveError::LinkageQuarantined {
+                    segment: 2,
+                    predecessor_hash: bogus.last_hash,
+                    parent_hash: fixture.blocks[15].hash(),
+                }),
+                "run loop halts at segment 2"
+            );
+            assert!(dump(archive.store.as_ref()).await == before, "no row of segment 2 was written");
+            assert_eq!(p.next_segment().await.unwrap(), 2, "H did not move past the bogus marker");
+        })
+        .await;
+    }
+
+    /// B4: the public publication path refuses a segment above the node's finalized block.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn publish_segment_requires_finality() {
+        bounded(async {
+            let sim = TestSimulator::start().await;
+            let fixture = Arc::new(ChainFixture::standard());
+            let config = fixture.config(TEST_N, 0, None);
+            let archive = sim.archive("t-final/", &config).await;
+            let mut node = FixtureNode::new(Arc::clone(&fixture));
+            node.finalized = 6;
+            let p = publisher(archive.clone(), node, config).await;
+            assert_eq!(
+                p.publish_segment(0).await.unwrap_err(),
+                ArchiveError::NotFinalized { segment: 0, last_block: 7, finalized: Some(6) },
+                "segment 0 ends above finalized block 6"
+            );
+            assert_eq!(dump(archive.store.as_ref()).await.len(), 1, "only the config row exists");
+        })
+        .await;
+    }
+
+    /// B5: when the marker recheck after a failed put keeps failing, the publisher aborts
+    /// without replaying: exactly zero additional puts.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failed_recheck_does_not_replay() {
+        bounded(async {
+            let sim = TestSimulator::start().await;
+            let fixture = Arc::new(ChainFixture::standard());
+            let config = fixture.config(TEST_N, 0, None);
+            let plain = sim.archive("t-recheck/", &config).await;
+            let faulty = Arc::new(FaultyStore::new(
+                Arc::clone(&plain.store),
+                vec![PutFault { when: PutMatch::AtOrAfter(0), kind: FaultKind::Fail, times: 1 }],
+            ));
+            let p = SegmentPublisher::open(
+                ExowareArchive::new(Arc::clone(&faulty)),
+                Arc::new(FixtureNode::new(Arc::clone(&fixture))),
+                fixture.verifier(),
+                config,
+                fast_options(),
+            )
+            .await
+            .unwrap();
+            let rows = p.build_segment(0).await.unwrap();
+            faulty.fail_reads(p.options.max_put_attempts);
+            let err = p.put_with_recovery(0, &rows.marker, &rows.rows[..1]).await.unwrap_err();
+            assert_eq!(err, ArchiveError::store("get", "injected read failure"), "the recheck error surfaces");
+            assert_eq!(faulty.put_count(), 1, "exactly the one failed put, zero replays");
+            assert_eq!(faulty.failing_reads.load(std::sync::atomic::Ordering::SeqCst), 0, "every read retry was used");
+            let (puts, state) = p.put_with_recovery(0, &rows.marker, &rows.rows[..1]).await.unwrap();
+            assert_eq!((puts, state), (1, MarkerState::Absent), "a healthy store acknowledges the next put");
+        })
+        .await;
+    }
+
     /// A9: a row above the batch target goes in its own put; a value above 32 MiB is terminal.
     #[test]
     fn oversized_rows_are_isolated() {
@@ -805,6 +1010,7 @@ mod tests {
         let rows = SegmentRows {
             segment: 0,
             rows: vec![row(0, 10), row(1, 10), row(2, 2048), row(3, 10), row(4, 10), row(5, 10), row(6, 10), row(7, 600), row(8, 600)],
+            first_parent_hash: B256::ZERO,
             marker,
         };
         assert_eq!(

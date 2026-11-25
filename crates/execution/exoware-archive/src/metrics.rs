@@ -22,6 +22,8 @@ base_metrics::define_metrics! {
     quarantined: gauge,
     #[describe("Set to 1 when the reader disabled the archive link (config identity mismatch)")]
     link_disabled: gauge,
+    #[describe("Hash lookups answered with the node's own null because the store failed before the hash resolved")]
+    hash_fallbacks: counter,
     #[describe("Prune passes completed")]
     prune_runs: counter,
 }

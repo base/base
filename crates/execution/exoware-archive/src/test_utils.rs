@@ -9,7 +9,10 @@
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -275,14 +278,29 @@ impl ChainFixture {
         BlockVerifier::new(Arc::clone(&self.chain_spec))
     }
 
-    /// Every log of blocks `[from, to]` matching `filter`, by brute force.
+    /// The same query as an alloy [`alloy_rpc_types_eth::Filter`], so the oracle does not
+    /// reuse the matcher under test.
+    pub fn alloy_filter(filter: &crate::LogFilter) -> alloy_rpc_types_eth::Filter {
+        let [t0, t1, t2, t3] = filter.topics.clone();
+        alloy_rpc_types_eth::Filter::new()
+            .from_block(filter.from)
+            .to_block(filter.to)
+            .address(filter.addresses.clone())
+            .event_signature(t0)
+            .topic1(t1)
+            .topic2(t2)
+            .topic3(t3)
+    }
+
+    /// Every log of blocks `[from, to]` matching `filter`, by brute force with alloy's matcher.
     pub fn expected_logs(&self, filter: &crate::LogFilter) -> Vec<(u64, u64, Log)> {
+        let alloy = Self::alloy_filter(filter);
         let mut out = Vec::new();
         for block in &self.blocks[filter.from as usize..=filter.to as usize] {
             let mut log_index = 0;
             for receipt in &block.receipts {
                 for log in &receipt.as_receipt().logs {
-                    if filter.matches(log) {
+                    if alloy.matches(log) {
                         out.push((block.number(), log_index, log.clone()));
                     }
                     log_index += 1;
@@ -409,7 +427,8 @@ pub struct PutFault {
     pub times: usize,
 }
 
-/// A store that injects scripted put faults in front of a real store.
+/// A store that injects scripted put faults and read failures in front of a real store, and
+/// can hold its first put at a barrier shared with another store.
 #[derive(Debug)]
 pub struct FaultyStore<S> {
     /// Real store.
@@ -418,12 +437,36 @@ pub struct FaultyStore<S> {
     pub faults: Mutex<Vec<PutFault>>,
     /// Puts seen, including faulted ones.
     pub puts: Mutex<usize>,
+    /// Remaining reads (through any session) that fail.
+    pub failing_reads: Arc<AtomicUsize>,
+    /// Barrier the first put waits on.
+    pub first_put_barrier: Option<Arc<tokio::sync::Barrier>>,
+    /// Whether the first put has passed the barrier.
+    pub barrier_passed: AtomicBool,
 }
 
 impl<S> FaultyStore<S> {
     /// Wraps `inner` with `faults`.
     pub fn new(inner: Arc<S>, faults: Vec<PutFault>) -> Self {
-        Self { inner, faults: Mutex::new(faults), puts: Mutex::new(0) }
+        Self {
+            inner,
+            faults: Mutex::new(faults),
+            puts: Mutex::new(0),
+            failing_reads: Arc::new(AtomicUsize::new(0)),
+            first_put_barrier: None,
+            barrier_passed: AtomicBool::new(false),
+        }
+    }
+
+    /// Holds the first put until every party of `barrier` arrived.
+    pub fn with_first_put_barrier(mut self, barrier: Arc<tokio::sync::Barrier>) -> Self {
+        self.first_put_barrier = Some(barrier);
+        self
+    }
+
+    /// Makes the next `reads` reads fail.
+    pub fn fail_reads(&self, reads: usize) {
+        self.failing_reads.store(reads, Ordering::SeqCst);
     }
 
     /// Puts seen so far.
@@ -432,15 +475,64 @@ impl<S> FaultyStore<S> {
     }
 }
 
+/// Session of a [`FaultyStore`]: fails reads while the store has failing reads left.
+#[derive(Debug)]
+pub struct FaultySession<Sess> {
+    /// Real session.
+    pub inner: Sess,
+    /// Shared failing-read budget.
+    pub failing_reads: Arc<AtomicUsize>,
+}
+
+impl<Sess> FaultySession<Sess> {
+    /// Consumes one failing read, if any is left.
+    pub fn fail(&self, op: &'static str) -> Result<(), ArchiveError> {
+        let failed = self
+            .failing_reads
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
+            .is_ok();
+        if failed { Err(ArchiveError::store(op, "injected read failure")) } else { Ok(()) }
+    }
+}
+
+#[async_trait]
+impl<Sess: StoreSession> StoreSession for FaultySession<Sess> {
+    async fn get(&self, key: &Bytes) -> Result<Option<Bytes>, ArchiveError> {
+        self.fail("get")?;
+        self.inner.get(key).await
+    }
+
+    async fn get_many(&self, keys: &[Bytes]) -> Result<Vec<Option<Bytes>>, ArchiveError> {
+        self.fail("get_many")?;
+        self.inner.get_many(keys).await
+    }
+
+    async fn range(
+        &self,
+        start: &Bytes,
+        end: &Bytes,
+        limit: usize,
+        mode: RangeMode,
+    ) -> Result<Vec<(Bytes, Bytes)>, ArchiveError> {
+        self.fail("range")?;
+        self.inner.range(start, end, limit, mode).await
+    }
+}
+
 #[async_trait]
 impl<S: ArchiveStore> ArchiveStore for FaultyStore<S> {
-    type Session = S::Session;
+    type Session = FaultySession<S::Session>;
 
     fn session(&self) -> Self::Session {
-        self.inner.session()
+        FaultySession { inner: self.inner.session(), failing_reads: Arc::clone(&self.failing_reads) }
     }
 
     async fn put(&self, rows: &[(Bytes, Bytes)]) -> Result<u64, ArchiveError> {
+        if let Some(barrier) = &self.first_put_barrier
+            && !self.barrier_passed.swap(true, Ordering::SeqCst)
+        {
+            barrier.wait().await;
+        }
         let index = {
             let mut puts = self.puts.lock().unwrap_or_else(PoisonError::into_inner);
             *puts += 1;

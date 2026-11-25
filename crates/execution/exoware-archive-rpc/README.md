@@ -1,0 +1,100 @@
+# base-exoware-archive-rpc
+
+Node wiring for `base-exoware-archive`:
+
+- `ProviderSource`, the reth provider as the exporter's `BlockSource` and the reader's
+  `NodeState`.
+- The exporter: a supervised task that publishes finalized segments.
+- The archive-backed `eth_` reads behind `ArchiveRpcBoundary`.
+- The `--archive.exoware.*` arguments (`ExowareArchiveArgs`).
+
+`ExowareArchiveExtension` is installed by `base-execution-cli` after `TxBaseRpcExtension`.
+Without `--archive.exoware.url` it is a no-op and the node is unchanged.
+
+## Arguments
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--archive.exoware.url` | unset | Store URL; unset disables the archive |
+| `--archive.exoware.namespace` | `base-archive/` | Key namespace (`[a-z0-9-]+/`) |
+| `--archive.exoware.export` | off | Run the exporter on this node |
+| `--archive.exoware.provision` | off | Write the config row at exporter start if absent; an existing row must match |
+| `--archive.exoware.segment-blocks` | 8192 | Blocks per segment, 1..=65536 |
+| `--archive.exoware.start-block` | 0 | First archived block, segment-aligned |
+| `--archive.exoware.retain-segments` | unset | Keep only the most recent segments |
+| `--archive.exoware.timeout` | 5s | Store budget per RPC request and per exporter store call |
+| `--archive.exoware.prune-grace-segments` | 2 | Segments kept below the earliest served one before rows are deleted, ≥ 1 |
+
+The store API key is read by the Exoware SDK from `EXOWARE_API_KEY` only. There is no flag
+and it is never logged. There is no audit-interval flag; audits are on demand
+(`SegmentAuditor`).
+
+## Exporter
+
+With `--archive.exoware.export` a node-started hook spawns the exporter on the node's task
+executor with a graceful-shutdown signal; node shutdown waits for the round in flight. It
+provisions the config row when asked, retries an unreachable store with backoff, opens
+`SegmentPublisher` (which requires a byte-equal config row) and runs
+`SegmentPublisher::run_until`. A config mismatch, missing config, quarantined segment or
+oversized value stops the exporter with an error log; the node keeps serving.
+
+The exporter does not gate reth's pruning. If it lags the node's retention it cannot publish
+the pruned blocks: it logs an error, keeps retrying, and `lag_blocks` (finalized block minus
+the last published block) grows. Alert on `lag_blocks`; another node with the blocks must
+publish the gap.
+
+## Reads
+
+Every method asks the node first. The archive is used only when the node's own data for the
+request is pruned:
+
+| Method | Goes to the archive when | Archive path |
+| --- | --- | --- |
+| `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_getBlockReceipts`, `eth_getTransactionByBlock{Hash,Number}AndIndex` | The node answered 4444, or answered for a block below its earliest body or at or below its `Receipts` checkpoint (Base defaults deposit fields when receipts are gone), or returned `null` for a pruned number. A `null` for a hash counts only once the node pruned something hash-addressable. | Hash locator (if needed), then the verified block |
+| `eth_getBlockTransactionCountBy{Number,Hash}` | Same, against the earliest body only | Same |
+| `eth_getTransactionByHash`, `eth_getTransactionReceipt` | Same as blocks | Tx locator, then the verified block |
+| `eth_getLogs` | The node answered 4444 | Blocks below the node's first complete block from the archive, the rest from the node's filter, no gap. reth's `--rpc.max-blocks-per-filter` and `--rpc.max-logs-per-response` apply to the combined result with reth's errors. |
+| `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode` | The block (number, hash, `earliest`; EIP-1898 objects included) is at or below the `AccountHistory` checkpoint, or the node refused the read as pruned | State history seek, else the node's state at the archive head `H` |
+| `eth_getStorageAt` | Same, against `StorageHistory` | Same |
+
+`latest`, `pending`, `safe` and `finalized` never reach the archive, and neither does a number
+above what the node holds. `eth_getTransactionCount` with a non-zero `nonce_key` is always
+answered by the Base transaction override; every local protocol-nonce read also goes through
+it, so the override's behavior is unchanged.
+
+Errors map once, in `ArchiveRpcBoundary`:
+
+- A number-addressed request in the pruned range, or a hash that resolved in the archive,
+  gets 4444 `pruned history unavailable: <reason>` when the archive cannot answer (outage,
+  timeout, integrity fault, retention moved). Never `null` or empty data.
+- A hash the node does not know returns `null` for a genuine archive miss, and also when the
+  store failed before the hash resolved (`hash_fallbacks` metric, warning log), so polling for
+  a pending transaction does not turn into errors during an outage.
+- Log query limits are `-32602` with reth's messages.
+
+A node that lacks the canonical hash of an archived block cannot verify it and answers 4444.
+Responses are built by `ArchiveConverter` with the node's own Base response constructors, so
+they equal what the node served before it pruned.
+
+## Gaps
+
+- Historical `eth_call`, `eth_estimateGas`, tracing and `eth_createAccessList` are not routed.
+- Uncle methods, log filters (`eth_newFilter`) and subscriptions are not routed.
+- Retention reads are cached for 2 s (`RETENTION_TTL`). A receipt pruned inside that window can
+  be served locally with default deposit fields once.
+
+## Tests
+
+```sh
+cargo test -p base-exoware-archive-rpc
+cargo test -p base-execution-cli --lib standard_node
+```
+
+- `pruned_node_serves_history_from_archive`: a dev node with 64-block retention exports to an
+  in-process simulator; every block, transaction, receipt, log and state response captured
+  before pruning is JSON-equal after pruning. With the simulator stopped, number-addressed
+  reads are 4444 and unknown hashes stay `null`.
+- `unpruned_node_with_store_down_answers_locally`: misses and recent reads stay local.
+- `transaction_count_override_is_preserved`: `nonce_key` answers equal the Base override's.
+- Unit tests cover the error boundary, hash fallback, routing per checkpoint, the retention
+  cache and argument parsing.
