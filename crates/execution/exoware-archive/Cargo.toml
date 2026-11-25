@@ -1,0 +1,53 @@
+[package]
+name = "base-exoware-archive"
+description = "Exoware-only archive store: segment rows, CAS-free publication, verified reads and pruning"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-execution-chainspec.workspace = true
+base-execution-consensus.workspace = true
+base-metrics.workspace = true
+base-common-consensus = { workspace = true, features = ["std", "k256"] }
+
+# alloy
+alloy-rlp.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std", "k256"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+
+# exoware
+exoware-sdk.workspace = true
+roaring.workspace = true
+
+# async
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+
+# misc
+bytes.workspace = true
+metrics = { workspace = true, optional = true }
+tracing.workspace = true
+sha2 = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+mockall.workspace = true
+alloy-signer.workspace = true
+exoware-simulator.workspace = true
+alloy-signer-local.workspace = true
+base-common-genesis = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = []
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

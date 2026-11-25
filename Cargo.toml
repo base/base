@@ -156,6 +156,9 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
+exoware-sdk = "2026.11.0"
+exoware-simulator = "2026.11.0"
+roaring = "0.11.4"
 # Base Primitives
 base-bundles = { path = "crates/common/bundles" }
 base-common-signer = { path = "crates/common/signer" }
