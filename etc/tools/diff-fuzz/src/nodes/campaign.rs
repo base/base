@@ -978,16 +978,59 @@ impl RpcCampaign {
 
     /// [`Self::KNOWN_BASE_OVERRIDE_ORDER`] with base's index, when every node refused `case` by
     /// naming an account that sets both `state` and `stateDiff` in its overrides, and the names
-    /// differ.
+    /// differ. In a batch, each reply that differs must be explained this way (matched by `id`),
+    /// and every other reply must be identical.
     pub fn override_order(
         case: &RpcCase,
         replies: &[(String, Reply)],
     ) -> Option<(&'static str, usize)> {
         let base = replies.iter().position(|(n, _)| n == "base")?;
         let body: Value = serde_json::from_str(&case.body).ok()?;
-        let overrides = body["params"][2].as_object()?;
-        let named = |reply: &Reply| -> Option<String> {
-            let Reply::Body(reply) = reply else { return None };
+        let bodies: Vec<&Value> = replies
+            .iter()
+            .map(|(_, reply)| match reply {
+                Reply::Body(body) => Some(body),
+                Reply::Transport(_) => None,
+            })
+            .collect::<Option<_>>()?;
+        let Value::Array(requests) = &body else {
+            return Self::names_differ(&body, &bodies, base)
+                .filter(|differ| *differ)
+                .map(|_| (Self::KNOWN_BASE_OVERRIDE_ORDER, base));
+        };
+        let by_id = |reply: &Value| -> Option<BTreeMap<String, Value>> {
+            reply.as_array().map(|items| {
+                items.iter().map(|item| (item["id"].to_string(), item.clone())).collect()
+            })
+        };
+        let maps: Vec<BTreeMap<String, Value>> =
+            bodies.iter().map(|b| by_id(b)).collect::<Option<_>>()?;
+        if maps.iter().any(|m| m.keys().ne(maps[base].keys())) {
+            return None;
+        }
+        let request_ids: Vec<String> = requests.iter().map(|r| r["id"].to_string()).collect();
+        let mut explained = false;
+        for (id, reference) in &maps[base] {
+            let items: Vec<&Value> = maps.iter().map(|m| &m[id]).collect();
+            if items.iter().all(|item| *item == reference) {
+                continue;
+            }
+            let index = request_ids.iter().position(|r| r == id)?;
+            let request = &requests[index];
+            if Self::names_differ(request, &items, base) != Some(true) {
+                return None;
+            }
+            explained = true;
+        }
+        explained.then_some((Self::KNOWN_BASE_OVERRIDE_ORDER, base))
+    }
+
+    /// For one request and each node's reply to it: `Some(whether the named accounts differ)`
+    /// when every reply names an account that sets both `state` and `stateDiff` in the
+    /// request's overrides, else `None`.
+    fn names_differ(request: &Value, replies: &[&Value], base: usize) -> Option<bool> {
+        let overrides = request["params"][2].as_object()?;
+        let named = |reply: &Value| -> Option<String> {
             let message = reply["error"]["message"].as_str()?;
             let account = message
                 .strip_prefix("account ")?
@@ -999,9 +1042,8 @@ impl RpcCampaign {
             });
             invalid.then(|| account.to_lowercase())
         };
-        let names: Vec<String> =
-            replies.iter().map(|(_, reply)| named(reply)).collect::<Option<_>>()?;
-        names.iter().any(|n| *n != names[base]).then_some((Self::KNOWN_BASE_OVERRIDE_ORDER, base))
+        let names: Vec<String> = replies.iter().map(|reply| named(reply)).collect::<Option<_>>()?;
+        Some(names.iter().any(|n| *n != names[base]))
     }
 
     /// [`Self::ACCEPTED_PRECOMPILE_DELEGATION`] with base's index, when the nodes disagree on
@@ -1819,6 +1861,27 @@ mod tests {
         assert_eq!(RpcCampaign::override_order(&case, &replies(a, c)), None);
         // The same account named by both is no disagreement to explain.
         assert_eq!(RpcCampaign::override_order(&case, &replies(a, a)), None);
+        // In a batch, the differing reply must be explained and the others identical.
+        let item = |id: u64, reply: &Reply| {
+            let Reply::Body(body) = reply else { unreachable!() };
+            let mut body = body.clone();
+            body["id"] = json!(id);
+            body
+        };
+        let request: Value = serde_json::from_str(&case.body).unwrap();
+        let mut second = request.clone();
+        second["id"] = json!(2);
+        let batch = RpcCase { body: json!([request, second]).to_string(), ..case };
+        let ok = json!({"id":2,"result":"0x"});
+        let batch_replies = |base: &str, tiger: &str, tiger_second: Value| {
+            vec![
+                ("base".to_owned(), Reply::Body(json!([item(1, &named(base)), ok]))),
+                ("tiger".to_owned(), Reply::Body(json!([item(1, &named(tiger)), tiger_second]))),
+            ]
+        };
+        assert!(RpcCampaign::override_order(&batch, &batch_replies(a, b, ok.clone())).is_some());
+        let other = json!({"id":2,"result":"0x01"});
+        assert_eq!(RpcCampaign::override_order(&batch, &batch_replies(a, b, other)), None);
     }
 
     #[test]
