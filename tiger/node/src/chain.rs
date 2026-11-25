@@ -252,6 +252,7 @@ impl PersistBatch {
     /// it stale.
     pub fn commit(&self) -> Result<bool, String> {
         let mut w = self.db.write().map_err(|error| error.to_string())?;
+        let started = std::time::Instant::now();
         // A reorg bumps the epoch before it waits for this write transaction.
         if self.epoch.load(Ordering::SeqCst) != self.started {
             return Ok(false);
@@ -282,7 +283,16 @@ impl PersistBatch {
         }
         w.set_chain_state(self.chain_state.0, self.chain_state.1).map_err(|error| error.to_string())?;
         Chain::put_forkchoice(&mut w, self.forkchoice)?;
+        let written = started.elapsed();
         w.commit().map_err(|error| error.to_string())?;
+        if std::env::var_os("TIGER_PERSIST_LOG").is_some() {
+            let [static_files, rocks, mdbx] =
+                *self.db.datadir.commit_phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            crate::Log::line(format!(
+                "tiger: persist commit of {} blocks: writes {written:?}, static files {static_files:?}, rocksdb {rocks:?}, mdbx commit {mdbx:?}",
+                self.blocks.len()
+            ));
+        }
         Ok(true)
     }
 }

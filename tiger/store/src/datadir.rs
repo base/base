@@ -120,6 +120,8 @@ pub struct Datadir {
     pub rocks: Rocks,
     /// A failed commit's heal failed too (such as on a full disk): the next write heals first.
     unhealed: AtomicBool,
+    /// How long the last commit spent on static files, RocksDB and MDBX, for logs.
+    pub commit_phases: std::sync::Mutex<[std::time::Duration; 3]>,
 }
 
 impl Datadir {
@@ -129,7 +131,14 @@ impl Datadir {
         let db = Db::open(&path.join("db"))?;
         let static_files = StaticFiles::open(&path.join("static_files"))?;
         let rocks = Rocks::open(&path.join("rocksdb"))?;
-        let datadir = Self { path: path.to_path_buf(), db, static_files, rocks, unhealed: AtomicBool::new(false) };
+        let datadir = Self {
+            path: path.to_path_buf(),
+            db,
+            static_files,
+            rocks,
+            unhealed: AtomicBool::new(false),
+            commit_phases: std::sync::Mutex::default(),
+        };
         let settings = datadir.db.read()?.get(datadir.db.dbi(Table::Metadata), STORAGE_SETTINGS_KEY)?.map(<[u8]>::to_vec);
         match settings {
             Some(bytes) => {
@@ -348,12 +357,18 @@ impl WriteTxn<'_> {
     pub fn commit(mut self) -> Result<(), StoreError> {
         let datadir = self.datadir;
         let committed = (|| {
+            let started = std::time::Instant::now();
             Fault::phase(self.label, "static-files");
             datadir.static_files.commit()?;
+            let static_files = started.elapsed();
             Fault::phase(self.label, "rocksdb");
             self.write_rocks()?;
+            let rocks = started.elapsed() - static_files;
             Fault::phase(self.label, "mdbx");
-            Ok(self.txn.take().expect("open transaction").commit()?)
+            self.txn.take().expect("open transaction").commit()?;
+            let mdbx = started.elapsed() - static_files - rocks;
+            *datadir.commit_phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = [static_files, rocks, mdbx];
+            Ok(())
         })();
         if let Err(error) = committed {
             // Static files and RocksDB may be ahead of MDBX, as after a crash (a full disk does
