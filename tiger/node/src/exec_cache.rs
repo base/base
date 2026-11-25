@@ -8,9 +8,11 @@
 //! state at the head with no side-branch blocks on top reads it, so a side branch, an older
 //! block, or a stateless (partial) datadir never sees it.
 //!
-//! It is bounded by entry counts (code by bytes), about twice base-reth's working set on Base
-//! mainnet (32k accounts, 0.5M slots, 5k codes); when the head moves, a shard over its cap drops
-//! entries spread evenly over its table. At its caps it holds about 8 MB of accounts, 100 MB of
+//! It is bounded by entry counts (code by bytes), sized from a live probe on Base mainnet: at
+//! 64k accounts and 1M slots, ~14% of the validating thread's misses were entries the cache had
+//! evicted, accounts all within the last 64k evicted, slots ever fewer per evicted entry out to
+//! 1M (most within 512k). When the head moves, a shard over its cap drops
+//! entries spread evenly over its table. At its caps it holds about 16 MB of accounts, 150 MB of
 //! slots and 64 MiB of code.
 
 use std::{
@@ -28,9 +30,9 @@ use evm2::bytecode::Bytecode;
 /// Shards, each with its own lock, so validation and the prewarm workers rarely contend.
 const SHARDS: usize = 16;
 /// Most accounts cached.
-pub(crate) const MAX_ACCOUNTS: usize = 1 << 16;
+pub(crate) const MAX_ACCOUNTS: usize = 1 << 17;
 /// Most storage slots cached.
-pub(crate) const MAX_SLOTS: usize = 1 << 20;
+pub(crate) const MAX_SLOTS: usize = 3 << 19;
 /// Most code bytes cached.
 pub(crate) const MAX_CODE_BYTES: usize = 64 << 20;
 
