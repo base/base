@@ -9,7 +9,9 @@
 //!   in-memory layer), checks each state root, makes each block canonical in memory, and prints
 //!   per-phase percentiles. `--skip` replays that many blocks first without timing them, so a run
 //!   can measure a block range other than another run's (PGO trains on one range and is measured
-//!   on the next). It never persists: the datadir is opened but not written, so the
+//!   on the next). With `TIGER_BENCH_PERF_CTL=<fifo>`, it writes `enable` to the fifo when the
+//!   timed blocks start and `disable` when they end, so `perf stat -D -1 --control fifo:<fifo>`
+//!   counts only them. It never persists: the datadir is opened but not written, so the
 //!   same datadir replays the same blocks again (with a warmer page cache).
 
 use std::{
@@ -110,6 +112,16 @@ fn read_blocks(path: &PathBuf) -> Result<Vec<alloy_consensus::Block<SignedTx>>, 
     Ok(blocks)
 }
 
+/// Writes a command to the `perf stat --control` fifo named by `TIGER_BENCH_PERF_CTL`, if set.
+fn perf_control(command: &str) -> Result<(), String> {
+    let Some(path) = std::env::var_os("TIGER_BENCH_PERF_CTL") else { return Ok(()) };
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .and_then(|mut fifo| fifo.write_all(format!("{command}\n").as_bytes()))
+        .map_err(|error| format!("TIGER_BENCH_PERF_CTL {}: {error}", path.display()))
+}
+
 fn replay(options: &Replay) -> Result<(), String> {
     let blocks = read_blocks(&options.blocks)?;
     let node = Node::open(&options.datadir, Genesis::load(&options.chain)?, None)?;
@@ -138,6 +150,7 @@ fn replay(options: &Replay) -> Result<(), String> {
     let mut timings = Vec::with_capacity(todo.len());
     for (index, block) in todo.into_iter().enumerate() {
         if index == options.skip {
+            perf_control("enable")?;
             started = Instant::now();
         }
         let header = block.header;
@@ -174,6 +187,7 @@ fn replay(options: &Replay) -> Result<(), String> {
         timings.push(Timing { exec: validation - root, root, canonical: canonical_started.elapsed(), gas });
     }
     let elapsed = started.elapsed();
+    perf_control("disable")?;
     let gas: u64 = timings.iter().map(|t| t.gas).sum();
     println!(
         "blocks {} in {:.2}s: {:.1} blocks/s, {:.0} Mgas/s",
