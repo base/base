@@ -1,6 +1,8 @@
 //! Cursors over the datadir's trie and hashed state tables, and an in-memory overlay of hashed
 //! state changes on top of them.
 
+use std::collections::{BTreeMap, btree_map};
+
 use alloy_primitives::{B256, U256};
 use alloy_trie::{BranchNodeCompact, Nibbles};
 use base_tiger_store::{Account, Cursor, Db, StorageEntry, Table, TrieCodec, Txn};
@@ -187,42 +189,45 @@ impl<K> HashedCursor for HashedStorageCursor<'_, K> {
     }
 }
 
-/// Changes over a base cursor: overlay entries (`None` deletes) replace base entries with the
-/// same key; with `wiped`, base entries are ignored.
+/// Changes over a base cursor, read in place from a sorted map: overlay entries replace base
+/// entries with the same key, and those `value` maps to `None` delete; with `wiped`, base entries
+/// are ignored.
 #[derive(Debug)]
-pub struct OverlayCursor<C: HashedCursor> {
+pub struct OverlayCursor<'o, C: HashedCursor, V> {
     /// The base cursor.
     pub base: C,
     /// Ignore the base.
     pub wiped: bool,
-    /// Sorted changes.
-    pub overlay: Vec<(B256, Option<C::Value>)>,
-    /// Next overlay index.
-    pub index: usize,
-    /// The next base entry.
-    pub base_next: Option<(B256, C::Value)>,
+    overlay: Option<&'o BTreeMap<B256, V>>,
+    value: fn(&V) -> Option<C::Value>,
+    overlay_iter: Option<btree_map::Range<'o, B256, V>>,
+    overlay_next: Option<(&'o B256, &'o V)>,
+    base_next: Option<(B256, C::Value)>,
 }
 
-impl<C: HashedCursor> OverlayCursor<C> {
-    /// An overlay of sorted `overlay` changes over `base`.
-    pub const fn new(base: C, wiped: bool, overlay: Vec<(B256, Option<C::Value>)>) -> Self {
-        Self { base, wiped, overlay, index: 0, base_next: None }
+impl<'o, C: HashedCursor, V> OverlayCursor<'o, C, V> {
+    /// An overlay of `overlay` changes over `base`, each read through `value`.
+    pub const fn new(base: C, wiped: bool, overlay: Option<&'o BTreeMap<B256, V>>, value: fn(&V) -> Option<C::Value>) -> Self {
+        Self { base, wiped, overlay, value, overlay_iter: None, overlay_next: None, base_next: None }
+    }
+
+    fn advance_overlay(&mut self) {
+        self.overlay_next = self.overlay_iter.as_mut().and_then(Iterator::next);
     }
 
     fn merged(&mut self) -> Result<Option<(B256, C::Value)>, TrieError> {
         loop {
-            let overlay_key = self.overlay.get(self.index).map(|(k, _)| *k);
             let base_key = self.base_next.as_ref().map(|(k, _)| *k);
-            match (overlay_key, base_key) {
-                (None, None) => return Ok(None),
-                (Some(o), b) if b.is_none_or(|b| o <= b) => {
-                    let value = self.overlay[self.index].1.clone();
-                    self.index += 1;
-                    if b == Some(o) {
+            match self.overlay_next {
+                None if base_key.is_none() => return Ok(None),
+                Some((o, value)) if base_key.is_none_or(|b| *o <= b) => {
+                    let value = (self.value)(value);
+                    self.advance_overlay();
+                    if base_key == Some(*o) {
                         self.base_next = self.base.next()?;
                     }
                     if let Some(value) = value {
-                        return Ok(Some((o, value)));
+                        return Ok(Some((*o, value)));
                     }
                 }
                 _ => {
@@ -235,12 +240,13 @@ impl<C: HashedCursor> OverlayCursor<C> {
     }
 }
 
-impl<C: HashedCursor> HashedCursor for OverlayCursor<C> {
+impl<C: HashedCursor, V> HashedCursor for OverlayCursor<'_, C, V> {
     type Value = C::Value;
 
     fn seek(&mut self, key: B256) -> Result<Option<(B256, C::Value)>, TrieError> {
         self.base_next = if self.wiped { None } else { self.base.seek(key)? };
-        self.index = self.overlay.partition_point(|(k, _)| *k < key);
+        self.overlay_iter = self.overlay.map(|overlay| overlay.range(key..));
+        self.advance_overlay();
         self.merged()
     }
 
@@ -249,40 +255,38 @@ impl<C: HashedCursor> HashedCursor for OverlayCursor<C> {
     }
 }
 
-/// Trie node changes over a base trie cursor: overlay nodes (`None` removes) replace base nodes
-/// at the same path. The node changes of the canonical blocks held in memory above the stored
-/// tip ([`crate::MemState`]).
+/// Trie node changes over a base trie cursor, read in place from a sorted map: overlay nodes
+/// (`None` removes) replace base nodes at the same path. The node changes of the canonical blocks
+/// held in memory above the stored tip ([`crate::MemState`]).
 #[derive(Debug)]
-pub struct TrieOverlayCursor<C> {
+pub struct TrieOverlayCursor<'o, C> {
     /// The base cursor.
     pub base: C,
-    /// Sorted changes.
-    pub overlay: Vec<(Nibbles, Option<BranchNodeCompact>)>,
-    index: usize,
+    overlay: Option<&'o BTreeMap<Nibbles, Option<BranchNodeCompact>>>,
+    overlay_iter: Option<btree_map::Range<'o, Nibbles, Option<BranchNodeCompact>>>,
+    overlay_next: Option<(&'o Nibbles, &'o Option<BranchNodeCompact>)>,
     base_next: Option<(Nibbles, BranchNodeCompact)>,
     current: Option<Nibbles>,
 }
 
-impl<C: TrieCursor> TrieOverlayCursor<C> {
-    /// An overlay of sorted `overlay` changes over `base`.
-    pub const fn new(base: C, overlay: Vec<(Nibbles, Option<BranchNodeCompact>)>) -> Self {
-        Self { base, overlay, index: 0, base_next: None, current: None }
+impl<'o, C: TrieCursor> TrieOverlayCursor<'o, C> {
+    /// An overlay of `overlay` changes over `base`.
+    pub const fn new(base: C, overlay: Option<&'o BTreeMap<Nibbles, Option<BranchNodeCompact>>>) -> Self {
+        Self { base, overlay, overlay_iter: None, overlay_next: None, base_next: None, current: None }
     }
 
     fn merged(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, TrieError> {
         loop {
-            let overlay_key = self.overlay.get(self.index).map(|(k, _)| *k);
             let base_key = self.base_next.as_ref().map(|(k, _)| *k);
-            let entry = match (overlay_key, base_key) {
-                (None, None) => None,
-                (Some(o), b) if b.is_none_or(|b| o <= b) => {
-                    let node = self.overlay[self.index].1.clone();
-                    self.index += 1;
-                    if b == Some(o) {
+            let entry = match self.overlay_next {
+                None if base_key.is_none() => None,
+                Some((o, node)) if base_key.is_none_or(|b| *o <= b) => {
+                    self.overlay_next = self.overlay_iter.as_mut().and_then(Iterator::next);
+                    if base_key == Some(*o) {
                         self.base_next = self.base.next()?;
                     }
                     match node {
-                        Some(node) => Some((o, node)),
+                        Some(node) => Some((*o, node.clone())),
                         None => continue,
                     }
                 }
@@ -298,7 +302,7 @@ impl<C: TrieCursor> TrieOverlayCursor<C> {
     }
 }
 
-impl<C: TrieCursor> TrieCursor for TrieOverlayCursor<C> {
+impl<C: TrieCursor> TrieCursor for TrieOverlayCursor<'_, C> {
     fn seek_exact(&mut self, key: Nibbles) -> Result<Option<(Nibbles, BranchNodeCompact)>, TrieError> {
         match self.seek(key)? {
             Some((path, node)) if path == key => Ok(Some((path, node))),
@@ -311,7 +315,8 @@ impl<C: TrieCursor> TrieCursor for TrieOverlayCursor<C> {
 
     fn seek(&mut self, key: Nibbles) -> Result<Option<(Nibbles, BranchNodeCompact)>, TrieError> {
         self.base_next = self.base.seek(key)?;
-        self.index = self.overlay.partition_point(|(k, _)| *k < key);
+        self.overlay_iter = self.overlay.map(|overlay| overlay.range(key..));
+        self.overlay_next = self.overlay_iter.as_mut().and_then(Iterator::next);
         self.merged()
     }
 

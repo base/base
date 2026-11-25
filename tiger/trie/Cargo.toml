@@ -21,6 +21,8 @@ alloy-trie = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+# The node's build has asm keccak through evm2; benchmarks and tests hash as fast.
+alloy-primitives = { workspace = true, features = ["std", "asm-keccak"] }
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std"] }

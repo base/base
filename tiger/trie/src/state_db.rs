@@ -861,7 +861,7 @@ impl StateView<'_> {
             return Ok(PreparedRoot { root, state: changes, txn_id: 0, block: 0, trie: None, layered: false });
         }
         if let Some(mem) = &self.mem {
-            let (root, updates) = self.trie_view(&changes).state_root(true)?;
+            let (root, updates) = self.trie_view(&changes).state_root_parallel()?;
             let trie = Some(PreparedTrie::Full(root, updates));
             return Ok(PreparedRoot { root, state: changes, txn_id: 0, block: mem.head, trie, layered: true });
         }
@@ -871,7 +871,7 @@ impl StateView<'_> {
                 (tries.root, PreparedTrie::Partial(tries))
             }
             None => {
-                let (root, updates) = TrieView::new(&self.txn, self.dbs(), &changes).state_root(true)?;
+                let (root, updates) = TrieView::new(&self.txn, self.dbs(), &changes).state_root_parallel()?;
                 (root, PreparedTrie::Full(root, updates))
             }
         };
