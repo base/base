@@ -68,6 +68,9 @@ impl NodeProcess {
     pub const STATELESS_ENV: &str = "BASE_DIFF_STATELESS";
     /// Line prefix a node prints when an injected fault crashes it (tiger's `TIGER_FAULT`).
     pub const FAULT_LINE: &str = "tiger-fault: crash at write";
+    /// Line prefix a node prints when an injected full disk fails its first write (tiger's
+    /// `TIGER_FAULT` mode `enospc`).
+    pub const DISK_FULL_LINE: &str = "tiger-fault: enospc at write";
 
     /// The log path.
     pub fn log_path(&self) -> PathBuf {
@@ -83,6 +86,17 @@ impl NodeProcess {
         String::from_utf8_lossy(since)
             .lines()
             .find(|line| line.contains(Self::FAULT_LINE))
+            .map(str::to_owned)
+    }
+
+    /// The full-disk line the current run printed, if an injected full disk failed a write.
+    pub fn injected_disk_full(&self) -> Option<String> {
+        self.child.as_ref()?;
+        let text = fs::read(self.log_path()).ok()?;
+        let since = text.get(self.log_start as usize..)?;
+        String::from_utf8_lossy(since)
+            .lines()
+            .find(|line| line.contains(Self::DISK_FULL_LINE))
             .map(str::to_owned)
     }
 

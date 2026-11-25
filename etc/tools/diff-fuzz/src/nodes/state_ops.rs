@@ -75,6 +75,20 @@ pub enum StateOp {
         /// Randomness of what is torn or lost.
         seed: u32,
     },
+    /// Restarts every node cleanly with a full disk armed for that run (tiger's `TIGER_FAULT`
+    /// mode `enospc`): store writes `writes` to `writes + count - 1` after the restart fail with
+    /// ENOSPC, and later writes succeed. The node keeps running and must heal in process. Engine
+    /// API calls that fail with the disk error inside that window are expected; the harness
+    /// then resends the forkchoice until the node takes it again.
+    #[serde(rename_all = "camelCase")]
+    DiskFull {
+        /// First store write (counted from the restart) that fails.
+        writes: u16,
+        /// Failing writes in a row.
+        count: u8,
+        /// Randomness of the fault.
+        seed: u32,
+    },
     /// Sends a forkchoice update naming the head's ancestor `depth` blocks back (never below the
     /// finalized block), with safe and finalized at or below it. Every node must answer `VALID`
     /// with that block as the latest valid hash and keep its head, as base-reth does.
@@ -105,6 +119,7 @@ impl StateOp {
             Self::Restart { kill: true, .. } => "kill",
             Self::BadRoot { .. } => "badRoot",
             Self::Fault { .. } => "fault",
+            Self::DiskFull { .. } => "diskFull",
             Self::Ancestor { .. } => "ancestor",
             Self::Check { .. } => "check",
         }
@@ -112,7 +127,7 @@ impl StateOp {
 
     /// A random operation. Restarts are rarer than the rest: they take seconds.
     pub fn random(rng: &mut Rng, max_depth: u8) -> Self {
-        match rng.weighted(&[40, 22, 8, 7, 7, 10, 6, 4]) {
+        match rng.weighted(&[40, 22, 8, 7, 7, 10, 6, 4, 4]) {
             0 => Self::Extend {
                 blocks: Self::blocks(rng),
                 stress: StressPlan::random(rng),
@@ -138,6 +153,11 @@ impl StateOp {
                 seed: rng.next_u64() as u32,
             },
             7 => Self::Ancestor { depth: Self::depth(rng, max_depth) },
+            8 => Self::DiskFull {
+                writes: Self::fault_writes(rng),
+                count: Self::disk_full_count(rng),
+                seed: rng.next_u64() as u32,
+            },
             _ => Self::Check { heights: rng.range(1, 6) as u8, seed: rng.next_u64() },
         }
     }
@@ -147,6 +167,13 @@ impl StateOp {
     fn fault_writes(rng: &mut Rng) -> u16 {
         let limit = *rng.pick(&[40, 300, 2_000]);
         rng.range(1, limit) as u16
+    }
+
+    /// Failing writes in a row: mostly one or a few, sometimes enough that the persistence
+    /// thread's one-second retries take a while to clear it.
+    fn disk_full_count(rng: &mut Rng) -> u8 {
+        let any = rng.range(1, 30) as u8;
+        *rng.pick(&[1, 1, 2, 6, any])
     }
 
     fn blocks(rng: &mut Rng) -> u8 {
@@ -269,7 +296,9 @@ impl StateMutator {
             | StateOp::Check { seed: salt, .. } => *salt = rng.next_u64(),
             StateOp::Switch { tip } => *tip = rng.below(4) as u8,
             StateOp::Restart { nodes, .. } => *nodes = rng.below(8) as u8,
-            StateOp::Fault { seed, .. } => *seed = rng.next_u64() as u32,
+            StateOp::Fault { seed, .. } | StateOp::DiskFull { seed, .. } => {
+                *seed = rng.next_u64() as u32;
+            }
             StateOp::Ancestor { depth } => *depth = rng.range(1, 64) as u8,
         }
     }
@@ -329,6 +358,13 @@ impl StateMutator {
             StateOp::Fault { writes, lose_unsynced, .. } => {
                 if rng.chance(50) {
                     *lose_unsynced = !*lose_unsynced;
+                } else {
+                    *writes = StateOp::fault_writes(rng);
+                }
+            }
+            StateOp::DiskFull { writes, count, .. } => {
+                if rng.chance(50) {
+                    *count = StateOp::disk_full_count(rng);
                 } else {
                     *writes = StateOp::fault_writes(rng);
                 }

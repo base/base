@@ -7,7 +7,7 @@ use std::{
     fs,
     path::PathBuf,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_consensus::Header;
@@ -414,7 +414,49 @@ impl StateSession {
     pub fn run(&mut self, op: &StateOp) -> eyre::Result<Vec<Divergence>> {
         self.history.push(op.clone());
         let result = self.run_op(op);
-        self.recover_faults().map_or(result, Ok)
+        let result = self.recover_faults().map_or(result, Ok);
+        result.map(|divergences| self.recover_disk_full(divergences))
+    }
+
+    /// Error text of a write that failed because the disk is full (ENOSPC).
+    pub const DISK_FULL_ERROR: &str = "os error 28";
+    /// How long a node may take to accept the head again after an injected full disk.
+    pub const DISK_FULL_RECOVERY: Duration = Duration::from_secs(60);
+
+    /// Handles the Engine API errors an injected full disk explains. A node whose current run
+    /// printed tiger's full-disk line and that answered with the disk error ("os error 28")
+    /// had its divergences in this operation dropped, as the disk error explains them; then the
+    /// head's forkchoice is resent until every node takes it or [`Self::DISK_FULL_RECOVERY`]
+    /// passes, and what still diverges after that is returned.
+    pub fn recover_disk_full(&mut self, mut divergences: Vec<Divergence>) -> Vec<Divergence> {
+        let explained: Vec<String> = self
+            .procs
+            .iter()
+            .zip(&self.nodes)
+            .filter(|(proc, node)| {
+                proc.injected_disk_full().is_some()
+                    && divergences.iter().any(|d| {
+                        d.node == node.name && d.got.to_string().contains(Self::DISK_FULL_ERROR)
+                    })
+            })
+            .map(|(_, node)| node.name.clone())
+            .collect();
+        if explained.is_empty() {
+            return divergences;
+        }
+        for name in &explained {
+            *self.observations.entry(format!("{name}: disk-full engine error")).or_default() += 1;
+        }
+        divergences.retain(|d| !explained.contains(&d.node));
+        let started = Instant::now();
+        loop {
+            let resync = self.forkchoice_resync(self.tree.head, "disk full");
+            if resync.is_empty() || started.elapsed() > Self::DISK_FULL_RECOVERY {
+                divergences.extend(resync);
+                return divergences;
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
     }
 
     fn run_op(&mut self, op: &StateOp) -> eyre::Result<Vec<Divergence>> {
@@ -430,6 +472,19 @@ impl StateSession {
             StateOp::Fault { writes, lose_unsynced, seed } => {
                 let mode = if *lose_unsynced { "lose_unsynced" } else { "torn" };
                 let fault = format!("seed={seed},crash_after_writes={writes},mode={mode}");
+                for proc in &mut self.procs {
+                    proc.fault = Some(fault.clone());
+                }
+                let divergences = self.restart(false, 0);
+                for proc in &mut self.procs {
+                    proc.fault = None;
+                }
+                Ok(divergences)
+            }
+            StateOp::DiskFull { writes, count, seed } => {
+                let fault = format!(
+                    "seed={seed},crash_after_writes={writes},mode=enospc,fail_writes={count}"
+                );
                 for proc in &mut self.procs {
                     proc.fault = Some(fault.clone());
                 }
