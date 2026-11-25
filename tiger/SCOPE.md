@@ -228,11 +228,15 @@ transaction gossip, and NAT traversal (UPnP). The external IP comes from configu
   overrides (`eth_call`, `eth_estimateGas`, `eth_createAccessList`) reach it.
 - **A stateless node cannot wipe storage it does not hold** (fuzz finding S2). When a block
   deletes an account whose storage is not empty, a partial datadir cannot record the slots the
-  wipe removes, so that block fails to commit with `state not held locally: storage of … wiped
-  by block …` and the stateless node stops there (a full node is unaffected). On Base only a
-  genesis allocation can be an empty account that holds storage (storage needs code, and
-  EIP-6780, EIP-7610 and the nonce bump of a 7702 authorization rule out the other ways), and
-  Base mainnet's genesis has none, so only synthetic chains reach it.
+  wipe removes, so that block can never commit. The stateless node exits with `tiger: fatal:
+  committing block … state not held locally: storage of … wiped by block …` and tells the
+  operator to restart from a full datadir, instead of retrying (a full node is unaffected). On
+  Base only a genesis allocation can be an empty account that holds storage (storage needs
+  code, and EIP-6780, EIP-7610 and the nonce bump of a 7702 authorization rule out the other
+  ways), and neither Base mainnet's genesis nor Base Sepolia's has one, so only synthetic chains
+  reach it. Checked with `jq` over `crates/common/chains/res/genesis/base.json` (2,064
+  allocations, 2,049 with storage) and `sepolia_base.json` (2,322 allocations, 2,049 with
+  storage): no allocation in either holds storage without code.
 
 ## Dependencies
 

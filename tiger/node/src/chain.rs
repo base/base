@@ -33,7 +33,7 @@ use alloy_primitives::{Address, B256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, BaseTxEnvelope as SignedTx};
 use base_tiger_store::{Fault, Segment, Table, WriteTxn};
-use base_tiger_trie::{BlockChanges, MemState, PreparedRoot, StateDb};
+use base_tiger_trie::{BlockChanges, MemState, PreparedRoot, StateDb, TrieError};
 use serde_json::json;
 
 use crate::{
@@ -985,10 +985,19 @@ impl Chain {
                 }
                 None => None,
             };
-            let root = self
-                .db
-                .commit_prepared(&mut w, block.number(), changes, prepared)
-                .map_err(|error| format!("committing block {} {}: {error}", block.number(), block.hash))?;
+            let root = self.db.commit_prepared(&mut w, block.number(), changes, prepared).map_err(|error| {
+                let message = format!("committing block {} {}: {error}", block.number(), block.hash);
+                if matches!(error, TrieError::UnheldWipe { .. }) {
+                    // Every retry fails the same way, so stop instead of retrying forever
+                    // (SCOPE.md, accepted differences: S2).
+                    eprintln!(
+                        "tiger: fatal: {message}; a stateless datadir cannot record this wipe, so \
+                         restart the node from a full datadir"
+                    );
+                    std::process::exit(1);
+                }
+                message
+            })?;
             if root != block.header.state_root {
                 return Err(format!(
                     "committing block {} {} gave state root {root}, not {}",

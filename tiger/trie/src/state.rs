@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use alloy_primitives::{B256, U256, keccak256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_trie::{BranchNodeCompact, EMPTY_ROOT_HASH, KECCAK_EMPTY, Nibbles};
 use base_tiger_store::{Account, MdbxError};
@@ -25,6 +25,14 @@ pub enum TrieError {
     },
     /// The state the operation needs is not held locally (partial state).
     Unknown(String),
+    /// A block deletes an account whose storage a partial state does not hold, so the state
+    /// cannot record what the wipe removes and can never commit that block.
+    UnheldWipe {
+        /// The account whose storage the block wipes.
+        address: Address,
+        /// The block that wipes it.
+        block: u64,
+    },
 }
 
 impl std::fmt::Display for TrieError {
@@ -37,6 +45,9 @@ impl std::fmt::Display for TrieError {
                 None => write!(f, "missing account trie node {hash} at path {path:?}"),
             },
             Self::Unknown(text) => write!(f, "state not held locally: {text}"),
+            Self::UnheldWipe { address, block } => {
+                write!(f, "state not held locally: storage of {address} wiped by block {block}")
+            }
         }
     }
 }
@@ -47,7 +58,7 @@ impl TrieError {
     /// Whether the operation needs state that is not held locally (a partial state or an
     /// incomplete witness), rather than failing on corrupt or unreadable data.
     pub const fn is_unknown(&self) -> bool {
-        matches!(self, Self::MissingNode { .. } | Self::Unknown(_))
+        matches!(self, Self::MissingNode { .. } | Self::Unknown(_) | Self::UnheldWipe { .. })
     }
 }
 

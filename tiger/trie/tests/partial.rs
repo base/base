@@ -208,7 +208,8 @@ fn partial_state_from_witnesses_matches_the_full_state() {
     }
 }
 
-/// A wipe of storage the partial state does not hold is refused as unknown, not guessed.
+/// A wipe of storage the partial state does not hold is refused, not guessed, with an error
+/// naming the account and block, so the node can stop on it instead of retrying.
 #[test]
 fn partial_state_refuses_a_wipe_of_unknown_storage() {
     let (full_dir, partial_dir) = (temp("wipe-full"), temp("wipe-partial"));
@@ -229,6 +230,7 @@ fn partial_state_refuses_a_wipe_of_unknown_storage() {
     let mut w = partial.write().unwrap();
     partial.absorb_witness(&mut w, &witness, &[]).unwrap();
     let err = partial.commit_block(&mut w, 1, &block).unwrap_err();
+    assert_eq!(err, TrieError::UnheldWipe { address, block: 1 });
     assert!(err.is_unknown(), "{err}");
     drop(w);
     drop((full, partial));

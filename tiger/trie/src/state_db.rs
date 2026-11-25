@@ -482,7 +482,7 @@ impl StateDb {
                 // EIP-7610 forbids creating over storage, and an empty account (touched and
                 // deleted by EIP-161) can hold storage only as a genesis allocation, which Base
                 // mainnet has none of (SCOPE.md, accepted differences).
-                return Err(TrieError::Unknown(format!("storage of {address} wiped by block {number}")));
+                return Err(TrieError::UnheldWipe { address: *address, block: number });
             }
             let slots = read_storage(txn, db, key)?;
             if slots.is_empty() && self.tip_account(txn, key)?.is_none() {
