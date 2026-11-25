@@ -510,7 +510,6 @@ impl<'a, Txs> Builder<'a, Txs> {
         self.begin_dormancy = Box::new(begin);
         self
     }
-
 }
 
 impl<Txs> Builder<'_, Txs> {
