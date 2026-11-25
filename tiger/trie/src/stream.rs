@@ -16,6 +16,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
+use alloy_trie::EMPTY_ROOT_HASH;
 use base_tiger_store::{Datadir, Db, Ro, Txn};
 
 use crate::{
@@ -245,6 +246,8 @@ struct StreamStats {
     /// their parent values.
     dropped: usize,
     reverted: usize,
+    /// Slots only the final changes name.
+    unseen: usize,
 }
 
 impl Stream {
@@ -294,11 +297,13 @@ impl Stream {
         local: &mut WorkerSource<'_>,
         fin: &HashedState,
     ) -> Result<(B256, TrieUpdates, Box<LiveState>), TrieError> {
-        // A slot the stream changed that the final changes leave out ended at its parent value
-        // (the final changes drop such slots): it goes back to that value, so the trie stays
-        // revealed. Storage tries the final changes cannot be reached from that way (wipes that
-        // differ, slots only the final changes name, deleted accounts) are dropped and
-        // recomputed from the stored trie.
+        // A storage trie keeps its streamed state, which the final changes then apply over: a
+        // slot only they name (written outside transactions, such as by a system call) just
+        // applies, and a slot the stream changed that they leave out ended at its parent value
+        // (they drop such slots), so it goes back to that value. A streamed wipe they do not
+        // have is kept when the parent storage is empty (the block's accumulator drops the wipe
+        // of a created account). Other wipe differences and deleted accounts drop the trie,
+        // which is recomputed from the stored trie.
         let started = std::time::Instant::now();
         let requested = fin;
         let mut fin = std::borrow::Cow::Borrowed(fin);
@@ -307,10 +312,16 @@ impl Stream {
         for (address, streamed) in &self.streamed.storages {
             let wanted = fin.storages.get(address);
             let wiped = wanted.is_some_and(|f| f.wiped);
-            let reachable = wiped == streamed.wiped
-                && wanted.is_none_or(|f| f.slots.keys().all(|k| streamed.slots.contains_key(k)))
-                && (wanted.is_some() || !streamed.wiped)
-                && !fin.accounts.get(address).is_some_and(Option::is_none);
+            let deleted = fin.accounts.get(address).is_some_and(Option::is_none);
+            let reachable = !deleted
+                && (wiped == streamed.wiped
+                    || (streamed.wiped
+                        && !wiped
+                        && local.view().storage_root(*address)? == EMPTY_ROOT_HASH));
+            if let Some(f) = wanted {
+                self.stats.unseen +=
+                    f.slots.keys().filter(|k| !streamed.slots.contains_key(*k)).count();
+            }
             if !reachable {
                 self.stats.dropped += 1;
                 self.live.storages.remove(address);
@@ -318,7 +329,7 @@ impl Stream {
                 restore.insert(*address);
                 continue;
             }
-            if streamed.wiped {
+            if wiped {
                 kept_wipes.insert(*address);
             }
             let reverted: Vec<B256> = streamed
@@ -371,7 +382,7 @@ impl Stream {
         if LiveBase::stats_enabled() {
             let stats = &self.stats;
             eprintln!(
-                "tiger: live root fresh={} txs={} batches={} accounts={} storages={} dropped={} reverted={} finish_us={} nodes={}",
+                "tiger: live root fresh={} txs={} batches={} accounts={} storages={} dropped={} reverted={} unseen={} finish_us={} nodes={}",
                 stats.fresh,
                 stats.transactions,
                 stats.batches,
@@ -379,6 +390,7 @@ impl Stream {
                 requested.storages.len(),
                 stats.dropped,
                 stats.reverted,
+                stats.unseen,
                 started.elapsed().as_micros(),
                 self.live.len()
             );

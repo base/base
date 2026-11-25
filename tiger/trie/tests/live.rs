@@ -71,6 +71,11 @@ fn transaction(
         match rng.below(20) {
             0..=6 => {
                 let info = info(rng);
+                // A created account: the executor may report a wipe of its (empty) storage.
+                if !model.contains_key(&address) && rng.below(2) == 0 {
+                    tx.wiped.push(address);
+                    wiped.insert(address);
+                }
                 tx.accounts.push((address, Some(info)));
                 model.entry(address).or_insert((info, BTreeMap::new())).0 = info;
             }
@@ -120,7 +125,8 @@ fn transaction(
 
 /// The block's final changes from the parent and the post state, as the block-state accumulator
 /// reports them: touched accounts and slots with their final values, wiped storages in full; with
-/// `drop_unchanged`, values equal to the parent's are left out.
+/// `drop_unchanged`, values equal to the parent's are left out. Like the accumulator, an account
+/// absent from the parent carries no wipe.
 fn final_changes(
     parent: &Model,
     post: &Model,
@@ -137,7 +143,7 @@ fn final_changes(
             out.accounts.push((*address, after.map(|(i, _)| *i)));
         }
         let Some((_, storage)) = after else { continue };
-        if wiped.contains(address) {
+        if wiped.contains(address) && before.is_some() {
             out.wiped.push(*address);
             out.storage.extend(storage.iter().map(|(s, v)| (*address, *s, *v)));
             continue;
@@ -200,7 +206,9 @@ fn streamed_live_roots_commit_the_same_tries_as_the_walker() {
             let flush_every = [1, 4, u64::MAX][rng.below(3) as usize];
             let mut touched: BTreeMap<Address, BTreeSet<U256>> = BTreeMap::new();
             let mut wiped = BTreeSet::new();
-            for _ in 0..1 + rng.below(if number % 9 == 0 { 120 } else { 15 }) {
+            let system = rng.below(3) == 0;
+            for index in 0..1 + rng.below(if number % 9 == 0 { 120 } else { 15 }) {
+                let first = index == 0;
                 let (tx, tx_wiped) = transaction(&mut rng, &mut model, &parent, &addresses, &slots);
                 for (address, _) in &tx.accounts {
                     touched.entry(*address).or_default();
@@ -209,7 +217,9 @@ fn streamed_live_roots_commit_the_same_tries_as_the_walker() {
                     touched.entry(*address).or_default().insert(*slot);
                 }
                 wiped.extend(tx_wiped);
-                if let Some(session) = &session {
+                // Sometimes the first changes come from outside transactions (a system call):
+                // only the final changes have them.
+                if let Some(session) = session.as_ref().filter(|_| !(first && system)) {
                     session.transaction(tx);
                     if rng.below(flush_every) == 0 {
                         session.flush();
