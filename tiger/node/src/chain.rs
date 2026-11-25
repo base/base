@@ -907,7 +907,9 @@ impl Chain {
         let mut w = self.db.write().map_err(|error| error.to_string())?;
         for block in &branch {
             let changes = block.changes.as_ref().ok_or_else(|| format!("state of block {} is gone", block.hash))?;
-            let validation = self.validations.remove(&block.hash);
+            // Kept until the commit succeeds: a failed commit (a full disk) retries with it, and
+            // `prune` drops it once the block is stored.
+            let validation = self.validations.get(&block.hash).cloned();
             let prepared = match validation.as_deref() {
                 Some(Validation::Prepared(prepared)) => Some(&**prepared),
                 Some(Validation::Witness(witness)) => {

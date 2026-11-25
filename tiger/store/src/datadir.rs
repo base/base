@@ -9,7 +9,12 @@
 //! An unwind commits MDBX first and then runs the same heal, so it has the same crash
 //! behavior.
 
-use std::{collections::BTreeMap, io, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    io,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use alloy_eips::eip2718::Encodable2718;
 
@@ -113,6 +118,8 @@ pub struct Datadir {
     pub static_files: StaticFiles,
     /// `rocksdb/`.
     pub rocks: Rocks,
+    /// A failed commit's heal failed too (such as on a full disk): the next write heals first.
+    unhealed: AtomicBool,
 }
 
 impl Datadir {
@@ -122,7 +129,7 @@ impl Datadir {
         let db = Db::open(&path.join("db"))?;
         let static_files = StaticFiles::open(&path.join("static_files"))?;
         let rocks = Rocks::open(&path.join("rocksdb"))?;
-        let datadir = Self { path: path.to_path_buf(), db, static_files, rocks };
+        let datadir = Self { path: path.to_path_buf(), db, static_files, rocks, unhealed: AtomicBool::new(false) };
         let settings = datadir.db.read()?.get(datadir.db.dbi(Table::Metadata), STORAGE_SETTINGS_KEY)?.map(<[u8]>::to_vec);
         match settings {
             Some(bytes) => {
@@ -181,6 +188,10 @@ impl Datadir {
 
     /// Begins the write transaction.
     pub fn write(&self) -> Result<WriteTxn<'_>, StoreError> {
+        if self.unhealed.load(Ordering::SeqCst) {
+            self.heal()?;
+            self.unhealed.store(false, Ordering::SeqCst);
+        }
         Ok(WriteTxn {
             txn: Some(self.db.write()?),
             datadir: self,
@@ -335,12 +346,26 @@ impl WriteTxn<'_> {
     /// Commits: static files, RocksDB, then MDBX (the commit point), then the heal if asked.
     pub fn commit(mut self) -> Result<(), StoreError> {
         let datadir = self.datadir;
-        Fault::phase(self.label, "static-files");
-        datadir.static_files.commit()?;
-        Fault::phase(self.label, "rocksdb");
-        self.write_rocks()?;
-        Fault::phase(self.label, "mdbx");
-        self.txn.take().expect("open transaction").commit()?;
+        let committed = (|| {
+            Fault::phase(self.label, "static-files");
+            datadir.static_files.commit()?;
+            Fault::phase(self.label, "rocksdb");
+            self.write_rocks()?;
+            Fault::phase(self.label, "mdbx");
+            Ok(self.txn.take().expect("open transaction").commit()?)
+        })();
+        if let Err(error) = committed {
+            // Static files and RocksDB may be ahead of MDBX, as after a crash (a full disk does
+            // this): drop what is pending and cut them back now, as a reopen would, so the next
+            // write starts from the MDBX tip.
+            drop(self.txn.take());
+            datadir.static_files.discard();
+            if let Err(heal) = datadir.heal() {
+                datadir.unhealed.store(true, Ordering::SeqCst);
+                return Err(StoreError::Corrupt(format!("{error}; healing after it: {heal}")));
+            }
+            return Err(error);
+        }
         if self.heal_after {
             datadir.heal()?;
         }
