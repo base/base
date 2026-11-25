@@ -175,6 +175,9 @@ pub struct Chain {
     /// [`PERSISTENCE_THRESHOLD`] and [`MEMORY_BLOCK_BUFFER_TARGET`] unless set.
     persistence_threshold: u64,
     memory_block_buffer_target: u64,
+    /// The cross-block execution cache (full states), holding the state after `cache_head`.
+    exec_cache: Arc<crate::ExecCache>,
+    cache_head: B256,
 }
 
 /// Canonical blocks for the persistence thread to commit, oldest first, from
@@ -287,6 +290,8 @@ impl Chain {
             epoch: Arc::new(AtomicU64::new(0)),
             persistence_threshold: PERSISTENCE_THRESHOLD,
             memory_block_buffer_target: MEMORY_BLOCK_BUFFER_TARGET,
+            exec_cache: Arc::default(),
+            cache_head: genesis.hash,
             genesis,
         };
         let genesis_number = chain.genesis.header.number;
@@ -358,6 +363,7 @@ impl Chain {
         }
         chain.disk = (tip, chain.head.hash);
         chain.mem = Arc::new(MemState::new(tip));
+        chain.cache_head = chain.head.hash;
         Ok(chain)
     }
 
@@ -589,7 +595,10 @@ impl Chain {
             self.db.view(number, overlays)
         }
         .map_err(|error| error.to_string())?;
-        Ok(NodeState::new(view, self.block_hashes(block)))
+        let state = NodeState::new(view, self.block_hashes(block));
+        // Only the head's own state reads the execution cache.
+        let cached = self.batched() && block.hash == self.head.hash && self.cache_head == self.head.hash;
+        Ok(if cached { state.with_cache(Arc::clone(&self.exec_cache)) } else { state })
     }
 
     /// The hashes of `block` and its ancestors in the `BLOCKHASH` window, zero below genesis.
@@ -727,10 +736,21 @@ impl Chain {
         let fork_number = fork_block.number();
         if fork_number == self.head.number() {
             for block in branch {
-                self.extend_canon(block)?;
+                self.extend_canon(Arc::clone(&block))?;
+                // The execution cache moves with the head when the head's child is added.
+                if self.cache_head == block.header.parent_hash
+                    && let Some(changes) = &block.changes
+                {
+                    self.exec_cache.apply(changes);
+                } else {
+                    self.exec_cache.clear();
+                }
+                self.cache_head = block.hash;
             }
         } else {
             self.reorg(fork_block, branch)?;
+            self.exec_cache.clear();
+            self.cache_head = self.head.hash;
         }
         self.forkchoice.head = head;
         self.prune();

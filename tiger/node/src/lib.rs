@@ -15,6 +15,9 @@ pub use exec::{BlockExecution, Built, Executed, Validated};
 mod genesis;
 pub use genesis::{Genesis, genesis_changes};
 
+mod exec_cache;
+pub use exec_cache::ExecCache;
+
 mod state;
 pub use state::{Misses, NodeDb, NodeState, ParentState, StateReadError, block_changes};
 

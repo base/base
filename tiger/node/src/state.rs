@@ -97,6 +97,8 @@ pub struct NodeState<'d> {
     prepared: RefCell<Option<PreparedRoot>>,
     /// When collecting ([`Self::collecting`]): the state reads that were not local.
     misses: Option<RefCell<Misses>>,
+    /// The cross-block execution cache, when this is the state at the cache's head.
+    cache: Option<std::sync::Arc<crate::ExecCache>>,
 }
 
 /// The accounts, storage slots and code a block's execution read that a partial state does not
@@ -133,7 +135,14 @@ impl<'d> NodeState<'d> {
             unknown: Cell::new(false),
             prepared: RefCell::new(None),
             misses: None,
+            cache: None,
         }
+    }
+
+    /// This state reading through `cache`, which must hold the same state (the cache's head).
+    pub(crate) fn with_cache(mut self, cache: std::sync::Arc<crate::ExecCache>) -> Self {
+        self.cache = Some(cache);
+        self
     }
 
     /// This state with reads of state that is not local answered as absent (zero, empty) and
@@ -187,8 +196,14 @@ impl<'d> NodeState<'d> {
 
     /// The account at `address`.
     pub fn account(&self, address: &Address) -> Result<Option<AccountInfo>, String> {
+        if let Some(account) = self.cache.as_ref().and_then(|cache| cache.account(address)) {
+            return Ok(account);
+        }
         match self.view.account(*address) {
             Ok(account) => {
+                if let Some(cache) = &self.cache {
+                    cache.put_account(*address, account);
+                }
                 if let (Some(misses), Some(account)) = (&self.misses, &account) {
                     misses.borrow_mut().code_owners.insert(account.code_hash, *address);
                 }
@@ -204,8 +219,16 @@ impl<'d> NodeState<'d> {
 
     /// The value of storage `slot` of `address`.
     pub fn storage(&self, address: &Address, slot: &U256) -> Result<U256, String> {
+        if let Some(value) = self.cache.as_ref().and_then(|cache| cache.storage(address, slot)) {
+            return Ok(value);
+        }
         match self.view.storage(*address, *slot) {
-            Ok(value) => Ok(value),
+            Ok(value) => {
+                if let Some(cache) = &self.cache {
+                    cache.put_storage(*address, *slot, value);
+                }
+                Ok(value)
+            }
             Err(error)
                 if self.collect(&error, |misses| {
                     _ = misses.storage.entry(*address).or_default().insert(*slot)
@@ -220,8 +243,16 @@ impl<'d> NodeState<'d> {
 
     /// The code with hash `hash`.
     pub fn code(&self, hash: &B256) -> Result<Bytes, String> {
+        if let Some(code) = self.cache.as_ref().and_then(|cache| cache.code(hash)) {
+            return Ok(code);
+        }
         match self.view.code(*hash) {
-            Ok(Some(code)) => Ok(code),
+            Ok(Some(code)) => {
+                if let Some(cache) = &self.cache {
+                    cache.put_code(*hash, code.clone());
+                }
+                Ok(code)
+            }
             Ok(None) => {
                 self.unknown.set(true);
                 let error = self.record(format!("missing bytecode {hash}"));

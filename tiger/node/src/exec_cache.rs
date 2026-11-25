@@ -1,0 +1,208 @@
+//! The cross-block execution cache of a full node, as base-reth's execution cache: the accounts,
+//! storage slots and code canonical blocks read or wrote, kept in memory across blocks, which
+//! validation reads before the in-memory layer and the datadir.
+//!
+//! It holds the state after one canonical block, its head ([`crate::Chain`] tracks which): reads
+//! of that state fill it, and when a child of the head becomes canonical its writes are applied
+//! and the child becomes the head. Any other head change (a reorg, an unwind) clears it. Only a
+//! state at the head with no side-branch blocks on top reads it, so a side branch, an older
+//! block, or a stateless (partial) datadir never sees it.
+//!
+//! It is bounded by entry counts (code by bytes), about twice base-reth's working set on Base
+//! mainnet (32k accounts, 0.5M slots, 5k codes); a full shard evicts an arbitrary entry. At its
+//! caps it holds about 8 MB of accounts, 100 MB of slots and 64 MiB of code.
+
+use std::{
+    collections::HashMap,
+    sync::{Mutex, MutexGuard},
+};
+
+use alloy_primitives::{Address, B256, Bytes, U256};
+use base_tiger_trie::{AccountInfo, BlockChanges};
+
+/// Shards, each with its own lock, so validation and the prewarm workers rarely contend.
+const SHARDS: usize = 16;
+/// Most accounts cached.
+pub(crate) const MAX_ACCOUNTS: usize = 1 << 16;
+/// Most storage slots cached.
+pub(crate) const MAX_SLOTS: usize = 1 << 20;
+/// Most code bytes cached.
+pub(crate) const MAX_CODE_BYTES: usize = 64 << 20;
+
+#[derive(Debug, Default)]
+struct Shard {
+    accounts: HashMap<Address, Option<AccountInfo>>,
+    storage: HashMap<(Address, U256), U256>,
+    codes: HashMap<B256, Bytes>,
+    code_bytes: usize,
+}
+
+/// Inserts into `map`, first evicting an arbitrary entry when it holds `cap` entries.
+fn bounded_insert<K: std::hash::Hash + Eq + Copy, V>(map: &mut HashMap<K, V>, cap: usize, key: K, value: V) {
+    if map.len() >= cap
+        && !map.contains_key(&key)
+        && let Some(evicted) = map.keys().next().copied()
+    {
+        map.remove(&evicted);
+    }
+    map.insert(key, value);
+}
+
+/// The cache (see the module documentation).
+#[derive(Debug)]
+pub struct ExecCache {
+    shards: [Mutex<Shard>; SHARDS],
+}
+
+impl Default for ExecCache {
+    fn default() -> Self {
+        Self { shards: std::array::from_fn(|_| Mutex::default()) }
+    }
+}
+
+impl ExecCache {
+    fn shard(&self, byte: u8) -> MutexGuard<'_, Shard> {
+        self.shards[usize::from(byte) % SHARDS].lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn slot_shard(&self, address: &Address, slot: &U256) -> MutexGuard<'_, Shard> {
+        self.shard(address[19] ^ slot.byte(0))
+    }
+
+    /// The cached account at `address` (`Some(None)`: cached as absent).
+    pub fn account(&self, address: &Address) -> Option<Option<AccountInfo>> {
+        self.shard(address[19]).accounts.get(address).copied()
+    }
+
+    /// Caches the account at `address` as the head's state reads it.
+    pub fn put_account(&self, address: Address, account: Option<AccountInfo>) {
+        bounded_insert(&mut self.shard(address[19]).accounts, MAX_ACCOUNTS / SHARDS, address, account);
+    }
+
+    /// The cached value of storage `slot` of `address`.
+    pub fn storage(&self, address: &Address, slot: &U256) -> Option<U256> {
+        self.slot_shard(address, slot).storage.get(&(*address, *slot)).copied()
+    }
+
+    /// Caches storage `slot` of `address` as the head's state reads it.
+    pub fn put_storage(&self, address: Address, slot: U256, value: U256) {
+        bounded_insert(&mut self.slot_shard(&address, &slot).storage, MAX_SLOTS / SHARDS, (address, slot), value);
+    }
+
+    /// The cached code with hash `hash`.
+    pub fn code(&self, hash: &B256) -> Option<Bytes> {
+        self.shard(hash[0]).codes.get(hash).cloned()
+    }
+
+    /// Caches code `code` with hash `hash`.
+    pub fn put_code(&self, hash: B256, code: Bytes) {
+        let mut shard = self.shard(hash[0]);
+        if shard.codes.contains_key(&hash) {
+            return;
+        }
+        while shard.code_bytes + code.len() > MAX_CODE_BYTES / SHARDS {
+            let Some(evicted) = shard.codes.keys().next().copied() else { return };
+            let removed = shard.codes.remove(&evicted).map_or(0, |code| code.len());
+            shard.code_bytes -= removed;
+        }
+        shard.code_bytes += code.len();
+        shard.codes.insert(hash, code);
+    }
+
+    /// Applies the writes of `changes`, a child of the head that became canonical: the cache
+    /// then holds the state after it. Only entries already cached change (a write is not a read
+    /// of the next block), except code, which is immutable.
+    pub fn apply(&self, changes: &BlockChanges) {
+        // Wiped and deleted storages first: their slots read zero unless the block sets them.
+        let cleared: Vec<Address> = changes
+            .wiped
+            .iter()
+            .copied()
+            .chain(changes.accounts.iter().filter(|(_, account)| account.is_none()).map(|(address, _)| *address))
+            .collect();
+        if !cleared.is_empty() {
+            for shard in &self.shards {
+                let mut shard = shard.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                shard.storage.retain(|(address, _), _| !cleared.contains(address));
+            }
+        }
+        for (address, slot, value) in &changes.storage {
+            if let Some(cached) = self.slot_shard(address, slot).storage.get_mut(&(*address, *slot)) {
+                *cached = *value;
+            }
+        }
+        for (address, account) in &changes.accounts {
+            if let Some(cached) = self.shard(address[19]).accounts.get_mut(address) {
+                *cached = *account;
+            }
+        }
+        for (hash, code) in &changes.codes {
+            self.put_code(*hash, code.clone());
+        }
+    }
+
+    /// Empties the cache.
+    pub fn clear(&self) {
+        for shard in &self.shards {
+            *shard.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Shard::default();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, B256, Bytes, U256};
+    use base_tiger_trie::{AccountInfo, BlockChanges};
+
+    use super::{ExecCache, MAX_ACCOUNTS, SHARDS};
+
+    fn account(nonce: u64) -> Option<AccountInfo> {
+        Some(AccountInfo { nonce, ..AccountInfo::default() })
+    }
+
+    /// A canonical child's writes update what is cached: a later write of the same key wins, a
+    /// wipe or a deletion drops the account's cached slots, and writes of keys not cached are not
+    /// cached (they were not read on the old head).
+    #[test]
+    fn apply_moves_the_cache_to_the_child() {
+        let cache = ExecCache::default();
+        let (a, b, c) = (Address::repeat_byte(1), Address::repeat_byte(2), Address::repeat_byte(3));
+        cache.put_account(a, account(1));
+        cache.put_account(b, account(1));
+        cache.put_storage(a, U256::from(1), U256::from(10));
+        cache.put_storage(b, U256::from(1), U256::from(10));
+        cache.put_storage(b, U256::from(2), U256::from(20));
+        cache.apply(&BlockChanges {
+            accounts: vec![(a, account(2)), (a, account(3)), (b, None), (c, account(1))],
+            storage: vec![(a, U256::from(1), U256::from(11)), (a, U256::from(1), U256::from(12)), (b, U256::from(2), U256::from(21))],
+            wiped: Vec::new(),
+            codes: vec![(B256::repeat_byte(9), Bytes::from_static(b"code"))],
+        });
+        assert_eq!(cache.account(&a), Some(account(3)));
+        assert_eq!(cache.account(&b), Some(None));
+        assert_eq!(cache.account(&c), None, "a write of a key not cached is not cached");
+        assert_eq!(cache.storage(&a, &U256::from(1)), Some(U256::from(12)));
+        assert_eq!(cache.storage(&b, &U256::from(1)), None, "a deleted account's slots go");
+        assert_eq!(cache.storage(&b, &U256::from(2)), None, "a deleted account's slots go, also written ones");
+        assert_eq!(cache.code(&B256::repeat_byte(9)), Some(Bytes::from_static(b"code")));
+
+        cache.put_storage(a, U256::from(5), U256::from(50));
+        cache.apply(&BlockChanges { wiped: vec![a], ..BlockChanges::default() });
+        assert_eq!(cache.storage(&a, &U256::from(5)), None, "a wipe drops the cached slots");
+        assert_eq!(cache.account(&a), Some(account(3)));
+    }
+
+    /// Each shard holds at most its share of the cap.
+    #[test]
+    fn bounded() {
+        let cache = ExecCache::default();
+        for index in 0..(MAX_ACCOUNTS + 1000) as u64 {
+            let mut address = Address::ZERO;
+            address[12..].copy_from_slice(&index.to_be_bytes());
+            cache.put_account(address, account(index));
+        }
+        let held: usize = cache.shards.iter().map(|shard| shard.lock().unwrap().accounts.len()).sum();
+        assert!(held <= MAX_ACCOUNTS, "{held} accounts cached");
+        assert!(held > MAX_ACCOUNTS - SHARDS, "the cache fills: {held}");
+    }
+}
