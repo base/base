@@ -2,11 +2,12 @@
 
 ## Overview
 
-Releases are managed through two manual workflows and one automatic trigger:
+Releases are managed through three manual workflows and one automatic trigger:
 
 - **Start Release** — pick a bump type (major/minor/patch) and the release branch is created automatically
 - **Publish Release** — pick a version and the final tag + Docker images + binaries are published
 - **Auto-RC** — every commit to a `releases/v*` branch (once the version sync PR is merged) automatically creates an RC tag and builds Docker images + binaries
+- **Build Dev** — pick a branch or commit and its Linux binaries are published to a `dev-<sha>` prerelease for development and testing
 
 ## Step-by-step
 
@@ -32,7 +33,7 @@ Every commit pushed to the release branch triggers the **Create RC** workflow, w
 - Otherwise creates the next RC tag (e.g., `v0.6.0-rc.1`, `v0.6.0-rc.2`, …) at the triggering commit
 - Dispatches the independent **Build RC** workflow at that tag, then finishes without waiting for artifacts
 
-**Build RC** builds multi-arch Docker images and native binaries using **Build Release**. The compatibility `node` image and every single-binary image receive the same RC tag only (not `latest`). Each RC builds in its own workflow run, so newer merges do not cancel or wait for older artifact builds (subject to runner availability).
+**Build RC** builds multi-arch Docker images and native binaries using **Build Release**. The compatibility `node` image and every single-binary image receive the same RC tag only (not `latest`). The binaries are uploaded to a published GitHub prerelease for the RC tag, so deployments can download them before the final release. Each RC builds in its own workflow run, so newer merges do not cancel or wait for older artifact builds (subject to runner availability).
 
 To create additional RCs, simply push more commits (bug fixes, backports) to the release branch.
 
@@ -94,6 +95,24 @@ Updating only `main` does not change push-triggered workflows on existing releas
 
 Before retrying a legacy **Create RC** run, check its checkout ref: older definitions checked out the moving release branch rather than the triggering SHA, so rerunning them can tag a newer commit instead of recovering the missed RC.
 
+## Dev builds
+
+Run **Build Dev** from `main` and pass the branch name or full commit SHA you want to build. In the Actions UI, select `main` in the workflow branch dropdown and enter the build ref separately:
+
+```sh
+gh workflow run build-dev.yml --ref main -f ref=my-feature-branch
+```
+
+- The commit must be on a branch in this repository; commits that exist only in forks are rejected
+- It builds the Linux binaries (`base`, `base-reth-node`, `base-consensus`, `basectl`, `sidecrush`) for x86_64 and aarch64 with the `maxperf` profile on Ubuntu 22.04
+- It publishes them with `.sha256` checksums to a prerelease tagged `dev-<first 12 hex digits of the SHA>`, which is never marked latest
+- Rerunning it for the same commit reuses the tag and replaces the binaries
+- Dev binaries are not GPG-signed or attested, and no Docker images are published
+
+Cargo runs branch build scripts and proc-macros inside a container with read-only source and rustup mounts. Rustup selects the toolchain from the build ref’s `rust-toolchain.toml`. The container does not receive runner credentials or writable host mounts. A separate job that runs no branch code checks the archive names and checksums and publishes them.
+
+Dev builds are for development environments only. Do not run them on a public network.
+
 ## Quick reference
 
 | Action | Workflow | Trigger | Output |
@@ -102,6 +121,7 @@ Before retrying a legacy **Create RC** run, check its checkout ref: older defini
 | Sync Cargo.toml version | **Release Version Sync** | Automatic on branch creation | PR targeting release branch |
 | Create RC tag | **Create RC** | Automatic on push to `releases/v*` | RC tag + independent build dispatch |
 | Build RC artifacts | **Build RC** | Dispatched by Create RC at the RC tag | Docker image + binaries |
+| Build dev artifacts | **Build Dev** | Manual (branch or commit) | `dev-<sha>` tag + prerelease binaries |
 | Publish final release | **Publish Release** | Manual (version number) | Final tag + Docker images + draft GitHub release |
 
 ## Workflows
@@ -110,5 +130,6 @@ Before retrying a legacy **Create RC** run, check its checkout ref: older defini
 - **Release Version Sync** — Opens a PR to update `Cargo.toml` when a release branch is created
 - **Create RC** — Triggered on push to `releases/v*`; creates RC tags and dispatches builds without waiting for artifacts
 - **Build RC** — Dispatched at an RC tag; validates the ref and builds artifacts independently of Create RC
+- **Build Dev** — Manual workflow that tags a branch or commit `dev-<sha>` and publishes its binaries to a prerelease
 - **Build Release** — Reusable workflow (called by Build RC and Publish Release) that builds Docker images and binaries
 - **Publish Release** — Manual workflow to create the final tag and publish the release

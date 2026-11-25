@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       is_final:
-        description: 'Whether this is a final release (creates GitHub release + uploads binaries)'
+        description: 'Whether this is a final release (draft GitHub release, latest images). Otherwise it is an RC, and its binaries go to a published prerelease.'
         required: false
         type: boolean
         default: false
@@ -50,6 +50,14 @@ jobs:
           - base-reth-node
           - base-consensus
           - basectl
+          - sidecrush
+        exclude:
+          # Publish sidecrush for Linux only.
+          - target:
+              triple: aarch64-apple-darwin
+              runner: macos-14
+              os: macos
+            binary: sidecrush
 
     runs-on: ${{ matrix.target.runner }}
 
@@ -193,17 +201,24 @@ jobs:
           retention-days: 1
 
       - name: Create or reuse GitHub Release
-        if: inputs.is_final
         env:
           GH_TOKEN: ${{ github.token }}
+          IS_FINAL: ${{ inputs.is_final }}
+          TAG: ${{ inputs.tag }}
         run: |
-          TAG="${{ inputs.tag }}"
-          if ! gh release view "$TAG" > /dev/null 2>&1; then
-            gh release create "$TAG" --title "$TAG" --notes "" --draft || gh release view "$TAG" > /dev/null
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            exit 0
           fi
+          # Final releases stay drafts until their notes are written. RC releases are published
+          # prereleases, never marked latest, so deployments can download their binaries.
+          if [[ "$IS_FINAL" == "true" ]]; then
+            release_args=(--draft --notes "")
+          else
+            release_args=(--prerelease --latest=false --verify-tag --notes "Release candidate. Not a supported release.")
+          fi
+          gh release create "$TAG" --title "$TAG" "${release_args[@]}" || gh release view "$TAG" > /dev/null
 
       - name: Upload binary to GitHub Release
-        if: inputs.is_final
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
