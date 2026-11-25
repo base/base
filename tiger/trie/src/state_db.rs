@@ -25,7 +25,7 @@ use base_tiger_store::{
 use alloy_rlp::Decodable;
 
 use crate::{
-    AccountProof, DbNodes, EMPTY_ROOT, HashedState, HashedStorage, LiveBase, LiveSession, LiveSlot, PARTIAL_ROOT_KEY, ProofNodes,
+    AccountProof, DbNodes, EMPTY_ROOT, HashedState, HashedStorage, LIVE_MAX_NODES, LiveBase, LiveSession, LiveSlot, PARTIAL_ROOT_KEY, ProofNodes,
     Recording, SparseTrie,
     PartialState, StateTries, StateWriter, TrieError, TrieUpdates, TrieView, hash_key,
 };
@@ -259,6 +259,8 @@ pub struct StateDb {
     /// Whether every live root is checked against the walker (`TIGER_LIVE_ROOT=check`), which
     /// panics on a difference.
     live_check: bool,
+    /// Most nodes the live trie keeps between blocks.
+    live_max_nodes: usize,
 }
 
 impl StateDb {
@@ -268,7 +270,17 @@ impl StateDb {
         let partial = PartialState::root(&datadir.db.read()?, &datadir.db)?.is_some();
         let mode = std::env::var("TIGER_LIVE_ROOT").unwrap_or_default();
         let (live_enabled, live_check) = (mode == "1" || mode == "check", mode == "check");
-        Ok(Self { datadir, partial, live: Default::default(), live_enabled, live_check })
+        Ok(Self {
+            datadir,
+            partial,
+            live: Default::default(),
+            live_enabled,
+            live_check,
+            live_max_nodes: std::env::var("TIGER_LIVE_MAX_NODES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(LIVE_MAX_NODES),
+        })
     }
 
     /// Opens the partial-state datadir at `path`, creating it when new: its state is the one
@@ -299,6 +311,12 @@ impl StateDb {
     /// `TIGER_LIVE_ROOT=1` (or `check`). Off, every root walks the stored trie.
     pub fn set_live_root(&mut self, enabled: bool) {
         self.live_enabled = enabled;
+    }
+
+    /// Bounds the live trie to `max_nodes` nodes between blocks (`TIGER_LIVE_MAX_NODES`, else
+    /// [`LIVE_MAX_NODES`]): above it, the least recently used are blinded down to half of it.
+    pub fn set_live_max_nodes(&mut self, max_nodes: usize) {
+        self.live_max_nodes = max_nodes;
     }
 
     /// Whether the datadir holds a partial state.
@@ -925,7 +943,12 @@ impl StateView<'_> {
 
     /// Where a live root of this view reads.
     fn live_base(&self) -> LiveBase {
-        LiveBase { db: self.dbs().clone(), mem: self.mem.clone(), snapshot: self.txn.id() }
+        LiveBase {
+            db: self.dbs().clone(),
+            mem: self.mem.clone(),
+            snapshot: self.txn.id(),
+            max_nodes: self.db.live_max_nodes,
+        }
     }
 
     /// Whether this view's roots can use the live trie: a full state at its tip.

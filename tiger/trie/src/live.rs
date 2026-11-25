@@ -87,6 +87,9 @@ struct Entry {
     changed: bool,
     /// The topmost branch of this subtree is stored. Valid while `rlp` is set.
     top_stored: bool,
+    /// The last block (the shard's `epoch`) that created, revealed or walked through it. A node's
+    /// is never older than its descendants', as every walk starts at the top.
+    used: u32,
 }
 
 /// One first-nibble subtree.
@@ -96,6 +99,8 @@ struct Shard {
     top: Option<u32>,
     arena: Vec<Entry>,
     free: Vec<u32>,
+    /// The block being computed, stamped on the nodes it uses (see [`LiveTrie::prune`]).
+    epoch: u32,
 }
 
 /// Stored branch row changes by path; `None` deletes the row.
@@ -145,7 +150,7 @@ enum Loc {
 
 impl Shard {
     fn alloc(&mut self, node: Node, rlp: Option<RlpNode>, top_stored: bool) -> u32 {
-        let entry = Entry { node, rlp, changed: false, top_stored };
+        let entry = Entry { node, rlp, changed: false, top_stored, used: self.epoch };
         if let Some(i) = self.free.pop() {
             self.arena[i as usize] = entry;
             return i;
@@ -157,7 +162,7 @@ impl Shard {
 
     fn release(&mut self, i: u32) {
         self.arena[i as usize] =
-            Entry { node: Node::Free, rlp: None, changed: false, top_stored: false };
+            Entry { node: Node::Free, rlp: None, changed: false, top_stored: false, used: 0 };
         self.free.push(i);
     }
 
@@ -302,7 +307,11 @@ impl Shard {
         path: &Nibbles,
     ) -> Result<u32, TrieError> {
         let i = self.get(loc);
-        if i == EMPTY || !matches!(self.arena[i as usize].node, Node::Blind) {
+        if i == EMPTY {
+            return Ok(i);
+        }
+        self.arena[i as usize].used = self.epoch;
+        if !matches!(self.arena[i as usize].node, Node::Blind) {
             return Ok(i);
         }
         let stored = self.arena[i as usize].top_stored;
@@ -337,6 +346,50 @@ impl Shard {
         self.release(revealed);
         self.arena[i as usize].node = node;
         Ok(i)
+    }
+
+    /// Blinds every hashed branch below `i` (inclusive) last used before `cutoff`, freeing what
+    /// is below it; a blinded branch is revealed again from the stored trie when needed.
+    fn prune(&mut self, i: u32, cutoff: u32) {
+        if i == EMPTY {
+            return;
+        }
+        let entry = &self.arena[i as usize];
+        match &entry.node {
+            Node::Branch { children, .. } => {
+                let children = *children;
+                let hashed = entry.rlp.as_ref().is_some_and(|rlp| rlp.as_hash().is_some());
+                if hashed && !entry.changed && entry.used < cutoff {
+                    for child in children {
+                        self.free_subtree(child);
+                    }
+                    self.arena[i as usize].node = Node::Blind;
+                } else {
+                    for child in children {
+                        self.prune(child, cutoff);
+                    }
+                }
+            }
+            Node::Ext { child, .. } => self.prune(*child, cutoff),
+            Node::Leaf { .. } | Node::Blind => {}
+            Node::Free => unreachable!("live node"),
+        }
+    }
+
+    /// Releases `i` and everything below it.
+    fn free_subtree(&mut self, i: u32) {
+        if i == EMPTY {
+            return;
+        }
+        match std::mem::replace(&mut self.arena[i as usize].node, Node::Free) {
+            Node::Branch { children, .. } => {
+                children.into_iter().for_each(|c| self.free_subtree(c))
+            }
+            Node::Ext { child, .. } => self.free_subtree(child),
+            Node::Leaf { .. } | Node::Blind => {}
+            Node::Free => unreachable!("live node"),
+        }
+        self.release(i);
     }
 
     fn touch(&mut self, chain: &[(Loc, u32, usize)]) {
@@ -637,6 +690,31 @@ impl LiveTrie {
         self.owner
     }
 
+    /// The block number (any counter that grows by block) nodes used from now on are stamped
+    /// with, for [`Self::prune`].
+    pub fn set_epoch(&mut self, epoch: u32) {
+        for shard in self.shards.iter_mut() {
+            shard.epoch = epoch;
+        }
+    }
+
+    /// The epoch this trie was last used in.
+    pub fn epoch(&self) -> u32 {
+        self.shards[0].epoch
+    }
+
+    /// Blinds the hashed branches last used before epoch `cutoff`, keeping their references, so
+    /// the trie holds fewer nodes; what they held is revealed again from the source when needed.
+    /// Call it only between roots (every node hashed) and only when the source will hold the
+    /// state this trie last computed.
+    pub fn prune(&mut self, cutoff: u32) {
+        for shard in self.shards.iter_mut() {
+            if let Some(top) = shard.top {
+                shard.prune(top, cutoff);
+            }
+        }
+    }
+
     /// Sets `key` to the encoded leaf `value`, or removes it with `None`. Stored rows the change
     /// removes are recorded in `updates`.
     pub fn update(
@@ -874,13 +952,14 @@ impl LiveTrie {
         for (n, shard) in self.shards.iter().enumerate() {
             let Some(top) = shard.top else { continue };
             let mut reachable = 0usize;
-            let mut stack = vec![(top, 1usize)];
-            while let Some((i, depth)) = stack.pop() {
+            let mut stack = vec![(top, 1usize, u32::MAX)];
+            while let Some((i, depth, parent_used)) = stack.pop() {
                 if i == EMPTY {
                     continue;
                 }
                 reachable += 1;
                 let entry = &shard.arena[i as usize];
+                assert!(entry.used <= parent_used, "shard {n}: used after its parent");
                 // Children of a revealed but unchanged node may stay unhashed until it changes.
                 assert!(
                     !entry.changed && (i != top || entry.rlp.is_some()),
@@ -903,14 +982,14 @@ impl LiveTrie {
                             ),
                             "shard {n}: extension above a non-branch"
                         );
-                        stack.push((*child, depth + key.len()));
+                        stack.push((*child, depth + key.len(), entry.used));
                     }
                     Node::Branch { children, .. } => {
                         assert!(
                             children.iter().filter(|c| **c != EMPTY).count() >= 2,
                             "shard {n}: branch with one child"
                         );
-                        stack.extend(children.iter().map(|c| (*c, depth + 1)));
+                        stack.extend(children.iter().map(|c| (*c, depth + 1, entry.used)));
                     }
                     Node::Free => panic!("shard {n}: reachable free entry"),
                 }
@@ -941,11 +1020,13 @@ pub struct LiveState {
     pub accounts: LiveTrie,
     /// Storage tries by hashed address.
     pub storages: HashMap<B256, LiveTrie>,
+    /// Blocks computed so far, the age [`Self::prune`] counts in.
+    pub epoch: u32,
 }
 
 impl Default for LiveState {
     fn default() -> Self {
-        Self { accounts: LiveTrie::new(None), storages: HashMap::new() }
+        Self { accounts: LiveTrie::new(None), storages: HashMap::new(), epoch: 0 }
     }
 }
 
@@ -987,16 +1068,18 @@ impl LiveState {
         originals: Option<&Originals>,
     ) -> Result<(B256, TrieUpdates), TrieError> {
         let mut updates = TrieUpdates::default();
+        self.accounts.set_epoch(self.epoch);
         // Storage tries first: account leaves need their roots.
         let mut work: Vec<(B256, LiveTrie, &HashedStorage)> = state
             .storages
             .iter()
             .map(|(address, changes)| {
-                let trie = match self.storages.remove(address) {
+                let mut trie = match self.storages.remove(address) {
                     Some(trie) if !changes.wiped || wiped.contains(address) => trie,
                     _ if changes.wiped => LiveTrie::empty(Some(*address)),
                     _ => LiveTrie::new(Some(*address)),
                 };
+                trie.set_epoch(self.epoch);
                 (*address, trie, changes)
             })
             .collect();
@@ -1142,6 +1225,28 @@ impl LiveState {
         self.accounts.len() + self.storages.values().map(LiveTrie::len).sum::<usize>()
     }
 
+    /// Ends a block whose root this state computed: later nodes are stamped with the next
+    /// epoch, and when more than `max` nodes are held, the least recently used are blinded
+    /// (storage tries unused for as long are dropped) until at most half of `max` remain: those
+    /// unused for the last 256 blocks, then 128, and so on down to every one unused this block.
+    /// The source of the next block must hold the state this one computed.
+    pub fn end_block(&mut self, max: usize) {
+        self.epoch += 1;
+        if self.len() <= max {
+            return;
+        }
+        let mut age = 256;
+        while age > 0 && self.len() > max / 2 {
+            let cutoff = self.epoch.saturating_sub(age);
+            self.storages.retain(|_, trie| trie.epoch() >= cutoff);
+            for trie in self.storages.values_mut() {
+                trie.prune(cutoff);
+            }
+            self.accounts.prune(cutoff);
+            age /= 2;
+        }
+    }
+
     /// Whether nothing is held.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -1267,10 +1372,11 @@ mod tests {
             let mut source = MemSource::default();
             let mut keys: Vec<B256> = Vec::new();
             let mut trie = LiveTrie::new(None);
-            for block in 0..40 {
+            for block in 0..40u32 {
                 if rng.below(5) == 0 {
                     trie = LiveTrie::new(None);
                 }
+                trie.set_epoch(block);
                 let mut next = source.leaves.clone();
                 let mut updates = NodeUpdates::new();
                 let ops = 1 + rng.below(if block % 9 == 8 { 300 } else { 30 });
@@ -1296,6 +1402,11 @@ mod tests {
                 apply(&mut source.rows, &updates);
                 assert_eq!(source.rows, expected_rows, "seed {seed} block {block}: stored rows");
                 source.leaves = next;
+                // Sometimes blind what the last few blocks did not use.
+                if rng.below(3) == 0 {
+                    trie.prune(block.saturating_sub(rng.below(4) as u32));
+                    trie.check();
+                }
                 // Reads through the trie agree with the leaves.
                 for _ in 0..3 {
                     let key = keys[rng.below(keys.len() as u64) as usize];
@@ -1503,6 +1614,11 @@ mod tests {
                 for (owner, trie) in expected.storages {
                     source.storages.entry(owner).or_default().leaves = trie.leaves;
                 }
+                // Sometimes over a small cap: least recently used nodes are blinded.
+                let held = live.len();
+                live.end_block(if rng.below(3) == 0 { held / 2 } else { usize::MAX });
+                live.accounts.check();
+                live.storages.values().for_each(LiveTrie::check);
             }
         }
     }

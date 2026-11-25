@@ -34,8 +34,10 @@ const PARALLEL_MIN_WORK: usize = 512;
 /// Most threads a live root uses.
 const LIVE_THREADS: usize = 16;
 
-/// The live trie is dropped when it holds more nodes than this, and rebuilt from the stored trie.
-const LIVE_MAX_NODES: usize = 4_000_000;
+/// When the live trie holds more nodes than this, its least recently used ones are blinded
+/// (revealed again from the stored trie when needed) down to half of it.
+/// About 120 bytes each plus its leaf value, so a few hundred megabytes at most.
+pub const LIVE_MAX_NODES: usize = 1_000_000;
 
 /// The state of a [`crate::StateDb`]'s live trie, shared with the sessions using it.
 #[derive(Debug, Default)]
@@ -58,6 +60,8 @@ pub struct LiveBase {
     pub mem: Option<Arc<MemState>>,
     /// The snapshot's transaction id, checked by every reader when there is no in-memory layer.
     pub snapshot: u64,
+    /// Most nodes the live trie keeps between blocks (see [`LIVE_MAX_NODES`]).
+    pub max_nodes: usize,
 }
 
 /// A [`LiveSource`] over its own read transaction.
@@ -165,12 +169,17 @@ impl LiveSlot {
         }
     }
 
-    /// Returns the live trie to `slot` after a root: kept at `root` when it succeeded and fits.
-    pub fn put(slot: &Mutex<Self>, kept: Option<(B256, Box<LiveState>)>) {
-        *slot.lock().expect("unpoisoned") = match kept {
-            Some((root, live)) if live.len() <= LIVE_MAX_NODES => Self::Idle(root, live),
-            _ => Self::Empty,
+    /// Returns the live trie to `slot` after a root: kept at `root` when it succeeded, pruned
+    /// to fit `max_nodes` (see [`LIVE_MAX_NODES`]).
+    pub fn put(slot: &Mutex<Self>, kept: Option<(B256, Box<LiveState>)>, max_nodes: usize) {
+        let next = match kept {
+            Some((root, mut live)) => {
+                live.end_block(max_nodes);
+                Self::Idle(root, live)
+            }
+            None => Self::Empty,
         };
+        *slot.lock().expect("unpoisoned") = next;
     }
 }
 
@@ -190,12 +199,12 @@ impl LiveBase {
         });
         match result {
             Ok(((root, updates), live)) => {
-                LiveSlot::put(slot, Some((root, live)));
+                LiveSlot::put(slot, Some((root, live)), self.max_nodes);
                 Some((root, updates))
             }
             Err(error) => {
                 eprintln!("tiger: live state root failed, the walker answers: {error}");
-                LiveSlot::put(slot, None);
+                LiveSlot::put(slot, None, 0);
                 None
             }
         }
@@ -425,7 +434,7 @@ impl LiveSession {
             Ok(local) => local,
             Err(error) => {
                 eprintln!("tiger: live state root failed, the walker answers: {error}");
-                LiveSlot::put(slot, None);
+                LiveSlot::put(slot, None, 0);
                 return;
             }
         };
@@ -487,7 +496,7 @@ impl LiveSession {
                 }
             }
         }
-        LiveSlot::put(slot, None);
+        LiveSlot::put(slot, None, 0);
     }
 
     fn reply(
@@ -500,12 +509,13 @@ impl LiveSession {
     ) {
         match stream.and_then(|s| s.finish(base, local, fin)) {
             Ok((root, updates, live)) => {
-                LiveSlot::put(slot, Some((root, live)));
+                // Answer first: putting the trie back may prune it.
                 let _ = reply.send(Some((root, updates)));
+                LiveSlot::put(slot, Some((root, live)), base.max_nodes);
             }
             Err(error) => {
                 eprintln!("tiger: live state root failed, the walker answers: {error}");
-                LiveSlot::put(slot, None);
+                LiveSlot::put(slot, None, 0);
                 let _ = reply.send(None);
             }
         }
@@ -534,11 +544,10 @@ impl LiveSession {
     pub fn finish(mut self, fin: &HashedState) -> Option<(B256, TrieUpdates)> {
         let (reply, answer) = mpsc::channel();
         self.sender.take()?.send(Message::Finish(fin.clone(), reply)).ok()?;
-        let result = answer.recv().ok().flatten();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-        result
+        // The thread ends on its own after answering (pruning the trie, sometimes, off the
+        // block's path).
+        self.thread.take();
+        answer.recv().ok().flatten()
     }
 }
 

@@ -31,7 +31,7 @@ mod live;
 pub use live::{LeafChange, LeafFn, LiveSource, LiveState, LiveTrie, NodeUpdates, Originals, SourceFn, Sources};
 
 mod stream;
-pub use stream::{LiveBase, LiveSession, LiveSlot, NO_CHANGES};
+pub use stream::{LIVE_MAX_NODES, LiveBase, LiveSession, LiveSlot, NO_CHANGES};
 
 mod spec;
 pub use spec::{KEY_NIBBLES, Spec};

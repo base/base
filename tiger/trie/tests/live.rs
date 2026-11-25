@@ -161,6 +161,10 @@ fn streamed_live_roots_commit_the_same_tries_as_the_walker() {
             (temp(&format!("live-{seed}")), temp(&format!("walker-{seed}")));
         let mut live = StateDb::open(&live_dir).unwrap();
         live.set_live_root(true);
+        // Half the seeds keep the live trie small, so blocks reveal what pruning blinded.
+        if seed % 2 == 1 {
+            live.set_live_max_nodes(1_500);
+        }
         let mut walker = StateDb::open(&walker_dir).unwrap();
         walker.set_live_root(false);
         let addresses: Vec<Address> =

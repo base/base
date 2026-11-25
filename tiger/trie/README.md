@@ -20,7 +20,9 @@ Merkle Patricia trie code and the state database of the tiger client.
   `StateDb` keeps one for the canonical head; it applies only when the view's state root equals
   the root it was left at, else it starts over from the stored trie. It is off unless
   `TIGER_LIVE_ROOT=1` (it gives no gain on real blocks yet and its memory is not bounded well);
-  `TIGER_LIVE_ROOT=check` also walks every root and panics if the two differ. `LiveSession`
+  `TIGER_LIVE_ROOT=check` also walks every root and panics if the two differ. Above
+  `TIGER_LIVE_MAX_NODES` nodes (1,000,000, about 120 bytes each plus leaf values), the least
+  recently used hashed branches are blinded, down to half of it. `LiveSession`
   (`src/stream.rs`) feeds it each transaction's changes while the block executes, on a
   background thread, and reconciles with the block's final changes.
 
@@ -41,20 +43,21 @@ Tested exhaustively:
 
 Tested by randomized differential checks:
 - `LiveTrie`: 60 seeds × 40 blocks of inserts, updates and deletes against `Spec` (root, and the
-  stored rows after applying each block's updates), dropping the trie at random so cold reveals
-  from the stored rows are exercised; structural invariants (`LiveTrie::check`) after every block.
+  stored rows after applying each block's updates), dropping the trie or pruning it at random
+  so reveals from the stored rows are exercised; structural invariants (`LiveTrie::check`)
+  after every block.
 - `LiveState`: 40 seeds × 30 blocks of account, storage, wipe and deletion changes against
-  `Spec` for every trie, on 1 to 4 threads.
+  `Spec` for every trie, on 1 to 4 threads, pruned to half its size every third block.
 - Over a datadir: the live state against the walker (`TrieView::state_root`) in the incremental
   model test, root equal and trie updates with the same effect.
 - End to end (`tests/live.rs`): blocks of transactions streamed into a `LiveSession` (values
   changed and changed back, wipes, deletions and re-creations, blocks with nothing streamed;
   `LiveSession::flush` makes the background apply each transaction, some of them, or none
-  before the final changes arrive), committed into one
-  datadir with the session's trie updates and into another with the walker's: roots equal and
-  the two trie tables byte-identical after every block.
+  before the final changes arrive; half the seeds cap the trie at 1,500 nodes so it prunes
+  every block), committed into one datadir with the session's trie updates and into another
+  with the walker's: roots equal and the two trie tables byte-identical after every block.
 - Mutation checks: removing the deletion of collapsed rows, the tree-mask or hash-mask rules,
-  the stream's reconciliation steps each fail these tests.
+  the stream's reconciliation steps, or a blinded branch's storedness each fail these tests.
 
 Contract and assumptions:
 - Trie updates are the walker's minus rewrites of rows that do not change (the walker rewrites
