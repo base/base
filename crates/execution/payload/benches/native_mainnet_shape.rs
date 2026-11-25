@@ -8,9 +8,10 @@
 //!
 //! Each block runs the same calls as the native builder: take the resting set, carry it into the
 //! block, snapshot the pool, run the selection loop, then finish the block and store the set. The
-//! table reports the snapshot, the selection loop, how long the loop ran and how many validity
-//! transactions it held before the first standard transaction was selected, and the time spent
-//! holding.
+//! table reports the snapshot, the snapshot without the hold work it ran after releasing the
+//! store locks (an upper bound on the time the lane stores' read guards were held), the selection
+//! loop, how long the loop ran and how many validity transactions it held before the first
+//! standard transaction was selected, and the time spent holding.
 //!
 //! The shape is configurable through environment variables:
 //!
@@ -29,7 +30,7 @@
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+        atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering},
     },
     time::{Duration, Instant},
 };
@@ -259,6 +260,10 @@ struct Probe {
     /// Hold checks that parked the transaction.
     held: AtomicUsize,
     hold_time: Mutex<Duration>,
+    /// Of `hold_time`, the time recorded while the pool was snapshotted.
+    snapshot_hold_time: Mutex<Duration>,
+    /// Whether the pool is being snapshotted.
+    in_snapshot: AtomicBool,
     /// Time since the selection loop started, and holds so far, at the first standard yield.
     first_standard: Mutex<Option<(Duration, usize)>>,
 }
@@ -281,6 +286,9 @@ impl BestTransactionsHold<BasePooledTransaction> for CountingHold {
 
     fn record_duration(&mut self, duration: Duration) {
         *self.probe.hold_time.lock().unwrap() += duration;
+        if self.probe.in_snapshot.load(AtomicOrdering::Relaxed) {
+            *self.probe.snapshot_hold_time.lock().unwrap() += duration;
+        }
         self.inner.record_duration(duration);
     }
 
@@ -352,6 +360,7 @@ impl ParkableBestTransactions<BasePooledTransaction> for ProbedBest {
 
 struct BlockTiming {
     snapshot: Duration,
+    snapshot_hold: Duration,
     selection: Duration,
     first_standard: Duration,
     holds_before_first_standard: usize,
@@ -433,12 +442,14 @@ fn main() {
         let probe = Arc::new(Probe::default());
         let hold = CountingHold { inner: shared.iterator_hold(), probe: Arc::clone(&probe) };
 
+        probe.in_snapshot.store(true, AtomicOrdering::Relaxed);
         let start = Instant::now();
         let inner = pool.best_transactions_with_attributes_and_parking(
             BestTransactionsAttributes::new(0, None),
             Some(Box::new(hold)),
         );
         let snapshot = start.elapsed();
+        probe.in_snapshot.store(false, AtomicOrdering::Relaxed);
 
         let start = Instant::now();
         let best = ParkableBestPayloadTransactions::new(Box::new(ProbedBest {
@@ -463,6 +474,7 @@ fn main() {
                 probe.first_standard.lock().unwrap().unwrap_or((selection, 0));
             timings.push(BlockTiming {
                 snapshot,
+                snapshot_hold: *probe.snapshot_hold_time.lock().unwrap(),
                 selection,
                 first_standard,
                 holds_before_first_standard,
@@ -495,6 +507,9 @@ fn main() {
         timings.iter().map(|timing| timing.carried).sum::<usize>() / timings.len(),
     );
     summarize("snapshot", "ms", &|timing| ms(timing.snapshot));
+    // The snapshot without the hold work it ran after releasing the store locks: an upper bound
+    // on the time the lane stores' read guards were held.
+    summarize("snapshot_unheld", "ms", &|timing| ms(timing.snapshot - timing.snapshot_hold));
     summarize("selection", "ms", &|timing| ms(timing.selection));
     summarize("first_standard", "ms", &|timing| ms(timing.first_standard));
     summarize("holds_before_standard", "n", &|timing| timing.holds_before_first_standard as f64);
