@@ -1,6 +1,8 @@
 //! A block's state root computed while the block executes: each transaction's committed changes
 //! stream into the live trie ([`crate::LiveState`]) on a background thread, which reveals and
-//! hashes them as they come, so little is left when the block ends.
+//! hashes them as they come, so little is left when the block ends. The block's own thread
+//! finishes it, taking the trie from the background thread (which holds it only while applying
+//! one batch), so a busy machine that leaves the background thread behind costs no wait for it.
 //!
 //! The streamed values are provisional. [`LiveSession::finish`] takes the block's final changes
 //! (the authority) and reconciles: storage tries whose streamed changes do not match the final
@@ -12,7 +14,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex, mpsc},
-    thread::JoinHandle,
 };
 
 use alloy_primitives::B256;
@@ -141,15 +142,36 @@ impl LiveBase {
         live.apply_over(&mut Sources::Threads(&sources, threads), state, wiped, originals)
     }
 
-    /// The kept live trie when it holds this base's state, else a new one.
+    /// The kept live trie when it holds this base's state (ending the block it computed, which
+    /// may prune it, see [`LiveState::end_block`]), else a new one.
     fn resume(
         &self,
         local: &WorkerSource<'_>,
         parent: Option<(B256, Box<LiveState>)>,
     ) -> Result<Box<LiveState>, TrieError> {
         Ok(match parent {
-            Some((root, live)) if local.view().state_root(false)?.0 == root => live,
+            Some((root, mut live)) if local.view().state_root(false)?.0 == root => {
+                live.end_block(self.max_nodes);
+                live
+            }
             _ => Box::default(),
+        })
+    }
+
+    /// A new stream over the kept trie `parent` (see [`Self::resume`]).
+    fn stream(
+        &self,
+        local: &WorkerSource<'_>,
+        parent: Option<(B256, Box<LiveState>)>,
+    ) -> Result<Stream, TrieError> {
+        let warm = parent.is_some();
+        let live = self.resume(local, parent)?;
+        Ok(Stream {
+            stats: StreamStats { fresh: !warm || live.is_empty(), ..StreamStats::default() },
+            live,
+            streamed: HashedState::default(),
+            originals: Mutex::default(),
+            updates: TrieUpdates::default(),
         })
     }
 
@@ -170,17 +192,13 @@ impl LiveSlot {
         }
     }
 
-    /// Returns the live trie to `slot` after a root: kept at `root` when it succeeded, pruned
-    /// to fit `max_nodes` (see [`LIVE_MAX_NODES`]).
-    pub fn put(slot: &Mutex<Self>, kept: Option<(B256, Box<LiveState>)>, max_nodes: usize) {
-        let next = match kept {
-            Some((root, mut live)) => {
-                live.end_block(max_nodes);
-                Self::Idle(root, live)
-            }
+    /// Returns the live trie to `slot` after a root: kept at `root` when it succeeded (the
+    /// next root that resumes it prunes it, off this block's path).
+    pub fn put(slot: &Mutex<Self>, kept: Option<(B256, Box<LiveState>)>) {
+        *slot.lock().expect("unpoisoned") = match kept {
+            Some((root, live)) => Self::Idle(root, live),
             None => Self::Empty,
         };
-        *slot.lock().expect("unpoisoned") = next;
     }
 }
 
@@ -200,12 +218,12 @@ impl LiveBase {
         });
         match result {
             Ok(((root, updates), live)) => {
-                LiveSlot::put(slot, Some((root, live)), self.max_nodes);
+                LiveSlot::put(slot, Some((root, live)));
                 Some((root, updates))
             }
             Err(error) => {
                 eprintln!("tiger: live state root failed, the walker answers: {error}");
-                LiveSlot::put(slot, None, 0);
+                LiveSlot::put(slot, None);
                 None
             }
         }
@@ -215,10 +233,20 @@ impl LiveBase {
 enum Message {
     /// One executed transaction's changes.
     Transaction(BlockChanges),
-    /// The block's final hashed changes; the answer goes back on the channel.
-    Finish(HashedState, mpsc::Sender<Option<(B256, TrieUpdates)>>),
     /// Answered once everything sent before it is applied.
     Flush(mpsc::Sender<()>),
+}
+
+/// Where a session's trie is, shared by its background thread and its owner.
+enum Progress {
+    /// Not started yet: the kept trie to resume.
+    Waiting(Option<(B256, Box<LiveState>)>),
+    /// Applying streamed transactions.
+    Streaming(Stream),
+    /// Streaming failed; the walker answers.
+    Failed(TrieError),
+    /// The owner took it to finish the block, or dropped the session.
+    Taken,
 }
 
 /// The streamed part of a session: the trie and what the stream did to it.
@@ -418,119 +446,108 @@ impl Stream {
 /// A block's state root computed as it executes (see the module docs). Feed it each executed
 /// transaction with [`Self::transaction`], then call [`Self::finish`] with the block's changes.
 /// Dropping it unfinished discards the live trie.
-#[derive(Debug)]
 pub struct LiveSession {
     sender: Option<mpsc::Sender<Message>>,
-    thread: Option<JoinHandle<()>>,
+    progress: Arc<Mutex<Progress>>,
+    slot: Arc<Mutex<LiveSlot>>,
+    base: LiveBase,
+}
+
+impl std::fmt::Debug for LiveSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveSession").finish_non_exhaustive()
+    }
 }
 
 impl LiveSession {
     /// Starts a session over `base` with the live trie in `slot`; `None` when it is in use.
     pub fn start(slot: Arc<Mutex<LiveSlot>>, base: LiveBase) -> Option<Self> {
         let parent = LiveSlot::take(&slot)?;
+        let progress = Arc::new(Mutex::new(Progress::Waiting(parent)));
         let (sender, receiver) = mpsc::channel::<Message>();
-        let thread = std::thread::Builder::new()
+        let (shared, thread_base) = (Arc::clone(&progress), base.clone());
+        let spawned = std::thread::Builder::new()
             .name("live-root".into())
-            .spawn(move || Self::run(&slot, &base, parent, &receiver))
-            .ok()?;
-        Some(Self { sender: Some(sender), thread: Some(thread) })
+            .spawn(move || Self::run(&thread_base, &shared, &receiver));
+        // Without the thread, the owner computes everything when it finishes.
+        let sender = spawned.is_ok().then_some(sender);
+        Some(Self { sender, progress, slot, base })
     }
 
-    fn run(
-        slot: &Mutex<LiveSlot>,
-        base: &LiveBase,
-        parent: Option<(B256, Box<LiveState>)>,
-        receiver: &mpsc::Receiver<Message>,
-    ) {
-        let mut local = match base.source() {
-            Ok(local) => local,
-            Err(error) => {
-                eprintln!("tiger: live state root failed, the walker answers: {error}");
-                LiveSlot::put(slot, None, 0);
-                return;
-            }
-        };
-        let warm = parent.is_some();
-        let mut stream = base.resume(&local, parent).map(|live| Stream {
-            stats: StreamStats { fresh: !warm || live.is_empty(), ..StreamStats::default() },
-            live,
-            streamed: HashedState::default(),
-            originals: Mutex::default(),
-            updates: TrieUpdates::default(),
-        });
+    /// The background thread: applies queued transactions in batches until the owner takes
+    /// the trie or the channel closes. It holds the trie only while applying one batch, so
+    /// finishing waits for at most that.
+    fn run(base: &LiveBase, progress: &Mutex<Progress>, receiver: &mpsc::Receiver<Message>) {
+        let mut local = None;
         while let Ok(message) = receiver.recv() {
-            match message {
-                Message::Transaction(changes) => {
-                    // Take every transaction already queued as one batch.
-                    let mut batch = changes.hashed();
-                    let mut transactions = 1;
-                    let mut finish = None;
-                    let mut flushed = None;
-                    while let Ok(next) = receiver.try_recv() {
-                        match next {
-                            Message::Transaction(changes) => {
-                                transactions += 1;
-                                batch.extend(&changes.hashed());
-                            }
-                            Message::Finish(fin, reply) => {
-                                finish = Some((fin, reply));
-                                break;
-                            }
-                            Message::Flush(reply) => {
-                                flushed = Some(reply);
-                                break;
-                            }
+            let mut batch = HashedState::default();
+            let mut transactions = 0;
+            let mut flushed = Vec::new();
+            let mut next = Some(message);
+            while let Some(message) = next {
+                match message {
+                    Message::Transaction(changes) => {
+                        transactions += 1;
+                        batch.extend(&changes.hashed());
+                    }
+                    Message::Flush(reply) => flushed.push(reply),
+                }
+                next = receiver.try_recv().ok();
+            }
+            if transactions > 0 {
+                let mut progress = progress.lock().expect("unpoisoned");
+                let state = std::mem::replace(&mut *progress, Progress::Taken);
+                *progress = match state {
+                    Progress::Taken => return,
+                    Progress::Failed(error) => Progress::Failed(error),
+                    Progress::Waiting(parent) => {
+                        match Self::apply(base, &mut local, None, parent, &batch, transactions) {
+                            Ok(stream) => Progress::Streaming(stream),
+                            Err(error) => Progress::Failed(error),
                         }
                     }
-                    if let Some((fin, reply)) = finish {
-                        // The final changes cover the batch: finish at once.
-                        Self::reply(slot, base, &mut local, stream, &fin, &reply);
-                        return;
-                    }
-                    if let Ok(s) = stream.as_mut()
-                        && let Err(error) = {
-                            s.stats.transactions += transactions;
-                            s.batch(base, &mut local, &batch)
+                    Progress::Streaming(stream) => {
+                        match Self::apply(
+                            base,
+                            &mut local,
+                            Some(stream),
+                            None,
+                            &batch,
+                            transactions,
+                        ) {
+                            Ok(stream) => Progress::Streaming(stream),
+                            Err(error) => Progress::Failed(error),
                         }
-                    {
-                        stream = Err(error);
                     }
-                    if let Some(reply) = flushed {
-                        let _ = reply.send(());
-                    }
-                }
-                Message::Flush(reply) => {
-                    let _ = reply.send(());
-                }
-                Message::Finish(fin, reply) => {
-                    Self::reply(slot, base, &mut local, stream, &fin, &reply);
-                    return;
-                }
+                };
+            }
+            for reply in flushed {
+                let _ = reply.send(());
             }
         }
-        LiveSlot::put(slot, None, 0);
     }
 
-    fn reply(
-        slot: &Mutex<LiveSlot>,
-        base: &LiveBase,
-        local: &mut WorkerSource<'_>,
-        stream: Result<Stream, TrieError>,
-        fin: &HashedState,
-        reply: &mpsc::Sender<Option<(B256, TrieUpdates)>>,
-    ) {
-        match stream.and_then(|s| s.finish(base, local, fin)) {
-            Ok((root, updates, live)) => {
-                // Answer first: putting the trie back may prune it.
-                let _ = reply.send(Some((root, updates)));
-                LiveSlot::put(slot, Some((root, live)), base.max_nodes);
-            }
-            Err(error) => {
-                eprintln!("tiger: live state root failed, the walker answers: {error}");
-                LiveSlot::put(slot, None, 0);
-                let _ = reply.send(None);
-            }
-        }
+    /// Applies `batch` to `stream`, or to a new stream over the kept trie `parent`, opening
+    /// the thread's source on first use.
+    fn apply<'b>(
+        base: &'b LiveBase,
+        local: &mut Option<WorkerSource<'b>>,
+        stream: Option<Stream>,
+        parent: Option<(B256, Box<LiveState>)>,
+        batch: &HashedState,
+        transactions: usize,
+    ) -> Result<Stream, TrieError> {
+        let source = match local {
+            Some(source) => source,
+            None => local.insert(base.source()?),
+        };
+        let mut stream = match stream {
+            Some(stream) => stream,
+            None => base.stream(source, parent)?,
+        };
+        stream.stats.transactions += transactions;
+        stream.batch(base, source, batch)?;
+        Ok(stream)
     }
 
     /// Streams one executed transaction's changes (plain keys, its values after it).
@@ -551,24 +568,45 @@ impl LiveSession {
         }
     }
 
-    /// The root and trie updates after the block's final hashed changes `fin`; `None` when the
-    /// session failed and the caller must use the walker.
+    /// The root and trie updates after the block's final hashed changes `fin`, computed on
+    /// this thread from what the background thread applied (transactions it has not reached
+    /// are covered by `fin`); `None` when the session failed and the caller must use the
+    /// walker.
     pub fn finish(mut self, fin: &HashedState) -> Option<(B256, TrieUpdates)> {
-        let (reply, answer) = mpsc::channel();
-        self.sender.take()?.send(Message::Finish(fin.clone(), reply)).ok()?;
-        // The thread ends on its own after answering (pruning the trie, sometimes, off the
-        // block's path).
-        self.thread.take();
-        answer.recv().ok().flatten()
+        self.sender.take();
+        let state =
+            std::mem::replace(&mut *self.progress.lock().expect("unpoisoned"), Progress::Taken);
+        let result = self.base.source().and_then(|mut local| {
+            let stream = match state {
+                Progress::Waiting(parent) => self.base.stream(&local, parent)?,
+                Progress::Streaming(stream) => stream,
+                Progress::Failed(error) => return Err(error),
+                Progress::Taken => unreachable!("only the owner takes the trie"),
+            };
+            stream.finish(&self.base, &mut local, fin)
+        });
+        match result {
+            Ok((root, updates, live)) => {
+                LiveSlot::put(&self.slot, Some((root, live)));
+                Some((root, updates))
+            }
+            Err(error) => {
+                eprintln!("tiger: live state root failed, the walker answers: {error}");
+                LiveSlot::put(&self.slot, None);
+                None
+            }
+        }
     }
 }
 
 impl Drop for LiveSession {
     fn drop(&mut self) {
-        // Closing the channel ends the thread, which drops the live trie.
+        // Unfinished (the block failed): the trie holds no state a later root can use.
         self.sender.take();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+        let state =
+            std::mem::replace(&mut *self.progress.lock().expect("unpoisoned"), Progress::Taken);
+        if !matches!(state, Progress::Taken) {
+            LiveSlot::put(&self.slot, None);
         }
     }
 }
