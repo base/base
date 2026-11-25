@@ -114,7 +114,8 @@ impl BlockExecution<'_> {
             return Err(missing);
         }
         let (_, result, changes) = executor.finish();
-        let (computed, state_root) = self.computed(env.timestamp, &transactions, &result, &changes, state)?;
+        let transactions_root = alloy_consensus::proofs::calculate_transaction_root(&transactions);
+        let (computed, state_root) = self.computed(env.timestamp, transactions_root, &result, &changes, state)?;
         let header = assemble_header(self.chain, env, extra_data, excess_blob_gas, &computed);
         Ok(Built {
             invalid: None,
@@ -205,7 +206,7 @@ impl BlockExecution<'_> {
             return Err(missing);
         }
         let (_, result, changes) = executor.finish();
-        let (computed, state_root) = self.computed(env.timestamp, &signed, &result, &changes, state)?;
+        let (computed, state_root) = self.computed(env.timestamp, transactions_root, &result, &changes, state)?;
         if let Err(error) = rules.validate_post_execution(header, &computed) {
             invalid.get_or_insert_with(|| format!("post-execution: {error}"));
         }
@@ -246,13 +247,13 @@ impl BlockExecution<'_> {
     fn computed(
         &self,
         timestamp: u64,
-        transactions: &[SignedTx],
+        transactions_root: B256,
         result: &BlockExecutionResult,
         changes: &BlockStateAccumulator,
         state: &impl ParentState,
     ) -> Result<(ComputedHeader, B256), String> {
         let state_root = state.state_root_after(changes)?;
-        let computed = computed_header(self.chain, timestamp, transactions, result, state_root, || {
+        let computed = computed_header(self.chain, timestamp, transactions_root, result, state_root, || {
             state.storage_root_after(Predeploys::L2_TO_L1_MESSAGE_PASSER, changes)
         })?;
         Ok((computed, state_root))

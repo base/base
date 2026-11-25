@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, mpsc};
 
 use alloy_consensus::{
-    EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs, transaction::Recovered,
+    EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, transaction::Recovered,
     transaction::SignerRecoverable,
 };
 use alloy_eips::{
@@ -141,12 +141,13 @@ pub fn receipts_root(chain: &ChainSpec, timestamp: u64, receipts: &[BaseReceiptE
     ordered_trie_root_with_encoder(&stripped, |receipt, buf| receipt.encode_2718(buf))
 }
 
-/// Computes the header fields of a block from its execution results. `withdrawals_root` is the
+/// Computes the header fields of a block from its execution results and its transactions root
+/// (the caller has it from validating the body). `withdrawals_root` is the
 /// `L2ToL1MessagePasser` storage root after the block, used from Isthmus.
 pub fn computed_header(
     chain: &ChainSpec,
     timestamp: u64,
-    transactions: &[SignedTx],
+    transactions_root: B256,
     result: &crate::BlockExecutionResult,
     state_root: B256,
     message_passer_root: impl FnOnce() -> Result<B256, String>,
@@ -168,7 +169,7 @@ pub fn computed_header(
     Ok(ComputedHeader {
         state_root,
         receipts_root: receipts_root(chain, timestamp, &result.receipts),
-        transactions_root: proofs::calculate_transaction_root(transactions),
+        transactions_root,
         logs_bloom: logs_bloom(result.receipts.iter().flat_map(|receipt| receipt.logs())),
         gas_used: result.gas_used,
         blob_gas_used,
