@@ -2587,14 +2587,11 @@ where
         // dropped reservation cannot be recreated from an older validation
         // snapshot after reth publishes the transaction.
         let _admission_guard = self.protocol_admission_lock.lock();
+        let balances = || accounts.iter().map(|account| (account.address, account.balance));
         for store in self.lane_stores() {
-            store.pool.write().apply_balance_updates(
-                accounts.iter().map(|account| (account.address, account.balance)),
-            );
+            store.pool.write().apply_balance_updates(balances());
         }
-        let mut dropped = self.validity.pool.read().unaffordable_transactions(
-            accounts.iter().map(|account| (account.address, account.balance)),
-        );
+        let mut dropped = self.validity.pool.read().unaffordable_transactions(balances());
         {
             let mut guard = self.guard.write();
             for account in &accounts {
