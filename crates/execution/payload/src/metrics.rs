@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::{
     FLOW_STANDARD, FLOW_VALIDITY, InclusionTracker, ParkedPredicateIndex, PredicateLoadTracker,
-    RestingCarryOver,
+    ResourceMeteringDimension, RestingCarryOver, SealedBlockObservation,
 };
 
 base_metrics::define_metrics! {
@@ -119,7 +119,7 @@ base_metrics::define_metrics! {
     )]
     native_payload_execution_duration: histogram,
     #[describe(
-        "Time from the end of transaction execution until the native payload is sealed, including the state root, in seconds"
+        "Total native payload build time minus execution time, including state-root work and other post-execution work, in seconds"
     )]
     native_payload_state_root_duration: histogram,
     #[describe(
@@ -127,6 +127,32 @@ base_metrics::define_metrics! {
     )]
     #[label(name = "result", default = ["delivered", "no_receiver"])]
     payload_ready_hints_sent_total: counter,
+    #[describe(
+        "Time from just before handling the state-root job (if any) through block finalization in `builder.finish`, in seconds, by how the state root was computed"
+    )]
+    #[label(name = "source", default = ["task", "synchronous", "task_fallback"])]
+    sealed_block_state_root_duration: histogram,
+    #[describe("Transactions in each composed sealed block, including sequencer transactions")]
+    sealed_block_transactions: histogram,
+    #[describe("Gas used by each composed sealed block")]
+    sealed_block_gas_used: histogram,
+    #[describe("Accounts in each composed sealed block's hashed post-state")]
+    sealed_block_hashed_accounts: histogram,
+    #[describe("Accounts with storage changes in each composed sealed block's hashed post-state")]
+    sealed_block_hashed_storages: histogram,
+    #[describe("Storage slots in each composed sealed block's hashed post-state")]
+    sealed_block_hashed_storage_slots: histogram,
+    #[describe("Storage slots of the account with the most storage changes in each composed sealed block")]
+    sealed_block_largest_storage_slots: histogram,
+    #[describe("Account trie nodes updated by each composed sealed block's state root")]
+    sealed_block_trie_account_nodes: histogram,
+    #[describe("Storage trie nodes updated by each composed sealed block's state root")]
+    sealed_block_trie_storage_nodes: histogram,
+    #[describe("Account and storage trie nodes removed by each composed sealed block's state root")]
+    sealed_block_trie_removed_nodes: histogram,
+    #[describe("Resource-metering units used by each composed sealed block, by schedule dimension")]
+    #[label(dimension)]
+    sealed_block_resource_metering_usage: histogram,
 }
 
 impl ValidityMetrics {
@@ -340,6 +366,32 @@ impl BuilderMetrics {
         let flow = if has_validity_predicates { FLOW_VALIDITY } else { FLOW_STANDARD };
         let bid = if has_coinbase_tip { "coinbase_tip" } else { "priority_fee" };
         Self::tip_per_gas(flow, bid).record(tip_per_gas);
+    }
+
+    /// Records one composed sealed block's state-root time, contents, and metered usage.
+    /// `dimensions` names [`SealedBlockObservation::resource_usage`]; pass none when metering is
+    /// inactive.
+    pub fn record_sealed_block(
+        observation: &SealedBlockObservation,
+        dimensions: &[ResourceMeteringDimension],
+    ) {
+        let diff = &observation.state_diff;
+        Self::sealed_block_state_root_duration(observation.state_root.source.as_str())
+            .record(observation.state_root.total.as_secs_f64());
+        Self::sealed_block_transactions().record(observation.tx_count as f64);
+        Self::sealed_block_gas_used().record(observation.gas_used as f64);
+        Self::sealed_block_hashed_accounts().record(diff.hashed_accounts as f64);
+        Self::sealed_block_hashed_storages().record(diff.hashed_storages as f64);
+        Self::sealed_block_hashed_storage_slots().record(diff.hashed_storage_slots as f64);
+        Self::sealed_block_largest_storage_slots()
+            .record(diff.largest_storage.map_or(0, |largest| largest.slots) as f64);
+        Self::sealed_block_trie_account_nodes().record(diff.trie_account_nodes as f64);
+        Self::sealed_block_trie_storage_nodes().record(diff.trie_storage_nodes as f64);
+        Self::sealed_block_trie_removed_nodes().record(diff.trie_removed_nodes as f64);
+        for (index, dimension) in dimensions.iter().enumerate() {
+            let usage = observation.resource_usage.get(index).copied().unwrap_or_default();
+            Self::sealed_block_resource_metering_usage(dimension.name.clone()).record(usage as f64);
+        }
     }
 }
 
