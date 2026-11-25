@@ -60,6 +60,11 @@ pub const MEMORY_BLOCK_BUFFER_TARGET: u64 = 5;
 /// memory (base-reth's `--engine.persistence-backpressure-threshold` default).
 pub const PERSISTENCE_BACKPRESSURE_THRESHOLD: u64 = 160;
 /// The `TigerForkchoice` key of the forkchoice heads.
+/// Most blocks below the head whose trie-node journal a stateless node keeps, even when the
+/// finalized block has not moved (the consensus node does not finalize while the node catches
+/// up). Base finalizes well within this (about 2 hours of 2 s blocks); an unwind deeper than it
+/// recomputes the trie instead and may fail as unknown. About 575 KB per mainnet block.
+const UNWIND_JOURNAL_BLOCKS: u64 = 4096;
 const FORKCHOICE_KEY: &[u8] = b"forkchoice";
 /// The `TigerForkchoice` key of a stateless datadir's start block number (big-endian).
 const START_KEY: &[u8] = b"stateless-start";
@@ -1007,6 +1012,10 @@ impl Chain {
                 ));
             }
             block.append(&mut w)?;
+        }
+        let head_number = branch.last().expect("the branch is not empty").number();
+        if let Some(through) = head_number.checked_sub(UNWIND_JOURNAL_BLOCKS) {
+            self.db.prune_unwind_journal(&mut w, through).map_err(|error| error.to_string())?;
         }
         Self::put_forkchoice(&mut w, Forkchoice { head, ..self.forkchoice })?;
         w.commit().map_err(|error| error.to_string())?;
