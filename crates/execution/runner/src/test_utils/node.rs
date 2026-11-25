@@ -6,7 +6,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::args::RollupArgs;
+use base_node_core::{TestNodeRuntime, args::RollupArgs};
 use eyre::Result;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
@@ -18,7 +18,6 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::Runtime;
 
 use crate::{
     BaseNodeExtension, BaseProvider, NodeHooks, node::BaseNode, test_utils::engine::EngineApi,
@@ -37,15 +36,7 @@ pub struct LocalNode {
     provider: LocalNodeProvider,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
-    _runtime: Runtime,
-    _db_path: PathBuf,
-}
-
-impl Drop for LocalNode {
-    fn drop(&mut self) {
-        // Clean up the temporary database directory
-        let _ = std::fs::remove_dir_all(&self._db_path);
-    }
+    _runtime: TestNodeRuntime,
 }
 
 impl fmt::Debug for LocalNode {
@@ -68,7 +59,7 @@ impl LocalNode {
         rpc_gas_cap: Option<u64>,
         engine_api_store: Option<PathBuf>,
     ) -> Result<Self> {
-        let exec = Runtime::test();
+        let mut exec = TestNodeRuntime::default();
 
         let network_config = NetworkArgs {
             discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
@@ -109,20 +100,24 @@ impl LocalNode {
         node_config = node_config
             .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
 
+        exec.rocksdb_path = Some(node_config.datadir().rocksdb());
+        exec.cleanup_paths.push(db_path.clone());
+
         let builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
-            .with_launch_context(exec.clone())
+            .with_launch_context(exec.runtime.clone())
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(base_node.components())
             .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        let NodeHandle { node: node_handle, node_exit_future } = extensions
+        let launch = extensions
             .into_iter()
             .fold(NodeHooks::new(), |b, ext| ext.apply(b))
             .apply_to(builder)
-            .launch()
-            .await?;
+            .launch();
+        let NodeHandle { node: node_handle, node_exit_future } =
+            exec.runtime.handle().spawn(launch).await??;
 
         let http_api_addr = node_handle
             .rpc_server_handle()
@@ -145,7 +140,6 @@ impl LocalNode {
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
             _runtime: exec,
-            _db_path: db_path,
         })
     }
 
@@ -183,5 +177,25 @@ impl LocalNode {
     /// Websocket URL for the local node.
     pub fn ws_url(&self) -> String {
         format!("ws://{}", self.ws_api_addr)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use reth_provider::providers::RocksDBProvider;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn dropping_local_node_closes_rocksdb() {
+        let node = LocalNode::new(Vec::new(), Arc::new(BaseChainSpec::mainnet()), None, None)
+            .await
+            .unwrap();
+        let path = node._runtime.rocksdb_path.clone().unwrap();
+        assert!(RocksDBProvider::new(&path).is_err());
+        drop(node);
+        let reopened = RocksDBProvider::new(&path).expect("node teardown must close RocksDB");
+        drop(reopened);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }

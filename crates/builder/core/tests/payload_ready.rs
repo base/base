@@ -20,7 +20,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes, PayloadReady,
 };
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::args::RollupArgs;
+use base_node_core::{TestNodeRuntime, args::RollupArgs};
 use base_node_runner::{BaseNodeRunner, LaunchedBaseNode, test_utils::L1_BLOCK_INFO_DEPOSIT_TX};
 use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::{Account, build_test_genesis};
@@ -28,7 +28,6 @@ use eyre::{Result, eyre};
 use reth_db::{ClientVersion, init_db, mdbx::DatabaseArguments};
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_node_core::args::{DatadirArgs, NetworkArgs, RpcServerArgs};
-use reth_tasks::Runtime;
 use serde_json::json;
 use tempfile::TempDir;
 use tokio::{sync::broadcast::error::TryRecvError, time::timeout};
@@ -41,7 +40,7 @@ struct NativeNode {
     launched: LaunchedBaseNode,
     rpc: RootProvider<Base>,
     chain_spec: Arc<BaseChainSpec>,
-    runtime: Runtime,
+    runtime: TestNodeRuntime,
     _datadir: TempDir,
 }
 
@@ -74,13 +73,18 @@ impl NativeNode {
             DatabaseArguments::new(ClientVersion::default())
                 .with_geometry_max_size(Some(100 * 1024 * 1024)),
         )?;
-        let runtime = Runtime::test();
+        let mut runtime = TestNodeRuntime::default();
+        runtime.rocksdb_path = Some(config.datadir().rocksdb());
         // This is the same service selection and runner handoff as `base sequencer`.
         // Do not attach a sender directly to the builder: that would bypass the wiring under test.
-        let launched = BaseNodeRunner::new(RollupArgs::default())
+        let launch = BaseNodeRunner::new(RollupArgs::default())
             .with_service_builder(NativePayloadServiceBuilder::new(BuilderConfig::default()))
-            .launch(NodeBuilder::new(config).with_database(db).with_launch_context(runtime.clone()))
-            .await?;
+            .launch(
+                NodeBuilder::new(config)
+                    .with_database(db)
+                    .with_launch_context(runtime.runtime.clone()),
+            );
+        let launched = runtime.runtime.handle().spawn(launch).await??;
         let address = launched
             .handle
             .node
@@ -194,8 +198,9 @@ impl NativeNode {
     }
 
     async fn shutdown(self) -> Result<()> {
-        timeout(RPC_TIMEOUT, self.runtime.initiate_graceful_shutdown()?.ignore_guard()).await?;
-        self.launched.handle.node_exit_future.await?;
+        timeout(RPC_TIMEOUT, self.runtime.runtime.initiate_graceful_shutdown()?.ignore_guard())
+            .await?;
+        timeout(RPC_TIMEOUT, self.launched.handle.node_exit_future).await??;
         Ok(())
     }
 }
