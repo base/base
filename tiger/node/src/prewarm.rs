@@ -10,9 +10,9 @@
 //! A full state prewarms each block in process while it executes instead ([`warm_while`]).
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet, VecDeque},
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, mpsc,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -27,7 +27,9 @@ use evm2::{
     registry::HandlerError,
 };
 
-use crate::{BlockExecution, Chain, Node, ParentState, StoredBlock, block_changes};
+use base_tiger_trie::BlockChanges;
+
+use crate::{BlockExecution, Chain, Node, ParentState, StoredBlock, TransactionChanges, block_changes};
 
 /// Blocks prewarmed at once.
 const PREWARM_WORKERS: usize = 12;
@@ -161,14 +163,24 @@ impl Node {
 
 /// Threads that prewarm a block on a full state while it executes.
 const FULL_PREWARM_WORKERS: usize = 8;
+/// Threads that walk the trie paths of what the prewarm workers' transactions change.
+const FULL_PREWARM_WALKERS: usize = 4;
+/// Most storage slots of one account a walker walks at once, so the walkers share a storage
+/// trie that a block changes in many places.
+const WALK_SLOTS: usize = 16;
+/// How long an idle walker waits for changes before it looks for paths to walk again.
+const WALK_POLL: Duration = Duration::from_millis(1);
 
-/// Runs `validate` (a block's serial execution and state root on this thread) while
-/// [`FULL_PREWARM_WORKERS`] threads warm the datadir pages it will read, as base-reth's prewarm
-/// does: each executes every `FULL_PREWARM_WORKERS`-th transaction (after the first, the L1
-/// info deposit, which sets what fees read) speculatively over the parent state, then walks the
-/// trie paths of what its transactions changed, which the state root reads. Their results are
-/// discarded; reading only faults pages into the cache, so a wrong speculation costs nothing
-/// but the work. A full state only: a partial state's reads go to the upstream instead.
+/// Runs `validate` (a block's serial execution and state root on this thread) while threads
+/// warm the datadir pages it will read, as base-reth's prewarm does. [`FULL_PREWARM_WORKERS`]
+/// workers each execute every `FULL_PREWARM_WORKERS`-th transaction (after the first, the L1
+/// info deposit, which sets what fees read) speculatively over the parent state, and send what
+/// each transaction changed to [`FULL_PREWARM_WALKERS`] walkers as soon as it commits. The
+/// walkers walk the trie paths of those changes, which the state root reads, at most
+/// [`WALK_SLOTS`] slots of one account at a time so a storage the block changes in many
+/// places is walked by all of them. Their results are discarded; reading only faults pages
+/// into the cache, so a wrong speculation costs nothing but the work. A full state only: a
+/// partial state's reads go to the upstream instead.
 pub(crate) fn warm_while<R>(
     chain: &Chain,
     spec: &ChainSpec,
@@ -182,22 +194,96 @@ pub(crate) fn warm_while<R>(
         return validate();
     }
     let done = AtomicBool::new(false);
+    let (changed, receiver) = mpsc::channel();
+    let receiver = Mutex::new(receiver);
+    let paths = Mutex::new(Paths::default());
     thread::scope(|scope| {
         for worker in 0..workers {
-            let done = &done;
+            let (done, changed) = (&done, changed.clone());
             // A speculation runs over state the block does not see; whatever it hits must not
             // fail the block.
             scope.spawn(move || {
                 let block = PrewarmBlock { chain, spec, header, transactions, parent };
-                let warm = || block.warm(worker, workers, done);
+                let warm = || block.warm(worker, workers, &changed, done);
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(warm));
             });
         }
+        drop(changed);
+        for _ in 0..FULL_PREWARM_WALKERS {
+            let (done, receiver, paths) = (&done, &receiver, &paths);
+            scope.spawn(move || {
+                let walk = || walk_paths(chain, parent, receiver, paths, done);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(walk));
+            });
+        }
         let result = validate();
-        // The workers stop at their next transaction or account.
+        // The workers stop at their next transaction, the walkers at their next path.
         done.store(true, Ordering::Relaxed);
         result
     })
+}
+
+/// One walker: walks the trie paths of the changes the workers send until they are all walked
+/// and the workers are done, or the block is.
+fn walk_paths(
+    chain: &Chain,
+    parent: &StoredBlock,
+    receiver: &Mutex<mpsc::Receiver<BlockChanges>>,
+    paths: &Mutex<Paths>,
+    done: &AtomicBool,
+) {
+    let Ok(state) = chain.state_after(parent) else { return };
+    let paths = || paths.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    while !done.load(Ordering::Relaxed) {
+        let next = paths().queued.pop_front();
+        if let Some((address, slots)) = next {
+            let _ = state.proof(address, &slots);
+            continue;
+        }
+        match receiver.lock().unwrap_or_else(std::sync::PoisonError::into_inner).recv_timeout(WALK_POLL) {
+            Ok(changes) => paths().add(&changes),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                if paths().queued.is_empty() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// The trie paths the walkers walk: the accounts and slots queued so far, and the paths still to
+/// walk, by account, each with at most [`WALK_SLOTS`] of its slots (none: the account's path
+/// only).
+#[derive(Debug, Default)]
+struct Paths {
+    accounts: HashSet<Address>,
+    slots: HashSet<(Address, U256)>,
+    queued: VecDeque<(Address, Vec<U256>)>,
+}
+
+impl Paths {
+    /// Queues the paths of `changes` not queued before.
+    fn add(&mut self, changes: &BlockChanges) {
+        let mut touched: BTreeMap<Address, Vec<U256>> = BTreeMap::new();
+        for (address, _) in &changes.accounts {
+            if self.accounts.insert(*address) {
+                touched.entry(*address).or_default();
+            }
+        }
+        for (address, slot, _) in &changes.storage {
+            if self.slots.insert((*address, *slot)) {
+                touched.entry(*address).or_default().push(*slot);
+            }
+        }
+        for (address, slots) in touched {
+            if slots.len() <= WALK_SLOTS {
+                self.queued.push_back((address, slots));
+            } else {
+                self.queued.extend(slots.chunks(WALK_SLOTS).map(|slots| (address, slots.to_vec())));
+            }
+        }
+    }
 }
 
 /// The block a full-state prewarm worker speculates on.
@@ -210,33 +296,32 @@ struct PrewarmBlock<'a> {
 }
 
 impl PrewarmBlock<'_> {
-    /// One prewarm worker: transactions `1 + worker`, `1 + worker + workers`, ….
-    fn warm(&self, worker: usize, workers: usize, done: &AtomicBool) {
+    /// One prewarm worker: transactions `1 + worker`, `1 + worker + workers`, …, each sent to
+    /// the walkers as it commits.
+    fn warm(&self, worker: usize, workers: usize, changed: &mpsc::Sender<BlockChanges>, done: &AtomicBool) {
         let Ok(state) = self.chain.state_after(self.parent) else { return };
         let env = BlockExecution::env(self.header);
         let Ok(mut executor) = BaseBlockExecutor::for_block(self.spec, &env, state.database()) else { return };
         let mine = self.transactions.iter().take(1).chain(self.transactions.iter().skip(1 + worker).step_by(workers));
-        for raw in mine {
+        for (index, raw) in mine.enumerate() {
             if done.load(Ordering::Relaxed) {
                 return;
             }
             let Ok((_, tx)) = Transactions::decode(raw) else { continue };
-            if let Err(HandlerError::Fatal(_)) = executor.execute_transaction(&tx) {
+            let mut changes = TransactionChanges::default();
+            let executed = executor.execute_transaction_observed(&tx, &mut changes);
+            // Every worker runs the first transaction; the first worker's changes are walked.
+            if index > 0 || worker == 0 {
+                let _ = changed.send(changes.0);
+            }
+            if let Err(HandlerError::Fatal(_)) = executed {
                 break;
             }
         }
-        let (_, _, changes) = executor.finish();
-        let changes = block_changes(&changes);
-        let mut touched: BTreeMap<Address, Vec<U256>> =
-            changes.accounts.iter().map(|(address, _)| (*address, Vec::new())).collect();
-        for (address, slot, _) in &changes.storage {
-            touched.entry(*address).or_default().push(*slot);
-        }
-        for (address, slots) in touched {
-            if done.load(Ordering::Relaxed) {
-                return;
-            }
-            let _ = state.proof(address, &slots);
+        // The pre-execution system calls' changes, which no transaction reports.
+        if worker == 0 {
+            let (_, _, changes) = executor.finish();
+            let _ = changed.send(block_changes(&changes));
         }
     }
 }
