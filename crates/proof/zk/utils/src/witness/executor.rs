@@ -18,6 +18,7 @@ use spin::RwLock;
 use tracing::info;
 
 use crate::{
+    KzgVerifier,
     client::{advance_to_target, fetch_safe_head_hash},
     precompiles::{CustomCrypto, ZkvmBaseEvmFactory},
 };
@@ -84,21 +85,23 @@ where
     Ok((boot_clone, (cursor, l1_provider, l2_provider), safe_head_number))
 }
 
-/// Derivation and execution pipeline for Ethereum DA.
+/// Derivation and execution pipeline for Ethereum DA, with `K` as the KZG crypto provider.
 #[derive(Debug)]
-pub struct WitnessExecutor<O, B>
+pub struct WitnessExecutor<O, B, K = CustomCrypto>
 where
     O: CommsClient + FlushableCache + Send + Sync + Debug,
     B: BlobProvider + Send + Sync + Debug + Clone,
+    K: KzgVerifier,
 {
-    _marker: std::marker::PhantomData<(O, B)>,
+    _marker: std::marker::PhantomData<(O, B, K)>,
 }
 
 #[allow(clippy::new_without_default)]
-impl<O, B> WitnessExecutor<O, B>
+impl<O, B, K> WitnessExecutor<O, B, K>
 where
     O: CommsClient + FlushableCache + Send + Sync + Debug,
     B: BlobProvider + Send + Sync + Debug + Clone,
+    K: KzgVerifier,
 {
     /// Create a new executor.
     pub const fn new() -> Self {
@@ -153,8 +156,8 @@ where
         DP: DriverPipeline<P> + Send + Sync + Debug,
         P: Pipeline + SignalReceiver + Send + Sync + Debug,
     {
-        // Install custom crypto provider for KZG point evaluation precompile
-        revm::precompile::install_crypto(CustomCrypto::default());
+        // Install the KZG crypto provider for the point evaluation precompile
+        revm::precompile::install_crypto(K::default());
 
         let boot_clone = boot.clone();
         let activation_admin_address = boot.activation_admin_address;
