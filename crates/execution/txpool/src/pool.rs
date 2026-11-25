@@ -400,14 +400,11 @@ where
             diff.push_exact_keys(&mut exact);
             diff.push_nonce_advances(&mut advances);
         }
+        let balances = || diffs.iter().filter_map(|diff| Some((diff.address, diff.balance?)));
         for store in self.lane_stores() {
-            store.pool.write().apply_balance_updates(
-                diffs.iter().filter_map(|diff| Some((diff.address, diff.balance?))),
-            );
+            store.pool.write().apply_balance_updates(balances());
         }
-        let unaffordable = self.validity.pool.read().unaffordable_transactions(
-            diffs.iter().filter_map(|diff| Some((diff.address, diff.balance?))),
-        );
+        let unaffordable = self.validity.pool.read().unaffordable_transactions(balances());
         let (behind, lane_moves) = self.resolve_nonce_advances(&advances);
         // Move lane cursors before releasing what fell behind them, so a
         // successor that stays pending is not re-announced as promoted.
@@ -2590,14 +2587,11 @@ where
         // dropped reservation cannot be recreated from an older validation
         // snapshot after reth publishes the transaction.
         let _admission_guard = self.protocol_admission_lock.lock();
+        let balances = || accounts.iter().map(|account| (account.address, account.balance));
         for store in self.lane_stores() {
-            store.pool.write().apply_balance_updates(
-                accounts.iter().map(|account| (account.address, account.balance)),
-            );
+            store.pool.write().apply_balance_updates(balances());
         }
-        let mut dropped = self.validity.pool.read().unaffordable_transactions(
-            accounts.iter().map(|account| (account.address, account.balance)),
-        );
+        let mut dropped = self.validity.pool.read().unaffordable_transactions(balances());
         {
             let mut guard = self.guard.write();
             for account in &accounts {
