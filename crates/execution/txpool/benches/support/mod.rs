@@ -29,7 +29,7 @@ pub(crate) type BenchPool = BaseTransactionPool<Client, InMemoryBlobStore, BaseE
 const ONE_ETHER: u64 = 1_000_000_000_000_000_000;
 const MIB: usize = 1024 * 1024;
 
-const fn chain_id() -> u64 {
+pub(crate) const fn chain_id() -> u64 {
     ChainConfig::mainnet().chain_id
 }
 

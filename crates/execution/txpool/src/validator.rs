@@ -1046,7 +1046,7 @@ where
         if size > limit {
             return Err(InvalidPoolTransactionError::OversizedData { size, limit });
         }
-        // Cheap shape checks run before the fork gate and signature recovery.
+        // Cheap shape checks run before the fork gate.
         TxBaseStructure::validate(signed).map_err(Self::map_structural_error)?;
 
         // Read the head-block clock up front so a concurrent `on_new_head_block`
@@ -1065,22 +1065,8 @@ where
         signed
             .validate_timestamp(now_ms)
             .map_err(|error| Self::map_timestamp_error(error, signed, now_ms))?;
-        Self::validate_eoa_sender_signature(signed)
-    }
-
-    /// Checks the implicit EOA-path signature is recoverable before admitting it
-    /// to the pool. A named sender's `K1_AUTHENTICATOR || r || s || v` blob is
-    /// checked during authorization.
-    fn validate_eoa_sender_signature(
-        signed: &TxBaseSigned,
-    ) -> Result<(), InvalidPoolTransactionError> {
-        if signed.explicit_sender().is_some() {
-            return Ok(());
-        }
-        signed
-            .recover_eoa_sender()
-            .map_err(|_| Self::base_tx_error("EOA sender signature recovery failed"))?
-            .ok_or_else(|| Self::base_tx_error("EOA sender signature recovery failed"))?;
+        // The EOA sender signature is recovered once, by `ResolvedSender::resolve`
+        // in full validation.
         Ok(())
     }
 
@@ -1608,24 +1594,36 @@ mod tests {
     }
 
     /// The call phase cap is a cheap shape check, so it rejects before the fork
-    /// gate and before any signature recovery is attempted.
+    /// gate.
     #[test]
-    fn call_phase_cap_rejects_before_fork_gate_and_signature_recovery() {
+    fn call_phase_cap_rejects_before_fork_gate() {
         let pre_everest = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
         let tx = TxBase {
             calls: vec![Vec::new(); TxBaseConstants::MAX_CALL_PHASES_PER_TX + 1],
             ..minimal_valid_eoa_tx()
         };
-        let unrecoverable = TxBaseSigned::new(tx, Bytes::from(vec![0xff; 65]), Bytes::new());
+        let signed = TxBaseSigned::new(tx, Bytes::from(vec![0xff; 65]), Bytes::new());
 
         for validator in
             [build_test_validator(), build_test_validator_with_spec(Arc::new(pre_everest))]
         {
             assert_structural_reason(
-                validator.validate_base_tx_structural(&unrecoverable),
+                validator.validate_base_tx_structural(&signed),
                 "call phase count exceeds maximum",
             );
         }
+    }
+
+    /// An unrecoverable EOA signature passes the stateless checks and is rejected
+    /// by full validation's single sender recovery.
+    #[test]
+    fn unrecoverable_eoa_signature_is_rejected_by_full_validation() {
+        let validator = build_test_validator();
+        let unrecoverable =
+            TxBaseSigned::new(minimal_valid_eoa_tx(), Bytes::from(vec![0xff; 65]), Bytes::new());
+        assert!(validator.validate_base_tx_structural(&unrecoverable).is_ok());
+        let error = validator.validate_base_tx_full(&unrecoverable).unwrap_err();
+        assert!(error.to_string().contains("EOA sender recovery failed"), "{error}");
     }
 
     #[test]
