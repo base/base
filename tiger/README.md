@@ -71,9 +71,13 @@ fewer in all 11 of 11 rounds: PGO (`maxperf`) 0.914, about 8.6% less work per bl
 wall times also came out lower in most rounds (PGO `maxperf` in 8 of 11), but eagle was shared
 with other work and those differences were not significant there; a wall-clock gain is likely
 but unproven.
-`-Ctarget-cpu=native` makes a binary that runs only on CPUs like the build host. On Zen 5 it
-leaves keccak on the scalar code (`sha3-asm` picks its AVX-512 code only for other AVX-512 CPUs),
-so it was not measured further. `GLIBC_TUNABLES=glibc.malloc.hugetlb=1` (transparent huge pages
+CPU-specific builds cut instructions but not cycles. At 14b4f55b9 (9 rounds, same method),
+against `release`: `-Ctarget-cpu=native` ran 0.939 of the user instructions in 9 of 9 rounds
+but 0.95 of the cycles (control 0.955); `-Ctarget-cpu=x86-64-v3 -Ctarget-feature=+pclmulqdq`
+(RocksDB's build needs the second flag) 0.946 and 0.97; `CFLAGS=-march=native` for the C
+dependencies alone (secp256k1, libmdbx, RocksDB; `-Ctarget-cpu` does not reach them) 0.988 and
+0.98. Such a binary also runs only on CPUs like the build host's, so none is recommended. On
+Zen 5, `sha3-asm` keeps keccak on its scalar code even with AVX-512 enabled. `GLIBC_TUNABLES=glibc.malloc.hugetlb=1` (transparent huge pages
 for malloc) made exec p90 slower in every round.
 
 ## Layout
