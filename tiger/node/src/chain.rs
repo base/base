@@ -994,7 +994,8 @@ impl Chain {
                 let message = format!("committing block {} {}: {error}", block.number(), block.hash);
                 if matches!(error, TrieError::UnheldWipe { .. }) {
                     // Every retry fails the same way, so stop instead of retrying forever
-                    // (SCOPE.md, accepted differences: S2).
+                    // (SCOPE.md, accepted differences: S2). The queued log lines go first.
+                    crate::Log::flush();
                     eprintln!(
                         "tiger: fatal: {message}; a stateless datadir cannot record this wipe, so \
                          restart the node from a full datadir"

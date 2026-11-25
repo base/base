@@ -57,6 +57,9 @@ pub use trie_mode::handle as handle_trie_request;
 mod http;
 pub use http::{JwtSecret, serve};
 
+mod log;
+pub use log::Log;
+
 #[cfg(feature = "edge-coverage")]
 mod edges;
 #[cfg(feature = "edge-coverage")]

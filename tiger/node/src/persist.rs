@@ -90,6 +90,8 @@ impl Node {
             while self.persist_once()? {}
             Ok(self.chain.read().expect("chain lock").unpersisted())
         });
+        // The queued per-block lines first, so they precede the last line in the log.
+        crate::Log::flush();
         match drained {
             Ok(0) => {
                 eprintln!("tiger: persisted every block through the head, shutting down");

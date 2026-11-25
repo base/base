@@ -506,14 +506,14 @@ impl Node {
             };
             if std::env::var_os("TIGER_VALIDATION_LOG").is_some() {
                 let (total, root) = (started.elapsed(), state.root_time());
-                eprintln!(
+                crate::Log::line(format!(
                     "tiger: validated block {} txs {} exec {:.1}ms root {:.1}ms cached {}",
                     header.number,
                     transactions.len(),
                     (total - root).as_secs_f64() * 1e3,
                     root.as_secs_f64() * 1e3,
                     state.is_cached(),
-                );
+                ));
             }
             let missing = match validated {
                 Ok(validated) => {
@@ -774,7 +774,7 @@ impl Node {
             }
             chain.update_forkchoice(update).map_err(RpcError::internal)?;
             if previous.head != head {
-                eprintln!("tiger: head {} {head}", head_block.number());
+                crate::Log::line(format!("tiger: head {} {head}", head_block.number()));
             }
         }
         let payload_status = status("VALID", Some(head), None);
