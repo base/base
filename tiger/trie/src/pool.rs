@@ -7,7 +7,9 @@
 //! when no worker gets to run the calling thread does every job itself.
 
 use std::{
+    any::Any,
     collections::VecDeque,
+    panic::AssertUnwindSafe,
     sync::{
         Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicUsize, Ordering},
@@ -46,6 +48,8 @@ struct Batch<C, R> {
     results: Mutex<Vec<Option<Result<R, TrieError>>>>,
     left: Mutex<usize>,
     done: Condvar,
+    /// The first job panic, raised again on the calling thread.
+    panic: Mutex<Option<Box<dyn Any + Send>>>,
     init: InitFn<C>,
     job: JobFn<C, R>,
 }
@@ -59,11 +63,20 @@ impl<C, R> Batch<C, R> {
             if index >= self.jobs {
                 return;
             }
-            let result = match context.get_or_insert_with(|| (self.init)()) {
-                Ok(context) => (self.job)(context, index),
-                Err(error) => Err(TrieError::Unknown(format!("{error}"))),
-            };
-            self.results.lock().expect("unpoisoned")[index] = Some(result);
+            // A panic must still count the job as done, or the caller would wait forever.
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                match context.get_or_insert_with(|| (self.init)()) {
+                    Ok(context) => (self.job)(context, index),
+                    Err(error) => Err(error.clone()),
+                }
+            }));
+            match result {
+                Ok(result) => self.results.lock().expect("unpoisoned")[index] = Some(result),
+                Err(panic) => {
+                    context = None;
+                    self.panic.lock().expect("unpoisoned").get_or_insert(panic);
+                }
+            }
             let mut left = self.left.lock().expect("unpoisoned");
             *left -= 1;
             if *left == 0 {
@@ -121,6 +134,7 @@ impl WorkerPool {
             results: Mutex::new((0..jobs).map(|_| None).collect()),
             left: Mutex::new(jobs),
             done: Condvar::new(),
+            panic: Mutex::new(None),
             init: Box::new(init),
             job: Box::new(job),
         });
@@ -138,7 +152,39 @@ impl WorkerPool {
             left = batch.done.wait(left).expect("unpoisoned");
         }
         drop(left);
+        if let Some(panic) = batch.panic.lock().expect("unpoisoned").take() {
+            std::panic::resume_unwind(panic);
+        }
         let results = std::mem::take(&mut *batch.results.lock().expect("unpoisoned"));
         results.into_iter().map(|result| result.expect("every job ran")).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A job that panics on a worker thread panics the caller instead of leaving it waiting.
+    #[test]
+    fn a_worker_panic_reaches_the_caller() {
+        let outcome = std::panic::catch_unwind(|| {
+            WorkerPool::global().run(
+                4,
+                3,
+                || Ok(()),
+                |_, _| {
+                    if std::thread::current().name().is_some_and(|name| name.starts_with("root-worker")) {
+                        panic!("job failed");
+                    }
+                    // Leaves the other jobs to the workers.
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    Ok(())
+                },
+            )
+        });
+        assert!(outcome.is_err());
+        // The pool still serves later runs.
+        let squares = WorkerPool::global().run(8, 3, || Ok(()), |_, index| Ok(index * index)).unwrap();
+        assert_eq!(squares, (0..8).map(|index| index * index).collect::<Vec<_>>());
     }
 }
