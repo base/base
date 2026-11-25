@@ -355,15 +355,22 @@ impl SyncCheck {
 
     /// tiger's accepted finding S2, if the target's log shows it: a stateless node cannot
     /// commit a block whose EIP-161 deletion wipes the storage of an empty account it holds
-    /// only partly, and retries forever. Only an empty account with storage can be wiped that
+    /// only partly: it retried forever before tiger d809183a2 and exits with a fatal line
+    /// since. Only an empty account with storage can be wiped that
     /// way, and only a genesis allocation can be such an account (storage needs code
     /// otherwise); Base mainnet and Sepolia allocate none. So the error must name an account
-    /// that this chain's genesis allocates with storage and without code or nonce.
-    fn accepted_wipe(&self) -> Option<String> {
+    /// that this chain's genesis allocates with storage and without code or nonce. With
+    /// `exited`, the node must have exited with tiger's fatal line for it.
+    fn accepted_wipe(&self, exited: bool) -> Option<String> {
         const PREFIX: &str = "state not held locally: storage of ";
+        const FATAL: &str = "tiger: fatal: ";
         let log = std::fs::read_to_string(self.proc.log_path()).ok()?;
-        let line = log.lines().rev().find(|line| line.contains(PREFIX))?;
+        let line = log
+            .lines()
+            .rev()
+            .find(|line| line.contains(PREFIX) && (!exited || line.starts_with(FATAL)))?;
         let rest = line.split(PREFIX).nth(1)?;
+        let rest = rest.split(';').next()?;
         let address = rest.split(' ').next()?.to_lowercase();
         let genesis: Value =
             serde_json::from_slice(&std::fs::read(self.proc.root.join("genesis.json")).ok()?)
@@ -405,9 +412,12 @@ impl SyncCheck {
             if status == "VALID" {
                 break;
             }
-            if status == "SYNCING"
+            // Since tiger d809183a2 the node exits on S2 instead of retrying, so a refused
+            // forkchoice counts only from a node that exited with S2's fatal line.
+            let exited = status.starts_with("error") && !self.proc.alive();
+            if (status == "SYNCING" || exited)
                 && self.config.stateless_start.is_some()
-                && let Some(accepted) = self.accepted_wipe()
+                && let Some(accepted) = self.accepted_wipe(exited)
             {
                 eprintln!("sync: accepted: {accepted}");
                 self.report.accepted.push(accepted);
