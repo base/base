@@ -69,8 +69,11 @@ the timed blocks, each build's ratio to `release` in the same round (median):
 User instructions vary by about ±0.5% between runs of one binary, and every optimized build ran
 fewer in all 11 of 11 rounds: PGO (`maxperf`) 0.914, about 8.6% less work per block. Cycles and
 wall times also came out lower in most rounds (PGO `maxperf` in 8 of 11), but eagle was shared
-with other work and those differences were not significant there; a wall-clock gain is likely
-but unproven.
+with other work and those differences were not significant there. Following the mainnet tip
+(10-minute windows after a 20-minute warm-up, same commit, trained on older blocks), PGO
+`maxperf` showed no newPayload p50 gain over `release` (29.0 vs 28.2 ms, exec 10.8 vs 10.2 ms,
+within the host's noise): there, latency is mostly cold reads, not CPU. So PGO is optional and
+its wall-clock gain unproven.
 CPU-specific builds cut instructions but not cycles. At 14b4f55b9 (9 rounds, same method),
 against `release`: `-Ctarget-cpu=native` ran 0.939 of the user instructions in 9 of 9 rounds
 but 0.95 of the cycles (control 0.955); `-Ctarget-cpu=x86-64-v3 -Ctarget-feature=+pclmulqdq`
