@@ -1,6 +1,7 @@
 //! Storage layout and constants for the activation registry.
 
-use alloy_primitives::{Address, B256, address, b256};
+use alloy_primitives::{Address, B256};
+use base_precompile_abi::ACTIVATION_REGISTRY_ADDRESS;
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 
@@ -45,46 +46,9 @@ impl ActivationAdminConfig {
     }
 }
 
-/// Identifies a Base-native precompile feature in the activation registry.
-///
-/// Each variant maps to a stable `keccak256` hash of the feature's canonical name and is used as
-/// the key when querying or mutating activation state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActivationFeature {
-    /// `keccak256("base.policy_registry")`
-    PolicyRegistry,
-    /// `keccak256("base.b20_stablecoin")`
-    B20Stablecoin,
-    /// `keccak256("base.b20_asset")`
-    B20Asset,
-}
-
-impl ActivationFeature {
-    /// Returns the `keccak256` hash that identifies this feature in storage.
-    pub const fn id(self) -> B256 {
-        match self {
-            Self::PolicyRegistry => {
-                b256!("0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f")
-            }
-            Self::B20Stablecoin => {
-                b256!("0xecfa0def2c10020caaf65e6155aa69c84b24892aaef76eeac52e0e2b3a0b8601")
-            }
-            Self::B20Asset => {
-                b256!("0xcdcc772fe4cbdb1029f822861176d09e646db96723d4c1e82ddfdeb8163ef54c")
-            }
-        }
-    }
-}
-
-impl From<ActivationFeature> for B256 {
-    fn from(feature: ActivationFeature) -> Self {
-        feature.id()
-    }
-}
-
 impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
-    pub const ADDRESS: Address = address!("8453000000000000000000000000000000000001");
+    pub const ADDRESS: Address = ACTIVATION_REGISTRY_ADDRESS;
 
     /// Returns the stored activation admin address.
     pub fn stored_admin(&self) -> Result<Address> {

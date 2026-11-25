@@ -1,12 +1,12 @@
 //! `BaseTime` predeploy artifacts, deployment, storage layout, and ABI surface.
 
-use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
+use alloy_primitives::{Address, B256, Bytes};
 use base_common_chains::{BaseFeature, Upgrades};
-use base_common_consensus::Predeploys;
+use base_common_consensus::{BaseTimePredeploy, Predeploys};
 use revm::{
     DatabaseCommit,
     database_interface::Database,
-    primitives::{HashMap, U256, uint},
+    primitives::{HashMap, U256},
     state::{Bytecode, EvmStorageSlot, TransactionId},
 };
 
@@ -39,52 +39,45 @@ pub enum BaseTimeTransitionError<DBError> {
 
 impl BaseTime {
     /// The code-namespace address used by the canonical `BaseTime` proxy.
-    pub const IMPLEMENTATION_ADDRESS: Address =
-        address!("0xc0D3C0d3C0d3C0D3c0d3C0d3c0D3C0d3c0d30030");
+    pub const IMPLEMENTATION_ADDRESS: Address = BaseTimePredeploy::IMPLEMENTATION_ADDRESS;
 
     /// The expected hash of the canonical `BaseTime` runtime bytecode.
-    pub const IMPLEMENTATION_CODE_HASH: B256 =
-        b256!("0x9c4c8a497a69d0b8f2ba67be0bee7a1373186055978c3be6ec3068e0ec27f32a");
+    pub const IMPLEMENTATION_CODE_HASH: B256 = BaseTimePredeploy::IMPLEMENTATION_CODE_HASH;
 
     /// The expected hash of the canonical predeploy proxy runtime bytecode.
-    pub const PROXY_CODE_HASH: B256 =
-        b256!("0xfa8c9db6c6cab7108dea276f4cd09d575674eb0852c0fa3187e59e98ef977998");
+    pub const PROXY_CODE_HASH: B256 = BaseTimePredeploy::PROXY_CODE_HASH;
 
     /// The EIP-1967 proxy implementation slot.
-    pub const IMPLEMENTATION_SLOT: U256 =
-        uint!(0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc_U256);
+    pub const IMPLEMENTATION_SLOT: U256 = BaseTimePredeploy::IMPLEMENTATION_SLOT;
 
     /// The EIP-1967 proxy admin slot.
-    pub const ADMIN_SLOT: U256 =
-        uint!(0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103_U256);
+    pub const ADMIN_SLOT: U256 = BaseTimePredeploy::ADMIN_SLOT;
 
     /// The selector of `setTimestampMillisPart(uint16)`.
-    pub const SET_TIMESTAMP_MILLIS_PART_SELECTOR: [u8; 4] = hex!("86bdf394");
+    pub const SET_TIMESTAMP_MILLIS_PART_SELECTOR: [u8; 4] =
+        BaseTimePredeploy::SET_TIMESTAMP_MILLIS_PART_SELECTOR;
 
     /// The selector of `timestampMillisPart()`.
-    pub const TIMESTAMP_MILLIS_PART_SELECTOR: [u8; 4] = hex!("7b2fea99");
+    pub const TIMESTAMP_MILLIS_PART_SELECTOR: [u8; 4] =
+        BaseTimePredeploy::TIMESTAMP_MILLIS_PART_SELECTOR;
 
     /// The selector of `timestampMs()`.
-    pub const TIMESTAMP_MS_SELECTOR: [u8; 4] = hex!("5745a677");
+    pub const TIMESTAMP_MS_SELECTOR: [u8; 4] = BaseTimePredeploy::TIMESTAMP_MS_SELECTOR;
 
     /// The slot that stores the `timestamp_millis_part` value.
-    pub const TIMESTAMP_MILLIS_PART_SLOT: U256 = uint!(0_U256);
+    pub const TIMESTAMP_MILLIS_PART_SLOT: U256 = BaseTimePredeploy::TIMESTAMP_MILLIS_PART_SLOT;
 
     /// Byte offset within the 32-byte storage slot of the packed `uint16` value.
-    pub const TIMESTAMP_MILLIS_PART_OFFSET: usize = 30;
+    pub const TIMESTAMP_MILLIS_PART_OFFSET: usize = BaseTimePredeploy::TIMESTAMP_MILLIS_PART_OFFSET;
 
     /// Returns the canonical `BaseTime` runtime bytecode from `base/contracts` commit `4848ec70`.
     pub fn implementation_bytecode() -> Bytes {
-        hex::decode(include_str!("bytecode/base-time.hex").trim())
-            .expect("BaseTime runtime artifact must be valid hex")
-            .into()
+        BaseTimePredeploy::implementation_bytecode()
     }
 
     /// Returns the canonical predeploy proxy runtime from `base/contracts` commit `4848ec70`.
     pub fn proxy_bytecode() -> Bytes {
-        hex::decode(include_str!("bytecode/proxy.hex").trim())
-            .expect("proxy runtime artifact must be valid hex")
-            .into()
+        BaseTimePredeploy::proxy_bytecode()
     }
 
     /// Installs the `BaseTime` implementation and links its existing proxy before transactions.
@@ -153,11 +146,7 @@ impl BaseTime {
 
     /// Decodes the packed low `uint16` millisecond component from a storage word.
     pub const fn decode_timestamp_millis_part(value: U256) -> u16 {
-        let slot = value.to_be_bytes::<32>();
-        u16::from_be_bytes([
-            slot[Self::TIMESTAMP_MILLIS_PART_OFFSET],
-            slot[Self::TIMESTAMP_MILLIS_PART_OFFSET + 1],
-        ])
+        BaseTimePredeploy::decode_timestamp_millis_part(value)
     }
 
     /// Fetches the `timestamp_millis_part` directly from the `BaseTime` predeploy storage.
