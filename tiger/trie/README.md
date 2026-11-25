@@ -61,11 +61,11 @@ Tested by randomized differential checks:
   before the final changes arrive; half the seeds cap the trie at 1,500 nodes so it prunes
   every block), committed into one datadir with the session's trie updates and into another
   with the walker's: roots equal and the two trie tables byte-identical after every block.
-- The node iterator skips the hashed seek after a skipped subtree when the walker reached its
-  next node through stored masks and no changed key lies between: checked by running every
-  skipped seek anyway and asserting its result would be dropped, over all tests, `root_bench`,
-  sync seeds 13 and 23 and a 300 s state campaign (no case found); dropping either condition
-  fails the model test.
+- The node iterator skips the hashed seek after a skipped subtree, and on entering a changed
+  subtree whose branch is stored, when the walker reached its next node through stored masks and
+  no changed key lies between: checked by running every skipped seek anyway and asserting its
+  result would be dropped, over all tests, `root_bench`, sync seeds 13 and 23 and 300 s state
+  campaigns (no case found); dropping either condition fails the model test.
 - Mutation checks: removing the deletion of collapsed rows, the tree-mask or hash-mask rules,
   the stream's reconciliation steps, or a blinded branch's storedness each fail these tests.
 

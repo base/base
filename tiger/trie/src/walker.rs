@@ -231,9 +231,9 @@ pub struct TrieWalker<C> {
     /// Stored node paths the walk found stale, when retained.
     pub removed_keys: Option<Vec<Nibbles>>,
     /// Whether the last [`Self::advance`] went through a position with no stored branch (the
-    /// root, which is never stored), where it seeks the next stored branch instead of stepping
-    /// through a stored branch's masks: keys may then lie between the old and new positions
-    /// that no mask records.
+    /// root, which is never stored) or found no stored branch where a mask records one, so it
+    /// sought the next stored branch instead of stepping through a stored branch's masks: keys
+    /// may then lie between the old and new positions that no mask records.
     pub left_stored_masks: bool,
 }
 
@@ -314,7 +314,9 @@ impl<C: TrieCursor> TrieWalker<C> {
     }
 
     fn consume_node(&mut self) -> Result<(), TrieError> {
+        // Seeking the next stored branch, not stepping through a stored branch's masks.
         let Some((key, node)) = self.node(false)? else {
+            self.left_stored_masks = true;
             self.stack.clear();
             return Ok(());
         };
@@ -323,6 +325,7 @@ impl<C: TrieCursor> TrieWalker<C> {
         }
         if let Some(subnode) = self.stack.last() {
             if !key.starts_with(&subnode.full_key) {
+                self.left_stored_masks = true;
                 return self.move_to_next_sibling(false);
             }
         }
