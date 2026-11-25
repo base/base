@@ -294,6 +294,7 @@ fn alloy_primitives_hex_decode(text: &str) -> Result<[u8; 32], String> {
 }
 
 fn main() -> ExitCode {
+    base_tiger_evm::install_ecrecover_cache();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("diff-adapter") => base_tiger::Adapter::run().map_err(|error| error.to_string()),

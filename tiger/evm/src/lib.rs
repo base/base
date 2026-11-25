@@ -34,6 +34,9 @@ pub use handler::BaseTxHandlerHooks;
 
 mod precompiles;
 
+mod ecrecover_cache;
+pub use ecrecover_cache::install_ecrecover_cache;
+
 mod native_precompiles;
 pub use native_precompiles::{BasePrecompiles, CallEnv, EvmStorageProvider};
 
