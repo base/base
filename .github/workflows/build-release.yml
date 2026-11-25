@@ -32,12 +32,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Linux binaries are built on Ubuntu 22.04 so they link against glibc 2.35 and run on
+        # 22.04 and every newer distribution. Building against newer glibc headers redirects
+        # strtol/sscanf in RocksDB, MDBX and AWS-LC to the GLIBC_2.38 __isoc23_* symbols.
         target:
           - triple: x86_64-unknown-linux-gnu
-            runner: depot-ubuntu-24.04-16
+            runner: depot-ubuntu-22.04-16
             os: linux
           - triple: aarch64-unknown-linux-gnu
-            runner: depot-ubuntu-24.04-arm-16
+            runner: depot-ubuntu-22.04-arm-16
             os: linux
           - triple: aarch64-apple-darwin
             runner: macos-14
@@ -114,6 +117,31 @@ jobs:
             esac
           fi
           cargo build --locked --profile maxperf --bin "${{ matrix.binary }}"
+
+      - name: Check glibc compatibility
+        if: matrix.target.os == 'linux'
+        env:
+          BIN: target/maxperf/${{ matrix.binary }}
+          MAX_GLIBC: "2.35"
+        run: |
+          set -euo pipefail
+          # Run objdump on its own so a missing tool or binary fails the step.
+          needs=$(objdump -p "$BIN")
+          # The loader checks every version-needs entry, even one only weak symbols use; only
+          # entries flagged VER_FLG_WEAK (0x02) are optional.
+          required=$(awk '/^Version References:/ { v = 1; next }
+            v && /^ *required from / { next }
+            v && NF == 4 && $2 != "0x02" && $4 ~ /^GLIBC_[0-9]/ { sub(/^GLIBC_/, "", $4); print $4 }' <<<"$needs" | sort -uV | tail -1)
+          if [ -z "$required" ]; then
+            echo "::error::no GLIBC version references found in $BIN; cannot verify compatibility"
+            exit 1
+          fi
+          echo "$BIN requires glibc $required"
+          if [ "$(printf '%s\n%s\n' "$required" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+            echo "::error::$BIN requires glibc $required, newer than the supported $MAX_GLIBC"
+            objdump -T "$BIN" | grep -F "(GLIBC_$required)" || true
+            exit 1
+          fi
 
       - name: Package binary
         run: |
