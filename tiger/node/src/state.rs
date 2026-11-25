@@ -110,6 +110,10 @@ pub fn block_changes(changes: &BlockStateAccumulator) -> BlockChanges {
     out
 }
 
+/// A run-ahead state's reads: the slots fetched for it, where it sends the ones not fetched yet,
+/// and how many reads it has answered as zero.
+type AheadReads = (std::sync::Arc<crate::prewarm::Fetches>, std::sync::mpsc::Sender<(Address, U256)>, Cell<usize>);
+
 /// The node's state after one stored block: a database view at a canonical block plus the
 /// in-memory blocks of a side branch on top, and the block hashes `BLOCKHASH` reads.
 ///
@@ -129,7 +133,9 @@ pub struct NodeState<'d> {
     cache: Option<(std::sync::Arc<crate::ExecCache>, u64)>,
     /// When running ahead ([`Self::running_ahead`]): the slots fetched for it, where it sends
     /// the ones not fetched yet, and how many reads it has answered as zero.
-    ahead: Option<(std::sync::Arc<crate::prewarm::Fetches>, std::sync::mpsc::Sender<(Address, U256)>, Cell<usize>)>,
+    ahead: Option<AheadReads>,
+    /// When timing reads ([`Self::timing_reads`]): where datadir storage reads are counted.
+    slow: Option<&'d crate::prewarm::SlowReads<'d>>,
     /// Time spent computing state and storage roots on this state.
     root_time: Cell<std::time::Duration>,
     /// The executing block's state root, computed as its transactions commit: started by the
@@ -173,6 +179,7 @@ impl<'d> NodeState<'d> {
             misses: None,
             cache: None,
             ahead: None,
+            slow: None,
             root_time: Cell::new(std::time::Duration::ZERO),
             live: RefCell::new(None),
         }
@@ -206,6 +213,12 @@ impl<'d> NodeState<'d> {
         self.cache.as_ref()?;
         self.ahead = Some((fetches, fetch, Cell::new(0)));
         Some(self)
+    }
+
+    /// This state with each datadir storage read timed into `slow` (a prewarm worker's state).
+    pub(crate) fn timing_reads(mut self, slow: &'d crate::prewarm::SlowReads<'d>) -> Self {
+        self.slow = Some(slow);
+        self
     }
 
     /// How many storage reads a run-ahead state has answered as zero so far.
@@ -288,7 +301,12 @@ impl<'d> NodeState<'d> {
                 U256::ZERO
             }));
         }
-        match self.view.storage(*address, *slot) {
+        let started = self.slow.as_ref().map(|_| std::time::Instant::now());
+        let read = self.view.storage(*address, *slot);
+        if let (Some(slow), Some(started)) = (&self.slow, started) {
+            slow.read(started.elapsed());
+        }
+        match read {
             Ok(value) => {
                 if let Some((cache, generation)) = &self.cache {
                     cache.put_storage(*generation, *address, *slot, value);
