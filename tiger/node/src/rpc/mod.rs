@@ -119,8 +119,9 @@ impl Node {
                 Ok(json!(U64::from(self.chain.read().expect("chain lock").head().number())))
             }
             "eth_getBlockByNumber" | "eth_getBlockByHash" => {
-                let block = self.block_by_hash_or_tag(method.ends_with("ByHash"), p.get(0))?;
+                // reth parses every parameter before it resolves the block.
                 let full: bool = param(p, 1)?;
+                let block = self.block_by_hash_or_tag(method.ends_with("ByHash"), p.get(0))?;
                 Ok(block.map_or(Value::Null, |block| self.block_json(&block, full)))
             }
             "eth_getTransactionCount" if param::<Option<U256>>(p, 2)?.is_some_and(|key| !key.is_zero()) => {
@@ -218,9 +219,9 @@ impl Node {
             Some(tag) => serde_json::from_value(tag.clone()).map_err(|error| RpcError::invalid_params(error.to_string()))?,
         };
         let expired = match id {
-            Some(BlockId::Number(BlockNumberOrTag::Earliest)) => (chain.earliest() > 0).then_some(0),
+            Some(BlockId::Number(BlockNumberOrTag::Earliest)) => Self::is_pruned(&chain, 0).then_some(0),
             Some(BlockId::Number(BlockNumberOrTag::Number(number))) => {
-                (number < chain.earliest() && number <= chain.head().number()).then_some(number)
+                (Self::is_pruned(&chain, number) && number <= chain.head().number()).then_some(number)
             }
             Some(BlockId::Hash(hash)) => chain.expired(&hash.block_hash),
             _ => None,
@@ -259,6 +260,13 @@ impl Node {
         }
         let tag: BlockNumberOrTag = serde_json::from_value(param).map_err(invalid)?;
         self.find_block(Some(&json!(tag)))
+    }
+
+    /// Whether block `number` was pruned: the datadir starts with the genesis or start block
+    /// but holds bodies only from a later block. Blocks below the first block (a nonzero genesis,
+    /// a stateless start) do not exist: they are unknown, as in base-reth, not pruned.
+    pub fn is_pruned(chain: &crate::Chain, number: u64) -> bool {
+        chain.earliest() > chain.first() && number < chain.earliest()
     }
 
     /// reth's `PrunedHistoryUnavailable` (EIP-4444): block `requested` is below the first block
@@ -361,6 +369,11 @@ pub(super) mod test_utils {
     /// A node on a fresh datadir whose genesis (block 0, every fork through Jovian active) holds
     /// [`REVERTER`] and a funded account `0x…01`.
     pub(crate) fn node() -> Node {
+        node_at(0)
+    }
+
+    /// [`node`] with its genesis at block `number`.
+    pub(crate) fn node_at(number: u64) -> Node {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir()
             .join(format!("tiger-rpc-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
@@ -376,7 +389,7 @@ pub(super) mod test_utils {
                 "terminalTotalDifficulty": 0, "terminalTotalDifficultyPassed": true,
                 "optimism": { "eip1559Elasticity": 6, "eip1559Denominator": 50, "eip1559DenominatorCanyon": 250 }
             },
-            "nonce": "0x0", "timestamp": "0x0", "extraData": "0x000000000100000006", "gasLimit": "0x1c9c380",
+            "number": format!("{number:#x}"), "nonce": "0x0", "timestamp": "0x0", "extraData": "0x000000000100000006", "gasLimit": "0x1c9c380",
             "difficulty": "0x0", "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
             "coinbase": "0x4200000000000000000000000000000000000011", "baseFeePerGas": "0x1",
             "excessBlobGas": "0x0", "blobGasUsed": "0x0",
@@ -399,7 +412,7 @@ pub(super) mod test_utils {
 mod tests {
     use serde_json::json;
 
-    use super::{RpcConfig, test_utils::{node, reply}};
+    use super::{RpcConfig, test_utils::{node, node_at, reply}};
 
     #[test]
     fn http_api_selects_namespaces_as_reth() {
@@ -421,4 +434,24 @@ mod tests {
         assert!(RpcConfig::default().with_http_api("Eth").serves("base_transactionStatus"));
         assert!(!RpcConfig::default().with_http_api("Eth").serves("eth_chainId"), "names are case-sensitive");
     }
+
+    #[test]
+    fn blocks_below_a_nonzero_genesis_do_not_exist() {
+        let node = node_at(1_000);
+        let call = |method: &str, params: serde_json::Value| {
+            let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+            reply(&node, &body.to_string()).expect("a request is answered")
+        };
+        // Below the genesis is unknown, not pruned (reth's earliest is block 0).
+        assert_eq!(call("eth_getBlockByNumber", json!(["0x0", false]))["result"], json!(null));
+        assert_eq!(call("eth_getBlockByNumber", json!(["earliest", false]))["result"], json!(null));
+        assert_eq!(call("eth_getBlockTransactionCountByNumber", json!(["0x5"]))["result"], json!(null));
+        let address = "0x0000000000000000000000000000000000000001";
+        assert_eq!(call("eth_getBalance", json!([address, "earliest"]))["error"]["code"], json!(-32001));
+        assert_eq!(call("eth_getLogs", json!([{ "fromBlock": "0x0", "toBlock": "0x14" }]))["result"], json!([]));
+        // Every parameter is parsed before the block is resolved.
+        assert_eq!(call("eth_getBlockByNumber", json!(["earliest", "false"]))["error"]["code"], json!(-32602));
+        assert!(call("eth_getBlockByNumber", json!(["0x3e8", false]))["result"].is_object());
+    }
+
 }

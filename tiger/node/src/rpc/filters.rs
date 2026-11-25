@@ -154,10 +154,11 @@ impl Node {
                 "query exceeds max block range {MAX_BLOCKS_PER_FILTER}"
             )));
         }
-        let earliest = self.chain.read().expect("chain lock").earliest();
-        if range.from < earliest {
-            return Err(Self::pruned(range.from, earliest));
+        let chain = self.chain.read().expect("chain lock");
+        if Self::is_pruned(&chain, range.from) {
+            return Err(Self::pruned(range.from, chain.earliest()));
         }
+        drop(chain);
         // reth reads headers in windows of `HEADER_WINDOW + 1` blocks (its range iterator's end
         // is inclusive); a window yields the blocks from its start up to the first one it does
         // not have, so a window starting below the first stored block yields none.
