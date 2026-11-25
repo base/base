@@ -22,7 +22,7 @@ use std::{
     collections::HashMap,
     path::Path,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -42,6 +42,11 @@ use crate::{
 
 /// Blocks `BLOCKHASH` can reach.
 pub const BLOCK_HASH_WINDOW: u64 = 256;
+/// Blocks whose [`Chain::block_hashes`] are kept for sharing (a few, so sibling payloads at the
+/// same height do not evict each other).
+const RECENT_BLOCK_HASHES: usize = 4;
+/// A block's [`Chain::block_hashes`], shared by its states.
+type BlockHashes = Arc<HashMap<u64, B256>>;
 /// Blocks this far below the head or deeper leave memory (base-reth's engine tree keeps a
 /// similar window of executed blocks in memory).
 const MEMORY_DEPTH: u64 = 64;
@@ -179,6 +184,10 @@ pub struct Chain {
     exec_cache: Arc<crate::ExecCache>,
     cache_head: B256,
     exec_cache_enabled: bool,
+    /// The [`Self::block_hashes`] of the last blocks states were taken at, least recent first:
+    /// the states of one block (validation and its prewarm workers) share them, and a child's
+    /// are derived from its parent's.
+    recent_block_hashes: Mutex<Vec<(B256, BlockHashes)>>,
 }
 
 /// Canonical blocks for the persistence thread to commit, oldest first, from
@@ -294,6 +303,7 @@ impl Chain {
             exec_cache: Arc::default(),
             cache_head: genesis.hash,
             exec_cache_enabled: true,
+            recent_block_hashes: Mutex::new(Vec::new()),
             genesis,
         };
         let genesis_number = chain.genesis.header.number;
@@ -597,10 +607,39 @@ impl Chain {
             self.db.view(number, overlays)
         }
         .map_err(|error| error.to_string())?;
-        let state = NodeState::new(view, self.block_hashes(block));
+        let state = NodeState::new(view, self.shared_block_hashes(block));
         // Only the head's own state reads the execution cache.
         let cached = self.exec_cache_enabled && self.batched() && block.hash == self.head.hash && self.cache_head == self.head.hash;
         Ok(if cached { state.with_cache(Arc::clone(&self.exec_cache)) } else { state })
+    }
+
+    /// [`Self::block_hashes`], shared with the recent blocks' states: a block's are reused, and a
+    /// child's are derived from its exact parent's (the oldest dropped, the child added) instead
+    /// of 256 header reads. A block whose parent's are not held reads them all.
+    fn shared_block_hashes(&self, block: &StoredBlock) -> BlockHashes {
+        let mut recent = self.recent_block_hashes.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(index) = recent.iter().position(|(hash, _)| *hash == block.hash) {
+            let entry = recent.remove(index);
+            let hashes = Arc::clone(&entry.1);
+            recent.push(entry);
+            return hashes;
+        }
+        let hashes = match recent.iter().find(|(hash, _)| *hash == block.header.parent_hash) {
+            Some((_, parent)) => {
+                let mut hashes = HashMap::clone(parent);
+                if let Some(oldest) = block.number().checked_sub(BLOCK_HASH_WINDOW) {
+                    hashes.remove(&oldest);
+                }
+                hashes.insert(block.number(), block.hash);
+                Arc::new(hashes)
+            }
+            None => Arc::new(self.block_hashes(block)),
+        };
+        if recent.len() == RECENT_BLOCK_HASHES {
+            recent.remove(0);
+        }
+        recent.push((block.hash, Arc::clone(&hashes)));
+        hashes
     }
 
     /// The hashes of `block` and its ancestors in the `BLOCKHASH` window, zero below genesis.
@@ -1027,5 +1066,64 @@ impl Chain {
             self.forkchoice = next;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Header;
+    use alloy_primitives::B256;
+
+    use crate::{BlockExecution, rpc::test_utils::node};
+
+    /// A block's states read its own ancestry's hashes when the shared hashes were last derived
+    /// for a sibling at the same height (a reorg between payloads), and match the full read.
+    #[test]
+    fn block_hashes_follow_each_blocks_own_ancestry() {
+        let node = node();
+        let build = |parent: B256, seconds: u64| -> B256 {
+            let mut chain = node.chain.write().unwrap();
+            let parent = chain.block(&parent).expect("parent stored");
+            let header = Header {
+                parent_hash: parent.hash,
+                number: parent.number() + 1,
+                timestamp: parent.header.timestamp + seconds,
+                gas_limit: parent.header.gas_limit,
+                base_fee_per_gas: parent.header.base_fee_per_gas,
+                beneficiary: parent.header.beneficiary,
+                parent_beacon_block_root: Some(B256::ZERO),
+                ..Header::default()
+            };
+            let state = chain.state_after(&parent).unwrap();
+            let built = BlockExecution { chain: &node.spec }
+                .build(&BlockExecution::env(&header), parent.header.extra_data.clone(), Some(0), &[], false, &state)
+                .unwrap();
+            drop(state);
+            let executed = built.executed.expect("an empty block builds");
+            let hash = executed.header.hash_slow();
+            chain.insert(hash, &executed, None).unwrap();
+            hash
+        };
+        let genesis = node.chain.read().unwrap().head().hash;
+        let (a1, b1) = (build(genesis, 2), build(genesis, 4));
+        let (a2, b2) = (build(a1, 2), build(b1, 2));
+        node.chain.write().unwrap().set_canonical(a2).unwrap();
+        let chain = node.chain.read().unwrap();
+        let check = |block: B256, parent: B256| {
+            let stored = chain.block(&block).unwrap();
+            let state = chain.state_after(&stored).unwrap();
+            let number = stored.number();
+            assert_eq!(state.block_hash(number), Ok(block));
+            assert_eq!(state.block_hash(number - 1), Ok(parent));
+            assert_eq!(state.block_hash(0), Ok(genesis));
+            for (number, hash) in chain.block_hashes(&stored) {
+                assert_eq!(state.block_hash(number), Ok(hash), "block {number}");
+            }
+            assert!(state.block_hash(number + 1).is_err(), "no hash above the block");
+        };
+        // Each block read right after its parent's sibling, then again.
+        for (block, parent) in [(a1, genesis), (b1, genesis), (a2, a1), (b2, b1), (a2, a1), (b2, b1)] {
+            check(block, parent);
+        }
     }
 }

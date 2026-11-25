@@ -117,7 +117,7 @@ pub fn block_changes(changes: &BlockStateAccumulator) -> BlockChanges {
 #[derive(Debug)]
 pub struct NodeState<'d> {
     view: StateView<'d>,
-    block_hashes: HashMap<u64, B256>,
+    block_hashes: std::sync::Arc<HashMap<u64, B256>>,
     missing: RefCell<Option<String>>,
     /// Whether a read failed for state not held locally (a partial, stateless datadir).
     unknown: Cell<bool>,
@@ -160,7 +160,7 @@ impl Misses {
 
 impl<'d> NodeState<'d> {
     /// The state of `view`, reading block hashes from `block_hashes`.
-    pub fn new(view: StateView<'d>, block_hashes: HashMap<u64, B256>) -> Self {
+    pub fn new(view: StateView<'d>, block_hashes: std::sync::Arc<HashMap<u64, B256>>) -> Self {
         Self {
             view,
             block_hashes,
