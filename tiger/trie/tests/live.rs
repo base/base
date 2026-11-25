@@ -155,7 +155,7 @@ fn final_changes(
 
 #[test]
 fn streamed_live_roots_commit_the_same_tries_as_the_walker() {
-    for seed in 0..6u64 {
+    for seed in 0..8u64 {
         let mut rng = Rng(seed);
         let (live_dir, walker_dir) =
             (temp(&format!("live-{seed}")), temp(&format!("walker-{seed}")));
@@ -190,6 +190,9 @@ fn streamed_live_roots_commit_the_same_tries_as_the_walker() {
             let view = live.view(number - 1, Vec::new()).unwrap();
             // Sometimes nothing streams (a block built without the hook).
             let session = if rng.below(6) == 0 { None } else { view.live_session() };
+            // How often streamed transactions are applied before the next is sent: after each,
+            // now and then, or never (the final changes do all the work).
+            let flush_every = [1, 4, u64::MAX][rng.below(3) as usize];
             let mut touched: BTreeMap<Address, BTreeSet<U256>> = BTreeMap::new();
             let mut wiped = BTreeSet::new();
             for _ in 0..1 + rng.below(if number % 9 == 0 { 120 } else { 15 }) {
@@ -203,6 +206,9 @@ fn streamed_live_roots_commit_the_same_tries_as_the_walker() {
                 wiped.extend(tx_wiped);
                 if let Some(session) = &session {
                     session.transaction(tx);
+                    if rng.below(flush_every) == 0 {
+                        session.flush();
+                    }
                 }
             }
             let changes = final_changes(&parent, &model, &touched, &wiped, rng.below(2) == 0);

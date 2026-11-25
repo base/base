@@ -1052,11 +1052,10 @@ impl LiveState {
                     Some(account_leaf(account, storage_root))
                 }
                 None => {
-                    // Storage changes only: the account keeps its fields.
+                    // Storage changes only: the account keeps its fields. An absent account
+                    // stays absent whatever its storage (the walker has no leaf for it either).
                     let Some(old) = old else {
-                        return Err(TrieError::Unknown(format!(
-                            "storage changes of absent account {address}"
-                        )));
+                        return Ok(None);
                     };
                     let mut leaf = old.to_vec();
                     let n = leaf.len();

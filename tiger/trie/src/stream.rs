@@ -19,7 +19,7 @@ use alloy_primitives::B256;
 use base_tiger_store::{Datadir, Db, Ro, Txn};
 
 use crate::{
-    BlockChanges, HashedState, LiveSource, LiveState, MemState, Originals, Sources,
+    BlockChanges, HashedState, LiveSource, LiveState, LiveTrie, MemState, Originals, Sources,
     StorageTrieUpdates, TrieError, TrieUpdates, TrieView,
 };
 
@@ -147,6 +147,12 @@ impl LiveBase {
             _ => Box::default(),
         })
     }
+
+    /// Whether `TIGER_LIVE_STATS=1` asks for a line per streamed block.
+    fn stats_enabled() -> bool {
+        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ENABLED.get_or_init(|| std::env::var("TIGER_LIVE_STATS").is_ok_and(|v| v == "1"))
+    }
 }
 
 impl LiveSlot {
@@ -187,7 +193,8 @@ impl LiveBase {
                 LiveSlot::put(slot, Some((root, live)));
                 Some((root, updates))
             }
-            Err(_) => {
+            Err(error) => {
+                eprintln!("tiger: live state root failed, the walker answers: {error}");
                 LiveSlot::put(slot, None);
                 None
             }
@@ -200,6 +207,8 @@ enum Message {
     Transaction(BlockChanges),
     /// The block's final hashed changes; the answer goes back on the channel.
     Finish(HashedState, mpsc::Sender<Option<(B256, TrieUpdates)>>),
+    /// Answered once everything sent before it is applied.
+    Flush(mpsc::Sender<()>),
 }
 
 /// The streamed part of a session: the trie and what the stream did to it.
@@ -211,6 +220,22 @@ struct Stream {
     originals: Originals,
     /// Trie updates of the streamed changes so far.
     updates: TrieUpdates,
+    /// What the session did, printed per block with `TIGER_LIVE_STATS=1`.
+    stats: StreamStats,
+}
+
+/// Counts of one streaming session, for `TIGER_LIVE_STATS=1`.
+#[derive(Debug, Default)]
+struct StreamStats {
+    /// The live trie was rebuilt from the stored trie (not the previous block's).
+    fresh: bool,
+    /// Streamed transactions, and the batches they were applied in.
+    transactions: usize,
+    batches: usize,
+    /// Storage tries the final changes could not reach (recomputed), and slots set back to
+    /// their parent values.
+    dropped: usize,
+    reverted: usize,
 }
 
 impl Stream {
@@ -221,6 +246,18 @@ impl Stream {
         local: &mut WorkerSource<'_>,
         batch: &HashedState,
     ) -> Result<(), TrieError> {
+        // A storage trie wiped earlier in the stream and since dropped from the live trie (its
+        // account was deleted) starts empty when later transactions write it, not from the
+        // stored trie.
+        for (address, storage) in &batch.storages {
+            if !storage.wiped && self.streamed.storages.get(address).is_some_and(|s| s.wiped) {
+                self.live
+                    .storages
+                    .entry(*address)
+                    .or_insert_with(|| LiveTrie::empty(Some(*address)));
+            }
+        }
+        self.stats.batches += 1;
         let (_, updates) =
             base.apply(local, &mut self.live, batch, &BTreeSet::new(), Some(&self.originals))?;
         Self::merge(&mut self.updates, updates);
@@ -248,24 +285,62 @@ impl Stream {
         local: &mut WorkerSource<'_>,
         fin: &HashedState,
     ) -> Result<(B256, TrieUpdates, Box<LiveState>), TrieError> {
-        // Storage tries the stream left in another state than the final changes describe are
-        // recomputed from the stored trie; the others keep their streamed (final) state.
+        // A slot the stream changed that the final changes leave out ended at its parent value
+        // (the final changes drop such slots): it goes back to that value, so the trie stays
+        // revealed. Storage tries the final changes cannot be reached from that way (wipes that
+        // differ, slots only the final changes name, deleted accounts) are dropped and
+        // recomputed from the stored trie.
+        let started = std::time::Instant::now();
+        let requested = fin;
+        let mut fin = std::borrow::Cow::Borrowed(fin);
         let mut kept_wipes = BTreeSet::new();
         let mut restore: BTreeSet<B256> = BTreeSet::new();
         for (address, streamed) in &self.streamed.storages {
-            let consistent = fin.storages.get(address).is_some_and(|f| {
-                f.wiped == streamed.wiped
-                    && f.slots.len() == streamed.slots.len()
-                    && f.slots.keys().eq(streamed.slots.keys())
-            });
-            if consistent {
-                if streamed.wiped {
-                    kept_wipes.insert(*address);
-                }
-            } else {
+            let wanted = fin.storages.get(address);
+            let wiped = wanted.is_some_and(|f| f.wiped);
+            let reachable = wiped == streamed.wiped
+                && wanted.is_none_or(|f| f.slots.keys().all(|k| streamed.slots.contains_key(k)))
+                && (wanted.is_some() || !streamed.wiped)
+                && !fin.accounts.get(address).is_some_and(Option::is_none);
+            if !reachable {
+                self.stats.dropped += 1;
                 self.live.storages.remove(address);
                 self.updates.storage_tries.remove(address);
                 restore.insert(*address);
+                continue;
+            }
+            if streamed.wiped {
+                kept_wipes.insert(*address);
+            }
+            let reverted: Vec<B256> = streamed
+                .slots
+                .keys()
+                .filter(|k| wanted.is_none_or(|f| !f.slots.contains_key(*k)))
+                .copied()
+                .collect();
+            if reverted.is_empty() {
+                continue;
+            }
+            self.stats.reverted += reverted.len();
+            let mut parent = Vec::new();
+            for slot in reverted {
+                // A wiped trie's parent value is absent.
+                let value = if wiped {
+                    alloy_primitives::U256::ZERO
+                } else {
+                    parent.clear();
+                    local.leaves(
+                        Some(*address),
+                        &alloy_trie::Nibbles::unpack(slot),
+                        &mut parent,
+                    )?;
+                    match parent.first() {
+                        Some((_, leaf)) => alloy_rlp::decode_exact(leaf)
+                            .map_err(|error| TrieError::Corrupt(error.to_string()))?,
+                        None => alloy_primitives::U256::ZERO,
+                    }
+                };
+                fin.to_mut().storages.entry(*address).or_default().slots.insert(slot, value);
             }
         }
         // Account leaves the final changes do not fully determine go back to the parent's.
@@ -283,7 +358,22 @@ impl Stream {
             }
             self.updates.account_nodes = nodes;
         }
-        let (root, updates) = base.apply(local, &mut self.live, fin, &kept_wipes, None)?;
+        let (root, updates) = base.apply(local, &mut self.live, &fin, &kept_wipes, None)?;
+        if LiveBase::stats_enabled() {
+            let stats = &self.stats;
+            eprintln!(
+                "tiger: live root fresh={} txs={} batches={} accounts={} storages={} dropped={} reverted={} finish_us={} nodes={}",
+                stats.fresh,
+                stats.transactions,
+                stats.batches,
+                requested.accounts.len(),
+                requested.storages.len(),
+                stats.dropped,
+                stats.reverted,
+                started.elapsed().as_micros(),
+                self.live.len()
+            );
+        }
         Self::merge(&mut self.updates, updates);
         // Only the storage tries the final changes name, with their wipes.
         let mut out = TrieUpdates {
@@ -291,8 +381,8 @@ impl Stream {
             storage_tries: BTreeMap::new(),
         };
         for (address, storage) in self.updates.storage_tries {
-            if let Some(f) = fin.storages.get(&address) {
-                let nodes = if fin.accounts.get(&address).is_some_and(Option::is_none) {
+            if let Some(f) = requested.storages.get(&address) {
+                let nodes = if requested.accounts.get(&address).is_some_and(Option::is_none) {
                     BTreeMap::new()
                 } else {
                     storage.nodes
@@ -331,47 +421,68 @@ impl LiveSession {
         parent: Option<(B256, Box<LiveState>)>,
         receiver: &mpsc::Receiver<Message>,
     ) {
-        let Ok(mut local) = base.source() else {
-            LiveSlot::put(slot, None);
-            return;
+        let mut local = match base.source() {
+            Ok(local) => local,
+            Err(error) => {
+                eprintln!("tiger: live state root failed, the walker answers: {error}");
+                LiveSlot::put(slot, None);
+                return;
+            }
         };
-        let mut stream = match base.resume(&local, parent) {
-            Ok(live) => Some(Stream {
-                live,
-                streamed: HashedState::default(),
-                originals: Mutex::default(),
-                updates: TrieUpdates::default(),
-            }),
-            Err(_) => None,
-        };
+        let warm = parent.is_some();
+        let mut stream = base.resume(&local, parent).map(|live| Stream {
+            stats: StreamStats { fresh: !warm || live.is_empty(), ..StreamStats::default() },
+            live,
+            streamed: HashedState::default(),
+            originals: Mutex::default(),
+            updates: TrieUpdates::default(),
+        });
         while let Ok(message) = receiver.recv() {
             match message {
                 Message::Transaction(changes) => {
                     // Take every transaction already queued as one batch.
                     let mut batch = changes.hashed();
+                    let mut transactions = 1;
                     let mut finish = None;
+                    let mut flushed = None;
                     while let Ok(next) = receiver.try_recv() {
                         match next {
-                            Message::Transaction(changes) => batch.extend(&changes.hashed()),
+                            Message::Transaction(changes) => {
+                                transactions += 1;
+                                batch.extend(&changes.hashed());
+                            }
                             Message::Finish(fin, reply) => {
                                 finish = Some((fin, reply));
+                                break;
+                            }
+                            Message::Flush(reply) => {
+                                flushed = Some(reply);
                                 break;
                             }
                         }
                     }
                     if let Some((fin, reply)) = finish {
                         // The final changes cover the batch: finish at once.
-                        Self::reply(slot, base, &mut local, stream.take(), &fin, &reply);
+                        Self::reply(slot, base, &mut local, stream, &fin, &reply);
                         return;
                     }
-                    if let Some(s) = stream.as_mut()
-                        && s.batch(base, &mut local, &batch).is_err()
+                    if let Ok(s) = stream.as_mut()
+                        && let Err(error) = {
+                            s.stats.transactions += transactions;
+                            s.batch(base, &mut local, &batch)
+                        }
                     {
-                        stream = None;
+                        stream = Err(error);
+                    }
+                    if let Some(reply) = flushed {
+                        let _ = reply.send(());
                     }
                 }
+                Message::Flush(reply) => {
+                    let _ = reply.send(());
+                }
                 Message::Finish(fin, reply) => {
-                    Self::reply(slot, base, &mut local, stream.take(), &fin, &reply);
+                    Self::reply(slot, base, &mut local, stream, &fin, &reply);
                     return;
                 }
             }
@@ -383,16 +494,17 @@ impl LiveSession {
         slot: &Mutex<LiveSlot>,
         base: &LiveBase,
         local: &mut WorkerSource<'_>,
-        stream: Option<Stream>,
+        stream: Result<Stream, TrieError>,
         fin: &HashedState,
         reply: &mpsc::Sender<Option<(B256, TrieUpdates)>>,
     ) {
-        match stream.map(|s| s.finish(base, local, fin)) {
-            Some(Ok((root, updates, live))) => {
+        match stream.and_then(|s| s.finish(base, local, fin)) {
+            Ok((root, updates, live)) => {
                 LiveSlot::put(slot, Some((root, live)));
                 let _ = reply.send(Some((root, updates)));
             }
-            _ => {
+            Err(error) => {
+                eprintln!("tiger: live state root failed, the walker answers: {error}");
                 LiveSlot::put(slot, None);
                 let _ = reply.send(None);
             }
@@ -403,6 +515,17 @@ impl LiveSession {
     pub fn transaction(&self, changes: BlockChanges) {
         if let Some(sender) = &self.sender {
             let _ = sender.send(Message::Transaction(changes));
+        }
+    }
+
+    /// Waits until every transaction streamed so far is applied (tests use it to make sure
+    /// streaming does the work rather than the final changes).
+    pub fn flush(&self) {
+        let (reply, done) = mpsc::channel();
+        if let Some(sender) = &self.sender
+            && sender.send(Message::Flush(reply)).is_ok()
+        {
+            let _ = done.recv();
         }
     }
 

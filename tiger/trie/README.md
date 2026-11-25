@@ -46,7 +46,9 @@ Tested by randomized differential checks:
 - Over a datadir: the live state against the walker (`TrieView::state_root`) in the incremental
   model test, root equal and trie updates with the same effect.
 - End to end (`tests/live.rs`): blocks of transactions streamed into a `LiveSession` (values
-  changed and changed back, wipes, deletions, blocks with nothing streamed), committed into one
+  changed and changed back, wipes, deletions and re-creations, blocks with nothing streamed;
+  `LiveSession::flush` makes the background apply each transaction, some of them, or none
+  before the final changes arrive), committed into one
   datadir with the session's trie updates and into another with the walker's: roots equal and
   the two trie tables byte-identical after every block.
 - Mutation checks: removing the deletion of collapsed rows, the tree-mask or hash-mask rules,
