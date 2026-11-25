@@ -24,7 +24,9 @@ Merkle Patricia trie code and the state database of the tiger client.
   block's root hashes only what changed, and its trie updates are the stored rows that change.
   `StateDb` keeps one for the canonical head; it applies only when the view's state root equals
   the root it was left at, else it starts over from the stored trie. It is off unless
-  `TIGER_LIVE_ROOT=1` (it gives no gain on real blocks yet and its memory is not bounded well);
+  `TIGER_LIVE_ROOT=1`: on Base mainnet blocks it is slower than the walker (live root p50 13.0
+  vs 7.0 ms, newPayload p50 29.5 vs 21.9 ms, at 04d10832d; 2 to 4 times slower on the replay
+  bench), mostly waiting for the background session to catch up, and uses up to 0.8 GB more;
   `TIGER_LIVE_ROOT=check` also walks every root and panics if the two differ. Above
   `TIGER_LIVE_MAX_NODES` nodes (1,000,000, about 120 bytes each plus leaf values), the least
   recently used hashed branches are blinded, down to half of it. `LiveSession`
