@@ -539,10 +539,12 @@ impl Chain {
             at = block.header.parent_hash;
             branch.push(block);
         };
-        let tip = self.head.number();
-        if branch.is_empty() && fork_number == tip {
+        // A canonical block, the head or an ancestor of it, leaves the head where it is, as in
+        // base-reth (a block built on the ancestor reorgs once it is imported and chosen).
+        if branch.is_empty() {
             return Ok(());
         }
+        let tip = self.head.number();
         branch.reverse();
         let fork_block = self.canonical_block(fork_number).expect("the fork point is canonical");
         if fork_number < tip {

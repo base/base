@@ -735,19 +735,30 @@ impl Node {
         let update =
             Forkchoice { head, safe: state.safe_block_hash, finalized: state.finalized_block_hash };
         let previous = chain.forkchoice();
-        // As in base-reth, the head moves before safe and finalized are checked against it.
-        chain.set_canonical(head).map_err(RpcError::internal)?;
-        for hash in [update.safe, update.finalized] {
-            if !hash.is_zero() && !chain.is_canonical(&hash) {
-                chain
-                    .update_forkchoice(Forkchoice { safe: B256::ZERO, finalized: B256::ZERO, ..update })
-                    .map_err(RpcError::internal)?;
-                return Err(RpcError::new(-38002, "Invalid forkchoice state"));
+        if head != chain.head().hash && chain.is_canonical(&head) {
+            // base-reth on Base: a canonical ancestor keeps the head, safe and finalized; it only
+            // checks that safe and finalized are canonical at or below it, and may build on it.
+            for hash in [update.safe, update.finalized] {
+                let below = chain.block(&hash).is_some_and(|block| block.number() <= head_block.number());
+                if !hash.is_zero() && !(below && chain.is_canonical(&hash)) {
+                    return Err(RpcError::new(-38002, "Invalid forkchoice state"));
+                }
             }
-        }
-        chain.update_forkchoice(update).map_err(RpcError::internal)?;
-        if previous.head != head {
-            eprintln!("tiger: head {} {head}", head_block.number());
+        } else {
+            // As in base-reth, the head moves before safe and finalized are checked against it.
+            chain.set_canonical(head).map_err(RpcError::internal)?;
+            for hash in [update.safe, update.finalized] {
+                if !hash.is_zero() && !chain.is_canonical(&hash) {
+                    chain
+                        .update_forkchoice(Forkchoice { safe: B256::ZERO, finalized: B256::ZERO, ..update })
+                        .map_err(RpcError::internal)?;
+                    return Err(RpcError::new(-38002, "Invalid forkchoice state"));
+                }
+            }
+            chain.update_forkchoice(update).map_err(RpcError::internal)?;
+            if previous.head != head {
+                eprintln!("tiger: head {} {head}", head_block.number());
+            }
         }
         let payload_status = status("VALID", Some(head), None);
         let Some(attributes) = attributes else {
