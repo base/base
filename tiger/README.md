@@ -1,10 +1,12 @@
 # Tiger client
 
 Tiger is a Base execution client written in Rust without reth or revm. It validates and imports
-Base blocks driven by the Base consensus node over the Engine API, keeps its own persistent state,
-and serves the JSON-RPC methods Base nodes use. [SCOPE.md](SCOPE.md) lists what it does and what
-it leaves out. It follows [TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md):
-simple explicit code, assertions, bounded resources, and few dependencies.
+Base blocks driven by the Base consensus node over the Engine API, keeps its own persistent state
+in base-reth's datadir format, and serves the JSON-RPC methods Base nodes use. It aims to behave
+exactly like base-reth for everything Base uses; [SCOPE.md](SCOPE.md) lists what is in, what is
+left out, and the accepted differences. It follows
+[TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md): simple
+explicit code, assertions, bounded resources, and few dependencies.
 
 Tiger is its own Cargo workspace, separate from the base workspace, so its dependency tree and
 lockfile stay small. Build and test from this directory:
@@ -13,6 +15,74 @@ lockfile stay small. Build and test from this directory:
 cargo build --release
 cargo test
 ```
+
+## Status
+
+As of 2026-11-25, tiger follows the Base mainnet tip behind `base-consensus` on a base-reth
+snapshot, with no state root mismatches against base-reth, and passes every mode of the
+differential fuzz harness against base-reth.
+
+## Key features
+
+- **Every Base fork from genesis**: deposits, L1 data fee and operator fee rules, Base
+  transactions, the native precompiles, and each upgrade's transitions, on
+  [evm2](https://github.com/alloy-rs/evm2).
+- **Engine API validation and import** driven by the Base consensus node: `newPayload`,
+  `forkchoiceUpdated`, payload building from the consensus node's attributes (no mempool),
+  reorgs, and EL sync from peers (discv5, RLPx, eth/69).
+- **base-reth's datadir format**: MDBX, static files and RocksDB, byte-identical, so tiger opens a
+  base-reth datadir or snapshot and base-reth opens tiger's full datadirs.
+- **Persistent state with correct roots across restarts, crashes and reorgs**: batched
+  persistence off the import path, as base-reth does; in-process healing after failed commits
+  (a full disk); SIGTERM persists through the head.
+- **Stateless start**: begin at a recent block with no state, filling it from an upstream's
+  proofs and witnesses.
+- **JSON-RPC**: the `eth_*`, `debug_*` and `trace_*` methods Base nodes serve, including proofs,
+  tracing and state overrides, matching base-reth's responses.
+- **Fast state root**: a parallel trie walker on threads started once, with large storages on
+  jobs of their own, that skips hashed-state reads its stored branches already answer.
+- **Prewarm and caches**: speculative execution and trie-path walks ahead of the serial block,
+  a bounded cross-block execution cache, and a memo of signature recoveries.
+- **Built-in benchmarking**: `tiger bench` replays real mainnet blocks through the validation path
+  (see [Benchmarks](#benchmarks)); `TIGER_VALIDATION_LOG=1` times every block a live node imports.
+- **Fault injection**: `TIGER_FAULT` crashes, tears writes or fills the disk at chosen writes,
+  so the fuzz harness can test recovery.
+
+## Results so far
+
+**Small dependency tree.** `cargo tree` for the `tiger` binary has no `reth-*` or `revm*` crate
+and 219 crates in all, against 766 for `base-reth-node`. Every direct dependency has a reason in
+[Dependencies](#dependencies). About 100k lines of Rust.
+
+**Correctness.** The differential fuzz harness (`etc/tools/diff-*`) runs base-reth as the
+reference and tiger as another adapter, in every mode: block execution, chain, system config,
+trie, RPC, sync and crash-recovery campaigns. Recent clean runs include 907,605 strict RPC
+requests, 284k chain-fuzz blocks, 290k execution-fuzz and 241k Everest-fuzz cases, 112k mainnet
+fuzz cases, sync runs with reorgs, gaps and kills, and state campaigns with injected crashes, torn
+writes and full disks, all with 0 findings. Every divergence it found was fixed at its root (a
+reproducer test where it would catch a regression), except the two accepted differences in
+SCOPE.md. 1,258 unit and integration tests.
+
+**Speed on Base mainnet.** Measured on one host (eagle, shared with a live base-reth) following
+the tip, in clean 10-minute windows with other work paused; insert is the `newPayload` latency
+the consensus node sees, p50 / p90 / p99 in ms:
+
+| Window (UTC, 2026-11-25) | tiger insert | base-reth insert | tiger / base-reth (p50) |
+| --- | --- | --- | --- |
+| 05:59 (start of the day's tuning) | 44.7 / 122 / 399 | 15.9 / 44 / 129 | 2.8× |
+| 08:40 | 26.3 / 89 / 344 | 17.5 / 44 / 108 | 1.5× |
+| 11:32 | 22.2 / 75 / 258 | 16.5 / 47 / 139 | 1.35× |
+
+- Execution alone is at parity with base-reth (p50 8.8 ms vs about 9).
+- On the warm replay bench, validation (execution plus state root) takes p50 3.8 ms per block,
+  with the state root at 1.6 ms.
+- The remaining live gap is cold reads: sampled live, the validating thread waits on disk reads
+  78% of its time. Most of those reads are the state root's trie and hashed-state pages; work
+  continues there.
+- Memory: about 1.2 GB anonymous against base-reth's 4.2 to 4.8 GB on the same host.
+
+Profile-guided builds (`pgo.sh`) cut instructions 8.6% but showed no live gain, since live
+latency is reads, not CPU (see [Optimized builds](#optimized-builds)).
 
 ## Benchmarks
 
