@@ -8,7 +8,7 @@ use std::{
 
 use alloy_primitives::{
     Address, B256, TxHash, U256,
-    map::{HashMap, hash_map::Entry},
+    map::{B256Map, HashMap, hash_map::Entry},
 };
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, EthPoolTransaction, PoolTransaction,
@@ -92,30 +92,56 @@ pub type DormancyWake<T> = Box<dyn Fn(&EvmState) -> Vec<WokenLane<T>> + Send + S
 ///
 /// The build loop parks a validity transaction once it finds one of its predicates unsatisfied,
 /// and the pool re-yields that transaction in every later iterator until a state change wakes it.
-/// A hold recognises such transactions at the source, so they are parked exactly as if the build
-/// loop had yielded and parked them, without the build loop seeing them: their lane stays
-/// occupied and [`ParkableBestTransactions::promote`] returns them to priority competition.
+/// A hold recognises such transactions at the source, so they are parked as if the build loop
+/// had yielded and parked them, without the build loop seeing them: nothing behind them in
+/// their lane is yielded and [`ParkableBestTransactions::promote`] returns them to priority
+/// competition.
+///
+/// A pool asks the hold while it snapshots its stores about the candidates no lane or store
+/// sequences behind another transaction, and leaves the held ones out of the iterator; see
+/// [`ParkedBestTransactions::with_held_at_source`]. The iterator asks it about the candidates
+/// that reach it.
+///
+/// Snapshot filtering invokes the hold only after releasing both lane-store read guards.
 pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
-    /// Returns whether `transaction` is parked instead of yielded. Called once per source candidate
-    /// that carries validity predicates and is not blocked by its lane.
+    /// Returns whether `transaction` is parked instead of yielded. Called for candidates that
+    /// carry validity predicates and are not blocked by their lane: when the pool is
+    /// snapshotted or when the candidate reaches the iterator, and at both points for a
+    /// candidate the snapshot asked about and did not hold.
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
 
-    /// Records the time one `next` call spent from its first hold until it found a candidate,
-    /// which includes advancing past further held transactions. Calls that hold nothing record
-    /// nothing.
+    /// Records the time spent holding transactions back: by a pool snapshot from its first hold
+    /// until it has filtered the independent heads, and by one `next` call from its first hold until it
+    /// found a candidate, which includes advancing past further held transactions. Snapshots
+    /// and calls that hold nothing record nothing.
     fn record_duration(&mut self, duration: Duration);
 
     /// Returns whether the build driving the iterator has stopped selecting transactions.
     ///
-    /// One `next` call can advance past many held transactions without returning to the build
-    /// loop, so the iterator checks this every [`HOLD_INTERRUPT_INTERVAL`] holds and returns
+    /// A pool snapshot and one `next` call can each hold many transactions without returning
+    /// to the build loop, so both check this every [`HOLD_INTERRUPT_INTERVAL`] holds and stop
     /// early once it is true. The default never interrupts.
     fn is_interrupted(&self) -> bool {
         false
     }
 }
 
-/// Number of held transactions a parking iterator advances past between checks of
+/// A transaction a pool snapshot held back with a [`BestTransactionsHold`] instead of offering
+/// it to the iterator, identified without keeping a reference to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeldBestTransaction {
+    /// Hash of the held transaction.
+    pub hash: TxHash,
+    /// When the pool admitted the held transaction. A transaction re-admitted under the same
+    /// hash, which can carry other validity predicates, was admitted at another instant.
+    pub admitted_at: Instant,
+}
+
+/// Returns the transaction a pool holds under a hash.
+pub type HeldTransactionLookup<T> =
+    Box<dyn Fn(&TxHash) -> Option<Arc<ValidPoolTransaction<T>>> + Send + Sync>;
+
+/// Number of transactions a pool snapshot or a parking iterator holds between checks of
 /// [`BestTransactionsHold::is_interrupted`], so the check stays off the per-transaction path.
 pub const HOLD_INTERRUPT_INTERVAL: u32 = 256;
 
@@ -175,6 +201,15 @@ where
     ready: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
     hold: Option<Box<dyn BestTransactionsHold<T>>>,
+    /// The transactions the source's snapshot held back, parked without an entry in `parked`.
+    /// Few are promoted in a build, so they stay in the list the snapshot produced until the
+    /// first one is.
+    held_at_source: Vec<HeldBestTransaction>,
+    /// The admission instants of the transactions the source's snapshot held back that are
+    /// still parked, by hash. Takes over from `held_at_source` when the first one is promoted.
+    held_at_source_parked: Option<B256Map<Instant>>,
+    /// Fetches a transaction the source's snapshot held back when it is promoted.
+    held_at_source_lookup: Option<HeldTransactionLookup<T>>,
     wake: Option<DormancyWake<T>>,
 }
 
@@ -190,6 +225,13 @@ where
             .field("parked", &self.parked.len())
             .field("ready", &self.ready.len())
             .field("hold", &self.hold.is_some())
+            .field(
+                "held_at_source",
+                &self
+                    .held_at_source_parked
+                    .as_ref()
+                    .map_or(self.held_at_source.len(), B256Map::len),
+            )
             .field("wake", &self.wake.is_some())
             .finish_non_exhaustive()
     }
@@ -213,6 +255,9 @@ where
             ready: HashMap::default(),
             ready_heap: BinaryHeap::new(),
             hold: None,
+            held_at_source: Vec::new(),
+            held_at_source_parked: None,
+            held_at_source_lookup: None,
             wake: None,
         }
     }
@@ -221,6 +266,45 @@ where
     pub fn with_hold(mut self, hold: Option<Box<dyn BestTransactionsHold<T>>>) -> Self {
         self.hold = hold;
         self
+    }
+
+    /// Parks the transactions the source's snapshot held back with the same hold. No other
+    /// pending transaction is sequenced behind one, so it is parked as a transaction this
+    /// iterator's own hold held, without its lane being occupied.
+    ///
+    /// [`ParkableBestTransactions::promote`] fetches one with `lookup` and returns it to
+    /// priority competition. One the pool no longer holds, or has since admitted again, stays
+    /// out of the build, like any transaction that arrives after the snapshot.
+    pub fn with_held_at_source(
+        mut self,
+        held: Vec<HeldBestTransaction>,
+        lookup: HeldTransactionLookup<T>,
+    ) -> Self {
+        self.held_at_source = held;
+        self.held_at_source_parked = None;
+        self.held_at_source_lookup = Some(lookup);
+        self
+    }
+
+    /// Takes the transaction the source's snapshot held back under `transaction_hash`.
+    pub fn take_held_at_source(
+        &mut self,
+        transaction_hash: TxHash,
+    ) -> Option<(Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)> {
+        if self.held_at_source_parked.is_none() && self.held_at_source.is_empty() {
+            return None;
+        }
+        let parked = self.held_at_source_parked.get_or_insert_with(|| {
+            std::mem::take(&mut self.held_at_source)
+                .into_iter()
+                .map(|held| (held.hash, held.admitted_at))
+                .collect()
+        });
+        let admitted_at = parked.remove(&transaction_hash)?;
+        let transaction = self.held_at_source_lookup.as_ref()?(&transaction_hash)
+            .filter(|transaction| transaction.timestamp == admitted_at)?;
+        let lane = BestTransactionLane::for_transaction(&transaction);
+        Some((transaction, lane))
     }
 
     /// Offers the dormant transactions `wake` returns for each commit.
@@ -482,7 +566,11 @@ where
     }
 
     fn promote(&mut self, transaction_hash: TxHash) -> bool {
-        let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
+        let parked = self
+            .parked
+            .remove(&transaction_hash)
+            .or_else(|| self.take_held_at_source(transaction_hash));
+        let Some((transaction, lane)) = parked else {
             return false;
         };
         if self.is_lane_invalid(lane) {
@@ -497,7 +585,11 @@ where
         transaction_hash: TxHash,
         kind: InvalidPoolTransactionError,
     ) -> bool {
-        let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
+        let parked = self
+            .parked
+            .remove(&transaction_hash)
+            .or_else(|| self.take_held_at_source(transaction_hash));
+        let Some((transaction, lane)) = parked else {
             return false;
         };
         if self.is_lane_invalid(lane) {
@@ -864,6 +956,111 @@ mod tests {
         assert_eq!(best.next().unwrap().hash(), held.hash());
         best.mark_committed(&held);
         assert_eq!(best.next().unwrap().hash(), child.hash());
+        assert!(best.next().is_none());
+    }
+
+    fn held_at_source(
+        transaction: &ValidPoolTransaction<BasePooledTransaction>,
+    ) -> HeldBestTransaction {
+        HeldBestTransaction { hash: *transaction.hash(), admitted_at: transaction.timestamp }
+    }
+
+    /// A lookup over the transactions a pool still holds.
+    fn lookup_in(
+        pool: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+    ) -> HeldTransactionLookup<BasePooledTransaction> {
+        Box::new(move |hash| pool.iter().find(|transaction| transaction.hash() == hash).cloned())
+    }
+
+    #[test]
+    fn transaction_held_at_the_source_is_parked_until_promoted() {
+        let held_signer = PrivateKeySigner::random();
+        let other_signer = PrivateKeySigner::random();
+        let held =
+            validity_transaction(&held_signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
+        let other = transaction(&other_signer, U256::ZERO, 0, 50);
+        let lowest = transaction(&PrivateKeySigner::random(), U256::ZERO, 0, 10);
+        // The source's snapshot left the held transaction out, so the source yields the rest.
+        let inner = StaticBestTransactions::new(vec![Arc::clone(&other), Arc::clone(&lowest)]);
+        let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0)
+            .with_held_at_source(vec![held_at_source(&held)], lookup_in(vec![Arc::clone(&held)]));
+
+        assert_eq!(best.next().unwrap().hash(), other.hash());
+        best.mark_committed(&other);
+
+        // Promotion returns it to priority competition, ahead of what the source still holds.
+        assert!(!best.promote(*lowest.hash()), "only held transactions are parked");
+        assert!(best.promote(*held.hash()));
+        assert!(!best.promote(*held.hash()), "a promoted transaction is no longer parked");
+        assert_eq!(best.next().unwrap().hash(), held.hash());
+        best.mark_committed(&held);
+        assert_eq!(best.next().unwrap().hash(), lowest.hash());
+        assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn discarded_transaction_held_at_the_source_is_not_promoted() {
+        let held = validity_transaction(
+            &PrivateKeySigner::random(),
+            U256::ZERO,
+            0,
+            100,
+            vec![balance_predicate()],
+        );
+        let mut best = ParkedBestTransactions::new(
+            StaticBestTransactions::new(Vec::new()),
+            BaseOrdering::coinbase_tip(),
+            0,
+        )
+        .with_held_at_source(vec![held_at_source(&held)], lookup_in(vec![Arc::clone(&held)]));
+
+        assert!(best.discard_parked(*held.hash(), InvalidPoolTransactionError::Underpriced));
+        assert!(!best.promote(*held.hash()));
+        assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn transaction_held_at_the_source_that_left_the_pool_is_not_promoted() {
+        let held = validity_transaction(
+            &PrivateKeySigner::random(),
+            U256::ZERO,
+            0,
+            100,
+            vec![balance_predicate()],
+        );
+        let mut best = ParkedBestTransactions::new(
+            StaticBestTransactions::new(Vec::new()),
+            BaseOrdering::coinbase_tip(),
+            0,
+        )
+        .with_held_at_source(vec![held_at_source(&held)], lookup_in(Vec::new()));
+
+        assert!(!best.promote(*held.hash()));
+        assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn transaction_readmitted_under_the_held_hash_is_not_promoted() {
+        let signer = PrivateKeySigner::random();
+        let held = validity_transaction(&signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
+        // The same signed transaction, admitted again later; its sidecar may differ.
+        let readmitted = Arc::new(ValidPoolTransaction {
+            transaction_id: held.transaction_id,
+            transaction: held.transaction.clone(),
+            propagate: true,
+            timestamp: held.timestamp + Duration::from_millis(1),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        });
+        assert_eq!(readmitted.hash(), held.hash());
+        let mut best = ParkedBestTransactions::new(
+            StaticBestTransactions::new(Vec::new()),
+            BaseOrdering::coinbase_tip(),
+            0,
+        )
+        .with_held_at_source(vec![held_at_source(&held)], lookup_in(vec![readmitted]));
+
+        assert!(!best.promote(*held.hash()));
         assert!(best.next().is_none());
     }
 

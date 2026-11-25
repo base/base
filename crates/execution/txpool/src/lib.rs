@@ -81,8 +81,8 @@ pub use ordering::{
 mod parking;
 pub use parking::{
     BestTransactionLane, BestTransactionLaneState, BestTransactionsHold, DormancyWake,
-    HOLD_INTERRUPT_INTERVAL, ParkableBestTransactions, ParkableTransactionPool,
-    ParkedBestTransactions, WokenLane,
+    HOLD_INTERRUPT_INTERVAL, HeldBestTransaction, HeldTransactionLookup, ParkableBestTransactions,
+    ParkableTransactionPool, ParkedBestTransactions, WokenLane,
 };
 
 mod pool;

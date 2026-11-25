@@ -41,10 +41,10 @@ use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, DormancyBuild,
-    DormancyWake, GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection,
-    MempoolGuard, ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions,
-    PoolStore, StateDiffInvalidation, UnixMillis, ValidityDormancyMode, ValidityPoolLimits,
-    ValidityPoolMetrics, WokenLane,
+    DormancyWake, GuardLimits, GuardMetrics, HeldBestTransaction, InvalidationCause,
+    InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
+    ParkableTransactionPool, ParkedBestTransactions, PoolStore, StateDiffInvalidation, UnixMillis,
+    ValidityDormancyMode, ValidityPoolLimits, ValidityPoolMetrics, WokenLane,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
         Bid, InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
@@ -1582,6 +1582,18 @@ where
         attributes: BestTransactionsAttributes,
         skip_dormant: bool,
     ) -> MergeBestTransactions<T, O> {
+        self.merged_best_transactions_holding(attributes, skip_dormant, None).0
+    }
+
+    /// [`Self::merged_best_transactions`] without the validity transactions `hold` holds, which
+    /// are returned for the caller to park; see
+    /// [`TwoDNoncePool::snapshot_lanes`].
+    fn merged_best_transactions_holding(
+        &self,
+        attributes: BestTransactionsAttributes,
+        skip_dormant: bool,
+        hold: Option<&mut dyn BestTransactionsHold<T>>,
+    ) -> (MergeBestTransactions<T, O>, Vec<HeldBestTransaction>) {
         let base_fee = attributes.basefee;
         // The lane bookkeeping the merge relies on (anchors, shared lanes) and
         // the lane stores' iterators are snapshotted under one pair of read
@@ -1596,7 +1608,7 @@ where
             let validity = self.validity.pool.read();
             (
                 sidecar.best_transactions(self.ordering.clone(), base_fee, false),
-                validity.best_transactions(self.ordering.clone(), base_fee, skip_dormant),
+                validity.snapshot_lanes(skip_dormant, hold.is_some()),
                 validity.lanes_ahead_of_state().clone(),
                 self.bridged_descendants(&sidecar, &validity),
             )
@@ -1604,7 +1616,8 @@ where
         // Reth hands back a boxed iterator of a private type, so it is boxed
         // once more as a `MergeSource`: one allocation per build.
         let protocol = self.protocol_pool.best_transactions_with_attributes(attributes);
-        MergeBestTransactions::new(
+        let (validity, held) = validity.rank(self.ordering.clone(), base_fee, hold);
+        let merged = MergeBestTransactions::new(
             Box::new(protocol),
             Box::new(sidecar),
             Box::new(validity),
@@ -1612,7 +1625,8 @@ where
             base_fee,
         )
         .with_external_anchors(anchors)
-        .with_bridged_descendants(bridged)
+        .with_bridged_descendants(bridged);
+        (merged, held)
     }
 
     /// For each validity lane that shares its nonce space with a standard
@@ -2438,11 +2452,18 @@ where
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
-        hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
+        mut hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
         dormancy: Option<&DormancyBuild>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
-        let mut merged = self.merged_best_transactions(attributes, dormancy.is_some());
+        // The validity snapshot sets aside the transactions the hold holds, so the iterator
+        // never ranks and yields them; the adapter still holds what reaches it through the
+        // merge, and fetches a set-aside transaction from the validity pool if it is promoted.
+        let (mut merged, held) = self.merged_best_transactions_holding(
+            attributes,
+            dormancy.is_some(),
+            hold.as_mut().map(|hold| &mut **hold as &mut dyn BestTransactionsHold<T>),
+        );
         // Snapshot every store, reth's included, so a transaction that arrives
         // mid-build waits for the next build instead of joining this one, unless
         // it follows a dormant transaction a commit wakes.
@@ -2451,11 +2472,15 @@ where
             let (pool, build) = (self.clone(), dormancy.id());
             Box::new(move |state: &EvmState| pool.wake_dormant(build, state)) as DormancyWake<T>
         });
-        Box::new(
-            ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee)
-                .with_hold(hold)
-                .with_dormancy_wake(wake),
-        )
+        let mut parked = ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee)
+            .with_hold(hold)
+            .with_dormancy_wake(wake);
+        if !held.is_empty() {
+            let validity = Arc::clone(&self.validity.pool);
+            parked =
+                parked.with_held_at_source(held, Box::new(move |hash| validity.read().get(hash)));
+        }
+        Box::new(parked)
     }
 
     fn begin_dormancy_build(
@@ -2937,8 +2962,8 @@ mod tests {
     use super::*;
     use crate::{
         BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
-        DEFAULT_MAX_VALIDITY_PREDICATES, LimitClass, NoExtensions, TransactionValidity,
-        ValidatedTransaction, ValidityOperator, ValidityPredicate, WatchSet,
+        DEFAULT_MAX_VALIDITY_PREDICATES, HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions,
+        TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate, WatchSet,
         is_already_imported_rejection,
     };
 
@@ -6830,6 +6855,281 @@ mod tests {
         assert_eq!(next, resting.into_iter().chain(late).collect(), "the next build takes them");
     }
 
+    /// Holds the validity transactions in `held`, recording every transaction it is asked about.
+    #[derive(Clone, Default)]
+    struct RecordingHold {
+        held: Arc<HashSet<TxHash>>,
+        asked: Arc<parking_lot::Mutex<Vec<TxHash>>>,
+    }
+
+    impl RecordingHold {
+        fn holding(held: impl IntoIterator<Item = TxHash>) -> Self {
+            Self { held: Arc::new(held.into_iter().collect()), asked: Arc::default() }
+        }
+
+        fn times_asked(&self, hash: TxHash) -> usize {
+            self.asked.lock().iter().filter(|asked| **asked == hash).count()
+        }
+    }
+
+    impl BestTransactionsHold<BasePooledTransaction> for RecordingHold {
+        fn hold(&mut self, transaction: &ValidPoolTransaction<BasePooledTransaction>) -> bool {
+            self.asked.lock().push(*transaction.hash());
+            self.held.contains(transaction.hash())
+        }
+
+        fn record_duration(&mut self, _duration: Duration) {}
+    }
+
+    /// A held validity transaction with nothing sequenced behind it is set aside while the pool
+    /// is snapshotted, so the iterator never yields it until it is promoted.
+    #[tokio::test]
+    async fn parking_iterator_sets_held_validity_transactions_aside_at_the_snapshot() {
+        let (pool, client) = build_integration_pool();
+        let [held_signer, free_signer, standard_signer] =
+            std::array::from_fn(|_| funded_signer(&client));
+        let held = add(&pool, validity_1559(&held_signer, 0, 900)).await;
+        let free = add(&pool, validity_1559(&free_signer, 0, 500)).await;
+        let standard = add(&pool, signed_1559_with_fees(&standard_signer, 0, 1_000, 100)).await;
+        let hold = RecordingHold::holding([held]);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            Some(Box::new(hold.clone())),
+            None,
+        );
+        assert_eq!(hold.times_asked(held), 1, "the snapshot asks before anything is yielded");
+        for expected in [free, standard] {
+            let transaction = build.next().expect("unheld transactions are yielded");
+            assert_eq!(*transaction.hash(), expected);
+            build.mark_committed(&transaction);
+        }
+        assert!(build.next().is_none(), "the held transaction is not yielded");
+        assert_eq!(hold.times_asked(held), 1, "a held transaction never reaches the iterator");
+
+        assert!(build.promote(held));
+        assert_eq!(build.next().map(|transaction| *transaction.hash()), Some(held));
+    }
+
+    #[tokio::test]
+    async fn snapshot_hold_does_not_block_store_writers() {
+        struct WriterProbe(IntegrationPool);
+        impl BestTransactionsHold<BasePooledTransaction> for WriterProbe {
+            fn hold(&mut self, _: &ValidPoolTransaction<BasePooledTransaction>) -> bool {
+                let _sidecar =
+                    self.0.sidecar.pool.try_write().expect("sidecar writer blocked by snapshot");
+                let _validity =
+                    self.0.validity.pool.try_write().expect("validity writer blocked by snapshot");
+                true
+            }
+
+            fn record_duration(&mut self, _: Duration) {}
+        }
+        let (pool, client) = build_integration_pool();
+        let hash = add(&pool, validity_1559(&funded_signer(&client), 0, 900)).await;
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            Some(Box::new(WriterProbe(pool.clone()))),
+            None,
+        );
+        assert!(build.promote(hash), "transaction was held before iteration");
+        assert_eq!(build.next().map(|tx| *tx.hash()), Some(hash));
+    }
+
+    /// A set-aside transaction is fetched from the pool when it is promoted, so one that left
+    /// the pool during the build stays out of it.
+    #[tokio::test]
+    async fn parking_iterator_does_not_promote_a_held_transaction_that_left_the_pool() {
+        let (pool, client) = build_integration_pool();
+        let held = add(&pool, validity_1559(&funded_signer(&client), 0, 900)).await;
+        let hold = RecordingHold::holding([held]);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            Some(Box::new(hold)),
+            None,
+        );
+        pool.remove_transactions(vec![held]);
+        assert!(!build.promote(held));
+        assert!(build.next().is_none());
+    }
+
+    /// A transaction admitted again under the hash of a set-aside one, here with another
+    /// sidecar, arrived after the snapshot and is not promoted into the build.
+    #[tokio::test]
+    async fn parking_iterator_does_not_promote_a_readmission_of_a_held_transaction() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let held = add(&pool, validity_1559(&signer, 0, 900)).await;
+        let hold = RecordingHold::holding([held]);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            Some(Box::new(hold)),
+            None,
+        );
+        pool.remove_transactions(vec![held]);
+        let other_sidecar = vec![ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::ZERO,
+        }];
+        let readmitted = add(
+            &pool,
+            signed_1559_with_fees(&signer, 0, 900, 900).with_validity_predicates(other_sidecar),
+        )
+        .await;
+        assert_eq!(readmitted, held, "the sidecar is not part of the hash");
+        assert!(!build.promote(held));
+        assert!(build.next().is_none());
+    }
+
+    /// A lane with pending descendants is not set aside at the snapshot: its head is held when
+    /// the iterator reaches it, and its descendant waits for the head to commit.
+    #[tokio::test]
+    async fn parking_iterator_holds_a_lane_with_descendants_when_it_reaches_it() {
+        let (pool, client) = build_integration_pool();
+        let [lane_signer, standard_signer] = std::array::from_fn(|_| funded_signer(&client));
+        let head = add(&pool, validity_1559(&lane_signer, 0, 900)).await;
+        let child = add(&pool, validity_1559(&lane_signer, 1, 800)).await;
+        let standard = add(&pool, signed_1559_with_fees(&standard_signer, 0, 1_000, 100)).await;
+        let hold = RecordingHold::holding([head]);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            Some(Box::new(hold.clone())),
+            None,
+        );
+        assert_eq!(hold.times_asked(head), 0, "the snapshot leaves the lane to the iterator");
+        let first = build.next().expect("the other lane is yielded");
+        assert_eq!(*first.hash(), standard);
+        build.mark_committed(&first);
+        assert!(build.next().is_none(), "nothing in the held lane is yielded");
+        assert_eq!(hold.times_asked(head), 1);
+        assert_eq!(
+            hold.times_asked(child),
+            0,
+            "a descendant behind a held head is not asked about"
+        );
+
+        assert!(build.promote(head));
+        let promoted = build.next().expect("the promoted head is yielded");
+        assert_eq!(*promoted.hash(), head);
+        assert!(build.next().is_none(), "the child waits for the head to commit");
+        build.mark_committed(&promoted);
+        assert_eq!(build.next().map(|transaction| *transaction.hash()), Some(child));
+    }
+
+    /// A validity transaction priced below the block's base fee is dropped by the merge, so the
+    /// snapshot does not hold it and nothing can promote it into the build.
+    #[tokio::test]
+    async fn parking_iterator_does_not_hold_an_underpriced_validity_transaction() {
+        let (pool, client) = build_integration_pool();
+        let underpriced = add(&pool, validity_1559(&funded_signer(&client), 0, 900)).await;
+        let hold = RecordingHold::holding([underpriced]);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(1_000, None),
+            Some(Box::new(hold.clone())),
+            None,
+        );
+        assert!(build.next().is_none());
+        assert_eq!(hold.times_asked(underpriced), 0);
+        assert!(!build.promote(underpriced));
+    }
+
+    /// Holds every validity transaction and reports its build as interrupted.
+    #[derive(Clone, Default)]
+    struct InterruptedHold {
+        held: Arc<parking_lot::Mutex<usize>>,
+    }
+
+    impl BestTransactionsHold<BasePooledTransaction> for InterruptedHold {
+        fn hold(&mut self, _transaction: &ValidPoolTransaction<BasePooledTransaction>) -> bool {
+            *self.held.lock() += 1;
+            true
+        }
+
+        fn record_duration(&mut self, _duration: Duration) {}
+
+        fn is_interrupted(&self) -> bool {
+            true
+        }
+    }
+
+    /// A build that stopped selecting does not pay for holding the rest of the pool: the
+    /// snapshot stops at the first interruption check.
+    #[tokio::test]
+    async fn parking_iterator_snapshot_stops_holding_once_its_build_is_interrupted() {
+        let (pool, client) = build_integration_pool();
+        for _ in 0..2 * HOLD_INTERRUPT_INTERVAL + 1 {
+            add(&pool, validity_1559(&funded_signer(&client), 0, 900)).await;
+        }
+        let hold = InterruptedHold::default();
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            Some(Box::new(hold.clone())),
+            None,
+        );
+        assert_eq!(*hold.held.lock(), HOLD_INTERRUPT_INTERVAL as usize);
+        assert!(build.next().is_none(), "the lanes the snapshot did not reach are not offered");
+    }
+
+    /// A held validity transaction whose lane continues a standard run stays behind that run:
+    /// it is parked only once the transaction in front of it has been yielded.
+    #[tokio::test]
+    async fn parking_iterator_holds_a_validity_successor_behind_its_standard_run() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let standard0 = add(&pool, signed_1559_with_fees(&signer, 0, 1_000, 1)).await;
+        let validity1 = add(
+            &pool,
+            signed_1559_with_fees(&signer, 1, 1_000, 900)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let hold = RecordingHold::holding([validity1]);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            Some(Box::new(hold.clone())),
+            None,
+        );
+        let first = build.next().expect("the standard predecessor is yielded");
+        assert_eq!(*first.hash(), standard0);
+        assert_eq!(hold.times_asked(validity1), 0, "the successor is not held ahead of its run");
+        build.mark_committed(&first);
+        assert!(build.next().is_none(), "the held successor is parked, not yielded");
+        assert_eq!(hold.times_asked(validity1), 1);
+
+        assert!(build.promote(validity1));
+        assert_eq!(build.next().map(|transaction| *transaction.hash()), Some(validity1));
+    }
+
+    /// A standard transaction queued behind a held validity transaction is released once that
+    /// transaction is promoted and commits, as when the validity transaction is not held.
+    #[tokio::test]
+    async fn parking_iterator_releases_the_standard_successor_of_a_promoted_validity_head() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let validity0 = add(&pool, validity_1559(&signer, 0, 900)).await;
+        let standard1 = add(&pool, signed_1559_with_fees(&signer, 1, 1_000, 1)).await;
+        let hold = RecordingHold::holding([validity0]);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            Some(Box::new(hold)),
+            None,
+        );
+        assert!(build.next().is_none(), "nothing in a held lane is yielded");
+
+        assert!(build.promote(validity0));
+        let promoted = build.next().expect("the promoted head is yielded");
+        assert_eq!(*promoted.hash(), validity0);
+        build.mark_committed(&promoted);
+        assert_eq!(build.next().map(|transaction| *transaction.hash()), Some(standard1));
+    }
+
     /// The reviewer's case: a validity successor that outbids the standard
     /// transaction in front of it must still come out behind it.
     #[tokio::test]
@@ -7415,6 +7715,26 @@ mod tests {
             let build = begin(&pool, 2);
             assert!(!offered(&pool, &build).contains(&parked));
             assert!(best_hashes(&pool).contains(&parked), "other snapshots offer it");
+        }
+
+        #[tokio::test]
+        async fn non_owning_build_can_hold_and_promote_a_dormant_root_independently() {
+            let (pool, client) = pool_dormancy_pool();
+            let signer = funded_signer(&client);
+            let hash = add(&pool, gated(signed_1559(&signer, 0), slot_is_one())).await;
+            seal(&pool, 1, &[(hash, slot_is_one())]);
+            let owner = begin(&pool, 2);
+            let hold = RecordingHold::holding([hash]);
+            let mut fallback = pool.best_transactions_with_attributes_and_parking(
+                BestTransactionsAttributes::new(0, None),
+                Some(Box::new(hold.clone())),
+                None,
+            );
+            assert_eq!(hold.times_asked(hash), 1, "the fallback snapshot used its own hold");
+            assert!(fallback.next().is_none());
+            assert!(fallback.promote(hash));
+            assert_eq!(commit_all(&mut fallback), vec![hash]);
+            assert!(offered(&pool, &owner).is_empty(), "still dormant for the owning build");
         }
 
         #[tokio::test]
