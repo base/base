@@ -449,6 +449,31 @@ impl StateSession {
             *self.observations.entry(format!("{name}: disk-full engine error")).or_default() += 1;
         }
         divergences.retain(|d| !explained.contains(&d.node));
+        // A node that could not open its datadir on the full disk (its startup heal failed) has
+        // exited; it starts again unarmed and must open intact.
+        for (index, node) in self.nodes.iter().enumerate() {
+            let proc = &mut self.procs[index];
+            if !explained.contains(&node.name) || proc.alive() {
+                continue;
+            }
+            *self
+                .observations
+                .entry(format!("{}: disk-full open failed", node.name))
+                .or_default() += 1;
+            proc.stop(true);
+            let started = proc.spawn(false).and_then(|()| proc.wait_ready(node));
+            if let Err(error) = started {
+                divergences.push(Divergence::new(
+                    "restart",
+                    &node.name,
+                    "start after a full disk",
+                    Some(self.tree.head().number),
+                    json!("answers JSON-RPC"),
+                    json!({ "error": format!("{error:#}") }),
+                ));
+                return divergences;
+            }
+        }
         let started = Instant::now();
         loop {
             let resync = self.forkchoice_resync(self.tree.head, "disk full");
