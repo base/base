@@ -218,18 +218,35 @@ impl StateCampaign {
                 *summary.ops.entry(op.name().to_owned()).or_default() += 1;
                 let mut divergences = session.run(op)?;
                 if divergences.is_empty() && !matches!(op, StateOp::Check { .. }) {
-                    divergences = session.check(1, rng.next_u64());
+                    divergences = session.check_recovering(1, rng.next_u64());
                 }
                 if divergences.iter().any(|d| !d.transient()) {
                     return Ok(divergences);
                 }
                 transient.extend(divergences);
             }
-            transient.extend(session.check(3, rng.next_u64()));
+            transient.extend(session.check_recovering(3, rng.next_u64()));
             Ok(transient)
         })();
         summary.blocks += session.blocks_built - built;
         let mut divergences = result?;
+        // An injected fault can crash a node that persists in the background after the last
+        // operation looked: recover it and check it again, as after any injected crash.
+        let crashed: Vec<String> = session
+            .procs
+            .iter_mut()
+            .filter_map(|proc| proc.injected_crash().map(|_| proc.name.clone()))
+            .collect();
+        if !crashed.is_empty() {
+            // What the crashed node answered while it was going down does not count.
+            divergences.retain(|d| !crashed.contains(&d.node));
+            if let Some(recovered) = session.recover_faults() {
+                divergences.extend(recovered);
+            }
+            if divergences.is_empty() {
+                divergences = session.check(3, rng.next_u64());
+            }
+        }
         // A node that died explains whatever else failed.
         for (index, proc) in session.procs.iter_mut().enumerate() {
             if !proc.alive() {

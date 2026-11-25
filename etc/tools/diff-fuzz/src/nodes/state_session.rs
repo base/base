@@ -1488,6 +1488,18 @@ impl StateSession {
         Ok(())
     }
 
+    /// [`Self::check`], recovering a node an injected fault crashed during the reads (a node
+    /// that persists in the background can crash at any time): what it answered while going
+    /// down is dropped, and the reads run again after its recovery.
+    pub fn check_recovering(&mut self, heights: u8, seed: u64) -> Vec<Divergence> {
+        let divergences = self.check(heights, seed);
+        match self.recover_faults() {
+            Some(recovered) if recovered.is_empty() => self.check(heights, seed),
+            Some(recovered) => recovered,
+            None => divergences,
+        }
+    }
+
     /// Replays `ops` from genesis on wiped nodes, with the campaign's checks after every
     /// operation, and returns the divergences of the first operation that has lasting ones, or
     /// else every transient one.
@@ -1498,7 +1510,7 @@ impl StateSession {
             let mut divergences = self.run(op)?;
             if divergences.is_empty() && !matches!(op, StateOp::Check { .. }) {
                 let seed = self.rng.next_u64();
-                divergences = self.check(1, seed);
+                divergences = self.check_recovering(1, seed);
             }
             if divergences.iter().any(|d| !d.transient()) {
                 return Ok(divergences);
@@ -1506,7 +1518,7 @@ impl StateSession {
             transient.extend(divergences);
         }
         let seed = self.rng.next_u64();
-        let divergences = self.check(3, seed);
+        let divergences = self.check_recovering(3, seed);
         if divergences.iter().any(|d| !d.transient()) {
             return Ok(divergences);
         }
