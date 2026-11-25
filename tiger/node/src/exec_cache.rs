@@ -9,8 +9,8 @@
 //! block, or a stateless (partial) datadir never sees it.
 //!
 //! It is bounded by entry counts (code by bytes), about twice base-reth's working set on Base
-//! mainnet (32k accounts, 0.5M slots, 5k codes); a full shard evicts an arbitrary entry. At its
-//! caps it holds about 8 MB of accounts, 100 MB of slots and 64 MiB of code.
+//! mainnet (32k accounts, 0.5M slots, 5k codes); a full shard evicts a batch of arbitrary
+//! entries. At its caps it holds about 8 MB of accounts, 100 MB of slots and 64 MiB of code.
 
 use std::{
     collections::HashMap,
@@ -41,13 +41,15 @@ struct Shard {
     code_bytes: usize,
 }
 
-/// Inserts into `map`, first evicting an arbitrary entry when it holds `cap` entries.
-fn bounded_insert<K: std::hash::Hash + Eq + Copy, V>(map: &mut HashMap<K, V>, cap: usize, key: K, value: V) {
-    if map.len() >= cap
-        && !map.contains_key(&key)
-        && let Some(evicted) = map.keys().next().copied()
-    {
-        map.remove(&evicted);
+/// Entries a full shard evicts at once. Each eviction scans the table from its start past the
+/// slots earlier evictions emptied, so evicting one entry per insert costs a full cache several
+/// times more per insert than a batch does.
+const EVICT_BATCH: usize = 64;
+
+/// Inserts into `map`, first evicting [`EVICT_BATCH`] arbitrary entries when it holds `cap`.
+fn bounded_insert<K: std::hash::Hash + Eq, V>(map: &mut HashMap<K, V>, cap: usize, key: K, value: V) {
+    if map.len() >= cap && !map.contains_key(&key) {
+        map.extract_if(|_, _| true).take(EVICT_BATCH).for_each(drop);
     }
     map.insert(key, value);
 }
@@ -189,7 +191,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
     use base_tiger_trie::{AccountInfo, BlockChanges};
 
-    use super::{ExecCache, MAX_ACCOUNTS, SHARDS};
+    use super::{EVICT_BATCH, ExecCache, MAX_ACCOUNTS, SHARDS};
 
     fn account(nonce: u64) -> Option<AccountInfo> {
         Some(AccountInfo { nonce, ..AccountInfo::default() })
@@ -257,6 +259,6 @@ mod tests {
         }
         let held: usize = cache.shards.iter().map(|shard| shard.lock().unwrap().accounts.len()).sum();
         assert!(held <= MAX_ACCOUNTS, "{held} accounts cached");
-        assert!(held > MAX_ACCOUNTS - SHARDS, "the cache fills: {held}");
+        assert!(held > MAX_ACCOUNTS - SHARDS * EVICT_BATCH, "the cache fills: {held}");
     }
 }
