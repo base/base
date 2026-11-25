@@ -54,6 +54,8 @@ pub struct RpcConfig {
     pub guided: bool,
     /// Percentage of guided requests that are fresh instead of mutants.
     pub explore_percent: u64,
+    /// Compare error messages and texts too (see [`RpcCompare::normalize`]).
+    pub strict_errors: bool,
 }
 
 /// Leaves a node out of the cases whose method and body match, written
@@ -430,7 +432,9 @@ impl RpcCampaign {
     ) -> RpcVerdict {
         let mut normalized: Vec<(String, Value)> = replies
             .iter()
-            .map(|(name, reply)| (name.clone(), RpcCompare::normalize(&case.method, reply)))
+            .map(|(name, reply)| {
+                (name.clone(), RpcCompare::normalize(&case.method, reply, config.strict_errors))
+            })
             .collect();
         let mut replies = replies.to_vec();
         let mut serving = serving.to_vec();
@@ -474,7 +478,7 @@ impl RpcCampaign {
             && failed.is_empty()
             && let Some(reference) = serving.first()
             && let again = reference.send(&case.body)
-            && RpcCompare::normalize(&case.method, &again) != normalized[0].1
+            && RpcCompare::normalize(&case.method, &again, config.strict_errors) != normalized[0].1
         {
             let mut s = summary.lock().expect("lock");
             s.requests += 1;
@@ -573,8 +577,13 @@ impl RpcCampaign {
                 serde_json::to_vec(&example).unwrap_or_default(),
             );
             if count == 1 && !serving.is_empty() && failed.is_empty() {
-                let (minimized, replies) =
-                    Self::minimize(case, serving, &signature, Self::MINIMIZE_BUDGET);
+                let (minimized, replies) = Self::minimize(
+                    case,
+                    serving,
+                    &signature,
+                    Self::MINIMIZE_BUDGET,
+                    config.strict_errors,
+                );
                 let example = json!({
                     "signature": signature,
                     "method": case.method,
@@ -1171,6 +1180,7 @@ impl RpcCampaign {
         serving: &[&NodeClient],
         signature: &str,
         budget: usize,
+        strict_errors: bool,
     ) -> (RpcCase, Vec<(String, Reply)>) {
         let send = |case: &RpcCase| -> Vec<(String, Reply)> {
             serving.iter().map(|n| (n.name.clone(), n.send(&case.body))).collect()
@@ -1203,7 +1213,9 @@ impl RpcCampaign {
                 let replies = send(&trial_case);
                 let normalized: Vec<(String, Value)> = replies
                     .iter()
-                    .map(|(name, reply)| (name.clone(), RpcCompare::normalize(&case.method, reply)))
+                    .map(|(name, reply)| {
+                        (name.clone(), RpcCompare::normalize(&case.method, reply, strict_errors))
+                    })
                     .collect();
                 let verdict = RpcVerdict::compare(&normalized);
                 if !verdict.agree && Self::signature(case, &verdict) == signature {
@@ -1493,7 +1505,7 @@ mod tests {
             ];
             let normalized: Vec<(String, Value)> = replies
                 .iter()
-                .map(|(n, r)| (n.clone(), RpcCompare::normalize(&case.method, r)))
+                .map(|(n, r)| (n.clone(), RpcCompare::normalize(&case.method, r, false)))
                 .collect();
             if RpcCampaign::simulate_encoding_only(case, &normalized) {
                 return Some((RpcCampaign::KNOWN_SIMULATE_HEADER, "all".to_owned()));

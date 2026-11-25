@@ -21,6 +21,9 @@
 //!    compared, and an object `error` (an `eth_simulateV1` call) loses its `message`.
 //! 8. A struct log's `"refund": 0`, empty `"memory": []` and empty `"returnData": "0x"` are
 //!    dropped: geth (and Nethermind) omit these empty fields, reth writes them.
+//!
+//! With `strict` (`--strict-errors`), rules 1 and 7 do not apply: error messages, every error
+//! `data`, and error texts inside results are compared as sent.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -104,7 +107,7 @@ pub struct RpcCompare;
 
 impl RpcCompare {
     /// Normalizes one node's reply to a request for `method` (see the module docs).
-    pub fn normalize(method: &str, reply: &Reply) -> Value {
+    pub fn normalize(method: &str, reply: &Reply, strict: bool) -> Value {
         match reply {
             Reply::Transport(text)
                 if text.starts_with("HTTP 2") && text.trim_end().ends_with(':') =>
@@ -115,19 +118,22 @@ impl RpcCompare {
             Reply::Transport(_) => json!({ "transport": true }),
             Reply::Body(Value::Array(items)) => {
                 let mut items: Vec<Value> =
-                    items.iter().map(|item| Self::envelope(method, item)).collect();
+                    items.iter().map(|item| Self::envelope(method, item, strict)).collect();
                 items.sort_by_key(|item| item.get("id").map(Value::to_string).unwrap_or_default());
                 Value::Array(items)
             }
-            Reply::Body(body) => Self::envelope(method, body),
+            Reply::Body(body) => Self::envelope(method, body, strict),
         }
     }
 
-    fn envelope(method: &str, body: &Value) -> Value {
+    fn envelope(method: &str, body: &Value, strict: bool) -> Value {
         let Value::Object(object) = body else { return body.clone() };
         let mut out = Map::new();
         for (key, value) in object {
             match key.as_str() {
+                "error" if strict => {
+                    out.insert(key.clone(), value.clone());
+                }
                 "error" => {
                     let mut error = Map::new();
                     if let Some(code) = value.get("code") {
@@ -155,7 +161,7 @@ impl RpcCompare {
                         Self::drop_timings(&mut result);
                     }
                     Self::integral_floats(&mut result);
-                    Self::error_texts(&mut result);
+                    Self::error_texts(&mut result, strict);
                     out.insert(key.clone(), result);
                 }
                 _ => {
@@ -182,10 +188,10 @@ impl RpcCompare {
         }
     }
 
-    fn error_texts(value: &mut Value) {
+    fn error_texts(value: &mut Value, strict: bool) {
         match value {
             Value::Object(object) => {
-                match object.get_mut("error") {
+                match object.get_mut("error").filter(|_| !strict) {
                     Some(text @ Value::String(_)) => *text = json!("<error>"),
                     Some(Value::Object(error)) => {
                         error.remove("message");
@@ -201,9 +207,9 @@ impl RpcCompare {
                         }
                     }
                 }
-                object.values_mut().for_each(Self::error_texts);
+                object.values_mut().for_each(|v| Self::error_texts(v, strict));
             }
-            Value::Array(items) => items.iter_mut().for_each(Self::error_texts),
+            Value::Array(items) => items.iter_mut().for_each(|v| Self::error_texts(v, strict)),
             _ => {}
         }
     }
@@ -306,7 +312,7 @@ mod tests {
         let c = Reply::Body(
             json!({"jsonrpc":"2.0","id":1,"error":{"code":3,"message":"execution reverted","data":"0x02"}}),
         );
-        let n = |r| RpcCompare::normalize("eth_call", r);
+        let n = |r| RpcCompare::normalize("eth_call", r, false);
         let verdict =
             RpcVerdict::compare(&[("a".into(), n(&a)), ("b".into(), n(&b)), ("c".into(), n(&c))]);
         assert_eq!(
@@ -316,8 +322,22 @@ mod tests {
         assert_eq!(verdict.differences.len(), 1);
         assert_eq!(verdict.differences[0].1[0].path, "error.data");
 
+        // Strict comparison tells the messages apart, and a non-hex data string too.
+        let s = |r| RpcCompare::normalize("eth_call", r, true);
+        let d = Reply::Body(
+            json!({"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params","data":"No more params"}}),
+        );
+        let e = Reply::Body(
+            json!({"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params"}}),
+        );
+        let strict =
+            RpcVerdict::compare(&[("a".into(), s(&a)), ("b".into(), s(&b)), ("d".into(), s(&d))]);
+        assert_eq!(strict.groups.len(), 3);
+        assert!(RpcVerdict::compare(&[("d".into(), n(&d)), ("e".into(), n(&e))]).agree);
+        assert!(!RpcVerdict::compare(&[("d".into(), s(&d)), ("e".into(), s(&e))]).agree);
+
         // In a result, an error text is compared only by its presence.
-        let n = |r| RpcCompare::normalize("debug_traceTransaction", &Reply::Body(r));
+        let n = |r| RpcCompare::normalize("debug_traceTransaction", &Reply::Body(r), false);
         let oog = n(json!({"id":1,"result":{"calls":[{"error":"out of gas"}]}}));
         let other = n(json!({"id":1,"result":{"calls":[{"error":"max initcode size exceeded"}]}}));
         let none = n(json!({"id":1,"result":{"calls":[{}]}}));
@@ -352,13 +372,13 @@ mod tests {
     fn batches_compare_in_id_order() {
         let a = Reply::Body(json!([{"id":1,"result":"0x1"},{"id":2,"result":"0x2"}]));
         let b = Reply::Body(json!([{"id":2,"result":"0x2"},{"id":1,"result":"0x1"}]));
-        let n = |r| RpcCompare::normalize("eth_chainId", r);
+        let n = |r| RpcCompare::normalize("eth_chainId", r, false);
         assert!(RpcVerdict::compare(&[("a".into(), n(&a)), ("b".into(), n(&b))]).agree);
     }
 
     #[test]
     fn integral_floats_equal_integers_but_fractions_differ() {
-        let n = |r| RpcCompare::normalize("eth_feeHistory", &Reply::Body(r));
+        let n = |r| RpcCompare::normalize("eth_feeHistory", &Reply::Body(r), false);
         let zero = n(json!({"id":1,"result":{"blobGasUsedRatio":[0.0, 0.5]}}));
         let int = n(json!({"id":1,"result":{"blobGasUsedRatio":[0, 0.5]}}));
         let other = n(json!({"id":1,"result":{"blobGasUsedRatio":[0, 0.25]}}));

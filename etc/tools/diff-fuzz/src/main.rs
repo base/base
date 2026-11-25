@@ -394,6 +394,11 @@ enum Command {
         /// Percentage of guided requests that are fresh generator requests instead of mutants.
         #[arg(long, default_value_t = 40)]
         explore: u64,
+        /// Compare error messages and every error `data` too, and error texts inside results
+        /// (see the `nodes::compare` module docs); for a client that must match the reference
+        /// exactly.
+        #[arg(long)]
+        strict_errors: bool,
     },
     /// Differential state fuzzing: every node follows synthetic chain `seed` with state-stress
     /// traffic through extensions, reorgs, restarts, and wrong-root blocks, and reads its state
@@ -615,6 +620,7 @@ fn main() -> eyre::Result<()> {
             coverage_from,
             unguided,
             explore,
+            strict_errors,
         } => {
             fs::create_dir_all(&out)?;
             let _ = fs::remove_file(out.join("payloads.jsonl"));
@@ -650,6 +656,7 @@ fn main() -> eyre::Result<()> {
                 coverage_from,
                 guided: !unguided,
                 explore_percent: explore,
+                strict_errors,
             };
             let summary = RpcCampaign::run(&mut follower, &config)?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
