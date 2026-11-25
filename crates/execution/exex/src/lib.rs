@@ -11,22 +11,26 @@ mod sync_target;
 use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::BlockHeader;
-use alloy_eips::eip1898::BlockWithParent;
+use alloy_eips::{NumHash, eip1898::BlockWithParent};
 #[cfg(feature = "metrics")]
 use base_execution_trie::BaseProofsStore;
 use base_execution_trie::{
     BaseProofStoragePrunerTask, BaseProofsBatchStore, BaseProofsStorage,
     live::{BatchBlock, LiveTrieCollector},
     metrics::BlockMetrics,
+    proof::DatabaseStateRoot,
 };
 use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
-use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
+use reth_provider::{
+    BlockHashReader, BlockNumReader, BlockReader, HeaderProvider, TransactionVariant,
+};
+use reth_trie::{HashedPostState, StateRoot};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Default safety threshold for the gap between stored earliest block and the configured
 /// window target. When exceeded on startup, the node refuses to auto-prune and asks the
@@ -232,6 +236,7 @@ where
     /// Main execution loop for the `ExEx`
     pub async fn run(mut self) -> eyre::Result<()> {
         self.ensure_initialized()?;
+        self.reconcile_with_canonical_chain()?;
         let sync_target = self.spawn_sync_task();
 
         // If storage is behind tip, start syncing immediately rather than waiting
@@ -309,6 +314,73 @@ where
         // can show outdated info. When metrics are disabled, this is a no-op.
         BlockMetrics::earliest_number().set(earliest_block_number as f64);
 
+        Ok(())
+    }
+
+    /// Unwinds stored history that may sit on a branch the chain abandoned while the node was
+    /// down.
+    ///
+    /// The `ExEx` writes blocks from `ChainCommitted` notifications, which reth emits before it
+    /// persists those blocks. After an unclean stop the store can therefore hold blocks above the
+    /// node's persisted tip, and the chain may have moved to another branch before they are seen
+    /// again. The store only records the hash of its tip, so the fork point cannot be located:
+    /// when the tip is not canonical, everything above the persisted tip is unwound and synced
+    /// again from the canonical chain. Reth's own `ExEx` head reconciliation does not cover this
+    /// because notifications are consumed without a head.
+    ///
+    /// Stored blocks at or below the persisted tip can also be stale when a reorg was received
+    /// but not yet applied by the sync task before the stop. The unwind therefore only proceeds
+    /// when the stored state root at the persisted tip matches the canonical header; otherwise the
+    /// fork point is unknown and the operator must unwind manually.
+    fn reconcile_with_canonical_chain(&self) -> eyre::Result<()> {
+        let Some((latest, latest_hash)) = self.storage.get_latest_block_number()? else {
+            return Ok(());
+        };
+        let provider = self.ctx.provider();
+        if provider.block_hash(latest)? == Some(latest_hash) {
+            return Ok(());
+        }
+
+        let unwind_required = || {
+            eyre::eyre!(
+                "Proofs storage tip {latest} ({latest_hash}) is not on the canonical chain. \
+                 Please run 'base-reth-node proofs unwind --target <BLOCK>' with a block at or \
+                 below the fork point before starting the node."
+            )
+        };
+        let persisted = provider.last_block_number()?;
+        if latest <= persisted {
+            return Err(unwind_required());
+        }
+
+        let persisted_header = provider
+            .sealed_header(persisted)?
+            .ok_or_else(|| eyre::eyre!("Missing header of persisted block {persisted}"))?;
+        let stored_root =
+            StateRoot::overlay_root(&self.storage, persisted, HashedPostState::default())?;
+        if stored_root != persisted_header.state_root() {
+            error!(
+                target: "base::exex",
+                persisted,
+                stored_root = %stored_root,
+                canonical_root = %persisted_header.state_root(),
+                "Proofs storage state at the persisted tip is not canonical"
+            );
+            return Err(unwind_required());
+        }
+
+        warn!(
+            target: "base::exex",
+            latest,
+            latest_hash = %latest_hash,
+            persisted,
+            "Proofs storage tip is not canonical, unwinding to the persisted tip"
+        );
+        // Unwinding reads only the number and parent hash of the first block it removes.
+        self.storage.unwind_history(BlockWithParent::new(
+            persisted_header.hash(),
+            NumHash::new(persisted + 1, Default::default()),
+        ))?;
         Ok(())
     }
 
@@ -708,13 +780,15 @@ mod tests {
 
     use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
+    use alloy_genesis::Genesis;
     use base_execution_trie::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
+    use reth_chainspec::ChainSpecBuilder;
     use reth_db::test_utils::tempdir_path;
     use reth_ethereum_primitives::{Block, Receipt};
     use reth_execution_types::{Chain, ExecutionOutcome};
-    use reth_primitives_traits::RecoveredBlock;
+    use reth_primitives_traits::{Account, RecoveredBlock};
     use reth_trie::{
         HashedPostStateSorted, LazyTrieData, SortedTrieData, updates::TrieUpdatesSorted,
     };
@@ -1016,6 +1090,127 @@ mod tests {
 
         let exex = build_test_exex(ctx, proofs.clone());
         exex.ensure_initialized().expect("should not return error");
+    }
+
+    /// Test context whose genesis has no accounts, so its state root matches an empty store.
+    async fn empty_genesis_exex_context()
+    -> (ExExContext<reth_exex_test_utils::Adapter>, reth_exex_test_utils::TestExExHandle) {
+        let chain_spec = Arc::new(ChainSpecBuilder::mainnet().genesis(Genesis::default()).build());
+        reth_exex_test_utils::test_exex_context_with_chain_spec(chain_spec)
+            .await
+            .expect("exex test context")
+    }
+
+    /// Stores genesis as the earliest block, optionally with one account in its state, followed
+    /// by blocks `1..=5` that the node does not know.
+    fn init_storage_at<S: BaseProofsStore>(
+        storage: &BaseProofsStorage<S>,
+        genesis: BlockNumHash,
+        account: Option<Account>,
+    ) {
+        let mut diff = BlockStateDiff::default();
+        if let Some(account) = account {
+            diff.sorted_post_state = HashedPostState::default()
+                .with_accounts([(b256(0xaa), Some(account))])
+                .into_sorted();
+        }
+        storage.set_earliest_block_number(genesis.number, genesis.hash).expect("set earliest");
+        storage
+            .store_trie_updates(BlockWithParent::new(genesis.hash, genesis), diff)
+            .expect("store trie update");
+        let mut parent = genesis.hash;
+        for n in 1..=5 {
+            storage
+                .store_trie_updates(
+                    BlockWithParent::new(parent, BlockNumHash::new(n, hash_for_num(n))),
+                    BlockStateDiff::default(),
+                )
+                .expect("store trie update");
+            parent = hash_for_num(n);
+        }
+    }
+
+    #[tokio::test]
+    async fn reconcile_unwinds_blocks_above_persisted_tip() {
+        let dir = tempdir_path();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
+
+        // The node has only persisted genesis; blocks 1..=5 were stored from notifications
+        // before an unclean stop.
+        let (ctx, handle) = empty_genesis_exex_context().await;
+        let genesis = handle.genesis.num_hash();
+        init_storage_at(&proofs, genesis, None);
+
+        let exex = build_test_exex(ctx, proofs.clone());
+        exex.reconcile_with_canonical_chain().expect("reconcile");
+
+        let latest = proofs.get_latest_block_number().expect("get latest").expect("ok");
+        assert_eq!(latest, (genesis.number, genesis.hash));
+    }
+
+    #[tokio::test]
+    async fn reconcile_errors_on_stale_state_below_persisted_tip() {
+        let dir = tempdir_path();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
+
+        // Blocks above the persisted tip are unknown, and the stored state at the persisted tip
+        // differs from the canonical genesis, as when a reorg was queued but not applied.
+        let (ctx, handle) = empty_genesis_exex_context().await;
+        let genesis = handle.genesis.num_hash();
+        let account = Account { nonce: 1, ..Default::default() };
+        init_storage_at(&proofs, genesis, Some(account));
+
+        let exex = build_test_exex(ctx, proofs.clone());
+        let err = exex.reconcile_with_canonical_chain().expect_err("should return error");
+        assert!(err.to_string().contains("not on the canonical chain"), "{err}");
+
+        let latest = proofs.get_latest_block_number().expect("get latest").expect("ok");
+        assert_eq!(latest, (5, hash_for_num(5)));
+    }
+
+    #[tokio::test]
+    async fn reconcile_keeps_canonical_tip() {
+        let dir = tempdir_path();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
+
+        let (ctx, handle) =
+            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+        let genesis = handle.genesis.num_hash();
+        proofs.set_earliest_block_number(genesis.number, genesis.hash).expect("set earliest");
+        proofs
+            .store_trie_updates(
+                BlockWithParent::new(genesis.hash, genesis),
+                BlockStateDiff::default(),
+            )
+            .expect("store trie update");
+
+        let exex = build_test_exex(ctx, proofs.clone());
+        exex.reconcile_with_canonical_chain().expect("reconcile");
+
+        let latest = proofs.get_latest_block_number().expect("get latest").expect("ok");
+        assert_eq!(latest, (genesis.number, genesis.hash));
+    }
+
+    #[tokio::test]
+    async fn reconcile_errors_on_non_canonical_persisted_tip() {
+        let dir = tempdir_path();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
+
+        // Stored block 0 has a different hash than the node's persisted genesis.
+        init_storage(proofs.clone());
+
+        let (ctx, _handle) =
+            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+        let exex = build_test_exex(ctx, proofs.clone());
+        let err = exex.reconcile_with_canonical_chain().expect_err("should return error");
+        assert!(err.to_string().contains("not on the canonical chain"), "{err}");
+
+        let latest = proofs.get_latest_block_number().expect("get latest").expect("ok");
+        assert_eq!(latest, (0, b256(0x00)));
     }
 
     #[tokio::test]

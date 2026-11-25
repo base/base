@@ -70,6 +70,17 @@ debug_proofsSyncStatus → { "earliest": <block>, "latest": <block> }
 Once `latest` tracks the chain tip, `eth_getProof` calls for every block within
 `[earliest, latest]` will be served from the versioned store.
 
+## Restarting After an Unclean Stop
+
+The `ExEx` stores blocks as soon as reth commits them to the canonical chain, before reth
+persists them, so after an OOM kill, `SIGKILL`, or host crash the store can be ahead of the
+node's database and on a branch the chain has since abandoned. On startup, if the stored tip is
+not canonical, the `ExEx` unwinds everything above the node's persisted tip and syncs it again,
+provided the stored state root at the persisted tip matches the canonical header. If the stored
+state at or below the persisted tip is not canonical (for example, a reorg was received but not
+yet applied before the stop), the `ExEx` refuses to start and asks for a manual `proofs unwind`,
+because the fork point cannot be determined.
+
 ## Operational Commands
 
 **Prune** — manually remove old proof history to reclaim space:
