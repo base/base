@@ -119,7 +119,7 @@ base_metrics::define_metrics! {
     )]
     native_payload_execution_duration: histogram,
     #[describe(
-        "Time from the end of transaction execution until the native payload is sealed, including the state root, in seconds"
+        "Total native payload build time minus execution time, including state-root work and other post-execution work, in seconds"
     )]
     native_payload_state_root_duration: histogram,
     #[describe(
@@ -128,7 +128,7 @@ base_metrics::define_metrics! {
     #[label(name = "result", default = ["delivered", "no_receiver"])]
     payload_ready_hints_sent_total: counter,
     #[describe(
-        "Time from the end of transaction execution until a composed block is sealed, including the state root, in seconds, by how the state root was computed"
+        "Time from just before handling the state-root job (if any) through block finalization in `builder.finish`, in seconds, by how the state root was computed"
     )]
     #[label(name = "source", default = ["task", "synchronous", "task_fallback"])]
     sealed_block_state_root_duration: histogram,

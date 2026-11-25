@@ -39,13 +39,17 @@ The observation joins the block's state-root time to what drove it, so resource 
 calibrated against builder state-root cost:
 
 - block number, hash, transaction count, and gas used;
-- state-root time from the end of execution to the sealed block, the part of it spent waiting on
-  the parallel state-root job, and how the root was computed (`task`, `synchronous`, or
+- state-root time from just before handling the state-root job (if any) through `builder.finish`,
+  time spent waiting on the job, and how the root was computed (`task`, `synchronous`, or
   `task_fallback`);
 - hashed post-state sizes: accounts, storages, total slots, and the account with the most changed
   slots (unhashed address and slot count);
 - trie update sizes: account nodes, storage tries, storage nodes, and removed nodes;
 - the block's usage of each resource-metering dimension, when metering is active.
+
+The existing `native_payload_state_root_duration` measures total native build time minus execution
+time, including post-execution work outside this interval. Its canary measurements provide an
+indirect comparison, not a measured warning rate for the new timer.
 
 Replayed `no_tx_pool` blocks are not observed. The builder calls `SealedBlockObservation::log` and
 `BuilderMetrics::record_sealed_block` once per sealed block. The counts iterate the block's maps

@@ -13,8 +13,9 @@ use crate::ResourceMeteringDimension;
 /// State-root time at or above which a sealed block's observation logs at `warn` instead of
 /// `debug`.
 ///
-/// A warning marks a rare stall on the Mainnet native builder canary: no observed block reached
-/// 50 ms over a 24-hour sample of about one million blocks, and the maximum was about 15 ms.
+/// A warning is intended to flag a rare stall. The Mainnet builder canary's broader
+/// build-minus-execution metric stayed below 50 ms across about one million build timing samples
+/// in 24 hours (maximum about 15 ms). This is an indirect comparison, not a measured warning rate.
 /// About 1–2% of sampled follower validation timings reached 50 ms; those are not builder timings.
 pub const SLOW_BLOCK_STATE_ROOT: Duration = Duration::from_millis(50);
 
@@ -47,7 +48,7 @@ pub struct StateRootTiming {
     pub source: StateRootSource,
     /// Time blocked on the state-root job after execution; zero without a job.
     pub wait: Duration,
-    /// Time from the end of transaction execution until the block was sealed. Includes
+    /// Time from just before handling the state-root job through `builder.finish`. Includes
     /// [`Self::wait`], hashing the post-state, any synchronous state root, and block assembly.
     pub total: Duration,
 }
