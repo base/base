@@ -72,7 +72,7 @@ base_metrics::define_metrics! {
     resting_predicate_carry_resets_total: counter,
     #[describe("Resting validity transactions parked in the transaction iterator without reaching the build loop")]
     resting_predicate_parked_total: counter,
-    #[describe("Time one native block build's transaction iterator spent advancing past held resting validity transactions, in seconds")]
+    #[describe("Time one native block build spent holding back resting validity transactions, in its pool snapshot and its transaction iterator, in seconds")]
     resting_predicate_hold_duration: histogram,
     #[describe("Resting validity transactions whose predicates matched when evaluated in shadow mode")]
     resting_predicate_shadow_mismatches_total: counter,
@@ -182,8 +182,8 @@ impl ValidityMetrics {
         Self::resting_predicate_sweep_duration().record(duration.as_secs_f64());
     }
 
-    /// Records the time one native block build's transaction iterator spent advancing past held
-    /// resting validity transactions.
+    /// Records the time one native block build spent holding back resting validity
+    /// transactions, in its pool snapshot and its transaction iterator.
     pub fn record_resting_hold_duration(duration: Duration) {
         Self::resting_predicate_hold_duration().record(duration.as_secs_f64());
     }
