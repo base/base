@@ -418,15 +418,16 @@ impl StateSession {
         result.map(|divergences| self.recover_disk_full(divergences))
     }
 
-    /// Error text of a write that failed because the disk is full (ENOSPC).
-    pub const DISK_FULL_ERROR: &str = "os error 28";
+    /// Error text of a write that failed because the disk is full: ENOSPC's strerror, which
+    /// both an io error ("os error 28") and an mdbx error ("mdbx error 28") carry.
+    pub const DISK_FULL_ERROR: &str = "No space left on device";
     /// How long a node may take to accept the head again after an injected full disk.
     pub const DISK_FULL_RECOVERY: Duration = Duration::from_secs(60);
 
-    /// Handles the Engine API errors an injected full disk explains. A node whose current run
-    /// printed tiger's full-disk line and that answered with the disk error ("os error 28")
-    /// had its divergences in this operation dropped, as the disk error explains them; then the
-    /// head's forkchoice is resent until every node takes it or [`Self::DISK_FULL_RECOVERY`]
+    /// Handles the Engine API errors an injected full disk explains. For each node whose current
+    /// run printed tiger's full-disk line and that answered with the disk error, the disk error
+    /// explains its divergences in this operation, so they are dropped; then the head's
+    /// forkchoice is resent until every node takes it or [`Self::DISK_FULL_RECOVERY`]
     /// passes, and what still diverges after that is returned.
     pub fn recover_disk_full(&mut self, mut divergences: Vec<Divergence>) -> Vec<Divergence> {
         let explained: Vec<String> = self
