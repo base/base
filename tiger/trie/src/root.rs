@@ -15,7 +15,7 @@ use alloy_trie::{
 use base_tiger_store::{Account, Datadir, Db, Ro, Txn};
 
 use crate::{
-    AccountTrieCursor, HashedAccountCursor, HashedCursor, HashedState, HashedStorage, HashedStorageCursor, MemState,
+    AccountTrieCursor, HashedAccountCursor, HashedCursor, HashedState, HashedStorage, HashedStorageCursor, LiveSource, MemState,
     OverlayCursor, PrefixSet, StorageTrieCursor, StorageTrieUpdates, TrieCursor, TrieElement, TrieError, TrieNodeIter,
     TrieOverlayCursor, TrieUpdates, TrieWalker, account_leaf, nibble_keys, storage_leaf,
 };
@@ -541,6 +541,60 @@ impl<'t> TrieView<'t, Ro> {
     }
 }
 
+/// The smallest key under the nibble path `prefix`.
+fn key_floor(prefix: &Nibbles) -> B256 {
+    let mut key = [0u8; 32];
+    for (i, nibble) in prefix.to_vec().into_iter().enumerate() {
+        key[i / 2] |= if i % 2 == 0 { nibble << 4 } else { nibble };
+    }
+    B256::from(key)
+}
+
+/// A view's state as a [`crate::LiveTrie`] source: its stored rows and flat leaves with the
+/// in-memory layer and the view's changes on top.
+impl<K> LiveSource for TrieView<'_, K> {
+    fn branch(&mut self, owner: Option<B256>, path: &Nibbles) -> Result<Option<BranchNodeCompact>, TrieError> {
+        Ok(self.first_branch_under(owner, path)?.filter(|(p, _)| p == path).map(|(_, node)| node))
+    }
+
+    fn first_branch_under(&mut self, owner: Option<B256>, prefix: &Nibbles) -> Result<Option<(Nibbles, BranchNodeCompact)>, TrieError> {
+        let found = match owner {
+            None => {
+                let mem = self.mem.map(|m| &m.trie.account_nodes);
+                TrieOverlayCursor::new(AccountTrieCursor::new(self.txn, self.db)?, mem).seek(*prefix)?
+            }
+            Some(address) => {
+                let wiped = self.state.storages.get(&address).is_some_and(|s| s.wiped);
+                self.storage_trie_cursor(address, wiped)?.seek(*prefix)?
+            }
+        };
+        Ok(found.filter(|(path, _)| path.starts_with(prefix)))
+    }
+
+    fn leaves(&mut self, owner: Option<B256>, prefix: &Nibbles, out: &mut Vec<(B256, Vec<u8>)>) -> Result<(), TrieError> {
+        let under = |key: &B256| Nibbles::unpack(*key).starts_with(prefix);
+        match owner {
+            None => {
+                let mut cursor = self.account_cursor()?;
+                let mut entry = cursor.seek(key_floor(prefix))?;
+                while let Some((key, account)) = entry.filter(|(k, _)| under(k)) {
+                    out.push((key, account_leaf(&account, self.storage_root(key)?)));
+                    entry = cursor.next()?;
+                }
+            }
+            Some(address) => {
+                let mut cursor = self.storage_cursor(address)?;
+                let mut entry = cursor.seek(key_floor(prefix))?;
+                while let Some((slot, value)) = entry.filter(|(k, _)| under(k)) {
+                    out.push((slot, storage_leaf(value)));
+                    entry = cursor.next()?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -550,7 +604,7 @@ mod tests {
     use base_tiger_store::{Table, TrieCodec};
 
     use super::*;
-    use crate::{MemState, StateWriter};
+    use crate::{LiveState, MemState, Sources, StateWriter};
 
     /// splitmix64.
     struct Rng(u64);
@@ -645,6 +699,37 @@ mod tests {
         nodes
     }
 
+    /// Checks that `live` trie updates do what the walker's `walker` do over `txn`'s stored trie:
+    /// the same storage tries with the same wipes, and node changes that are the walker's minus
+    /// rewrites of rows that do not change (the walker rewrites every stored node it walks
+    /// through, the live trie only the ones that change).
+    fn assert_same_effect<K>(txn: &Txn<K>, db: &Db, live: &TrieUpdates, walker: &TrieUpdates, at: &str) {
+        let check = |owner: Option<B256>,
+                     live: &BTreeMap<Nibbles, Option<alloy_trie::BranchNodeCompact>>,
+                     walker: &BTreeMap<Nibbles, Option<alloy_trie::BranchNodeCompact>>,
+                     wiped: bool| {
+            for (path, node) in live {
+                assert_eq!(walker.get(path), Some(node), "{at}: {owner:?} row {path:?} only in the live updates");
+            }
+            for (path, node) in walker {
+                if live.contains_key(path) {
+                    continue;
+                }
+                let empty = HashedState::default();
+                let mut source = TrieView::new(txn, db, &empty);
+                let stored = if wiped { None } else { LiveSource::branch(&mut source, owner, path).unwrap() };
+                assert_eq!(node.as_ref(), stored.as_ref(), "{at}: {owner:?} row {path:?} changed only by the walker");
+            }
+        };
+        check(None, &live.account_nodes, &walker.account_nodes, false);
+        assert_eq!(live.storage_tries.keys().collect::<Vec<_>>(), walker.storage_tries.keys().collect::<Vec<_>>(), "{at}: storage tries");
+        for (address, trie) in &walker.storage_tries {
+            let ours = &live.storage_tries[address];
+            assert_eq!(ours.wiped, trie.wiped, "{at}: wipe of {address}");
+            check(Some(*address), &ours.nodes, &trie.nodes, trie.wiped);
+        }
+    }
+
     #[test]
     fn incremental_roots_nodes_and_proofs_match_a_from_scratch_model() {
         for seed in 0..12u64 {
@@ -652,6 +737,7 @@ mod tests {
             let (dir, db) = temp_db(&format!("model-{seed}"));
             let mut model = Model::new();
             let mut keys: Vec<B256> = Vec::new();
+            let mut live = LiveState::default();
             for block in 0..30 {
                 let mut state = HashedState::default();
                 let mut next = model.clone();
@@ -712,6 +798,15 @@ mod tests {
                 let mut txn = db.write().unwrap();
                 let (root, updates) = TrieView::new(&txn, &db, &state).state_root(true).unwrap();
                 assert_eq!(root, model_root(&model), "seed {seed} block {block}");
+                // The trie kept in memory across blocks (dropped now and then) gives the same.
+                if rng.below(8) == 0 {
+                    live = LiveState::default();
+                }
+                let parent = HashedState::default();
+                let mut source = TrieView::new(&txn, &db, &parent);
+                let (live_root, live_updates) = live.apply(&mut Sources::Local(&mut source), &state).unwrap();
+                assert_eq!(live_root, root, "seed {seed} block {block}: live root");
+                assert_same_effect(&txn, &db, &live_updates, &updates, &format!("seed {seed} block {block}"));
                 assert_eq!(parallel, (root, updates.clone()), "parallel: seed {seed} block {block}");
                 StateWriter::write_hashed_state(&mut txn, &db, &state).unwrap();
                 StateWriter::write_trie_updates(&mut txn, &db, &updates).unwrap();

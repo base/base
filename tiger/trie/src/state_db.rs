@@ -25,7 +25,8 @@ use base_tiger_store::{
 use alloy_rlp::Decodable;
 
 use crate::{
-    AccountProof, DbNodes, EMPTY_ROOT, HashedState, HashedStorage, PARTIAL_ROOT_KEY, ProofNodes, Recording, SparseTrie,
+    AccountProof, DbNodes, EMPTY_ROOT, HashedState, HashedStorage, LiveBase, LiveSession, LiveSlot, PARTIAL_ROOT_KEY, ProofNodes,
+    Recording, SparseTrie,
     PartialState, StateTries, StateWriter, TrieError, TrieUpdates, TrieView, hash_key,
 };
 
@@ -251,6 +252,13 @@ pub struct StateDb {
     /// The datadir.
     pub datadir: Datadir,
     partial: bool,
+    /// The trie kept in memory across blocks for the next block's root (full state only).
+    live: std::sync::Arc<std::sync::Mutex<LiveSlot>>,
+    /// Whether roots use the live trie (`TIGER_LIVE_ROOT=0` turns it off, for comparisons).
+    live_enabled: bool,
+    /// Whether every live root is checked against the walker (`TIGER_LIVE_ROOT=check`), which
+    /// panics on a difference.
+    live_check: bool,
 }
 
 impl StateDb {
@@ -258,7 +266,9 @@ impl StateDb {
     pub fn open(path: &std::path::Path) -> Result<Self, TrieError> {
         let datadir = Datadir::open(path)?;
         let partial = PartialState::root(&datadir.db.read()?, &datadir.db)?.is_some();
-        Ok(Self { datadir, partial })
+        let mode = std::env::var("TIGER_LIVE_ROOT").unwrap_or_default();
+        let (live_enabled, live_check) = (mode != "0", mode == "check");
+        Ok(Self { datadir, partial, live: Default::default(), live_enabled, live_check })
     }
 
     /// Opens the partial-state datadir at `path`, creating it when new: its state is the one
@@ -283,6 +293,12 @@ impl StateDb {
         w.commit()?;
         db.partial = true;
         Ok(db)
+    }
+
+    /// Turns the live trie (state roots kept in memory across blocks) on or off; it is on unless
+    /// `TIGER_LIVE_ROOT=0`. Off, every root walks the stored trie.
+    pub fn set_live_root(&mut self, enabled: bool) {
+        self.live_enabled = enabled;
     }
 
     /// Whether the datadir holds a partial state.
@@ -854,14 +870,24 @@ impl StateView<'_> {
     /// The state root after `extra` with the trie changes that produce it, for
     /// [`StateDb::commit_prepared`] to reuse when the block is committed on this view's block.
     pub fn prepare_root(&self, extra: &BlockChanges) -> Result<PreparedRoot, TrieError> {
+        self.prepare_root_with(extra, None)
+    }
+
+    /// [`Self::prepare_root`] finishing `session`, which streamed the block's transactions (see
+    /// [`Self::live_session`]).
+    pub fn prepare_root_with(&self, extra: &BlockChanges, session: Option<LiveSession>) -> Result<PreparedRoot, TrieError> {
         let changes = extra.hashed();
+        let mut streamed = session.and_then(|session| session.finish(&changes));
         let reusable = self.block == self.tip && self.overlays.is_empty();
         if !reusable {
             let root = self.state_root(Some(extra))?;
             return Ok(PreparedRoot { root, state: changes, txn_id: 0, block: 0, trie: None, layered: false });
         }
         if let Some(mem) = &self.mem {
-            let (root, updates) = self.trie_view(&changes).state_root_parallel()?;
+            let (root, updates) = match streamed.take().or_else(|| self.live_root(&changes)) {
+                Some(result) => self.checked(result, || self.trie_view(&changes).state_root_parallel())?,
+                None => self.trie_view(&changes).state_root_parallel()?,
+            };
             let trie = Some(PreparedTrie::Full(root, updates));
             return Ok(PreparedRoot { root, state: changes, txn_id: 0, block: mem.head, trie, layered: true });
         }
@@ -871,11 +897,56 @@ impl StateView<'_> {
                 (tries.root, PreparedTrie::Partial(tries))
             }
             None => {
-                let (root, updates) = TrieView::new(&self.txn, self.dbs(), &changes).state_root_parallel()?;
+                let walk = || TrieView::new(&self.txn, self.dbs(), &changes).state_root_parallel();
+                let (root, updates) = match streamed.take().or_else(|| self.live_root(&changes)) {
+                    Some(result) => self.checked(result, walk)?,
+                    None => walk()?,
+                };
                 (root, PreparedTrie::Full(root, updates))
             }
         };
         Ok(PreparedRoot { root, state: changes, txn_id: self.txn.id(), block: self.block, trie: Some(trie), layered: false })
+    }
+
+    /// A live root, compared with the walker's when `TIGER_LIVE_ROOT=check`.
+    fn checked(
+        &self,
+        live: (B256, TrieUpdates),
+        walk: impl FnOnce() -> Result<(B256, TrieUpdates), TrieError>,
+    ) -> Result<(B256, TrieUpdates), TrieError> {
+        if self.db.live_check {
+            let walked = walk()?;
+            assert_eq!(live.0, walked.0, "live state root differs from the walker's at block {}", self.block + 1);
+        }
+        Ok(live)
+    }
+
+    /// Where a live root of this view reads.
+    fn live_base(&self) -> LiveBase {
+        LiveBase { db: self.dbs().clone(), mem: self.mem.clone(), snapshot: self.txn.id() }
+    }
+
+    /// Whether this view's roots can use the live trie: a full state at its tip.
+    fn live_capable(&self) -> bool {
+        self.db.live_enabled && !self.db.partial && self.block == self.tip && self.overlays.is_empty()
+    }
+
+    /// The root after `changes` over this view and its trie updates, from the live trie kept
+    /// across blocks. `None` when it cannot be used; the caller uses the walker.
+    fn live_root(&self, changes: &HashedState) -> Option<(B256, TrieUpdates)> {
+        if !self.live_capable() {
+            return None;
+        }
+        self.live_base().root_once(&self.db.live, changes)
+    }
+
+    /// Starts computing the state root of a block executing over this view as its transactions
+    /// commit, when this view can: pass it to [`Self::prepare_root_with`].
+    pub fn live_session(&self) -> Option<LiveSession> {
+        if !self.live_capable() {
+            return None;
+        }
+        LiveSession::start(std::sync::Arc::clone(&self.db.live), self.live_base())
     }
 
     fn nodes(&self) -> DbNodes<'_, Ro> {

@@ -9,12 +9,12 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_tiger_trie::{
-    AccountInfo, AccountProof, BlockChanges, PreparedRoot, StateView, TrieError,
+    AccountInfo, AccountProof, BlockChanges, LiveSession, PreparedRoot, StateView, TrieError,
 };
 use evm2::{
     AccountInfo as EvmAccount, BlockStateAccumulator,
     bytecode::Bytecode,
-    evm::{Database, Db, DynDatabase},
+    evm::{AccountChangeRef, Database, Db, DynDatabase, StateChangeSink, StorageChange},
 };
 
 use crate::{WitnessDb, WitnessState};
@@ -33,6 +33,34 @@ pub trait ParentState {
     ) -> Result<B256, String>;
     /// The first read this state could not serve (a witness or partial state missing data).
     fn missing(&self) -> Option<String>;
+    /// Takes one executed transaction's committed changes, so the state root can start before
+    /// the block ends.
+    fn transaction_committed(&self, _changes: TransactionChanges) {}
+}
+
+/// One transaction's committed state changes in plain keys, collected as the executor commits
+/// it (in the order it commits them: a storage wipe before the slots written after it).
+#[derive(Debug, Default)]
+pub struct TransactionChanges(pub BlockChanges);
+
+impl StateChangeSink for TransactionChanges {
+    type Error = core::convert::Infallible;
+
+    fn account(&mut self, change: AccountChangeRef<'_>) -> Result<(), Self::Error> {
+        let info = change.current.map(|info| AccountInfo { nonce: info.nonce, balance: info.balance, code_hash: info.code_hash });
+        self.0.accounts.push((change.address, info));
+        Ok(())
+    }
+
+    fn storage_wipe(&mut self, address: Address) -> Result<(), Self::Error> {
+        self.0.wiped.push(address);
+        Ok(())
+    }
+
+    fn storage(&mut self, change: StorageChange) -> Result<(), Self::Error> {
+        self.0.storage.push((change.address, change.key, change.current));
+        Ok(())
+    }
 }
 
 impl ParentState for Rc<WitnessState> {
@@ -101,6 +129,9 @@ pub struct NodeState<'d> {
     cache: Option<(std::sync::Arc<crate::ExecCache>, u64)>,
     /// Time spent computing state and storage roots on this state.
     root_time: Cell<std::time::Duration>,
+    /// The executing block's state root, computed as its transactions commit: started by the
+    /// first one, `Some(None)` when this view cannot.
+    live: RefCell<Option<Option<LiveSession>>>,
 }
 
 /// The accounts, storage slots and code a block's execution read that a partial state does not
@@ -139,6 +170,7 @@ impl<'d> NodeState<'d> {
             misses: None,
             cache: None,
             root_time: Cell::new(std::time::Duration::ZERO),
+            live: RefCell::new(None),
         }
     }
 
@@ -313,7 +345,8 @@ impl ParentState for NodeState<'_> {
     fn state_root_after(&self, changes: &BlockStateAccumulator) -> Result<B256, String> {
         let started = std::time::Instant::now();
         let changes = block_changes(changes);
-        let prepared = self.view.prepare_root(&changes);
+        let session = self.live.borrow_mut().take().flatten();
+        let prepared = self.view.prepare_root_with(&changes, session);
         self.root_time.set(self.root_time.get() + started.elapsed());
         let prepared = match prepared {
             Ok(prepared) => prepared,
@@ -358,6 +391,13 @@ impl ParentState for NodeState<'_> {
 
     fn missing(&self) -> Option<String> {
         self.missing.borrow().clone()
+    }
+
+    fn transaction_committed(&self, changes: TransactionChanges) {
+        let mut live = self.live.borrow_mut();
+        if let Some(session) = live.get_or_insert_with(|| self.view.live_session()) {
+            session.transaction(changes.0);
+        }
     }
 }
 

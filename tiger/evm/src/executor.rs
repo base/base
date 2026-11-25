@@ -8,7 +8,7 @@ use base_common_genesis::BaseFeature;
 use base_common_l1_fees::L1FeeParams;
 use evm2::{
     BlockStateAccumulator, Evm, SpecId,
-    evm::DynDatabase,
+    evm::{DynDatabase, NoopChangeSink, StateChangeSink, Tee},
     env::BlockEnv,
     evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SystemTx},
     registry::{HandlerError, HandlerResult},
@@ -316,6 +316,17 @@ impl<'a> BaseBlockExecutor<'a> {
     /// Executes `tx`, appending its receipt (with running cumulative gas) and committing its
     /// state changes into the block-state accumulator.
     pub fn execute_transaction(&mut self, tx: &Recovered<BaseTxEnvelope>) -> HandlerResult<()> {
+        self.execute_transaction_observed(tx, &mut NoopChangeSink::default())
+    }
+
+    /// [`Self::execute_transaction`], also streaming the transaction's committed state changes
+    /// into `observer` (nothing when it fails), so work on the block's changes, such as its
+    /// state root, can start before the block ends.
+    pub fn execute_transaction_observed(
+        &mut self,
+        tx: &Recovered<BaseTxEnvelope>,
+        observer: &mut impl StateChangeSink<Error = core::convert::Infallible>,
+    ) -> HandlerResult<()> {
         let ty = tx.ty();
         let is_deposit = tx.is_deposit();
         let signer = tx.signer();
@@ -406,7 +417,7 @@ impl<'a> BaseBlockExecutor<'a> {
         let cumulative_gas_used = self.gas_used;
         // Accumulate the DA footprint metered above (zero for deposits and before Jovian).
         self.da_footprint_used = self.da_footprint_used.saturating_add(tx_da_footprint);
-        let _ = executed.commit_to(&mut self.block_state);
+        let Ok(_) = executed.commit_with(&mut Tee::new(&mut self.block_state, observer));
 
         let receipt = Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs };
         let envelope = if is_deposit {
