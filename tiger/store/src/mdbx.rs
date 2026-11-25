@@ -28,8 +28,15 @@ use crate::mdbx_sys as ffi;
 pub struct MdbxError(pub c_int);
 
 impl MdbxError {
-    /// Turns an MDBX return code into a result.
+    /// Turns an MDBX return code into a result. `MDBX_PANIC` exits the process: libmdbx marks the
+    /// environment failed (such as after a write error inside a commit) and fails every later
+    /// call on it until it is reopened, so the node stops for a restart, which reopens it and
+    /// recovers from the last commit, as base-reth stops instead of serving errors.
     pub fn check(code: c_int) -> Result<(), Self> {
+        if code == ffi::MDBX_PANIC {
+            eprintln!("tiger: fatal: {}; restart the node to reopen the datadir", Self(code));
+            std::process::exit(1);
+        }
         if code == ffi::MDBX_SUCCESS || code == ffi::MDBX_RESULT_TRUE { Ok(()) } else { Err(Self(code)) }
     }
 }
