@@ -195,7 +195,7 @@ of the forwarding path:
 
 - builder: always registers `base_sendRawTransactionValidity` for direct
   submission.
-- mempool/client: `--enable-tx-forwarding` and a `--builder-rpc-urls` endpoint
+- mempool/client: `base mempool` with a `--tx-forwarding.builder-urls` endpoint
   targeting the builder
 
 The default devnet compose files include these flags and schedule Cobalt at
