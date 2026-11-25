@@ -77,15 +77,27 @@ impl NodeProcess {
         self.root.join(format!("{}.log", self.name))
     }
 
-    /// The fault line the current run printed, if an injected fault crashed it. The line comes
-    /// before the abort, so the process may not have exited yet: its requests already fail.
+    /// Line a node prints when it stops because an earlier write failure left libmdbx in its
+    /// fatal state (tiger exits so a restart reopens the datadir from the last commit).
+    pub const MDBX_PANIC_LINE: &str = "tiger: fatal: mdbx error -30795: MDBX_PANIC";
+
+    /// The fault line the current run printed, if an injected fault crashed it: a crash fault,
+    /// or a stop on libmdbx's fatal state after an injected full disk. The line comes before
+    /// the exit, so the process may not have exited yet: its requests already fail.
     pub fn injected_crash(&mut self) -> Option<String> {
         self.child.as_ref()?;
         let text = fs::read(self.log_path()).ok()?;
         let since = text.get(self.log_start as usize..)?;
-        String::from_utf8_lossy(since)
-            .lines()
-            .find(|line| line.contains(Self::FAULT_LINE))
+        let since = String::from_utf8_lossy(since);
+        let crash = since.lines().find(|line| line.contains(Self::FAULT_LINE));
+        let disk_full = || since.lines().any(|line| line.contains(Self::DISK_FULL_LINE));
+        crash
+            .or_else(|| {
+                since
+                    .lines()
+                    .find(|line| line.contains(Self::MDBX_PANIC_LINE))
+                    .filter(|_| disk_full())
+            })
             .map(str::to_owned)
     }
 

@@ -1638,7 +1638,13 @@ impl StateSession {
                         .join(" ")
                 })
                 .unwrap_or_default();
-            let mode = if line.contains("LoseUnsynced") { "lose_unsynced" } else { "torn" };
+            let mode = if line.contains(NodeProcess::MDBX_PANIC_LINE) {
+                "mdbx_panic after disk full"
+            } else if line.contains("LoseUnsynced") {
+                "lose_unsynced"
+            } else {
+                "torn"
+            };
             *self.observations.entry(format!("{name}: fault crash {mode} {phase}")).or_default() +=
                 1;
             self.trace.push(json!({ "kind": "fault", "node": name, "line": line }));
