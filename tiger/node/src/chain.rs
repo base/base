@@ -195,6 +195,35 @@ pub struct Chain {
     recent_block_hashes: Mutex<Vec<(B256, BlockHashes)>>,
 }
 
+/// The in-memory layer of the canonical blocks above a committed persistence batch, built by
+/// the persistence thread without the chain lock ([`Chain::blocks_above`], [`MemRebuild::build`])
+/// so that [`Chain::persisted`] only swaps it in: rebuilding under the write lock stalled block
+/// imports for hundreds of milliseconds after a slow batch left many blocks above it.
+#[derive(Debug)]
+pub struct MemRebuild {
+    mem: MemState,
+    txs: HashMap<B256, (u64, usize)>,
+    blocks: Vec<B256>,
+}
+
+impl MemRebuild {
+    /// Merges `blocks` (from [`Chain::blocks_above`]) over stored block `over`.
+    pub fn build(over: u64, blocks: &[(Arc<StoredBlock>, Arc<Validation>)]) -> Self {
+        let mut rebuilt = Self { mem: MemState::new(over), txs: HashMap::new(), blocks: Vec::with_capacity(blocks.len()) };
+        for (block, validation) in blocks {
+            let Validation::Prepared(prepared) = &**validation else { unreachable!("blocks_above takes prepared ones") };
+            let trie = prepared.trie_updates().expect("blocks_above takes ones with trie updates");
+            let changes = block.changes.as_ref().expect("blocks_above takes ones with changes");
+            rebuilt.mem.extend(block.number(), prepared.hashed(), trie, &changes.codes);
+            for (index, tx) in block.tx_hashes.iter().enumerate() {
+                rebuilt.txs.insert(*tx, (block.number(), index));
+            }
+            rebuilt.blocks.push(block.hash);
+        }
+        rebuilt
+    }
+}
+
 /// Canonical blocks for the persistence thread to commit, oldest first, from
 /// [`Chain::persistence_batch`].
 #[derive(Debug)]
@@ -853,16 +882,21 @@ impl Chain {
         Ok(())
     }
 
+    /// The block at the datadir tip `disk`.
+    fn disk_block(&self) -> Arc<StoredBlock> {
+        match self.blocks.get(&self.disk.1) {
+            Some(block) => Arc::clone(block),
+            None if self.head.hash == self.disk.1 => Arc::clone(&self.head),
+            None => self.load_canonical(self.disk.0),
+        }
+    }
+
     /// Rebuilds the in-memory layer from `canon` over the datadir tip, which must be `disk`.
     fn rebuild_mem(&mut self) -> Result<(), String> {
         self.mem = Arc::new(MemState::new(self.disk.0));
         self.mem_txs.clear();
         let canon = std::mem::take(&mut self.canon);
-        self.head = match self.blocks.get(&self.disk.1) {
-            Some(block) => Arc::clone(block),
-            None if self.head.hash == self.disk.1 => Arc::clone(&self.head),
-            None => self.load_canonical(self.disk.0),
-        };
+        self.head = self.disk_block();
         for block in canon {
             self.extend_canon(block)?;
         }
@@ -928,16 +962,53 @@ impl Chain {
         })
     }
 
-    /// Takes in a committed persistence batch: its blocks leave `canon` for the datadir. A batch
-    /// a reorg overtook is ignored (the reorg took in the datadir tip itself).
-    pub fn persisted(&mut self, batch: &PersistBatch) -> Result<(), String> {
+    /// The canonical blocks above `batch` with their validations, for [`MemRebuild::build`];
+    /// `None` when the batch is stale or a block lacks its trie changes (the layer is then
+    /// rebuilt under the lock).
+    pub fn blocks_above(&self, batch: &PersistBatch) -> Option<Vec<(Arc<StoredBlock>, Arc<Validation>)>> {
+        if self.epoch.load(Ordering::SeqCst) != batch.started || self.disk != batch.disk {
+            return None;
+        }
+        let above = (batch.last().0 - self.disk.0) as usize;
+        self.canon.get(above..)?
+            .iter()
+            .map(|block| {
+                let validation = self.validations.get(&block.hash)?;
+                let prepared = matches!(&**validation, Validation::Prepared(p) if p.trie_updates().is_some());
+                (prepared && block.changes.is_some()).then(|| (Arc::clone(block), Arc::clone(validation)))
+            })
+            .collect()
+    }
+
+    /// Takes in a committed persistence batch: its blocks leave `canon` for the datadir, and the
+    /// in-memory layer becomes `rebuilt` (when it covers a prefix of the blocks still above the
+    /// batch, the later ones merged on top) or is rebuilt here. A batch a reorg overtook is
+    /// ignored (the reorg took in the datadir tip itself).
+    pub fn persisted(&mut self, batch: &PersistBatch, rebuilt: Option<MemRebuild>) -> Result<(), String> {
         if self.epoch.load(Ordering::SeqCst) != batch.started || self.disk != batch.disk {
             return Ok(());
         }
         let (number, hash) = batch.last();
         self.canon.drain(..(number - self.disk.0) as usize);
         self.disk = (number, hash);
-        self.rebuild_mem()?;
+        let covers = |rebuilt: &MemRebuild, canon: &[Arc<StoredBlock>]| {
+            rebuilt.blocks.len() <= canon.len() && rebuilt.blocks.iter().zip(canon).all(|(hash, block)| *hash == block.hash)
+        };
+        match rebuilt {
+            Some(rebuilt) if covers(&rebuilt, &self.canon) => {
+                let later = self.canon.split_off(rebuilt.blocks.len());
+                self.mem = Arc::new(rebuilt.mem);
+                self.mem_txs = rebuilt.txs;
+                self.head = match self.canon.last() {
+                    Some(block) => Arc::clone(block),
+                    None => self.disk_block(),
+                };
+                for block in later {
+                    self.extend_canon(block)?;
+                }
+            }
+            _ => self.rebuild_mem()?,
+        }
         self.prune();
         Ok(())
     }
