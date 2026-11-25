@@ -745,6 +745,11 @@ impl Chain {
         self.exec_cache_enabled = enabled;
     }
 
+    /// The cross-block execution cache (`tiger bench --full-cache` fills it).
+    pub(crate) fn exec_cache(&self) -> &crate::ExecCache {
+        &self.exec_cache
+    }
+
     /// Whether the Engine API should wait for persistence: the canonical blocks in memory are
     /// [`PERSISTENCE_BACKPRESSURE_THRESHOLD`] beyond the buffer target.
     pub fn persistence_backlogged(&self) -> bool {

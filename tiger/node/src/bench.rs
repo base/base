@@ -4,14 +4,16 @@
 //! - `tiger bench fetch --rpc <url> --from <n> --count <n> --out <file>` saves canonical blocks
 //!   (`debug_getRawBlock`) to a file, each as a little-endian `u32` length and the block's RLP.
 //! - `tiger bench replay --chain <chain> --datadir <dir> --blocks <file> [--skip <n>] [--count <n>]
-//!   [--no-prewarm] [--no-cache]` validates the blocks after the datadir's tip in order, the
+//!   [--no-prewarm] [--no-cache] [--full-cache]` validates the blocks after the datadir's tip in order, the
 //!   way the Engine API does on a full node (prewarm, the cross-block execution cache, the
 //!   in-memory layer), checks each state root, makes each block canonical in memory, and prints
 //!   per-phase percentiles. `--skip` replays that many blocks first without timing them, so a run
 //!   can measure a block range other than another run's (PGO trains on one range and is measured
 //!   on the next). With `TIGER_BENCH_PERF_CTL=<fifo>`, it writes `enable` to the fifo when the
 //!   timed blocks start and `disable` when they end, so `perf stat -D -1 --control fifo:<fifo>`
-//!   counts only them. It never persists: the datadir is opened but not written, so the
+//!   counts only them. `--full-cache` first fills the execution cache to its caps with entries
+//!   no block reads, so every block's cache fills evict, as on a node that has run for a while
+//!   (a replay alone does not fill it). It never persists: the datadir is opened but not written, so the
 //!   same datadir replays the same blocks again (with a warmer page cache).
 
 use std::{
@@ -50,6 +52,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             count: value("--count").map(str::parse).transpose().map_err(|error| format!("--count: {error}"))?,
             prewarm: !flag("--no-prewarm"),
             cache: !flag("--no-cache"),
+            full_cache: flag("--full-cache"),
         }),
         _ => Err("usage: tiger bench fetch|replay (see node/src/bench.rs)".into()),
     }
@@ -83,6 +86,7 @@ struct Replay {
     count: Option<usize>,
     prewarm: bool,
     cache: bool,
+    full_cache: bool,
 }
 
 /// One replayed block's timings.
@@ -122,6 +126,24 @@ fn perf_control(command: &str) -> Result<(), String> {
         .map_err(|error| format!("TIGER_BENCH_PERF_CTL {}: {error}", path.display()))
 }
 
+/// Fills `cache` past its caps with accounts and slots of addresses no block reads.
+fn fill_exec_cache(cache: &crate::ExecCache) {
+    use alloy_primitives::{Address, U256};
+    let generation = cache.generation();
+    let dummy = |n: usize| {
+        let mut address = [0xee; 20];
+        address[12..].copy_from_slice(&(n as u64).to_be_bytes());
+        Address::from(address)
+    };
+    let account = Some(base_tiger_trie::AccountInfo { nonce: 1, ..Default::default() });
+    for n in 0..2 * crate::exec_cache::MAX_ACCOUNTS {
+        cache.put_account(generation, dummy(n), account);
+    }
+    for n in 0..2 * crate::exec_cache::MAX_SLOTS {
+        cache.put_storage(generation, dummy(n / 64), U256::from(n), U256::from(1));
+    }
+}
+
 fn replay(options: &Replay) -> Result<(), String> {
     let blocks = read_blocks(&options.blocks)?;
     let node = Node::open(&options.datadir, Genesis::load(&options.chain)?, None)?;
@@ -129,6 +151,9 @@ fn replay(options: &Replay) -> Result<(), String> {
         let mut chain = node.chain.write().expect("chain lock");
         chain.set_persistence(u64::MAX, 0)?;
         chain.set_exec_cache(options.cache);
+        if options.full_cache {
+            fill_exec_cache(chain.exec_cache());
+        }
     }
     let tip = node.chain.read().expect("chain lock").head().number();
     let todo: Vec<_> = blocks.into_iter().filter(|block| block.header.number > tip).take(options.count.map_or(usize::MAX, |count| options.skip + count)).collect();
