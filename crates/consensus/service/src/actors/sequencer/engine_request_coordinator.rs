@@ -29,9 +29,12 @@ use crate::{
     EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
     NodeOperatingMode, ReconcileShadowRequest, ResetOrigin, ResetReason, ResetRequest,
     ResetRequestOutcome, actors::engine::ResetOutcome,
+    HistoricalStartupFailure, HistoricalStartupHandoff,
 };
 
 const SEQUENCER_EL_SYNC_PROBE_INTERVAL: Duration = Duration::from_secs(5);
+const HISTORICAL_STARTUP_DEADLINE: Duration = Duration::from_secs(600);
+const HISTORICAL_STARTUP_PROBE_BUDGET: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BootstrapRole {
@@ -106,6 +109,10 @@ where
     /// Recent canonical payloads retained during catch-up, and the largest gap between the unsafe
     /// head and external gossip still admitted while regular. Both span the same wall-clock window.
     catchup_capacity: usize,
+    /// Opt-in, caller-authenticated historical startup, completed before ordinary routing.
+historical_startup: Option<Box<base_consensus_engine::SequencerStartupSync>>,
+    /// Local head height admitted once, retained across gossip and label retries.
+    historical_startup_initial_head: Option<u64>,
 }
 
 impl<EngineClient_, DerivationClient>
@@ -137,6 +144,172 @@ where
             sequencer_kind: mode.into(),
             unsafe_head_tx,
             catchup_capacity,
+            historical_startup: None,
+            historical_startup_initial_head: None,
+        }
+    }
+
+    /// Opts a stopped regular coordinator into historical startup at an authenticated target.
+    ///
+    /// Call before `start`. The owner must supply a trusted target and no outstanding build jobs.
+    /// This Rust API is intentionally not a new public RPC or a default change for existing nodes.
+    pub fn begin_historical_startup(&mut self, target: base_protocol::L2BlockInfo) -> Result<(), EngineClientError> {
+        if !self.sequencer_stopped || self.sequencer_kind != SequencerKind::Regular {
+            return Err(EngineClientError::HistoricalStartupRefused("requires a stopped regular sequencer"));
+        }
+        self.historical_startup = Some(Box::new(base_consensus_engine::SequencerStartupSync::new(target)));
+        self.historical_startup_initial_head = None;
+        Ok(())
+    }
+
+    /// Refuses a reused target before the first FCU, without assuming local ancestry.
+    ///
+    /// Admission is shared by task entry and public probes. Once admitted, reaching or retargeting
+    /// within the phase is expected and must not restart this cold-entry check.
+    pub async fn admit_historical_startup_target(&mut self, remaining: Duration) -> Result<(), EngineError> {
+        let target = self.historical_startup.as_ref().ok_or(HistoricalStartupFailure::NotSelected)?.target();
+        if self.historical_startup_initial_head.is_some() {
+            return Ok(());
+        }
+        if remaining.is_zero() {
+            return Err(HistoricalStartupFailure::BudgetExhausted.into());
+        }
+        let local = time::timeout(remaining, self.processor.client().l2_block_info_by_label(BlockNumberOrTag::Latest)).await
+            .map_err(|_| HistoricalStartupFailure::HeadQueryTimeout)?
+            .map_err(|error| HistoricalStartupFailure::HeadQuery(Box::new(error)))?
+            .ok_or(HistoricalStartupFailure::MissingHead)?;
+        if local.block_info.number >= target.block_info.number {
+            return Err(HistoricalStartupFailure::ReusedTarget { target: target.block_info.number, local: local.block_info.number }.into());
+        }
+        self.historical_startup_initial_head = Some(local.block_info.number);
+        info!(
+            target: "engine",
+            block = target.block_info.number,
+            hash = %target.block_info.hash,
+            local_head = local.block_info.number,
+            "Historical startup phase starting"
+        );
+        Ok(())
+    }
+
+    /// Confirms the selected target only after non-leader admission, within one shared budget.
+    ///
+    /// Admission failure revokes earlier readiness. The old engine completion latch is not used.
+    pub async fn probe_historical_startup(&mut self, remaining: Duration) -> Result<base_consensus_engine::StartupSyncStatus, EngineError> {
+        let started = TokioInstant::now();
+        self.historical_startup.as_mut().ok_or(HistoricalStartupFailure::NotSelected)?.invalidate();
+        if remaining.is_zero() {
+            return Err(HistoricalStartupFailure::BudgetExhausted.into());
+        }
+        if let Some(conductor) = &self.conductor {
+            let leader = time::timeout(remaining, conductor.leader()).await
+                .map_err(|_| HistoricalStartupFailure::LeadershipTimeout)?
+                .map_err(|error| HistoricalStartupFailure::Leadership(Box::new(error)))?;
+            if leader {
+                return Err(HistoricalStartupFailure::Leader.into());
+            }
+        }
+        self.admit_historical_startup_target(remaining.saturating_sub(started.elapsed())).await?;
+        let phase = self.historical_startup.as_mut().expect("phase admitted");
+        phase.probe(self.processor.client().as_ref(), remaining.saturating_sub(started.elapsed())).await
+            .map_err(|error| HistoricalStartupFailure::Probe(Box::new(error)).into())
+    }
+
+    /// Services startup requests without allowing ordinary engine queue work to execute.
+    async fn handle_historical_startup_request(&mut self, request: EngineActorRequest) {
+        match request {
+            EngineActorRequest::PrepareSequencerStart { result_tx, .. } => {
+                let _ = result_tx.try_send(Err(EngineClientError::HistoricalStartupPending));
+            }
+            EngineActorRequest::BuildRequest(request) => {
+                let _ = request.result_tx.try_send(Err(base_consensus_engine::BuildTaskError::EngineBuildError(
+                    base_consensus_engine::EngineBuildError::EngineSyncing,
+                )));
+            }
+            EngineActorRequest::ResetRequest(request) => {
+                // The stopped actor sends this reset on launch and recognizes ELSyncing as
+                // deferred. A new error would terminate the actor before startup can finish.
+                let error = match request.reason {
+                    ResetReason::SequencerStartup => EngineClientError::ELSyncing,
+                    _ => EngineClientError::HistoricalStartupPending,
+                };
+                let _ = request.result_tx.try_send(Err(error));
+            }
+            EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
+                // Only this request has already passed the network actor's signer authentication.
+                let phase = self.historical_startup.as_mut().expect("startup request routing");
+                if envelope.execution_payload.block_number() >= phase.target().block_info.number {
+                    match base_protocol::L2BlockInfo::from_payload_and_genesis(
+                        envelope.execution_payload, envelope.parent_beacon_block_root, &self.processor.rollup().genesis,
+                    ) {
+                        Ok(target) if target != phase.target() => phase.set_target(target),
+                        Ok(_) => {}
+                        Err(error) => warn!(target: "engine", %error, "Ignoring undecodable historical startup target"),
+                    }
+                }
+            }
+            // Derivation is not running and no local job may exist at cold-start entry. Dropping
+            // other requests closes response channels without executing FCU or newPayload. Normal
+            // derivation is reset at handoff, so stale unsolicited signals are not replayed.
+            _ => {}
+        }
+    }
+
+    /// Exclusively owns coordinator engine calls through target confirmation and handoff.
+    async fn run_historical_startup(&mut self, requests: &mut mpsc::Receiver<EngineActorRequest>) -> Result<(), EngineError> {
+        let deadline = TokioInstant::now() + HISTORICAL_STARTUP_DEADLINE;
+        if let Some(conductor) = &self.conductor {
+            let leader = time::timeout(HISTORICAL_STARTUP_PROBE_BUDGET, conductor.leader()).await
+                .map_err(|_| HistoricalStartupFailure::LeadershipTimeout)?
+                .map_err(|error| HistoricalStartupFailure::Leadership(Box::new(error)))?;
+            if leader {
+                return Err(HistoricalStartupFailure::Leader.into());
+            }
+        }
+        let remaining = deadline.saturating_duration_since(TokioInstant::now()).min(HISTORICAL_STARTUP_PROBE_BUDGET);
+        self.admit_historical_startup_target(remaining).await?;
+        let mut interval = time::interval(SEQUENCER_EL_SYNC_PROBE_INTERVAL);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                request = requests.recv() => {
+                    // Ordinary engine routing is inaccessible while this loop owns requests.
+                    let request = request.ok_or(EngineError::ChannelClosed)?;
+                    self.handle_historical_startup_request(request).await;
+                }
+                _ = time::sleep_until(deadline) => {
+                    return Err(HistoricalStartupFailure::DeadlineExceeded.into());
+                }
+                _ = interval.tick() => {
+                    let remaining = deadline.saturating_duration_since(TokioInstant::now()).min(HISTORICAL_STARTUP_PROBE_BUDGET);
+                    if remaining.is_zero() {
+                        return Err(HistoricalStartupFailure::DeadlineExceeded.into());
+                    }
+                    let status = self.probe_historical_startup(remaining).await?;
+                    if status == base_consensus_engine::StartupSyncStatus::ExecutionReady {
+                        let target = self.historical_startup.as_ref().expect("startup phase").target();
+                        if let Some(conductor) = &self.conductor {
+                            let remaining = deadline.saturating_duration_since(TokioInstant::now()).min(HISTORICAL_STARTUP_PROBE_BUDGET);
+                            let leader = time::timeout(remaining, conductor.leader()).await
+                                .map_err(|_| HistoricalStartupFailure::LeadershipTimeout)?
+                                .map_err(|error| HistoricalStartupFailure::Leadership(Box::new(error)))?;
+                            if leader {
+                                return Err(HistoricalStartupFailure::Leader.into());
+                            }
+                        }
+                        let outcome = time::timeout_at(deadline, self.processor.handoff_historical_startup(target)).await
+                            .map_err(|_| HistoricalStartupFailure::HandoffTimeout)??;
+                        if outcome == HistoricalStartupHandoff::Pending {
+                            self.historical_startup.as_mut().expect("startup phase").invalidate();
+                            continue;
+                        }
+                        // Normal routing starts only after canonical reset and completion delivery.
+                        self.historical_startup = None;
+                        self.complete_startup(target);
+                        return Ok(());
+                    }
+                }
+            }
         }
     }
 
@@ -187,6 +360,9 @@ where
         expected_hash: B256,
     ) -> Result<(), EngineClientError> {
         let sync_state = self.processor.engine_state().sync_state;
+        if self.historical_startup.is_some() {
+            return Err(EngineClientError::HistoricalStartupPending);
+        }
         let head = sync_state.unsafe_head();
         if expected_hash == B256::ZERO || head.block_info.hash == B256::ZERO {
             return Err(EngineClientError::RequestError(
@@ -504,6 +680,7 @@ where
     ) -> JoinHandle<Result<(), EngineError>> {
         tokio::spawn(async move {
             // Bootstrap: pre-populate the unsafe_head_tx watch channel so that external callers
+            // An explicitly selected historical phase owns the connection before bootstrap.
             // (admin_startSequencer, sync-status RPC) never observe a zero hash.
             //
             // We gate on whether reth's current head is at the rollup genesis:
@@ -518,6 +695,11 @@ where
             //     enter an infinite reset loop. Instead we seed the watch channel from reth's
             //     current head directly; derivation will issue its own FCU once the first Reset
             //     task arrives.
+            let historical_startup_selected = self.historical_startup.is_some();
+            if historical_startup_selected {
+                self.run_historical_startup(&mut request_channel).await?;
+            }
+            if !historical_startup_selected {
             let opt_head = self
                 .processor
                 .client()
@@ -557,6 +739,7 @@ where
                         self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await
                     }
                 }
+            }
             }
 
             let mut el_sync_probe_interval = time::interval_at(
@@ -937,13 +1120,394 @@ mod tests {
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
         let processor = EngineProcessor::new(
-            Arc::new(test_engine_client_builder().build()),
+            Arc::new(test_engine_client_builder().with_block_info_by_tag(BlockNumberOrTag::Latest, test_block_info(0)).build()),
             Arc::new(RollupConfig::default()),
             MockEngineDerivationClient::new(),
             engine,
         );
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
         SequencerEngineRequestCoordinator::new(processor, mode, conductor, stopped, unsafe_head_tx)
+    }
+
+    const REGULAR_MODE: bool = false;
+    const STOPPED: bool = true;
+
+    /// Missing phase selection and missing execution heads fail without a panic or an FCU.
+    #[tokio::test]
+    async fn historical_startup_missing_selection_and_head_fail_closed() {
+        let mut coordinator = coordinator(REGULAR_MODE, STOPPED, None);
+        assert!(matches!(coordinator.probe_historical_startup(Duration::from_secs(1)).await, Err(crate::EngineError::HistoricalStartup(crate::HistoricalStartupFailure::NotSelected))), "an unselected public probe must return a classified error");
+        coordinator.begin_historical_startup(test_block_info(100)).expect("stopped target must be admitted");
+        coordinator.processor.client().storage().write().await.block_info_by_tag.clear();
+        let (_tx, mut rx) = mpsc::channel(1);
+        assert!(matches!(coordinator.run_historical_startup(&mut rx).await, Err(crate::EngineError::HistoricalStartup(crate::HistoricalStartupFailure::MissingHead))), "missing head must fail closed at admission");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "missing head must not allow FCU");
+    }
+
+    /// Full rejection channels must not park the phase inside a request branch.
+    #[tokio::test]
+    async fn historical_startup_full_reply_channels_do_not_block() {
+        let mut coordinator = coordinator(REGULAR_MODE, STOPPED, None);
+        let target = test_block_info(100);
+        coordinator.begin_historical_startup(target).expect("stopped target must be admitted");
+        let (result_tx, _rx) = mpsc::channel(1);
+        result_tx.try_send(Err(EngineClientError::HistoricalStartupPending)).expect("fill activation response channel");
+        tokio::time::timeout(Duration::from_millis(50), coordinator.handle_historical_startup_request(EngineActorRequest::PrepareSequencerStart { expected_hash: target.block_info.hash, result_tx })).await.expect("activation rejection must not wait for channel capacity");
+        let (result_tx, _rx) = mpsc::channel(1);
+        result_tx.try_send(Err(base_consensus_engine::BuildTaskError::EngineBuildError(base_consensus_engine::EngineBuildError::EngineSyncing))).expect("fill build response channel");
+        tokio::time::timeout(Duration::from_millis(50), coordinator.handle_historical_startup_request(EngineActorRequest::BuildRequest(Box::new(crate::BuildRequest { attributes: TestAttributesBuilder::new().with_parent(target).build(), result_tx, otel_cx: Default::default() })))).await.expect("build rejection must not wait for channel capacity");
+        let (result_tx, _rx) = mpsc::channel(1);
+        result_tx.try_send(Err(EngineClientError::ELSyncing)).expect("fill reset response channel");
+        tokio::time::timeout(Duration::from_millis(50), coordinator.handle_historical_startup_request(EngineActorRequest::ResetRequest(Box::new(ResetRequest { result_tx, origin: ResetOrigin::Sequencer, reason: ResetReason::SequencerStartup })))).await.expect("reset rejection must not wait for channel capacity");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "rejecting full reply channels must not reach the engine");
+    }
+
+    /// A leadership change after the last target VALID must be refused before label handoff.
+    #[tokio::test]
+    async fn historical_startup_rechecks_leadership_before_handoff() {
+        let mut conductor = MockConductor::new();
+        let mut sequence = mockall::Sequence::new();
+        conductor.expect_leader().times(1).in_sequence(&mut sequence).returning(|| Ok(false));
+        conductor.expect_leader().times(1).in_sequence(&mut sequence).returning(|| Ok(false));
+        conductor.expect_leader().times(1).in_sequence(&mut sequence).returning(|| Ok(true));
+        let mut coordinator = coordinator(REGULAR_MODE, STOPPED, Some(Arc::new(conductor)));
+        coordinator.begin_historical_startup(test_block_info(100)).expect("stopped target must be admitted");
+        coordinator.processor.client().set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None }, payload_id: None }).await;
+        let (_tx, mut rx) = mpsc::channel(1);
+        assert!(matches!(coordinator.run_historical_startup(&mut rx).await, Err(crate::EngineError::HistoricalStartup(crate::HistoricalStartupFailure::Leader))), "handoff must refuse newly observed leadership");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 1, "only the target probe may run before handoff refusal");
+        assert!(coordinator.historical_startup.is_some(), "leadership refusal must leave activation gated");
+    }
+
+    /// A label SYNCING retry never restarts the overall phase clock.
+    #[tokio::test(start_paused = true)]
+    async fn historical_startup_label_retry_respects_original_deadline() {
+        let attributes = TestAttributesBuilder::new().with_parent(test_block_info(999)).with_transactions(vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())]).build();
+        let block = base_consensus_engine::test_utils::matching_rpc_block(&attributes);
+        let target = L2BlockInfo::from_block_and_genesis(&block.clone().into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()), &RollupConfig::default().genesis).expect("fixture must contain a deposit");
+        let client = Arc::new(test_engine_client_builder().with_block_info_by_tag(BlockNumberOrTag::Latest, target)
+            .with_l2_block(BlockNumberOrTag::Latest.into(), block.clone()).with_l2_block(BlockNumberOrTag::Safe.into(), block.clone()).with_l2_block(BlockNumberOrTag::Finalized.into(), block).with_l1_block(0u64.into(), Default::default())
+            .with_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }, payload_id: None }).build());
+        client.storage().write().await.latest_block_info_responses.push_back(Some(test_block_info(0)));
+        client.storage().write().await.fork_choice_updated_v3_responses.push_back(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None }, payload_id: None });
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0);
+        let processor = EngineProcessor::new(Arc::clone(&client), Arc::new(RollupConfig::default()), MockEngineDerivationClient::new(), Engine::new(EngineState::default(), state_tx, queue_tx));
+        let (head_tx, _) = watch::channel(L2BlockInfo::default());
+        let mut coordinator = SequencerEngineRequestCoordinator::new(processor, NodeOperatingMode::Sequencer, None, STOPPED, head_tx);
+        coordinator.begin_historical_startup(target).expect("stopped target must be admitted");
+        let (_tx, mut rx) = mpsc::channel(1);
+        let started = tokio::time::Instant::now();
+        assert!(matches!(coordinator.run_historical_startup(&mut rx).await, Err(crate::EngineError::HistoricalStartup(crate::HistoricalStartupFailure::DeadlineExceeded))), "pending label followed by continued syncing must end at the original deadline");
+        assert_eq!(started.elapsed(), super::HISTORICAL_STARTUP_DEADLINE, "SYNCING retries must not renew the phase budget");
+        assert!(coordinator.historical_startup.is_some(), "deadline expiry must retain the activation gate");
+        assert!(!coordinator.processor.engine_state().el_sync_finished, "pending labels must not commit readiness");
+    }
+
+    /// Reusing a one-shot target must fail before FCU when local execution has reached or passed it.
+    #[rstest]
+    #[case::at_target(100, None)]
+    #[case::same_height_conflict(100, Some(B256::repeat_byte(0xaa)))]
+    #[case::past_target(101, None)]
+    #[tokio::test]
+    async fn historical_startup_refuses_reused_target_before_fcu(#[case] local_height: u64, #[case] hash_override: Option<B256>) {
+        let mut coordinator = coordinator(REGULAR_MODE, STOPPED, None);
+        let target = test_block_info(100);
+        coordinator.begin_historical_startup(target).expect("stopped target must be admitted");
+        let mut local = test_block_info(local_height);
+        if let Some(hash) = hash_override { local.block_info.hash = hash; }
+        coordinator.processor.client().storage().write().await.block_info_by_tag.insert(BlockNumberOrTag::Latest, local);
+        let (_tx, mut rx) = mpsc::channel(1);
+        assert!(matches!(coordinator.run_historical_startup(&mut rx).await, Err(crate::EngineError::HistoricalStartup(crate::HistoricalStartupFailure::ReusedTarget { target: 100, local })) if local == local_height), "reused targets must return the specific removal-required error");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "restart must not send the stale target to the engine");
+        assert!(matches!(coordinator.probe_historical_startup(Duration::from_secs(1)).await, Err(crate::EngineError::HistoricalStartup(crate::HistoricalStartupFailure::ReusedTarget { .. }))), "a public pre-start probe must enforce the same one-shot admission");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "public probing must not bypass the stale-target guard");
+    }
+
+    /// Authenticated gossip beyond the active window replaces the target and revokes readiness.
+    #[tokio::test]
+    async fn historical_startup_gossip_retarget_revokes_readiness() {
+        let mut coordinator = coordinator(REGULAR_MODE, STOPPED, None);
+        let first = test_block_info(100);
+        let client = Arc::clone(coordinator.processor.client());
+        coordinator.begin_historical_startup(first).expect("stopped target must be admitted");
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None }, payload_id: None }).await;
+        coordinator.probe_historical_startup(Duration::from_secs(1)).await.expect("first target must confirm");
+        let envelope = payload(first.block_info.number + coordinator.catchup_capacity as u64 + 1, 42);
+        let next = L2BlockInfo::from_payload_and_genesis(envelope.execution_payload.clone(), envelope.parent_beacon_block_root, &coordinator.processor.rollup().genesis).expect("gossip fixture must contain a deposit");
+        coordinator.handle_historical_startup_request(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(envelope))).await;
+        let phase = coordinator.historical_startup.as_ref().expect("phase must remain selected");
+        assert_eq!(phase.target(), next, "gossip beyond the active gap limit must replace the target");
+        assert_eq!(phase.status(), base_consensus_engine::StartupSyncStatus::Pending, "retargeting must revoke the earlier VALID immediately");
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }, payload_id: None }).await;
+        client.storage().write().await.block_info_by_tag.insert(BlockNumberOrTag::Latest, next);
+        assert_eq!(coordinator.probe_historical_startup(Duration::from_secs(1)).await.expect("SYNCING is recoverable"), base_consensus_engine::StartupSyncStatus::Pending, "new target must require its own confirmation");
+        let requests = client.storage().read().await.fork_choice_updated_v3_requests.clone();
+        assert_eq!(requests.len(), 2, "each target must have exactly one confirmation attempt");
+        assert_eq!(requests[1].0.head_block_hash, next.block_info.hash, "the following FCU must use the gossip target");
+        assert!(!requests[1].1, "historical target confirmation must not build");
+        assert!(client.last_new_payload_v2().await.is_none(), "retargeting must never insert the full gossip payload");
+        coordinator.handle_historical_startup_request(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(payload(first.block_info.number - 1, 43)))).await;
+        assert_eq!(coordinator.historical_startup.as_ref().unwrap().target(), next, "below-target gossip must not retarget");
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None }, payload_id: None }).await;
+        coordinator.probe_historical_startup(Duration::from_secs(1)).await.expect("new target must confirm");
+        let mut malformed = payload(next.block_info.number + 1, 44);
+        let BaseExecutionPayload::V1(body) = &mut malformed.execution_payload else { panic!("fixture must be V1") };
+        body.transactions.clear();
+        for envelope in [payload(first.block_info.number - 1, 43), payload(next.block_info.number, 42), malformed] {
+            coordinator.handle_historical_startup_request(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(envelope))).await;
+            let phase = coordinator.historical_startup.as_ref().unwrap();
+            assert_eq!(phase.target(), next, "old, duplicate or undecodable gossip must not replace the target");
+            assert_eq!(phase.status(), base_consensus_engine::StartupSyncStatus::ExecutionReady, "ignored gossip must retain the current target confirmation");
+        }
+    }
+
+    /// Entry admission and the first probe independently consult leadership before any engine call.
+    #[tokio::test]
+    async fn historical_startup_entry_admission_precedes_probe_admission() {
+        let mut conductor = MockConductor::new();
+        let mut sequence = mockall::Sequence::new();
+        conductor.expect_leader().times(1).in_sequence(&mut sequence).returning(|| Ok(false));
+        conductor.expect_leader().times(1).in_sequence(&mut sequence).returning(|| Ok(true));
+        let mut coordinator = coordinator(REGULAR_MODE, STOPPED, Some(Arc::new(conductor)));
+        coordinator.begin_historical_startup(test_block_info(100)).expect("stopped target must be admitted");
+        let (_tx, mut rx) = mpsc::channel(1);
+        assert!(coordinator.run_historical_startup(&mut rx).await.is_err(), "leadership acquired after entry must refuse the first probe");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "both entry and probe checks must precede engine calls");
+    }
+
+    /// A label SYNCING response leaves engine state uncommitted instead of killing startup.
+    #[tokio::test]
+    async fn historical_startup_label_syncing_defers_handoff() {
+        let attributes = TestAttributesBuilder::new().with_parent(test_block_info(999)).with_transactions(vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())]).build();
+        let block = base_consensus_engine::test_utils::matching_rpc_block(&attributes);
+        let target = L2BlockInfo::from_block_and_genesis(&block.clone().into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()), &RollupConfig::default().genesis).expect("fixture must contain an L1 info deposit");
+        let mut coordinator = coordinator(REGULAR_MODE, STOPPED, None);
+        let client = Arc::new(test_engine_client_builder().with_block_info_by_tag(BlockNumberOrTag::Latest, target)
+            .with_l2_block(BlockNumberOrTag::Latest.into(), block.clone())
+            .with_l2_block(BlockNumberOrTag::Safe.into(), block.clone())
+            .with_l2_block(BlockNumberOrTag::Finalized.into(), block)
+            .with_l1_block(0u64.into(), Default::default()).build());
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0);
+        coordinator.processor = EngineProcessor::new(Arc::clone(&client), Arc::new(RollupConfig::default()), MockEngineDerivationClient::new(), Engine::new(EngineState::default(), state_tx, queue_tx));
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }, payload_id: None }).await;
+        let before = *coordinator.processor.engine_state();
+        assert_eq!(coordinator.processor.handoff_historical_startup(target).await.expect("SYNCING is recoverable"), crate::HistoricalStartupHandoff::Pending, "label SYNCING must defer handoff rather than terminate startup");
+        assert_eq!(*coordinator.processor.engine_state(), before, "pending labels must not commit readiness or engine labels");
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Invalid { validation_error: "invalid labels".into() }, latest_valid_hash: None }, payload_id: None }).await;
+        assert!(matches!(coordinator.processor.handoff_historical_startup(target).await, Err(crate::EngineError::HistoricalStartup(crate::HistoricalStartupFailure::LabelStatus(PayloadStatusEnum::Invalid { .. })))), "invalid labels must remain a typed terminal error");
+        client.storage().write().await.fork_choice_updated_v3_response = None;
+        assert!(matches!(coordinator.processor.handoff_historical_startup(target).await, Err(crate::EngineError::HistoricalStartup(crate::HistoricalStartupFailure::LabelRequest(_)))), "label transport errors must retain their source and stay terminal");
+        assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), 3, "each explicit handoff must issue only one label request, without internal retries");
+        assert_eq!(*coordinator.processor.engine_state(), before, "terminal label failures must not commit state");
+    }
+
+    /// Historical startup must gate activation even if the old EL completion latch is true.
+    #[tokio::test]
+    async fn historical_startup_gate_is_independent_of_engine_latch() {
+        let mut coordinator = coordinator(false, true, None);
+        let target = test_block_info(100);
+        coordinator.begin_historical_startup(target).expect("stopped regular sequencer accepts a startup target");
+        assert!(matches!(coordinator.prepare_sequencer_start(target.block_info.hash), Err(EngineClientError::HistoricalStartupPending)), "activation must reject a pending target");
+        assert!(coordinator.probe_historical_startup(Duration::ZERO).await.is_err(), "an exhausted budget must not confirm startup");
+        assert!(matches!(coordinator.prepare_sequencer_start(target.block_info.hash), Err(EngineClientError::HistoricalStartupPending)), "failed probe must leave activation gated");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "no FCU may escape an expired budget");
+    }
+
+    /// The startup request router must reject mutations without reaching the execution client.
+    #[tokio::test]
+    async fn historical_startup_router_serializes_engine_ownership() {
+        let mut coordinator = coordinator(false, true, None);
+        let target = test_block_info(100);
+        coordinator.begin_historical_startup(target).expect("startup target");
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        coordinator.handle_historical_startup_request(EngineActorRequest::BuildRequest(Box::new(crate::BuildRequest {
+            attributes: TestAttributesBuilder::new().with_parent(target).build(),
+            result_tx, otel_cx: Default::default(),
+        }))).await;
+        assert!(matches!(result_rx.recv().await.unwrap(), Err(base_consensus_engine::BuildTaskError::EngineBuildError(base_consensus_engine::EngineBuildError::EngineSyncing))), "building must return the named syncing error");
+        coordinator.handle_historical_startup_request(EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(Box::new(payload(101, 9)))).await;
+        coordinator.handle_historical_startup_request(EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(Box::new(50))).await;
+        assert!(coordinator.processor.client().last_new_payload_v2().await.is_none(), "admin inserts must not interleave with startup FCU");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "build and finalization must not send an FCU");
+    }
+
+    /// A previously latched engine still waits for this target and completes delivery before release.
+    #[rstest]
+    #[case::immediate(vec![PayloadStatusEnum::Valid, PayloadStatusEnum::Valid])]
+    #[case::label_syncing(vec![PayloadStatusEnum::Valid, PayloadStatusEnum::Syncing, PayloadStatusEnum::Valid, PayloadStatusEnum::Valid])]
+    #[tokio::test(start_paused = true)]
+    async fn historical_startup_valid_handoff_releases_gate_after_derivation_delivery(#[case] statuses: Vec<PayloadStatusEnum>) {
+        let old = test_block_info(100);
+        let attributes = TestAttributesBuilder::new().with_parent(test_block_info(999))
+            .with_transactions(vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())]).build();
+        let block = base_consensus_engine::test_utils::matching_rpc_block(&attributes);
+        let target = L2BlockInfo::from_block_and_genesis(
+            &block.clone().into_consensus()
+                .map_transactions(|tx| tx.inner.inner.into_inner()), &RollupConfig::default().genesis,
+        ).expect("fixture contains an L1 info deposit");
+        let safe = target;
+        let state = TestEngineStateBuilder::new().with_unsafe_head(old).with_safe_head(safe)
+            .with_finalized_head(test_block_info(80)).with_el_sync_finished(true).build();
+        let client = Arc::new(test_engine_client_builder()
+            .with_block_info_by_tag(BlockNumberOrTag::Latest, target)
+            .with_l2_block(BlockNumberOrTag::Latest.into(), block.clone())
+            .with_l2_block(BlockNumberOrTag::Safe.into(), block.clone())
+            .with_l2_block(BlockNumberOrTag::Finalized.into(), block)
+            .with_l1_block(0u64.into(), Default::default())
+            .with_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None }, payload_id: None }).build());
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_send_signal().times(1).returning(|_| Ok(()));
+        derivation.expect_send_new_engine_safe_head().times(1).withf(move |actual| *actual == safe).returning(|_| Ok(()));
+        derivation.expect_notify_sync_completed().times(1).withf(move |actual| *actual == safe).returning(|_| Ok(()));
+        let (state_tx, _) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0);
+        // Real sync-start selection must retain the safe/finalized labels supplied by this EL.
+        let processor = EngineProcessor::new(Arc::clone(&client), Arc::new(RollupConfig::default()), derivation, Engine::new(state, state_tx, queue_tx));
+        let (head_tx, _) = watch::channel(old);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(processor, NodeOperatingMode::Sequencer, None, true, head_tx);
+        coordinator.begin_historical_startup(target).expect("startup target");
+        assert!(matches!(coordinator.prepare_sequencer_start(old.block_info.hash), Err(EngineClientError::HistoricalStartupPending)), "old VALID latch must not authorize activation");
+        let (_tx, mut rx) = mpsc::channel(4);
+        let expected_calls = statuses.len();
+        client.storage().write().await.fork_choice_updated_v3_responses.extend(statuses.into_iter().map(|status| ForkchoiceUpdated { payload_status: PayloadStatus { status, latest_valid_hash: None }, payload_id: None }));
+        client.storage().write().await.latest_block_info_responses.push_back(Some(old));
+        coordinator.run_historical_startup(&mut rx).await.expect("VALID and derivation delivery complete handoff");
+        assert!(coordinator.historical_startup.is_none(), "the gate releases only after successful delivery");
+        assert_eq!(coordinator.processor.engine_state().sync_state.unsafe_head(), target, "normal routing must inherit the confirmed target");
+        assert!(coordinator.prepare_sequencer_start(target.block_info.hash).is_ok(), "activation may proceed at the handed-off target");
+        assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), expected_calls, "each label SYNCING must require another target probe and label confirmation before delivery");
+    }
+
+    /// Confirmation and retargeting never consult or modify the old readiness latch.
+    #[tokio::test]
+    async fn historical_startup_retarget_syncing_and_error_remain_gated() {
+        let mut coordinator = coordinator(false, true, None);
+        let first = test_block_info(100);
+        let second = test_block_info(200);
+        let client = Arc::clone(coordinator.processor.client());
+        coordinator.begin_historical_startup(first).expect("initial target");
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None }, payload_id: None }).await;
+        assert_eq!(coordinator.probe_historical_startup(Duration::from_secs(1)).await.unwrap(), base_consensus_engine::StartupSyncStatus::ExecutionReady, "VALID confirms execution but not handoff");
+        assert!(matches!(coordinator.prepare_sequencer_start(first.block_info.hash), Err(EngineClientError::HistoricalStartupPending)), "raw VALID alone must not authorize activation");
+        coordinator.begin_historical_startup(second).expect("replacement target");
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }, payload_id: None }).await;
+        assert_eq!(coordinator.probe_historical_startup(Duration::from_secs(1)).await.unwrap(), base_consensus_engine::StartupSyncStatus::Pending, "new target SYNCING must be pending");
+        client.storage().write().await.fork_choice_updated_v3_response = None;
+        assert!(coordinator.probe_historical_startup(Duration::from_secs(1)).await.is_err(), "RPC failure must fail closed");
+        assert!(matches!(coordinator.prepare_sequencer_start(second.block_info.hash), Err(EngineClientError::HistoricalStartupPending)), "retarget and RPC failure cannot reuse earlier VALID");
+        assert!(!coordinator.processor.engine_state().el_sync_finished, "raw probes must not set the old latch");
+        let requests = client.storage().read().await.fork_choice_updated_v3_requests.clone();
+        assert_eq!(requests.len(), 3, "each explicit probe must reach EL exactly once");
+        assert_eq!(requests[0].0.head_block_hash, first.block_info.hash, "first probe target");
+        assert_eq!(requests[1].0.head_block_hash, second.block_info.hash, "retargeted SYNCING probe");
+        assert_eq!(requests[2].0.head_block_hash, second.block_info.hash, "failed reconfirmation target");
+    }
+
+    /// The real coordinator task enters startup before ordinary bootstrap and engine draining.
+    #[tokio::test]
+    async fn historical_startup_task_rejects_build_and_admin_start() {
+        let mut coordinator = coordinator(false, true, None);
+        let target = test_block_info(1000);
+        let client = Arc::clone(coordinator.processor.client());
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }, payload_id: None }).await;
+        coordinator.begin_historical_startup(target).expect("inactive startup target");
+        let (tx, rx) = mpsc::channel(8);
+        let task = coordinator.start(rx);
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        tx.send(EngineActorRequest::BuildRequest(Box::new(crate::BuildRequest { attributes: TestAttributesBuilder::new().with_parent(target).build(), result_tx, otel_cx: Default::default() }))).await.expect("build request");
+        assert!(matches!(tokio::time::timeout(Duration::from_secs(1), result_rx.recv()).await.unwrap().unwrap(), Err(base_consensus_engine::BuildTaskError::EngineBuildError(base_consensus_engine::EngineBuildError::EngineSyncing))), "real task must reject a build while startup owns EL");
+        tx.send(EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(Box::new(payload(1001, 8)))).await.expect("admin payload");
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        tx.send(EngineActorRequest::PrepareSequencerStart { expected_hash: target.block_info.hash, result_tx }).await.expect("activation request");
+        assert!(matches!(tokio::time::timeout(Duration::from_secs(1), result_rx.recv()).await.unwrap().unwrap(), Err(EngineClientError::HistoricalStartupPending)), "real activation path must stay gated");
+        assert!(client.last_new_payload_v2().await.is_none(), "admin newPayload must not interleave");
+        assert!(client.storage().read().await.fork_choice_updated_v3_requests.iter().all(|(fc, attributes)| fc.head_block_hash == target.block_info.hash && !attributes), "every engine call during startup must be a target-only FCU");
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled(), "the test must stop its coordinator task");
+    }
+
+    /// The stopped actor must defer its automatic initial reset rather than terminate startup.
+    #[tokio::test]
+    async fn historical_startup_keeps_stopped_sequencer_actor_alive() {
+        let mut coordinator = coordinator(false, true, None);
+        let target = test_block_info(1000);
+        let client = Arc::clone(coordinator.processor.client());
+        client.set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }, payload_id: None }).await;
+        coordinator.begin_historical_startup(target).expect("historical target");
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let (_head_tx, head_rx) = watch::channel(target);
+        let (_state_tx, state_rx) = watch::channel(*coordinator.processor.engine_state());
+        let engine_client = Arc::new(crate::QueuedSequencerEngineClient::new(request_tx.clone(), head_rx, state_rx));
+        let mut seed = super::super::tests::test_actor();
+        Arc::make_mut(&mut seed.rollup_config).block_time = 2;
+        seed.builder.rollup_config = Arc::clone(&seed.rollup_config);
+        let actor = crate::SequencerActor {
+            builder: crate::PayloadBuilder {
+                attributes_builder: seed.builder.attributes_builder,
+                origin_selector: seed.builder.origin_selector,
+                recovery_mode: seed.builder.recovery_mode,
+                rollup_config: seed.builder.rollup_config,
+                engine_client: Arc::clone(&engine_client),
+            },
+            admin_api_rx: seed.admin_api_rx, cancellation_token: seed.cancellation_token,
+            conductor: seed.conductor, engine_client, is_active: false, mode: seed.mode,
+            shadow_funding: seed.shadow_funding, recovery_mode: seed.recovery_mode,
+            rollup_config: seed.rollup_config, seal_offset: seed.seal_offset,
+            schedule_delay: seed.schedule_delay, unsafe_payload_gossip_client: seed.unsafe_payload_gossip_client,
+            sealer: seed.sealer, pending_stop: seed.pending_stop, payload_ready: seed.payload_ready,
+        };
+        let cancellation = actor.cancellation_token.clone();
+        let coordinator_task = coordinator.start(request_rx);
+        let mut actor_task = tokio::spawn(crate::NodeActor::start(actor, ()));
+        tokio::select! {
+            result = &mut actor_task => {
+                coordinator_task.abort();
+                panic!("stopped sequencer must wait through historical startup, got {result:?}");
+            }
+            _ = tokio::time::sleep(Duration::from_millis(20)) => {}
+        }
+        cancellation.cancel();
+        actor_task.await.expect("actor task must join").expect("deferred initial reset must honor cancellation");
+        assert!(client.last_new_payload_v2().await.is_none(), "the stopped actor cannot insert a payload");
+        coordinator_task.abort();
+        assert!(coordinator_task.await.unwrap_err().is_cancelled(), "the test must stop its coordinator");
+        drop(request_tx);
+    }
+
+    /// Public pre-start probing must not bypass conductor admission enforced by task entry.
+    #[tokio::test]
+    async fn historical_startup_public_probe_rejects_leader_before_engine_calls() {
+        let mut conductor = MockConductor::new();
+        conductor.expect_leader().times(1).returning(|| Ok(true));
+        let mut coordinator = coordinator(false, true, Some(Arc::new(conductor)));
+        coordinator.begin_historical_startup(test_block_info(100)).expect("stopped target");
+        coordinator.processor.client().set_fork_choice_updated_v3_response(ForkchoiceUpdated { payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None }, payload_id: None }).await;
+        assert!(coordinator.probe_historical_startup(Duration::from_secs(1)).await.is_err(), "public probes must refuse a configured leader before sending FCU");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "no public pre-start FCU may bypass leadership admission");
+    }
+
+    /// A configured leader cannot enter the inactive phase, even when locally stopped.
+    #[tokio::test]
+    async fn historical_startup_rejects_conductor_leader_before_engine_calls() {
+        let mut conductor = MockConductor::new();
+        conductor.expect_leader().times(1).returning(|| Ok(true));
+        let mut coordinator = coordinator(false, true, Some(Arc::new(conductor)));
+        coordinator.begin_historical_startup(test_block_info(100)).expect("stopped target");
+        let (_tx, mut rx) = mpsc::channel(1);
+        assert!(coordinator.run_historical_startup(&mut rx).await.is_err(), "a leader must use a separate initialization path");
+        assert!(coordinator.historical_startup.is_some(), "failed entry must not release the gate");
+        assert_eq!(coordinator.processor.client().storage().read().await.fork_choice_updated_v3_requests.len(), 0, "leadership admission runs before any engine call");
+    }
+
+    /// Active or private sequencing must not enter a canonical historical startup phase.
+    #[test]
+    fn historical_startup_requires_stopped_regular_sequencer() {
+        let mut active = coordinator(false, false, None);
+        assert!(active.begin_historical_startup(test_block_info(100)).is_err(), "an active sequencer cannot enter startup");
+        let mut shadow = coordinator(true, true, None);
+        assert!(shadow.begin_historical_startup(test_block_info(100)).is_err(), "a shadow sequencer cannot enter regular startup");
     }
 
     fn payload(number: u64, hash: u8) -> BaseExecutionPayloadEnvelope {

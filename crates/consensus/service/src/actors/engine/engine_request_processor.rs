@@ -15,6 +15,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
     CheckpointWriter, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
+    HistoricalStartupFailure,
     NoopCheckpointWriter, actors::sequencer::CanonicalReconciliationInputs,
 };
 
@@ -41,6 +42,15 @@ pub enum ResetOutcome {
     /// (no reconciliation state exists yet) and fires at most once, since the path that produces
     /// it flips `el_sync_complete` to `true` before returning.
     InitialELSyncReset,
+}
+
+/// Whether historical labels still need confirmation or the handoff has been delivered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoricalStartupHandoff {
+    /// A label FCU returned SYNCING without committing state or sending notifications.
+    Pending,
+    /// Labels were confirmed and reset plus completion notifications were delivered.
+    Complete,
 }
 
 /// Responsible for managing the operations sent to the execution layer's Engine API. To accomplish
@@ -159,6 +169,42 @@ where
             last_safe_head_sent: L2BlockInfo::default(),
             rollup: config,
         }
+    }
+
+    /// Hands a confirmed historical target to normal derivation using the existing reset policy.
+    ///
+    /// The coordinator retains exclusive engine ownership until this completes. This does not
+    /// promote finality or require offset-anchor selection. Notification completion means queued
+    /// delivery, as with the normal initial-sync handoff, not pipeline acknowledgement.
+    pub async fn handoff_historical_startup(&mut self, target: L2BlockInfo) -> Result<HistoricalStartupHandoff, EngineError> {
+        let latest = self.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await
+            .map_err(|error| HistoricalStartupFailure::HeadQuery(Box::new(error)))?;
+        if latest != Some(target) {
+            return Err(HistoricalStartupFailure::TargetChanged.into());
+        }
+        let start = base_consensus_engine::find_starting_forkchoice_with_checkpoint_reader(
+            &self.rollup, self.client.as_ref(), self.checkpoint_reader.as_ref(),
+        ).await.map_err(base_consensus_engine::EngineResetError::SyncStart)?;
+        if start.un_safe != target {
+            return Err(HistoricalStartupFailure::ResetChangedTarget.into());
+        }
+        let update = EngineSyncStateUpdate { unsafe_head: Some(target), local_safe_head: Some(start.safe), safe_head: Some(start.safe), finalized_head: Some(start.finalized) };
+        let proposed = self.engine.state().sync_state.updated(update);
+        let response = self.client.fork_choice_updated_v3(proposed.create_forkchoice_state(), None).await
+            .map_err(|error| HistoricalStartupFailure::LabelRequest(Box::new(error)))?;
+        match response.payload_status.status {
+            alloy_rpc_types_engine::PayloadStatusEnum::Valid => {}
+            alloy_rpc_types_engine::PayloadStatusEnum::Syncing => return Ok(HistoricalStartupHandoff::Pending),
+            status => return Err(HistoricalStartupFailure::LabelStatus(status).into()),
+        }
+        self.engine.accept_confirmed_startup(update);
+        base_consensus_engine::Metrics::engine_reset_count().increment(1);
+        self.checkpoint_forkchoice_state_if_updated().await;
+        self.notify_derivation_of_reset(start.safe).await?;
+        self.derivation_client.notify_sync_completed(start.safe).await.map_err(|_| EngineError::ChannelClosed)?;
+        self.el_sync_complete = true;
+        info!(target: "engine", block = target.block_info.number, safe = start.safe.block_info.number, finalized = start.finalized.block_info.number, "Historical startup handoff complete");
+        Ok(HistoricalStartupHandoff::Complete)
     }
 
     /// Resets the inner [`Engine`] without notifying derivation.

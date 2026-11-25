@@ -10,7 +10,7 @@ mod config;
 pub use config::EngineConfig;
 
 mod error;
-pub use error::EngineError;
+pub use error::{EngineError, HistoricalStartupFailure};
 
 mod request;
 pub use request::{
@@ -22,7 +22,7 @@ pub use request::{
 mod engine_request_processor;
 #[cfg(test)]
 pub use client::MockEngineDerivationClient;
-pub use engine_request_processor::{EngineProcessor, EngineRequestReceiver, ResetOutcome};
+pub use engine_request_processor::{EngineProcessor, EngineRequestReceiver, HistoricalStartupHandoff, ResetOutcome};
 
 mod validator_engine_request_handler;
 pub use validator_engine_request_handler::ValidatorEngineRequestHandler;
