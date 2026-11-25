@@ -498,11 +498,23 @@ impl Node {
             let state = if stateless { state.collecting() } else { state };
             let validate =
                 || (BlockExecution { chain: &self.spec }).validate(header, transactions, &parent.header, &state);
+            let started = std::time::Instant::now();
             let validated = if chain.db.is_partial() {
                 validate()
             } else {
                 crate::prewarm::warm_while(chain, &self.spec, header, transactions, parent, validate)
             };
+            if std::env::var_os("TIGER_VALIDATION_LOG").is_some() {
+                let (total, root) = (started.elapsed(), state.root_time());
+                eprintln!(
+                    "tiger: validated block {} txs {} exec {:.1}ms root {:.1}ms cached {}",
+                    header.number,
+                    transactions.len(),
+                    (total - root).as_secs_f64() * 1e3,
+                    root.as_secs_f64() * 1e3,
+                    state.is_cached(),
+                );
+            }
             let missing = match validated {
                 Ok(validated) => {
                     let prepared = state

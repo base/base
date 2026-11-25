@@ -99,6 +99,8 @@ pub struct NodeState<'d> {
     misses: Option<RefCell<Misses>>,
     /// The cross-block execution cache, when this is the state at the cache's head.
     cache: Option<std::sync::Arc<crate::ExecCache>>,
+    /// Time spent computing state and storage roots on this state.
+    root_time: Cell<std::time::Duration>,
 }
 
 /// The accounts, storage slots and code a block's execution read that a partial state does not
@@ -136,6 +138,7 @@ impl<'d> NodeState<'d> {
             prepared: RefCell::new(None),
             misses: None,
             cache: None,
+            root_time: Cell::new(std::time::Duration::ZERO),
         }
     }
 
@@ -283,6 +286,17 @@ impl<'d> NodeState<'d> {
         self.prepared.borrow_mut().take()
     }
 
+    /// Time spent computing state and storage roots on this state, for timing a block's
+    /// validation: the rest is execution.
+    pub fn root_time(&self) -> std::time::Duration {
+        self.root_time.get()
+    }
+
+    /// Whether reads go through the cross-block execution cache.
+    pub fn is_cached(&self) -> bool {
+        self.cache.is_some()
+    }
+
     /// The hash of ancestor block `number`.
     pub fn block_hash(&self, number: u64) -> Result<B256, String> {
         self.block_hashes.get(&number).copied().ok_or_else(|| self.record(format!("missing block hash {number}")))
@@ -295,8 +309,11 @@ impl ParentState for NodeState<'_> {
     }
 
     fn state_root_after(&self, changes: &BlockStateAccumulator) -> Result<B256, String> {
+        let started = std::time::Instant::now();
         let changes = block_changes(changes);
-        let prepared = match self.view.prepare_root(&changes) {
+        let prepared = self.view.prepare_root(&changes);
+        self.root_time.set(self.root_time.get() + started.elapsed());
+        let prepared = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
                 // A deletion can collapse a branch into a sibling no read loaded; the deleted
@@ -328,7 +345,10 @@ impl ParentState for NodeState<'_> {
         changes: &BlockStateAccumulator,
     ) -> Result<B256, String> {
         // The message passer's account is read only for its storage root, not by execution.
-        self.view.storage_root_after(address, &block_changes(changes)).map_err(|error| {
+        let started = std::time::Instant::now();
+        let root = self.view.storage_root_after(address, &block_changes(changes));
+        self.root_time.set(self.root_time.get() + started.elapsed());
+        root.map_err(|error| {
             self.collect(&error, |misses| _ = misses.accounts.insert(address));
             self.record(error)
         })

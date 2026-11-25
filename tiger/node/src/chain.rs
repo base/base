@@ -178,6 +178,7 @@ pub struct Chain {
     /// The cross-block execution cache (full states), holding the state after `cache_head`.
     exec_cache: Arc<crate::ExecCache>,
     cache_head: B256,
+    exec_cache_enabled: bool,
 }
 
 /// Canonical blocks for the persistence thread to commit, oldest first, from
@@ -292,6 +293,7 @@ impl Chain {
             memory_block_buffer_target: MEMORY_BLOCK_BUFFER_TARGET,
             exec_cache: Arc::default(),
             cache_head: genesis.hash,
+            exec_cache_enabled: true,
             genesis,
         };
         let genesis_number = chain.genesis.header.number;
@@ -597,7 +599,7 @@ impl Chain {
         .map_err(|error| error.to_string())?;
         let state = NodeState::new(view, self.block_hashes(block));
         // Only the head's own state reads the execution cache.
-        let cached = self.batched() && block.hash == self.head.hash && self.cache_head == self.head.hash;
+        let cached = self.exec_cache_enabled && self.batched() && block.hash == self.head.hash && self.cache_head == self.head.hash;
         Ok(if cached { state.with_cache(Arc::clone(&self.exec_cache)) } else { state })
     }
 
@@ -692,6 +694,11 @@ impl Chain {
         }
         (self.persistence_threshold, self.memory_block_buffer_target) = (threshold, buffer_target);
         Ok(())
+    }
+
+    /// Turns the cross-block execution cache on or off (on by default; `tiger bench` compares).
+    pub fn set_exec_cache(&mut self, enabled: bool) {
+        self.exec_cache_enabled = enabled;
     }
 
     /// Whether the Engine API should wait for persistence: the canonical blocks in memory are

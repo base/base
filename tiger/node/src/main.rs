@@ -21,7 +21,8 @@ const USAGE: &str = "usage:
              [--port <port>] [--discovery.port <port>] [--disable-discovery]
              [--bootnodes <enode,...>] [--trusted-peers <enode,...>] [--p2p-secret-key <file>]
              [--max-outbound-peers <n>] [--max-inbound-peers <n>] [--nat extip:<ip>]
-  tiger diff-adapter";
+  tiger diff-adapter
+  tiger bench fetch|replay (see node/src/bench.rs)";
 
 /// `tiger node` options, named as base-reth names them.
 #[derive(Debug)]
@@ -297,6 +298,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("diff-adapter") => base_tiger::Adapter::run().map_err(|error| error.to_string()),
         Some("node") => NodeArgs::parse(&args[1..]).and_then(NodeArgs::run),
+        Some("bench") => base_tiger::bench(&args[1..]),
         _ => Err(USAGE.to_owned()),
     };
     match result {

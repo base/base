@@ -15,6 +15,9 @@ pub use exec::{BlockExecution, Built, Executed, Validated};
 mod genesis;
 pub use genesis::{Genesis, genesis_changes};
 
+mod bench;
+pub use bench::run as bench;
+
 mod exec_cache;
 pub use exec_cache::ExecCache;
 

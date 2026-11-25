@@ -14,6 +14,27 @@ cargo build --release
 cargo test
 ```
 
+## Benchmarks
+
+`tiger bench` replays real blocks through a full node's validation path (prewarm, the cross-block
+execution cache, the in-memory layer, `set_canonical`) on a datadir without persisting, checks
+each state root, and prints per-phase percentiles (execution, state root, canonical update) with
+blocks/s and Mgas/s. The datadir must be a full base mainnet datadir at the block before the
+first replayed one; it is opened but not written, so one datadir (a ZFS clone of a snapshot, for
+example) replays the same blocks again.
+
+```sh
+# The replay set: the 2,000 blocks after the datadir's tip, from any base mainnet RPC that serves
+# debug_getRawBlock (base-reth does). On eagle: tip 61,858,621 (snapshot tiger-20261124).
+tiger bench fetch --rpc http://127.0.0.1:8545 --from 61858622 --count 2000 --out blocks.bin
+tiger bench replay --chain base --datadir <datadir> --blocks blocks.bin [--count N] [--no-prewarm] [--no-cache]
+```
+
+A run's numbers depend on the page cache: the first replay of a block range reads the datadir
+from disk, later ones from memory. Compare builds on the same range back to back, and say which
+kind of run a number comes from. `TIGER_VALIDATION_LOG=1` prints the same execution and state
+root split for every block a running node validates.
+
 ## Layout
 
 | Directory | Crate | What it holds |
