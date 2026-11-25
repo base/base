@@ -98,7 +98,7 @@ pub struct NodeState<'d> {
     /// When collecting ([`Self::collecting`]): the state reads that were not local.
     misses: Option<RefCell<Misses>>,
     /// The cross-block execution cache, when this is the state at the cache's head.
-    cache: Option<std::sync::Arc<crate::ExecCache>>,
+    cache: Option<(std::sync::Arc<crate::ExecCache>, u64)>,
     /// Time spent computing state and storage roots on this state.
     root_time: Cell<std::time::Duration>,
 }
@@ -144,7 +144,8 @@ impl<'d> NodeState<'d> {
 
     /// This state reading through `cache`, which must hold the same state (the cache's head).
     pub(crate) fn with_cache(mut self, cache: std::sync::Arc<crate::ExecCache>) -> Self {
-        self.cache = Some(cache);
+        let generation = cache.generation();
+        self.cache = Some((cache, generation));
         self
     }
 
@@ -199,13 +200,13 @@ impl<'d> NodeState<'d> {
 
     /// The account at `address`.
     pub fn account(&self, address: &Address) -> Result<Option<AccountInfo>, String> {
-        if let Some(account) = self.cache.as_ref().and_then(|cache| cache.account(address)) {
+        if let Some(account) = self.cache.as_ref().and_then(|(cache, generation)| cache.account(*generation, address)) {
             return Ok(account);
         }
         match self.view.account(*address) {
             Ok(account) => {
-                if let Some(cache) = &self.cache {
-                    cache.put_account(*address, account);
+                if let Some((cache, generation)) = &self.cache {
+                    cache.put_account(*generation, *address, account);
                 }
                 if let (Some(misses), Some(account)) = (&self.misses, &account) {
                     misses.borrow_mut().code_owners.insert(account.code_hash, *address);
@@ -222,13 +223,13 @@ impl<'d> NodeState<'d> {
 
     /// The value of storage `slot` of `address`.
     pub fn storage(&self, address: &Address, slot: &U256) -> Result<U256, String> {
-        if let Some(value) = self.cache.as_ref().and_then(|cache| cache.storage(address, slot)) {
+        if let Some(value) = self.cache.as_ref().and_then(|(cache, generation)| cache.storage(*generation, address, slot)) {
             return Ok(value);
         }
         match self.view.storage(*address, *slot) {
             Ok(value) => {
-                if let Some(cache) = &self.cache {
-                    cache.put_storage(*address, *slot, value);
+                if let Some((cache, generation)) = &self.cache {
+                    cache.put_storage(*generation, *address, *slot, value);
                 }
                 Ok(value)
             }
@@ -246,12 +247,13 @@ impl<'d> NodeState<'d> {
 
     /// The code with hash `hash`.
     pub fn code(&self, hash: &B256) -> Result<Bytes, String> {
-        if let Some(code) = self.cache.as_ref().and_then(|cache| cache.code(hash)) {
+        if let Some(code) = self.cache.as_ref().and_then(|(cache, _)| cache.code(hash)) {
             return Ok(code);
         }
         match self.view.code(*hash) {
             Ok(Some(code)) => {
-                if let Some(cache) = &self.cache {
+                // Code is addressed by its hash, so it is never stale.
+                if let Some((cache, _)) = &self.cache {
                     cache.put_code(*hash, code.clone());
                 }
                 Ok(code)
