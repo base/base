@@ -77,34 +77,7 @@ impl NativePrecompiles {
     /// addresses. These are the addresses base-reth pre-warms; B-20 token addresses are resolved
     /// dynamically and are not pre-warmed.
     pub fn fixed(&self) -> Vec<(Address, NativePrecompile)> {
-        let entries = [
-            (
-                BaseFeature::TokenFactoryPrecompile,
-                B20FactoryStorage::ADDRESS,
-                NativePrecompile::B20Factory,
-            ),
-            (
-                BaseFeature::PolicyPrecompile,
-                PolicyRegistryStorage::ADDRESS,
-                NativePrecompile::PolicyRegistry,
-            ),
-            (
-                BaseFeature::ActivationRegistry,
-                ActivationRegistryStorage::ADDRESS,
-                NativePrecompile::ActivationRegistry,
-            ),
-            (
-                BaseFeature::TransactionContextPrecompile,
-                TxContextStorage::ADDRESS,
-                NativePrecompile::TxContext,
-            ),
-            (
-                BaseFeature::NonceManagerPrecompile,
-                NonceManagerStorage::ADDRESS,
-                NativePrecompile::NonceManager,
-            ),
-        ];
-        let fixed: Vec<_> = entries
+        let fixed: Vec<_> = Self::FIXED
             .into_iter()
             .filter(|(feature, _, _)| self.upgrade.is_feature_enabled(*feature))
             .map(|(_, address, precompile)| (address, precompile))
@@ -113,11 +86,43 @@ impl NativePrecompiles {
         fixed
     }
 
+    /// The fixed-address native precompiles, each with the feature that installs it.
+    const FIXED: [(BaseFeature, Address, NativePrecompile); 5] = [
+        (
+            BaseFeature::TokenFactoryPrecompile,
+            B20FactoryStorage::ADDRESS,
+            NativePrecompile::B20Factory,
+        ),
+        (
+            BaseFeature::PolicyPrecompile,
+            PolicyRegistryStorage::ADDRESS,
+            NativePrecompile::PolicyRegistry,
+        ),
+        (
+            BaseFeature::ActivationRegistry,
+            ActivationRegistryStorage::ADDRESS,
+            NativePrecompile::ActivationRegistry,
+        ),
+        (
+            BaseFeature::TransactionContextPrecompile,
+            TxContextStorage::ADDRESS,
+            NativePrecompile::TxContext,
+        ),
+        (
+            BaseFeature::NonceManagerPrecompile,
+            NonceManagerStorage::ADDRESS,
+            NativePrecompile::NonceManager,
+        ),
+    ];
+
     /// Resolves `address` to the native precompile installed there at this fork, if any.
     pub fn lookup(&self, address: Address) -> Option<NativePrecompile> {
-        if let Some((_, precompile)) = self.fixed().into_iter().find(|(fixed, _)| *fixed == address)
+        // Runs on every call, so without collecting `fixed()`.
+        if let Some((_, _, precompile)) = Self::FIXED
+            .iter()
+            .find(|(feature, fixed, _)| *fixed == address && self.upgrade.is_feature_enabled(*feature))
         {
-            return Some(precompile);
+            return Some(*precompile);
         }
         if !self.upgrade.is_feature_enabled(BaseFeature::TokenPrecompiles) {
             return None;
