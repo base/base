@@ -4,8 +4,12 @@
 //! is Apache-2.0 licensed. The environment is opened the way reth's `DatabaseEnv::open` opens it
 //! (geometry, max tables, read-ahead off, coalesce, durable sync, rp augment limit), except that
 //! tiger never uses `MDBX_WRITEMAP`: all page writes then go through `pwrite`, where the
-//! fault-injection layer ([`crate::Fault`]) hooks them. The file format does not depend on the
-//! write mode, so base-reth opens the same files.
+//! fault-injection layer ([`crate::Fault`]) hooks them. tiger also reclaims free pages LIFO
+//! (`MDBX_LIFORECLAIM`): reusing the pages freed last keeps writes on pages the filesystem cache
+//! still holds, where FIFO reuse makes every partial-record `pwrite` on ZFS read its record from
+//! disk first (on a base mainnet datadir, half the commit time). With durable sync it is as
+//! crash-safe as FIFO. Neither the file format nor base-reth's reading of it depends on the
+//! write mode or the reclaim order.
 
 use std::{
     ffi::{CStr, CString, c_int, c_void},
@@ -123,7 +127,8 @@ impl Env {
                 ] {
                     MdbxError::check(ffi::mdbx_env_set_option(env, option, value))?;
                 }
-                let mut flags = ffi::MDBX_NORDAHEAD | ffi::MDBX_COALESCE | ffi::MDBX_NOSTICKYTHREADS;
+                let mut flags =
+                    ffi::MDBX_NORDAHEAD | ffi::MDBX_COALESCE | ffi::MDBX_NOSTICKYTHREADS | ffi::MDBX_LIFORECLAIM;
                 flags |= if options.read_only { ffi::MDBX_RDONLY } else { ffi::MDBX_SYNC_DURABLE };
                 let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| MdbxError(ffi::MDBX_EINVAL))?;
                 MdbxError::check(ffi::mdbx_env_open(env, path.as_ptr(), flags, 0o644))
