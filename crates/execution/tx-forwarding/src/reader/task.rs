@@ -101,7 +101,8 @@ impl<P: TransactionPool> ReaderPool for P {
 /// Each pass waits until at least half of the destination queue is free, refreshes its lanes, and
 /// fills the free slots from two lanes: a configured percentage of picks goes to the oldest pending
 /// transaction and the rest to the highest tip-per-gas bid (see [`LaneMix`] and [`LaneScheduler`]).
-/// Transactions recently accepted by this destination's queue are skipped.
+/// Transactions recently accepted by this destination's queue are skipped, unless the pool has
+/// since admitted them again (see [`RecentlySent`]).
 ///
 /// The lanes come from a full `best_transactions()` read about every [`Self::FULL_READ_INTERVAL`].
 /// In between, the reader looks up the transactions the pool announces as pending and adds them to
@@ -321,7 +322,7 @@ where
             }
 
             txs_read += 1;
-            if self.recently_sent.was_recently_sent(tx.hash()) {
+            if self.recently_sent.was_recently_sent(tx.hash(), tx.timestamp) {
                 txs_ignored += 1;
                 continue;
             }
@@ -331,10 +332,11 @@ where
             // it ages from when it became due rather than from its old pool timestamp, so it goes
             // after transactions that were already waiting then, and ahead of later arrivals. The
             // resends a full read finds all at once therefore cannot jump the existing backlog.
-            let (arrived, priority) = self.recently_sent.resend_due(tx.hash()).map_or_else(
-                || (tx.timestamp, ordering.priority(&tx.transaction, base_fee)),
-                |due| (due, Priority::None),
-            );
+            let (arrived, priority) =
+                self.recently_sent.resend_due(tx.hash(), tx.timestamp).map_or_else(
+                    || (tx.timestamp, ordering.priority(&tx.transaction, base_fee)),
+                    |due| (due, Priority::None),
+                );
             if let Some(sequence) = sequence {
                 self.queued.insert(sequence, tx.nonce());
             }
@@ -371,7 +373,7 @@ where
         txs.sort_unstable_by_key(|tx| (tx.sender(), tx.nonce(), *tx.hash()));
         txs.dedup_by_key(|tx| *tx.hash());
         for tx in txs {
-            if self.recently_sent.was_recently_sent(tx.hash()) {
+            if self.recently_sent.was_recently_sent(tx.hash(), tx.timestamp) {
                 continue;
             }
             let sequence = BestTransactionLane::for_transaction(&tx);
@@ -415,7 +417,7 @@ where
         }
         self.pool
             .get_transaction_by_sender_and_nonce(sequence.sender, previous)
-            .is_none_or(|previous| self.recently_sent.was_sent(previous.hash()))
+            .is_none_or(|previous| self.recently_sent.was_sent(previous.hash(), previous.timestamp))
     }
 
     /// Moves transactions from `lanes` into the destination queue until it is full or `lanes` is
@@ -428,16 +430,16 @@ where
             let Some(tx) = lanes.pop(self.lane_mix.next_lane()) else { break };
             let hash = *tx.hash();
             // An announcement can repeat a transaction a full read already put in the lanes.
-            if self.recently_sent.was_recently_sent(&hash) {
+            if self.recently_sent.was_recently_sent(&hash, tx.timestamp) {
                 continue;
             }
             match self.try_enqueue(&tx) {
                 Ok(()) => {
                     let is_validity = Self::is_validity(&tx);
-                    if self.recently_sent.was_sent(&hash) {
+                    if self.recently_sent.was_sent(&hash, tx.timestamp) {
                         if is_validity { validity_resent += 1 } else { standard_resent += 1 }
                     }
-                    self.recently_sent.mark_sent(hash, is_validity);
+                    self.recently_sent.mark_sent(hash, tx.timestamp, is_validity);
                     txs_sent += 1;
                 }
                 // Only this reader produces into the queue, so capacity cannot shrink between the
@@ -917,7 +919,7 @@ mod tests {
         reader.push_announced(&mut lanes, &mut vec![*next.hash()]);
         assert!(lanes.is_empty(), "held back while the predecessor is unsent");
 
-        reader.recently_sent.mark_sent(*previous.hash(), false);
+        reader.recently_sent.mark_sent(*previous.hash(), previous.timestamp, false);
         reader.push_announced(&mut lanes, &mut vec![*next.hash()]);
         assert_eq!(lanes.pop(Lane::Priority).map(|tx| *tx.hash()), Some(*next.hash()));
     }
@@ -1014,7 +1016,7 @@ mod tests {
             CancellationToken::new(),
             "http://builder.test".parse().unwrap(),
         );
-        reader.recently_sent.mark_sent(*resend.hash(), false);
+        reader.recently_sent.mark_sent(*resend.hash(), resend.timestamp, false);
 
         let mut lanes = reader.take_snapshot().unwrap();
 
@@ -1086,6 +1088,47 @@ mod tests {
         let mut expected = vec![*standard.hash(), *validity.hash()];
         expected.sort();
         assert_eq!(resent, expected, "the failed validity transaction is resent");
+    }
+
+    /// A held validity transaction that expired and was resubmitted with the same signed bytes,
+    /// and so the same hash, is forwarded again: the destination dropped the first copy at its
+    /// block expiry. The copy that was already sent stays held.
+    #[test]
+    fn a_resubmitted_validity_transaction_is_forwarded_again() {
+        let first = with_validity(&from_sender(0xbb, 0, 2));
+        let resubmitted = Arc::new(ValidPoolTransaction {
+            transaction_id: first.transaction_id,
+            transaction: first.transaction.clone(),
+            propagate: first.propagate,
+            timestamp: first.timestamp + Duration::from_secs(1),
+            origin: first.origin,
+            authority_ids: None,
+        });
+        assert_eq!(first.hash(), resubmitted.hash());
+        let mut pool = MockReaderPool::new();
+        pool.expect_block_info().returning(BlockInfo::default);
+        let mut reads = vec![
+            Arc::clone(&resubmitted),
+            Arc::clone(&resubmitted),
+            Arc::clone(&first),
+            Arc::clone(&first),
+        ];
+        pool.expect_best_transactions().returning(move || Box::new(reads.pop().into_iter()));
+        let (sender, mut queue) = mpsc::channel(4);
+        let mut reader = paced_reader(pool, sender, CancellationToken::new());
+
+        for (read, expected) in [("first send", 1), ("first copy again", 0)] {
+            let mut lanes = reader.take_snapshot().unwrap();
+            assert_eq!(reader.fill_queue(&mut lanes), Some(expected), "{read}");
+        }
+        let mut lanes = reader.take_snapshot().unwrap();
+        assert_eq!(reader.fill_queue(&mut lanes), Some(1), "the resubmission is forwarded");
+        let mut lanes = reader.take_snapshot().unwrap();
+        assert_eq!(reader.fill_queue(&mut lanes), Some(0), "the resubmission is then held");
+
+        let forwarded: Vec<_> = std::iter::from_fn(|| queue.try_recv().ok()).collect();
+        assert_eq!(forwarded.len(), 2);
+        assert!(forwarded.iter().all(|tx| tx.tx_hash == *first.hash()));
     }
 
     /// Cancelling while the reader waits out the gap after an expensive snapshot must end the
