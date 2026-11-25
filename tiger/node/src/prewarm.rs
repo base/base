@@ -10,10 +10,10 @@
 //! A full state prewarms each block in process while it executes instead ([`warm_while`]).
 
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     sync::{
         Arc, Condvar, Mutex, mpsc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::Duration,
@@ -170,6 +170,55 @@ const FULL_PREWARM_WALKERS: usize = 4;
 const WALK_SLOTS: usize = 16;
 /// How long an idle walker waits for changes before it looks for paths to walk again.
 const WALK_POLL: Duration = Duration::from_millis(1);
+/// Threads that run ahead of the block's transactions (see [`PrewarmBlock::run_ahead`]).
+const RUN_AHEAD_THREADS: usize = 2;
+/// Threads that read the slots the run-ahead threads miss, so they are read concurrently.
+const FETCHERS: usize = 8;
+/// Most passes over one transaction: each reaches one read deeper into its chains of
+/// dependent storage reads.
+const RUN_AHEAD_PASSES: usize = 32;
+/// Longest a run-ahead pass waits for the slots it missed before the next pass.
+const PASS_WAIT: Duration = Duration::from_millis(2);
+
+/// Whether prewarm runs ahead of the block's transactions (opt-in: `TIGER_RUN_AHEAD=1`).
+fn run_ahead_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("TIGER_RUN_AHEAD").is_ok_and(|v| v == "1"))
+}
+
+/// The slots the run-ahead threads asked for: read (with their values) or still being read.
+#[derive(Debug, Default)]
+pub(crate) struct Fetches {
+    slots: Mutex<HashMap<(Address, U256), Option<U256>>>,
+    landed: Condvar,
+}
+
+impl Fetches {
+    /// The value of `slot` of `address` if a fetcher has read it; otherwise queues it on `fetch`
+    /// (once) and returns `None`.
+    pub(crate) fn read(&self, address: Address, slot: U256, fetch: &mpsc::Sender<(Address, U256)>) -> Option<U256> {
+        let mut slots = self.slots.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match slots.get(&(address, slot)) {
+            Some(value) => *value,
+            None => {
+                slots.insert((address, slot), None);
+                let _ = fetch.send((address, slot));
+                None
+            }
+        }
+    }
+
+    fn land(&self, address: Address, slot: U256, value: U256) {
+        self.slots.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert((address, slot), Some(value));
+        self.landed.notify_all();
+    }
+
+    /// Waits up to [`PASS_WAIT`] for every slot asked for so far to be read.
+    fn wait_landed(&self) {
+        let slots = self.slots.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = self.landed.wait_timeout_while(slots, PASS_WAIT, |slots| slots.values().any(Option::is_none));
+    }
+}
 
 /// Runs `validate` (a block's serial execution and state root on this thread) while threads
 /// warm the datadir pages it will read, as base-reth's prewarm does. [`FULL_PREWARM_WORKERS`]
@@ -178,7 +227,9 @@ const WALK_POLL: Duration = Duration::from_millis(1);
 /// each transaction changed to [`FULL_PREWARM_WALKERS`] walkers as soon as it commits. The
 /// walkers walk the trie paths of those changes, which the state root reads, at most
 /// [`WALK_SLOTS`] slots of one account at a time so a storage the block changes in many
-/// places is walked by all of them. Their results are discarded; reading only faults pages
+/// places is walked by all of them. With `TIGER_RUN_AHEAD=1`, [`RUN_AHEAD_THREADS`] threads
+/// also run ahead of each transaction with [`FETCHERS`] threads reading the slots they reach
+/// concurrently (see [`PrewarmBlock::run_ahead`]). Their results are discarded; reading only faults pages
 /// into the cache, so a wrong speculation costs nothing but the work. A full state only: a
 /// partial state's reads go to the upstream instead.
 pub(crate) fn warm_while<R>(
@@ -197,6 +248,10 @@ pub(crate) fn warm_while<R>(
     let (changed, receiver) = mpsc::channel();
     let receiver = Mutex::new(receiver);
     let paths = Mutex::new(Paths::default());
+    let fetches = Arc::new(Fetches::default());
+    let (fetch, fetched) = mpsc::channel();
+    let fetched = Mutex::new(fetched);
+    let next = AtomicUsize::new(1);
     thread::scope(|scope| {
         for worker in 0..workers {
             let (done, changed) = (&done, changed.clone());
@@ -214,6 +269,22 @@ pub(crate) fn warm_while<R>(
             scope.spawn(move || {
                 let walk = || walk_paths(chain, parent, receiver, paths, done);
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(walk));
+            });
+        }
+        for _ in 0..if run_ahead_enabled() { RUN_AHEAD_THREADS } else { 0 } {
+            let (done, next, fetches, fetch) = (&done, &next, Arc::clone(&fetches), fetch.clone());
+            scope.spawn(move || {
+                let block = PrewarmBlock { chain, spec, header, transactions, parent };
+                let run = || block.run_ahead(next, fetches, fetch, done);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+            });
+        }
+        drop(fetch);
+        for _ in 0..if run_ahead_enabled() { FETCHERS } else { 0 } {
+            let (done, fetched, fetches) = (&done, &fetched, &fetches);
+            scope.spawn(move || {
+                let fetch = || fetch_slots(chain, parent, fetched, fetches, done);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(fetch));
             });
         }
         let result = validate();
@@ -248,6 +319,26 @@ fn walk_paths(
                     return;
                 }
             }
+        }
+    }
+}
+
+/// One fetcher: reads the slots the run-ahead threads miss (filling the execution cache) and
+/// hands them their values, until the run-ahead threads are done or the block is.
+fn fetch_slots(
+    chain: &Chain,
+    parent: &StoredBlock,
+    fetched: &Mutex<mpsc::Receiver<(Address, U256)>>,
+    fetches: &Fetches,
+    done: &AtomicBool,
+) {
+    let Ok(state) = chain.state_after(parent) else { return };
+    while !done.load(Ordering::Relaxed) {
+        let next = fetched.lock().unwrap_or_else(std::sync::PoisonError::into_inner).recv_timeout(WALK_POLL);
+        match next {
+            Ok((address, slot)) => fetches.land(address, slot, state.storage(&address, &slot).unwrap_or_default()),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
 }
@@ -322,6 +413,39 @@ impl PrewarmBlock<'_> {
         if worker == 0 {
             let (_, _, changes) = executor.finish();
             let _ = changed.send(block_changes(&changes));
+        }
+    }
+
+    /// One run-ahead thread: takes the block's transactions in order and executes each (after
+    /// the first) over the parent state without waiting on the datadir: slots neither the
+    /// execution cache nor the fetchers hold read as zero and go to the fetchers. A transaction
+    /// whose reads form chains (a slot's address depends on a value read before it) reaches one
+    /// read deeper each pass, so it is executed again once the slots it missed land, up to
+    /// [`RUN_AHEAD_PASSES`] times, until a pass misses nothing. A heavy transaction's slots are
+    /// read concurrently instead of one after another; the validating thread then finds them
+    /// cached.
+    fn run_ahead(&self, next: &AtomicUsize, fetches: Arc<Fetches>, fetch: mpsc::Sender<(Address, U256)>, done: &AtomicBool) {
+        let Ok(state) = self.chain.state_after(self.parent) else { return };
+        let Some(state) = state.running_ahead(fetches.clone(), fetch) else { return };
+        let env = BlockExecution::env(self.header);
+        let Some(Ok((_, first))) = self.transactions.first().map(|raw| Transactions::decode(raw)) else { return };
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            let Some(raw) = self.transactions.get(index) else { return };
+            let Ok((_, tx)) = Transactions::decode(raw) else { continue };
+            for _ in 0..RUN_AHEAD_PASSES {
+                if done.load(Ordering::Relaxed) {
+                    return;
+                }
+                let missed = state.ahead_misses();
+                let Ok(mut executor) = BaseBlockExecutor::for_block(self.spec, &env, state.database()) else { return };
+                let _ = executor.execute_transaction(&first);
+                let _ = executor.execute_transaction(&tx);
+                if state.ahead_misses() == missed {
+                    break;
+                }
+                fetches.wait_landed();
+            }
         }
     }
 }

@@ -127,6 +127,9 @@ pub struct NodeState<'d> {
     misses: Option<RefCell<Misses>>,
     /// The cross-block execution cache, when this is the state at the cache's head.
     cache: Option<(std::sync::Arc<crate::ExecCache>, u64)>,
+    /// When running ahead ([`Self::running_ahead`]): the slots fetched for it, where it sends
+    /// the ones not fetched yet, and how many reads it has answered as zero.
+    ahead: Option<(std::sync::Arc<crate::prewarm::Fetches>, std::sync::mpsc::Sender<(Address, U256)>, Cell<usize>)>,
     /// Time spent computing state and storage roots on this state.
     root_time: Cell<std::time::Duration>,
     /// The executing block's state root, computed as its transactions commit: started by the
@@ -169,6 +172,7 @@ impl<'d> NodeState<'d> {
             prepared: RefCell::new(None),
             misses: None,
             cache: None,
+            ahead: None,
             root_time: Cell::new(std::time::Duration::ZERO),
             live: RefCell::new(None),
         }
@@ -187,6 +191,26 @@ impl<'d> NodeState<'d> {
     pub fn collecting(mut self) -> Self {
         self.misses = Some(RefCell::new(Misses::default()));
         self
+    }
+
+    /// This state with storage reads that neither the execution cache nor `fetches` answer sent
+    /// to `fetch` and answered as zero instead of read, so a speculative execution never waits
+    /// on the datadir and names the slots it reaches while fetchers read them (a prewarm's
+    /// run-ahead). Its values are wrong wherever it misses: only for speculation that discards
+    /// them. None when not cached.
+    pub(crate) fn running_ahead(
+        mut self,
+        fetches: std::sync::Arc<crate::prewarm::Fetches>,
+        fetch: std::sync::mpsc::Sender<(Address, U256)>,
+    ) -> Option<Self> {
+        self.cache.as_ref()?;
+        self.ahead = Some((fetches, fetch, Cell::new(0)));
+        Some(self)
+    }
+
+    /// How many storage reads a run-ahead state has answered as zero so far.
+    pub(crate) fn ahead_misses(&self) -> usize {
+        self.ahead.as_ref().map_or(0, |(_, _, misses)| misses.get())
     }
 
     /// The reads collected as missing (empty when not collecting).
@@ -257,6 +281,12 @@ impl<'d> NodeState<'d> {
     pub fn storage(&self, address: &Address, slot: &U256) -> Result<U256, String> {
         if let Some(value) = self.cache.as_ref().and_then(|(cache, generation)| cache.storage(*generation, address, slot)) {
             return Ok(value);
+        }
+        if let Some((fetches, fetch, misses)) = &self.ahead {
+            return Ok(fetches.read(*address, *slot, fetch).unwrap_or_else(|| {
+                misses.set(misses.get() + 1);
+                U256::ZERO
+            }));
         }
         match self.view.storage(*address, *slot) {
             Ok(value) => {
