@@ -59,13 +59,13 @@ use tokio::sync::broadcast;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
-    HoldInterrupt, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
-    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, BlockStaleTracker, BuilderMetrics,
+    CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
+    RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
+    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -559,7 +559,8 @@ impl<Txs> Builder<'_, Txs> {
         })?;
 
         // 2. execute sequencer transactions
-        let mut info = ctx.execute_sequencer_transactions(&mut builder)?;
+        let mut info =
+            ctx.execute_sequencer_transactions(&mut builder, ctx.stale_storage_tracker())?;
 
         // 3. if mem pool transactions are requested we execute them
         let mut resting = None;
@@ -637,6 +638,9 @@ impl<Txs> Builder<'_, Txs> {
             }
         }
         let execution_duration = build_start.elapsed();
+        if let Some(stale_storage) = info.stale_storage.as_ref() {
+            stale_storage.finish();
+        }
         // Start the end-of-block sweep now so it overlaps the state root.
         let resting = resting
             .zip(resting_predicates.as_ref())
@@ -755,7 +759,7 @@ impl<Txs> Builder<'_, Txs> {
             builder.evm().block().number().try_into().expect("block_number must be < u64::MAX");
 
         builder.apply_pre_execution_changes()?;
-        ctx.execute_sequencer_transactions(&mut builder)?;
+        ctx.execute_sequencer_transactions(&mut builder, None)?;
         builder.into_executor().apply_post_execution_changes()?;
 
         if ctx.cancel.is_cancelled() {
@@ -813,6 +817,8 @@ pub struct ExecutionInfo {
     /// Transaction hashes that exceeded a per-transaction resource limit and should be
     /// permanently removed from the pool and recorded in the shared rejection cache.
     pub permanently_rejected_txs: Vec<TxHash>,
+    /// Per-build state of the log-only stale-storage meter, when it is enabled.
+    pub stale_storage: Option<BlockStaleTracker>,
 }
 
 impl ExecutionInfo {
@@ -826,6 +832,7 @@ impl ExecutionInfo {
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
             permanently_rejected_txs: Vec::new(),
+            stale_storage: None,
         }
     }
 
@@ -1010,6 +1017,21 @@ where
         );
     }
 
+    /// Starts the log-only stale-storage tracker for this build, or `None` when the meter is
+    /// disabled or the build replays derived attributes (`no_tx_pool`), whose transactions
+    /// enforcement could never exclude.
+    pub fn stale_storage_tracker(&self) -> Option<BlockStaleTracker> {
+        if self.attributes().no_tx_pool() {
+            return None;
+        }
+        self.builder_config.stale_storage.as_ref().map(|meter| {
+            meter.block_tracker(
+                self.parent().number().saturating_add(1),
+                self.attributes().timestamp(),
+            )
+        })
+    }
+
     /// Executes all sequencer transactions that are included in the payload attributes.
     ///
     /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
@@ -1024,6 +1046,9 @@ where
     /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
     /// attribute pre-includes; pre-includes there may legitimately be skipped on `InvalidTx`,
     /// so the historical skip-and-continue behavior is preserved.
+    ///
+    /// `stale_storage` is the build's tracker from [`Self::stale_storage_tracker`], or `None` on
+    /// paths that must not report, such as witness generation.
     #[instrument(
         skip_all,
         fields(phase = "sequencer_txs", block_number = tracing::field::Empty)
@@ -1031,9 +1056,11 @@ where
     pub fn execute_sequencer_transactions(
         &self,
         builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
+        stale_storage: Option<BlockStaleTracker>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         tracing::Span::current().record("block_number", self.parent().number().saturating_add(1));
         let mut info = ExecutionInfo::new();
+        info.stale_storage = stale_storage;
         let no_tx_pool = self.attributes().no_tx_pool();
         let resource_metering = &self.builder_config.resource_metering;
 
@@ -1066,6 +1093,9 @@ where
                         result_and_state.result.tx_gas_used(),
                         &result_and_state.state,
                     );
+                    if let Some(stale_storage) = info.stale_storage.as_mut() {
+                        stale_storage.evaluate(&result_and_state.state);
+                    }
                     CommitChanges::Yes
                 },
             ) {
@@ -1109,6 +1139,11 @@ where
                     &usage,
                     &mut info.resource_metering_usage,
                 );
+            }
+            // Sequencer transactions cannot be excluded, so they count toward the gate and
+            // dedupe but not toward the dry-run verdicts.
+            if let Some(stale_storage) = info.stale_storage.as_mut() {
+                stale_storage.include_unmetered();
             }
         }
         Ok(info)
@@ -1543,6 +1578,9 @@ where
                         if owns_dormancy {
                             best_txs.wake_by_state(&result_and_state.state);
                         }
+                        if let Some(stale_storage) = info.stale_storage.as_mut() {
+                            stale_storage.evaluate(&result_and_state.state);
+                        }
                         CommitChanges::Yes
                     }
                 },
@@ -1628,6 +1666,9 @@ where
                     &usage,
                     &mut info.resource_metering_usage,
                 );
+            }
+            if let Some(stale_storage) = info.stale_storage.as_mut() {
+                stale_storage.commit(&tx_hash);
             }
 
             best_txs.mark_current_committed();
@@ -1869,7 +1910,7 @@ mod tests {
         BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
         ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
-        RestingPredicateStore, SharedMeteringProvider, SharedRestingPredicates,
+        RestingPredicateStore, SharedMeteringProvider, SharedRestingPredicates, StaleStorageMeter,
         config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
@@ -3125,6 +3166,45 @@ mod tests {
         }
     }
 
+    /// Enabling the meter leaves the built block unchanged. The plain transfers here stay under
+    /// [`crate::STALE_STORAGE_CONTRACT_SLOT_GATE`], so nothing is flagged; the flag and limit paths
+    /// are covered by the `stale_storage` unit tests.
+    #[test]
+    fn stale_storage_meter_observes_without_excluding() {
+        let build = |meter: Option<StaleStorageMeter>| {
+            let evicted = Arc::new(Mutex::new(Vec::new()));
+            let invalid = Arc::new(Mutex::new(Vec::new()));
+            let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+            ctx.builder_config.stale_storage = meter;
+            let transactions = TestParkableTransactions::recording(
+                vec![pool_transaction(0), pool_transaction(1)],
+                Arc::clone(&invalid),
+            );
+            let evicted_by_build = Arc::clone(&evicted);
+            let outcome = build_pool_payload_with(ctx, transactions, move |hashes| {
+                evicted_by_build.lock().unwrap().extend(hashes);
+            });
+            let invalid = invalid.lock().unwrap().len();
+            (included_tx_count(outcome), evicted.lock().unwrap().clone(), invalid)
+        };
+        let metered = build(Some(StaleStorageMeter::new(1 << 16)));
+        let unmetered = build(None);
+
+        assert!(metered.0 > 0);
+        assert_eq!(metered, unmetered);
+    }
+
+    /// Derived-attribute (`no_tx_pool`) builds replay a block whose contents enforcement could
+    /// never change, so they must not add to the dry-run counts.
+    #[test]
+    fn derived_attribute_builds_do_not_meter_stale_storage() {
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.stale_storage = Some(StaleStorageMeter::new(1 << 16));
+        assert!(ctx.stale_storage_tracker().is_some());
+        ctx.config.attributes.no_tx_pool = true;
+        assert!(ctx.stale_storage_tracker().is_none());
+    }
+
     #[test]
     fn predicted_transaction_scope_exclude_evicts_from_pool() {
         let tx = pool_transaction(0);
@@ -3507,7 +3587,7 @@ mod tests {
         db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
         let mut builder = ctx.block_builder(&mut db).expect("block builder");
         builder.apply_pre_execution_changes().expect("pre-execution changes");
-        let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+        let mut info = ctx.execute_sequencer_transactions(&mut builder, None).expect("sequencer");
         let usage_before = info.resource_metering_usage.clone();
         let nonce_before = builder
             .evm_mut()

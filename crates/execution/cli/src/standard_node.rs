@@ -10,7 +10,10 @@ use base_execution_base_tx_rpc_node::TxBaseRpcExtension;
 use base_execution_payer_rpc::{PayerRpcConfig, PayerRpcExtension};
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
-    ResourceMeteringConfig, SharedMeteringProvider,
+    ResourceMeteringConfig, STALE_STORAGE_CACHE_MIB, STALE_STORAGE_CONTRACT_SLOT_GATE,
+    STALE_STORAGE_FIRST_DAY_LIMIT, STALE_STORAGE_FIRST_HOUR_LIMIT, STALE_STORAGE_LIMIT,
+    STALE_STORAGE_MAX_CACHE_MIB, STALE_STORAGE_MIN_CACHE_MIB, STALE_STORAGE_WINDOW_HOURS,
+    SharedMeteringProvider, StaleStorageMeter,
 };
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
@@ -37,7 +40,7 @@ use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::{
     UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalStartupMode,
 };
-use tracing::warn;
+use tracing::{info, warn};
 use url::Url;
 
 use crate::upgrade_signal::{
@@ -83,6 +86,10 @@ pub struct MeteringArgs {
     /// payload builder.
     #[command(flatten)]
     pub resource_metering: ResourceMeteringArgs,
+
+    /// Log-only stale-storage meter for the native payload builder.
+    #[command(flatten)]
+    pub stale_storage: StaleStorageArgs,
 }
 
 /// CLI arguments for payload resource metering.
@@ -124,6 +131,80 @@ impl Default for ResourceMeteringArgs {
             rejection_cache_max_capacity: REJECTION_CACHE_MAX_CAPACITY,
             rejection_cache_ttl_secs: REJECTION_CACHE_TTL.as_secs(),
         }
+    }
+}
+
+/// CLI arguments for the log-only stale-storage meter.
+///
+/// The meter counts, for each transaction the native payload builder commits, the storage slots
+/// it rewrites that no canonical block wrote within the window, in contracts past a changed-slot
+/// gate. Many such slots make the serial state root slow. It logs and counts what age-tiered
+/// limits would have flagged and never excludes a transaction. The recency cache is stamped
+/// from canonical-state notifications on every node that runs the payload builder, starts empty
+/// at startup, and is not saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::Args)]
+pub struct StaleStorageArgs {
+    /// Enables the log-only stale-storage meter.
+    #[arg(
+        id = "stale_storage_enabled",
+        long = "payload.stale-storage-metering",
+        env = "PAYLOAD_STALE_STORAGE_METERING",
+        default_value = "false"
+    )]
+    pub enabled: bool,
+
+    /// Size of the stale-storage recency cache in mebibytes: a power of two from 8 to 4096. Raise it
+    /// when unexpired evictions exceed about 1% of cache writes.
+    #[arg(
+        id = "stale_storage_cache_mib",
+        long = "payload.stale-storage-cache-mib",
+        env = "PAYLOAD_STALE_STORAGE_CACHE_MIB",
+        default_value_t = STALE_STORAGE_CACHE_MIB,
+        value_parser = StaleStorageArgs::parse_cache_mib
+    )]
+    pub cache_mib: u32,
+}
+
+impl Default for StaleStorageArgs {
+    fn default() -> Self {
+        Self { enabled: false, cache_mib: STALE_STORAGE_CACHE_MIB }
+    }
+}
+
+impl StaleStorageArgs {
+    /// Parses a cache size in mebibytes. Sizes that are not a power of two are rejected rather than
+    /// rounded, so the configured size is the allocated size.
+    pub fn parse_cache_mib(value: &str) -> Result<u32, String> {
+        let mib: u32 = value.parse().map_err(|error| format!("{error}"))?;
+        if (STALE_STORAGE_MIN_CACHE_MIB..=STALE_STORAGE_MAX_CACHE_MIB).contains(&mib)
+            && mib.is_power_of_two()
+        {
+            Ok(mib)
+        } else {
+            Err(format!(
+                "must be a power of two from {STALE_STORAGE_MIN_CACHE_MIB} to \
+                 {STALE_STORAGE_MAX_CACHE_MIB} MiB"
+            ))
+        }
+    }
+
+    /// Allocates the meter when enabled, or returns `None`.
+    pub fn meter(&self) -> Option<StaleStorageMeter> {
+        if !self.enabled {
+            return None;
+        }
+        let meter = StaleStorageMeter::with_cache_mib(self.cache_mib);
+        info!(
+            cache_mib = self.cache_mib,
+            cache_entries = meter.cache.len(),
+            window_hours = STALE_STORAGE_WINDOW_HOURS,
+            contract_slot_gate = STALE_STORAGE_CONTRACT_SLOT_GATE,
+            limit = STALE_STORAGE_LIMIT,
+            first_hour_limit = STALE_STORAGE_FIRST_HOUR_LIMIT,
+            first_day_limit = STALE_STORAGE_FIRST_DAY_LIMIT,
+            "log-only stale storage meter enabled"
+        );
+        Some(meter)
     }
 }
 
@@ -699,6 +780,9 @@ impl StandardBaseRethNode {
         );
         runner =
             runner.with_resource_metering(resource_metering).with_rejection_cache(rejection_cache);
+        if let Some(meter) = args.metering.stale_storage.meter() {
+            runner = runner.with_stale_storage(meter);
+        }
 
         let transaction_event_env = TransactionEventEnv::read();
         let transaction_event_writer_config =
@@ -1565,5 +1649,42 @@ mod tests {
 
         StandardBaseRethNode::runner(args)
             .expect("STATE_ and unknown schedule names must not fail opcode parse");
+    }
+
+    #[test]
+    fn stale_storage_meter_is_off_by_default() {
+        let args = CommandParser::<StaleStorageArgs>::parse_from(["reth"]).args;
+        assert_eq!(args, StaleStorageArgs::default());
+        assert!(args.meter().is_none());
+    }
+
+    #[test]
+    fn the_stale_storage_metering_flag_enables_the_meter() {
+        let args = CommandParser::<StaleStorageArgs>::try_parse_from([
+            "reth",
+            "--payload.stale-storage-metering",
+        ])
+        .expect("flag")
+        .args;
+        assert!(args.enabled);
+        assert!(args.meter().is_some());
+    }
+
+    #[test]
+    fn the_stale_storage_cache_size_defaults_to_128_mib_and_is_validated() {
+        let meter = |flags: &[&str]| {
+            CommandParser::<StaleStorageArgs>::try_parse_from(
+                ["reth", "--payload.stale-storage-metering"].iter().chain(flags).copied(),
+            )
+            .map(|parsed| parsed.args.meter().expect("enabled").cache.len())
+        };
+        assert_eq!(meter(&[]).expect("default"), 128 << 18);
+        assert_eq!(meter(&["--payload.stale-storage-cache-mib", "8"]).expect("override"), 8 << 18);
+        for rejected in ["0", "4", "7", "12", "8192", "-8", "abc"] {
+            assert!(
+                meter(&["--payload.stale-storage-cache-mib", rejected]).is_err(),
+                "{rejected} MiB must be rejected"
+            );
+        }
     }
 }

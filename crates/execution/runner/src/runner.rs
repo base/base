@@ -8,7 +8,7 @@ use std::{
 use base_common_network::SharedEngineApi;
 use base_common_rpc_types_engine::PayloadReady;
 use base_execution_payload_builder::{
-    RejectionCache,
+    RejectionCache, StaleStorageMeter,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_node_core::{BaseEngineApiBuilder, args::RollupArgs};
@@ -64,6 +64,8 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     resource_metering: Option<ResourceMeteringConfig>,
     /// Shared rejection cache for permanently rejected transaction hashes.
     rejection_cache: Option<RejectionCache>,
+    /// Log-only stale-storage meter for the native payload builder.
+    stale_storage: Option<StaleStorageMeter>,
     /// Binary-owned callbacks to run after the node has started.
     started_callbacks: Vec<StartedCallback>,
 }
@@ -80,6 +82,7 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
             manifest_precheck_enabled: true,
             resource_metering: None,
             rejection_cache: None,
+            stale_storage: None,
             started_callbacks: Vec::new(),
         }
     }
@@ -95,6 +98,7 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .field("resource_metering", &self.resource_metering)
             .field("rejection_cache", &self.rejection_cache)
+            .field("stale_storage", &self.stale_storage)
             .field("started_callbacks", &self.started_callbacks.len())
             .finish()
     }
@@ -131,6 +135,12 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         self
     }
 
+    /// Sets the log-only stale-storage meter for the native payload builder.
+    pub fn with_stale_storage(mut self, stale_storage: StaleStorageMeter) -> Self {
+        self.stale_storage = Some(stale_storage);
+        self
+    }
+
     /// Swap the payload service builder.
     pub fn with_service_builder<SB2: PayloadServiceBuilder>(self, sb: SB2) -> BaseNodeRunner<SB2> {
         BaseNodeRunner {
@@ -142,6 +152,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             manifest_precheck_enabled: self.manifest_precheck_enabled,
             resource_metering: self.resource_metering,
             rejection_cache: self.rejection_cache,
+            stale_storage: self.stale_storage,
             started_callbacks: self.started_callbacks,
         }
     }
@@ -194,6 +205,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             manifest_precheck_enabled,
             resource_metering,
             rejection_cache,
+            stale_storage,
             started_callbacks,
         } = self;
         let mut base_node = BaseNode::new(rollup_args);
@@ -212,6 +224,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         if let Some(rejection_cache) = rejection_cache {
             base_node = base_node.with_rejection_cache(rejection_cache);
         }
+        base_node.stale_storage = stale_storage;
         let components = service_builder.build_components(&base_node);
         let engine_api = Arc::new(OnceLock::new());
         let add_ons = base_node.add_ons().with_engine_api(

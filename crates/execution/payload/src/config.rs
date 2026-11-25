@@ -20,6 +20,7 @@ use crate::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
     RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
     ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
+    StaleStorageMeter,
 };
 
 /// Settings for the Base payload builder.
@@ -57,6 +58,11 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Log-only stale-storage meter, or `None` when disabled.
+    ///
+    /// When set, the builder counts each committed transaction's stale storage slots and logs
+    /// what the dry-run limits would have flagged. It never excludes a transaction.
+    pub stale_storage: Option<StaleStorageMeter>,
 }
 
 impl Default for BaseBuilderConfig {
@@ -71,6 +77,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            stale_storage: None,
         }
     }
 }
@@ -92,6 +99,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            stale_storage: None,
         }
     }
 

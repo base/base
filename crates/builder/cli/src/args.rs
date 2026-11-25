@@ -9,7 +9,7 @@ use base_builder_core::{
     ValiditySignatureMode,
 };
 use base_builder_metering::MeteringStore;
-use base_execution_cli::ShadowIndexerArgs;
+use base_execution_cli::{ShadowIndexerArgs, StaleStorageArgs};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -236,6 +236,10 @@ pub struct Args {
     /// Shadow indexer `ExEx` configuration
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// Log-only stale-storage meter for the native payload builder.
+    #[command(flatten)]
+    pub stale_storage: StaleStorageArgs,
 }
 
 impl HasRollupArgs for Args {
@@ -273,6 +277,7 @@ impl Default for Args {
             manifest_precheck_enabled: true,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            stale_storage: StaleStorageArgs::default(),
         }
     }
 }
@@ -332,6 +337,7 @@ impl Args {
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            stale_storage: self.stale_storage.meter(),
         })
     }
 }
@@ -355,6 +361,25 @@ mod tests {
     fn convert(args: Args) -> BuilderConfig {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
         args.into_builder_config(metering_provider).expect("conversion should succeed")
+    }
+
+    #[test]
+    fn stale_storage_metering_and_cache_size_are_the_builders_stale_storage_flags() {
+        let parsed = CommandParser::try_parse_from(["builder", "--payload.stale-storage-metering"])
+            .expect("metering flag");
+        assert!(parsed.args.stale_storage.enabled);
+        let cache_entries = |size: &str| {
+            CommandParser::try_parse_from([
+                "builder",
+                "--payload.stale-storage-metering",
+                "--payload.stale-storage-cache-mib",
+                size,
+            ])
+            .map(|parsed| parsed.args.stale_storage.meter().expect("enabled").cache.len())
+        };
+        assert_eq!(cache_entries("8").expect("override"), 8 << 18);
+        assert!(cache_entries("100").is_err());
+        assert!(cache_entries("8192").is_err());
     }
 
     #[test]

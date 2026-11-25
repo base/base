@@ -19,6 +19,7 @@ use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
     Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes,
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PayloadPrimitives, RejectionCache,
+    StaleStorageMeter,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_execution_rpc::{
@@ -987,6 +988,8 @@ pub struct BasePayloadBuilder {
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     pub rejection_cache: RejectionCache,
+    /// Log-only stale-storage meter, or `None` when disabled.
+    pub stale_storage: Option<StaleStorageMeter>,
     /// Optional notifications for frozen sequencer payloads.
     pub payload_ready: Option<tokio::sync::broadcast::Sender<PayloadReady>>,
 }
@@ -1001,6 +1004,7 @@ impl Default for BasePayloadBuilder {
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            stale_storage: None,
             payload_ready: None,
         }
     }
@@ -1062,6 +1066,12 @@ impl BasePayloadBuilder {
         self.rejection_cache = rejection_cache;
         self
     }
+
+    /// Configure the log-only stale-storage meter, or `None` to disable it.
+    pub fn with_stale_storage(mut self, stale_storage: Option<StaleStorageMeter>) -> Self {
+        self.stale_storage = stale_storage;
+        self
+    }
 }
 
 impl<Node, Pool, Evm, Attrs> PayloadBuilderBuilder<Node, Pool, Evm> for BasePayloadBuilder
@@ -1098,6 +1108,12 @@ where
         pool: Pool,
         evm_config: Evm,
     ) -> eyre::Result<Self::PayloadBuilder> {
+        // Every node that runs the payload builder records canonical blocks, so a follower's
+        // table is current when it becomes leader.
+        if let Some(meter) = self.stale_storage.clone() {
+            ctx.task_executor()
+                .spawn_task(meter.maintain(ctx.provider().subscribe_to_canonical_state()));
+        }
         let payload_builder =
             base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
                 pool,
@@ -1113,6 +1129,7 @@ where
                     resource_metering: self.resource_metering,
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
+                    stale_storage: self.stale_storage,
                 },
             )
             .with_task_executor(ctx.task_executor().clone())

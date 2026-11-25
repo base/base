@@ -60,6 +60,13 @@ where
         let mut builder_config = self.builder_config;
         builder_config.state_provider_metrics = ctx.config().engine.state_provider_metrics;
 
+        // Every node that runs the payload builder records canonical blocks, so a follower's
+        // table is current when it becomes leader.
+        if let Some(meter) = builder_config.stale_storage.clone() {
+            ctx.task_executor()
+                .spawn_task(meter.maintain(ctx.provider().subscribe_to_canonical_state()));
+        }
+
         let payload_builder =
             base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
                 pool,
