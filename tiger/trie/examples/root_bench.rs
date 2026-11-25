@@ -12,7 +12,8 @@
 //! the block shape: `TOUCHED` accounts (3,000), `STORAGE_ACCOUNTS` (150) with `SLOTS` changes each
 //! on average (12), `BIG_TOUCH` slots in each big contract (200), and `REUSE`, the percent of
 //! touches that pick a recently touched account or contract again (0). Mainnet-shaped blocks
-//! (Base, November 2026): `TOUCHED=24 STORAGE_ACCOUNTS=24 SLOTS=2 BIG_TOUCH=8 REUSE=60`.
+//! (Base, November 2026): `TOUCHED=24 STORAGE_ACCOUNTS=24 SLOTS=2 BIG_TOUCH=8 REUSE=60`. The
+//! chained and streamed sections time the live trie only with `TIGER_LIVE_ROOT=1`.
 
 use std::{sync::Arc, time::Instant};
 

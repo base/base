@@ -18,9 +18,11 @@ Merkle Patricia trie code and the state database of the tiger client.
   blocks, revealed lazily from the stored branch rows and flat leaves, in 16 shards per trie. A
   block's root hashes only what changed, and its trie updates are the stored rows that change.
   `StateDb` keeps one for the canonical head; it applies only when the view's state root equals
-  the root it was left at, else it starts over from the stored trie. `TIGER_LIVE_ROOT=0` turns
-  it off; `TIGER_LIVE_ROOT=check` also walks every root and panics if the two differ. `LiveSession` (`src/stream.rs`) feeds it each transaction's changes while the
-  block executes, on a background thread, and reconciles with the block's final changes.
+  the root it was left at, else it starts over from the stored trie. It is off unless
+  `TIGER_LIVE_ROOT=1` (it gives no gain on real blocks yet and its memory is not bounded well);
+  `TIGER_LIVE_ROOT=check` also walks every root and panics if the two differ. `LiveSession`
+  (`src/stream.rs`) feeds it each transaction's changes while the block executes, on a
+  background thread, and reconciles with the block's final changes.
 
 ## Verification of the state root
 

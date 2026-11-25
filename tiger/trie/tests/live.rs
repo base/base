@@ -159,7 +159,8 @@ fn streamed_live_roots_commit_the_same_tries_as_the_walker() {
         let mut rng = Rng(seed);
         let (live_dir, walker_dir) =
             (temp(&format!("live-{seed}")), temp(&format!("walker-{seed}")));
-        let live = StateDb::open(&live_dir).unwrap();
+        let mut live = StateDb::open(&live_dir).unwrap();
+        live.set_live_root(true);
         let mut walker = StateDb::open(&walker_dir).unwrap();
         walker.set_live_root(false);
         let addresses: Vec<Address> =

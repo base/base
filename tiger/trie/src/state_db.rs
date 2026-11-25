@@ -254,7 +254,7 @@ pub struct StateDb {
     partial: bool,
     /// The trie kept in memory across blocks for the next block's root (full state only).
     live: std::sync::Arc<std::sync::Mutex<LiveSlot>>,
-    /// Whether roots use the live trie (`TIGER_LIVE_ROOT=0` turns it off, for comparisons).
+    /// Whether roots use the live trie (opt-in: `TIGER_LIVE_ROOT=1` or `check`).
     live_enabled: bool,
     /// Whether every live root is checked against the walker (`TIGER_LIVE_ROOT=check`), which
     /// panics on a difference.
@@ -267,7 +267,7 @@ impl StateDb {
         let datadir = Datadir::open(path)?;
         let partial = PartialState::root(&datadir.db.read()?, &datadir.db)?.is_some();
         let mode = std::env::var("TIGER_LIVE_ROOT").unwrap_or_default();
-        let (live_enabled, live_check) = (mode != "0", mode == "check");
+        let (live_enabled, live_check) = (mode == "1" || mode == "check", mode == "check");
         Ok(Self { datadir, partial, live: Default::default(), live_enabled, live_check })
     }
 
@@ -295,8 +295,8 @@ impl StateDb {
         Ok(db)
     }
 
-    /// Turns the live trie (state roots kept in memory across blocks) on or off; it is on unless
-    /// `TIGER_LIVE_ROOT=0`. Off, every root walks the stored trie.
+    /// Turns the live trie (state roots kept in memory across blocks) on or off; it is off unless
+    /// `TIGER_LIVE_ROOT=1` (or `check`). Off, every root walks the stored trie.
     pub fn set_live_root(&mut self, enabled: bool) {
         self.live_enabled = enabled;
     }
