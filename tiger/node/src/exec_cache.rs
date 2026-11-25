@@ -8,12 +8,13 @@
 //! state at the head with no side-branch blocks on top reads it, so a side branch, an older
 //! block, or a stateless (partial) datadir never sees it.
 //!
-//! It is bounded by entry counts (code by bytes), sized from a live probe on Base mainnet: at
-//! 64k accounts and 1M slots, ~14% of the validating thread's misses were entries the cache had
-//! evicted, accounts all within the last 64k evicted, slots ever fewer per evicted entry out to
-//! 1M (most within 512k). When the head moves, a shard over its cap drops
-//! entries spread evenly over its table. At its caps it holds about 16 MB of accounts, 150 MB of
-//! slots and 64 MiB of code.
+//! It is bounded by entry counts (code by bytes), sized from live probes on Base mainnet: at
+//! 128k accounts and 1.5M slots, ~14% of the validating thread's slot misses (21% of the prewarm
+//! workers') were entries the cache had evicted, half of them read from disk; 2.5M slots keep
+//! 99% of those. When the head moves, a shard over its cap drops entries spread evenly over its
+//! table. At its caps it holds about 16 MB of accounts, 370 MB of slots and 64 MiB of code: the
+//! slot tables' bucket count is a power of two, so any slot cap from 1.64M to 3.26M (with its
+//! overshoot) costs the same 2^18 buckets of 89 bytes per shard.
 
 use std::{
     collections::HashMap,
@@ -32,7 +33,7 @@ const SHARDS: usize = 16;
 /// Most accounts cached.
 pub(crate) const MAX_ACCOUNTS: usize = 1 << 17;
 /// Most storage slots cached.
-pub(crate) const MAX_SLOTS: usize = 3 << 19;
+pub(crate) const MAX_SLOTS: usize = 5 << 19;
 /// Most code bytes cached.
 pub(crate) const MAX_CODE_BYTES: usize = 64 << 20;
 
