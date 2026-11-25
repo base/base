@@ -89,9 +89,11 @@ impl ExowareArchiveExtension {
             };
             match opened {
                 Ok(publisher) => break publisher,
-                Err(err @ ArchiveError::Store { .. }) => {
+                // An unreachable store, or a config row the provisioning node has not written
+                // yet (a normal rollout race), is retried; a config mismatch stays terminal.
+                Err(err @ (ArchiveError::Store { .. } | ArchiveError::ConfigMissing)) => {
                     failures += 1;
-                    warn!(error = %err, failures, "archive store unreachable; exporter retries");
+                    warn!(error = %err, failures, "archive store not ready; exporter retries");
                     tokio::select! {
                         () = &mut shutdown => return Ok(()),
                         () = tokio::time::sleep(options.backoff(failures)) => {}

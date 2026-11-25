@@ -1039,10 +1039,9 @@ where
             hash,
             local,
             |tx| {
-                let timestamp = tx.block_number.and_then(|n| self.block_timestamp(n));
-                tx.block_number
-                    .zip(tx.block_hash)
-                    .filter(|_| self.converter.transaction_incomplete(tx, timestamp))
+                tx.block_number.zip(tx.block_hash).filter(|(number, _)| {
+                    self.converter.transaction_incomplete(tx, || self.block_timestamp(*number))
+                })
             },
             |block, index| Ok(self.converter.transaction(block, index)),
         )
@@ -1058,7 +1057,7 @@ where
         let incomplete = |tx: &Transaction| {
             let number = tx.block_number?;
             self.converter
-                .transaction_incomplete(tx, self.block_timestamp(number))
+                .transaction_incomplete(tx, || self.block_timestamp(number))
                 .then_some(number)
         };
         self.routed(local, AnswerNeeds::Deposits, Addressed::Hash(hash), incomplete, |block| {
@@ -1078,7 +1077,7 @@ where
         let incomplete = |tx: &Transaction| {
             let number = tx.block_number?;
             self.converter
-                .transaction_incomplete(tx, self.block_timestamp(number))
+                .transaction_incomplete(tx, || self.block_timestamp(number))
                 .then_some(number)
         };
         self.routed(local, AnswerNeeds::Deposits, Addressed::Number(n), incomplete, |block| {

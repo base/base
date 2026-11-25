@@ -878,7 +878,7 @@ async fn pruned_node_parity(scenario: Scenario) {
 
 /// On an unpruned node whose store is unreachable, misses (an unmined receipt, an unknown
 /// hash, a block above the head) and recent reads answer locally. An exporter whose shutdown
-/// is already signaled does not provision.
+/// is already signaled does not provision, and one waiting for a config row keeps retrying.
 #[tokio::test(flavor = "multi_thread")]
 async fn unpruned_node_with_store_down_answers_locally() {
     tokio::time::timeout(E2E_TIMEOUT, async {
@@ -928,6 +928,31 @@ async fn unpruned_node_with_store_down_answers_locally() {
             .await
             .expect("config read");
         assert_eq!(config, None, "a signaled exporter does not provision");
+
+        // A non-provisioning exporter that starts before the config row exists (a rollout
+        // race) keeps retrying instead of halting, and still exits cleanly on shutdown.
+        let mut waiting = archive_args(&url, true);
+        waiting.archive_exoware_provision = false;
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let exporter = tokio::spawn(ExowareArchiveExtension::export(
+            Arc::clone(&store),
+            harness.blockchain_provider(),
+            BlockVerifier::new(Arc::clone(&chain_spec)),
+            waiting,
+            chain_spec.chain().id(),
+            chain_spec.genesis_hash(),
+            async move {
+                let _ = stopped.await;
+            },
+        ));
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(!exporter.is_finished(), "a missing config row is retried, not terminal");
+        stop.send(()).expect("exporter is still waiting for shutdown");
+        assert_eq!(
+            exporter.await.expect("exporter task joins"),
+            Ok(()),
+            "a retrying exporter exits cleanly on shutdown"
+        );
         simulator.abort();
     })
     .await

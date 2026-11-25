@@ -103,11 +103,15 @@ impl ArchiveConverter {
     /// Whether a mined deposit transaction response visibly lacks a deposit field its fork
     /// requires. `block_timestamp` is used when the response carries none; a pending or
     /// non-deposit transaction is complete.
-    pub fn transaction_incomplete(&self, tx: &Transaction, block_timestamp: Option<u64>) -> bool {
+    pub fn transaction_incomplete(
+        &self,
+        tx: &Transaction,
+        block_timestamp: impl FnOnce() -> Option<u64>,
+    ) -> bool {
         if !tx.inner.inner.inner().is_deposit() {
             return false;
         }
-        tx.inner.block_timestamp.or(block_timestamp).is_some_and(|timestamp| {
+        tx.inner.block_timestamp.or_else(block_timestamp).is_some_and(|timestamp| {
             self.deposit_fields_missing(timestamp, tx.deposit_nonce, tx.deposit_receipt_version)
         })
     }
@@ -119,7 +123,7 @@ impl ArchiveConverter {
         block
             .transactions
             .as_transactions()
-            .is_some_and(|txs| txs.iter().any(|tx| self.transaction_incomplete(tx, timestamp)))
+            .is_some_and(|txs| txs.iter().any(|tx| self.transaction_incomplete(tx, || timestamp)))
     }
 
     /// Deposit nonce and receipt version of a deposit receipt response, `None` for other
@@ -277,5 +281,41 @@ impl ArchiveConverter {
             },
             block_timestamp_ms: archived.block_timestamp_ms,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    /// A mined EIP-1559 transaction as the node serves it, with no `blockTimestamp`.
+    fn non_deposit() -> Transaction {
+        serde_json::from_value(serde_json::json!({
+            "accessList": [], "blockHash": "0xaf717cc4bb56e51a0bc80970238bc046aab3f30a3a6cb4e6349f03a49cd5acb6",
+            "blockNumber": "0x1", "chainId": "0x509f455",
+            "from": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "gas": "0x7a120", "gasPrice": "0x0",
+            "hash": "0xca91e58a19b91e632f198ef9854beb02db9f7c6f1ade1e5d40c6cc4342a72434", "input": "0x",
+            "maxFeePerGas": "0x3b9aca00", "maxPriorityFeePerGas": "0x0", "nonce": "0x0",
+            "r": "0x24c58941c876a962d40413481fa8fd6b868550bcf75f16890383a6c5abad956e",
+            "s": "0x2efdac6d16cdbdebf57934aeb48dc00013730d52e1a77037e862e2ee04e5e6a4",
+            "to": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", "transactionIndex": "0x3", "type": "0x2",
+            "v": "0x1", "value": "0x3e8", "yParity": "0x1"
+        }))
+        .expect("EIP-1559 transaction json")
+    }
+
+    /// A non-deposit transaction is complete without reading its block's timestamp.
+    #[test]
+    fn non_deposit_transactions_never_read_the_block_timestamp() {
+        let converter = ArchiveConverter::new(Arc::new(BaseChainSpec::mainnet()));
+        let reads = Cell::new(0usize);
+        let incomplete = converter.transaction_incomplete(&non_deposit(), || {
+            reads.set(reads.get() + 1);
+            Some(0)
+        });
+        assert!(!incomplete, "a non-deposit transaction is never incomplete");
+        assert_eq!(reads.get(), 0, "the block timestamp must not be read for a non-deposit");
     }
 }
