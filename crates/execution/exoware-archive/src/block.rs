@@ -115,7 +115,8 @@ impl BlockCodec {
     /// Decodes a header, rejecting trailing bytes.
     pub fn decode_header(raw: &[u8]) -> Result<Header, ArchiveError> {
         let mut buf = raw;
-        let header = Header::decode(&mut buf).map_err(|e| ArchiveError::decode(Family::Header, e))?;
+        let header =
+            Header::decode(&mut buf).map_err(|e| ArchiveError::decode(Family::Header, e))?;
         if !buf.is_empty() {
             return Err(ArchiveError::decode(Family::Header, "trailing bytes"));
         }
@@ -209,7 +210,7 @@ impl BlockCodec {
 
     /// Decodes senders.
     pub fn decode_senders(raw: &[u8]) -> Result<Vec<Address>, ArchiveError> {
-        if raw.len() % 20 != 0 {
+        if !raw.len().is_multiple_of(20) {
             return Err(ArchiveError::decode(Family::Senders, "length is not a multiple of 20"));
         }
         Ok(raw.chunks_exact(20).map(Address::from_slice).collect())
@@ -249,7 +250,7 @@ impl BlockCodec {
     /// entries.
     pub fn decode_account_changes(raw: &[u8]) -> Result<Vec<AccountChange>, ArchiveError> {
         let family = Family::AccountChanges;
-        if raw.len() % ACCOUNT_CHANGE_LEN != 0 {
+        if !raw.len().is_multiple_of(ACCOUNT_CHANGE_LEN) {
             return Err(ArchiveError::decode(family, "bad length"));
         }
         let mut out: Vec<AccountChange> = Vec::with_capacity(raw.len() / ACCOUNT_CHANGE_LEN);
@@ -299,7 +300,7 @@ impl BlockCodec {
     /// Decodes storage changes, requiring strictly increasing `(address, slot)`.
     pub fn decode_storage_changes(raw: &[u8]) -> Result<Vec<StorageChange>, ArchiveError> {
         let family = Family::StorageChanges;
-        if raw.len() % STORAGE_CHANGE_LEN != 0 {
+        if !raw.len().is_multiple_of(STORAGE_CHANGE_LEN) {
             return Err(ArchiveError::decode(family, "bad length"));
         }
         let mut out: Vec<StorageChange> = Vec::with_capacity(raw.len() / STORAGE_CHANGE_LEN);
@@ -309,7 +310,10 @@ impl BlockCodec {
                 slot: B256::from_slice(&entry[20..52]),
                 before: U256::from_be_slice(&entry[52..84]),
             };
-            if out.last().is_some_and(|prev| (prev.address, prev.slot) >= (change.address, change.slot)) {
+            if out
+                .last()
+                .is_some_and(|prev| (prev.address, prev.slot) >= (change.address, change.slot))
+            {
                 return Err(ArchiveError::decode(family, "keys not strictly increasing"));
             }
             out.push(change);
@@ -332,27 +336,53 @@ mod tests {
         let fixture = ChainFixture::standard();
         for block in &fixture.blocks {
             let n = block.number();
-            assert_eq!(BlockCodec::decode_header(&BlockCodec::encode_header(&block.header)).unwrap(), block.header, "header {n}");
-            assert_eq!(BlockCodec::decode_body(&BlockCodec::encode_body(&block.body)).unwrap(), block.body, "body {n}");
-            assert_eq!(BlockCodec::decode_receipts(&BlockCodec::encode_receipts(&block.receipts)).unwrap(), block.receipts, "receipts {n}");
-            assert_eq!(BlockCodec::decode_senders(&BlockCodec::encode_senders(&block.senders)).unwrap(), block.senders, "senders {n}");
+            assert_eq!(
+                BlockCodec::decode_header(&BlockCodec::encode_header(&block.header)).unwrap(),
+                block.header,
+                "header {n}"
+            );
+            assert_eq!(
+                BlockCodec::decode_body(&BlockCodec::encode_body(&block.body)).unwrap(),
+                block.body,
+                "body {n}"
+            );
+            assert_eq!(
+                BlockCodec::decode_receipts(&BlockCodec::encode_receipts(&block.receipts)).unwrap(),
+                block.receipts,
+                "receipts {n}"
+            );
+            assert_eq!(
+                BlockCodec::decode_senders(&BlockCodec::encode_senders(&block.senders)).unwrap(),
+                block.senders,
+                "senders {n}"
+            );
             let mut accounts = block.account_changes.clone();
             accounts.sort_by_key(|c| c.address);
             assert_eq!(
-                BlockCodec::decode_account_changes(&BlockCodec::encode_account_changes(n, &block.account_changes).unwrap()).unwrap(),
+                BlockCodec::decode_account_changes(
+                    &BlockCodec::encode_account_changes(n, &block.account_changes).unwrap()
+                )
+                .unwrap(),
                 accounts,
                 "account changes {n}"
             );
             let mut storage = block.storage_changes.clone();
             storage.sort_by_key(|c| (c.address, c.slot));
             assert_eq!(
-                BlockCodec::decode_storage_changes(&BlockCodec::encode_storage_changes(n, &block.storage_changes).unwrap()).unwrap(),
+                BlockCodec::decode_storage_changes(
+                    &BlockCodec::encode_storage_changes(n, &block.storage_changes).unwrap()
+                )
+                .unwrap(),
                 storage,
                 "storage changes {n}"
             );
         }
         assert_eq!(fixture.blocks[12].body.withdrawals, None, "pre-Canyon body has no withdrawals");
-        assert_eq!(fixture.blocks[13].body.withdrawals, Some(Withdrawals::default()), "post-Canyon body has an empty list");
+        assert_eq!(
+            fixture.blocks[13].body.withdrawals,
+            Some(Withdrawals::default()),
+            "post-Canyon body has an empty list"
+        );
     }
 
     /// Typed transactions sit in the list as raw EIP-2718 bytes, not wrapped in an RLP string,
@@ -367,14 +397,20 @@ mod tests {
         assert!(outer.list, "body is a list");
         let txs = alloy_rlp::Header::decode(&mut buf).unwrap();
         assert!(txs.list, "transactions are a list");
-        assert_eq!(buf[0], 0x7e, "first transaction starts with the deposit type byte, no string header");
+        assert_eq!(
+            buf[0], 0x7e,
+            "first transaction starts with the deposit type byte, no string header"
+        );
         assert_eq!(
             txs.payload_length,
             block.body.transactions.iter().map(Encodable2718::encode_2718_len).sum::<usize>(),
             "list payload is the concatenated 2718 encodings"
         );
-        let receipts = BlockCodec::decode_receipts(&BlockCodec::encode_receipts(&block.receipts)).unwrap();
-        let BaseReceipt::Deposit(deposit) = &receipts[0] else { panic!("first receipt is a deposit") };
+        let receipts =
+            BlockCodec::decode_receipts(&BlockCodec::encode_receipts(&block.receipts)).unwrap();
+        let BaseReceipt::Deposit(deposit) = &receipts[0] else {
+            panic!("first receipt is a deposit")
+        };
         assert_eq!(deposit.deposit_nonce, Some(0), "deposit nonce survives the archive encoding");
     }
 
@@ -388,14 +424,31 @@ mod tests {
         };
         let encoded = BlockCodec::encode_account_changes(1, &[present, absent]).unwrap();
         assert_eq!(encoded.len(), 2 * ACCOUNT_CHANGE_LEN, "two fixed-width entries");
-        assert_eq!(&encoded[20..ACCOUNT_CHANGE_LEN], &[0u8; ACCOUNT_CHANGE_LEN - 20][..], "absent sentinel is zeroed");
+        assert_eq!(
+            &encoded[20..ACCOUNT_CHANGE_LEN],
+            &[0u8; ACCOUNT_CHANGE_LEN - 20][..],
+            "absent sentinel is zeroed"
+        );
         assert_eq!(encoded[ACCOUNT_CHANGE_LEN + 20], 1, "present flag");
-        assert_eq!(BlockCodec::decode_account_changes(&encoded).unwrap(), vec![absent, present], "sorted by address");
-        assert!(BlockCodec::encode_account_changes(1, &[absent, absent]).is_err(), "duplicate account rejected");
+        assert_eq!(
+            BlockCodec::decode_account_changes(&encoded).unwrap(),
+            vec![absent, present],
+            "sorted by address"
+        );
+        assert!(
+            BlockCodec::encode_account_changes(1, &[absent, absent]).is_err(),
+            "duplicate account rejected"
+        );
         let slot = StorageChange { address: Address::ZERO, slot: B256::ZERO, before: U256::ZERO };
-        assert!(BlockCodec::encode_storage_changes(1, &[slot, slot]).is_err(), "duplicate slot rejected");
-        let mut bad = encoded.clone();
+        assert!(
+            BlockCodec::encode_storage_changes(1, &[slot, slot]).is_err(),
+            "duplicate slot rejected"
+        );
+        let mut bad = encoded;
         bad[ACCOUNT_CHANGE_LEN - 1] = 1;
-        assert!(BlockCodec::decode_account_changes(&bad).is_err(), "non-zero absent entry rejected");
+        assert!(
+            BlockCodec::decode_account_changes(&bad).is_err(),
+            "non-zero absent entry rejected"
+        );
     }
 }

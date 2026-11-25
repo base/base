@@ -7,12 +7,12 @@ use base_builder_metering::{
     MeteringStoreExtension,
 };
 use base_execution_base_tx_rpc_node::TxBaseRpcExtension;
-use base_exoware_archive_rpc::{ExowareArchiveArgs, ExowareArchiveExtension};
 use base_execution_payer_rpc::{PayerRpcConfig, PayerRpcExtension};
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
 };
+use base_exoware_archive_rpc::{ExowareArchiveArgs, ExowareArchiveExtension};
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
@@ -720,6 +720,12 @@ impl StandardBaseRethNode {
         //     and eth_call.
         //   - ProofsHistoryExtension: registers eth_getProof variants (disjoint from
         //     the above, so it can sit anywhere in the chain).
+        //   - ExowareArchiveExtension (only with --archive.exoware.url): owns the
+        //     pruned-history eth_ reads (blocks, transactions, receipts, balance,
+        //     nonce, storage, code, logs) and re-registers eth_getTransactionCount,
+        //     delegating to TxBaseRpcExtension's override, so it must stay installed
+        //     after TxBaseRpcExtension. Any other extension overriding one of these
+        //     methods must compose with it, not replace it.
         // New extensions touching the same RPC methods MUST coordinate ownership
         // here rather than relying on install order.
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig {
@@ -796,7 +802,7 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxBaseRpcExtension>(());
         // After `TxBaseRpcExtension`: the archive re-registers `eth_getTransactionCount` and
         // delegates local reads to the Base transaction override.
-        runner.install_ext::<ExowareArchiveExtension>(args.exoware_archive.clone());
+        runner.install_ext::<ExowareArchiveExtension>(args.exoware_archive);
         Ok(runner)
     }
 

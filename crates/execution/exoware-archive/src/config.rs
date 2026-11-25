@@ -74,7 +74,10 @@ impl ArchiveConfig {
     pub fn validate(&self) -> Result<(), ArchiveError> {
         if self.format != FORMAT_VERSION {
             return Err(ArchiveError::InvalidConfig {
-                reason: format!("format {} is not supported (expected {FORMAT_VERSION})", self.format),
+                reason: format!(
+                    "format {} is not supported (expected {FORMAT_VERSION})",
+                    self.format
+                ),
             });
         }
         if self.blocks_per_segment == 0 || self.blocks_per_segment > MAX_BLOCKS_PER_SEGMENT {
@@ -193,7 +196,11 @@ mod tests {
         assert_eq!(with.encode().len(), CONFIG_LEN_WITH_RETENTION, "length with retention");
         assert_eq!(without.encode().len(), CONFIG_LEN_WITH_RETENTION - 8, "length without");
         assert_eq!(ArchiveConfig::decode(&with.encode()).unwrap(), with, "round-trip with");
-        assert_eq!(ArchiveConfig::decode(&without.encode()).unwrap(), without, "round-trip without");
+        assert_eq!(
+            ArchiveConfig::decode(&without.encode()).unwrap(),
+            without,
+            "round-trip without"
+        );
         let mut trailing = without.encode();
         trailing.push(0);
         assert!(ArchiveConfig::decode(&trailing).is_err(), "trailing byte rejected");
@@ -210,7 +217,10 @@ mod tests {
             "unsupported format rejected by validation"
         );
         assert!(
-            matches!(ArchiveConfig::decode(&other_format.encode()), Err(ArchiveError::Decode { family: Family::Config, .. })),
+            matches!(
+                ArchiveConfig::decode(&other_format.encode()),
+                Err(ArchiveError::Decode { family: Family::Config, .. })
+            ),
             "unsupported stored format rejected on decode"
         );
     }

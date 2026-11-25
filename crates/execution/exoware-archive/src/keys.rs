@@ -364,7 +364,8 @@ mod tests {
             "markers sort after all block rows"
         );
         assert!(
-            ArchiveKey::log_topic(4, B256::ZERO, 0) > ArchiveKey::log_topic(3, B256::repeat_byte(0xff), u64::MAX),
+            ArchiveKey::log_topic(4, B256::ZERO, 0)
+                > ArchiveKey::log_topic(3, B256::repeat_byte(0xff), u64::MAX),
             "topic position orders before topic"
         );
     }
@@ -372,8 +373,16 @@ mod tests {
     /// Malformed keys are rejected by the parser.
     #[test]
     fn malformed_keys_do_not_parse() {
-        assert_eq!(ArchiveKey::family(&[FORMAT_VERSION + 1, 0x10, 0, 0, 0, 0, 0, 0, 0, 0]), None, "other generation");
+        assert_eq!(
+            ArchiveKey::family(&[FORMAT_VERSION + 1, 0x10, 0, 0, 0, 0, 0, 0, 0, 0]),
+            None,
+            "other generation"
+        );
         assert_eq!(ArchiveKey::family(&[FORMAT_VERSION, 0x10, 0]), None, "short block key");
-        assert_eq!(ArchiveKey::family(&[FORMAT_VERSION, 0x09, 0, 0, 0, 0, 0, 0, 0, 0]), None, "unknown family");
+        assert_eq!(
+            ArchiveKey::family(&[FORMAT_VERSION, 0x09, 0, 0, 0, 0, 0, 0, 0, 0]),
+            None,
+            "unknown family"
+        );
     }
 }

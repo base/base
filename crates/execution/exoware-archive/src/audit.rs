@@ -8,7 +8,9 @@
 //! Block families (`0x10`–`0x15`) are keyed by block number, so the audit enumerates every
 //! stored key of the segment's block range, through the whole prefix interval of the last
 //! block's key, and reports keys that the rebuild does not produce; those rows also enter the
-//! digest of the stored rows, so they show as a digest mismatch too.
+//! digest of the stored rows, so they show as a digest mismatch too. Blocks are read and
+//! rebuilt in batches (`batch_blocks`), and the digest is computed per family as rows are read,
+//! the same way the exporter computes the marker's.
 //! Hash-led families (`0x01`–`0x05`) put the segment number after the hash or address, so the
 //! keys of one segment are not a contiguous range: an extra locator or posting can only be found
 //! by scanning the whole family. The audit checks every expected hash-led row but cannot report
@@ -20,7 +22,8 @@ use exoware_sdk::RangeMode;
 
 use crate::{
     ArchiveConfig, ArchiveError, ArchiveKey, ArchiveMetrics, ArchiveStore, BlockCodec, BlockData,
-    BlockVerifier, ExowareArchive, Family, SegmentDigest, SegmentRows, StoreSession,
+    BlockVerifier, DEFAULT_EXPORT_BATCH_BLOCKS, ExowareArchive, Family, SegmentBuilder,
+    SegmentDigest, StoreSession,
 };
 
 /// One problem found by an audit.
@@ -109,71 +112,62 @@ pub struct SegmentAuditor<S> {
     pub config: ArchiveConfig,
     /// Root and sender checks.
     pub verifier: BlockVerifier,
+    /// Blocks read and rebuilt at a time, as the exporter streams them.
+    pub batch_blocks: u64,
+}
+
+/// State carried across the batches of one audit.
+#[derive(Debug)]
+struct AuditPass {
+    /// Rebuilds the segment's rows and marker batch by batch.
+    builder: SegmentBuilder,
+    /// Digest of the rows found in the store.
+    stored: SegmentDigest,
+    /// Hash of the last block of the previous batch.
+    parent: Option<B256>,
+    /// Data problems found so far (missing, invalid or unlinked block rows).
+    findings: Vec<AuditFinding>,
+    /// Stored keys of block families that the rebuild does not produce.
+    unexpected: Vec<AuditFinding>,
 }
 
 impl<S: ArchiveStore> SegmentAuditor<S> {
-    /// Creates an auditor.
-    pub const fn new(archive: ExowareArchive<S>, config: ArchiveConfig, verifier: BlockVerifier) -> Self {
-        Self { archive, config, verifier }
+    /// Creates an auditor that reads [`DEFAULT_EXPORT_BATCH_BLOCKS`] blocks at a time.
+    pub const fn new(
+        archive: ExowareArchive<S>,
+        config: ArchiveConfig,
+        verifier: BlockVerifier,
+    ) -> Self {
+        Self { archive, config, verifier, batch_blocks: DEFAULT_EXPORT_BATCH_BLOCKS }
     }
 
     /// Audits segment `segment`. Store errors are returned; data problems are findings.
+    ///
+    /// Block rows are read, verified and rebuilt a batch at a time, so the audit holds one
+    /// batch of blocks like the exporter. The stored rows' digest is computed per family as the
+    /// rows are read and compared with the marker's at the end.
     pub async fn audit_segment(&self, segment: u64) -> Result<AuditReport, ArchiveError> {
         let session = self.archive.store.session();
-        let mut findings = Vec::new();
         let Some(marker) = ExowareArchive::<S>::marker(&session, segment).await? else {
-            findings.push(AuditFinding::MarkerMissing);
-            return Ok(Self::report(segment, findings));
+            return Ok(Self::report(segment, vec![AuditFinding::MarkerMissing]));
         };
         let first = self.config.first_block(segment);
         let last = self.config.last_block(segment);
-        let n = self.config.blocks_per_segment as usize;
-        let mut unexpected = Vec::new();
-        let mut extras: Vec<(Bytes, Bytes)> = Vec::new();
-        let mut columns: Vec<Vec<Option<Bytes>>> = Vec::with_capacity(Family::BLOCK.len());
-        for family in Family::BLOCK {
-            // Block keys have a fixed length, so every key between the last block's key and the
-            // next block's key extends the last block's key. Scanning through the next block's
-            // key (inclusive) covers the last key's whole prefix interval; that next key itself
-            // belongs to the following segment and is skipped. The limit leaves room for
-            // malformed keys between the expected ones.
-            let end = match last.checked_add(1) {
-                Some(next) => ArchiveKey::block(family, next),
-                None => {
-                    let mut end = ArchiveKey::block(family, last).to_vec();
-                    end.extend([0xff; 64]);
-                    Bytes::from(end)
-                }
-            };
-            let next_key = last.checked_add(1).map(|next| ArchiveKey::block(family, next));
-            let rows = session
-                .range(&ArchiveKey::block(family, first), &end, n.saturating_mul(2).saturating_add(1), RangeMode::Forward)
-                .await?;
-            let mut column = vec![None; n];
-            for (key, value) in rows {
-                if next_key.as_ref() == Some(&key) {
-                    continue;
-                }
-                match ArchiveKey::number(&key)
-                    .filter(|b| (first..=last).contains(b) && ArchiveKey::family(&key) == Some(family))
-                {
-                    Some(number) => column[(number - first) as usize] = Some(value),
-                    None => {
-                        unexpected.push(AuditFinding::UnexpectedRow { family, key: hex::encode(&key) });
-                        extras.push((key, value));
-                    }
-                }
-            }
-            for (i, value) in column.iter().enumerate() {
-                if value.is_none() {
-                    findings.push(AuditFinding::BlockRowMissing { family, block: first + i as u64 });
-                }
-            }
-            columns.push(column);
+        let mut pass = AuditPass {
+            builder: SegmentBuilder::new(&self.config, segment),
+            stored: SegmentDigest::default(),
+            parent: None,
+            findings: Vec::new(),
+            unexpected: Vec::new(),
+        };
+        let size = self.batch_blocks.max(1);
+        for start in (first..=last).step_by(size as usize) {
+            self.audit_batch(&session, &mut pass, start, last.min(start + size - 1)).await?;
         }
         // Unexpected rows do not stop the audit: the segment is still rebuilt, and the rows
         // enter the digest of the stored rows below, so they also show as a digest mismatch.
         // They are reported first.
+        let AuditPass { builder, mut stored, parent, mut findings, unexpected } = pass;
         let with_unexpected = |findings: Vec<AuditFinding>| {
             let mut all = unexpected.clone();
             all.extend(findings);
@@ -182,48 +176,25 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
         if !findings.is_empty() {
             return Ok(with_unexpected(findings));
         }
-        let mut blocks = Vec::with_capacity(n);
-        for i in 0..n {
-            let number = first + i as u64;
-            let cell = |c: usize| columns[c][i].as_deref().unwrap_or_default();
-            let decoded = (|| {
-                Ok::<_, ArchiveError>(BlockData {
-                    header: BlockCodec::decode_header(cell(0))?,
-                    body: BlockCodec::decode_body(cell(1))?,
-                    receipts: BlockCodec::decode_receipts(cell(2))?,
-                    senders: BlockCodec::decode_senders(cell(3))?,
-                    account_changes: BlockCodec::decode_account_changes(cell(4))?,
-                    storage_changes: BlockCodec::decode_storage_changes(cell(5))?,
-                })
-            })()
-            .and_then(|block| {
-                if block.number() != number {
-                    return Err(ArchiveError::unavailable(Family::Header, format!("holds header {}", block.number())));
-                }
-                self.verifier.verify_block(&block)?;
-                Ok(block)
+        if parent != Some(marker.last_hash) {
+            findings.push(AuditFinding::LinkageInvalid {
+                reason: format!(
+                    "segment's last header does not hash to the marker's {}",
+                    marker.last_hash
+                ),
             });
-            match decoded {
-                Ok(block) => blocks.push(block),
-                Err(err) => findings.push(AuditFinding::BlockInvalid { block: number, reason: err.to_string() }),
-            }
-        }
-        if !findings.is_empty() {
             return Ok(with_unexpected(findings));
         }
-        let headers: Vec<_> = blocks.iter().map(|b| b.header.clone()).collect();
-        if let Err(err) = BlockVerifier::verify_linkage(&headers, marker.last_hash) {
-            findings.push(AuditFinding::LinkageInvalid { reason: err.to_string() });
-            return Ok(with_unexpected(findings));
-        }
-        let rebuilt = SegmentRows::build(&self.config, segment, &blocks)?;
+        let rebuilt = builder.finish()?;
         if rebuilt.marker != marker {
-            findings.push(AuditFinding::MarkerMismatch { stored: marker.digest, rebuilt: rebuilt.marker.digest });
+            findings.push(AuditFinding::MarkerMismatch {
+                stored: marker.digest,
+                rebuilt: rebuilt.marker.digest,
+            });
         }
-        let keys: Vec<Bytes> = rebuilt.rows.iter().map(|(k, _)| k.clone()).collect();
-        let stored = session.get_many(&keys).await?;
-        let mut present: Vec<(&[u8], &[u8])> = extras.iter().map(|(k, v)| (k.as_ref(), v.as_ref())).collect();
-        for ((key, expected), found) in rebuilt.rows.iter().zip(&stored) {
+        let keys: Vec<Bytes> = rebuilt.index_rows.iter().map(|(k, _)| k.clone()).collect();
+        let found = session.get_many(&keys).await?;
+        for ((key, expected), found) in rebuilt.index_rows.iter().zip(&found) {
             let family = ArchiveKey::family(key).unwrap_or(Family::Config);
             match found {
                 None => findings.push(AuditFinding::RowMissing { family, key: hex::encode(key) }),
@@ -231,20 +202,134 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
                     if value != expected {
                         findings.push(AuditFinding::RowMismatch { family, key: hex::encode(key) });
                     }
-                    present.push((key.as_ref(), value.as_ref()));
+                    stored.update(family, key, value);
                 }
             }
         }
-        present.sort_unstable_by(|a, b| a.0.cmp(b.0));
-        let mut digest = SegmentDigest::default();
-        for (key, value) in present {
-            digest.update(key, value);
-        }
-        let stored_rows = digest.finish();
+        let stored_rows = stored.finish();
         if stored_rows != marker.digest {
             findings.push(AuditFinding::DigestMismatch { marker: marker.digest, stored_rows });
         }
         Ok(with_unexpected(findings))
+    }
+
+    /// Reads, checks and rebuilds blocks `from..=to` of the segment.
+    async fn audit_batch(
+        &self,
+        session: &S::Session,
+        pass: &mut AuditPass,
+        from: u64,
+        to: u64,
+    ) -> Result<(), ArchiveError> {
+        let n = (to - from + 1) as usize;
+        let mut columns: Vec<Vec<Option<Bytes>>> = Vec::with_capacity(Family::BLOCK.len());
+        for family in Family::BLOCK {
+            // Block keys have a fixed length, so every key between block `to`'s key and the
+            // next block's key extends block `to`'s key. Scanning through the next block's key
+            // (inclusive) covers that whole prefix interval; the next key itself belongs to the
+            // next batch or segment and is skipped. The limit leaves room for malformed keys
+            // between the expected ones.
+            let next_key = to.checked_add(1).map(|next| ArchiveKey::block(family, next));
+            let end = next_key.clone().unwrap_or_else(|| {
+                let mut end = ArchiveKey::block(family, to).to_vec();
+                end.extend([0xff; 64]);
+                Bytes::from(end)
+            });
+            let rows = session
+                .range(
+                    &ArchiveKey::block(family, from),
+                    &end,
+                    n.saturating_mul(2).saturating_add(1),
+                    RangeMode::Forward,
+                )
+                .await?;
+            let mut column = vec![None; n];
+            for (key, value) in rows {
+                if next_key.as_ref() == Some(&key) {
+                    continue;
+                }
+                // Rows of one family arrive in key order, batch after batch.
+                pass.stored.update(family, &key, &value);
+                match ArchiveKey::number(&key)
+                    .filter(|b| (from..=to).contains(b) && ArchiveKey::family(&key) == Some(family))
+                {
+                    Some(number) => column[(number - from) as usize] = Some(value),
+                    None => pass
+                        .unexpected
+                        .push(AuditFinding::UnexpectedRow { family, key: hex::encode(&key) }),
+                }
+            }
+            for (i, value) in column.iter().enumerate() {
+                if value.is_none() {
+                    pass.findings
+                        .push(AuditFinding::BlockRowMissing { family, block: from + i as u64 });
+                }
+            }
+            columns.push(column);
+        }
+        if !pass.findings.is_empty() {
+            return Ok(());
+        }
+        let mut blocks = Vec::with_capacity(n);
+        for (i, number) in (from..=to).enumerate() {
+            let cell = |family: usize| columns[family][i].as_deref().unwrap_or_default();
+            match self.decode_block(number, cell) {
+                Ok(block) => blocks.push(block),
+                Err(err) => pass
+                    .findings
+                    .push(AuditFinding::BlockInvalid { block: number, reason: err.to_string() }),
+            }
+        }
+        if !pass.findings.is_empty() {
+            return Ok(());
+        }
+        for block in &blocks {
+            if pass.parent.is_some_and(|parent| block.header.parent_hash != parent) {
+                pass.findings.push(AuditFinding::LinkageInvalid {
+                    reason: format!(
+                        "header {} does not link to header {}",
+                        block.number(),
+                        block.number() - 1
+                    ),
+                });
+                return Ok(());
+            }
+            pass.parent = Some(block.hash());
+        }
+        let rebuilt = pass.builder.push_batch(&blocks)?;
+        for (key, expected) in rebuilt {
+            let family = ArchiveKey::family(&key).unwrap_or(Family::Config);
+            let Some(index) = Family::BLOCK.iter().position(|f| *f == family) else { continue };
+            let number = ArchiveKey::number(&key).unwrap_or_default();
+            if columns[index][(number - from) as usize].as_ref() != Some(&expected) {
+                pass.findings.push(AuditFinding::RowMismatch { family, key: hex::encode(&key) });
+            }
+        }
+        Ok(())
+    }
+
+    /// Decodes and verifies block `number` from its six block-family values.
+    fn decode_block<'a>(
+        &self,
+        number: u64,
+        cell: impl Fn(usize) -> &'a [u8],
+    ) -> Result<BlockData, ArchiveError> {
+        let block = BlockData {
+            header: BlockCodec::decode_header(cell(0))?,
+            body: BlockCodec::decode_body(cell(1))?,
+            receipts: BlockCodec::decode_receipts(cell(2))?,
+            senders: BlockCodec::decode_senders(cell(3))?,
+            account_changes: BlockCodec::decode_account_changes(cell(4))?,
+            storage_changes: BlockCodec::decode_storage_changes(cell(5))?,
+        };
+        if block.number() != number {
+            return Err(ArchiveError::unavailable(
+                Family::Header,
+                format!("holds header {}", block.number()),
+            ));
+        }
+        self.verifier.verify_block(&block)?;
+        Ok(block)
     }
 
     /// Builds a report, counting a dirty segment as a fault.
@@ -260,13 +345,17 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
 mod tests {
     use std::sync::Arc;
 
-    use exoware_sdk::prune_policy::{GroupBy, KeysScope, PrunePolicy, RetainPolicy};
-    use exoware_sdk::selector::Selector;
+    use exoware_sdk::{
+        prune_policy::{GroupBy, KeysScope, PrunePolicy, RetainPolicy},
+        selector::Selector,
+    };
 
     use super::*;
     use crate::{
         LogFilter,
-        test_utils::{ChainFixture, FixtureNode, TEST_N, TEST_TIMEOUT, TestSimulator, publish_through, reader},
+        test_utils::{
+            ChainFixture, FixtureNode, TEST_N, TEST_TIMEOUT, TestSimulator, publish_through, reader,
+        },
     };
 
     /// A3: a deleted posting goes unnoticed by log reads (postings only detect false
@@ -285,7 +374,10 @@ mod tests {
                 .store
                 .prune(&[PrunePolicy {
                     scope: KeysScope {
-                        selector: Selector { prefix: key.clone(), payload_regex: "(?s-u)^$".into() },
+                        selector: Selector {
+                            prefix: key.clone(),
+                            payload_regex: "(?s-u)^$".into(),
+                        },
                         group_by: GroupBy::default(),
                         order_by: None,
                     },
@@ -293,15 +385,24 @@ mod tests {
                 }])
                 .await
                 .unwrap();
-            let filter = LogFilter { from: 8, to: 15, addresses: vec![address], topics: Default::default() };
+            let filter =
+                LogFilter { from: 8, to: 15, addresses: vec![address], topics: Default::default() };
             assert!(!fixture.expected_logs(&filter).is_empty(), "the address logs in segment 1");
             let r = reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await;
-            assert_eq!(r.logs(&filter).await.unwrap(), vec![], "a missing posting silently drops logs");
+            assert_eq!(
+                r.logs(&filter).await.unwrap(),
+                vec![],
+                "a missing posting silently drops logs"
+            );
 
             let auditor = SegmentAuditor::new(archive.clone(), config, fixture.verifier());
             let report = auditor.audit_segment(1).await.unwrap();
             assert_eq!(report.findings.len(), 2, "missing row and digest: {:?}", report.findings);
-            assert_eq!(report.findings[0], AuditFinding::RowMissing { family: Family::LogAddress, key: hex::encode(&key) }, "row");
+            assert_eq!(
+                report.findings[0],
+                AuditFinding::RowMissing { family: Family::LogAddress, key: hex::encode(&key) },
+                "row"
+            );
             assert!(matches!(report.findings[1], AuditFinding::DigestMismatch { .. }), "digest");
             assert!(auditor.audit_segment(0).await.unwrap().is_clean(), "segment 0 clean");
         })
@@ -319,14 +420,24 @@ mod tests {
             let archive = sim.archive("t-audit-extra/", &config).await;
             publish_through(&archive, &fixture, config, 1).await;
             let auditor = SegmentAuditor::new(archive.clone(), config, fixture.verifier());
-            assert!(auditor.audit_segment(1).await.unwrap().is_clean(), "segment 1 clean before the insert");
-            let marker = ExowareArchive::<crate::ExowareStore>::marker(&archive.store.session(), 1).await.unwrap().unwrap();
+            assert!(
+                auditor.audit_segment(1).await.unwrap().is_clean(),
+                "segment 1 clean before the insert"
+            );
+            let marker = ExowareArchive::<crate::ExowareStore>::marker(&archive.store.session(), 1)
+                .await
+                .unwrap()
+                .unwrap();
             // Interior extra (after block 10) and an extra extending the last block's key (15),
             // which sorts past that key.
             for (block, label) in [(10, "interior"), (15, "last block")] {
                 let mut extra = ArchiveKey::block(Family::Receipts, block).to_vec();
                 extra.push(0);
-                archive.store.put(&[(Bytes::from(extra.clone()), Bytes::from_static(b"x"))]).await.unwrap();
+                archive
+                    .store
+                    .put(&[(Bytes::from(extra.clone()), Bytes::from_static(b"x"))])
+                    .await
+                    .unwrap();
                 let report = auditor.audit_segment(1).await.unwrap();
                 let stored_rows = report.findings.iter().find_map(|f| match f {
                     AuditFinding::DigestMismatch { stored_rows, .. } => Some(*stored_rows),
@@ -334,20 +445,33 @@ mod tests {
                 });
                 assert_eq!(
                     report.findings.first(),
-                    Some(&AuditFinding::UnexpectedRow { family: Family::Receipts, key: hex::encode(&extra) }),
+                    Some(&AuditFinding::UnexpectedRow {
+                        family: Family::Receipts,
+                        key: hex::encode(&extra)
+                    }),
                     "{label}: the inserted row is reported first"
                 );
                 assert_eq!(
                     report.findings.last(),
-                    Some(&AuditFinding::DigestMismatch { marker: marker.digest, stored_rows: stored_rows.expect("digest mismatch") }),
+                    Some(&AuditFinding::DigestMismatch {
+                        marker: marker.digest,
+                        stored_rows: stored_rows.expect("digest mismatch")
+                    }),
                     "{label}: the extra enters the stored-row digest"
                 );
-                assert_ne!(stored_rows, Some(marker.digest), "{label}: digest differs from the marker");
+                assert_ne!(
+                    stored_rows,
+                    Some(marker.digest),
+                    "{label}: digest differs from the marker"
+                );
                 archive
                     .store
                     .prune(&[PrunePolicy {
                         scope: KeysScope {
-                            selector: Selector { prefix: Bytes::from(extra.clone()), payload_regex: "(?s-u)^$".into() },
+                            selector: Selector {
+                                prefix: Bytes::from(extra.clone()),
+                                payload_regex: "(?s-u)^$".into(),
+                            },
                             group_by: GroupBy::default(),
                             order_by: None,
                         },
@@ -355,12 +479,22 @@ mod tests {
                     }])
                     .await
                     .unwrap();
-                assert!(auditor.audit_segment(1).await.unwrap().is_clean(), "{label}: clean after removing the extra");
+                assert!(
+                    auditor.audit_segment(1).await.unwrap().is_clean(),
+                    "{label}: clean after removing the extra"
+                );
             }
             let mut next_segment = ArchiveKey::block(Family::Receipts, 16).to_vec();
             next_segment.push(0);
-            archive.store.put(&[(Bytes::from(next_segment), Bytes::from_static(b"x"))]).await.unwrap();
-            assert!(auditor.audit_segment(1).await.unwrap().is_clean(), "an extra of segment 2 is not segment 1's");
+            archive
+                .store
+                .put(&[(Bytes::from(next_segment), Bytes::from_static(b"x"))])
+                .await
+                .unwrap();
+            assert!(
+                auditor.audit_segment(1).await.unwrap().is_clean(),
+                "an extra of segment 2 is not segment 1's"
+            );
             assert!(auditor.audit_segment(0).await.unwrap().is_clean(), "segment 0 unaffected");
         })
         .await

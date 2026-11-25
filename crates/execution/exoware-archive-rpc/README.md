@@ -24,6 +24,7 @@ Without `--archive.exoware.url` it is a no-op and the node is unchanged.
 | `--archive.exoware.retain-segments` | unset | Keep only the most recent segments |
 | `--archive.exoware.timeout` | 5s | Store budget per RPC request and per exporter store call |
 | `--archive.exoware.prune-grace-segments` | 2 | Segments kept below the earliest served one before rows are deleted, ≥ 1 |
+| `--archive.exoware.export-batch-blocks` | 256 | Blocks the exporter loads, encodes and writes at a time, 1..=65536; bounds its block memory |
 
 The store API key is read by the Exoware SDK from `EXOWARE_API_KEY` only. There is no flag
 and it is never logged. There is no audit-interval flag; audits are on demand
@@ -38,6 +39,11 @@ provisions the config row when asked, retries an unreachable store with backoff,
 `SegmentPublisher::run_until`. A config mismatch, missing config, quarantined segment or
 oversized value stops the exporter with an error log; the node keeps serving.
 
+Each segment is streamed `--archive.exoware.export-batch-blocks` blocks at a time, so the
+exporter holds at most one batch of blocks plus the segment's index rows and postings (see
+`base-exoware-archive`, "Exporter memory"). The marker digest is computed per family as the
+rows stream ("Marker digest").
+
 The exporter does not gate reth's pruning. If it lags the node's retention it cannot publish
 the pruned blocks: it logs an error, keeps retrying, and `lag_blocks` (finalized block minus
 the last published block) grows. Alert on `lag_blocks`; another node with the blocks must
@@ -50,9 +56,9 @@ request is pruned:
 
 | Method | Goes to the archive when | Archive path |
 | --- | --- | --- |
-| `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_getBlockReceipts`, `eth_getTransactionByBlock{Hash,Number}AndIndex` | The node answered 4444, or answered for a block below its earliest body or at or below its `Receipts` checkpoint (Base defaults deposit fields when receipts are gone), or returned `null` for a pruned number. A `null` for a hash counts only once the node pruned something hash-addressable. | Hash locator (if needed), then the verified block |
-| `eth_getBlockTransactionCountBy{Number,Hash}` | Same, against the earliest body only | Same |
-| `eth_getTransactionByHash`, `eth_getTransactionReceipt` | Same as blocks | Tx locator, then the verified block |
+| `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_getBlockReceipts`, `eth_getTransactionByBlock{Hash,Number}AndIndex` | The node answered 4444, or returned `null` for a pruned number, or its answer is visibly incomplete over pruned data: a deposit lacks a field its fork requires (`depositNonce` from Regolith, `depositReceiptVersion` from Canyon; Base defaults both when the receipt is gone) and a fresh retention read shows its receipts or lookup pruned. A complete answer is served as is, with no retention read. A `null` for a hash counts only once the node pruned something hash-addressable. | Hash locator (if needed), then the verified block |
+| `eth_getBlockTransactionCountBy{Number,Hash}` | 4444 or `null` for a pruned number, against the earliest body only | Same |
+| `eth_getTransactionByHash`, `eth_getTransactionReceipt` | As for blocks. A `null` stays local without a store call when the hash is in the local pool or the node's `TransactionLookup` is unpruned and has no entry for it, so pending-transaction polling never reaches the store; a transaction the node still places is read at that block. | Tx locator, then the verified block |
 | `eth_getLogs` | The node answered 4444 | Blocks below the node's first complete block from the archive, the rest from the node's filter, no gap. reth's `--rpc.max-blocks-per-filter` and `--rpc.max-logs-per-response` apply to the combined result with reth's errors. |
 | `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode` | The block (number, hash, `earliest`; EIP-1898 objects included) is at or below the `AccountHistory` checkpoint, or the node refused the read as pruned | State history seek, else the node's state at the archive head `H` |
 | `eth_getStorageAt` | Same, against `StorageHistory` | Same |
@@ -84,8 +90,9 @@ they equal what the node served before it pruned.
 
 - Historical `eth_call`, `eth_estimateGas`, tracing and `eth_createAccessList` are not routed.
 - Uncle methods, log filters (`eth_newFilter`) and subscriptions are not routed.
-- Retention reads are cached for 2 s (`RETENTION_TTL`). A receipt pruned inside that window can
-  be served locally with default deposit fields once.
+- Retention reads are cached for 2 s (`RETENTION_TTL`), and an answer whose deposit fields
+  are present is never rechecked. A visibly incomplete answer always rereads retention, so
+  defaulted deposit fields over pruned receipts are never served.
 
 ## Tests
 

@@ -58,10 +58,15 @@ impl BlockVerifier {
         if receipts.len() != tx_count {
             return Err(ArchiveError::unavailable(
                 Family::Receipts,
-                format!("block {} has {} receipts for {tx_count} transactions", header.number, receipts.len()),
+                format!(
+                    "block {} has {} receipts for {tx_count} transactions",
+                    header.number,
+                    receipts.len()
+                ),
             ));
         }
-        let root = calculate_receipt_root_no_memo(receipts, self.chain_spec.as_ref(), header.timestamp);
+        let root =
+            calculate_receipt_root_no_memo(receipts, self.chain_spec.as_ref(), header.timestamp);
         if root != header.receipts_root {
             return Err(ArchiveError::unavailable(
                 Family::Receipts,
@@ -84,7 +89,11 @@ impl BlockVerifier {
         if senders.len() != transactions.len() {
             return Err(ArchiveError::unavailable(
                 Family::Senders,
-                format!("block {number} has {} senders for {} transactions", senders.len(), transactions.len()),
+                format!(
+                    "block {number} has {} senders for {} transactions",
+                    senders.len(),
+                    transactions.len()
+                ),
             ));
         }
         for (index, (tx, sender)) in transactions.iter().zip(senders).enumerate() {
@@ -143,7 +152,10 @@ impl BlockVerifier {
         for (index, receipt) in receipts.iter().enumerate() {
             let Some(deposit) = receipt.as_deposit_receipt() else { continue };
             let sender = *senders.get(index).ok_or_else(|| {
-                ArchiveError::unavailable(Family::Senders, format!("block {number} lacks sender {index}"))
+                ArchiveError::unavailable(
+                    Family::Senders,
+                    format!("block {number} lacks sender {index}"),
+                )
             })?;
             let before = account_changes.iter().find(|c| c.address == sender).ok_or_else(|| {
                 ArchiveError::unavailable(
@@ -171,7 +183,12 @@ impl BlockVerifier {
         self.verify_body(&block.header, &block.body)?;
         self.verify_receipts(&block.header, block.body.transactions.len(), &block.receipts)?;
         self.verify_senders(block.number(), &block.body.transactions, &block.senders)?;
-        self.verify_deposit_nonces(&block.header, &block.senders, &block.receipts, &block.account_changes)
+        self.verify_deposit_nonces(
+            &block.header,
+            &block.senders,
+            &block.receipts,
+            &block.account_changes,
+        )
     }
 
     /// Checks that `headers` (consecutive, ascending) chain by parent hash and that the last one
@@ -210,18 +227,37 @@ mod tests {
         let fixture = ChainFixture::standard();
         let verifier = fixture.verifier();
         for block in &fixture.blocks {
-            verifier.verify_block(block).unwrap_or_else(|e| panic!("block {} verifies: {e}", block.number()));
+            verifier
+                .verify_block(block)
+                .unwrap_or_else(|e| panic!("block {} verifies: {e}", block.number()));
         }
         let regolith = &fixture.blocks[5];
         let mut stripped = regolith.receipts.clone();
         stripped[0].as_deposit_receipt_mut().expect("deposit").deposit_nonce = None;
-        let canyon_rule = alloy_consensus::proofs::ordered_trie_root_with_encoder(&regolith.receipts, |r, buf| {
-            alloy_eips::eip2718::Encodable2718::encode_2718(&alloy_consensus::TxReceipt::with_bloom_ref(r), buf)
-        });
-        assert_ne!(canyon_rule, regolith.header.receipts_root, "a Regolith block's root excludes the nonce");
-        assert_eq!(regolith.receipts[0].as_deposit_receipt().unwrap().deposit_nonce, Some(4), "archive keeps the nonce");
+        let canyon_rule = alloy_consensus::proofs::ordered_trie_root_with_encoder(
+            &regolith.receipts,
+            |r, buf| {
+                alloy_eips::eip2718::Encodable2718::encode_2718(
+                    &alloy_consensus::TxReceipt::with_bloom_ref(r),
+                    buf,
+                )
+            },
+        );
+        assert_ne!(
+            canyon_rule, regolith.header.receipts_root,
+            "a Regolith block's root excludes the nonce"
+        );
+        assert_eq!(
+            regolith.receipts[0].as_deposit_receipt().unwrap().deposit_nonce,
+            Some(4),
+            "archive keeps the nonce"
+        );
         let canyon = &fixture.blocks[20];
-        assert_eq!(canyon.receipts[0].as_deposit_receipt().unwrap().deposit_receipt_version, Some(1), "Canyon receipt version");
+        assert_eq!(
+            canyon.receipts[0].as_deposit_receipt().unwrap().deposit_receipt_version,
+            Some(1),
+            "Canyon receipt version"
+        );
     }
 
     /// Wrong senders, swapped transactions, altered receipts and broken links are rejected.
@@ -231,16 +267,41 @@ mod tests {
         let verifier = fixture.verifier();
         let mut block = fixture.blocks[9].clone();
         block.senders[1] = Address::with_last_byte(0x42);
-        assert!(matches!(verifier.verify_block(&block), Err(ArchiveError::Unavailable { family: Family::Senders, .. })), "wrong sender");
+        assert!(
+            matches!(
+                verifier.verify_block(&block),
+                Err(ArchiveError::Unavailable { family: Family::Senders, .. })
+            ),
+            "wrong sender"
+        );
         let mut block = fixture.blocks[9].clone();
         block.body.transactions.swap(1, 2);
-        assert!(matches!(verifier.verify_block(&block), Err(ArchiveError::Unavailable { family: Family::Body, .. })), "swapped txs");
+        assert!(
+            matches!(
+                verifier.verify_block(&block),
+                Err(ArchiveError::Unavailable { family: Family::Body, .. })
+            ),
+            "swapped txs"
+        );
         let mut block = fixture.blocks[9].clone();
         block.receipts.swap(1, 2);
-        assert!(matches!(verifier.verify_block(&block), Err(ArchiveError::Unavailable { family: Family::Receipts, .. })), "swapped receipts");
+        assert!(
+            matches!(
+                verifier.verify_block(&block),
+                Err(ArchiveError::Unavailable { family: Family::Receipts, .. })
+            ),
+            "swapped receipts"
+        );
         let headers: Vec<_> = fixture.blocks[8..16].iter().map(|b| b.header.clone()).collect();
-        assert_eq!(BlockVerifier::verify_linkage(&headers, fixture.blocks[15].hash()).unwrap().len(), 8, "segment links");
-        assert!(BlockVerifier::verify_linkage(&headers, fixture.blocks[14].hash()).is_err(), "wrong last hash");
+        assert_eq!(
+            BlockVerifier::verify_linkage(&headers, fixture.blocks[15].hash()).unwrap().len(),
+            8,
+            "segment links"
+        );
+        assert!(
+            BlockVerifier::verify_linkage(&headers, fixture.blocks[14].hash()).is_err(),
+            "wrong last hash"
+        );
     }
 
     /// B1: dropping the empty withdrawals list after Canyon or adding one before Canyon is
@@ -250,17 +311,27 @@ mod tests {
         let fixture = ChainFixture::standard();
         let verifier = fixture.verifier();
         let mut post = fixture.blocks[20].clone();
-        assert_eq!(post.body.withdrawals, Some(Default::default()), "Canyon block has empty withdrawals");
+        assert_eq!(
+            post.body.withdrawals,
+            Some(Default::default()),
+            "Canyon block has empty withdrawals"
+        );
         post.body.withdrawals = None;
         assert!(
-            matches!(verifier.verify_block(&post), Err(ArchiveError::Unavailable { family: Family::Body, .. })),
+            matches!(
+                verifier.verify_block(&post),
+                Err(ArchiveError::Unavailable { family: Family::Body, .. })
+            ),
             "dropped withdrawals after Canyon rejected"
         );
         let mut pre = fixture.blocks[5].clone();
         assert_eq!(pre.body.withdrawals, None, "pre-Canyon block has no withdrawals");
         pre.body.withdrawals = Some(Default::default());
         assert!(
-            matches!(verifier.verify_block(&pre), Err(ArchiveError::Unavailable { family: Family::Body, .. })),
+            matches!(
+                verifier.verify_block(&pre),
+                Err(ArchiveError::Unavailable { family: Family::Body, .. })
+            ),
             "added withdrawals before Canyon rejected"
         );
     }
@@ -273,29 +344,48 @@ mod tests {
         let fixture = ChainFixture::standard();
         let verifier = fixture.verifier();
         let block = &fixture.blocks[5];
-        assert!(verifier.deposit_nonce_uncovered(block.header.timestamp), "block 5 is in the Regolith window");
-        assert!(!verifier.deposit_nonce_uncovered(fixture.blocks[20].header.timestamp), "block 20 is after Canyon");
+        assert!(
+            verifier.deposit_nonce_uncovered(block.header.timestamp),
+            "block 5 is in the Regolith window"
+        );
+        assert!(
+            !verifier.deposit_nonce_uncovered(fixture.blocks[20].header.timestamp),
+            "block 20 is after Canyon"
+        );
         let mut corrupt = block.clone();
         corrupt.receipts[0].as_deposit_receipt_mut().expect("deposit").deposit_nonce = Some(99);
         assert_eq!(
-            verifier.verify_receipts(&corrupt.header, corrupt.body.transactions.len(), &corrupt.receipts),
+            verifier.verify_receipts(
+                &corrupt.header,
+                corrupt.body.transactions.len(),
+                &corrupt.receipts
+            ),
             Ok(()),
             "the receipt root does not see the nonce"
         );
         assert!(
-            matches!(verifier.verify_block(&corrupt), Err(ArchiveError::Unavailable { family: Family::Receipts, .. })),
+            matches!(
+                verifier.verify_block(&corrupt),
+                Err(ArchiveError::Unavailable { family: Family::Receipts, .. })
+            ),
             "nonce-only corruption rejected"
         );
         let mut missing = block.clone();
         missing.account_changes.retain(|c| c.address != fixture.depositor);
         assert!(
-            matches!(verifier.verify_block(&missing), Err(ArchiveError::Unavailable { family: Family::AccountChanges, .. })),
+            matches!(
+                verifier.verify_block(&missing),
+                Err(ArchiveError::Unavailable { family: Family::AccountChanges, .. })
+            ),
             "deposit sender missing from the changeset"
         );
         let mut canyon = fixture.blocks[20].clone();
         canyon.receipts[0].as_deposit_receipt_mut().expect("deposit").deposit_nonce = Some(99);
         assert!(
-            matches!(verifier.verify_block(&canyon), Err(ArchiveError::Unavailable { family: Family::Receipts, .. })),
+            matches!(
+                verifier.verify_block(&canyon),
+                Err(ArchiveError::Unavailable { family: Family::Receipts, .. })
+            ),
             "after Canyon the root covers the nonce"
         );
     }

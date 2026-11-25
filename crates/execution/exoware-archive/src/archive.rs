@@ -60,7 +60,10 @@ impl<S: ArchiveStore> ExowareArchive<S> {
 
     /// Explicit operator step: writes the config row if absent. An existing row must be
     /// byte-identical. Exporters never create the config implicitly.
-    pub async fn provision(&self, config: &ArchiveConfig) -> Result<ProvisionOutcome, ArchiveError> {
+    pub async fn provision(
+        &self,
+        config: &ArchiveConfig,
+    ) -> Result<ProvisionOutcome, ArchiveError> {
         config.validate()?;
         let session = self.store.session();
         match session.get(&ArchiveKey::config()).await? {
@@ -80,15 +83,18 @@ impl<S: ArchiveStore> ExowareArchive<S> {
     }
 
     /// Reads the config row.
-    pub async fn read_config(
-        session: &S::Session,
-    ) -> Result<Option<ArchiveConfig>, ArchiveError> {
+    pub async fn read_config(session: &S::Session) -> Result<Option<ArchiveConfig>, ArchiveError> {
         session.get(&ArchiveKey::config()).await?.map(|raw| ArchiveConfig::decode(&raw)).transpose()
     }
 
     /// Requires the stored config to equal `expected` byte for byte.
     pub async fn require_config(&self, expected: &ArchiveConfig) -> Result<(), ArchiveError> {
-        let raw = self.store.session().get(&ArchiveKey::config()).await?.ok_or(ArchiveError::ConfigMissing)?;
+        let raw = self
+            .store
+            .session()
+            .get(&ArchiveKey::config())
+            .await?
+            .ok_or(ArchiveError::ConfigMissing)?;
         if raw.as_ref() != expected.encode().as_slice() {
             return Err(ArchiveError::ConfigMismatch {
                 stored: Self::render_config(&raw),
@@ -123,7 +129,11 @@ impl<S: ArchiveStore> ExowareArchive<S> {
         session: &S::Session,
         segment: u64,
     ) -> Result<Option<SegmentMarker>, ArchiveError> {
-        session.get(&ArchiveKey::marker(segment)).await?.map(|raw| SegmentMarker::decode(&raw)).transpose()
+        session
+            .get(&ArchiveKey::marker(segment))
+            .await?
+            .map(|raw| SegmentMarker::decode(&raw))
+            .transpose()
     }
 
     /// Prune policy deleting rows of `family` below segment `cutoff`: logical selector prefix
@@ -131,15 +141,9 @@ impl<S: ArchiveStore> ExowareArchive<S> {
     /// and captures the trailing 8 bytes, `U64Be` ordering and `GreaterThanOrEqual` retention.
     /// Block families compare block numbers against `N · cutoff`.
     pub fn prune_policy(config: &ArchiveConfig, family: Family, cutoff: u64) -> PrunePolicy {
-        let threshold = if family.keyed_by_block() {
-            config.first_block(cutoff)
-        } else {
-            cutoff
-        };
-        let payload_regex = format!(
-            "(?s-u)^.{{{}}}(?P<{PRUNE_CAPTURE}>.{{{NUMBER_LEN}}})$",
-            family.fields_len()
-        );
+        let threshold = if family.keyed_by_block() { config.first_block(cutoff) } else { cutoff };
+        let payload_regex =
+            format!("(?s-u)^.{{{}}}(?P<{PRUNE_CAPTURE}>.{{{NUMBER_LEN}}})$", family.fields_len());
         PrunePolicy {
             scope: KeysScope {
                 selector: Selector {
@@ -197,11 +201,21 @@ mod tests {
             publish_through(&archive, &fixture, config, 4).await;
             publish_through(&neighbor, &fixture, config, 4).await;
             let neighbor_before = dump(neighbor.store.as_ref()).await;
-            assert_eq!(archive.prune(&config, Some(4), 1).await.unwrap(), Some(2), "E = 3, grace 1, cutoff 2");
+            assert_eq!(
+                archive.prune(&config, Some(4), 1).await.unwrap(),
+                Some(2),
+                "E = 3, grace 1, cutoff 2"
+            );
 
-            let mut expected: Vec<(Bytes, Bytes)> = vec![(ArchiveKey::config(), Bytes::from(config.encode()))];
+            let mut expected: Vec<(Bytes, Bytes)> =
+                vec![(ArchiveKey::config(), Bytes::from(config.encode()))];
             for segment in 0..5 {
-                let rows = SegmentRows::build(&config, segment, &fixture.blocks[(segment * TEST_N) as usize..((segment + 1) * TEST_N) as usize]).unwrap();
+                let rows = SegmentRows::build(
+                    &config,
+                    segment,
+                    &fixture.blocks[(segment * TEST_N) as usize..((segment + 1) * TEST_N) as usize],
+                )
+                .unwrap();
                 expected.push((ArchiveKey::marker(segment), Bytes::from(rows.marker.encode())));
                 if segment >= 2 {
                     expected.extend(rows.rows);
@@ -214,13 +228,25 @@ mod tests {
             // the previous neighbor "t9/x" is now rejected by `ExowareStore::validate_namespace`.
             let after = dump(archive.store.as_ref()).await;
             for family in Family::INDEX.into_iter().chain(Family::BLOCK) {
-                let left = |rows: &[(Bytes, Bytes)]| rows.iter().filter(|(k, _)| ArchiveKey::family(k) == Some(family)).count();
+                let left = |rows: &[(Bytes, Bytes)]| {
+                    rows.iter().filter(|(k, _)| ArchiveKey::family(k) == Some(family)).count()
+                };
                 assert_eq!(left(&after), left(&expected), "{family:?} rows after prune");
             }
             assert_eq!(after.len(), expected.len(), "row count after prune");
-            assert!(after == expected, "store holds exactly config, all markers and segments 2..=4");
-            assert!(dump(neighbor.store.as_ref()).await == neighbor_before, "neighboring namespace untouched");
-            assert_eq!(archive.prune(&config, Some(4), 1).await.unwrap(), Some(2), "repeat is idempotent");
+            assert!(
+                after == expected,
+                "store holds exactly config, all markers and segments 2..=4"
+            );
+            assert!(
+                dump(neighbor.store.as_ref()).await == neighbor_before,
+                "neighboring namespace untouched"
+            );
+            assert_eq!(
+                archive.prune(&config, Some(4), 1).await.unwrap(),
+                Some(2),
+                "repeat is idempotent"
+            );
             let again = dump(archive.store.as_ref()).await;
             assert!(again == expected, "repeat deletes nothing more");
         })

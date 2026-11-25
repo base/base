@@ -22,7 +22,9 @@ use alloy_consensus::{
     proofs::calculate_transaction_root,
 };
 use alloy_eips::eip4895::Withdrawals;
-use alloy_primitives::{Address, B256, Bloom, Bytes as AlloyBytes, Log, Sealable, TxKind, U256, keccak256};
+use alloy_primitives::{
+    Address, B256, Bloom, Bytes as AlloyBytes, Log, Sealable, TxKind, U256, keccak256,
+};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
@@ -110,17 +112,33 @@ impl ChainFixture {
         let depositor = Address::with_last_byte(0xde);
         let recipient = Address::with_last_byte(0xee);
         let sparse = Address::with_last_byte(0x5a);
-        let contracts = [Address::with_last_byte(0xc0), Address::with_last_byte(0xc1), Address::with_last_byte(0xc2)];
+        let contracts = [
+            Address::with_last_byte(0xc0),
+            Address::with_last_byte(0xc1),
+            Address::with_last_byte(0xc2),
+        ];
         let events = [keccak256("Transfer"), keccak256("Approval")];
         let code_hash = keccak256(CONTRACT_CODE);
 
         let mut state = FixtureState::default();
         for sender in &senders {
-            state.accounts.insert(*sender, AccountInfo { nonce: 0, balance: U256::from(10u64.pow(18)), code_hash: KECCAK_EMPTY });
+            state.accounts.insert(
+                *sender,
+                AccountInfo {
+                    nonce: 0,
+                    balance: U256::from(10u64.pow(18)),
+                    code_hash: KECCAK_EMPTY,
+                },
+            );
         }
-        state.accounts.insert(depositor, AccountInfo { nonce: 0, balance: U256::ZERO, code_hash: KECCAK_EMPTY });
+        state.accounts.insert(
+            depositor,
+            AccountInfo { nonce: 0, balance: U256::ZERO, code_hash: KECCAK_EMPTY },
+        );
         for contract in contracts {
-            state.accounts.insert(contract, AccountInfo { nonce: 1, balance: U256::ZERO, code_hash });
+            state
+                .accounts
+                .insert(contract, AccountInfo { nonce: 1, balance: U256::ZERO, code_hash });
         }
         let genesis = Header {
             number: 0,
@@ -163,7 +181,11 @@ impl ChainFixture {
             gas += 50_000;
             let depositor_account = state.accounts.get_mut(&depositor).expect("depositor");
             receipts.push(BaseReceipt::Deposit(DepositReceipt {
-                inner: Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: gas, logs: vec![] },
+                inner: Receipt {
+                    status: Eip658Value::Eip658(true),
+                    cumulative_gas_used: gas,
+                    logs: vec![],
+                },
                 deposit_nonce: Some(depositor_account.nonce),
                 deposit_receipt_version: canyon.then_some(1),
             }));
@@ -181,7 +203,12 @@ impl ChainFixture {
                     vec![topic0, B256::from(U256::from(number))],
                     AlloyBytes::from(number.to_be_bytes().to_vec()),
                 );
-                transfers.push((((number + j) % 3) as usize, recipient, U256::from(1_000 + number), vec![log]));
+                transfers.push((
+                    ((number + j) % 3) as usize,
+                    recipient,
+                    U256::from(1_000 + number),
+                    vec![log],
+                ));
             }
             if SPARSE_BLOCKS.contains(&number) {
                 transfers.push(((number % 3) as usize, sparse, U256::from(7), vec![]));
@@ -203,7 +230,15 @@ impl ChainFixture {
                 tx_senders.push(senders[idx]);
                 account.nonce += 1;
                 account.balance -= value;
-                state.accounts.entry(to).or_insert(AccountInfo { nonce: 0, balance: U256::ZERO, code_hash: KECCAK_EMPTY }).balance += value;
+                state
+                    .accounts
+                    .entry(to)
+                    .or_insert(AccountInfo {
+                        nonce: 0,
+                        balance: U256::ZERO,
+                        code_hash: KECCAK_EMPTY,
+                    })
+                    .balance += value;
                 gas += 21_000;
                 receipts.push(BaseReceipt::Eip1559(Receipt {
                     status: Eip658Value::Eip658(true),
@@ -211,7 +246,9 @@ impl ChainFixture {
                     logs,
                 }));
             }
-            state.storage.insert((contracts[0], B256::from(U256::from(number % 3))), U256::from(number));
+            state
+                .storage
+                .insert((contracts[0], B256::from(U256::from(number % 3))), U256::from(number));
             if SPARSE_BLOCKS.contains(&number) {
                 state.storage.insert((contracts[1], SPARSE_SLOT), U256::from(number));
             }
@@ -220,7 +257,10 @@ impl ChainFixture {
                 .accounts
                 .iter()
                 .filter(|(address, info)| before.accounts.get(*address) != Some(*info))
-                .map(|(address, _)| AccountChange { address: *address, before: before.accounts.get(address).copied() })
+                .map(|(address, _)| AccountChange {
+                    address: *address,
+                    before: before.accounts.get(address).copied(),
+                })
                 .collect();
             let storage_changes = state
                 .storage
@@ -243,7 +283,11 @@ impl ChainFixture {
                 base_fee_per_gas: Some(1),
                 state_root: keccak256(number.to_be_bytes()),
                 transactions_root: calculate_transaction_root(&body.transactions),
-                receipts_root: calculate_receipt_root_no_memo(&receipts, chain_spec.as_ref(), timestamp),
+                receipts_root: calculate_receipt_root_no_memo(
+                    &receipts,
+                    chain_spec.as_ref(),
+                    timestamp,
+                ),
                 logs_bloom: receipts.iter().fold(Bloom::ZERO, |bloom, r| bloom | r.bloom()),
                 withdrawals_root: canyon.then_some(EMPTY_ROOT_HASH),
                 ..Default::default()
@@ -258,7 +302,18 @@ impl ChainFixture {
             });
             states.push(state.clone());
         }
-        Self { blocks, states, chain_spec, canyon_block, senders, depositor, recipient, sparse, contracts, events }
+        Self {
+            blocks,
+            states,
+            chain_spec,
+            canyon_block,
+            senders,
+            depositor,
+            recipient,
+            sparse,
+            contracts,
+            events,
+        }
     }
 
     /// The standard fixture: 41 blocks (five full segments of [`TEST_N`] plus one block),
@@ -268,9 +323,20 @@ impl ChainFixture {
     }
 
     /// Archive config for this chain.
-    pub fn config(&self, blocks_per_segment: u64, start_segment: u64, retain: Option<u64>) -> ArchiveConfig {
-        ArchiveConfig::new(self.chain_spec.chain.id(), self.blocks[0].hash(), blocks_per_segment, start_segment, retain)
-            .expect("valid config")
+    pub fn config(
+        &self,
+        blocks_per_segment: u64,
+        start_segment: u64,
+        retain: Option<u64>,
+    ) -> ArchiveConfig {
+        ArchiveConfig::new(
+            self.chain_spec.chain.id(),
+            self.blocks[0].hash(),
+            blocks_per_segment,
+            start_segment,
+            retain,
+        )
+        .expect("valid config")
     }
 
     /// Verifier for this chain.
@@ -330,7 +396,13 @@ impl FixtureNode {
     /// A node with every block finalized and nothing pruned.
     pub fn new(fixture: Arc<ChainFixture>) -> Self {
         let finalized = fixture.blocks.len() as u64 - 1;
-        Self { fixture, finalized, availability: LocalAvailability::default(), headers_from: 0, senders_pruned: false }
+        Self {
+            fixture,
+            finalized,
+            availability: LocalAvailability::default(),
+            headers_from: 0,
+            senders_pruned: false,
+        }
     }
 
     /// Block `number`, if served.
@@ -385,12 +457,25 @@ impl NodeState for FixtureNode {
         Ok(self.block(number).map(BlockData::hash))
     }
 
-    async fn account_at(&self, block: u64, address: Address) -> Result<Option<AccountInfo>, ArchiveError> {
+    async fn account_at(
+        &self,
+        block: u64,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, ArchiveError> {
         Ok(self.fixture.states[block as usize].accounts.get(&address).copied())
     }
 
-    async fn storage_at(&self, block: u64, address: Address, slot: B256) -> Result<U256, ArchiveError> {
-        Ok(self.fixture.states[block as usize].storage.get(&(address, slot)).copied().unwrap_or_default())
+    async fn storage_at(
+        &self,
+        block: u64,
+        address: Address,
+        slot: B256,
+    ) -> Result<U256, ArchiveError> {
+        Ok(self.fixture.states[block as usize]
+            .storage
+            .get(&(address, slot))
+            .copied()
+            .unwrap_or_default())
     }
 
     async fn bytecode(&self, code_hash: B256) -> Result<Option<AlloyBytes>, ArchiveError> {
@@ -524,7 +609,10 @@ impl<S: ArchiveStore> ArchiveStore for FaultyStore<S> {
     type Session = FaultySession<S::Session>;
 
     fn session(&self) -> Self::Session {
-        FaultySession { inner: self.inner.session(), failing_reads: Arc::clone(&self.failing_reads) }
+        FaultySession {
+            inner: self.inner.session(),
+            failing_reads: Arc::clone(&self.failing_reads),
+        }
     }
 
     async fn put(&self, rows: &[(Bytes, Bytes)]) -> Result<u64, ArchiveError> {
@@ -538,7 +626,8 @@ impl<S: ArchiveStore> ArchiveStore for FaultyStore<S> {
             *puts += 1;
             *puts - 1
         };
-        let has_marker = rows.iter().any(|(k, _)| ArchiveKey::family(k) == Some(crate::Family::Marker));
+        let has_marker =
+            rows.iter().any(|(k, _)| ArchiveKey::family(k) == Some(crate::Family::Marker));
         let fired = {
             let mut faults = self.faults.lock().unwrap_or_else(PoisonError::into_inner);
             faults
@@ -584,7 +673,7 @@ pub struct TestSimulator {
 }
 
 impl TestSimulator {
-    /// Starts a simulator on an ephemeral port with a temporary RocksDB.
+    /// Starts a simulator on an ephemeral port with a temporary `RocksDB`.
     pub async fn start() -> Self {
         let (task, url) = exoware_simulator::open_temp().await.expect("simulator starts");
         Self { task, url }
@@ -592,11 +681,18 @@ impl TestSimulator {
 
     /// Opens `namespace`.
     pub fn store(&self, namespace: &str) -> Arc<ExowareStore> {
-        Arc::new(ExowareStore::new(StoreClient::new(&self.url), namespace, Duration::from_secs(10)).expect("store"))
+        Arc::new(
+            ExowareStore::new(StoreClient::new(&self.url), namespace, Duration::from_secs(10))
+                .expect("store"),
+        )
     }
 
     /// Opens `namespace` and provisions `config` in it.
-    pub async fn archive(&self, namespace: &str, config: &ArchiveConfig) -> ExowareArchive<ExowareStore> {
+    pub async fn archive(
+        &self,
+        namespace: &str,
+        config: &ArchiveConfig,
+    ) -> ExowareArchive<ExowareStore> {
         let archive = ExowareArchive::new(self.store(namespace));
         archive.provision(config).await.expect("provision");
         archive

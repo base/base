@@ -1,7 +1,6 @@
 //! [`BlockSource`] and [`NodeState`] over a reth provider.
 
-use alloy_consensus::Header;
-use alloy_consensus::constants::KECCAK_EMPTY;
+use alloy_consensus::{Header, constants::KECCAK_EMPTY};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
@@ -163,7 +162,11 @@ impl<P: ArchiveProvider> BlockSource for ProviderSource<P> {
             .storage_block_changeset(number)
             .map_err(Self::local)?
             .into_iter()
-            .map(|change| StorageChange { address: change.address, slot: change.key, before: change.value })
+            .map(|change| StorageChange {
+                address: change.address,
+                slot: change.key,
+                before: change.value,
+            })
             .collect())
     }
 }
@@ -174,7 +177,11 @@ impl<P: ArchiveProvider> NodeState for ProviderSource<P> {
         self.blocking(move |p| p.block_hash(number).map_err(Self::local)).await
     }
 
-    async fn account_at(&self, block: u64, address: Address) -> Result<Option<AccountInfo>, ArchiveError> {
+    async fn account_at(
+        &self,
+        block: u64,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, ArchiveError> {
         self.blocking(move |p| {
             let state = p.history_by_block_number(block).map_err(Self::local)?;
             Ok(state.basic_account(&address).map_err(Self::local)?.map(Self::account_info))
@@ -182,7 +189,12 @@ impl<P: ArchiveProvider> NodeState for ProviderSource<P> {
         .await
     }
 
-    async fn storage_at(&self, block: u64, address: Address, slot: B256) -> Result<U256, ArchiveError> {
+    async fn storage_at(
+        &self,
+        block: u64,
+        address: Address,
+        slot: B256,
+    ) -> Result<U256, ArchiveError> {
         self.blocking(move |p| {
             let state = p.history_by_block_number(block).map_err(Self::local)?;
             Ok(state.storage(address, slot).map_err(Self::local)?.unwrap_or_default())
@@ -193,7 +205,10 @@ impl<P: ArchiveProvider> NodeState for ProviderSource<P> {
     async fn bytecode(&self, code_hash: B256) -> Result<Option<Bytes>, ArchiveError> {
         self.blocking(move |p| {
             let state = p.latest().map_err(Self::local)?;
-            Ok(state.bytecode_by_hash(&code_hash).map_err(Self::local)?.map(|code| code.original_bytes()))
+            Ok(state
+                .bytecode_by_hash(&code_hash)
+                .map_err(Self::local)?
+                .map(|code| code.original_bytes()))
         })
         .await
     }

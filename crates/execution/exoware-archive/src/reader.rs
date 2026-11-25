@@ -20,16 +20,16 @@ use std::{
 
 use alloy_consensus::{Header, constants::KECCAK_EMPTY};
 use alloy_primitives::{Address, B256, Bloom, Bytes as AlloyBytes, Log, U256};
+use base_common_consensus::{BaseReceipt, BaseTimeUpdateTx, BaseTxEnvelope};
 use bytes::Bytes;
 use exoware_sdk::RangeMode;
-use base_common_consensus::{BaseReceipt, BaseTimeUpdateTx, BaseTxEnvelope};
 use roaring::RoaringBitmap;
 use tracing::{error, warn};
 
 use crate::{
-    AccountInfo, ArchiveConfig, ArchiveError, ArchiveKey, ArchiveMetrics, ArchiveStore,
-    BlockBody, BlockCodec, BlockVerifier, ExowareArchive, Family, NodeState, OffsetSet,
-    SegmentMarker, StateKey, StoreSession,
+    AccountInfo, ArchiveConfig, ArchiveError, ArchiveKey, ArchiveMetrics, ArchiveStore, BlockBody,
+    BlockCodec, BlockVerifier, ExowareArchive, Family, NodeState, OffsetSet, SegmentMarker,
+    StateKey, StoreSession,
 };
 
 /// Default maximum address plus topic alternatives in one log query.
@@ -208,7 +208,10 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         let config =
             ExowareArchive::<S>::read_config(&session).await?.ok_or(ArchiveError::ConfigMissing)?;
         let mismatch = if config.chain_id != chain_id {
-            Some(format!("archive chain id {} differs from node chain id {chain_id}", config.chain_id))
+            Some(format!(
+                "archive chain id {} differs from node chain id {chain_id}",
+                config.chain_id
+            ))
         } else if config.genesis_hash != genesis_hash {
             Some(format!(
                 "archive genesis {} differs from node genesis {genesis_hash}",
@@ -229,13 +232,12 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
     /// Starts a request: opens a session and resolves the highest marker in it.
     pub async fn begin(&self) -> Result<ArchiveRequest<S::Session>, ArchiveError> {
         let session = self.archive.store.session();
-        let snapshot = ExowareArchive::<S>::highest_marker(&session).await?.map(|highest| {
-            ArchiveSnapshot {
+        let snapshot =
+            ExowareArchive::<S>::highest_marker(&session).await?.map(|highest| ArchiveSnapshot {
                 highest_segment: highest.segment,
                 marker: highest.marker,
                 earliest_segment: self.config.earliest_segment(Some(highest.segment)),
-            }
-        });
+            });
         Ok(ArchiveRequest {
             session,
             snapshot,
@@ -255,9 +257,8 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         let lowest = request.lowest_block.load(Ordering::Relaxed);
         if lowest != u64::MAX {
             let highest = ExowareArchive::<S>::highest_marker(&request.session).await?;
-            let earliest = self.config.first_block(
-                self.config.earliest_segment(highest.map(|h| h.segment)),
-            );
+            let earliest =
+                self.config.first_block(self.config.earliest_segment(highest.map(|h| h.segment)));
             if lowest < earliest {
                 return Err(ArchiveError::Pruned { block: lowest, earliest });
             }
@@ -280,9 +281,8 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         request: &ArchiveRequest<S::Session>,
         number: u64,
     ) -> Result<ArchiveSnapshot, ArchiveError> {
-        let snapshot = request
-            .snapshot
-            .ok_or(ArchiveError::NotArchived { block: number, highest: None })?;
+        let snapshot =
+            request.snapshot.ok_or(ArchiveError::NotArchived { block: number, highest: None })?;
         let highest = self.config.last_block(snapshot.highest_segment);
         if number > highest {
             return Err(ArchiveError::NotArchived { block: number, highest: Some(highest) });
@@ -304,8 +304,14 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
     }
 
     /// Fails with [`ArchiveError::Unavailable`] for a missing row inside `[E, H]`.
-    pub fn require_row(value: Option<Bytes>, family: Family, number: u64) -> Result<Bytes, ArchiveError> {
-        value.ok_or_else(|| ArchiveError::unavailable(family, format!("row for block {number} is missing")))
+    pub fn require_row(
+        value: Option<Bytes>,
+        family: Family,
+        number: u64,
+    ) -> Result<Bytes, ArchiveError> {
+        value.ok_or_else(|| {
+            ArchiveError::unavailable(family, format!("row for block {number} is missing"))
+        })
     }
 
     /// Verifies a fetched header for block `number` and returns its hash: against the node's
@@ -353,9 +359,14 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         }
         let marker = match request.snapshot {
             Some(s) if s.highest_segment == segment => s.marker,
-            _ => ExowareArchive::<S>::marker(&request.session, segment)
-                .await?
-                .ok_or_else(|| ArchiveError::unavailable(Family::Marker, format!("marker {segment} is missing")))?,
+            _ => {
+                ExowareArchive::<S>::marker(&request.session, segment).await?.ok_or_else(|| {
+                    ArchiveError::unavailable(
+                        Family::Marker,
+                        format!("marker {segment} is missing"),
+                    )
+                })?
+            }
         };
         let first = self.config.first_block(segment);
         let last = self.config.last_block(segment);
@@ -371,7 +382,11 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         if rows.len() as u64 != self.config.blocks_per_segment {
             return Err(ArchiveError::unavailable(
                 Family::Header,
-                format!("segment {segment} has {} of {} headers", rows.len(), self.config.blocks_per_segment),
+                format!(
+                    "segment {segment} has {} of {} headers",
+                    rows.len(),
+                    self.config.blocks_per_segment
+                ),
             ));
         }
         let headers = rows
@@ -380,7 +395,10 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             .collect::<Result<Vec<_>, _>>()
             .map_err(Self::integrity)?;
         if headers.first().map(|h| h.number) != Some(first) {
-            return Err(ArchiveError::unavailable(Family::Header, format!("segment {segment} starts at the wrong block")));
+            return Err(ArchiveError::unavailable(
+                Family::Header,
+                format!("segment {segment} starts at the wrong block"),
+            ));
         }
         let hashes = Arc::new(BlockVerifier::verify_linkage(&headers, marker.last_hash)?);
         request
@@ -414,13 +432,24 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         self.check_range(request, number)?;
         let mut values = request
             .session
-            .get_many(&[ArchiveKey::block(Family::Header, number), ArchiveKey::block(Family::Body, number)])
+            .get_many(&[
+                ArchiveKey::block(Family::Header, number),
+                ArchiveKey::block(Family::Body, number),
+            ])
             .await?
             .into_iter();
-        let header = BlockCodec::decode_header(&Self::require_row(values.next().flatten(), Family::Header, number)?)
-            .map_err(Self::integrity)?;
-        let body = BlockCodec::decode_body(&Self::require_row(values.next().flatten(), Family::Body, number)?)
-            .map_err(Self::integrity)?;
+        let header = BlockCodec::decode_header(&Self::require_row(
+            values.next().flatten(),
+            Family::Header,
+            number,
+        )?)
+        .map_err(Self::integrity)?;
+        let body = BlockCodec::decode_body(&Self::require_row(
+            values.next().flatten(),
+            Family::Body,
+            number,
+        )?)
+        .map_err(Self::integrity)?;
         let hash = self.verify_header(request, number, &header).await?;
         self.verifier.verify_body(&header, &body)?;
         Ok((header, hash, body))
@@ -443,8 +472,12 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         }
         let number = header.number;
         let raw = request.session.get(&ArchiveKey::block(Family::AccountChanges, number)).await?;
-        let changes = BlockCodec::decode_account_changes(&Self::require_row(raw, Family::AccountChanges, number)?)
-            .map_err(Self::integrity)?;
+        let changes = BlockCodec::decode_account_changes(&Self::require_row(
+            raw,
+            Family::AccountChanges,
+            number,
+        )?)
+        .map_err(Self::integrity)?;
         self.verifier.verify_deposit_nonces(header, senders, receipts, &changes)
     }
 
@@ -462,12 +495,14 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             .iter()
             .zip(values)
             .map(|(family, value)| Self::require_row(value, *family, number));
-        let header = BlockCodec::decode_header(&rows.next().expect("header row")?).map_err(Self::integrity)?;
-        let body = BlockCodec::decode_body(&rows.next().expect("body row")?).map_err(Self::integrity)?;
-        let receipts =
-            BlockCodec::decode_receipts(&rows.next().expect("receipts row")?).map_err(Self::integrity)?;
-        let senders =
-            BlockCodec::decode_senders(&rows.next().expect("senders row")?).map_err(Self::integrity)?;
+        let header = BlockCodec::decode_header(&rows.next().expect("header row")?)
+            .map_err(Self::integrity)?;
+        let body =
+            BlockCodec::decode_body(&rows.next().expect("body row")?).map_err(Self::integrity)?;
+        let receipts = BlockCodec::decode_receipts(&rows.next().expect("receipts row")?)
+            .map_err(Self::integrity)?;
+        let senders = BlockCodec::decode_senders(&rows.next().expect("senders row")?)
+            .map_err(Self::integrity)?;
         let hash = self.verify_header(request, number, &header).await?;
         self.verifier.verify_body(&header, &body)?;
         self.verifier.verify_receipts(&header, body.transactions.len(), &receipts)?;
@@ -502,7 +537,9 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         };
         let segment = ArchiveKey::number(&key)
             .filter(|_| ArchiveKey::fields(&key) == Some(hash.as_slice()))
-            .ok_or_else(|| ArchiveError::unavailable(family, "locator range returned a foreign key"))?;
+            .ok_or_else(|| {
+                ArchiveError::unavailable(family, "locator range returned a foreign key")
+            })?;
         Ok(Some((segment, value)))
     }
 
@@ -521,7 +558,10 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             .map(u64::from_be_bytes)
             .map_err(|_| ArchiveError::unavailable(Family::BlockHash, "bad locator value"))?;
         if self.config.segment_of(number) != segment {
-            return Err(ArchiveError::unavailable(Family::BlockHash, "locator segment does not hold its block"));
+            return Err(ArchiveError::unavailable(
+                Family::BlockHash,
+                "locator segment does not hold its block",
+            ));
         }
         Ok(Some(number))
     }
@@ -585,7 +625,10 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         let number = u64::from_be_bytes(value[..8].try_into().expect("8 bytes"));
         let index = u32::from_be_bytes(value[8..].try_into().expect("4 bytes"));
         if self.config.segment_of(number) != segment {
-            return Err(ArchiveError::unavailable(Family::TxHash, "locator segment does not hold its block"));
+            return Err(ArchiveError::unavailable(
+                Family::TxHash,
+                "locator segment does not hold its block",
+            ));
         }
         Ok(Some((number, index)))
     }
@@ -635,10 +678,16 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             let segment = ArchiveKey::number(&row_key)
                 .filter(|s| (first_segment..=snapshot.highest_segment).contains(s))
                 .filter(|_| ArchiveKey::fields(&row_key) == Some(&key.fields()[..]))
-                .ok_or_else(|| ArchiveError::unavailable(family, "state range returned a foreign key"))?;
+                .ok_or_else(|| {
+                    ArchiveError::unavailable(family, "state range returned a foreign key")
+                })?;
             let set = OffsetSet::decode(family, &value).map_err(Self::integrity)?;
-            if set.is_empty() || set.iter().any(|o| u64::from(o) >= self.config.blocks_per_segment) {
-                return Err(ArchiveError::unavailable(family, format!("invalid posting in segment {segment}")));
+            if set.is_empty() || set.iter().any(|o| u64::from(o) >= self.config.blocks_per_segment)
+            {
+                return Err(ArchiveError::unavailable(
+                    family,
+                    format!("invalid posting in segment {segment}"),
+                ));
             }
             let first = self.config.first_block(segment);
             if let Some(change) =
@@ -662,7 +711,8 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         &self,
         request: &ArchiveRequest<S::Session>,
     ) -> Result<u64, ArchiveError> {
-        let snapshot = request.snapshot.ok_or(ArchiveError::NotArchived { block: 0, highest: None })?;
+        let snapshot =
+            request.snapshot.ok_or(ArchiveError::NotArchived { block: 0, highest: None })?;
         let highest = self.config.last_block(snapshot.highest_segment);
         let node_hash = self.node.canonical_hash(highest).await?;
         if node_hash != Some(snapshot.marker.last_hash) {
@@ -684,17 +734,25 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         address: Address,
         block: u64,
     ) -> Result<Option<AccountInfo>, ArchiveError> {
-        let Some(change) = self.first_change_in(request, &StateKey::account(address), block).await? else {
+        let Some(change) =
+            self.first_change_in(request, &StateKey::account(address), block).await?
+        else {
             let highest = self.require_node_at_highest(request).await?;
             return self.node.account_at(highest, address).await;
         };
         let raw = request.session.get(&ArchiveKey::block(Family::AccountChanges, change)).await?;
-        let changes = BlockCodec::decode_account_changes(&Self::require_row(raw, Family::AccountChanges, change)?)
-            .map_err(Self::integrity)?;
+        let changes = BlockCodec::decode_account_changes(&Self::require_row(
+            raw,
+            Family::AccountChanges,
+            change,
+        )?)
+        .map_err(Self::integrity)?;
         let index = changes.binary_search_by_key(&address, |c| c.address).map_err(|_| {
             ArchiveError::unavailable(
                 Family::AccountChanges,
-                format!("block {change} is indexed as changing {address} but its changeset lacks it"),
+                format!(
+                    "block {change} is indexed as changing {address} but its changeset lacks it"
+                ),
             )
         })?;
         Ok(changes[index].before)
@@ -714,8 +772,12 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             return self.node.storage_at(highest, address, slot).await;
         };
         let raw = request.session.get(&ArchiveKey::block(Family::StorageChanges, change)).await?;
-        let changes = BlockCodec::decode_storage_changes(&Self::require_row(raw, Family::StorageChanges, change)?)
-            .map_err(Self::integrity)?;
+        let changes = BlockCodec::decode_storage_changes(&Self::require_row(
+            raw,
+            Family::StorageChanges,
+            change,
+        )?)
+        .map_err(Self::integrity)?;
         let index = changes.binary_search_by_key(&(address, slot), |c| (c.address, c.slot)).map_err(|_| {
             ArchiveError::unavailable(
                 Family::StorageChanges,
@@ -765,8 +827,11 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
                 ),
             });
         }
-        let candidates =
-            if filter.is_wildcard() { self.bloom_candidates(request, filter).await? } else { self.posting_candidates(request, filter).await? };
+        let candidates = if filter.is_wildcard() {
+            self.bloom_candidates(request, filter).await?
+        } else {
+            self.posting_candidates(request, filter).await?
+        };
         if candidates.len() > self.limits.max_log_candidates {
             return Err(ArchiveError::LimitExceeded {
                 reason: format!(
@@ -802,12 +867,18 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
                 )
                 .await?;
             if rows.len() as u64 != span {
-                return Err(ArchiveError::unavailable(Family::Header, format!("{} of {span} headers present", rows.len())));
+                return Err(ArchiveError::unavailable(
+                    Family::Header,
+                    format!("{} of {span} headers present", rows.len()),
+                ));
             }
             for (key, value) in rows {
                 let header = BlockCodec::decode_header(&value).map_err(Self::integrity)?;
                 if ArchiveKey::number(&key) != Some(header.number) {
-                    return Err(ArchiveError::unavailable(Family::Header, "header row holds another block"));
+                    return Err(ArchiveError::unavailable(
+                        Family::Header,
+                        "header row holds another block",
+                    ));
                 }
                 if header.logs_bloom != Bloom::ZERO {
                     out.push(header.number);
@@ -849,10 +920,16 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             let segment = ArchiveKey::number(&key)
                 .filter(|s| (segments.0..=segments.1).contains(s))
                 .filter(|_| ArchiveKey::fields(&key) == Some(fields))
-                .ok_or_else(|| ArchiveError::unavailable(family, "posting range returned a foreign key"))?;
+                .ok_or_else(|| {
+                    ArchiveError::unavailable(family, "posting range returned a foreign key")
+                })?;
             let set = OffsetSet::decode(family, &value).map_err(Self::integrity)?;
-            if set.is_empty() || set.iter().any(|o| u64::from(o) >= self.config.blocks_per_segment) {
-                return Err(ArchiveError::unavailable(family, format!("invalid posting in segment {segment}")));
+            if set.is_empty() || set.iter().any(|o| u64::from(o) >= self.config.blocks_per_segment)
+            {
+                return Err(ArchiveError::unavailable(
+                    family,
+                    format!("invalid posting in segment {segment}"),
+                ));
             }
             out.insert(segment, set.bits);
         }
@@ -870,7 +947,9 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         if !filter.addresses.is_empty() {
             let mut union: BTreeMap<u64, RoaringBitmap> = BTreeMap::new();
             for address in &filter.addresses {
-                for (segment, bits) in self.postings(request, Family::LogAddress, address.as_slice(), segments).await? {
+                for (segment, bits) in
+                    self.postings(request, Family::LogAddress, address.as_slice(), segments).await?
+                {
                     *union.entry(segment).or_default() |= bits;
                 }
             }
@@ -885,7 +964,9 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
                 let mut fields = [0u8; 33];
                 fields[0] = position as u8;
                 fields[1..].copy_from_slice(topic.as_slice());
-                for (segment, bits) in self.postings(request, Family::LogTopic, &fields, segments).await? {
+                for (segment, bits) in
+                    self.postings(request, Family::LogTopic, &fields, segments).await?
+                {
                     *union.entry(segment).or_default() |= bits;
                 }
             }
@@ -903,7 +984,9 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             }
             let base = self.config.first_block(*segment);
             out.extend(
-                bits.iter().map(|o| base + u64::from(o)).filter(|n| (filter.from..=filter.to).contains(n)),
+                bits.iter()
+                    .map(|o| base + u64::from(o))
+                    .filter(|n| (filter.from..=filter.to).contains(n)),
             );
         }
         Ok(out)
@@ -925,17 +1008,30 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         let mut out = Vec::new();
         for (number, rows) in candidates.iter().zip(values.chunks_exact(families.len())) {
             let number = *number;
-            let header = BlockCodec::decode_header(&Self::require_row(rows[0].clone(), Family::Header, number)?)
-                .map_err(Self::integrity)?;
-            let body = BlockCodec::decode_body(&Self::require_row(rows[1].clone(), Family::Body, number)?)
-                .map_err(Self::integrity)?;
-            let receipts = BlockCodec::decode_receipts(&Self::require_row(rows[2].clone(), Family::Receipts, number)?)
-                .map_err(Self::integrity)?;
+            let header = BlockCodec::decode_header(&Self::require_row(
+                rows[0].clone(),
+                Family::Header,
+                number,
+            )?)
+            .map_err(Self::integrity)?;
+            let body =
+                BlockCodec::decode_body(&Self::require_row(rows[1].clone(), Family::Body, number)?)
+                    .map_err(Self::integrity)?;
+            let receipts = BlockCodec::decode_receipts(&Self::require_row(
+                rows[2].clone(),
+                Family::Receipts,
+                number,
+            )?)
+            .map_err(Self::integrity)?;
             let block_hash = self.verify_header(request, number, &header).await?;
             self.verifier.verify_body(&header, &body)?;
             self.verifier.verify_receipts(&header, body.transactions.len(), &receipts)?;
-            let block_timestamp_ms =
-                BaseTimeUpdateTx::extract_timestamp_ms(&body.transactions, number, header.timestamp).ok();
+            let block_timestamp_ms = BaseTimeUpdateTx::extract_timestamp_ms(
+                &body.transactions,
+                number,
+                header.timestamp,
+            )
+            .ok();
             let mut log_index = 0;
             for (tx_index, (tx, receipt)) in body.transactions.iter().zip(&receipts).enumerate() {
                 for log in &receipt.as_receipt().logs {
@@ -990,14 +1086,23 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
     }
 
     /// Account at the end of block `block`, in its own request.
-    pub async fn account_at(&self, address: Address, block: u64) -> Result<Option<AccountInfo>, ArchiveError> {
+    pub async fn account_at(
+        &self,
+        address: Address,
+        block: u64,
+    ) -> Result<Option<AccountInfo>, ArchiveError> {
         let request = self.begin().await?;
         let result = self.account_at_in(&request, address, block).await;
         self.conclude(&request, result).await
     }
 
     /// Storage slot at the end of block `block`, in its own request.
-    pub async fn storage_at(&self, address: Address, slot: B256, block: u64) -> Result<U256, ArchiveError> {
+    pub async fn storage_at(
+        &self,
+        address: Address,
+        slot: B256,
+        block: u64,
+    ) -> Result<U256, ArchiveError> {
         let request = self.begin().await?;
         let result = self.storage_at_in(&request, address, slot, block).await;
         self.conclude(&request, result).await
@@ -1022,12 +1127,11 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
 mod tests {
     use super::*;
     use crate::{
-        BlockCodec, SegmentAuditor,
+        AuditFinding, BlockCodec, ExowareStore, SegmentAuditor,
         test_utils::{
             CONTRACT_CODE, ChainFixture, FixtureNode, SPARSE_BLOCKS, SPARSE_SLOT, TEST_N,
             TEST_TIMEOUT, TestSimulator, publish_through, publisher, reader,
         },
-        AuditFinding, ExowareStore,
     };
 
     /// Runs `fut` under the per-test network budget.
@@ -1055,30 +1159,65 @@ mod tests {
             let sim = TestSimulator::start().await;
             let (fixture, archive) = published(&sim, "t8/").await;
             let foreign = BlockCodec::encode_receipts(&fixture.blocks[11].receipts);
-            archive.store.put(&[(ArchiveKey::block(Family::Receipts, 10), Bytes::from(foreign))]).await.unwrap();
+            archive
+                .store
+                .put(&[(ArchiveKey::block(Family::Receipts, 10), Bytes::from(foreign))])
+                .await
+                .unwrap();
             let r = reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await;
             assert!(
-                matches!(r.block(10).await, Err(ArchiveError::Unavailable { family: Family::Receipts, .. })),
+                matches!(
+                    r.block(10).await,
+                    Err(ArchiveError::Unavailable { family: Family::Receipts, .. })
+                ),
                 "overwritten receipts rejected"
             );
-            let filter = LogFilter { from: 10, to: 10, addresses: vec![], topics: Default::default() };
-            assert!(matches!(r.logs(&filter).await, Err(ArchiveError::Unavailable { family: Family::Receipts, .. })), "logs too");
+            let filter =
+                LogFilter { from: 10, to: 10, addresses: vec![], topics: Default::default() };
+            assert!(
+                matches!(
+                    r.logs(&filter).await,
+                    Err(ArchiveError::Unavailable { family: Family::Receipts, .. })
+                ),
+                "logs too"
+            );
             let auditor = SegmentAuditor::new(archive.clone(), r.config, fixture.verifier());
             let report = auditor.audit_segment(1).await.unwrap();
             assert_eq!(report.findings.len(), 1, "one finding: {:?}", report.findings);
-            assert!(matches!(&report.findings[0], AuditFinding::BlockInvalid { block: 10, .. }), "block 10 flagged");
+            assert!(
+                matches!(&report.findings[0], AuditFinding::BlockInvalid { block: 10, .. }),
+                "block 10 flagged"
+            );
             assert!(auditor.audit_segment(0).await.unwrap().is_clean(), "segment 0 is clean");
-            assert_eq!(auditor.audit_segment(9).await.unwrap().findings, vec![AuditFinding::MarkerMissing], "unpublished");
+            assert_eq!(
+                auditor.audit_segment(9).await.unwrap().findings,
+                vec![AuditFinding::MarkerMissing],
+                "unpublished"
+            );
 
             let mut node = FixtureNode::new(Arc::clone(&fixture));
             node.headers_from = 100;
             let r = reader(archive.clone(), node).await;
-            assert_eq!(r.header(20).await.unwrap().1, fixture.blocks[20].hash(), "linkage verifies without node hashes");
+            assert_eq!(
+                r.header(20).await.unwrap().1,
+                fixture.blocks[20].hash(),
+                "linkage verifies without node hashes"
+            );
             let mut header = fixture.blocks[19].header.clone();
             header.extra_data = AlloyBytes::from_static(b"forged");
-            archive.store.put(&[(ArchiveKey::block(Family::Header, 19), Bytes::from(BlockCodec::encode_header(&header)))]).await.unwrap();
+            archive
+                .store
+                .put(&[(
+                    ArchiveKey::block(Family::Header, 19),
+                    Bytes::from(BlockCodec::encode_header(&header)),
+                )])
+                .await
+                .unwrap();
             assert!(
-                matches!(r.header(20).await, Err(ArchiveError::Unavailable { family: Family::Header, .. })),
+                matches!(
+                    r.header(20).await,
+                    Err(ArchiveError::Unavailable { family: Family::Header, .. })
+                ),
                 "forged parent breaks linkage"
             );
         })
@@ -1104,7 +1243,11 @@ mod tests {
                 (31, "B = H, next change at H + 1: node at H"),
             ] {
                 let state = &fixture.states[block as usize];
-                assert_eq!(r.account_at(sparse, block).await.unwrap(), state.accounts.get(&sparse).copied(), "account: {case}");
+                assert_eq!(
+                    r.account_at(sparse, block).await.unwrap(),
+                    state.accounts.get(&sparse).copied(),
+                    "account: {case}"
+                );
                 assert_eq!(
                     r.storage_at(slot_owner, SPARSE_SLOT, block).await.unwrap(),
                     state.storage.get(&(slot_owner, SPARSE_SLOT)).copied().unwrap_or_default(),
@@ -1117,18 +1260,45 @@ mod tests {
                 "B = 20 must come from the archive, not the node's state at H"
             );
             let request = r.begin().await.unwrap();
-            assert_eq!(r.first_change_in(&request, &StateKey::account(sparse), 8).await.unwrap(), Some(12), "first change after 8");
-            assert_eq!(r.first_change_in(&request, &StateKey::account(sparse), 7).await.unwrap(), Some(8), "offset 0 of segment 1");
-            assert_eq!(r.first_change_in(&request, &StateKey::account(sparse), 31).await.unwrap(), None, "32 is beyond H");
-            assert_eq!(r.code_at(fixture.contracts[0], 10).await.unwrap(), AlloyBytes::from_static(&CONTRACT_CODE), "code");
-            assert_eq!(r.code_at(fixture.recipient, 10).await.unwrap(), AlloyBytes::new(), "no code");
-            assert_eq!(r.account_at(sparse, 33).await.unwrap_err(), ArchiveError::NotArchived { block: 33, highest: Some(31) }, "B > H");
+            assert_eq!(
+                r.first_change_in(&request, &StateKey::account(sparse), 8).await.unwrap(),
+                Some(12),
+                "first change after 8"
+            );
+            assert_eq!(
+                r.first_change_in(&request, &StateKey::account(sparse), 7).await.unwrap(),
+                Some(8),
+                "offset 0 of segment 1"
+            );
+            assert_eq!(
+                r.first_change_in(&request, &StateKey::account(sparse), 31).await.unwrap(),
+                None,
+                "32 is beyond H"
+            );
+            assert_eq!(
+                r.code_at(fixture.contracts[0], 10).await.unwrap(),
+                AlloyBytes::from_static(&CONTRACT_CODE),
+                "code"
+            );
+            assert_eq!(
+                r.code_at(fixture.recipient, 10).await.unwrap(),
+                AlloyBytes::new(),
+                "no code"
+            );
+            assert_eq!(
+                r.account_at(sparse, 33).await.unwrap_err(),
+                ArchiveError::NotArchived { block: 33, highest: Some(31) },
+                "B > H"
+            );
 
             let mut node = FixtureNode::new(Arc::clone(&fixture));
             node.headers_from = 32;
             let r = reader(archive.clone(), node).await;
             assert!(
-                matches!(r.account_at(sparse, 31).await, Err(ArchiveError::Unavailable { family: Family::Marker, .. })),
+                matches!(
+                    r.account_at(sparse, 31).await,
+                    Err(ArchiveError::Unavailable { family: Family::Marker, .. })
+                ),
                 "node fallback requires the node's hash at H to match the marker"
             );
 
@@ -1136,7 +1306,11 @@ mod tests {
             let retained = sim.archive("t10-retain/", &config).await;
             publish_through(&retained, &fixture, config, 3).await;
             let r = reader(retained, FixtureNode::new(Arc::clone(&fixture))).await;
-            assert_eq!(r.account_at(sparse, 3).await.unwrap_err(), ArchiveError::Pruned { block: 3, earliest: 16 }, "B < E");
+            assert_eq!(
+                r.account_at(sparse, 3).await.unwrap_err(),
+                ArchiveError::Pruned { block: 3, earliest: 16 },
+                "B < E"
+            );
         })
         .await;
     }
@@ -1152,26 +1326,60 @@ mod tests {
             let [c0, c1, c2] = fixture.contracts;
             let [e0, _] = fixture.events;
             let filters = [
-                LogFilter { from: 1, to: 31, addresses: vec![c0], topics: [vec![e0], vec![], vec![], vec![]] },
+                LogFilter {
+                    from: 1,
+                    to: 31,
+                    addresses: vec![c0],
+                    topics: [vec![e0], vec![], vec![], vec![]],
+                },
                 LogFilter { from: 3, to: 29, addresses: vec![c1, c2], topics: Default::default() },
-                LogFilter { from: 0, to: 31, addresses: vec![], topics: [vec![], vec![B256::from(U256::from(10))], vec![], vec![]] },
+                LogFilter {
+                    from: 0,
+                    to: 31,
+                    addresses: vec![],
+                    topics: [vec![], vec![B256::from(U256::from(10))], vec![], vec![]],
+                },
                 LogFilter { from: 0, to: 31, addresses: vec![], topics: Default::default() },
-                LogFilter { from: 9, to: 9, addresses: vec![c2], topics: [vec![], vec![B256::from(U256::from(10))], vec![], vec![]] },
+                LogFilter {
+                    from: 9,
+                    to: 9,
+                    addresses: vec![c2],
+                    topics: [vec![], vec![B256::from(U256::from(10))], vec![], vec![]],
+                },
             ];
             for filter in &filters {
-                let got: Vec<_> = r.logs(filter).await.unwrap().into_iter().map(|l| (l.block_number, l.log_index, l.log)).collect();
+                let got: Vec<_> = r
+                    .logs(filter)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|l| (l.block_number, l.log_index, l.log))
+                    .collect();
                 let expected = fixture.expected_logs(filter);
                 assert_eq!(got, expected, "filter {filter:?}");
             }
-            assert_eq!(fixture.expected_logs(&filters[2]).len(), 2, "topic 1 = 10 matches both logs of block 10");
-            assert!(fixture.expected_logs(&filters[4]).is_empty(), "disjoint filter matches nothing");
+            assert_eq!(
+                fixture.expected_logs(&filters[2]).len(),
+                2,
+                "topic 1 = 10 matches both logs of block 10"
+            );
+            assert!(
+                fixture.expected_logs(&filters[4]).is_empty(),
+                "disjoint filter matches nothing"
+            );
 
             let request = r.begin().await.unwrap();
             let candidates = r.log_candidates_in(&request, &filters[0]).await.unwrap();
             for false_positive in [5, 12, 19, 26] {
-                assert!(candidates.contains(&false_positive), "block {false_positive} is an index candidate");
                 assert!(
-                    !fixture.expected_logs(&filters[0]).iter().any(|(n, _, _)| *n == false_positive),
+                    candidates.contains(&false_positive),
+                    "block {false_positive} is an index candidate"
+                );
+                assert!(
+                    !fixture
+                        .expected_logs(&filters[0])
+                        .iter()
+                        .any(|(n, _, _)| *n == false_positive),
                     "block {false_positive} has no matching log"
                 );
             }
@@ -1181,17 +1389,44 @@ mod tests {
                 "wildcard candidates are blocks with a non-empty bloom"
             );
             let logs = r.logs(&filters[2]).await.unwrap();
-            assert_eq!(logs[0].transaction_hash, fixture.blocks[10].body.transactions[1].tx_hash(), "tx hash");
-            assert_eq!((logs[0].transaction_index, logs[1].transaction_index), (1, 2), "tx indexes");
+            assert_eq!(
+                logs[0].transaction_hash,
+                fixture.blocks[10].body.transactions[1].tx_hash(),
+                "tx hash"
+            );
+            assert_eq!(
+                (logs[0].transaction_index, logs[1].transaction_index),
+                (1, 2),
+                "tx indexes"
+            );
             assert_eq!(logs[0].block_hash, fixture.blocks[10].hash(), "block hash");
 
-            let wide = LogFilter { addresses: (0..101u8).map(Address::with_last_byte).collect(), ..filters[1].clone() };
-            assert!(matches!(r.logs(&wide).await, Err(ArchiveError::LimitExceeded { .. })), "101 alternatives");
-            let tight = ArchiveReader { limits: ReaderLimits { max_log_candidates: 5, ..ReaderLimits::default() }, ..reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await };
-            assert!(matches!(tight.logs(&filters[3]).await, Err(ArchiveError::LimitExceeded { .. })), "candidate limit");
-            assert!(matches!(tight.logs(&filters[0]).await, Err(ArchiveError::LimitExceeded { .. })), "index candidate limit");
+            let wide = LogFilter {
+                addresses: (0..101u8).map(Address::with_last_byte).collect(),
+                ..filters[1].clone()
+            };
+            assert!(
+                matches!(r.logs(&wide).await, Err(ArchiveError::LimitExceeded { .. })),
+                "101 alternatives"
+            );
+            let tight = ArchiveReader {
+                limits: ReaderLimits { max_log_candidates: 5, ..ReaderLimits::default() },
+                ..reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await
+            };
+            assert!(
+                matches!(tight.logs(&filters[3]).await, Err(ArchiveError::LimitExceeded { .. })),
+                "candidate limit"
+            );
+            assert!(
+                matches!(tight.logs(&filters[0]).await, Err(ArchiveError::LimitExceeded { .. })),
+                "index candidate limit"
+            );
             let above = LogFilter { to: 32, ..filters[0].clone() };
-            assert_eq!(r.logs(&above).await.unwrap_err(), ArchiveError::NotArchived { block: 32, highest: Some(31) }, "to above H");
+            assert_eq!(
+                r.logs(&above).await.unwrap_err(),
+                ArchiveError::NotArchived { block: 32, highest: Some(31) },
+                "to above H"
+            );
         })
         .await;
     }
@@ -1206,7 +1441,8 @@ mod tests {
             let fixture = Arc::new(ChainFixture::standard());
             let config = fixture.config(TEST_N, 0, Some(1));
             let archive = sim.archive("t-paused/", &config).await;
-            let mut p = publisher(archive.clone(), FixtureNode::new(Arc::clone(&fixture)), config).await;
+            let mut p =
+                publisher(archive.clone(), FixtureNode::new(Arc::clone(&fixture)), config).await;
             p.options.prune_grace_segments = 1;
             for segment in 0..2 {
                 p.publish_segment(segment).await.unwrap();
@@ -1215,12 +1451,20 @@ mod tests {
             let request = r.begin().await.unwrap();
             assert_eq!(request.snapshot.map(|s| s.earliest_segment), Some(1), "E = 1 at start");
             let answer = r.block_in(&request, 9).await;
-            assert_eq!(answer.as_ref().map(|b| b.hash), Ok(fixture.blocks[9].hash()), "read succeeds before the prune");
+            assert_eq!(
+                answer.as_ref().map(|b| b.hash),
+                Ok(fixture.blocks[9].hash()),
+                "read succeeds before the prune"
+            );
             let late = r.begin().await.unwrap();
             for segment in 2..4 {
                 p.publish_segment(segment).await.unwrap();
             }
-            assert_eq!(archive.prune(&config, Some(3), 1).await.unwrap(), Some(2), "segments below 2 pruned");
+            assert_eq!(
+                archive.prune(&config, Some(3), 1).await.unwrap(),
+                Some(2),
+                "segments below 2 pruned"
+            );
             assert_eq!(
                 r.conclude(&request, answer).await.unwrap_err(),
                 ArchiveError::Pruned { block: 9, earliest: 24 },
@@ -1228,9 +1472,21 @@ mod tests {
             );
             let result = r.block_in(&late, 9).await;
             assert!(result.is_err(), "rows are gone");
-            assert_eq!(r.conclude(&late, result).await.unwrap_err(), ArchiveError::Pruned { block: 9, earliest: 24 }, "paused request");
-            assert_eq!(r.block(9).await.unwrap_err(), ArchiveError::Pruned { block: 9, earliest: 24 }, "fresh request");
-            assert_eq!(r.block(24).await.unwrap().hash, fixture.blocks[24].hash(), "retained block");
+            assert_eq!(
+                r.conclude(&late, result).await.unwrap_err(),
+                ArchiveError::Pruned { block: 9, earliest: 24 },
+                "paused request"
+            );
+            assert_eq!(
+                r.block(9).await.unwrap_err(),
+                ArchiveError::Pruned { block: 9, earliest: 24 },
+                "fresh request"
+            );
+            assert_eq!(
+                r.block(24).await.unwrap().hash,
+                fixture.blocks[24].hash(),
+                "retained block"
+            );
         })
         .await;
     }
@@ -1244,7 +1500,8 @@ mod tests {
             let fixture = Arc::new(ChainFixture::standard());
             let config = fixture.config(TEST_N, 0, Some(1));
             let archive = sim.archive("t-locator/", &config).await;
-            let mut p = publisher(archive.clone(), FixtureNode::new(Arc::clone(&fixture)), config).await;
+            let mut p =
+                publisher(archive.clone(), FixtureNode::new(Arc::clone(&fixture)), config).await;
             p.options.prune_grace_segments = 1;
             for segment in 0..2 {
                 p.publish_segment(segment).await.unwrap();
@@ -1254,14 +1511,22 @@ mod tests {
             let tx_request = r.begin().await.unwrap();
             let unknown = r.begin().await.unwrap();
             assert_eq!(
-                r.conclude(&unknown, r.block_number_by_hash_in(&unknown, B256::repeat_byte(9)).await).await,
+                r.conclude(
+                    &unknown,
+                    r.block_number_by_hash_in(&unknown, B256::repeat_byte(9)).await
+                )
+                .await,
                 Ok(None),
                 "unknown hash before any prune is a miss"
             );
             for segment in 2..4 {
                 p.publish_segment(segment).await.unwrap();
             }
-            assert_eq!(archive.prune(&config, Some(3), 1).await.unwrap(), Some(2), "segments below 2 pruned");
+            assert_eq!(
+                archive.prune(&config, Some(3), 1).await.unwrap(),
+                Some(2),
+                "segments below 2 pruned"
+            );
             let block = r.block_number_by_hash_in(&block_request, fixture.blocks[9].hash()).await;
             assert_eq!(block, Ok(None), "the locator range finds nothing");
             assert_eq!(
@@ -1269,7 +1534,12 @@ mod tests {
                 Err(ArchiveError::Pruned { block: 8, earliest: 24 }),
                 "block hash miss after prune rejected"
             );
-            let tx = r.transaction_by_hash_in(&tx_request, fixture.blocks[9].body.transactions[1].tx_hash()).await;
+            let tx = r
+                .transaction_by_hash_in(
+                    &tx_request,
+                    fixture.blocks[9].body.transactions[1].tx_hash(),
+                )
+                .await;
             assert_eq!(tx, Ok(None), "the tx locator range finds nothing");
             assert_eq!(
                 r.conclude(&tx_request, tx).await,
@@ -1291,13 +1561,21 @@ mod tests {
                 limits: ReaderLimits { max_log_candidates: 1, ..ReaderLimits::default() },
                 ..reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await
             };
-            let sparse = LogFilter { from: 0, to: 1, addresses: vec![], topics: Default::default() };
+            let sparse =
+                LogFilter { from: 0, to: 1, addresses: vec![], topics: Default::default() };
             assert_eq!(fixture.blocks[0].header.logs_bloom, Bloom::ZERO, "genesis has no logs");
             let logs = tight.logs(&sparse).await.unwrap();
-            assert_eq!(logs.len(), 2, "two logs of block 1 over a two-block range with one candidate");
+            assert_eq!(
+                logs.len(),
+                2,
+                "two logs of block 1 over a two-block range with one candidate"
+            );
             assert!(logs.iter().all(|l| l.block_number == 1), "both from block 1");
             let dense = LogFilter { from: 1, to: 2, ..sparse };
-            assert!(matches!(tight.logs(&dense).await, Err(ArchiveError::LimitExceeded { .. })), "two candidates exceed one");
+            assert!(
+                matches!(tight.logs(&dense).await, Err(ArchiveError::LimitExceeded { .. })),
+                "two candidates exceed one"
+            );
         })
         .await;
     }
@@ -1310,7 +1588,11 @@ mod tests {
             let sim = TestSimulator::start().await;
             let (fixture, archive) = published(&sim, "t-nonce/").await;
             let r = reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await;
-            assert_eq!(r.block(5).await.unwrap().receipts, fixture.blocks[5].receipts, "intact block reads");
+            assert_eq!(
+                r.block(5).await.unwrap().receipts,
+                fixture.blocks[5].receipts,
+                "intact block reads"
+            );
             let mut receipts = fixture.blocks[5].receipts.clone();
             match &mut receipts[0] {
                 BaseReceipt::Deposit(deposit) => deposit.deposit_nonce = Some(99),
@@ -1318,11 +1600,17 @@ mod tests {
             }
             archive
                 .store
-                .put(&[(ArchiveKey::block(Family::Receipts, 5), Bytes::from(BlockCodec::encode_receipts(&receipts)))])
+                .put(&[(
+                    ArchiveKey::block(Family::Receipts, 5),
+                    Bytes::from(BlockCodec::encode_receipts(&receipts)),
+                )])
                 .await
                 .unwrap();
             assert!(
-                matches!(r.block(5).await, Err(ArchiveError::Unavailable { family: Family::Receipts, .. })),
+                matches!(
+                    r.block(5).await,
+                    Err(ArchiveError::Unavailable { family: Family::Receipts, .. })
+                ),
                 "nonce-only corruption rejected"
             );
         })

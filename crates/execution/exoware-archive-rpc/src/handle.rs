@@ -88,7 +88,8 @@ impl<P: ArchiveProvider> ArchiveHandle<P> {
             .await;
         if let Err(err) = &opened {
             warn!(error = %err, "archive reader unavailable; serving local data");
-            *self.open_failed_at.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+            *self.open_failed_at.lock().unwrap_or_else(PoisonError::into_inner) =
+                Some(Instant::now());
         }
         opened
     }
@@ -99,9 +100,9 @@ impl<P: ArchiveProvider> ArchiveHandle<P> {
         &self,
         fut: impl Future<Output = Result<T, ArchiveError>>,
     ) -> Result<T, ArchiveError> {
-        tokio::time::timeout(self.budget, fut)
-            .await
-            .map_err(|_| ArchiveError::store("request", format!("budget of {:?} exceeded", self.budget)))?
+        tokio::time::timeout(self.budget, fut).await.map_err(|_| {
+            ArchiveError::store("request", format!("budget of {:?} exceeded", self.budget))
+        })?
     }
 
     /// Whether `err` is a store outage rather than bad data or a retention change.

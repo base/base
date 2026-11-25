@@ -13,6 +13,7 @@ use alloy_consensus::{
 };
 use alloy_primitives::U256;
 use alloy_rpc_types_eth::{BlockTransactionsKind, Header, Log};
+use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionInfo, DepositInfo, DepositReceiptExt,
 };
@@ -86,6 +87,54 @@ impl ArchiveConverter {
             .unwrap_or_default()
     }
 
+    /// Whether deposit fields that the fork at `timestamp` requires are absent: the deposit
+    /// nonce from Regolith on, the deposit receipt version from Canyon on. The node fills both
+    /// from the deposit's receipt and defaults them to `None` when the receipt is gone.
+    pub fn deposit_fields_missing(
+        &self,
+        timestamp: u64,
+        nonce: Option<u64>,
+        version: Option<u64>,
+    ) -> bool {
+        (nonce.is_none() && self.chain_spec.is_regolith_active_at_timestamp(timestamp))
+            || (version.is_none() && self.chain_spec.is_canyon_active_at_timestamp(timestamp))
+    }
+
+    /// Whether a mined deposit transaction response visibly lacks a deposit field its fork
+    /// requires. `block_timestamp` is used when the response carries none; a pending or
+    /// non-deposit transaction is complete.
+    pub fn transaction_incomplete(&self, tx: &Transaction, block_timestamp: Option<u64>) -> bool {
+        if !tx.inner.inner.inner().is_deposit() {
+            return false;
+        }
+        tx.inner.block_timestamp.or(block_timestamp).is_some_and(|timestamp| {
+            self.deposit_fields_missing(timestamp, tx.deposit_nonce, tx.deposit_receipt_version)
+        })
+    }
+
+    /// Whether a full block response holds a deposit that visibly lacks a required field. A
+    /// hashes-only block carries no deposit fields and is complete.
+    pub fn block_incomplete(&self, block: &BaseBlockResponse) -> bool {
+        let timestamp = Some(block.header.inner.timestamp);
+        block
+            .transactions
+            .as_transactions()
+            .is_some_and(|txs| txs.iter().any(|tx| self.transaction_incomplete(tx, timestamp)))
+    }
+
+    /// Deposit nonce and receipt version of a deposit receipt response, `None` for other
+    /// receipts.
+    pub const fn receipt_deposit_fields(
+        receipt: &BaseTransactionReceipt,
+    ) -> Option<(Option<u64>, Option<u64>)> {
+        match &receipt.inner.inner.receipt {
+            BaseReceipt::Deposit(deposit) => {
+                Some((deposit.deposit_nonce, deposit.deposit_receipt_version))
+            }
+            _ => None,
+        }
+    }
+
     /// `eth_getBlockBy*` response.
     pub fn block(&self, prepared: &PreparedBlock, full: bool) -> BaseBlockResponse {
         let kind = if full { BlockTransactionsKind::Full } else { BlockTransactionsKind::Hashes };
@@ -134,19 +183,29 @@ impl ArchiveConverter {
         let deposit_meta = Self::deposit_meta(&prepared.receipts, Some(index as u64));
         Some(Transaction::from_transaction(
             tx,
-            BaseTransactionInfo { inner: info, deposit_meta, block_timestamp_ms: prepared.timestamp_ms },
+            BaseTransactionInfo {
+                inner: info,
+                deposit_meta,
+                block_timestamp_ms: prepared.timestamp_ms,
+            },
         ))
     }
 
     /// Every receipt of the block, as `eth_getBlockReceipts` returns them.
-    pub fn receipts(&self, prepared: &PreparedBlock) -> Result<Vec<BaseTransactionReceipt>, ArchiveError> {
+    pub fn receipts(
+        &self,
+        prepared: &PreparedBlock,
+    ) -> Result<Vec<BaseTransactionReceipt>, ArchiveError> {
         if prepared.receipts.is_empty() {
             return Ok(Vec::new());
         }
         (0..prepared.receipts.len())
             .map(|index| {
                 self.receipt(prepared, index)?.ok_or_else(|| {
-                    ArchiveError::unavailable(Family::Receipts, format!("receipt {index} has no transaction"))
+                    ArchiveError::unavailable(
+                        Family::Receipts,
+                        format!("receipt {index} has no transaction"),
+                    )
                 })
             })
             .collect()
@@ -191,9 +250,12 @@ impl ArchiveConverter {
             next_log_index: logs_before,
             meta,
         };
-        let mut receipt = BaseReceiptBuilder::new(self.chain_spec.as_ref(), input, &mut l1_block_info)
-            .map_err(|err| ArchiveError::unavailable(Family::Receipts, format!("receipt fields: {err}")))?
-            .build();
+        let mut receipt =
+            BaseReceiptBuilder::new(self.chain_spec.as_ref(), input, &mut l1_block_info)
+                .map_err(|err| {
+                    ArchiveError::unavailable(Family::Receipts, format!("receipt fields: {err}"))
+                })?
+                .build();
         for log in &mut receipt.inner.inner.receipt.as_receipt_mut().logs {
             log.block_timestamp_ms = prepared.timestamp_ms;
         }

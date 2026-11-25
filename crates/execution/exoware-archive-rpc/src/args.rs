@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use alloy_primitives::B256;
 use base_exoware_archive::{
-    ArchiveConfig, ArchiveError, DEFAULT_NAMESPACE, DEFAULT_PRUNE_GRACE_SEGMENTS,
-    DEFAULT_STORE_TIMEOUT, MAX_BLOCKS_PER_SEGMENT, PublisherOptions,
+    ArchiveConfig, ArchiveError, DEFAULT_EXPORT_BATCH_BLOCKS, DEFAULT_NAMESPACE,
+    DEFAULT_PRUNE_GRACE_SEGMENTS, DEFAULT_STORE_TIMEOUT, MAX_BLOCKS_PER_SEGMENT, PublisherOptions,
 };
 
 /// Default blocks per segment.
@@ -95,6 +95,16 @@ pub struct ExowareArchiveArgs {
         requires = "archive_exoware_url"
     )]
     pub archive_exoware_prune_grace_segments: u64,
+
+    /// Blocks the exporter loads, encodes and writes at a time; bounds its block memory.
+    #[arg(
+        long = "archive.exoware.export-batch-blocks",
+        id = "archive_exoware_export_batch_blocks",
+        default_value_t = DEFAULT_EXPORT_BATCH_BLOCKS,
+        value_parser = clap::value_parser!(u64).range(1..=MAX_BLOCKS_PER_SEGMENT),
+        requires = "archive_exoware_url"
+    )]
+    pub archive_exoware_export_batch_blocks: u64,
 }
 
 impl Default for ExowareArchiveArgs {
@@ -109,6 +119,7 @@ impl Default for ExowareArchiveArgs {
             archive_exoware_retain_segments: None,
             archive_exoware_timeout: DEFAULT_STORE_TIMEOUT,
             archive_exoware_prune_grace_segments: DEFAULT_PRUNE_GRACE_SEGMENTS,
+            archive_exoware_export_batch_blocks: DEFAULT_EXPORT_BATCH_BLOCKS,
         }
     }
 }
@@ -121,7 +132,11 @@ impl ExowareArchiveArgs {
 
     /// The archive config these arguments describe for the node's chain. The start block must
     /// be segment-aligned.
-    pub fn archive_config(&self, chain_id: u64, genesis_hash: B256) -> Result<ArchiveConfig, ArchiveError> {
+    pub fn archive_config(
+        &self,
+        chain_id: u64,
+        genesis_hash: B256,
+    ) -> Result<ArchiveConfig, ArchiveError> {
         let blocks = self.archive_exoware_segment_blocks;
         if blocks == 0 || !self.archive_exoware_start_block.is_multiple_of(blocks) {
             return Err(ArchiveError::InvalidConfig {
@@ -144,6 +159,7 @@ impl ExowareArchiveArgs {
     pub fn publisher_options(&self) -> PublisherOptions {
         PublisherOptions {
             prune_grace_segments: self.archive_exoware_prune_grace_segments,
+            export_batch_blocks: self.archive_exoware_export_batch_blocks,
             ..PublisherOptions::default()
         }
     }
@@ -190,6 +206,8 @@ mod tests {
             "750ms",
             "--archive.exoware.prune-grace-segments",
             "3",
+            "--archive.exoware.export-batch-blocks",
+            "32",
         ])
         .expect("all flags parse");
         assert_eq!(
@@ -204,6 +222,7 @@ mod tests {
                 archive_exoware_retain_segments: Some(10),
                 archive_exoware_timeout: Duration::from_millis(750),
                 archive_exoware_prune_grace_segments: 3,
+                archive_exoware_export_batch_blocks: 32,
             },
             "every flag lands in its field"
         );
@@ -211,6 +230,11 @@ mod tests {
         assert_eq!(config.start_segment, 2, "start block 128 is segment 2 of 64 blocks");
         assert_eq!(config.retain_segments, Some(10), "retention carried over");
         assert_eq!(args.publisher_options().prune_grace_segments, 3, "grace carried over");
+        assert_eq!(args.publisher_options().export_batch_blocks, 32, "export batch carried over");
+        assert_eq!(
+            off.archive_exoware_export_batch_blocks, 256,
+            "export batch defaults to 256 blocks"
+        );
     }
 
     /// Out-of-range values, options without a url, an unaligned start and the removed audit
@@ -222,17 +246,38 @@ mod tests {
             (vec!["--archive.exoware.export"], "export without a url"),
             (vec!["--archive.exoware.provision"], "provision without a url"),
             (vec![url[0], url[1], "--archive.exoware.segment-blocks", "0"], "zero segment size"),
-            (vec![url[0], url[1], "--archive.exoware.segment-blocks", "65537"], "segment above 65536"),
+            (
+                vec![url[0], url[1], "--archive.exoware.segment-blocks", "65537"],
+                "segment above 65536",
+            ),
             (vec![url[0], url[1], "--archive.exoware.prune-grace-segments", "0"], "zero grace"),
+            (
+                vec![url[0], url[1], "--archive.exoware.export-batch-blocks", "0"],
+                "zero export batch",
+            ),
+            (vec!["--archive.exoware.export-batch-blocks", "8"], "export batch without a url"),
             (vec![url[0], url[1], "--archive.exoware.retain-segments", "0"], "zero retention"),
-            (vec![url[0], url[1], "--archive.exoware.audit-interval", "1m"], "audit interval was dropped"),
+            (
+                vec![url[0], url[1], "--archive.exoware.audit-interval", "1m"],
+                "audit interval was dropped",
+            ),
             (vec![url[0], url[1], "--archive.exoware.api-key", "k"], "no api key flag"),
         ] {
             assert!(parse(&flags).is_err(), "{why} must be refused");
         }
-        let unaligned = parse(&[url[0], url[1], "--archive.exoware.segment-blocks", "64", "--archive.exoware.start-block", "100"])
-            .expect("parses");
+        let unaligned = parse(&[
+            url[0],
+            url[1],
+            "--archive.exoware.segment-blocks",
+            "64",
+            "--archive.exoware.start-block",
+            "100",
+        ])
+        .expect("parses");
         let err = unaligned.archive_config(1, B256::ZERO).expect_err("unaligned start");
-        assert!(matches!(err, ArchiveError::InvalidConfig { .. }), "unaligned start is an invalid config: {err}");
+        assert!(
+            matches!(err, ArchiveError::InvalidConfig { .. }),
+            "unaligned start is an invalid config: {err}"
+        );
     }
 }

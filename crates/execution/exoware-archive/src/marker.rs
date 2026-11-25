@@ -43,17 +43,17 @@ impl SegmentMarker {
     }
 }
 
-/// SHA-256 over a segment's rows in key order, each framed as
+/// SHA-256 over one family's rows in key order, each framed as
 /// `len(key):u64be ‖ key ‖ len(value):u64be ‖ value`.
 #[derive(Debug, Clone, Default)]
-pub struct SegmentDigest {
+pub struct FamilyDigest {
     /// Running hash.
     pub hasher: Sha256,
     /// Rows added.
     pub rows: u64,
 }
 
-impl SegmentDigest {
+impl FamilyDigest {
     /// Adds one row. Rows must be added in increasing key order.
     pub fn update(&mut self, key: &[u8], value: &[u8]) {
         self.hasher.update((key.len() as u64).to_be_bytes());
@@ -67,14 +67,55 @@ impl SegmentDigest {
     pub fn finish(self) -> B256 {
         B256::from_slice(&self.hasher.finalize())
     }
+}
 
-    /// Digest of `rows`, which must be sorted by key.
-    pub fn of<'a>(rows: impl IntoIterator<Item = (&'a [u8], &'a [u8])>) -> B256 {
-        let mut digest = Self::default();
-        for (key, value) in rows {
-            digest.update(key, value);
+/// Families a segment digest covers, in family-byte order.
+pub const DIGEST_FAMILIES: [Family; 11] = [
+    Family::BlockHash,
+    Family::TxHash,
+    Family::StateHistory,
+    Family::LogAddress,
+    Family::LogTopic,
+    Family::Header,
+    Family::Body,
+    Family::Receipts,
+    Family::Senders,
+    Family::AccountChanges,
+    Family::StorageChanges,
+];
+
+/// Segment digest: SHA-256 over the concatenation, in family-byte order
+/// ([`DIGEST_FAMILIES`]), of every family's [`FamilyDigest`] (an empty family contributes the
+/// digest of no rows). Families are hashed independently, so block rows can be hashed as they
+/// are streamed, a batch at a time, while index rows are hashed at the end.
+#[derive(Debug, Clone, Default)]
+pub struct SegmentDigest {
+    /// One running digest per entry of [`DIGEST_FAMILIES`].
+    pub families: [FamilyDigest; 11],
+}
+
+impl SegmentDigest {
+    /// Adds one row of `family`. Rows of one family must be added in increasing key order;
+    /// families may interleave. Rows of families outside [`DIGEST_FAMILIES`] (config, marker)
+    /// are not segment rows and are ignored.
+    pub fn update(&mut self, family: Family, key: &[u8], value: &[u8]) {
+        if let Some(slot) = DIGEST_FAMILIES.iter().position(|f| *f == family) {
+            self.families[slot].update(key, value);
         }
-        digest.finish()
+    }
+
+    /// Rows added across every family.
+    pub fn rows(&self) -> u64 {
+        self.families.iter().map(|f| f.rows).sum()
+    }
+
+    /// Final digest.
+    pub fn finish(self) -> B256 {
+        let mut outer = Sha256::new();
+        for family in self.families {
+            outer.update(family.finish());
+        }
+        B256::from_slice(&outer.finalize())
     }
 }
 
@@ -94,8 +135,55 @@ mod tests {
         assert_eq!(marker.encode().len(), MARKER_LEN, "marker length");
         assert_eq!(SegmentMarker::decode(&marker.encode()).unwrap(), marker, "round-trip");
         assert!(SegmentMarker::decode(&[0; 71]).is_err(), "short marker rejected");
-        let a = SegmentDigest::of([(&b"ab"[..], &b"c"[..])]);
-        let b = SegmentDigest::of([(&b"a"[..], &b"bc"[..])]);
-        assert_ne!(a, b, "length framing separates key and value");
+        let digest = |key: &[u8], value: &[u8]| {
+            let mut d = FamilyDigest::default();
+            d.update(key, value);
+            d.finish()
+        };
+        assert_ne!(
+            digest(b"ab", b"c"),
+            digest(b"a", b"bc"),
+            "length framing separates key and value"
+        );
+    }
+
+    /// The segment digest hashes per-family digests in family-byte order, so interleaving
+    /// families gives the same result and moving a row to another family changes it.
+    #[test]
+    fn segment_digest_is_per_family() {
+        let mut a = SegmentDigest::default();
+        a.update(Family::Header, b"h1", b"x");
+        a.update(Family::BlockHash, b"b1", b"y");
+        a.update(Family::Header, b"h2", b"z");
+        let mut b = SegmentDigest::default();
+        b.update(Family::BlockHash, b"b1", b"y");
+        b.update(Family::Header, b"h1", b"x");
+        b.update(Family::Header, b"h2", b"z");
+        assert_eq!(a.rows(), 3, "three rows");
+        let mut expected = Sha256::new();
+        for family in DIGEST_FAMILIES {
+            let mut d = FamilyDigest::default();
+            match family {
+                Family::BlockHash => d.update(b"b1", b"y"),
+                Family::Header => {
+                    d.update(b"h1", b"x");
+                    d.update(b"h2", b"z");
+                }
+                _ => {}
+            }
+            expected.update(d.finish());
+        }
+        let expected = B256::from_slice(&expected.finalize());
+        let a = a.finish();
+        assert_eq!(a, expected, "outer hash over the eleven family digests in byte order");
+        assert_eq!(b.finish(), a, "interleaving families does not change the digest");
+        let mut moved = SegmentDigest::default();
+        moved.update(Family::Body, b"h1", b"x");
+        moved.update(Family::BlockHash, b"b1", b"y");
+        moved.update(Family::Header, b"h2", b"z");
+        assert_ne!(moved.finish(), a, "the family a row belongs to is part of the digest");
+        let mut ignored = SegmentDigest::default();
+        ignored.update(Family::Marker, b"m", b"v");
+        assert_eq!(ignored.rows(), 0, "marker rows are not segment rows");
     }
 }

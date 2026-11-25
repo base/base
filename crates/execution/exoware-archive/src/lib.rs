@@ -20,7 +20,7 @@ mod config;
 pub use config::{ArchiveConfig, CONFIG_LEN_WITH_RETENTION, MAX_BLOCKS_PER_SEGMENT};
 
 mod marker;
-pub use marker::{MARKER_LEN, SegmentDigest, SegmentMarker};
+pub use marker::{DIGEST_FAMILIES, FamilyDigest, MARKER_LEN, SegmentDigest, SegmentMarker};
 
 mod block;
 pub use block::{
@@ -32,7 +32,7 @@ mod verify;
 pub use verify::BlockVerifier;
 
 mod rows;
-pub use rows::{RowBuilder, SegmentRows};
+pub use rows::{RowBuilder, SegmentBuilder, SegmentRows, SegmentTail};
 
 mod metrics;
 pub use metrics::ArchiveMetrics;
@@ -55,15 +55,15 @@ pub use source::{MockBlockSource, MockNodeState};
 
 mod publisher;
 pub use publisher::{
-    DEFAULT_MAX_BATCH_BYTES, DEFAULT_MAX_BATCH_ROWS, MarkerState, PublishOutcome, PublisherOptions,
-    PutSize, SegmentPublisher, StepOutcome,
+    DEFAULT_EXPORT_BATCH_BLOCKS, DEFAULT_MAX_BATCH_BYTES, DEFAULT_MAX_BATCH_ROWS, MarkerCheck,
+    MarkerState, PublishOutcome, PublisherOptions, PutSize, SegmentPublisher, StepOutcome,
 };
 
 mod reader;
 pub use reader::{
     ArchiveReader, ArchiveRequest, ArchiveSnapshot, ArchivedBlock, ArchivedLog,
-    ArchivedTransaction, DEFAULT_MAX_LOG_ALTERNATIVES, DEFAULT_MAX_LOG_CANDIDATES, HEADER_PAGE, LogFilter,
-    ReaderLimits,
+    ArchivedTransaction, DEFAULT_MAX_LOG_ALTERNATIVES, DEFAULT_MAX_LOG_CANDIDATES, HEADER_PAGE,
+    LogFilter, ReaderLimits,
 };
 
 mod audit;

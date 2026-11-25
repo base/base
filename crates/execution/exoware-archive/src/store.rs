@@ -5,8 +5,8 @@ use std::{fmt, time::Duration};
 use async_trait::async_trait;
 use bytes::Bytes;
 use exoware_sdk::{
-    limits::{MAX_RESPONSE_MESSAGE_BYTES, MAX_VALUE_LEN},
     PrefixedStoreClient, RangeMode, ReadSession, StoreClient, StoreKeyPrefix, StoreWriteBatch,
+    limits::{MAX_RESPONSE_MESSAGE_BYTES, MAX_VALUE_LEN},
     prune_policy::PrunePolicy,
 };
 
@@ -85,7 +85,11 @@ impl ExowareStore {
     }
 
     /// Wraps an existing client under `namespace`.
-    pub fn new(client: StoreClient, namespace: &str, timeout: Duration) -> Result<Self, ArchiveError> {
+    pub fn new(
+        client: StoreClient,
+        namespace: &str,
+        timeout: Duration,
+    ) -> Result<Self, ArchiveError> {
         Self::validate_namespace(namespace)?;
         let prefix = StoreKeyPrefix::new(Bytes::copy_from_slice(namespace.as_bytes()))
             .map_err(|e| ArchiveError::InvalidConfig { reason: format!("namespace: {e}") })?;
@@ -113,10 +117,10 @@ impl ExowareStore {
         op: &'static str,
         fut: impl Future<Output = Result<T, E>>,
     ) -> Result<T, ArchiveError> {
-        match tokio::time::timeout(timeout, fut).await {
-            Ok(result) => result.map_err(|e| ArchiveError::store(op, e)),
-            Err(_) => Err(ArchiveError::store(op, format!("timed out after {timeout:?}"))),
-        }
+        tokio::time::timeout(timeout, fut).await.map_or_else(
+            |_| Err(ArchiveError::store(op, format!("timed out after {timeout:?}"))),
+            |result| result.map_err(|e| ArchiveError::store(op, e)),
+        )
     }
 }
 
@@ -213,18 +217,30 @@ mod tests {
         for ok in ["base-archive/", "a/", "mainnet-2/", "0/"] {
             assert_eq!(ExowareStore::validate_namespace(ok), Ok(()), "{ok:?} accepted");
             assert!(
-                ExowareStore::new(StoreClient::new("http://127.0.0.1:1"), ok, DEFAULT_STORE_TIMEOUT).is_ok(),
+                ExowareStore::new(
+                    StoreClient::new("http://127.0.0.1:1"),
+                    ok,
+                    DEFAULT_STORE_TIMEOUT
+                )
+                .is_ok(),
                 "{ok:?} accepted by the constructor"
             );
         }
         for bad in ["", "/", "base-archive", "a/b/", "a//", "A/", "a_b/", "a/x", "a b/", "é/"] {
             assert!(
-                matches!(ExowareStore::validate_namespace(bad), Err(ArchiveError::InvalidConfig { .. })),
+                matches!(
+                    ExowareStore::validate_namespace(bad),
+                    Err(ArchiveError::InvalidConfig { .. })
+                ),
                 "{bad:?} rejected"
             );
             assert!(
                 matches!(
-                    ExowareStore::new(StoreClient::new("http://127.0.0.1:1"), bad, DEFAULT_STORE_TIMEOUT),
+                    ExowareStore::new(
+                        StoreClient::new("http://127.0.0.1:1"),
+                        bad,
+                        DEFAULT_STORE_TIMEOUT
+                    ),
                     Err(ArchiveError::InvalidConfig { .. })
                 ),
                 "{bad:?} rejected by the constructor"

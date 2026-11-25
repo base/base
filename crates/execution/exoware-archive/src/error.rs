@@ -83,7 +83,7 @@ pub enum ArchiveError {
         /// Node's finalized block.
         finalized: Option<u64>,
     },
-    /// A row value exceeds the store's 32 MiB value limit; the segment cannot be published.
+    /// A row value exceeds the store's 32 `MiB` value limit; the segment cannot be published.
     #[error("row {key} of segment {segment} has {len} bytes, above the {max}-byte value limit")]
     ValueTooLarge {
         /// Segment number.

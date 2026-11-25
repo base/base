@@ -95,15 +95,23 @@ impl SegmentLoader {
         config: &ArchiveConfig,
         segment: u64,
     ) -> Result<Vec<BlockData>, ArchiveError> {
-        let first = config.first_block(segment);
-        let last = config.last_block(segment);
+        Self::load_range(source, config.first_block(segment), config.last_block(segment))
+    }
+
+    /// Reads blocks `first..=last`, checking availability before and after the read as
+    /// [`Self::load`] does. The exporter reads a segment in such bounded batches.
+    pub fn load_range<B: BlockSource + ?Sized>(
+        source: &B,
+        first: u64,
+        last: u64,
+    ) -> Result<Vec<BlockData>, ArchiveError> {
         Self::check_available(&source.availability()?, first)?;
         let missing = |table: &'static str, block: u64| ArchiveError::LocalDataPruned {
             table,
             block,
             earliest: block.saturating_add(1),
         };
-        let mut blocks = Vec::with_capacity(config.blocks_per_segment as usize);
+        let mut blocks = Vec::with_capacity(last.saturating_sub(first).saturating_add(1) as usize);
         for number in first..=last {
             let header = source.header(number)?.ok_or_else(|| missing("headers", number))?;
             let body = source.body(number)?.ok_or_else(|| missing("bodies", number))?;
@@ -131,7 +139,9 @@ impl SegmentLoader {
         block: u64,
     ) -> Result<(), ArchiveError> {
         match availability.first_missing(block) {
-            Some((table, earliest)) => Err(ArchiveError::LocalDataPruned { table, block, earliest }),
+            Some((table, earliest)) => {
+                Err(ArchiveError::LocalDataPruned { table, block, earliest })
+            }
             None => Ok(()),
         }
     }
@@ -153,7 +163,12 @@ pub trait NodeState: Send + Sync {
     ) -> Result<Option<AccountInfo>, ArchiveError>;
 
     /// Storage slot at the end of block `block`.
-    async fn storage_at(&self, block: u64, address: Address, slot: B256) -> Result<U256, ArchiveError>;
+    async fn storage_at(
+        &self,
+        block: u64,
+        address: Address,
+        slot: B256,
+    ) -> Result<U256, ArchiveError>;
 
     /// Bytecode with hash `code_hash`; bytecodes are never pruned.
     async fn bytecode(&self, code_hash: B256) -> Result<Option<Bytes>, ArchiveError>;

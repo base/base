@@ -5,8 +5,8 @@ use std::{sync::Arc, time::Duration};
 
 use base_execution_base_tx_rpc::TxBaseEthApiExt;
 use base_exoware_archive::{
-    ArchiveError, ArchiveMetrics, BlockVerifier, ExowareArchive, ExowareStore, ProvisionOutcome, ReaderLimits,
-    SegmentPublisher,
+    ArchiveError, ArchiveMetrics, BlockVerifier, ExowareArchive, ExowareStore, ProvisionOutcome,
+    ReaderLimits, SegmentPublisher,
 };
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
@@ -37,7 +37,11 @@ pub struct ExowareArchiveExtension {
 impl ExowareArchiveExtension {
     /// Opens the configured namespace.
     pub fn store(args: &ExowareArchiveArgs, url: &str) -> eyre::Result<Arc<ExowareStore>> {
-        Ok(Arc::new(ExowareStore::connect(url, &args.archive_exoware_namespace, args.archive_exoware_timeout)?))
+        Ok(Arc::new(ExowareStore::connect(
+            url,
+            &args.archive_exoware_namespace,
+            args.archive_exoware_timeout,
+        )?))
     }
 
     /// Runs the exporter until `shutdown`: provisions the config row when asked, opens the
@@ -144,6 +148,7 @@ impl BaseNodeExtension for ExowareArchiveExtension {
                 converter: ArchiveConverter::new(chain_spec),
                 limits,
                 retention: RetentionCache::new(RETENTION_TTL),
+                pool: Arc::new(ctx.pool().clone()),
             };
             ctx.modules.replace_configured(api.into_rpc())?;
             Ok(())
@@ -158,33 +163,34 @@ impl BaseNodeExtension for ExowareArchiveExtension {
             let verifier = BlockVerifier::new(Arc::clone(&chain_spec));
             let (chain_id, genesis_hash) = (chain_spec.chain().id(), chain_spec.genesis_hash());
             node.task_executor.spawn_with_graceful_shutdown_signal(move |shutdown| async move {
-                    // The guard is held until the exporter returns, so node shutdown waits for
-                    // the round in flight.
-                    let (guard_tx, guard_rx) = tokio::sync::oneshot::channel();
-                    ArchiveMetrics::exporter_running().set(1.0);
-                    let result = Self::export(
-                        store,
-                        provider,
-                        verifier,
-                        export_args,
-                        chain_id,
-                        genesis_hash,
-                        async move {
-                            let _ = guard_tx.send(shutdown.await);
-                        },
-                    )
-                    .await;
-                    drop(guard_rx);
-                    // Health signal: the gauge drops to 0 on any exit, and a terminal error is
-                    // logged at error level, so a halted exporter is visible while the node
-                    // keeps serving.
-                    ArchiveMetrics::exporter_running().set(0.0);
-                    match result {
-                        Ok(()) => info!("archive exporter stopped on shutdown"),
-                        Err(err) => error!(error = %err, "archive exporter halted; the node keeps serving"),
+                // The guard is held until the exporter returns, so node shutdown waits for
+                // the round in flight.
+                let (guard_tx, guard_rx) = tokio::sync::oneshot::channel();
+                ArchiveMetrics::exporter_running().set(1.0);
+                let result = Self::export(
+                    store,
+                    provider,
+                    verifier,
+                    export_args,
+                    chain_id,
+                    genesis_hash,
+                    async move {
+                        let _ = guard_tx.send(shutdown.await);
+                    },
+                )
+                .await;
+                drop(guard_rx);
+                // Health signal: the gauge drops to 0 on any exit, and a terminal error is
+                // logged at error level, so a halted exporter is visible while the node
+                // keeps serving.
+                ArchiveMetrics::exporter_running().set(0.0);
+                match result {
+                    Ok(()) => info!("archive exporter stopped on shutdown"),
+                    Err(err) => {
+                        error!(error = %err, "archive exporter halted; the node keeps serving")
                     }
-                },
-            );
+                }
+            });
             Ok(())
         })
     }

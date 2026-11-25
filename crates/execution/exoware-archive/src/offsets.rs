@@ -21,7 +21,7 @@ pub const TAG_COMPACT: u8 = 0x00;
 pub const TAG_ROARING: u8 = 0x01;
 
 /// A set of `u16` block offsets within one segment.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OffsetSet {
     /// Offsets, kept as a bitmap for set algebra.
     pub bits: RoaringBitmap,
@@ -94,7 +94,8 @@ impl OffsetSet {
                 Self::from_offsets(offsets)
             }
             TAG_ROARING => {
-                let bits = RoaringBitmap::deserialize_from(rest).map_err(|e| err(&e.to_string()))?;
+                let bits =
+                    RoaringBitmap::deserialize_from(rest).map_err(|e| err(&e.to_string()))?;
                 if bits.max().is_some_and(|max| max > u32::from(u16::MAX)) {
                     return Err(err("offset above u16"));
                 }
@@ -122,19 +123,35 @@ mod tests {
         assert_eq!(encoded[0], TAG_COMPACT, "16 offsets use the compact tag");
         assert_eq!(encoded[1], 16, "count byte");
         assert_eq!(&encoded[2..6], &[0, 0, 0, 1], "offsets are big-endian u16s");
-        assert_eq!(OffsetSet::decode(Family::LogAddress, &encoded).unwrap(), sixteen, "16 round-trip");
+        assert_eq!(
+            OffsetSet::decode(Family::LogAddress, &encoded).unwrap(),
+            sixteen,
+            "16 round-trip"
+        );
 
         let seventeen = OffsetSet::from_offsets(0..17);
         let encoded = seventeen.encode();
         assert_eq!(encoded[0], TAG_ROARING, "17 offsets use the roaring tag");
-        assert_eq!(OffsetSet::decode(Family::LogAddress, &encoded).unwrap(), seventeen, "17 round-trip");
+        assert_eq!(
+            OffsetSet::decode(Family::LogAddress, &encoded).unwrap(),
+            seventeen,
+            "17 round-trip"
+        );
 
         let one = OffsetSet::from_offsets([65_535]);
         assert_eq!(one.encode(), vec![TAG_COMPACT, 1, 0xff, 0xff], "one offset is 4 bytes");
         let full = OffsetSet::from_offsets(0..=u16::MAX);
         let encoded = full.encode();
-        assert!(encoded.len() < 64, "a full segment run-optimizes to a few bytes, got {}", encoded.len());
-        assert_eq!(OffsetSet::decode(Family::StateHistory, &encoded).unwrap(), full, "full round-trip");
+        assert!(
+            encoded.len() < 64,
+            "a full segment run-optimizes to a few bytes, got {}",
+            encoded.len()
+        );
+        assert_eq!(
+            OffsetSet::decode(Family::StateHistory, &encoded).unwrap(),
+            full,
+            "full round-trip"
+        );
     }
 
     /// Non-canonical and malformed encodings are rejected.

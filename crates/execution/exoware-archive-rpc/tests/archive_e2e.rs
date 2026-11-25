@@ -21,9 +21,11 @@ use base_exoware_archive::{ArchiveKey, ArchiveStore, BlockVerifier, ExowareArchi
 use base_exoware_archive_rpc::{ExowareArchiveArgs, ExowareArchiveExtension};
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, LocalNodeRetention, TestHarness};
 use base_protocol::BaseTimeUpdateTx;
-use base_test_utils::{Account, build_test_genesis, build_test_genesis_cobalt, build_test_genesis_everest};
-use reth_node_core::args::{PruningArgs, StaticFilesArgs};
+use base_test_utils::{
+    Account, build_test_genesis, build_test_genesis_cobalt, build_test_genesis_everest,
+};
 use reth_chainspec::EthChainSpec;
+use reth_node_core::args::{PruningArgs, StaticFilesArgs};
 use reth_prune_types::PruneSegment;
 use reth_storage_api::{
     BlockNumReader, BlockReader, PruneCheckpointReader, StateProviderFactory, errors::ProviderError,
@@ -140,16 +142,20 @@ async fn archive_node(
 async fn call(client: &RpcClient, method: &'static str, params: Value) -> Value {
     match client.request::<_, Value>(method, params.clone()).await {
         Ok(value) => value,
-        Err(err) => match err.as_error_resp() {
-            Some(payload) => json!({ "code": payload.code, "message": payload.message }),
-            None => json!({ "transport": err.to_string(), "method": method, "params": params }),
-        },
+        Err(err) => err.as_error_resp().map_or_else(
+            || json!({ "transport": err.to_string(), "method": method, "params": params }),
+            |payload| json!({ "code": payload.code, "message": payload.message }),
+        ),
     }
 }
 
 /// Number-addressed requests over the active blocks. Multi-block log queries are left out
 /// when `with_range_logs` is false (a node with a tiny log cap refuses them before pruning too).
-fn number_requests(blocks: &[(u64, B256)], contract: Address, with_range_logs: bool) -> Vec<(&'static str, Value)> {
+fn number_requests(
+    blocks: &[(u64, B256)],
+    contract: Address,
+    with_range_logs: bool,
+) -> Vec<(&'static str, Value)> {
     let mut out = Vec::new();
     for (number, hash) in blocks {
         let tag = format!("0x{number:x}");
@@ -180,7 +186,10 @@ fn number_requests(blocks: &[(u64, B256)], contract: Address, with_range_logs: b
     if with_range_logs {
         let last = format!("0x{:x}", blocks.last().expect("blocks").0);
         out.push(("eth_getLogs", json!([{ "fromBlock": "0x1", "toBlock": last }])));
-        out.push(("eth_getLogs", json!([{ "fromBlock": "0x1", "toBlock": last, "address": contract }])));
+        out.push((
+            "eth_getLogs",
+            json!([{ "fromBlock": "0x1", "toBlock": last, "address": contract }]),
+        ));
     }
     out
 }
@@ -250,7 +259,9 @@ async fn pruned_node_serves_history_from_archive() {
         max_logs: None,
         full: true,
     };
-    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario)).await.expect("e2e run timed out");
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario))
+        .await
+        .expect("e2e run timed out");
 }
 
 /// Receipt-only pruning: bodies and state stay local, but every answer with deposit fields
@@ -266,9 +277,16 @@ async fn receipt_only_pruning_serves_deposit_fields_from_archive() {
         },
         static_files: short_retention().static_files,
     };
-    let scenario =
-        Scenario { name: "receipts", retention, pruned: PruneSegment::Receipts, max_logs: None, full: false };
-    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario)).await.expect("e2e run timed out");
+    let scenario = Scenario {
+        name: "receipts",
+        retention,
+        pruned: PruneSegment::Receipts,
+        max_logs: None,
+        full: false,
+    };
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario))
+        .await
+        .expect("e2e run timed out");
 }
 
 /// Transaction-lookup-only pruning: the node cannot place a transaction hash, and Base would
@@ -290,7 +308,9 @@ async fn lookup_only_pruning_resolves_hashes_in_archive() {
         max_logs: None,
         full: false,
     };
-    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario)).await.expect("e2e run timed out");
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario))
+        .await
+        .expect("e2e run timed out");
 }
 
 /// Unequal retention: account history is kept but storage history is pruned. reth refuses
@@ -307,7 +327,9 @@ async fn asymmetric_state_retention_serves_refused_state_from_archive() {
         max_logs: None,
         full: false,
     };
-    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario)).await.expect("e2e run timed out");
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario))
+        .await
+        .expect("e2e run timed out");
 }
 
 /// The node's `--rpc.max-logs-per-response` applies to the combined archive + local result
@@ -321,7 +343,165 @@ async fn combined_log_limit_matches_reth() {
         max_logs: Some(2),
         full: false,
     };
-    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario)).await.expect("e2e run timed out");
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario))
+        .await
+        .expect("e2e run timed out");
+}
+
+/// A TCP listener standing in for the store that counts connections and drops them, so any
+/// store call shows up in the count.
+async fn counting_store() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let url = format!("http://{}", listener.local_addr().expect("addr"));
+    let connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&connections);
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            drop(stream);
+        }
+    });
+    (url, connections)
+}
+
+/// P2: pending-transaction polling never reaches the store. On a node whose transaction
+/// lookup is pruned, a pooled hash answers `null` with zero store connections while an
+/// unknown hash does consult the store; on an unpruned node an unknown hash makes zero store
+/// connections. (A lookup-pruned node still resolves archived hashes through the store:
+/// `lookup_only_pruning_resolves_hashes_in_archive`.)
+#[tokio::test(flavor = "multi_thread")]
+async fn pending_hash_polling_skips_the_store() {
+    tokio::time::timeout(E2E_TIMEOUT, async {
+        let lookup_pruned = LocalNodeRetention {
+            pruning: PruningArgs {
+                block_interval: Some(1),
+                transaction_lookup_distance: Some(RETENTION),
+                ..Default::default()
+            },
+            static_files: short_retention().static_files,
+        };
+        for (name, retention, pruned) in [
+            ("lookup-pruned", lookup_pruned, true),
+            ("unpruned", LocalNodeRetention::default(), false),
+        ] {
+            let (url, connections) = counting_store().await;
+            let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
+            let harness =
+                archive_node(chain_spec, retention, archive_args(&url, false), None).await;
+            let client = harness.rpc_client().expect("rpc client");
+            build_active_blocks(&harness).await;
+            if pruned {
+                harness.advance_chain(RETENTION + 2 * BLOCKS_PER_SEGMENT).await.expect("advance");
+                let checkpoint = harness
+                    .blockchain_provider()
+                    .get_prune_checkpoint(PruneSegment::TransactionLookup)
+                    .expect("checkpoint read")
+                    .and_then(|c| c.block_number);
+                assert!(checkpoint.is_some(), "{name}: the transaction lookup is pruned");
+            }
+            let (pending, pending_hash) = Account::Alice
+                .sign_txn_request(
+                    BaseTransactionRequest::default()
+                        .to(Account::Bob.address())
+                        .value(U256::from(1))
+                        .nonce(ACTIVE_BLOCKS * 2),
+                )
+                .expect("pending tx");
+            let sent = call(&client, "eth_sendRawTransaction", json!([pending])).await;
+            assert_eq!(sent, json!(pending_hash), "{name}: the transaction enters the pool");
+            for _ in 0..3 {
+                for method in ["eth_getTransactionReceipt", "eth_getTransactionByHash"] {
+                    let value = call(&client, method, json!([pending_hash])).await;
+                    if method == "eth_getTransactionReceipt" {
+                        assert_eq!(value, Value::Null, "{name}: a pending receipt is null");
+                    } else {
+                        assert_eq!(
+                            value["hash"],
+                            json!(pending_hash),
+                            "{name}: the pending transaction is served by the node"
+                        );
+                    }
+                }
+            }
+            assert_eq!(
+                connections.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "{name}: polling a pooled hash makes zero store connections"
+            );
+            let unknown = B256::repeat_byte(0x42);
+            let value = call(&client, "eth_getTransactionReceipt", json!([unknown])).await;
+            assert_eq!(value, Value::Null, "{name}: an unknown hash is null");
+            let expected = usize::from(pruned);
+            let seen = connections.load(std::sync::atomic::Ordering::SeqCst);
+            if pruned {
+                assert!(
+                    seen >= expected,
+                    "{name}: an unplaced hash on a lookup-pruned node consults the store ({seen})"
+                );
+            } else {
+                assert_eq!(
+                    seen, 0,
+                    "{name}: an unpruned lookup answers an unknown hash with zero store connections"
+                );
+            }
+        }
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// Forged locators: an unknown block hash whose locator points at block 2 resolves in the
+/// archive, then fails the hash check, and is 4444 rather than a wrong block or null. A forged
+/// transaction locator is only consulted when the node's transaction lookup is pruned
+/// (`lookup_pruned`); otherwise the node's `null` stands and the store is not asked.
+async fn check_forged_locators(
+    client: &RpcClient,
+    store: &ExowareStore,
+    name: &str,
+    lookup_pruned: bool,
+) {
+    let forged_block = B256::repeat_byte(0xb1);
+    let forged_tx = B256::repeat_byte(0xc1);
+    let mut tx_locator = 2u64.to_be_bytes().to_vec();
+    tx_locator.extend(0u32.to_be_bytes());
+    store
+        .put(&[
+            (ArchiveKey::block_hash(forged_block, 0), 2u64.to_be_bytes().to_vec().into()),
+            (ArchiveKey::tx_hash(forged_tx, 0), tx_locator.into()),
+        ])
+        .await
+        .expect("forge locators");
+    for (method, params) in [
+        ("eth_getBlockByHash", json!([forged_block, true])),
+        ("eth_getBlockTransactionCountByHash", json!([forged_block])),
+        ("eth_getLogs", json!([{ "blockHash": forged_block }])),
+    ] {
+        let value = call(client, method, params.clone()).await;
+        assert_eq!(
+            value["code"],
+            json!(PRUNED_HISTORY),
+            "{name}: {method} {params} with a forged locator is 4444, got {value}"
+        );
+    }
+    for (method, params) in [
+        ("eth_getTransactionByHash", json!([forged_tx])),
+        ("eth_getTransactionReceipt", json!([forged_tx])),
+    ] {
+        let value = call(client, method, params.clone()).await;
+        if lookup_pruned {
+            assert_eq!(
+                value["code"],
+                json!(PRUNED_HISTORY),
+                "{name}: {method} {params} with a forged locator is 4444, got {value}"
+            );
+        } else {
+            assert_eq!(
+                value,
+                Value::Null,
+                "{name}: {method} {params} stays null while the lookup is unpruned"
+            );
+        }
+    }
 }
 
 /// Builds `ACTIVE_BLOCKS` blocks of transfers and contract calls on `harness`; returns the
@@ -371,7 +551,8 @@ async fn pruned_node_parity(scenario: Scenario) {
     let store = ExowareStore::connect(&url, NAMESPACE, Duration::from_secs(5)).expect("store");
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
     let harness =
-        archive_node(chain_spec, scenario.retention, archive_args(&url, true), scenario.max_logs).await;
+        archive_node(chain_spec, scenario.retention, archive_args(&url, true), scenario.max_logs)
+            .await;
     let client = harness.rpc_client().expect("rpc client");
     let (contract, tx_hashes) = build_active_blocks(&harness).await;
     harness.advance_chain(BLOCKS_PER_SEGMENT * 2 - ACTIVE_BLOCKS).await.expect("advance");
@@ -409,13 +590,20 @@ async fn pruned_node_parity(scenario: Scenario) {
     });
     let mut per_block_logs = Vec::new();
     for (number, hash) in &blocks[..ACTIVE_BLOCKS as usize] {
-        let logs = call(&client, "eth_getLogs", json!([{ "blockHash": hash, "address": contract }])).await;
-        let logs = logs.as_array().cloned().unwrap_or_else(|| panic!("{name}: logs of block {number}: {logs}"));
+        let logs =
+            call(&client, "eth_getLogs", json!([{ "blockHash": hash, "address": contract }])).await;
+        let logs = logs
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| panic!("{name}: logs of block {number}: {logs}"));
         assert_eq!(logs.len(), 1, "{name}: block {number} has one contract log");
         per_block_logs.extend(logs);
     }
     if scenario.max_logs.is_none() {
-        assert_eq!(active_logs, per_block_logs, "{name}: range and per-block logs agree before pruning");
+        assert_eq!(
+            active_logs, per_block_logs,
+            "{name}: range and per-block logs agree before pruning"
+        );
     }
     let warm_block = blocks[0];
     let warm_requests = [
@@ -441,7 +629,8 @@ async fn pruned_node_parity(scenario: Scenario) {
             // retention TTL; the answer must be exact either way.)
             let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let warmer = {
-                let (client, stop, requests) = (client.clone(), Arc::clone(&stop), warm_requests.clone());
+                let (client, stop, requests) =
+                    (client.clone(), Arc::clone(&stop), warm_requests.clone());
                 tokio::spawn(async move {
                     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
                         for (method, params) in &requests {
@@ -454,7 +643,10 @@ async fn pruned_node_parity(scenario: Scenario) {
             let mut pruned = false;
             for _ in 0..(4 * BLOCKS_PER_SEGMENT) {
                 harness.advance_chain(1).await.expect("advance");
-                if matches!(provider.block_by_number(warm_block.0), Err(ProviderError::BlockExpired { requested: 1, .. })) {
+                if matches!(
+                    provider.block_by_number(warm_block.0),
+                    Err(ProviderError::BlockExpired { requested: 1, .. })
+                ) {
                     pruned = true;
                     break;
                 }
@@ -466,7 +658,10 @@ async fn pruned_node_parity(scenario: Scenario) {
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
             warmer.await.expect("warm reader");
             assert!(pruned, "{name}: block 1 is pruned within {} blocks", 4 * BLOCKS_PER_SEGMENT);
-            assert_eq!(after, warm_expected, "{name}: a block pruned under warm caches keeps its deposit fields");
+            assert_eq!(
+                after, warm_expected,
+                "{name}: a block pruned under warm caches keeps its deposit fields"
+            );
             warm_checked = true;
             let head = harness.latest_block().number;
             wait_for_segment(&store, head / BLOCKS_PER_SEGMENT - 2).await;
@@ -482,14 +677,20 @@ async fn pruned_node_parity(scenario: Scenario) {
     let head = harness.latest_block().number;
     let (retained_call, _) = contract_call(contract, 999, ACTIVE_BLOCKS * 2);
     harness
-        .build_block_from_transactions(vec![l1_info_deposit(head + 1), base_time_deposit(head + 1), retained_call])
+        .build_block_from_transactions(vec![
+            l1_info_deposit(head + 1),
+            base_time_deposit(head + 1),
+            retained_call,
+        ])
         .await
         .expect("retained block");
     let retained = head + 1;
     let retained_hash = alloy_primitives::Sealable::hash_slow(
         &provider.block_by_number(retained).expect("read").expect("retained block").header,
     );
-    let retained_logs = call(&client, "eth_getLogs", json!([{ "blockHash": retained_hash, "address": contract }])).await;
+    let retained_logs =
+        call(&client, "eth_getLogs", json!([{ "blockHash": retained_hash, "address": contract }]))
+            .await;
     let retained_logs = retained_logs.as_array().cloned().expect("retained logs");
     assert_eq!(retained_logs.len(), 1, "{name}: the retained block has one contract log");
 
@@ -500,7 +701,11 @@ async fn pruned_node_parity(scenario: Scenario) {
         .and_then(|c| c.block_number);
     // Blocks after the active ones hold no transactions, so the lookup checkpoint stops at
     // the last active block.
-    let through = if scenario.pruned == PruneSegment::TransactionLookup { ACTIVE_BLOCKS } else { ACTIVE_BLOCKS + 2 };
+    let through = if scenario.pruned == PruneSegment::TransactionLookup {
+        ACTIVE_BLOCKS
+    } else {
+        ACTIVE_BLOCKS + 2
+    };
     assert!(
         checkpoint.is_some_and(|c| c >= through),
         "{name}: {:?} is pruned through every compared block, checkpoint {checkpoint:?}",
@@ -524,7 +729,10 @@ async fn pruned_node_parity(scenario: Scenario) {
             matches!(pruned_body, Err(ProviderError::BlockExpired { requested: 1, earliest_available }) if earliest_available == earliest),
             "the body of block 1 reads as exactly BlockExpired {{ 1, {earliest} }}, got {pruned_body:?}"
         );
-        assert!(earliest > ACTIVE_BLOCKS + 2, "every compared block is pruned (earliest {earliest})");
+        assert!(
+            earliest > ACTIVE_BLOCKS + 2,
+            "every compared block is pruned (earliest {earliest})"
+        );
     }
 
     for ((method, params), before) in requests.iter().zip(&expected) {
@@ -537,8 +745,13 @@ async fn pruned_node_parity(scenario: Scenario) {
     let split = call(&client, "eth_getLogs", combined.clone()).await;
     match scenario.max_logs {
         None => {
-            let expected: Vec<Value> = per_block_logs.iter().chain(&retained_logs).cloned().collect();
-            assert_eq!(split, Value::Array(expected), "{name}: archived then retained logs, exactly");
+            let expected: Vec<Value> =
+                per_block_logs.iter().chain(&retained_logs).cloned().collect();
+            assert_eq!(
+                split,
+                Value::Array(expected),
+                "{name}: archived then retained logs, exactly"
+            );
         }
         Some(max) => {
             assert_eq!(
@@ -570,13 +783,25 @@ async fn pruned_node_parity(scenario: Scenario) {
                 json!([{ "fromBlock": format!("0x{ACTIVE_BLOCKS:x}"), "toBlock": "latest", "address": contract }]),
             )
             .await;
-            let expected: Vec<Value> = per_block_logs[ACTIVE_BLOCKS as usize - 1..].iter().chain(&retained_logs).cloned().collect();
-            assert_eq!(within, Value::Array(expected), "{name}: exactly the cap is served across the split");
+            let expected: Vec<Value> = per_block_logs[ACTIVE_BLOCKS as usize - 1..]
+                .iter()
+                .chain(&retained_logs)
+                .cloned()
+                .collect();
+            assert_eq!(
+                within,
+                Value::Array(expected),
+                "{name}: exactly the cap is served across the split"
+            );
         }
+    }
+    if scenario.pruned == PruneSegment::TransactionLookup {
+        check_forged_locators(&client, &store, name, true).await;
     }
     if !scenario.full {
         return;
     }
+    check_forged_locators(&client, &store, name, false).await;
 
     // Tags and pending stay local on a pruned node.
     let head = harness.latest_block().number;
@@ -591,34 +816,16 @@ async fn pruned_node_parity(scenario: Scenario) {
     }
     let latest = call(&client, "eth_getBlockByNumber", json!(["latest", false])).await;
     assert_eq!(latest["number"], json!(format!("0x{head:x}")), "latest is the head");
-    let pending_logs = call(&client, "eth_getLogs", json!([{ "fromBlock": "latest", "toBlock": "pending" }])).await;
-    assert!(pending_logs.is_array(), "a latest..pending log query is served locally, got {pending_logs}");
-    let next = call(&client, "eth_getBlockByNumber", json!([format!("0x{:x}", head + 1), false])).await;
+    let pending_logs =
+        call(&client, "eth_getLogs", json!([{ "fromBlock": "latest", "toBlock": "pending" }]))
+            .await;
+    assert!(
+        pending_logs.is_array(),
+        "a latest..pending log query is served locally, got {pending_logs}"
+    );
+    let next =
+        call(&client, "eth_getBlockByNumber", json!([format!("0x{:x}", head + 1), false])).await;
     assert_eq!(next, Value::Null, "block {} does not exist yet", head + 1);
-
-    // Forged locators: an unknown hash whose locator points at block 2 resolves in the
-    // archive, then fails the hash check, and is 4444 rather than a wrong block or null.
-    let forged_block = B256::repeat_byte(0xb1);
-    let forged_tx = B256::repeat_byte(0xc1);
-    let mut tx_locator = 2u64.to_be_bytes().to_vec();
-    tx_locator.extend(0u32.to_be_bytes());
-    store
-        .put(&[
-            (ArchiveKey::block_hash(forged_block, 0), 2u64.to_be_bytes().to_vec().into()),
-            (ArchiveKey::tx_hash(forged_tx, 0), tx_locator.into()),
-        ])
-        .await
-        .expect("forge locators");
-    for (method, params) in [
-        ("eth_getBlockByHash", json!([forged_block, true])),
-        ("eth_getBlockTransactionCountByHash", json!([forged_block])),
-        ("eth_getLogs", json!([{ "blockHash": forged_block }])),
-        ("eth_getTransactionByHash", json!([forged_tx])),
-        ("eth_getTransactionReceipt", json!([forged_tx])),
-    ] {
-        let value = call(&client, method, params.clone()).await;
-        assert_eq!(value["code"], json!(PRUNED_HISTORY), "{method} {params} with a forged locator is 4444, got {value}");
-    }
 
     // Store down: number-addressed reads in the pruned range and hashes the node can place
     // are 4444 with a reason, an unknown hash keeps the node's `null`, and recent blocks are
@@ -632,15 +839,22 @@ async fn pruned_node_parity(scenario: Scenario) {
         ("eth_getStorageAt", json!([contract, "0x0", "0x2"])),
         ("eth_getLogs", json!([{ "fromBlock": "0x1", "toBlock": "0x3" }])),
         ("eth_getBlockByHash", json!([blocks[1].1, true])),
-        ("eth_getTransactionReceipt", json!([tx_hashes[1]])),
     ] {
         let value = call(&client, method, params.clone()).await;
-        assert_eq!(value["code"], json!(PRUNED_HISTORY), "{method} {params} is 4444 with the store down, got {value}");
+        assert_eq!(
+            value["code"],
+            json!(PRUNED_HISTORY),
+            "{method} {params} is 4444 with the store down, got {value}"
+        );
         assert!(
             value["message"].as_str().is_some_and(|m| m.starts_with("pruned history unavailable")),
             "{method} {params} names pruned history, got {value}"
         );
     }
+    // A complete local answer (here a non-deposit receipt the node still serves) is never
+    // routed to the archive, so it is served exactly as before pruning with the store down.
+    let receipt = call(&client, "eth_getTransactionReceipt", json!([tx_hashes[1]])).await;
+    assert_eq!(receipt, warm_expected[1], "a complete local receipt is served with the store down");
     let unknown = B256::repeat_byte(0x42);
     for (method, params) in [
         ("eth_getTransactionReceipt", json!([unknown])),
@@ -648,10 +862,18 @@ async fn pruned_node_parity(scenario: Scenario) {
         ("eth_getBlockByHash", json!([unknown, false])),
     ] {
         let value = call(&client, method, params.clone()).await;
-        assert_eq!(value, Value::Null, "{method} of an unknown hash stays null with the store down");
+        assert_eq!(
+            value,
+            Value::Null,
+            "{method} of an unknown hash stays null with the store down"
+        );
     }
     let latest = call(&client, "eth_getBlockByNumber", json!(["latest", false])).await;
-    assert_eq!(latest["number"], json!(format!("0x{head:x}")), "recent blocks are served locally with the store down");
+    assert_eq!(
+        latest["number"],
+        json!(format!("0x{head:x}")),
+        "recent blocks are served locally with the store down"
+    );
 }
 
 /// On an unpruned node whose store is unreachable, misses (an unmined receipt, an unknown
@@ -683,11 +905,14 @@ async fn unpruned_node_with_store_down_answers_locally() {
         }
         let genesis = call(&client, "eth_getBlockByNumber", json!(["0x0", true])).await;
         assert!(genesis["hash"].is_string(), "genesis is served locally, got {genesis}");
-        let balance = call(&client, "eth_getBalance", json!([Account::Alice.address(), "0x1"])).await;
+        let balance =
+            call(&client, "eth_getBalance", json!([Account::Alice.address(), "0x1"])).await;
         assert!(balance.is_string(), "unpruned state is served locally, got {balance}");
 
         let (simulator, url) = exoware_simulator::open_temp().await.expect("simulator starts");
-        let store = Arc::new(ExowareStore::connect(&url, NAMESPACE, Duration::from_secs(5)).expect("store"));
+        let store = Arc::new(
+            ExowareStore::connect(&url, NAMESPACE, Duration::from_secs(5)).expect("store"),
+        );
         let exported = ExowareArchiveExtension::export(
             Arc::clone(&store),
             harness.blockchain_provider(),
@@ -699,7 +924,9 @@ async fn unpruned_node_with_store_down_answers_locally() {
         )
         .await;
         assert_eq!(exported, Ok(()), "a signaled exporter exits cleanly");
-        let config = ExowareArchive::<ExowareStore>::read_config(&store.session()).await.expect("config read");
+        let config = ExowareArchive::<ExowareStore>::read_config(&store.session())
+            .await
+            .expect("config read");
         assert_eq!(config, None, "a signaled exporter does not provision");
         simulator.abort();
     })
@@ -750,17 +977,29 @@ async fn transaction_count_override_is_preserved() {
                 .expect("node starts");
             let archive_client = archive.rpc_client().expect("rpc client");
             let plain_client = plain.rpc_client().expect("rpc client");
-            let with_archive = call(&archive_client, "eth_getTransactionCount", params.clone()).await;
+            let with_archive =
+                call(&archive_client, "eth_getTransactionCount", params.clone()).await;
             let base_tx = call(&plain_client, "eth_getTransactionCount", params.clone()).await;
-            assert_eq!(with_archive, base_tx, "{label}: archive must delegate to the Base override");
+            assert_eq!(
+                with_archive, base_tx,
+                "{label}: archive must delegate to the Base override"
+            );
             if label == "everest" {
                 assert_eq!(with_archive, json!("0x2a"), "everest: seeded channel nonce 42");
             } else {
-                assert_eq!(with_archive["code"], json!(-32602), "pre-everest: invalid params, got {with_archive}");
+                assert_eq!(
+                    with_archive["code"],
+                    json!(-32602),
+                    "pre-everest: invalid params, got {with_archive}"
+                );
             }
-            let legacy = call(&archive_client, "eth_getTransactionCount", json!([alice, "latest"])).await;
-            let zero = call(&archive_client, "eth_getTransactionCount", json!([alice, "latest", "0x0"])).await;
-            let plain_legacy = call(&plain_client, "eth_getTransactionCount", json!([alice, "latest"])).await;
+            let legacy =
+                call(&archive_client, "eth_getTransactionCount", json!([alice, "latest"])).await;
+            let zero =
+                call(&archive_client, "eth_getTransactionCount", json!([alice, "latest", "0x0"]))
+                    .await;
+            let plain_legacy =
+                call(&plain_client, "eth_getTransactionCount", json!([alice, "latest"])).await;
             assert_eq!(legacy, zero, "{label}: nonce_key 0 equals the protocol nonce");
             assert_eq!(legacy, plain_legacy, "{label}: protocol nonce matches the plain node");
         }

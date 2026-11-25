@@ -2,17 +2,18 @@
 
 Exoware archive store: exports finalized Base chain history (headers, bodies, receipts,
 senders, account and storage before-value changesets) into an Exoware key-value store and
-serves verified reads from it, with no S3 bucket, NippyJar files or SlateDB.
+serves verified reads from it, with no S3 bucket, `NippyJar` files or `SlateDB`.
 
 ## Overview
 
 - **Format**: fixed-width keys `gen ‖ family ‖ fields ‖ (segment | block):u64be`, canonical
   RLP/EIP-2718 values, offset-set postings, a config row and a per-segment marker carrying a
-  SHA-256 digest of the segment's rows.
+  SHA-256 digest of the segment's rows (see [Marker digest](#marker-digest)).
 - **Publication** (`SegmentPublisher`): rows are a pure function of finalized block data, so
   any number of nodes can publish the same segment without compare-and-swap. A segment
   becomes visible when its marker is written, after every row is acknowledged and after the
-  previous segment's marker exists.
+  previous segment's marker exists. Segments are streamed in batches (see
+  [Exporter memory](#exporter-memory)).
 - **Reads** (`ArchiveReader`): every request resolves the highest marker in one monotonic
   session; block, hash and receipt answers are verified against roots and header hashes;
   state reads use the first change after the block and its before-value; logs use posting
@@ -66,3 +67,27 @@ Typed transactions are raw EIP-2718 bytes placed directly in the body's RLP list
 extra RLP string wrapping. An absent account before-value is `present = 0` with every
 other field zeroed. Receipts are stored in full, including the deposit nonce, even when
 the Regolith receipt root excludes it.
+
+## Marker digest
+
+The marker's digest is `SHA-256(D(0x01) ‖ D(0x02) ‖ D(0x03) ‖ D(0x04) ‖ D(0x05) ‖ D(0x10) ‖ …
+‖ D(0x15))`: the concatenation, in family-byte order, of one SHA-256 per family. `D(f)` hashes
+that family's rows of the segment in ascending key order, each framed as
+`len(key):u64be ‖ key ‖ len(value):u64be ‖ value`; a family with no rows contributes the
+SHA-256 of empty input. Config (`0x00`) and marker (`0x1f`) rows are not segment rows. Because
+families are hashed independently, the exporter hashes block rows as it streams them and the
+audit recomputes the digest the same way, a batch at a time.
+
+## Exporter memory
+
+The exporter never holds a whole segment of blocks. It loads `export_batch_blocks` (CLI
+`--archive.exoware.export-batch-blocks`, default 256) consecutive blocks, verifies them,
+encodes their block-family rows (`0x10`–`0x15`), folds them into the digest, writes them chunk
+by chunk and drops the batch before loading the next. Only the index rows and postings
+(`0x01`–`0x05`: block and transaction locators, state and log postings) and the eleven running
+family digests accumulate. They are written after the last batch, then the marker last, so a
+partial segment stays invisible and a replay writes identical bytes; recovery, contiguity and
+quarantine checks are unchanged. Peak block memory is one batch: with the default 256 blocks
+of an 8192-block segment, 1/32 of the previous whole-segment load. Index memory grows with the
+segment's distinct transactions, touched accounts and slots, and log addresses and topics, not
+with block bodies. The audit reads stored block rows in batches of the same size.
