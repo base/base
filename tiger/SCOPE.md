@@ -219,6 +219,14 @@ transaction gossip, and NAT traversal (UPnP). The external IP comes from configu
 - **Pruning**, WebSocket and IPC transports, `eth_subscribe`, `admin_*`, JS tracers, metrics.
 - **Ethereum L1 behavior** that Base never activates (blob transactions, PoW, pre-merge rules).
 
+### Accepted differences
+
+- **A 7702 delegation on a precompile address** (fuzz finding R7). base-reth (revm) checks for a
+  precompile at the call's original address first, so the precompile runs; tiger keeps evm2's
+  behavior, which resolves the delegation first and runs the delegate's code, in every call path.
+  No account can carry a delegation at a precompile address on chain, so only RPC state
+  overrides (`eth_call`, `eth_estimateGas`, `eth_createAccessList`) reach it.
+
 ## Dependencies
 
 evm2 (with evm2-inspectors for tracing), alloy types, RLP and trie primitives, serde/serde_json
