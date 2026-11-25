@@ -20,8 +20,9 @@ use std::{
     },
 };
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, U256};
 use base_tiger_trie::{AccountInfo, BlockChanges};
+use evm2::bytecode::Bytecode;
 
 /// Shards, each with its own lock, so validation and the prewarm workers rarely contend.
 const SHARDS: usize = 16;
@@ -36,7 +37,7 @@ pub(crate) const MAX_CODE_BYTES: usize = 64 << 20;
 struct Shard {
     accounts: HashMap<Address, Option<AccountInfo>>,
     storage: HashMap<(Address, U256), U256>,
-    codes: HashMap<B256, Bytes>,
+    codes: HashMap<B256, Bytecode>,
     code_bytes: usize,
 }
 
@@ -122,12 +123,12 @@ impl ExecCache {
     }
 
     /// The cached code with hash `hash`.
-    pub fn code(&self, hash: &B256) -> Option<Bytes> {
+    pub fn code(&self, hash: &B256) -> Option<Bytecode> {
         self.shard(hash[0]).codes.get(hash).cloned()
     }
 
-    /// Caches code `code` with hash `hash`.
-    pub fn put_code(&self, hash: B256, code: Bytes) {
+    /// Caches code `code` with hash `hash`, analyzed, so later blocks skip the analysis.
+    pub fn put_code(&self, hash: B256, code: Bytecode) {
         let mut shard = self.shard(hash[0]);
         if shard.codes.contains_key(&hash) {
             return;
@@ -170,7 +171,7 @@ impl ExecCache {
             }
         }
         for (hash, code) in &changes.codes {
-            self.put_code(*hash, code.clone());
+            self.put_code(*hash, Bytecode::new_raw(code.clone()));
         }
     }
 
@@ -218,7 +219,7 @@ mod tests {
         assert_eq!(cache.storage(cache.generation(), &a, &U256::from(1)), Some(U256::from(12)));
         assert_eq!(cache.storage(cache.generation(), &b, &U256::from(1)), None, "a deleted account's slots go");
         assert_eq!(cache.storage(cache.generation(), &b, &U256::from(2)), None, "a deleted account's slots go, also written ones");
-        assert_eq!(cache.code(&B256::repeat_byte(9)), Some(Bytes::from_static(b"code")));
+        assert_eq!(cache.code(&B256::repeat_byte(9)).map(|code| code.original_bytes()), Some(Bytes::from_static(b"code")));
 
         cache.put_storage(cache.generation(), a, U256::from(5), U256::from(50));
         cache.apply(&BlockChanges { wiped: vec![a], ..BlockChanges::default() });

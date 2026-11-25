@@ -279,11 +279,18 @@ impl<'d> NodeState<'d> {
 
     /// The code with hash `hash`.
     pub fn code(&self, hash: &B256) -> Result<Bytes, String> {
+        self.bytecode(hash).map(|code| code.original_bytes())
+    }
+
+    /// The code with hash `hash`, analyzed for execution. The execution cache keeps it analyzed
+    /// across blocks (evm2 keeps it within one).
+    pub fn bytecode(&self, hash: &B256) -> Result<Bytecode, String> {
         if let Some(code) = self.cache.as_ref().and_then(|(cache, _)| cache.code(hash)) {
             return Ok(code);
         }
         match self.view.code(*hash) {
             Ok(Some(code)) => {
+                let code = Bytecode::new_raw(code);
                 // Code is addressed by its hash, so it is never stale.
                 if let Some((cache, _)) = &self.cache {
                     cache.put_code(*hash, code.clone());
@@ -296,14 +303,14 @@ impl<'d> NodeState<'d> {
                 match &self.misses {
                     Some(misses) => {
                         misses.borrow_mut().codes.insert(*hash, None);
-                        Ok(Bytes::new())
+                        Ok(Bytecode::new())
                     }
                     None => Err(error),
                 }
             }
             Err(error) if self.collect(&error, |misses| _ = misses.codes.insert(*hash, None)) => {
                 self.record_trie(error);
-                Ok(Bytes::new())
+                Ok(Bytecode::new())
             }
             Err(error) => Err(self.record_trie(error)),
         }
@@ -431,7 +438,7 @@ impl Database for NodeDb<'_, '_> {
     }
 
     fn get_code_by_hash(&mut self, code_hash: &B256) -> Result<Bytecode, StateReadError> {
-        Ok(Bytecode::new_raw(self.0.code(code_hash).map_err(StateReadError)?))
+        self.0.bytecode(code_hash).map_err(StateReadError)
     }
 
     fn get_storage(&mut self, address: &Address, key: &U256) -> Result<U256, StateReadError> {
