@@ -172,6 +172,24 @@ pub enum MarkerState {
 }
 
 /// Publishes segments from a [`BlockSource`] into an archive.
+///
+/// The only public publication paths are [`Self::publish_segment`], [`Self::step`] and
+/// [`Self::run_until`], which all check finality, the predecessor marker and the parent link
+/// before writing. Raw row writes stay crate-internal:
+///
+/// ```no_run
+/// # use base_exoware_archive::{BlockSource, ExowareStore, SegmentPublisher};
+/// async fn checked<B: BlockSource + 'static>(p: &SegmentPublisher<ExowareStore, B>) {
+///     let _ = p.publish_segment(0).await;
+/// }
+/// ```
+///
+/// ```compile_fail
+/// # use base_exoware_archive::{BlockSource, ExowareStore, SegmentMarker, SegmentPublisher};
+/// async fn bypass<B: BlockSource + 'static>(p: &SegmentPublisher<ExowareStore, B>, m: &SegmentMarker) {
+///     let _ = p.put_with_recovery(0, m, &[]).await;
+/// }
+/// ```
 #[derive(Debug)]
 pub struct SegmentPublisher<S, B: ?Sized> {
     /// Archive handle.
@@ -368,7 +386,7 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
     /// complete; a confirmed absent one replays the same rows. A recheck that keeps failing
     /// aborts without another `Put`. The marker is rechecked after the last failed attempt too.
     /// Returns the number of `Put`s issued and the marker state that ended the loop.
-    pub async fn put_with_recovery(
+    pub(crate) async fn put_with_recovery(
         &self,
         segment: u64,
         marker: &SegmentMarker,
@@ -401,7 +419,7 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
 
     /// Reads marker `segment` for [`Self::put_with_recovery`], retrying failed reads up to
     /// `max_put_attempts` times. Quarantine and the last read error are returned.
-    pub async fn recheck_marker(
+    pub(crate) async fn recheck_marker(
         &self,
         segment: u64,
         marker: &SegmentMarker,
@@ -431,9 +449,8 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
     {
         let segment = self.next_segment().await?;
         let finalized = self.finalized().await?;
-        let highest_block = segment.checked_sub(1).map(|s| self.config.last_block(s));
-        if let (Some(finalized), Some(highest)) = (finalized, highest_block) {
-            ArchiveMetrics::lag_blocks().set(finalized.saturating_sub(highest) as f64);
+        if let Some(finalized) = finalized {
+            ArchiveMetrics::lag_blocks().set(self.lag_blocks(segment, finalized) as f64);
         }
         if self.require_finalized(segment, finalized).is_err() {
             return Ok(StepOutcome::Waiting { segment, finalized });
@@ -441,6 +458,13 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
         let outcome = self.publish_finalized(segment).await?;
         self.archive.prune(&self.config, Some(segment), self.options.prune_grace_segments).await?;
         Ok(StepOutcome::Advanced { segment, outcome })
+    }
+
+    /// Finalized blocks not yet published when `next` is the next segment to publish:
+    /// `finalized + 1 − first_block(next)`, saturating. Before marker 0 exists this counts
+    /// from the start segment, so a fresh exporter that cannot publish is visible.
+    pub const fn lag_blocks(&self, next: u64, finalized: u64) -> u64 {
+        finalized.saturating_add(1).saturating_sub(self.config.first_block(next))
     }
 
     /// Prunes against the current highest marker. A stalled exporter can reinsert rows
@@ -453,6 +477,11 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
 
     /// Runs [`Self::step`] until `shutdown` resolves, backing off exponentially on errors.
     /// Quarantine and config errors stop the loop.
+    ///
+    /// Shutdown is checked first and raced against every round, so a signaled exporter starts
+    /// no further round and abandons one in flight at its next await point (between chunks,
+    /// retries or backoffs). Abandoning a round is the same as a crash: the marker is written
+    /// last and replays write identical bytes, so a later round completes the segment.
     pub async fn run_until(&self, shutdown: impl Future<Output = ()>) -> Result<(), ArchiveError>
     where
         B: 'static,
@@ -463,11 +492,21 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
         loop {
             if last_reconcile.elapsed() >= self.options.reconcile_interval {
                 last_reconcile = Instant::now();
-                if let Err(err) = self.reconcile_prune().await {
+                let reconciled = tokio::select! {
+                    biased;
+                    () = &mut shutdown => return Ok(()),
+                    reconciled = self.reconcile_prune() => reconciled,
+                };
+                if let Err(err) = reconciled {
                     warn!(error = %err, "reconcile prune failed");
                 }
             }
-            let delay = match self.step().await {
+            let stepped = tokio::select! {
+                biased;
+                () = &mut shutdown => return Ok(()),
+                stepped = self.step() => stepped,
+            };
+            let delay = match stepped {
                 Ok(StepOutcome::Advanced { .. }) => {
                     failures = 0;
                     Duration::ZERO
@@ -999,6 +1038,72 @@ mod tests {
             assert_eq!((puts, state), (1, MarkerState::Absent), "a healthy store acknowledges the next put");
         })
         .await;
+    }
+
+    /// R5: a shutdown signaled before the loop starts issues no put at all, and one signaled
+    /// during a round's retry backoff ends the round at that await point instead of after it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shutdown_is_checked_before_and_inside_rounds() {
+        bounded(async {
+            let sim = TestSimulator::start().await;
+            let fixture = Arc::new(ChainFixture::standard());
+            let config = fixture.config(TEST_N, 0, None);
+            let plain = sim.archive("t-shutdown/", &config).await;
+            let faulty = Arc::new(FaultyStore::new(
+                Arc::clone(&plain.store),
+                vec![PutFault { when: PutMatch::AtOrAfter(0), kind: FaultKind::Fail, times: 100 }],
+            ));
+            let open = |options| {
+                SegmentPublisher::open(
+                    ExowareArchive::new(Arc::clone(&faulty)),
+                    Arc::new(FixtureNode::new(Arc::clone(&fixture))),
+                    fixture.verifier(),
+                    config,
+                    options,
+                )
+            };
+            let p = open(fast_options()).await.unwrap();
+            p.run_until(std::future::ready(())).await.expect("an already signaled shutdown is a clean exit");
+            assert_eq!(faulty.put_count(), 0, "no round starts after shutdown was signaled");
+
+            let slow = PublisherOptions {
+                initial_backoff: Duration::from_secs(30),
+                max_backoff: Duration::from_secs(30),
+                ..fast_options()
+            };
+            let p = open(slow).await.unwrap();
+            let started = Instant::now();
+            p.run_until(tokio::time::sleep(Duration::from_millis(500))).await.expect("clean exit");
+            assert!(started.elapsed() < Duration::from_secs(5), "shutdown ended the 30 s backoff, took {:?}", started.elapsed());
+            assert_eq!(faulty.put_count(), 1, "exactly the one failed put before the backoff");
+            assert!(
+                ExowareArchive::<FaultyStore<ExowareStore>>::marker(&faulty.session(), 0).await.unwrap().is_none(),
+                "the abandoned segment has no marker"
+            );
+        })
+        .await;
+    }
+
+    /// R5: lag counts every finalized block not yet published, from the start segment before
+    /// marker 0 exists.
+    #[test]
+    fn lag_counts_from_the_start_segment() {
+        let fixture = Arc::new(ChainFixture::standard());
+        let config = fixture.config(TEST_N, 2, None);
+        let p = SegmentPublisher {
+            archive: ExowareArchive::new(Arc::new(FaultyStore::new(
+                Arc::new(ExowareStore::new(exoware_sdk::StoreClient::new("http://127.0.0.1:1"), "t-lag/", Duration::from_secs(1)).unwrap()),
+                vec![],
+            ))),
+            source: Arc::new(FixtureNode::new(Arc::clone(&fixture))),
+            verifier: fixture.verifier(),
+            config,
+            options: fast_options(),
+        };
+        assert_eq!(p.lag_blocks(2, 15), 0, "finalized below the start block 16");
+        assert_eq!(p.lag_blocks(2, 16), 1, "start block finalized, nothing published");
+        assert_eq!(p.lag_blocks(2, 40), 25, "blocks 16..=40 pending before marker 2 exists");
+        assert_eq!(p.lag_blocks(4, 40), 9, "after markers 2 and 3, blocks 32..=40 pending");
     }
 
     /// A9: a row above the batch target goes in its own put; a value above 32 MiB is terminal.

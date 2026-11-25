@@ -208,6 +208,10 @@ mod tests {
                 }
             }
             expected.sort();
+            // A namespace is `[a-z0-9-]+/` and `/` occurs only as its last byte, so no valid
+            // namespace is a byte prefix of another ("t9/" and "t9-x/" differ before either
+            // ends). An unbounded range over "t9/" therefore returns only this archive's keys;
+            // the previous neighbor "t9/x" is now rejected by `ExowareStore::validate_namespace`.
             let after = dump(archive.store.as_ref()).await;
             for family in Family::INDEX.into_iter().chain(Family::BLOCK) {
                 let left = |rows: &[(Bytes, Bytes)]| rows.iter().filter(|(k, _)| ArchiveKey::family(k) == Some(family)).count();

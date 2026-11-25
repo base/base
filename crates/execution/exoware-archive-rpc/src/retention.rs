@@ -18,6 +18,15 @@ pub enum StateDomain {
     Storage,
 }
 
+/// Local data a successful local answer is built from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnswerNeeds {
+    /// Headers and bodies only: hashes-only blocks and transaction counts.
+    Body,
+    /// Bodies plus receipts and the transaction lookup: anything with deposit fields.
+    Deposits,
+}
+
 /// The node's earliest body and prune checkpoints.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LocalRetention {
@@ -73,11 +82,16 @@ impl LocalRetention {
         pruned.is_some_and(|pruned| number <= pruned)
     }
 
-    /// Whether a local block, transaction or receipt answer for `number` is incomplete: the
-    /// body is gone (reth's block cache may still answer) or the receipts that carry Base's
-    /// deposit fields are.
-    pub fn answer_incomplete(&self, number: u64) -> bool {
-        number < self.earliest_body || self.receipts_pruned.is_some_and(|pruned| number <= pruned)
+    /// Whether a local answer of kind `needs` about block `number` may be incomplete.
+    /// [`AnswerNeeds::Body`] answers (hashes-only blocks, transaction counts) need only the
+    /// body. [`AnswerNeeds::Deposits`] answers carry Base deposit fields, which the node fills
+    /// from receipts found through the transaction lookup and silently defaults when either is
+    /// gone, so they also need receipts and the lookup.
+    pub fn incomplete(&self, number: u64, needs: AnswerNeeds) -> bool {
+        let covered = |pruned: Option<u64>| pruned.is_some_and(|pruned| number <= pruned);
+        number < self.earliest_body
+            || (needs == AnswerNeeds::Deposits
+                && (covered(self.receipts_pruned) || covered(self.tx_lookup_pruned)))
     }
 
     /// Lowest block whose body and receipts the node holds.
@@ -96,7 +110,7 @@ impl LocalRetention {
                     || self.receipts_pruned.is_some()
                     || self.tx_lookup_pruned.is_some()
             },
-            |number| self.answer_incomplete(number),
+            |number| self.incomplete(number, AnswerNeeds::Deposits),
         )
     }
 }
@@ -116,6 +130,15 @@ impl RetentionCache {
     /// Creates an empty cache that reuses a read for `ttl`.
     pub const fn new(ttl: Duration) -> Self {
         Self { ttl, cached: Mutex::new(None) }
+    }
+
+    /// Calls `read` now, bypassing the TTL, and caches the result. Used after a local read
+    /// that may be incomplete: pruning only moves forward, so a boundary read after the local
+    /// read proves the local read happened before the data was pruned.
+    pub fn refresh(&self, read: impl FnOnce() -> LocalRetention) -> LocalRetention {
+        let retention = read();
+        *self.cached.lock().unwrap_or_else(PoisonError::into_inner) = Some((Instant::now(), retention));
+        retention
     }
 
     /// Returns the cached retention, or calls `read` once the cached value is older than
@@ -167,8 +190,14 @@ mod tests {
         assert!(storage_only.state_pruned(100, StateDomain::Storage), "checkpoint block is pruned");
         assert!(!storage_only.state_pruned(101, StateDomain::Storage), "101 is local");
         let receipts = LocalRetention { receipts_pruned: Some(40), ..Default::default() };
-        assert!(receipts.answer_incomplete(40), "receipts pruned at 40");
-        assert!(!receipts.answer_incomplete(41), "receipts kept from 41");
+        assert!(receipts.incomplete(40, AnswerNeeds::Deposits), "receipts pruned at 40");
+        assert!(!receipts.incomplete(41, AnswerNeeds::Deposits), "receipts kept from 41");
+        assert!(!receipts.incomplete(40, AnswerNeeds::Body), "hashes-only answers ignore receipts");
+        let lookup = LocalRetention { tx_lookup_pruned: Some(30), ..Default::default() };
+        assert!(lookup.incomplete(30, AnswerNeeds::Deposits), "lookup-only pruning defaults deposit fields");
+        assert!(!lookup.incomplete(30, AnswerNeeds::Body), "lookup pruning leaves counts intact");
+        let bodies = LocalRetention { earliest_body: 10, ..Default::default() };
+        assert!(bodies.incomplete(9, AnswerNeeds::Body), "a pruned body is incomplete for every kind");
         assert_eq!(receipts.first_complete(), 41, "first complete block");
         let bodies = LocalRetention { earliest_body: 10, receipts_pruned: Some(4), ..Default::default() };
         assert_eq!(bodies.first_complete(), 10, "bodies bound the complete range");
@@ -186,6 +215,19 @@ mod tests {
         let bodies = LocalRetention { earliest_body: 10, ..Default::default() };
         assert!(bodies.archive_may_hold(Some(9)), "block 9 is pruned");
         assert!(!bodies.archive_may_hold(Some(10)), "block 10 is local");
+    }
+
+    /// `refresh` bypasses the TTL and seeds the cache for later `get` calls.
+    #[test]
+    fn refresh_bypasses_the_ttl() {
+        let cache = RetentionCache::new(Duration::from_secs(60));
+        assert_eq!(cache.get(|| LocalRetention { earliest_body: 1, ..Default::default() }).earliest_body, 1, "first read");
+        assert_eq!(
+            cache.refresh(|| LocalRetention { earliest_body: 5, ..Default::default() }).earliest_body,
+            5,
+            "refresh reads inside the TTL"
+        );
+        assert_eq!(cache.get(|| unreachable!("cached")).earliest_body, 5, "later reads see the refreshed value");
     }
 
     /// Every call inside the TTL reuses one read; the first after it reads again.

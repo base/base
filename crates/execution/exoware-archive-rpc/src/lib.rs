@@ -12,13 +12,13 @@ mod convert;
 pub use convert::{ArchiveConverter, PreparedBlock};
 
 mod retention;
-pub use retention::{LocalRetention, RetentionCache, StateDomain};
+pub use retention::{AnswerNeeds, LocalRetention, RetentionCache, StateDomain};
 
 mod handle;
 pub use handle::{ArchiveHandle, HashLookup, NodeArchiveReader};
 
 mod eth;
-pub use eth::{ArchiveEth, ArchiveEthApiServer, ArchiveRpcBoundary, LocalEthApi};
+pub use eth::{Addressed, ArchiveEth, ArchiveEthApiServer, ArchiveRpcBoundary, LocalEthApi, LocalIdentity};
 
 mod extension;
 pub use extension::{ExowareArchiveExtension, RETENTION_TTL};

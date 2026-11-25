@@ -6,7 +6,9 @@
 //! recomputes the digest against the marker.
 //!
 //! Block families (`0x10`–`0x15`) are keyed by block number, so the audit enumerates every
-//! stored key of the segment's block range and reports keys that the rebuild does not produce.
+//! stored key of the segment's block range, through the whole prefix interval of the last
+//! block's key, and reports keys that the rebuild does not produce; those rows also enter the
+//! digest of the stored rows, so they show as a digest mismatch too.
 //! Hash-led families (`0x01`–`0x05`) put the segment number after the hash or address, so the
 //! keys of one segment are not a contiguous range: an extra locator or posting can only be found
 //! by scanning the whole family. The audit checks every expected hash-led row but cannot report
@@ -127,19 +129,39 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
         let last = self.config.last_block(segment);
         let n = self.config.blocks_per_segment as usize;
         let mut unexpected = Vec::new();
+        let mut extras: Vec<(Bytes, Bytes)> = Vec::new();
         let mut columns: Vec<Vec<Option<Bytes>>> = Vec::with_capacity(Family::BLOCK.len());
         for family in Family::BLOCK {
-            // The limit leaves room for malformed keys between the expected ones.
+            // Block keys have a fixed length, so every key between the last block's key and the
+            // next block's key extends the last block's key. Scanning through the next block's
+            // key (inclusive) covers the last key's whole prefix interval; that next key itself
+            // belongs to the following segment and is skipped. The limit leaves room for
+            // malformed keys between the expected ones.
+            let end = match last.checked_add(1) {
+                Some(next) => ArchiveKey::block(family, next),
+                None => {
+                    let mut end = ArchiveKey::block(family, last).to_vec();
+                    end.extend([0xff; 64]);
+                    Bytes::from(end)
+                }
+            };
+            let next_key = last.checked_add(1).map(|next| ArchiveKey::block(family, next));
             let rows = session
-                .range(&ArchiveKey::block(family, first), &ArchiveKey::block(family, last), n.saturating_mul(2), RangeMode::Forward)
+                .range(&ArchiveKey::block(family, first), &end, n.saturating_mul(2).saturating_add(1), RangeMode::Forward)
                 .await?;
             let mut column = vec![None; n];
             for (key, value) in rows {
+                if next_key.as_ref() == Some(&key) {
+                    continue;
+                }
                 match ArchiveKey::number(&key)
                     .filter(|b| (first..=last).contains(b) && ArchiveKey::family(&key) == Some(family))
                 {
                     Some(number) => column[(number - first) as usize] = Some(value),
-                    None => unexpected.push(AuditFinding::UnexpectedRow { family, key: hex::encode(&key) }),
+                    None => {
+                        unexpected.push(AuditFinding::UnexpectedRow { family, key: hex::encode(&key) });
+                        extras.push((key, value));
+                    }
                 }
             }
             for (i, value) in column.iter().enumerate() {
@@ -149,9 +171,16 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
             }
             columns.push(column);
         }
-        findings.append(&mut unexpected);
+        // Unexpected rows do not stop the audit: the segment is still rebuilt, and the rows
+        // enter the digest of the stored rows below, so they also show as a digest mismatch.
+        // They are reported first.
+        let with_unexpected = |findings: Vec<AuditFinding>| {
+            let mut all = unexpected.clone();
+            all.extend(findings);
+            Self::report(segment, all)
+        };
         if !findings.is_empty() {
-            return Ok(Self::report(segment, findings));
+            return Ok(with_unexpected(findings));
         }
         let mut blocks = Vec::with_capacity(n);
         for i in 0..n {
@@ -180,12 +209,12 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
             }
         }
         if !findings.is_empty() {
-            return Ok(Self::report(segment, findings));
+            return Ok(with_unexpected(findings));
         }
         let headers: Vec<_> = blocks.iter().map(|b| b.header.clone()).collect();
         if let Err(err) = BlockVerifier::verify_linkage(&headers, marker.last_hash) {
             findings.push(AuditFinding::LinkageInvalid { reason: err.to_string() });
-            return Ok(Self::report(segment, findings));
+            return Ok(with_unexpected(findings));
         }
         let rebuilt = SegmentRows::build(&self.config, segment, &blocks)?;
         if rebuilt.marker != marker {
@@ -193,7 +222,7 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
         }
         let keys: Vec<Bytes> = rebuilt.rows.iter().map(|(k, _)| k.clone()).collect();
         let stored = session.get_many(&keys).await?;
-        let mut digest = SegmentDigest::default();
+        let mut present: Vec<(&[u8], &[u8])> = extras.iter().map(|(k, v)| (k.as_ref(), v.as_ref())).collect();
         for ((key, expected), found) in rebuilt.rows.iter().zip(&stored) {
             let family = ArchiveKey::family(key).unwrap_or(Family::Config);
             match found {
@@ -202,15 +231,20 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
                     if value != expected {
                         findings.push(AuditFinding::RowMismatch { family, key: hex::encode(key) });
                     }
-                    digest.update(key, value);
+                    present.push((key.as_ref(), value.as_ref()));
                 }
             }
+        }
+        present.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        let mut digest = SegmentDigest::default();
+        for (key, value) in present {
+            digest.update(key, value);
         }
         let stored_rows = digest.finish();
         if stored_rows != marker.digest {
             findings.push(AuditFinding::DigestMismatch { marker: marker.digest, stored_rows });
         }
-        Ok(Self::report(segment, findings))
+        Ok(with_unexpected(findings))
     }
 
     /// Builds a report, counting a dirty segment as a fault.
@@ -286,15 +320,47 @@ mod tests {
             publish_through(&archive, &fixture, config, 1).await;
             let auditor = SegmentAuditor::new(archive.clone(), config, fixture.verifier());
             assert!(auditor.audit_segment(1).await.unwrap().is_clean(), "segment 1 clean before the insert");
-            let mut extra = ArchiveKey::block(Family::Receipts, 10).to_vec();
-            extra.push(0);
-            archive.store.put(&[(Bytes::from(extra.clone()), Bytes::from_static(b"x"))]).await.unwrap();
-            let report = auditor.audit_segment(1).await.unwrap();
-            assert_eq!(
-                report.findings,
-                vec![AuditFinding::UnexpectedRow { family: Family::Receipts, key: hex::encode(&extra) }],
-                "exactly the inserted row is reported"
-            );
+            let marker = ExowareArchive::<crate::ExowareStore>::marker(&archive.store.session(), 1).await.unwrap().unwrap();
+            // Interior extra (after block 10) and an extra extending the last block's key (15),
+            // which sorts past that key.
+            for (block, label) in [(10, "interior"), (15, "last block")] {
+                let mut extra = ArchiveKey::block(Family::Receipts, block).to_vec();
+                extra.push(0);
+                archive.store.put(&[(Bytes::from(extra.clone()), Bytes::from_static(b"x"))]).await.unwrap();
+                let report = auditor.audit_segment(1).await.unwrap();
+                let stored_rows = report.findings.iter().find_map(|f| match f {
+                    AuditFinding::DigestMismatch { stored_rows, .. } => Some(*stored_rows),
+                    _ => None,
+                });
+                assert_eq!(
+                    report.findings.first(),
+                    Some(&AuditFinding::UnexpectedRow { family: Family::Receipts, key: hex::encode(&extra) }),
+                    "{label}: the inserted row is reported first"
+                );
+                assert_eq!(
+                    report.findings.last(),
+                    Some(&AuditFinding::DigestMismatch { marker: marker.digest, stored_rows: stored_rows.expect("digest mismatch") }),
+                    "{label}: the extra enters the stored-row digest"
+                );
+                assert_ne!(stored_rows, Some(marker.digest), "{label}: digest differs from the marker");
+                archive
+                    .store
+                    .prune(&[PrunePolicy {
+                        scope: KeysScope {
+                            selector: Selector { prefix: Bytes::from(extra.clone()), payload_regex: "(?s-u)^$".into() },
+                            group_by: GroupBy::default(),
+                            order_by: None,
+                        },
+                        retain: RetainPolicy::DropAll,
+                    }])
+                    .await
+                    .unwrap();
+                assert!(auditor.audit_segment(1).await.unwrap().is_clean(), "{label}: clean after removing the extra");
+            }
+            let mut next_segment = ArchiveKey::block(Family::Receipts, 16).to_vec();
+            next_segment.push(0);
+            archive.store.put(&[(Bytes::from(next_segment), Bytes::from_static(b"x"))]).await.unwrap();
+            assert!(auditor.audit_segment(1).await.unwrap().is_clean(), "an extra of segment 2 is not segment 1's");
             assert!(auditor.audit_segment(0).await.unwrap().is_clean(), "segment 0 unaffected");
         })
         .await

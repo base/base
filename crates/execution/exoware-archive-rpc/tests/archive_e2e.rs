@@ -17,13 +17,17 @@ use base_common_precompiles::NonceManagerStorage;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_base_tx_rpc_node::TxBaseRpcExtension;
 use base_execution_chainspec::BaseChainSpec;
-use base_exoware_archive::{ArchiveStore, ExowareArchive, ExowareStore};
+use base_exoware_archive::{ArchiveKey, ArchiveStore, BlockVerifier, ExowareArchive, ExowareStore};
 use base_exoware_archive_rpc::{ExowareArchiveArgs, ExowareArchiveExtension};
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, LocalNodeRetention, TestHarness};
 use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::{Account, build_test_genesis, build_test_genesis_cobalt, build_test_genesis_everest};
 use reth_node_core::args::{PruningArgs, StaticFilesArgs};
-use reth_storage_api::{BlockNumReader, BlockReader, StateProviderFactory, errors::ProviderError};
+use reth_chainspec::EthChainSpec;
+use reth_prune_types::PruneSegment;
+use reth_storage_api::{
+    BlockNumReader, BlockReader, PruneCheckpointReader, StateProviderFactory, errors::ProviderError,
+};
 use serde_json::{Value, json};
 
 /// EIP-4444 "pruned history" error code.
@@ -118,10 +122,13 @@ async fn archive_node(
     chain_spec: Arc<BaseChainSpec>,
     retention: LocalNodeRetention,
     args: ExowareArchiveArgs,
+    max_logs: Option<u64>,
 ) -> TestHarness {
-    TestHarness::builder()
-        .with_chain_spec(chain_spec)
-        .with_retention(retention)
+    let mut builder = TestHarness::builder().with_chain_spec(chain_spec).with_retention(retention);
+    if let Some(max) = max_logs {
+        builder = builder.with_max_logs_per_response(max);
+    }
+    builder
         .with_ext::<TxBaseRpcExtension>(())
         .with_ext::<ExowareArchiveExtension>(args)
         .build()
@@ -140,8 +147,9 @@ async fn call(client: &RpcClient, method: &'static str, params: Value) -> Value 
     }
 }
 
-/// Number-addressed requests over the active blocks.
-fn number_requests(blocks: &[(u64, B256)], contract: Address) -> Vec<(&'static str, Value)> {
+/// Number-addressed requests over the active blocks. Multi-block log queries are left out
+/// when `with_range_logs` is false (a node with a tiny log cap refuses them before pruning too).
+fn number_requests(blocks: &[(u64, B256)], contract: Address, with_range_logs: bool) -> Vec<(&'static str, Value)> {
     let mut out = Vec::new();
     for (number, hash) in blocks {
         let tag = format!("0x{number:x}");
@@ -164,13 +172,16 @@ fn number_requests(blocks: &[(u64, B256)], contract: Address) -> Vec<(&'static s
             "eth_getStorageAt",
             json!([contract, "0x0", { "blockHash": hash, "requireCanonical": true }]),
         ));
+        out.push((
+            "eth_getTransactionCount",
+            json!([Account::Alice.address(), { "blockNumber": tag }]),
+        ));
     }
-    let last = blocks.last().expect("blocks").0;
-    out.push(("eth_getLogs", json!([{ "fromBlock": "0x1", "toBlock": format!("0x{last:x}") }])));
-    out.push((
-        "eth_getLogs",
-        json!([{ "fromBlock": "0x1", "toBlock": "latest", "address": contract }]),
-    ));
+    if with_range_logs {
+        let last = format!("0x{:x}", blocks.last().expect("blocks").0);
+        out.push(("eth_getLogs", json!([{ "fromBlock": "0x1", "toBlock": last }])));
+        out.push(("eth_getLogs", json!([{ "fromBlock": "0x1", "toBlock": last, "address": contract }])));
+    }
     out
 }
 
@@ -179,17 +190,18 @@ fn hash_requests(blocks: &[(u64, B256)], tx_hashes: &[B256]) -> Vec<(&'static st
     let mut out = Vec::new();
     for (number, hash) in blocks {
         out.push(("eth_getBlockByHash", json!([hash, true])));
+        out.push(("eth_getBlockByHash", json!([hash, false])));
         out.push(("eth_getBlockTransactionCountByHash", json!([hash])));
         if *number <= ACTIVE_BLOCKS {
             out.push(("eth_getTransactionByBlockHashAndIndex", json!([hash, "0x2"])));
             out.push(("eth_getBlockReceipts", json!([{ "blockHash": hash }])));
+            out.push(("eth_getLogs", json!([{ "blockHash": hash }])));
         }
     }
     for hash in tx_hashes {
         out.push(("eth_getTransactionByHash", json!([hash])));
         out.push(("eth_getTransactionReceipt", json!([hash])));
     }
-    out.push(("eth_getLogs", json!([{ "blockHash": blocks[2].1 }])));
     out
 }
 
@@ -210,24 +222,111 @@ async fn wait_for_segment(store: &ExowareStore, segment: u64) {
     .unwrap_or_else(|_| panic!("exporter did not publish segment {segment} in time"));
 }
 
-/// A pruned node serves every covered `eth_` method from the archive with JSON parity; with
-/// the store down, number-addressed reads in the pruned range are 4444 and an unknown hash is
-/// `null`.
-#[tokio::test(flavor = "multi_thread")]
-async fn pruned_node_serves_history_from_archive() {
-    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity()).await.expect("e2e run timed out");
+/// One retention setup to check for parity.
+struct Scenario {
+    /// Name for assertion messages.
+    name: &'static str,
+    /// Node retention.
+    retention: LocalNodeRetention,
+    /// Prune segment whose checkpoint must cover every compared block.
+    pruned: PruneSegment,
+    /// `--rpc.max-logs-per-response`.
+    max_logs: Option<u64>,
+    /// Run the checks that need bodies and state pruned too (warm-cache prune, tags, forged
+    /// locators, store down).
+    full: bool,
 }
 
-/// Body of [`pruned_node_serves_history_from_archive`].
-async fn pruned_node_parity() {
-    let (simulator, url) = exoware_simulator::open_temp().await.expect("simulator starts");
-    let store = ExowareStore::connect(&url, NAMESPACE, Duration::from_secs(5)).expect("store");
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
-    let harness = archive_node(chain_spec, short_retention(), archive_args(&url, true)).await;
-    let client = harness.rpc_client().expect("rpc client");
+/// A pruned node serves every covered `eth_` method from the archive with JSON parity, also
+/// for a block pruned while the caches were warm. Tags stay local, forged locators are 4444,
+/// and with the store down number-addressed reads in the pruned range are 4444 and an unknown
+/// hash is `null`.
+#[tokio::test(flavor = "multi_thread")]
+async fn pruned_node_serves_history_from_archive() {
+    let scenario = Scenario {
+        name: "full",
+        retention: short_retention(),
+        pruned: PruneSegment::Bodies,
+        max_logs: None,
+        full: true,
+    };
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario)).await.expect("e2e run timed out");
+}
 
-    // Blocks 1..=ACTIVE_BLOCKS: a deployment, value transfers and contract calls that write
-    // storage and emit logs.
+/// Receipt-only pruning: bodies and state stay local, but every answer with deposit fields
+/// and every log comes from the archive.
+#[tokio::test(flavor = "multi_thread")]
+async fn receipt_only_pruning_serves_deposit_fields_from_archive() {
+    let retention = LocalNodeRetention {
+        pruning: PruningArgs {
+            block_interval: Some(1),
+            minimum_distance: Some(RETENTION),
+            receipts_distance: Some(RETENTION),
+            ..Default::default()
+        },
+        static_files: short_retention().static_files,
+    };
+    let scenario =
+        Scenario { name: "receipts", retention, pruned: PruneSegment::Receipts, max_logs: None, full: false };
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario)).await.expect("e2e run timed out");
+}
+
+/// Transaction-lookup-only pruning: the node cannot place a transaction hash, and Base would
+/// default deposit fields; hash reads resolve through the archive's locators.
+#[tokio::test(flavor = "multi_thread")]
+async fn lookup_only_pruning_resolves_hashes_in_archive() {
+    let retention = LocalNodeRetention {
+        pruning: PruningArgs {
+            block_interval: Some(1),
+            transaction_lookup_distance: Some(RETENTION),
+            ..Default::default()
+        },
+        static_files: short_retention().static_files,
+    };
+    let scenario = Scenario {
+        name: "lookup",
+        retention,
+        pruned: PruneSegment::TransactionLookup,
+        max_logs: None,
+        full: false,
+    };
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario)).await.expect("e2e run timed out");
+}
+
+/// Unequal retention: account history is kept but storage history is pruned. reth refuses
+/// account reads at old blocks as pruned (or with `InsufficientChangesets`) although the
+/// account checkpoint says they are local; those refusals go to the archive.
+#[tokio::test(flavor = "multi_thread")]
+async fn asymmetric_state_retention_serves_refused_state_from_archive() {
+    let mut retention = short_retention();
+    retention.pruning.account_history_distance = None;
+    let scenario = Scenario {
+        name: "asymmetric",
+        retention,
+        pruned: PruneSegment::StorageHistory,
+        max_logs: None,
+        full: false,
+    };
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario)).await.expect("e2e run timed out");
+}
+
+/// The node's `--rpc.max-logs-per-response` applies to the combined archive + local result
+/// with reth's error, whether the crossing block is archived or local.
+#[tokio::test(flavor = "multi_thread")]
+async fn combined_log_limit_matches_reth() {
+    let scenario = Scenario {
+        name: "limits",
+        retention: short_retention(),
+        pruned: PruneSegment::Receipts,
+        max_logs: Some(2),
+        full: false,
+    };
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario)).await.expect("e2e run timed out");
+}
+
+/// Builds `ACTIVE_BLOCKS` blocks of transfers and contract calls on `harness`; returns the
+/// contract and every transaction hash.
+async fn build_active_blocks(harness: &TestHarness) -> (Address, Vec<B256>) {
     let (deploy, contract, deploy_hash) =
         Account::Deployer.create_deployment_tx(init_code(), 0).expect("deployment tx");
     let mut tx_hashes = vec![deploy_hash];
@@ -245,18 +344,36 @@ async fn pruned_node_parity() {
                     .nonce(nonce * 2),
             )
             .expect("transfer tx");
-        let (set, set_hash) = Account::Alice
-            .sign_txn_request(
-                BaseTransactionRequest::default()
-                    .to(contract)
-                    .input(B256::from(U256::from(100 + number)).0.to_vec().into())
-                    .nonce(nonce * 2 + 1),
-            )
-            .expect("contract call tx");
+        let (set, set_hash) = contract_call(contract, 100 + number, nonce * 2 + 1);
         txs.extend([transfer, set]);
         tx_hashes.extend([transfer_hash, set_hash]);
         harness.build_block_from_transactions(txs).await.expect("active block");
     }
+    (contract, tx_hashes)
+}
+
+/// Alice's call storing and logging `value` in the contract.
+fn contract_call(contract: Address, value: u64, nonce: u64) -> (Bytes, B256) {
+    Account::Alice
+        .sign_txn_request(
+            BaseTransactionRequest::default()
+                .to(contract)
+                .input(B256::from(U256::from(value)).0.to_vec().into())
+                .nonce(nonce),
+        )
+        .expect("contract call tx")
+}
+
+/// Body of the parity tests.
+async fn pruned_node_parity(scenario: Scenario) {
+    let name = scenario.name;
+    let (simulator, url) = exoware_simulator::open_temp().await.expect("simulator starts");
+    let store = ExowareStore::connect(&url, NAMESPACE, Duration::from_secs(5)).expect("store");
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
+    let harness =
+        archive_node(chain_spec, scenario.retention, archive_args(&url, true), scenario.max_logs).await;
+    let client = harness.rpc_client().expect("rpc client");
+    let (contract, tx_hashes) = build_active_blocks(&harness).await;
     harness.advance_chain(BLOCKS_PER_SEGMENT * 2 - ACTIVE_BLOCKS).await.expect("advance");
 
     let provider = harness.blockchain_provider();
@@ -266,9 +383,10 @@ async fn pruned_node_parity() {
             (n, alloy_primitives::Sealable::hash_slow(&block.header))
         })
         .collect();
-    let number_requests = number_requests(&blocks, contract);
-    let hash_requests = hash_requests(&blocks, &tx_hashes);
-    let requests: Vec<_> = number_requests.iter().chain(&hash_requests).cloned().collect();
+    let requests: Vec<_> = number_requests(&blocks, contract, scenario.max_logs.is_none())
+        .into_iter()
+        .chain(hash_requests(&blocks, &tx_hashes))
+        .collect();
     let mut expected = Vec::with_capacity(requests.len());
     for (method, params) in &requests {
         expected.push(call(&client, method, params.clone()).await);
@@ -276,61 +394,245 @@ async fn pruned_node_parity() {
     for ((method, params), value) in requests.iter().zip(&expected) {
         assert!(
             value.get("code").is_none() && value.get("transport").is_none() && !value.is_null(),
-            "{method} {params} must succeed before pruning, got {value}"
+            "{name}: {method} {params} must succeed before pruning, got {value}"
         );
     }
+    let active_logs = call(
+        &client,
+        "eth_getLogs",
+        json!([{ "fromBlock": "0x1", "toBlock": format!("0x{ACTIVE_BLOCKS:x}"), "address": contract }]),
+    )
+    .await;
+    let active_logs = active_logs.as_array().cloned().unwrap_or_else(|| {
+        // A log cap below the active log count refuses this before pruning; rebuild it per block.
+        Vec::new()
+    });
+    let mut per_block_logs = Vec::new();
+    for (number, hash) in &blocks[..ACTIVE_BLOCKS as usize] {
+        let logs = call(&client, "eth_getLogs", json!([{ "blockHash": hash, "address": contract }])).await;
+        let logs = logs.as_array().cloned().unwrap_or_else(|| panic!("{name}: logs of block {number}: {logs}"));
+        assert_eq!(logs.len(), 1, "{name}: block {number} has one contract log");
+        per_block_logs.extend(logs);
+    }
+    if scenario.max_logs.is_none() {
+        assert_eq!(active_logs, per_block_logs, "{name}: range and per-block logs agree before pruning");
+    }
+    let warm_block = blocks[0];
+    let warm_requests = [
+        ("eth_getBlockByNumber", json!(["0x1", true])),
+        ("eth_getTransactionReceipt", json!([tx_hashes[1]])),
+    ];
+    let warm_expected = [
+        call(&client, warm_requests[0].0, warm_requests[0].1.clone()).await,
+        call(&client, warm_requests[1].0, warm_requests[1].1.clone()).await,
+    ];
 
     // Export while the chain grows past the retention window: the finalized head trails the
     // head by one block, so segment k is published once block 8k+8 exists.
     wait_for_segment(&store, 0).await;
+    let mut warm_checked = false;
     while harness.latest_block().number < TIP {
+        let head = harness.latest_block().number;
+        if scenario.full && !warm_checked && head + BLOCKS_PER_SEGMENT > RETENTION + 1 {
+            // Warm-cache prune: a background reader keeps the node's block cache and the
+            // boundary's retention cache warm while the node prunes block 1, so the re-read
+            // right after the prune meets caches filled before it. (A wall-clock bound on the
+            // cache age is not asserted: block building under parallel tests can exceed the
+            // retention TTL; the answer must be exact either way.)
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let warmer = {
+                let (client, stop, requests) = (client.clone(), Arc::clone(&stop), warm_requests.clone());
+                tokio::spawn(async move {
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        for (method, params) in &requests {
+                            call(&client, method, params.clone()).await;
+                        }
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                })
+            };
+            let mut pruned = false;
+            for _ in 0..(4 * BLOCKS_PER_SEGMENT) {
+                harness.advance_chain(1).await.expect("advance");
+                if matches!(provider.block_by_number(warm_block.0), Err(ProviderError::BlockExpired { requested: 1, .. })) {
+                    pruned = true;
+                    break;
+                }
+            }
+            let mut after = Vec::new();
+            for (method, params) in &warm_requests {
+                after.push(call(&client, method, params.clone()).await);
+            }
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            warmer.await.expect("warm reader");
+            assert!(pruned, "{name}: block 1 is pruned within {} blocks", 4 * BLOCKS_PER_SEGMENT);
+            assert_eq!(after, warm_expected, "{name}: a block pruned under warm caches keeps its deposit fields");
+            warm_checked = true;
+            let head = harness.latest_block().number;
+            wait_for_segment(&store, head / BLOCKS_PER_SEGMENT - 2).await;
+            continue;
+        }
         harness.advance_chain(BLOCKS_PER_SEGMENT).await.expect("advance");
         let head = harness.latest_block().number;
         wait_for_segment(&store, head / BLOCKS_PER_SEGMENT - 2).await;
     }
+    assert_eq!(warm_checked, scenario.full, "{name}: warm-cache check ran exactly when expected");
 
-    // The node no longer has the active blocks' bodies or state.
-    let pruned_state = provider
-        .history_by_block_number(1)
-        .and_then(|state| state.basic_account(&Account::Alice.address()));
-    assert!(
-        matches!(
-            pruned_state,
-            Err(ProviderError::StateAtBlockPruned(1)
-                | ProviderError::InsufficientChangesets { requested: 1, .. })
-        ),
-        "state at block 1 must be pruned locally, got {pruned_state:?}"
+    // A retained block with a matching log, so log queries span both sides.
+    let head = harness.latest_block().number;
+    let (retained_call, _) = contract_call(contract, 999, ACTIVE_BLOCKS * 2);
+    harness
+        .build_block_from_transactions(vec![l1_info_deposit(head + 1), base_time_deposit(head + 1), retained_call])
+        .await
+        .expect("retained block");
+    let retained = head + 1;
+    let retained_hash = alloy_primitives::Sealable::hash_slow(
+        &provider.block_by_number(retained).expect("read").expect("retained block").header,
     );
-    let pruned_body = provider.block_by_number(1);
+    let retained_logs = call(&client, "eth_getLogs", json!([{ "blockHash": retained_hash, "address": contract }])).await;
+    let retained_logs = retained_logs.as_array().cloned().expect("retained logs");
+    assert_eq!(retained_logs.len(), 1, "{name}: the retained block has one contract log");
+
+    // The node no longer has the compared blocks' data for the scenario's segment.
+    let checkpoint = provider
+        .get_prune_checkpoint(scenario.pruned)
+        .expect("checkpoint read")
+        .and_then(|c| c.block_number);
+    // Blocks after the active ones hold no transactions, so the lookup checkpoint stops at
+    // the last active block.
+    let through = if scenario.pruned == PruneSegment::TransactionLookup { ACTIVE_BLOCKS } else { ACTIVE_BLOCKS + 2 };
     assert!(
-        !matches!(pruned_body, Ok(Some(_))),
-        "body of block 1 must be pruned locally, got {pruned_body:?}"
+        checkpoint.is_some_and(|c| c >= through),
+        "{name}: {:?} is pruned through every compared block, checkpoint {checkpoint:?}",
+        scenario.pruned
     );
-    let earliest = provider.earliest_block_number().expect("earliest block");
-    assert!(earliest > ACTIVE_BLOCKS + 2, "every compared block is pruned (earliest {earliest})");
+    if scenario.full {
+        let pruned_state = provider
+            .history_by_block_number(1)
+            .and_then(|state| state.basic_account(&Account::Alice.address()));
+        assert!(
+            matches!(
+                pruned_state,
+                Err(ProviderError::StateAtBlockPruned(1)
+                    | ProviderError::InsufficientChangesets { requested: 1, .. })
+            ),
+            "state at block 1 must be pruned locally, got {pruned_state:?}"
+        );
+        let earliest = provider.earliest_block_number().expect("earliest block");
+        let pruned_body = provider.block_by_number(1);
+        assert!(
+            matches!(pruned_body, Err(ProviderError::BlockExpired { requested: 1, earliest_available }) if earliest_available == earliest),
+            "the body of block 1 reads as exactly BlockExpired {{ 1, {earliest} }}, got {pruned_body:?}"
+        );
+        assert!(earliest > ACTIVE_BLOCKS + 2, "every compared block is pruned (earliest {earliest})");
+    }
 
     for ((method, params), before) in requests.iter().zip(&expected) {
         let after = call(&client, method, params.clone()).await;
-        assert_eq!(&after, before, "{method} {params} must match the pre-pruning response");
+        assert_eq!(&after, before, "{name}: {method} {params} must match the pre-pruning response");
     }
 
-    // A block above the head stays a local `null` on a pruned node.
+    // Split logs: archived and retained matches, in order, with no gap.
+    let combined = json!([{ "fromBlock": "0x1", "toBlock": "latest", "address": contract }]);
+    let split = call(&client, "eth_getLogs", combined.clone()).await;
+    match scenario.max_logs {
+        None => {
+            let expected: Vec<Value> = per_block_logs.iter().chain(&retained_logs).cloned().collect();
+            assert_eq!(split, Value::Array(expected), "{name}: archived then retained logs, exactly");
+        }
+        Some(max) => {
+            assert_eq!(
+                split,
+                json!({ "code": -32602, "message": format!("query exceeds max results {max}, retry with the range 1-2") }),
+                "{name}: the cap fails at archived block 3"
+            );
+            let tail = call(
+                &client,
+                "eth_getLogs",
+                json!([{ "fromBlock": format!("0x{:x}", ACTIVE_BLOCKS - 1), "toBlock": "latest", "address": contract }]),
+            )
+            .await;
+            assert_eq!(
+                tail,
+                json!({
+                    "code": -32602,
+                    "message": format!(
+                        "query exceeds max results {max}, retry with the range {}-{}",
+                        ACTIVE_BLOCKS - 1,
+                        retained - 1
+                    )
+                }),
+                "{name}: the cap fails at the retained block after two archived logs"
+            );
+            let within = call(
+                &client,
+                "eth_getLogs",
+                json!([{ "fromBlock": format!("0x{ACTIVE_BLOCKS:x}"), "toBlock": "latest", "address": contract }]),
+            )
+            .await;
+            let expected: Vec<Value> = per_block_logs[ACTIVE_BLOCKS as usize - 1..].iter().chain(&retained_logs).cloned().collect();
+            assert_eq!(within, Value::Array(expected), "{name}: exactly the cap is served across the split");
+        }
+    }
+    if !scenario.full {
+        return;
+    }
+
+    // Tags and pending stay local on a pruned node.
     let head = harness.latest_block().number;
-    let next =
-        call(&client, "eth_getBlockByNumber", json!([format!("0x{:x}", head + 1), false])).await;
+    let alice = Account::Alice.address();
+    let at_head = call(&client, "eth_getBalance", json!([alice, format!("0x{head:x}")])).await;
+    for tag in ["latest", "pending", "safe", "finalized"] {
+        let value = call(&client, "eth_getBalance", json!([alice, tag])).await;
+        assert!(value.is_string(), "{tag} balance is served locally, got {value}");
+        if tag != "safe" && tag != "finalized" {
+            assert_eq!(value, at_head, "{tag} balance equals the balance at the head");
+        }
+    }
+    let latest = call(&client, "eth_getBlockByNumber", json!(["latest", false])).await;
+    assert_eq!(latest["number"], json!(format!("0x{head:x}")), "latest is the head");
+    let pending_logs = call(&client, "eth_getLogs", json!([{ "fromBlock": "latest", "toBlock": "pending" }])).await;
+    assert!(pending_logs.is_array(), "a latest..pending log query is served locally, got {pending_logs}");
+    let next = call(&client, "eth_getBlockByNumber", json!([format!("0x{:x}", head + 1), false])).await;
     assert_eq!(next, Value::Null, "block {} does not exist yet", head + 1);
 
-    // Store down: number-addressed reads in the pruned range are 4444 with a reason, an
-    // unknown hash keeps the node's `null`, and recent blocks are still served locally.
+    // Forged locators: an unknown hash whose locator points at block 2 resolves in the
+    // archive, then fails the hash check, and is 4444 rather than a wrong block or null.
+    let forged_block = B256::repeat_byte(0xb1);
+    let forged_tx = B256::repeat_byte(0xc1);
+    let mut tx_locator = 2u64.to_be_bytes().to_vec();
+    tx_locator.extend(0u32.to_be_bytes());
+    store
+        .put(&[
+            (ArchiveKey::block_hash(forged_block, 0), 2u64.to_be_bytes().to_vec().into()),
+            (ArchiveKey::tx_hash(forged_tx, 0), tx_locator.into()),
+        ])
+        .await
+        .expect("forge locators");
+    for (method, params) in [
+        ("eth_getBlockByHash", json!([forged_block, true])),
+        ("eth_getBlockTransactionCountByHash", json!([forged_block])),
+        ("eth_getLogs", json!([{ "blockHash": forged_block }])),
+        ("eth_getTransactionByHash", json!([forged_tx])),
+        ("eth_getTransactionReceipt", json!([forged_tx])),
+    ] {
+        let value = call(&client, method, params.clone()).await;
+        assert_eq!(value["code"], json!(PRUNED_HISTORY), "{method} {params} with a forged locator is 4444, got {value}");
+    }
+
+    // Store down: number-addressed reads in the pruned range and hashes the node can place
+    // are 4444 with a reason, an unknown hash keeps the node's `null`, and recent blocks are
+    // still served locally.
     simulator.abort();
     let _ = simulator.await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     for (method, params) in [
-        ("eth_getBlockByNumber", json!(["0x2", false])),
-        ("eth_getBalance", json!([Account::Alice.address(), "0x2"])),
+        ("eth_getBlockByNumber", json!(["0x2", true])),
+        ("eth_getBalance", json!([alice, "0x2"])),
         ("eth_getStorageAt", json!([contract, "0x0", "0x2"])),
         ("eth_getLogs", json!([{ "fromBlock": "0x1", "toBlock": "0x3" }])),
-        ("eth_getBlockByHash", json!([blocks[1].1, false])),
+        ("eth_getBlockByHash", json!([blocks[1].1, true])),
+        ("eth_getTransactionReceipt", json!([tx_hashes[1]])),
     ] {
         let value = call(&client, method, params.clone()).await;
         assert_eq!(value["code"], json!(PRUNED_HISTORY), "{method} {params} is 4444 with the store down, got {value}");
@@ -349,22 +651,23 @@ async fn pruned_node_parity() {
         assert_eq!(value, Value::Null, "{method} of an unknown hash stays null with the store down");
     }
     let latest = call(&client, "eth_getBlockByNumber", json!(["latest", false])).await;
-    assert_eq!(
-        latest["number"],
-        json!(format!("0x{head:x}")),
-        "recent blocks are served locally with the store down"
-    );
+    assert_eq!(latest["number"], json!(format!("0x{head:x}")), "recent blocks are served locally with the store down");
 }
 
 /// On an unpruned node whose store is unreachable, misses (an unmined receipt, an unknown
-/// hash, a block above the head) and recent reads answer locally.
+/// hash, a block above the head) and recent reads answer locally. An exporter whose shutdown
+/// is already signaled does not provision.
 #[tokio::test(flavor = "multi_thread")]
 async fn unpruned_node_with_store_down_answers_locally() {
     tokio::time::timeout(E2E_TIMEOUT, async {
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
-        let harness =
-            archive_node(chain_spec, LocalNodeRetention::default(), archive_args("http://127.0.0.1:1", false))
-                .await;
+        let harness = archive_node(
+            Arc::clone(&chain_spec),
+            LocalNodeRetention::default(),
+            archive_args("http://127.0.0.1:1", false),
+            None,
+        )
+        .await;
         harness.advance_chain(2).await.expect("advance");
         let client = harness.rpc_client().expect("rpc client");
         let unknown = B256::repeat_byte(0x42);
@@ -378,10 +681,27 @@ async fn unpruned_node_with_store_down_answers_locally() {
             let value = call(&client, method, params.clone()).await;
             assert_eq!(value, Value::Null, "{method} {params} must be a local null");
         }
-        let genesis = call(&client, "eth_getBlockByNumber", json!(["0x0", false])).await;
+        let genesis = call(&client, "eth_getBlockByNumber", json!(["0x0", true])).await;
         assert!(genesis["hash"].is_string(), "genesis is served locally, got {genesis}");
         let balance = call(&client, "eth_getBalance", json!([Account::Alice.address(), "0x1"])).await;
         assert!(balance.is_string(), "unpruned state is served locally, got {balance}");
+
+        let (simulator, url) = exoware_simulator::open_temp().await.expect("simulator starts");
+        let store = Arc::new(ExowareStore::connect(&url, NAMESPACE, Duration::from_secs(5)).expect("store"));
+        let exported = ExowareArchiveExtension::export(
+            Arc::clone(&store),
+            harness.blockchain_provider(),
+            BlockVerifier::new(Arc::clone(&chain_spec)),
+            archive_args(&url, true),
+            chain_spec.chain().id(),
+            chain_spec.genesis_hash(),
+            std::future::ready(()),
+        )
+        .await;
+        assert_eq!(exported, Ok(()), "a signaled exporter exits cleanly");
+        let config = ExowareArchive::<ExowareStore>::read_config(&store.session()).await.expect("config read");
+        assert_eq!(config, None, "a signaled exporter does not provision");
+        simulator.abort();
     })
     .await
     .expect("test timed out");
@@ -419,6 +739,7 @@ async fn transaction_count_override_is_preserved() {
                 Arc::new(BaseChainSpec::from_genesis(genesis())),
                 LocalNodeRetention::default(),
                 archive_args("http://127.0.0.1:1", false),
+                None,
             )
             .await;
             let plain = TestHarness::builder()

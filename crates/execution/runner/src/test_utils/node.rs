@@ -74,13 +74,15 @@ impl LocalNode {
     /// Launch a new local node with the provided extensions and chain spec, and
     /// `rpc_gas_cap` as its `--rpc.gascap` and `engine_api_store` as its
     /// `--debug.engine-api-store` when set. `retention` replaces the default (archive) prune
-    /// and static-file settings when set.
+    /// and static-file settings when set, and `max_logs_per_response` sets
+    /// `--rpc.max-logs-per-response`.
     pub async fn new(
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<BaseChainSpec>,
         rpc_gas_cap: Option<u64>,
         engine_api_store: Option<PathBuf>,
         retention: Option<LocalNodeRetention>,
+        max_logs_per_response: Option<u64>,
     ) -> Result<Self> {
         let exec = Runtime::test();
 
@@ -101,6 +103,9 @@ impl LocalNode {
         rpc_args.auth_ipc_path = unique_ipc_path;
         if let Some(rpc_gas_cap) = rpc_gas_cap {
             rpc_args.rpc_gas_cap = rpc_gas_cap;
+        }
+        if let Some(max) = max_logs_per_response {
+            rpc_args.rpc_max_logs_per_response = max.into();
         }
 
         let base_node = BaseNode::new(RollupArgs::default());

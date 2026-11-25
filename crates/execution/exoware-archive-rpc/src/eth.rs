@@ -25,7 +25,7 @@ use base_common_rpc_types::{
     BaseTransactionRequest, Transaction,
 };
 use base_execution_base_tx_rpc::TxBaseEthApiOverrideServer;
-use base_exoware_archive::{ArchiveError, LogFilter};
+use base_exoware_archive::{ArchiveError, Family, LogFilter};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -37,8 +37,8 @@ use reth_storage_api::errors::provider::ProviderError;
 use tracing::debug;
 
 use crate::{
-    ArchiveConverter, ArchiveHandle, ArchiveProvider, HashLookup, LocalRetention, PreparedBlock,
-    RetentionCache, StateDomain,
+    AnswerNeeds, ArchiveConverter, ArchiveHandle, ArchiveProvider, HashLookup, LocalRetention,
+    PreparedBlock, RetentionCache, StateDomain,
 };
 
 /// The archive-backed `eth_` methods.
@@ -214,6 +214,14 @@ impl ArchiveRpcBoundary {
         Err(Self::too_many_logs(max, from, retry_to))
     }
 
+    /// The block reth names in a "query exceeds max results …, retry with the range a-b" error.
+    pub fn retry_to(err: &ErrorObjectOwned) -> Option<u64> {
+        if err.code() != INVALID_PARAMS_CODE || !err.message().starts_with("query exceeds max results") {
+            return None;
+        }
+        err.message().rsplit('-').next()?.parse().ok()
+    }
+
     /// Whether the node answered with the EIP-4444 "pruned history" error.
     pub fn is_pruned(err: &ErrorObjectOwned) -> bool {
         err.code() == EthRpcErrorCode::PrunedHistory.code()
@@ -225,7 +233,17 @@ impl ArchiveRpcBoundary {
     pub fn is_state_pruned(err: &ErrorObjectOwned, number: u64) -> bool {
         let expected =
             ErrorObjectOwned::from(EthApiError::from(ProviderError::StateAtBlockPruned(number)));
-        err.code() == expected.code() && err.message() == expected.message()
+        (err.code() == expected.code() && err.message() == expected.message())
+            || Self::is_insufficient_changesets(err)
+    }
+
+    /// Whether the node refused a state read with reth's `InsufficientChangesets` as an
+    /// internal error. reth maps it to 4444 only when the request is below a non-degenerate
+    /// available range; the changeset paths that report an empty range (`0..=0`) surface it as
+    /// internal, and the requested block is then below what the node can revert to.
+    pub fn is_insufficient_changesets(err: &ErrorObjectOwned) -> bool {
+        err.code() == jsonrpsee::types::error::INTERNAL_ERROR_CODE
+            && err.message().starts_with("insufficient changesets to revert to block #")
     }
 
     /// Picks the answer of a hash-addressed request after the node missed: the archive's
@@ -237,6 +255,24 @@ impl ArchiveRpcBoundary {
             HashLookup::Failed(err) => Err(Self::error(err)),
         }
     }
+}
+
+/// Which block a request names, as the node resolved it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalIdentity {
+    /// Block number.
+    pub number: u64,
+    /// Block hash the request (or the node's index) named; the archived block must match it.
+    pub hash: Option<B256>,
+}
+
+/// How a block-level request addresses its block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Addressed {
+    /// By number.
+    Number(u64),
+    /// By hash.
+    Hash(B256),
 }
 
 /// Local-first, archive-on-prune implementation of [`ArchiveEthApiServer`].
@@ -273,106 +309,261 @@ where
         self.retention.get(|| LocalRetention::read(&self.provider))
     }
 
-    /// Whether a local answer about block `number` must go to the archive: `found` is the
-    /// block number of a local success, `requested` the number a miss or refusal was for.
-    pub fn needs_archive<T>(
-        &self,
-        local: &RpcResult<Option<T>>,
-        found: impl FnOnce(&T) -> Option<u64>,
-        requested: Option<u64>,
-    ) -> bool {
-        let retention = self.local_retention();
-        match local {
-            Ok(Some(value)) => found(value).is_some_and(|number| retention.answer_incomplete(number)),
-            Ok(None) => retention.archive_may_hold(requested),
-            Err(err) => ArchiveRpcBoundary::is_pruned(err),
+    /// The node's retention read now, bypassing the cache.
+    pub fn fresh_retention(&self) -> LocalRetention {
+        self.retention.refresh(|| LocalRetention::read(&self.provider))
+    }
+
+    /// Whether the node's `needs` data for block `number` is pruned now. The cached boundary
+    /// answers "pruned" directly (pruning only moves forward); otherwise the boundary is read
+    /// again, so a call made after a local read validates that read against fresh boundaries.
+    pub fn pruned_now(&self, number: u64, needs: AnswerNeeds) -> bool {
+        self.local_retention().incomplete(number, needs) || self.fresh_retention().incomplete(number, needs)
+    }
+
+    /// Whether a local miss for block `number` may be pruned history: the block exists (at or
+    /// below the head) and its `needs` data is pruned now.
+    pub fn miss_may_be_pruned(&self, number: u64, needs: AnswerNeeds) -> bool {
+        self.provider.best_block_number().is_ok_and(|best| number <= best) && self.pruned_now(number, needs)
+    }
+
+    /// The node's identity for `addressed`: the number as given, or the number the node's
+    /// header index maps the hash to.
+    pub fn identity(&self, addressed: Addressed) -> Option<LocalIdentity> {
+        match addressed {
+            Addressed::Number(number) => Some(LocalIdentity { number, hash: None }),
+            Addressed::Hash(hash) => self
+                .provider
+                .block_number(hash)
+                .ok()
+                .flatten()
+                .map(|number| LocalIdentity { number, hash: Some(hash) }),
         }
     }
 
-    /// Reads and prepares block `number` from the archive.
-    pub async fn archived_block(&self, number: u64) -> Result<PreparedBlock, ArchiveError> {
+    /// Runs `read` inside one archive request within the request budget.
+    pub async fn archive_request<T>(
+        &self,
+        read: impl AsyncFnOnce(
+            &crate::NodeArchiveReader<P>,
+            &base_exoware_archive::ArchiveRequest<base_exoware_archive::ExowareSession>,
+        ) -> Result<T, ArchiveError>,
+    ) -> Result<T, ArchiveError> {
         self.archive
             .bounded(async {
                 let reader = self.archive.reader().await?;
                 let request = reader.begin().await?;
-                let result = reader.block_in(&request, number).await;
+                let result = read(reader, &request).await;
                 reader.conclude(&request, result).await
             })
             .await
-            .map(|block| self.converter.prepare(block))
     }
 
-    /// Resolves a block hash in the archive and reads the block.
-    pub async fn archived_block_by_hash(&self, hash: B256) -> HashLookup<PreparedBlock> {
+    /// Requires the archived block to carry the hash the request named.
+    pub fn require_hash(block: &PreparedBlock, expected: Option<B256>) -> Result<(), ArchiveError> {
+        match expected {
+            Some(expected) if block.block.hash() != expected => Err(ArchiveError::unavailable(
+                Family::BlockHash,
+                format!(
+                    "archived block {} has hash {}, the request named {expected}",
+                    block.block.header().number,
+                    block.block.hash()
+                ),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// Reads block `id.number` from the archive and checks it is the block `id` names.
+    pub async fn archived_at(&self, id: LocalIdentity) -> Result<PreparedBlock, ArchiveError> {
+        let block = self
+            .archive_request(async |reader, request| reader.block_in(request, id.number).await)
+            .await
+            .map(|block| self.converter.prepare(block))?;
+        Self::require_hash(&block, id.hash)?;
+        Ok(block)
+    }
+
+    /// Resolves a block hash the node does not know in the archive and reads the block.
+    /// Resolution is marked as soon as a valid locator decodes, so any later failure is 4444.
+    pub async fn archived_by_hash(&self, hash: B256) -> HashLookup<PreparedBlock> {
         let mut resolved = false;
         let outcome = self
-            .archive
-            .bounded(async {
-                let reader = self.archive.reader().await?;
-                let request = reader.begin().await?;
-                let result = async {
-                    let Some(number) = reader.block_number_by_hash_in(&request, hash).await? else {
-                        return Ok(None);
-                    };
-                    resolved = true;
-                    reader.block_in(&request, number).await.map(Some)
-                }
-                .await;
-                reader.conclude(&request, result).await
+            .archive_request(async |reader, request| {
+                let Some(number) = reader.locate_block_in(request, hash).await? else { return Ok(None) };
+                resolved = true;
+                reader.verify_located_block_in(request, hash, number).await?;
+                reader.block_in(request, number).await.map(Some)
             })
-            .await;
-        ArchiveHandle::<P>::classify(outcome.map(|b| b.map(|b| self.converter.prepare(b))), resolved)
+            .await
+            .map(|block| block.map(|block| self.converter.prepare(block)));
+        let outcome = outcome.and_then(|block| match block {
+            Some(block) => Self::require_hash(&block, Some(hash)).map(|()| Some(block)),
+            None => Ok(None),
+        });
+        ArchiveHandle::<P>::classify(outcome, resolved)
     }
 
-    /// Resolves a transaction hash in the archive and reads its block.
+    /// Resolves a transaction hash the node cannot place in the archive and reads its block.
+    /// Resolution is marked as soon as a valid locator decodes.
     pub async fn archived_transaction(&self, hash: B256) -> HashLookup<(PreparedBlock, usize)> {
         let mut resolved = false;
         let outcome = self
-            .archive
-            .bounded(async {
-                let reader = self.archive.reader().await?;
-                let request = reader.begin().await?;
-                let result = async {
-                    let Some(tx) = reader.transaction_by_hash_in(&request, hash).await? else {
-                        return Ok(None);
-                    };
-                    resolved = true;
-                    let block = reader.block_in(&request, tx.block_number).await?;
-                    Ok(Some((block, tx.index as usize)))
-                }
-                .await;
-                reader.conclude(&request, result).await
+            .archive_request(async |reader, request| {
+                let Some((number, index)) = reader.locate_transaction_in(request, hash).await? else {
+                    return Ok(None);
+                };
+                resolved = true;
+                reader.transaction_at_in(request, hash, number, index).await?;
+                Ok(Some((reader.block_in(request, number).await?, index as usize)))
             })
-            .await;
-        ArchiveHandle::<P>::classify(
-            outcome.map(|found| found.map(|(block, index)| (self.converter.prepare(block), index))),
-            resolved,
-        )
+            .await
+            .map(|found| found.map(|(block, index)| (self.converter.prepare(block), index)));
+        ArchiveHandle::<P>::classify(outcome, resolved)
     }
 
-    /// A block-level answer for `number` after a local miss: the archive's, or 4444.
-    pub async fn block_answer<T>(
+    /// Index of transaction `hash` in an archived block.
+    pub fn transaction_index(block: &PreparedBlock, hash: B256) -> Result<usize, ArchiveError> {
+        block.block.body().transactions.iter().position(|tx| tx.tx_hash() == hash).ok_or_else(|| {
+            ArchiveError::unavailable(
+                Family::TxHash,
+                format!("archived block {} does not hold transaction {hash}", block.block.header().number),
+            )
+        })
+    }
+
+    /// A block-level answer from the archive for a block the node identified. `required`
+    /// means the node answered with data the archive must reproduce, so a missing item is a
+    /// fault, not `null`. Every failure is 4444.
+    pub async fn answer_at<T>(
         &self,
-        number: u64,
+        id: LocalIdentity,
+        required: bool,
         build: impl FnOnce(&PreparedBlock) -> Result<Option<T>, ArchiveError>,
     ) -> RpcResult<Option<T>> {
-        self.archived_block(number)
-            .await
-            .and_then(|block| build(&block))
-            .map_err(ArchiveRpcBoundary::error)
+        let answer = self.archived_at(id).await.and_then(|block| build(&block));
+        match answer {
+            Ok(None) if required => Err(ArchiveRpcBoundary::error(ArchiveError::unavailable(
+                Family::Body,
+                format!("archived block {} lacks an item the node served", id.number),
+            ))),
+            answer => answer.map_err(ArchiveRpcBoundary::error),
+        }
     }
 
-    /// A block-level answer for `hash` after a local miss.
-    pub async fn block_answer_by_hash<T>(
+    /// Routes a block-level read. A local success whose `needs` data may be pruned is checked
+    /// against fresh boundaries after the read and, if incomplete, never reused: the archive
+    /// answers or the request is 4444. A local miss or pruned refusal goes to the archive at
+    /// the node's identity for the block, or, for a hash the node does not know, through the
+    /// archive's locator.
+    pub async fn routed<T>(
+        &self,
+        local: RpcResult<Option<T>>,
+        needs: AnswerNeeds,
+        addressed: Addressed,
+        found: impl FnOnce(&T) -> Option<u64>,
+        build: impl FnOnce(&PreparedBlock) -> Result<Option<T>, ArchiveError>,
+    ) -> RpcResult<Option<T>> {
+        let identity = self.identity(addressed);
+        let named = match addressed {
+            Addressed::Hash(hash) => Some(hash),
+            Addressed::Number(_) => None,
+        };
+        let miss = match &local {
+            Ok(Some(value)) => {
+                if needs == AnswerNeeds::Body {
+                    return local;
+                }
+                let Some(number) = found(value).or(identity.map(|id| id.number)) else { return local };
+                if !self.pruned_now(number, needs) {
+                    return local;
+                }
+                debug!(number, "local answer may lack deposit fields; serving from the archive");
+                return self.answer_at(LocalIdentity { number, hash: named }, true, build).await;
+            }
+            Ok(None) => true,
+            Err(err) if ArchiveRpcBoundary::is_pruned(err) => false,
+            Err(_) => return local,
+        };
+        match (identity, named) {
+            (Some(id), _) => {
+                if miss && !self.miss_may_be_pruned(id.number, needs) {
+                    return local;
+                }
+                self.answer_at(id, false, build).await
+            }
+            (None, Some(hash)) => {
+                if miss && !self.local_retention().archive_may_hold(None) {
+                    return local;
+                }
+                let archived = match self.archived_by_hash(hash).await {
+                    HashLookup::Found(block) => match build(&block) {
+                        Ok(Some(answer)) => HashLookup::Found(answer),
+                        Ok(None) => HashLookup::Miss,
+                        Err(err) => HashLookup::Failed(err),
+                    },
+                    HashLookup::Miss => HashLookup::Miss,
+                    HashLookup::Unresolved(err) => HashLookup::Unresolved(err),
+                    HashLookup::Failed(err) => HashLookup::Failed(err),
+                };
+                ArchiveRpcBoundary::by_hash(local, archived)
+            }
+            (None, None) => local,
+        }
+    }
+
+    /// The archive's answer for transaction `hash` in the block the node placed it in. The
+    /// node knows the transaction is mined, so a missing item is a fault (4444), not `null`.
+    pub async fn answer_transaction_at<T>(
+        &self,
+        id: LocalIdentity,
+        hash: B256,
+        build: impl FnOnce(&PreparedBlock, usize) -> Result<Option<T>, ArchiveError>,
+    ) -> RpcResult<Option<T>> {
+        self.answer_at(id, true, |block| build(block, Self::transaction_index(block, hash)?)).await
+    }
+
+    /// Routes a transaction-hash read (`found` gives the block number and hash of a mined
+    /// local answer). A mined transaction the node can place, through its answer or its
+    /// transaction index, keeps that identity: an incomplete or missing local answer is
+    /// replaced by the archive's copy of exactly that block, and any archive failure is 4444.
+    /// Only a hash the node cannot place at all is looked up through the archive's locator.
+    pub async fn routed_transaction<T>(
         &self,
         hash: B256,
         local: RpcResult<Option<T>>,
-        build: impl FnOnce(&PreparedBlock) -> Result<Option<T>, ArchiveError>,
+        found: impl FnOnce(&T) -> Option<(u64, B256)>,
+        build: impl FnOnce(&PreparedBlock, usize) -> Result<Option<T>, ArchiveError>,
     ) -> RpcResult<Option<T>> {
-        let archived = match self.archived_block_by_hash(hash).await {
-            HashLookup::Found(block) => match build(&block) {
+        let miss = match &local {
+            Ok(Some(value)) => {
+                let Some((number, block_hash)) = found(value) else { return local };
+                if !self.pruned_now(number, AnswerNeeds::Deposits) {
+                    return local;
+                }
+                return self.answer_transaction_at(LocalIdentity { number, hash: Some(block_hash) }, hash, build).await;
+            }
+            Ok(None) => true,
+            Err(err) if ArchiveRpcBoundary::is_pruned(err) => false,
+            Err(_) => return local,
+        };
+        if let Ok(Some((_, meta))) = self.provider.transaction_by_hash_with_meta(hash) {
+            let id = LocalIdentity { number: meta.block_number, hash: Some(meta.block_hash) };
+            if miss && !self.pruned_now(id.number, AnswerNeeds::Deposits) {
+                return local;
+            }
+            return self.answer_transaction_at(id, hash, build).await;
+        }
+        if miss && !self.local_retention().archive_may_hold(None) {
+            return local;
+        }
+        let archived = match self.archived_transaction(hash).await {
+            HashLookup::Found((block, index)) => match build(&block, index) {
                 Ok(Some(answer)) => HashLookup::Found(answer),
-                Ok(None) => HashLookup::Miss,
+                Ok(None) => HashLookup::Failed(ArchiveError::unavailable(
+                    Family::TxHash,
+                    "located transaction index is past the block",
+                )),
                 Err(err) => HashLookup::Failed(err),
             },
             HashLookup::Miss => HashLookup::Miss,
@@ -380,6 +571,23 @@ where
             HashLookup::Failed(err) => HashLookup::Failed(err),
         };
         ArchiveRpcBoundary::by_hash(local, archived)
+    }
+
+    /// The block number a state read at `block` addresses, when it can be outside the node's
+    /// retention. A hash must be canonical on the node (which also satisfies
+    /// `requireCanonical`): only canonical history is archived, and the archived state at that
+    /// number is then the state of exactly that hash. Anything else stays with the node.
+    pub fn state_number(&self, block: Option<BlockId>) -> Option<u64> {
+        if !LocalRetention::may_be_pruned(block) {
+            return None;
+        }
+        match block? {
+            BlockId::Hash(hash) => {
+                let number = self.provider.block_number(hash.block_hash).ok().flatten()?;
+                (self.provider.block_hash(number).ok().flatten() == Some(hash.block_hash)).then_some(number)
+            }
+            BlockId::Number(tag) => self.provider.convert_block_number(tag).ok().flatten(),
+        }
     }
 
     /// Serves a state read locally unless the node lacks its history. Returns `Ok` with the
@@ -393,9 +601,7 @@ where
         domain: StateDomain,
         local: impl AsyncFnOnce() -> RpcResult<T>,
     ) -> Result<RpcResult<T>, u64> {
-        let number = LocalRetention::may_be_pruned(block)
-            .then(|| block.and_then(|block| self.provider.block_number_for_id(block).ok().flatten()))
-            .flatten();
+        let number = self.state_number(block);
         if let Some(number) = number.filter(|n| self.local_retention().state_pruned(*n, domain)) {
             return Err(number);
         }
@@ -420,15 +626,7 @@ where
             &base_exoware_archive::ArchiveRequest<base_exoware_archive::ExowareSession>,
         ) -> Result<T, ArchiveError>,
     ) -> RpcResult<T> {
-        self.archive
-            .bounded(async {
-                let reader = self.archive.reader().await?;
-                let request = reader.begin().await?;
-                let result = read(reader, &request).await;
-                reader.conclude(&request, result).await
-            })
-            .await
-            .map_err(ArchiveRpcBoundary::error)
+        self.archive_request(read).await.map_err(ArchiveRpcBoundary::error)
     }
 
     /// Converts a block range bound using the node's view of tags; an omitted bound or one
@@ -452,66 +650,133 @@ where
         }
     }
 
-    /// Serves `eth_getLogs` after the node reported pruned history: blocks below the node's
-    /// first complete block from the archive, the rest from the node, with reth's limits over
-    /// the whole range.
+    /// Archived logs of `filter` over `[from, to]`.
+    pub async fn archived_log_range(&self, filter: &Filter, from: u64, to: u64) -> RpcResult<Vec<BaseLogResponse>> {
+        let log_filter = Self::log_filter(filter, from, to);
+        let logs = self
+            .archive_request(async |reader, request| reader.logs_in(request, &log_filter).await)
+            .await
+            .map_err(ArchiveRpcBoundary::error)?;
+        Ok(logs.iter().map(ArchiveConverter::log).collect())
+    }
+
+    /// Logs of a `blockHash` filter for a block the node refused. A block the node knows is
+    /// read at its number and must carry the hash; an unknown hash is resolved and read in
+    /// one archive request. An archive miss or an outage before the hash resolved keeps the
+    /// node's error; a failure after it resolved is 4444.
+    pub async fn archived_hash_logs(
+        &self,
+        filter: &Filter,
+        hash: B256,
+        local: RpcResult<Vec<BaseLogResponse>>,
+    ) -> RpcResult<Vec<BaseLogResponse>> {
+        let check = |logs: Vec<BaseLogResponse>| -> Result<Vec<BaseLogResponse>, ArchiveError> {
+            match logs.iter().find(|log| log.inner.block_hash != Some(hash)) {
+                Some(log) => Err(ArchiveError::unavailable(
+                    Family::BlockHash,
+                    format!("archived log of block {:?} does not belong to {hash}", log.inner.block_hash),
+                )),
+                None => Ok(logs),
+            }
+        };
+        if let Some(number) = self.provider.block_number(hash).ok().flatten() {
+            let logs = self.archived_log_range(filter, number, number).await?;
+            return check(logs).map_err(ArchiveRpcBoundary::error);
+        }
+        let mut resolved = false;
+        let outcome = self
+            .archive_request(async |reader, request| {
+                let Some(number) = reader.locate_block_in(request, hash).await? else { return Ok(None) };
+                resolved = true;
+                reader.verify_located_block_in(request, hash, number).await?;
+                let logs = reader.logs_in(request, &Self::log_filter(filter, number, number)).await?;
+                Ok(Some(logs.iter().map(ArchiveConverter::log).collect::<Vec<_>>()))
+            })
+            .await
+            .and_then(|logs| logs.map(check).transpose());
+        match ArchiveHandle::<P>::classify(outcome, resolved) {
+            HashLookup::Found(logs) => Ok(logs),
+            HashLookup::Miss | HashLookup::Unresolved(_) => local,
+            HashLookup::Failed(err) => Err(ArchiveRpcBoundary::error(err)),
+        }
+    }
+
+    /// Serves `eth_getLogs` after the node refused pruned receipts. Blocks below the node's
+    /// first complete block (read fresh, and re-read whenever the node refuses again) come
+    /// from the archive, the rest from the node's filter, with no gap. reth's limits apply to
+    /// the combined result: the local suffix gets only the remaining log allowance, and a
+    /// suffix that overflows it is turned into reth's error for the combined range.
     pub async fn archived_logs(&self, filter: Filter) -> RpcResult<Vec<BaseLogResponse>> {
         let best = self
             .provider
             .best_block_number()
             .map_err(|err| ErrorObjectOwned::from(EthApiError::from(err)))?;
-        let (from, to) = match filter.block_option {
-            FilterBlockOption::AtBlockHash(hash) => {
-                let local = self
-                    .provider
-                    .block_number(hash)
-                    .map_err(|err| ErrorObjectOwned::from(EthApiError::from(err)))?;
-                let number = match local {
-                    Some(number) => number,
-                    None => match self.archived_block_by_hash(hash).await {
-                        HashLookup::Found(block) => block.block.header().number,
-                        HashLookup::Miss | HashLookup::Unresolved(_) => {
-                            return Err(EthApiError::from(ProviderError::HeaderNotFound(hash.into())).into());
-                        }
-                        HashLookup::Failed(err) => return Err(ArchiveRpcBoundary::error(err)),
-                    },
-                };
-                (number, number)
-            }
-            FilterBlockOption::Range { from_block, to_block } => {
-                (self.resolve(from_block, best)?, self.resolve(to_block, best)?)
-            }
+        let FilterBlockOption::Range { from_block, to_block } = filter.block_option else {
+            return Err(ErrorObjectOwned::owned(INVALID_PARAMS_CODE, "invalid block range params", None::<()>));
         };
+        let (from, to) = (self.resolve(from_block, best)?, self.resolve(to_block, best)?);
         if from > to {
             return Err(ErrorObjectOwned::owned(INVALID_PARAMS_CODE, "invalid block range params", None::<()>));
         }
         if let Some(max) = self.limits.max_blocks_per_filter.filter(|max| to - from > *max) {
             return Err(ArchiveRpcBoundary::too_many_blocks(max));
         }
-        let first_local = self.local_retention().first_complete();
+        let max_logs = self.limits.max_logs_per_response;
         let mut out = Vec::new();
-        if from < first_local {
-            let archive_to = to.min(first_local - 1);
-            let log_filter = Self::log_filter(&filter, from, archive_to);
-            let logs = self
-                .archive
-                .bounded(async {
-                    let reader = self.archive.reader().await?;
-                    let request = reader.begin().await?;
-                    let result = reader.logs_in(&request, &log_filter).await;
-                    reader.conclude(&request, result).await
-                })
-                .await
-                .map_err(ArchiveRpcBoundary::error)?;
-            out.extend(logs.iter().map(ArchiveConverter::log));
-            ArchiveRpcBoundary::check_max_logs(self.limits.max_logs_per_response, &out, from, to)?;
+        let mut archived_to = from.checked_sub(1);
+        let mut first_local = self.fresh_retention().first_complete();
+        for _ in 0..3 {
+            let archive_from = archived_to.map_or(from, |n| n + 1);
+            if archive_from < first_local && archive_from <= to {
+                let archive_to = to.min(first_local - 1);
+                out.extend(self.archived_log_range(&filter, archive_from, archive_to).await?);
+                ArchiveRpcBoundary::check_max_logs(max_logs, &out, from, to)?;
+                archived_to = Some(archive_to);
+            }
+            if to < first_local {
+                return Ok(out);
+            }
+            let local_from = from.max(first_local);
+            let allowance = max_logs.map(|max| max.saturating_sub(out.len()));
+            let local_filter = filter.clone().from_block(local_from).to_block(to);
+            let limits = QueryLimits { max_blocks_per_filter: None, max_logs_per_response: allowance };
+            match EngineEthFilter::logs(&self.filter, local_filter, limits).await {
+                Ok(logs) => {
+                    out.extend(logs);
+                    ArchiveRpcBoundary::check_max_logs(max_logs, &out, from, to)?;
+                    return Ok(out);
+                }
+                Err(err) if ArchiveRpcBoundary::is_pruned(&err) => {
+                    let moved = self.fresh_retention().first_complete();
+                    if moved <= first_local {
+                        return Err(err);
+                    }
+                    debug!(first_local, moved, "node pruned further during the query; extending the archive part");
+                    first_local = moved;
+                }
+                Err(err) => {
+                    let (Some(max), Some(suffix_retry)) = (max_logs, ArchiveRpcBoundary::retry_to(&err)) else { return Err(err) };
+                    if local_from == from {
+                        return Err(err);
+                    }
+                    // reth reports `b = c - 1` for a crossing block `c` above the suffix start,
+                    // and `b = local_from` both when `local_from` itself crosses and when
+                    // `local_from + 1` does; one single-block query tells them apart.
+                    let crossing = if suffix_retry > local_from {
+                        suffix_retry + 1
+                    } else {
+                        let first = filter.clone().from_block(local_from).to_block(local_from);
+                        let logs = EngineEthFilter::logs(&self.filter, first, QueryLimits::no_limits()).await?;
+                        if out.len() + logs.len() > max { local_from } else { local_from + 1 }
+                    };
+                    return Err(ArchiveRpcBoundary::too_many_logs(max, from, crossing - 1));
+                }
+            }
         }
-        if to >= first_local {
-            let local = filter.clone().from_block(from.max(first_local)).to_block(to);
-            out.extend(EngineEthFilter::logs(&self.filter, local, QueryLimits::no_limits()).await?);
-        }
-        ArchiveRpcBoundary::check_max_logs(self.limits.max_logs_per_response, &out, from, to)?;
-        Ok(out)
+        Err(ArchiveRpcBoundary::error(ArchiveError::unavailable(
+            Family::Receipts,
+            "the node kept pruning receipts during the query",
+        )))
     }
 }
 
@@ -530,25 +795,20 @@ where
     ) -> RpcResult<Option<BaseBlockResponse>> {
         let local = EthApiServer::block_by_number(&self.eth, number, full).await;
         let Some(n) = number.as_number() else { return local };
-        if !self.needs_archive(&local, |b| Some(b.header.number), Some(n)) {
-            return local;
-        }
-        self.block_answer(n, |block| Ok(Some(self.converter.block(block, full)))).await
+        let needs = if full { AnswerNeeds::Deposits } else { AnswerNeeds::Body };
+        self.routed(local, needs, Addressed::Number(n), |b| Some(b.header.number), |block| {
+            Ok(Some(self.converter.block(block, full)))
+        })
+        .await
     }
 
     async fn block_by_hash(&self, hash: B256, full: bool) -> RpcResult<Option<BaseBlockResponse>> {
         let local = EthApiServer::block_by_hash(&self.eth, hash, full).await;
-        if !self.needs_archive(&local, |b| Some(b.header.number), None) {
-            return local;
-        }
-        let local_number = self.provider.block_number(hash).ok().flatten();
-        match local_number {
-            Some(n) => self.block_answer(n, |block| Ok(Some(self.converter.block(block, full)))).await,
-            None => {
-                self.block_answer_by_hash(hash, local, |block| Ok(Some(self.converter.block(block, full))))
-                    .await
-            }
-        }
+        let needs = if full { AnswerNeeds::Deposits } else { AnswerNeeds::Body };
+        self.routed(local, needs, Addressed::Hash(hash), |b| Some(b.header.number), |block| {
+            Ok(Some(self.converter.block(block, full)))
+        })
+        .await
     }
 
     async fn block_transaction_count_by_number(
@@ -557,55 +817,29 @@ where
     ) -> RpcResult<Option<U256>> {
         let local = EthApiServer::block_transaction_count_by_number(&self.eth, number).await;
         let Some(n) = number.as_number() else { return local };
-        let earliest_body = self.local_retention().earliest_body;
-        let pruned = match &local {
-            Ok(Some(_)) => false,
-            Ok(None) => n < earliest_body,
-            Err(err) => ArchiveRpcBoundary::is_pruned(err),
-        };
-        if !pruned {
-            return local;
-        }
-        self.block_answer(n, |block| Ok(Some(U256::from(block.block.body().transactions.len())))).await
+        self.routed(local, AnswerNeeds::Body, Addressed::Number(n), |_| None, |block| {
+            Ok(Some(U256::from(block.block.body().transactions.len())))
+        })
+        .await
     }
 
     async fn block_transaction_count_by_hash(&self, hash: B256) -> RpcResult<Option<U256>> {
         let local = EthApiServer::block_transaction_count_by_hash(&self.eth, hash).await;
-        let retention = self.local_retention();
-        let pruned = match &local {
-            Ok(Some(_)) => false,
-            Ok(None) => retention.earliest_body > 0,
-            Err(err) => ArchiveRpcBoundary::is_pruned(err),
-        };
-        if !pruned {
-            return local;
-        }
-        let count = |block: &PreparedBlock| Ok(Some(U256::from(block.block.body().transactions.len())));
-        match self.provider.block_number(hash).ok().flatten() {
-            Some(n) if n < retention.earliest_body => self.block_answer(n, count).await,
-            Some(_) => local,
-            None => self.block_answer_by_hash(hash, local, count).await,
-        }
+        self.routed(local, AnswerNeeds::Body, Addressed::Hash(hash), |_| None, |block| {
+            Ok(Some(U256::from(block.block.body().transactions.len())))
+        })
+        .await
     }
 
     async fn transaction_by_hash(&self, hash: B256) -> RpcResult<Option<Transaction>> {
         let local = EthApiServer::transaction_by_hash(&self.eth, hash).await;
-        if !self.needs_archive(&local, |tx| tx.block_number, None) {
-            return local;
-        }
-        let archived = match self.archived_transaction(hash).await {
-            HashLookup::Found((block, index)) => match self.converter.transaction(&block, index) {
-                Some(tx) => HashLookup::Found(tx),
-                None => HashLookup::Failed(ArchiveError::unavailable(
-                    base_exoware_archive::Family::TxHash,
-                    "located transaction index is past the block",
-                )),
-            },
-            HashLookup::Miss => HashLookup::Miss,
-            HashLookup::Unresolved(err) => HashLookup::Unresolved(err),
-            HashLookup::Failed(err) => HashLookup::Failed(err),
-        };
-        ArchiveRpcBoundary::by_hash(local, archived)
+        self.routed_transaction(
+            hash,
+            local,
+            |tx| tx.block_number.zip(tx.block_hash),
+            |block, index| Ok(self.converter.transaction(block, index)),
+        )
+        .await
     }
 
     async fn transaction_by_block_hash_and_index(
@@ -614,15 +848,10 @@ where
         index: Index,
     ) -> RpcResult<Option<Transaction>> {
         let local = EthApiServer::transaction_by_block_hash_and_index(&self.eth, hash, index).await;
-        let local_number = self.provider.block_number(hash).ok().flatten();
-        if !self.needs_archive(&local, |tx| tx.block_number, local_number) {
-            return local;
-        }
-        let build = |block: &PreparedBlock| Ok(self.converter.transaction(block, index.0));
-        match local_number {
-            Some(n) => self.block_answer(n, build).await,
-            None => self.block_answer_by_hash(hash, local, build).await,
-        }
+        self.routed(local, AnswerNeeds::Deposits, Addressed::Hash(hash), |tx| tx.block_number, |block| {
+            Ok(self.converter.transaction(block, index.0))
+        })
+        .await
     }
 
     async fn transaction_by_block_number_and_index(
@@ -632,58 +861,57 @@ where
     ) -> RpcResult<Option<Transaction>> {
         let local = EthApiServer::transaction_by_block_number_and_index(&self.eth, number, index).await;
         let Some(n) = number.as_number() else { return local };
-        if !self.needs_archive(&local, |tx| tx.block_number, Some(n)) {
-            return local;
-        }
-        self.block_answer(n, |block| Ok(self.converter.transaction(block, index.0))).await
+        self.routed(local, AnswerNeeds::Deposits, Addressed::Number(n), |tx| tx.block_number, |block| {
+            Ok(self.converter.transaction(block, index.0))
+        })
+        .await
     }
 
     async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<BaseTransactionReceipt>> {
         let local = EthApiServer::transaction_receipt(&self.eth, hash).await;
-        if !self.needs_archive(&local, |r| r.inner.block_number, None) {
-            return local;
-        }
-        let archived = match self.archived_transaction(hash).await {
-            HashLookup::Found((block, index)) => match self.converter.receipt(&block, index) {
-                Ok(Some(receipt)) => HashLookup::Found(receipt),
-                Ok(None) => HashLookup::Failed(ArchiveError::unavailable(
-                    base_exoware_archive::Family::TxHash,
-                    "located transaction index is past the block",
-                )),
-                Err(err) => HashLookup::Failed(err),
-            },
-            HashLookup::Miss => HashLookup::Miss,
-            HashLookup::Unresolved(err) => HashLookup::Unresolved(err),
-            HashLookup::Failed(err) => HashLookup::Failed(err),
-        };
-        ArchiveRpcBoundary::by_hash(local, archived)
+        self.routed_transaction(
+            hash,
+            local,
+            |r| r.inner.block_number.zip(r.inner.block_hash),
+            |block, index| self.converter.receipt(block, index),
+        )
+        .await
     }
 
     async fn block_receipts(&self, block: BlockId) -> RpcResult<Option<Vec<BaseTransactionReceipt>>> {
         let local = EthApiServer::block_receipts(&self.eth, block).await;
-        let (number, hash) = match block {
+        let addressed = match block {
             BlockId::Number(number) => match number.as_number() {
-                Some(n) => (Some(n), None),
+                Some(n) => Addressed::Number(n),
                 None => return local,
             },
-            BlockId::Hash(hash) => (self.provider.block_number(hash.block_hash).ok().flatten(), Some(hash.block_hash)),
+            BlockId::Hash(hash) => Addressed::Hash(hash.block_hash),
         };
         let found = |receipts: &Vec<BaseTransactionReceipt>| receipts.first().and_then(|r| r.inner.block_number);
-        if !self.needs_archive(&local, found, number) {
-            return local;
-        }
-        let build = |block: &PreparedBlock| self.converter.receipts(block).map(Some);
-        match (number, hash) {
-            (Some(n), _) => self.block_answer(n, build).await,
-            (None, Some(hash)) => self.block_answer_by_hash(hash, local, build).await,
-            (None, None) => local,
-        }
+        self.routed(local, AnswerNeeds::Deposits, addressed, found, |block| {
+            self.converter.receipts(block).map(Some)
+        })
+        .await
     }
 
     async fn logs(&self, filter: Filter) -> RpcResult<Vec<BaseLogResponse>> {
-        match EngineEthFilter::logs(&self.filter, filter.clone(), self.limits).await {
-            Err(err) if ArchiveRpcBoundary::is_pruned(&err) => self.archived_logs(filter).await,
-            local => local,
+        let local = EngineEthFilter::logs(&self.filter, filter.clone(), self.limits).await;
+        let Err(err) = &local else { return local };
+        match filter.block_option {
+            FilterBlockOption::AtBlockHash(hash) => {
+                let known = self.provider.block_number(hash).ok().flatten().is_some();
+                if ArchiveRpcBoundary::is_pruned(err)
+                    || (!known && self.local_retention().archive_may_hold(None))
+                {
+                    self.archived_hash_logs(&filter, hash, local).await
+                } else {
+                    local
+                }
+            }
+            FilterBlockOption::Range { .. } if ArchiveRpcBoundary::is_pruned(err) => {
+                self.archived_logs(filter).await
+            }
+            FilterBlockOption::Range { .. } => local,
         }
     }
 
@@ -835,6 +1063,32 @@ mod tests {
         let err = ArchiveRpcBoundary::check_max_logs(Some(1), &logs, 3, 10).unwrap_err();
         assert_eq!(err.message(), "query exceeds max results 1, retry with the range 3-3", "from crosses");
         assert!(ArchiveRpcBoundary::check_max_logs(Some(1), &logs[..2], 3, 3).is_ok(), "single block is exempt");
+    }
+
+    /// reth's `InsufficientChangesets` with an empty available range surfaces as an internal
+    /// error and is recognised as pruned state; other internal errors are not.
+    #[test]
+    fn insufficient_changesets_is_a_state_fallback_trigger() {
+        let degenerate = ErrorObjectOwned::from(EthApiError::from(ProviderError::InsufficientChangesets {
+            requested: 5,
+            available: 0..=0,
+        }));
+        assert_eq!(degenerate.code(), jsonrpsee::types::error::INTERNAL_ERROR_CODE, "reth maps it to internal");
+        assert!(ArchiveRpcBoundary::is_state_pruned(&degenerate, 5), "recognised as pruned state");
+        let below = ErrorObjectOwned::from(EthApiError::from(ProviderError::InsufficientChangesets {
+            requested: 5,
+            available: 10..=20,
+        }));
+        assert!(ArchiveRpcBoundary::is_pruned(&below), "below the available range is 4444 already");
+        let other = ErrorObjectOwned::from(EthApiError::from(ProviderError::BestBlockNotFound));
+        assert!(!ArchiveRpcBoundary::is_state_pruned(&other, 5), "other internal errors stay local");
+    }
+
+    /// The retry block is read back from reth's own limit error.
+    #[test]
+    fn retry_block_is_parsed_from_reth_errors() {
+        assert_eq!(ArchiveRpcBoundary::retry_to(&ArchiveRpcBoundary::too_many_logs(3, 10, 42)), Some(42), "retry to 42");
+        assert_eq!(ArchiveRpcBoundary::retry_to(&ArchiveRpcBoundary::too_many_blocks(5)), None, "block cap is not a log cap");
     }
 
     /// A node refusal of pruned state is recognised for the requested block only.

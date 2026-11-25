@@ -506,8 +506,10 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         Ok(Some((segment, value)))
     }
 
-    /// Resolves a block hash to its number, verifying the header hashes to `hash`.
-    pub async fn block_number_by_hash_in(
+    /// Decodes the block-hash locator for `hash` without reading the block: the block number
+    /// the archive claims, before any header check. A caller that must tell "the archive knows
+    /// this hash" from "the store failed first" treats `Some` as resolved.
+    pub async fn locate_block_in(
         &self,
         request: &ArchiveRequest<S::Session>,
         hash: B256,
@@ -521,6 +523,16 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         if self.config.segment_of(number) != segment {
             return Err(ArchiveError::unavailable(Family::BlockHash, "locator segment does not hold its block"));
         }
+        Ok(Some(number))
+    }
+
+    /// Verifies that block `number` hashes to `hash`, as a located block hash must.
+    pub async fn verify_located_block_in(
+        &self,
+        request: &ArchiveRequest<S::Session>,
+        hash: B256,
+        number: u64,
+    ) -> Result<(), ArchiveError> {
         let (_, found) = self.header_in(request, number).await?;
         if found != hash {
             return Err(ArchiveError::unavailable(
@@ -528,6 +540,19 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
                 format!("locator for {hash} points at block {number} with hash {found}"),
             ));
         }
+        Ok(())
+    }
+
+    /// Resolves a block hash to its number, verifying the header hashes to `hash`.
+    pub async fn block_number_by_hash_in(
+        &self,
+        request: &ArchiveRequest<S::Session>,
+        hash: B256,
+    ) -> Result<Option<u64>, ArchiveError> {
+        let Some(number) = self.locate_block_in(request, hash).await? else {
+            return Ok(None);
+        };
+        self.verify_located_block_in(request, hash, number).await?;
         Ok(Some(number))
     }
 
@@ -538,6 +563,19 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         request: &ArchiveRequest<S::Session>,
         hash: B256,
     ) -> Result<Option<ArchivedTransaction>, ArchiveError> {
+        let Some((number, index)) = self.locate_transaction_in(request, hash).await? else {
+            return Ok(None);
+        };
+        self.transaction_at_in(request, hash, number, index).await.map(Some)
+    }
+
+    /// Decodes the transaction-hash locator for `hash` without reading the block: the
+    /// `(block, index)` the archive claims. `Some` means the archive knows the hash.
+    pub async fn locate_transaction_in(
+        &self,
+        request: &ArchiveRequest<S::Session>,
+        hash: B256,
+    ) -> Result<Option<(u64, u32)>, ArchiveError> {
         let Some((segment, value)) = self.locate(request, Family::TxHash, hash).await? else {
             return Ok(None);
         };
@@ -549,6 +587,17 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         if self.config.segment_of(number) != segment {
             return Err(ArchiveError::unavailable(Family::TxHash, "locator segment does not hold its block"));
         }
+        Ok(Some((number, index)))
+    }
+
+    /// Reads the transaction a locator points at, verifying it hashes to `hash`.
+    pub async fn transaction_at_in(
+        &self,
+        request: &ArchiveRequest<S::Session>,
+        hash: B256,
+        number: u64,
+        index: u32,
+    ) -> Result<ArchivedTransaction, ArchiveError> {
         let (header, block_hash, body) = self.body_in(request, number).await?;
         let transaction = body
             .transactions
@@ -558,7 +607,7 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             .ok_or_else(|| {
                 ArchiveError::unavailable(Family::TxHash, format!("locator for {hash} points at block {number} index {index}, which holds another transaction"))
             })?;
-        Ok(Some(ArchivedTransaction { block_number: number, block_hash, index, header, transaction }))
+        Ok(ArchivedTransaction { block_number: number, block_hash, index, header, transaction })
     }
 
     /// First block `c` with `block < c ≤ H` where `key` changed. Scans `seg(block)..=seg(H)`;

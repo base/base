@@ -73,6 +73,10 @@ Errors map once, in `ArchiveRpcBoundary`:
 - Log query limits are `-32602` with reth's messages.
 
 A node that lacks the canonical hash of an archived block cannot verify it and answers 4444.
+Deposit nonces of the Regolith window (`depositNonce` in transactions and receipts) are
+trusted-store fields, like state and log completeness: the receipt root does not cover them and
+the reader only checks them for consistency with the archived account changes (see
+`base-exoware-archive`).
 Responses are built by `ArchiveConverter` with the node's own Base response constructors, so
 they equal what the node served before it pruned.
 

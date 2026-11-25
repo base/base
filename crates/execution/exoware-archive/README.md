@@ -39,6 +39,13 @@ answers detect false positives only. Their completeness relies on a store that i
 and not corrupt, plus on-demand `SegmentAuditor::audit_segment`, which recomputes the digest
 over every row of a segment.
 
+Regolith-window deposit nonces are in the same class. A deposit receipt's nonce is not covered
+by the receipt root, so the reader can only check it for consistency: against the sender's
+before-value nonce in the block's account changes plus the earlier transactions from the same
+sender in that block. Neither value is authenticated by any root, so a store that rewrites both
+consistently is not detected on read. Like state and log completeness (A3), these nonces are
+trusted-store fields; `SegmentAuditor` detects such a rewrite against the marker digest.
+
 Sender recovery on read is a deliberate cost: every block read recovers each transaction's
 signer (one secp256k1 recovery per non-deposit transaction, on the order of tens of
 microseconds each) and compares it with the archived senders, so a full block of a few hundred

@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 
 use base_execution_base_tx_rpc::TxBaseEthApiExt;
 use base_exoware_archive::{
-    ArchiveError, BlockVerifier, ExowareArchive, ExowareStore, ProvisionOutcome, ReaderLimits,
+    ArchiveError, ArchiveMetrics, BlockVerifier, ExowareArchive, ExowareStore, ProvisionOutcome, ReaderLimits,
     SegmentPublisher,
 };
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -41,7 +41,9 @@ impl ExowareArchiveExtension {
     }
 
     /// Runs the exporter until `shutdown`: provisions the config row when asked, opens the
-    /// publisher (which requires the row to match) and publishes finalized segments.
+    /// publisher (which requires the row to match) and publishes finalized segments. Shutdown
+    /// is checked before provisioning, raced against every store call while opening, and
+    /// inside every publication round (see `SegmentPublisher::run_until`).
     pub async fn export<P: ArchiveProvider>(
         store: Arc<ExowareStore>,
         provider: P,
@@ -57,7 +59,11 @@ impl ExowareArchiveExtension {
         tokio::pin!(shutdown);
         let mut failures = 0;
         let publisher = loop {
-            let opened = async {
+            let opened = tokio::select! {
+                // Checked first: a signaled exporter does not provision or open.
+                biased;
+                () = &mut shutdown => return Ok(()),
+                opened = async {
                 let archive = ExowareArchive::new(Arc::clone(&store));
                 if args.archive_exoware_provision {
                     match archive.provision(&config).await? {
@@ -75,8 +81,8 @@ impl ExowareArchiveExtension {
                     options,
                 )
                 .await
-            }
-            .await;
+            } => opened,
+            };
             match opened {
                 Ok(publisher) => break publisher,
                 Err(err @ ArchiveError::Store { .. }) => {
@@ -155,6 +161,7 @@ impl BaseNodeExtension for ExowareArchiveExtension {
                     // The guard is held until the exporter returns, so node shutdown waits for
                     // the round in flight.
                     let (guard_tx, guard_rx) = tokio::sync::oneshot::channel();
+                    ArchiveMetrics::exporter_running().set(1.0);
                     let result = Self::export(
                         store,
                         provider,
@@ -168,8 +175,13 @@ impl BaseNodeExtension for ExowareArchiveExtension {
                     )
                     .await;
                     drop(guard_rx);
-                    if let Err(err) = result {
-                        error!(error = %err, "archive exporter stopped; the node keeps serving");
+                    // Health signal: the gauge drops to 0 on any exit, and a terminal error is
+                    // logged at error level, so a halted exporter is visible while the node
+                    // keeps serving.
+                    ArchiveMetrics::exporter_running().set(0.0);
+                    match result {
+                        Ok(()) => info!("archive exporter stopped on shutdown"),
+                        Err(err) => error!(error = %err, "archive exporter halted; the node keeps serving"),
                     }
                 },
             );

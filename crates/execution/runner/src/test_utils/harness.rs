@@ -50,6 +50,7 @@ pub struct TestHarnessBuilder {
     rpc_gas_cap: Option<u64>,
     engine_api_store: Option<PathBuf>,
     retention: Option<LocalNodeRetention>,
+    max_logs_per_response: Option<u64>,
 }
 
 impl TestHarnessBuilder {
@@ -100,6 +101,12 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Set the node's `--rpc.max-logs-per-response`.
+    pub const fn with_max_logs_per_response(mut self, max: u64) -> Self {
+        self.max_logs_per_response = Some(max);
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
@@ -115,6 +122,7 @@ impl TestHarnessBuilder {
             self.rpc_gas_cap,
             self.engine_api_store,
             self.retention,
+            self.max_logs_per_response,
         )
         .await?;
         let engine = node.engine_api()?;
