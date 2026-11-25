@@ -496,12 +496,14 @@ impl Node {
         for round in 0..=MAX_PROOF_ROUNDS {
             let state = chain.state_after(parent).map_err(RpcError::internal)?;
             let state = if stateless { state.collecting() } else { state };
-            let missing = match (BlockExecution { chain: &self.spec }).validate(
-                header,
-                transactions,
-                &parent.header,
-                &state,
-            ) {
+            let validate =
+                || (BlockExecution { chain: &self.spec }).validate(header, transactions, &parent.header, &state);
+            let validated = if chain.db.is_partial() {
+                validate()
+            } else {
+                crate::prewarm::warm_while(chain, &self.spec, header, transactions, parent, validate)
+            };
+            let missing = match validated {
                 Ok(validated) => {
                     let prepared = state
                         .take_prepared()

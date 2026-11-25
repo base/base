@@ -6,19 +6,28 @@
 //! traced keys are only a hint (a reorged block reads others), so a wrong one only costs a fetch.
 //! The keys the block deletes are prewarmed too: the trie nodes their deletions collapse into
 //! (see [`Node::collapse_siblings`]), and the block's whole witness when one is a branch.
+//!
+//! A full state prewarms each block in process while it executes instead ([`warm_while`]).
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Condvar, Mutex},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::Duration,
 };
 
 use alloy_consensus::Header;
-use alloy_primitives::{B256, KECCAK256_EMPTY, U256};
-use evm2::evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS};
+use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256};
+use base_tiger_evm::{BaseBlockExecutor, ChainSpec, Transactions};
+use evm2::{
+    evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS},
+    registry::HandlerError,
+};
 
-use crate::Node;
+use crate::{BlockExecution, Chain, Node, ParentState, StoredBlock, block_changes};
 
 /// Blocks prewarmed at once.
 const PREWARM_WORKERS: usize = 12;
@@ -147,5 +156,87 @@ impl Node {
         }
         let chain = self.chain.read().expect("chain lock");
         let _ = Self::absorb(&chain, &proofs);
+    }
+}
+
+/// Threads that prewarm a block on a full state while it executes.
+const FULL_PREWARM_WORKERS: usize = 8;
+
+/// Runs `validate` (a block's serial execution and state root on this thread) while
+/// [`FULL_PREWARM_WORKERS`] threads warm the datadir pages it will read, as base-reth's prewarm
+/// does: each executes every `FULL_PREWARM_WORKERS`-th transaction (after the first, the L1
+/// info deposit, which sets what fees read) speculatively over the parent state, then walks the
+/// trie paths of what its transactions changed, which the state root reads. Their results are
+/// discarded; reading only faults pages into the cache, so a wrong speculation costs nothing
+/// but the work. A full state only: a partial state's reads go to the upstream instead.
+pub(crate) fn warm_while<R>(
+    chain: &Chain,
+    spec: &ChainSpec,
+    header: &Header,
+    transactions: &[Bytes],
+    parent: &StoredBlock,
+    validate: impl FnOnce() -> R,
+) -> R {
+    let workers = FULL_PREWARM_WORKERS.min(transactions.len().saturating_sub(1));
+    if workers == 0 {
+        return validate();
+    }
+    let done = AtomicBool::new(false);
+    thread::scope(|scope| {
+        for worker in 0..workers {
+            let done = &done;
+            // A speculation runs over state the block does not see; whatever it hits must not
+            // fail the block.
+            scope.spawn(move || {
+                let block = PrewarmBlock { chain, spec, header, transactions, parent };
+                let warm = || block.warm(worker, workers, done);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(warm));
+            });
+        }
+        let result = validate();
+        // The workers stop at their next transaction or account.
+        done.store(true, Ordering::Relaxed);
+        result
+    })
+}
+
+/// The block a full-state prewarm worker speculates on.
+struct PrewarmBlock<'a> {
+    chain: &'a Chain,
+    spec: &'a ChainSpec,
+    header: &'a Header,
+    transactions: &'a [Bytes],
+    parent: &'a StoredBlock,
+}
+
+impl PrewarmBlock<'_> {
+    /// One prewarm worker: transactions `1 + worker`, `1 + worker + workers`, ….
+    fn warm(&self, worker: usize, workers: usize, done: &AtomicBool) {
+        let Ok(state) = self.chain.state_after(self.parent) else { return };
+        let env = BlockExecution::env(self.header);
+        let Ok(mut executor) = BaseBlockExecutor::for_block(self.spec, &env, state.database()) else { return };
+        let mine = self.transactions.iter().take(1).chain(self.transactions.iter().skip(1 + worker).step_by(workers));
+        for raw in mine {
+            if done.load(Ordering::Relaxed) {
+                return;
+            }
+            let Ok((_, tx)) = Transactions::decode(raw) else { continue };
+            if let Err(HandlerError::Fatal(_)) = executor.execute_transaction(&tx) {
+                break;
+            }
+        }
+        let (_, _, changes) = executor.finish();
+        let changes = block_changes(&changes);
+        let mut touched: BTreeMap<Address, Vec<U256>> =
+            changes.accounts.iter().map(|(address, _)| (*address, Vec::new())).collect();
+        for (address, slot, _) in &changes.storage {
+            touched.entry(*address).or_default().push(*slot);
+        }
+        for (address, slots) in touched {
+            if done.load(Ordering::Relaxed) {
+                return;
+            }
+            let _ = state.proof(address, &slots);
+        }
     }
 }
