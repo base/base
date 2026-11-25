@@ -370,7 +370,7 @@ fn read_u64_at(file: &File, offset: u64) -> io::Result<u64> {
 }
 
 fn write_at(path: &Path, file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
-    Fault::before_write(path, offset, buf);
+    Fault::before_write(path, offset, buf)?;
     file.write_all_at(buf, offset)
 }
 
@@ -731,6 +731,14 @@ impl StaticFiles {
             segments.push(SegmentFiles { segment, jars, pending: Vec::new() });
         }
         Ok(Self { dir: dir.to_path_buf(), blocks_per_file, segments: RwLock::new(segments) })
+    }
+
+    /// Drops the in-memory state and opens the files again, as a restart would (after a failed
+    /// commit left the files and that state apart).
+    pub fn reopen(&self) -> io::Result<()> {
+        let fresh = Self::open(&self.dir)?;
+        *self.segments.write().unwrap() = fresh.segments.into_inner().unwrap();
+        Ok(())
     }
 
     /// The directory.

@@ -189,6 +189,7 @@ impl Datadir {
     /// Begins the write transaction.
     pub fn write(&self) -> Result<WriteTxn<'_>, StoreError> {
         if self.unhealed.load(Ordering::SeqCst) {
+            self.static_files.reopen()?;
             self.heal()?;
             self.unhealed.store(false, Ordering::SeqCst);
         }
@@ -356,11 +357,10 @@ impl WriteTxn<'_> {
         })();
         if let Err(error) = committed {
             // Static files and RocksDB may be ahead of MDBX, as after a crash (a full disk does
-            // this): drop what is pending and cut them back now, as a reopen would, so the next
-            // write starts from the MDBX tip.
+            // this): reload the static files from disk and cut them back now, as a restart would,
+            // so the next write starts from the MDBX tip.
             drop(self.txn.take());
-            datadir.static_files.discard();
-            if let Err(heal) = datadir.heal() {
+            if let Err(heal) = datadir.static_files.reopen().map_err(StoreError::from).and_then(|()| datadir.heal()) {
                 datadir.unhealed.store(true, Ordering::SeqCst);
                 return Err(StoreError::Corrupt(format!("{error}; healing after it: {heal}")));
             }

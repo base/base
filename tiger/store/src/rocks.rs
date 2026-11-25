@@ -19,7 +19,7 @@ use rocksdb::{
     WriteBufferManager, WriteOptions, DB,
 };
 
-use crate::Fault;
+use crate::{Fault, StoreError};
 
 /// Block numbers per full history shard (reth's `NUM_OF_INDICES_IN_SHARD`).
 pub const SHARD_SIZE: usize = 2_000;
@@ -204,7 +204,7 @@ impl Rocks {
 
     /// Writes `batch` atomically and durably (WAL synced). Under `TIGER_FAULT`, one counted
     /// write.
-    pub fn write(&self, batch: RocksBatch) -> Result<(), RocksError> {
+    pub fn write(&self, batch: RocksBatch) -> Result<(), StoreError> {
         if batch.ops.is_empty() {
             return Ok(());
         }
@@ -218,8 +218,8 @@ impl Rocks {
         let mut options = WriteOptions::default();
         options.set_sync(true);
         let mut result = Ok(());
-        Fault::opaque_write("rocksdb", || result = self.db.write_opt(write, &options));
-        result
+        Fault::opaque_write("rocksdb", || result = self.db.write_opt(write, &options))?;
+        Ok(result?)
     }
 }
 

@@ -16,6 +16,12 @@
 //!   the old file length where nothing kept extends it), then aborts. Writes through a file
 //!   opened with `O_DSYNC` (libmdbx's meta writes) count as synced when they return.
 //!
+//! - `enospc` (with `fail_writes=M`, default 1): writes `K` through `K+M-1` fail with `ENOSPC`
+//!   instead of being performed (a libmdbx `pwrite`, a static-file write, a RocksDB batch), and
+//!   the process keeps running; later writes succeed again, so the store's in-process heal and
+//!   the node's retry can finish. The first failing write prints
+//!   `tiger-fault: enospc at write K..K+M-1 phase="P" file=F`.
+//!
 //! Before aborting it prints one line to stderr:
 //! `tiger-fault: crash at write K mode=M phase="P" file=F offset=O len=L: D`, where `P` is the
 //! phase the store set (such as `commit 17 mdbx-pages` or `commit 17 static-files`).
@@ -35,6 +41,8 @@ pub enum FaultMode {
     Torn,
     /// Unsynced writes are partly lost.
     LoseUnsynced,
+    /// Writes fail with `ENOSPC` and the process keeps running.
+    Enospc,
 }
 
 /// A parsed `TIGER_FAULT` value.
@@ -46,15 +54,17 @@ pub struct FaultConfig {
     pub crash_after_writes: u64,
     /// The crash mode.
     pub mode: FaultMode,
+    /// How many writes from `crash_after_writes` on fail (`enospc` only).
+    pub fail_writes: u64,
 }
 
 impl FaultConfig {
     /// The environment variable that enables fault injection.
     pub const ENV: &'static str = "TIGER_FAULT";
 
-    /// Parses `seed=N,crash_after_writes=K,mode=torn|lose_unsynced`.
+    /// Parses `seed=N,crash_after_writes=K,mode=torn|lose_unsynced|enospc[,fail_writes=M]`.
     pub fn parse(text: &str) -> Result<Self, String> {
-        let (mut seed, mut after, mut mode) = (0, None, None);
+        let (mut seed, mut after, mut mode, mut fail_writes) = (0, None, None, 1);
         for part in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
             let (key, value) = part.split_once('=').ok_or_else(|| format!("bad TIGER_FAULT part {part:?}"))?;
             match key {
@@ -66,9 +76,11 @@ impl FaultConfig {
                     mode = Some(match value {
                         "torn" => FaultMode::Torn,
                         "lose_unsynced" => FaultMode::LoseUnsynced,
+                        "enospc" => FaultMode::Enospc,
                         _ => return Err(format!("bad mode {value:?}")),
                     })
                 }
+                "fail_writes" => fail_writes = value.parse().map_err(|_| format!("bad fail_writes {value:?}"))?,
                 _ => return Err(format!("unknown TIGER_FAULT key {key:?}")),
             }
         }
@@ -76,7 +88,10 @@ impl FaultConfig {
         if crash_after_writes == 0 {
             return Err("crash_after_writes must be at least 1".into());
         }
-        Ok(Self { seed, crash_after_writes, mode: mode.ok_or("TIGER_FAULT needs mode")? })
+        if fail_writes == 0 {
+            return Err("fail_writes must be at least 1".into());
+        }
+        Ok(Self { seed, crash_after_writes, mode: mode.ok_or("TIGER_FAULT needs mode")?, fail_writes })
     }
 }
 
@@ -107,6 +122,9 @@ struct State {
 }
 
 static STATE: OnceLock<Option<Mutex<State>>> = OnceLock::new();
+
+/// `ENOSPC` on Linux and macOS.
+const ENOSPC: c_int = 28;
 
 unsafe extern "C" {
     static mut tiger_hook_pwrite: Option<unsafe extern "C" fn(c_int, *const c_void, usize, u64) -> c_int>;
@@ -166,24 +184,38 @@ impl Fault {
         }
     }
 
-    /// Called by tiger's own writers before writing `buf` at `offset` of `path`.
-    pub fn before_write(path: &Path, offset: u64, buf: &[u8]) {
-        if let Some(state) = Self::state() {
-            state.lock().unwrap().write(path, offset, buf, false, "");
+    /// Called by tiger's own writers before writing `buf` at `offset` of `path`; an error means
+    /// the write must not be performed (`enospc`).
+    pub fn before_write(path: &Path, offset: u64, buf: &[u8]) -> std::io::Result<()> {
+        match Self::state() {
+            Some(state) => state.lock().unwrap().write(path, offset, buf, false, "").map_err(std::io::Error::from_raw_os_error),
+            None => Ok(()),
         }
     }
 
     /// Runs a durable write tiger cannot split into file writes (a synced RocksDB batch) as one
     /// counted write. At the crash write, `torn` and `lose_unsynced` both perform it or not at
     /// random (a torn WAL record is dropped by RocksDB's recovery; a synced one survives), then
-    /// abort.
-    pub fn opaque_write(name: &str, write: impl FnOnce()) {
-        let Some(state) = Self::state() else { return write() };
+    /// abort. Under `enospc`, a failing write is not performed and returns the error.
+    pub fn opaque_write(name: &str, write: impl FnOnce()) -> std::io::Result<()> {
+        let Some(state) = Self::state() else {
+            write();
+            return Ok(());
+        };
         let mut state = state.lock().unwrap();
         state.writes += 1;
+        if state.config.mode == FaultMode::Enospc {
+            if let Err(errno) = state.enospc(Path::new(name)) {
+                return Err(std::io::Error::from_raw_os_error(errno));
+            }
+            drop(state);
+            write();
+            return Ok(());
+        }
         if state.writes != state.config.crash_after_writes {
             drop(state);
-            return write();
+            write();
+            return Ok(());
         }
         let performed = state.next() % 2 == 0;
         if performed {
@@ -225,13 +257,17 @@ impl State {
         fs::metadata(path).map(|m| m.len()).unwrap_or(0)
     }
 
-    fn write(&mut self, path: &Path, offset: u64, buf: &[u8], durable: bool, detail: &str) {
+    /// Counts a write; `Err(errno)` means it must fail instead of being performed.
+    fn write(&mut self, path: &Path, offset: u64, buf: &[u8], durable: bool, detail: &str) -> Result<(), c_int> {
         self.writes += 1;
+        if self.config.mode == FaultMode::Enospc {
+            return self.enospc(path);
+        }
         if self.writes == self.config.crash_after_writes {
             self.crash(path, offset, buf, detail);
         }
         if self.config.mode != FaultMode::LoseUnsynced || durable {
-            return;
+            return Ok(());
         }
         if !self.synced_len.iter().any(|(p, _)| p == path) {
             self.synced_len.push((path.to_path_buf(), Self::file_len(path)));
@@ -240,6 +276,20 @@ impl State {
         let read = File::open(path).and_then(|f| read_up_to(&f, &mut old, offset)).unwrap_or(0);
         old.truncate(read);
         self.undo.push(Undo { path: path.to_path_buf(), offset, old, len: buf.len() as u64 });
+        Ok(())
+    }
+
+    /// `enospc`: whether the write just counted falls in the failing range.
+    fn enospc(&self, path: &Path) -> Result<(), c_int> {
+        let first = self.config.crash_after_writes;
+        let last = first + self.config.fail_writes - 1;
+        if !(first..=last).contains(&self.writes) {
+            return Ok(());
+        }
+        if self.writes == first {
+            eprintln!("tiger-fault: enospc at write {first}..{last} phase=\"{}\" file={}", self.phase, path.display());
+        }
+        Err(ENOSPC)
     }
 
     fn synced(&mut self, path: &Path) {
@@ -256,6 +306,7 @@ impl State {
                 format!("wrote {prefix} of {} bytes", buf.len())
             }
             FaultMode::LoseUnsynced => self.lose_unsynced(),
+            FaultMode::Enospc => unreachable!("enospc never crashes"),
         };
         let phase = if detail.is_empty() { self.phase.clone() } else { format!("{} {detail}", self.phase) };
         eprintln!(
@@ -361,8 +412,10 @@ unsafe extern "C" fn mdbx_pwrite_hook(fd: c_int, buf: *const c_void, bytes: usiz
     // MDBX keeps its meta pages in the first three pages; tiger opens 4096-byte pages, and a
     // datadir with larger pages still has its metas below 3 * 65536.
     let detail = if offset < 3 * 4096 { "mdbx-meta" } else { "mdbx-pages" };
-    state.write(&path, offset, data, dsync, detail);
-    0
+    match state.write(&path, offset, data, dsync, detail) {
+        Ok(()) => 0,
+        Err(errno) => errno,
+    }
 }
 
 unsafe extern "C" fn mdbx_fsync_hook(fd: c_int) {
@@ -380,7 +433,10 @@ mod tests {
     #[test]
     fn parses_the_fuzzer_format() {
         let config = FaultConfig::parse("seed=7,crash_after_writes=12,mode=lose_unsynced").unwrap();
-        assert_eq!(config, FaultConfig { seed: 7, crash_after_writes: 12, mode: FaultMode::LoseUnsynced });
+        assert_eq!(config, FaultConfig { seed: 7, crash_after_writes: 12, mode: FaultMode::LoseUnsynced, fail_writes: 1 });
+        let config = FaultConfig::parse("seed=3,crash_after_writes=5,mode=enospc,fail_writes=4").unwrap();
+        assert_eq!((config.mode, config.fail_writes), (FaultMode::Enospc, 4));
+        assert!(FaultConfig::parse("crash_after_writes=5,mode=enospc,fail_writes=0").is_err());
         assert_eq!(FaultConfig::parse("crash_after_writes=1,mode=torn").unwrap().mode, FaultMode::Torn);
         assert!(FaultConfig::parse("seed=1,mode=torn").is_err());
         assert!(FaultConfig::parse("crash_after_writes=0,mode=torn").is_err());

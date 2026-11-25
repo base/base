@@ -15,6 +15,8 @@ use crate::Node;
 
 /// How often the persistence thread checks for a batch.
 const POLL: Duration = Duration::from_millis(20);
+/// How long the persistence thread waits after a failed batch commit before it retries.
+const RETRY: Duration = Duration::from_secs(1);
 /// `SIGINT` and `SIGTERM` (the same numbers on Linux and macOS).
 const SHUTDOWN_SIGNALS: [i32; 2] = [2, 15];
 
@@ -57,10 +59,11 @@ impl Node {
                         Ok(true) => {}
                         Ok(false) => thread::sleep(POLL),
                         Err(error) => {
-                            // The blocks were validated, so this is a datadir fault: stop, and
-                            // reopen at the last batch.
-                            eprintln!("tiger: persisting blocks failed: {error}");
-                            std::process::exit(1);
+                            // The blocks were validated, so this is a datadir fault, such as a
+                            // full disk; the failed commit healed the datadir back to the last
+                            // batch, so try again (the blocks stay in memory meanwhile).
+                            eprintln!("tiger: persisting blocks failed, retrying: {error}");
+                            thread::sleep(RETRY);
                         }
                     }
                 }

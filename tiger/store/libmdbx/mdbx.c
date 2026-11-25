@@ -29226,14 +29226,18 @@ int osal_pread(mdbx_filehandle_t fd, void *buf, size_t bytes, uint64_t offset) {
 }
 
 /* tiger: fault-injection hooks, NULL unless TIGER_FAULT is set (tiger/store/src/fault.rs).
- * tiger_hook_pwrite runs before every positional write and may abort the process;
+ * tiger_hook_pwrite runs before every positional write and may abort the process, or return an
+ * errno (such as ENOSPC) that fails the write instead;
  * tiger_hook_fsync runs after every successful fsync/fdatasync. */
 int (*tiger_hook_pwrite)(mdbx_filehandle_t fd, const void *buf, size_t bytes, uint64_t offset) = NULL;
 void (*tiger_hook_fsync)(mdbx_filehandle_t fd) = NULL;
 
 int osal_pwrite(mdbx_filehandle_t fd, const void *buf, size_t bytes, uint64_t offset) {
-  if (unlikely(tiger_hook_pwrite != NULL))
-    tiger_hook_pwrite(fd, buf, bytes, offset);
+  if (unlikely(tiger_hook_pwrite != NULL)) {
+    const int rc = tiger_hook_pwrite(fd, buf, bytes, offset);
+    if (unlikely(rc != MDBX_SUCCESS))
+      return rc;
+  }
   while (true) {
 #if defined(_WIN32) || defined(_WIN64)
     OVERLAPPED ov;
