@@ -149,6 +149,7 @@ impl Node {
     /// Answers one `engine_*` method.
     pub fn engine(&self, method: &str, params_value: &Value) -> Result<Value, RpcError> {
         let p = params_value;
+        let received = std::time::Instant::now();
         if method.starts_with("engine_newPayload") || method.starts_with("engine_forkchoiceUpdated") {
             self.persistence_backpressure();
         }
@@ -163,7 +164,7 @@ impl Node {
             "engine_newPayloadV2" => {
                 let input: ExecutionPayloadInputV2 = params(p, 0)?;
                 let payload = BaseExecutionPayload::v2(input);
-                self.new_payload(Version::V2, payload, BaseExecutionPayloadSidecar::default())
+                self.new_payload(Version::V2, payload, BaseExecutionPayloadSidecar::default(), received)
             }
             "engine_newPayloadV3" => {
                 let payload: ExecutionPayloadV3 = params(p, 0)?;
@@ -173,7 +174,7 @@ impl Node {
                     parent_beacon_block_root,
                     versioned_hashes,
                 });
-                self.new_payload(Version::V3, BaseExecutionPayload::V3(payload), sidecar)
+                self.new_payload(Version::V3, BaseExecutionPayload::V3(payload), sidecar, received)
             }
             "engine_newPayloadV4" => {
                 let payload: BaseExecutionPayloadV4 = params(p, 0)?;
@@ -184,7 +185,7 @@ impl Node {
                     CancunPayloadFields { parent_beacon_block_root, versioned_hashes },
                     PraguePayloadFields::new(Requests::new(requests)),
                 );
-                self.new_payload(Version::V4, BaseExecutionPayload::V4(payload), sidecar)
+                self.new_payload(Version::V4, BaseExecutionPayload::V4(payload), sidecar, received)
             }
             "engine_forkchoiceUpdatedV1" => self.forkchoice_updated(Version::V1, p),
             "engine_forkchoiceUpdatedV2" => self.forkchoice_updated(Version::V2, p),
@@ -308,7 +309,9 @@ impl Node {
         version: Version,
         payload: BaseExecutionPayload,
         sidecar: BaseExecutionPayloadSidecar,
+        received: std::time::Instant,
     ) -> Result<Value, RpcError> {
+        let entered = received.elapsed();
         let v1 = payload.as_v1();
         let timestamp = v1.timestamp;
         let expected_hash = v1.block_hash;
@@ -321,7 +324,9 @@ impl Node {
             sidecar.parent_beacon_block_root().is_some(),
             false,
         )?;
+        let locking = std::time::Instant::now();
         let mut engine = self.engine.lock().expect("engine lock");
+        let (engine_lock, decoding) = (locking.elapsed(), std::time::Instant::now());
         let block = match payload.into_block_with_sidecar_raw(&sidecar) {
             Ok(block) => block,
             Err(error) => {
@@ -336,8 +341,24 @@ impl Node {
             let error = format!("block hash mismatch: want {expected_hash}, got {hash}");
             return Ok(status("INVALID", None, Some(&error)));
         }
+        let (decoded, importing) = (decoding.elapsed(), std::time::Instant::now());
         match self.import_block(&mut engine, header.clone(), hash, &block.body.transactions)? {
-            Imported::Valid | Imported::Known => Ok(status("VALID", Some(hash), None)),
+            Imported::Valid | Imported::Known => {
+                if std::env::var_os("TIGER_VALIDATION_LOG").is_some() {
+                    let ms = |duration: std::time::Duration| duration.as_secs_f64() * 1e3;
+                    crate::Log::line(format!(
+                        "tiger: new payload {} request {:.2}ms backpressure+params {:.2}ms engine lock {:.2}ms decode {:.2}ms import {:.2}ms total {:.2}ms",
+                        header.number,
+                        crate::http::request_started().map_or(0.0, |started| ms(received - started)),
+                        ms(entered),
+                        ms(engine_lock),
+                        ms(decoded),
+                        ms(importing.elapsed()),
+                        crate::http::request_started().map_or(0.0, |started| ms(started.elapsed())),
+                    ));
+                }
+                Ok(status("VALID", Some(hash), None))
+            }
             Imported::MissingParent | Imported::AwaitingWitness => {
                 // As base-reth buffers a block it cannot validate yet: the sync thread imports it
                 // from here (or downloads it) once its parent and witness are in.
@@ -400,7 +421,11 @@ impl Node {
         transactions: &[Bytes],
     ) -> Result<Result<(crate::Validated, Option<Validation>), Imported>, RpcError> {
         let parent_hash = header.parent_hash;
+        let locking = std::time::Instant::now();
         let chain = self.chain.read().expect("chain lock");
+        if std::env::var_os("TIGER_VALIDATION_LOG").is_some() {
+            crate::Log::line(format!("tiger: block {} chain read lock {:.2}ms", header.number, locking.elapsed().as_secs_f64() * 1e3));
+        }
         if chain.block(&hash).is_some() {
             return Ok(Err(Imported::Known));
         }
@@ -454,14 +479,21 @@ impl Node {
         let (validated, prepared) = validated;
         match (validated.invalid, validated.executed) {
             (None, Some(executed)) => {
+                let number = header.number;
                 let mut stored = executed;
                 stored.header = header;
+                let locking = std::time::Instant::now();
                 let mut chain = self.chain.write().expect("chain lock");
+                let (lock, inserting) = (locking.elapsed(), std::time::Instant::now());
                 // The Engine API may have pruned the parent while the block validated unlocked.
                 if chain.block(&parent_hash).is_none() {
                     return Ok(Imported::MissingParent);
                 }
                 chain.insert(hash, &stored, prepared).map_err(RpcError::internal)?;
+                if std::env::var_os("TIGER_VALIDATION_LOG").is_some() {
+                    let ms = |duration: std::time::Duration| duration.as_secs_f64() * 1e3;
+                    crate::Log::line(format!("tiger: block {number} chain write lock {:.2}ms insert {:.2}ms", ms(lock), ms(inserting.elapsed())));
+                }
                 Ok(Imported::Valid)
             }
             (invalid, _) => {
