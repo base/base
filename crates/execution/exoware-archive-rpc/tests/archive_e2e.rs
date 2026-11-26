@@ -801,16 +801,22 @@ async fn check_forged_locators(
         ])
         .await
         .expect("forge locators");
-    for (method, params) in [
-        ("eth_getBlockByHash", json!([forged_block, true])),
-        ("eth_getBlockTransactionCountByHash", json!([forged_block])),
-        ("eth_getLogs", json!([{ "blockHash": forged_block }])),
+    // The node keeps every canonical header, so a block hash it does not know is never pruned
+    // history: the archive's block-hash locator is not consulted and the node's answer stands
+    // (`archive_requests.rs` counts zero store requests for it).
+    for (method, params, expected) in [
+        ("eth_getBlockByHash", json!([forged_block, true]), Value::Null),
+        ("eth_getBlockTransactionCountByHash", json!([forged_block]), Value::Null),
+        (
+            "eth_getLogs",
+            json!([{ "blockHash": forged_block }]),
+            json!({ "code": -32001, "message": format!("block not found: hash {forged_block}") }),
+        ),
     ] {
         let value = call(client, method, params.clone()).await;
         assert_eq!(
-            value["code"],
-            json!(PRUNED_HISTORY),
-            "{name}: {method} {params} with a forged locator is 4444, got {value}"
+            value, expected,
+            "{name}: {method} {params} with a forged locator keeps the node's answer"
         );
     }
     let trace = call(client, "debug_traceTransaction", json!([forged_tx, {}])).await;

@@ -56,10 +56,10 @@ request is pruned:
 
 | Method | Goes to the archive when | Archive path |
 | --- | --- | --- |
-| `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_getBlockReceipts`, `eth_getTransactionByBlock{Hash,Number}AndIndex` | The node answered 4444, or returned `null` for a pruned number, or its answer is visibly incomplete over pruned data: a deposit lacks a field its fork requires (`depositNonce` from Regolith, `depositReceiptVersion` from Canyon; Base defaults both when the receipt is gone) and a fresh retention read shows its receipts or lookup pruned. A complete answer is served as is, with no retention read. A `null` for a hash counts only once the node pruned something hash-addressable. | Hash locator (if needed), then the verified block |
+| `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_getBlockReceipts`, `eth_getTransactionByBlock{Hash,Number}AndIndex` | The node answered 4444, or returned `null` for a pruned number, or its answer is visibly incomplete over pruned data: a deposit lacks a field its fork requires (`depositNonce` from Regolith, `depositReceiptVersion` from Canyon; Base defaults both when the receipt is gone) and a fresh retention read shows its receipts or lookup pruned. A complete answer is served as is, with no retention read. A block hash the node does not know keeps the node's answer with no store call: the node never prunes headers and the archive holds only finalized canonical blocks, so an unknown hash is a block the node has not seen yet or a forked-out one, never pruned history. | The verified block at the node's number for it |
 | `eth_getBlockTransactionCountBy{Number,Hash}` | 4444 or `null` for a pruned number, against the earliest body only | Same |
 | `eth_getTransactionByHash`, `eth_getTransactionReceipt` | As for blocks. A `null` stays local without a store call when the hash is in the local pool or the node's `TransactionLookup` is unpruned and has no entry for it, so pending-transaction polling never reaches the store; a transaction the node still places is read at that block. | Tx locator, then the verified block |
-| `eth_getLogs` | The node answered 4444 | Blocks below the node's first complete block from the archive, the rest from the node's filter, no gap. reth's `--rpc.max-blocks-per-filter` and `--rpc.max-logs-per-response` apply to the combined result with reth's errors; the archive reader stops after the 32-block chunk that crosses the log cap. |
+| `eth_getLogs` | The node answered 4444 (for `blockHash`, only for a block the node knows) | Blocks below the node's first complete block from the archive, the rest from the node's filter, no gap. reth's `--rpc.max-blocks-per-filter` and `--rpc.max-logs-per-response` apply to the combined result with reth's errors; the archive reader stops after the 32-block chunk that crosses the log cap. |
 | `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode` | The block (number, hash, `earliest`; EIP-1898 objects included) is at or below the `AccountHistory` checkpoint, or the node refused the read as pruned | State history seek, else the node's state at the archive head `H` |
 | `eth_getStorageAt` | Same, against `StorageHistory` | Same |
 
@@ -73,9 +73,10 @@ Errors map once, in `ArchiveRpcBoundary`:
 - A number-addressed request in the pruned range, or a hash that resolved in the archive,
   gets 4444 `pruned history unavailable: <reason>` when the archive cannot answer (outage,
   timeout, integrity fault, retention moved). Never `null` or empty data.
-- A hash the node does not know returns `null` for a genuine archive miss, and also when the
-  store failed before the hash resolved (`hash_fallbacks` metric, warning log), so polling for
-  a pending transaction does not turn into errors during an outage.
+- A block hash the node does not know gets the node's own answer without a store call.
+- A transaction hash the node cannot place returns `null` for a genuine archive miss, and also
+  when the store failed before the hash resolved (`hash_fallbacks` metric, warning log), so
+  polling for a pending transaction does not turn into errors during an outage.
 - Log query limits are `-32602` with reth's messages.
 
 A local read that fails with a server error (reth's static-file pruner can delete a file
@@ -140,7 +141,12 @@ cargo test -p base-execution-cli --lib standard_node
 - `pruned_node_serves_history_from_archive`: a dev node with 64-block retention exports to an
   in-process simulator; every block, transaction, receipt, log and state response captured
   before pruning is JSON-equal after pruning. With the simulator stopped, number-addressed
-  reads are 4444 and unknown hashes stay `null`.
+  reads are 4444 and unknown hashes stay `null`. A forged block-hash locator for a hash the
+  node does not know is never read: the node's answer stands.
+- `block_reads_over_pruned_bodies_make_one_archive_request` (its own binary, counting the
+  process-wide `requests` metric): a block read over pruned bodies makes exactly one archive
+  request, also with the store down, and an unknown block hash makes none across all five
+  hash-addressed block methods.
 - `unpruned_node_with_store_down_answers_locally`: misses and recent reads stay local.
 - `transaction_count_override_is_preserved`: `nonce_key` answers equal the Base override's.
 - Unit tests cover the error boundary, hash fallback, routing per checkpoint, the retention

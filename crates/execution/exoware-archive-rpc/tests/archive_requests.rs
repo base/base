@@ -10,7 +10,7 @@ use alloy_primitives::{B256, Bytes, U256};
 use alloy_rpc_client::RpcClient;
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
-use base_exoware_archive::{ArchiveStore, ExowareArchive, ExowareStore};
+use base_exoware_archive::{ArchiveKey, ArchiveStore, ExowareArchive, ExowareStore};
 use base_exoware_archive_rpc::{ExowareArchiveArgs, ExowareArchiveExtension};
 use base_node_runner::test_utils::{
     L1_BLOCK_INFO_DEPOSIT_TX, LocalNodeRetention, RethRpcModule, RpcModuleSelection, TestHarness,
@@ -141,12 +141,11 @@ async fn severable_store(
     (url, cut, proxy)
 }
 
-/// Calls `eth_getBlockByNumber(number, full)` and returns its result or error as JSON, with
-/// the archive requests it began.
-async fn counted_block(client: &RpcClient, number: u64, full: bool) -> (Value, u64) {
+/// Calls `method` with `params` and returns its result or error as JSON, with the archive
+/// requests it began.
+async fn counted(client: &RpcClient, method: &'static str, params: Value) -> (Value, u64) {
     let before = archive_requests();
-    let params = json!([format!("0x{number:x}"), full]);
-    let value = match client.request::<_, Value>("eth_getBlockByNumber", params).await {
+    let value = match client.request::<_, Value>(method, params).await {
         Ok(value) => value,
         Err(err) => err.as_error_resp().map_or_else(
             || panic!("transport failure: {err}"),
@@ -156,9 +155,16 @@ async fn counted_block(client: &RpcClient, number: u64, full: bool) -> (Value, u
     (value, archive_requests() - before)
 }
 
+/// Calls `eth_getBlockByNumber(number, full)`, as [`counted`] does.
+async fn counted_block(client: &RpcClient, number: u64, full: bool) -> (Value, u64) {
+    counted(client, "eth_getBlockByNumber", json!([format!("0x{number:x}"), full])).await
+}
+
 /// A block read over pruned bodies reaches the archive exactly once: with every deposit field
 /// served from the archive (`full = true` over pruned receipts), and as one 4444 with the
-/// store down. The node's local delegate never asks the archive a second time.
+/// store down. The node's local delegate never asks the archive a second time. A block hash
+/// the node does not know is never pruned history, so all five hash-addressed block methods
+/// keep the node's answer with zero archive requests, even with a locator for it in the store.
 #[tokio::test(flavor = "multi_thread")]
 async fn block_reads_over_pruned_bodies_make_one_archive_request() {
     tokio::time::timeout(E2E_TIMEOUT, async {
@@ -213,6 +219,25 @@ async fn block_reads_over_pruned_bodies_make_one_archive_request() {
         let (archived, requests) = counted_block(&client, 1, true).await;
         assert_eq!(archived, unpruned, "the archive serves block 1 with every deposit field");
         assert_eq!(requests, 1, "full = true over pruned bodies makes one archive request");
+
+        let unknown = B256::repeat_byte(0xb2);
+        store
+            .put(&[(ArchiveKey::block_hash(unknown, 0), 2u64.to_be_bytes().to_vec().into())])
+            .await
+            .expect("forge a block-hash locator");
+        let not_found =
+            json!({ "code": -32001, "message": format!("block not found: hash {unknown}") });
+        for (method, params, expected) in [
+            ("eth_getBlockByHash", json!([unknown, true]), Value::Null),
+            ("eth_getBlockTransactionCountByHash", json!([unknown]), Value::Null),
+            ("eth_getBlockReceipts", json!([unknown]), Value::Null),
+            ("eth_getTransactionByBlockHashAndIndex", json!([unknown, "0x0"]), Value::Null),
+            ("eth_getLogs", json!([{ "blockHash": unknown }]), not_found),
+        ] {
+            let (value, requests) = counted(&client, method, params).await;
+            assert_eq!(value, expected, "{method} for an unknown hash keeps the node's answer");
+            assert_eq!(requests, 0, "{method} for an unknown hash makes no archive request");
+        }
 
         cut.notify_one();
         proxy.await.expect("proxy closes");

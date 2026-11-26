@@ -10,8 +10,10 @@
 //! Errors: a number-addressed request in the pruned range, or a hash that resolved in the
 //! archive, gets JSON-RPC 4444 when the archive cannot answer it (outage, timeout, integrity
 //! fault, retention moved). `null` is returned only for a genuine miss, or when the store
-//! failed before a hash the node does not know resolved (so pending-transaction polling does
-//! not turn into errors during an outage).
+//! failed before a transaction hash the node cannot place resolved (so pending-transaction
+//! polling does not turn into errors during an outage). A block hash the node does not know
+//! is never pruned history (the node keeps every canonical header), so it keeps the node's
+//! answer without a store call.
 
 use std::sync::Arc;
 
@@ -457,29 +459,6 @@ where
         Ok(block)
     }
 
-    /// Resolves a block hash the node does not know in the archive and reads the block.
-    /// Resolution is marked as soon as a valid locator decodes, so any later failure is 4444.
-    pub async fn archived_by_hash(&self, hash: B256) -> HashLookup<PreparedBlock> {
-        let mut resolved = false;
-        let outcome = self
-            .archive_request(async |reader, request| {
-                let Some(number) = reader.locate_block_in(request, hash).await? else {
-                    return Ok(None);
-                };
-                resolved = true;
-                reader.verify_located_block_in(request, hash, number).await?;
-                reader.block_in(request, number).await.map(Some)
-            })
-            .await
-            .map(|block| block.map(|block| self.converter.prepare(block)));
-        let outcome = outcome.and_then(|block| {
-            block.map_or(Ok(None), |block| {
-                Self::require_hash(&block, Some(hash)).map(|()| Some(block))
-            })
-        });
-        ArchiveHandle::<P>::classify(outcome, resolved)
-    }
-
     /// Resolves a transaction hash the node cannot place in the archive and reads its block.
     /// Resolution is marked as soon as a valid locator decodes.
     pub async fn archived_transaction(&self, hash: B256) -> HashLookup<(PreparedBlock, usize)> {
@@ -539,8 +518,9 @@ where
     /// archive answers or the request is 4444. Complete answers cost no retention read. A local
     /// miss, a pruned refusal, or a failure that raced the pruner
     /// ([`ArchiveRpcBoundary::raced_prune`]) goes to the archive at
-    /// the node's identity for the block, or, for a hash the node does not know, through the
-    /// archive's locator.
+    /// the node's identity for the block. A hash the node does not know is never pruned history
+    /// (the node keeps every canonical header, and the archive holds only finalized canonical
+    /// blocks), so it keeps the node's answer without a store call.
     pub async fn routed<T>(
         &self,
         local: RpcResult<Option<T>>,
@@ -567,45 +547,18 @@ where
             };
             return self.answer_at(LocalIdentity { number, hash: named }, true, build).await;
         }
-        let identity = self.identity(addressed);
-        let named = match addressed {
-            Addressed::Hash(hash) => Some(hash),
-            Addressed::Number(_) => None,
-        };
+        // An unknown hash has no identity: it is not pruned history, so the node's answer stands.
+        let Some(id) = self.identity(addressed) else { return local };
         let miss = match &local {
             Ok(None) => true,
             Err(err) if ArchiveRpcBoundary::is_pruned(err) => false,
-            Err(err) => match identity {
-                Some(id) if self.raced_prune(err, id.number, needs) => false,
-                _ => return local,
-            },
-            Ok(Some(_)) => return local,
+            Err(err) if self.raced_prune(err, id.number, needs) => false,
+            Err(_) | Ok(Some(_)) => return local,
         };
-        match (identity, named) {
-            (Some(id), _) => {
-                if miss && !self.miss_may_be_pruned(id.number, needs) {
-                    return local;
-                }
-                self.answer_at(id, false, build).await
-            }
-            (None, Some(hash)) => {
-                if miss && !self.local_retention().archive_may_hold(None) {
-                    return local;
-                }
-                let archived = match self.archived_by_hash(hash).await {
-                    HashLookup::Found(block) => match build(&block) {
-                        Ok(Some(answer)) => HashLookup::Found(answer),
-                        Ok(None) => HashLookup::Miss,
-                        Err(err) => HashLookup::Failed(err),
-                    },
-                    HashLookup::Miss => HashLookup::Miss,
-                    HashLookup::Unresolved(err) => HashLookup::Unresolved(err),
-                    HashLookup::Failed(err) => HashLookup::Failed(err),
-                };
-                ArchiveRpcBoundary::by_hash(local, archived)
-            }
-            (None, None) => local,
+        if miss && !self.miss_may_be_pruned(id.number, needs) {
+            return local;
         }
+        self.answer_at(id, false, build).await
     }
 
     /// The archive's answer for transaction `hash` in the block the node placed it in. The
@@ -816,15 +769,13 @@ where
         Ok(logs.iter().map(ArchiveConverter::log).collect())
     }
 
-    /// Logs of a `blockHash` filter for a block the node refused. A block the node knows is
-    /// read at its number and must carry the hash; an unknown hash is resolved and read in
-    /// one archive request. An archive miss or an outage before the hash resolved keeps the
-    /// node's error; a failure after it resolved is 4444.
+    /// Logs of a `blockHash` filter for block `number`, which the node knows by `hash` and
+    /// refused as pruned. The archived logs must all carry the hash; any failure is 4444.
     pub async fn archived_hash_logs(
         &self,
         filter: &Filter,
         hash: B256,
-        local: RpcResult<Vec<BaseLogResponse>>,
+        number: u64,
     ) -> RpcResult<Vec<BaseLogResponse>> {
         let check = |logs: Vec<BaseLogResponse>| -> Result<Vec<BaseLogResponse>, ArchiveError> {
             let foreign = logs
@@ -838,30 +789,8 @@ where
                 ))
             })
         };
-        if let Some(number) = self.provider.block_number(hash).ok().flatten() {
-            let logs = self.archived_log_range(filter, number, number, None).await?;
-            return check(logs).map_err(ArchiveRpcBoundary::error);
-        }
-        let mut resolved = false;
-        let outcome = self
-            .archive_request(async |reader, request| {
-                let Some(number) = reader.locate_block_in(request, hash).await? else {
-                    return Ok(None);
-                };
-                resolved = true;
-                reader.verify_located_block_in(request, hash, number).await?;
-                let logs = reader
-                    .logs_in(request, &Self::log_filter(filter, number, number), None)
-                    .await?;
-                Ok(Some(logs.iter().map(ArchiveConverter::log).collect::<Vec<_>>()))
-            })
-            .await
-            .and_then(|logs| logs.map(check).transpose());
-        match ArchiveHandle::<P>::classify(outcome, resolved) {
-            HashLookup::Found(logs) => Ok(logs),
-            HashLookup::Miss | HashLookup::Unresolved(_) => local,
-            HashLookup::Failed(err) => Err(ArchiveRpcBoundary::error(err)),
-        }
+        let logs = self.archived_log_range(filter, number, number, None).await?;
+        check(logs).map_err(ArchiveRpcBoundary::error)
     }
 
     /// Serves `eth_getLogs` after the node refused pruned receipts. Blocks below the node's
@@ -1115,14 +1044,14 @@ where
         let local = EngineEthFilter::logs(&self.filter, filter.clone(), self.limits).await;
         let Err(err) = &local else { return local };
         match filter.block_option {
+            // A hash the node does not know is never pruned history; only a known block the
+            // node refused as pruned goes to the archive.
             FilterBlockOption::AtBlockHash(hash) => {
-                let known = self.provider.block_number(hash).ok().flatten().is_some();
-                if ArchiveRpcBoundary::is_pruned(err)
-                    || (!known && self.local_retention().archive_may_hold(None))
-                {
-                    self.archived_hash_logs(&filter, hash, local).await
-                } else {
-                    local
+                match self.provider.block_number(hash).ok().flatten() {
+                    Some(number) if ArchiveRpcBoundary::is_pruned(err) => {
+                        self.archived_hash_logs(&filter, hash, number).await
+                    }
+                    _ => local,
                 }
             }
             FilterBlockOption::Range { .. } if ArchiveRpcBoundary::is_pruned(err) => {

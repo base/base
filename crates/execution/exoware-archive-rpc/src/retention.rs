@@ -133,21 +133,6 @@ impl LocalRetention {
         }
         HashMiss::Archive
     }
-
-    /// Whether a local miss may be history the node pruned. A number qualifies only below what
-    /// the node fully holds, never above its head; a hash (`None`) only when the node pruned
-    /// bodies, receipts or its transaction lookup. Polling for an unmined receipt therefore
-    /// never reaches the archive on an unpruned node.
-    pub fn archive_may_hold(&self, number: Option<u64>) -> bool {
-        number.map_or_else(
-            || {
-                self.earliest_body > 0
-                    || self.receipts_pruned.is_some()
-                    || self.tx_lookup_pruned.is_some()
-            },
-            |number| self.incomplete(number, AnswerNeeds::Deposits),
-        )
-    }
 }
 
 /// The node's [`LocalRetention`], reused for `ttl` so high-volume RPCs do not open several
@@ -264,20 +249,6 @@ mod tests {
         let bodies =
             LocalRetention { earliest_body: 10, receipts_pruned: Some(4), ..Default::default() };
         assert_eq!(bodies.first_complete(), 10, "bodies bound the complete range");
-    }
-
-    /// Misses reach the archive only for pruned history: never above what the node holds, and
-    /// for hashes only once something hash-addressable was pruned.
-    #[test]
-    fn misses_reach_the_archive_only_for_pruned_history() {
-        let unpruned = LocalRetention::default();
-        assert!(!unpruned.archive_may_hold(None), "unknown hash on an unpruned node stays local");
-        assert!(!unpruned.archive_may_hold(Some(1_000)), "head + 1 on an unpruned node");
-        let lookup = LocalRetention { tx_lookup_pruned: Some(3), ..Default::default() };
-        assert!(lookup.archive_may_hold(None), "pruned tx lookup qualifies hashes");
-        let bodies = LocalRetention { earliest_body: 10, ..Default::default() };
-        assert!(bodies.archive_may_hold(Some(9)), "block 9 is pruned");
-        assert!(!bodies.archive_may_hold(Some(10)), "block 10 is local");
     }
 
     /// P1: a complete local answer performs zero retention reads; a visibly incomplete one
