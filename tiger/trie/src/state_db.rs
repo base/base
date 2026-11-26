@@ -731,6 +731,11 @@ pub struct StateView<'d> {
 }
 
 impl StateView<'_> {
+    /// The datadir's tip when the view opened.
+    pub const fn tip(&self) -> u64 {
+        self.tip
+    }
+
     fn dbs(&self) -> &Db {
         &self.db.datadir.db
     }

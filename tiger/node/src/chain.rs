@@ -119,6 +119,59 @@ impl FoundBlock {
     }
 }
 
+/// Where a state's reads start: the in-memory layer over the stored tip, or a stored block.
+#[derive(Debug)]
+enum StateBase {
+    Mem(Arc<MemState>),
+    Stored(u64),
+}
+
+/// What [`Chain::state_after`] opens, taken under the chain lock. An RPC call opens it with
+/// [`Self::open`] after releasing the lock, so a slow read (a proof over many in-memory blocks)
+/// does not hold up a block's insert behind the lock. The parts stay valid while the datadir
+/// only gains blocks: the in-memory layer holds the latest value of everything the blocks it
+/// merged change, and a view below the tip reads the changesets back to its block.
+#[derive(Debug)]
+pub struct StateParts {
+    db: Arc<StateDb>,
+    base: StateBase,
+    /// Blocks on top of `base`, oldest first.
+    overlays: Vec<Arc<BlockChanges>>,
+    block_hashes: BlockHashes,
+    cache: Option<Arc<crate::ExecCache>>,
+    epoch: Arc<AtomicU64>,
+    /// `epoch` when the parts were taken.
+    started: u64,
+}
+
+impl StateParts {
+    /// The state, outside the chain lock. `None` when the datadir changed under the parts since
+    /// they were taken, by a reorg that may have unwound it or a commit past the layer's head:
+    /// take them again. (A reorg bumps the epoch before it writes, so a view opened while the
+    /// epoch is unchanged reads the datadir from before any unwind.)
+    pub fn open(&self) -> Result<Option<NodeState<'_>>, String> {
+        let state = self.open_on(&self.db)?;
+        let reorged = self.epoch.load(Ordering::SeqCst) != self.started;
+        // A persistence commit of blocks above the layer's head would show their later values.
+        let overtaken = matches!(&self.base, StateBase::Mem(mem) if state.stored_tip() > mem.head);
+        Ok((!reorged && !overtaken).then_some(state))
+    }
+
+    fn open_on<'d>(&self, db: &'d StateDb) -> Result<NodeState<'d>, String> {
+        let overlays = self.overlays.iter().map(|changes| BlockChanges::clone(changes)).collect();
+        let view = match &self.base {
+            StateBase::Mem(mem) => db.view_mem(Arc::clone(mem), overlays),
+            StateBase::Stored(number) => db.view(*number, overlays),
+        }
+        .map_err(|error| error.to_string())?;
+        let state = NodeState::new(view, Arc::clone(&self.block_hashes));
+        Ok(match &self.cache {
+            Some(cache) => state.with_cache(Arc::clone(cache)),
+            None => state,
+        })
+    }
+}
+
 /// One block with its execution results.
 #[derive(Debug, Clone)]
 pub struct StoredBlock {
@@ -679,13 +732,18 @@ impl Chain {
     /// The state after `block` (canonical or a side branch) with the block hashes `BLOCKHASH`
     /// reads in a child of it. Holds a database read transaction: use it and drop it.
     pub fn state_after(&self, block: &StoredBlock) -> Result<NodeState<'_>, String> {
+        self.state_parts(block)?.open_on(&self.db)
+    }
+
+    /// What [`Self::state_after`] opens, for a reader to open after releasing the chain lock
+    /// ([`StateParts::open`]).
+    pub fn state_parts(&self, block: &StoredBlock) -> Result<StateParts, String> {
         let mut overlays = Vec::new();
         let mut number = block.number();
         if !self.is_canonical(&block.hash) {
             let (mut hash, mut changes, mut parent) = (block.hash, block.changes.clone(), block.header.parent_hash);
             loop {
-                let state = changes.ok_or_else(|| format!("state of block {hash} is gone"))?;
-                overlays.push(BlockChanges::clone(&state));
+                overlays.push(changes.ok_or_else(|| format!("state of block {hash} is gone"))?);
                 let at = self.block(&parent).ok_or_else(|| format!("block {hash} has no stored parent"))?;
                 if self.is_canonical(&at.hash) {
                     number = at.number();
@@ -695,22 +753,29 @@ impl Chain {
             }
         }
         overlays.reverse();
-        let view = if self.batched() && number == self.head.number() {
-            self.db.view_mem(Arc::clone(&self.mem), overlays)
+        let base = if self.batched() && number == self.head.number() {
+            StateBase::Mem(Arc::clone(&self.mem))
         } else if let Some(at) = number.checked_sub(self.disk.0).filter(|&above| above > 0 && self.batched()) {
             // A canonical block below the head: the canonical blocks up to it as overlays.
             let canon = self.canon[..at as usize].iter().map(|block| {
-                BlockChanges::clone(block.changes.as_ref().expect("in-memory canonical blocks keep their changes"))
+                Arc::clone(block.changes.as_ref().expect("in-memory canonical blocks keep their changes"))
             });
-            self.db.view(self.disk.0, canon.chain(overlays).collect())
+            overlays = canon.chain(overlays).collect();
+            StateBase::Stored(self.disk.0)
         } else {
-            self.db.view(number, overlays)
-        }
-        .map_err(|error| error.to_string())?;
-        let state = NodeState::new(view, self.shared_block_hashes(block));
+            StateBase::Stored(number)
+        };
         // Only the head's own state reads the execution cache.
         let cached = self.exec_cache_enabled && self.batched() && block.hash == self.head.hash && self.cache_head == self.head.hash;
-        Ok(if cached { state.with_cache(Arc::clone(&self.exec_cache)) } else { state })
+        Ok(StateParts {
+            db: Arc::clone(&self.db),
+            base,
+            overlays,
+            block_hashes: self.shared_block_hashes(block),
+            cache: cached.then(|| Arc::clone(&self.exec_cache)),
+            epoch: Arc::clone(&self.epoch),
+            started: self.epoch.load(Ordering::SeqCst),
+        })
     }
 
     /// [`Self::block_hashes`], shared with the recent blocks' states: a block's are reused, and a
@@ -1243,38 +1308,59 @@ impl Chain {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Header;
-    use alloy_primitives::B256;
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 
-    use crate::{BlockExecution, rpc::test_utils::node};
+    use crate::{BlockExecution, Node, rpc::test_utils::node};
+
+    /// Builds and stores a child of `parent`, `seconds` later, with `transactions`.
+    fn build(node: &Node, parent: B256, seconds: u64, transactions: &[Bytes]) -> B256 {
+        let mut chain = node.chain.write().unwrap();
+        let parent = chain.block(&parent).expect("parent stored");
+        let header = Header {
+            parent_hash: parent.hash,
+            number: parent.number() + 1,
+            timestamp: parent.header.timestamp + seconds,
+            gas_limit: parent.header.gas_limit,
+            base_fee_per_gas: parent.header.base_fee_per_gas,
+            beneficiary: parent.header.beneficiary,
+            parent_beacon_block_root: Some(B256::ZERO),
+            ..Header::default()
+        };
+        let state = chain.state_after(&parent).unwrap();
+        let built = BlockExecution { chain: &node.spec }
+            .build(&BlockExecution::env(&header), parent.header.extra_data.clone(), Some(0), transactions, false, &state)
+            .unwrap();
+        drop(state);
+        let executed = built.executed.expect("the block builds");
+        assert_eq!(executed.transactions.len(), transactions.len(), "every transaction is included");
+        let hash = executed.header.hash_slow();
+        chain.insert(hash, &executed, None).unwrap();
+        hash
+    }
+
+    /// A deposit minting one wei to `to`.
+    fn deposit(to: Address) -> Bytes {
+        let tx = TxDeposit {
+            source_hash: B256::left_padding_from(to.as_slice()),
+            from: Address::with_last_byte(0x10),
+            to: TxKind::Call(to),
+            mint: 1,
+            value: U256::from(1),
+            gas_limit: 100_000,
+            is_system_transaction: false,
+            input: Bytes::new(),
+        };
+        BaseTxEnvelope::Deposit(alloy_consensus::Sealed::new(tx)).encoded_2718().into()
+    }
 
     /// A block's states read its own ancestry's hashes when the shared hashes were last derived
     /// for a sibling at the same height (a reorg between payloads), and match the full read.
     #[test]
     fn block_hashes_follow_each_blocks_own_ancestry() {
         let node = node();
-        let build = |parent: B256, seconds: u64| -> B256 {
-            let mut chain = node.chain.write().unwrap();
-            let parent = chain.block(&parent).expect("parent stored");
-            let header = Header {
-                parent_hash: parent.hash,
-                number: parent.number() + 1,
-                timestamp: parent.header.timestamp + seconds,
-                gas_limit: parent.header.gas_limit,
-                base_fee_per_gas: parent.header.base_fee_per_gas,
-                beneficiary: parent.header.beneficiary,
-                parent_beacon_block_root: Some(B256::ZERO),
-                ..Header::default()
-            };
-            let state = chain.state_after(&parent).unwrap();
-            let built = BlockExecution { chain: &node.spec }
-                .build(&BlockExecution::env(&header), parent.header.extra_data.clone(), Some(0), &[], false, &state)
-                .unwrap();
-            drop(state);
-            let executed = built.executed.expect("an empty block builds");
-            let hash = executed.header.hash_slow();
-            chain.insert(hash, &executed, None).unwrap();
-            hash
-        };
+        let build = |parent: B256, seconds: u64| build(&node, parent, seconds, &[]);
         let genesis = node.chain.read().unwrap().head().hash;
         let (a1, b1) = (build(genesis, 2), build(genesis, 4));
         let (a2, b2) = (build(a1, 2), build(b1, 2));
@@ -1309,5 +1395,51 @@ mod tests {
             assert_eq!(chain.persistence_backpressure_threshold, expected, "threshold {threshold}");
         }
         assert!(chain.set_persistence(2048, 5, Some(2048)).is_err());
+    }
+
+    /// State parts taken under the chain lock (an RPC call's) read the same state after a
+    /// persistence commit moves the datadir tip under them, for the head (the in-memory layer)
+    /// and a canonical block below it (overlays on the stored tip); after a reorg they are
+    /// taken again.
+    #[test]
+    fn state_parts_outlive_persistence_and_retake_after_reorg() {
+        let node = node();
+        let genesis = node.chain.read().unwrap().head().hash;
+        let mut blocks = vec![genesis];
+        for n in 1..=4u8 {
+            blocks.push(build(&node, blocks[n as usize - 1], 2, &[deposit(Address::with_last_byte(n))]));
+        }
+        node.chain.write().unwrap().set_canonical(blocks[4]).unwrap();
+        let (two, four) = (Address::with_last_byte(2), Address::with_last_byte(4));
+        let taken: Vec<_> = {
+            let chain = node.chain.read().unwrap();
+            [blocks[2], blocks[4]]
+                .iter()
+                .map(|hash| {
+                    let block = chain.block(hash).unwrap();
+                    let state = chain.state_after(&block).unwrap();
+                    let proofs = [state.proof(two, &[]).unwrap(), state.proof(four, &[]).unwrap()];
+                    (chain.state_parts(&block).unwrap(), proofs)
+                })
+                .collect()
+        };
+        // Block 2's state holds the deposit to 0x…02 but not yet the one to 0x…04.
+        assert!(taken[0].1[0].account.is_some() && taken[0].1[1].account.is_none());
+        assert!(taken[1].1[1].account.is_some());
+        node.chain.write().unwrap().set_persistence(0, 0, None).unwrap();
+        while node.persist_once().unwrap() {}
+        assert_eq!(node.chain.read().unwrap().unpersisted(), 0, "every block persisted");
+        for (parts, proofs) in &taken {
+            let state = parts.open().unwrap().expect("the datadir only gained the parts' blocks");
+            assert_eq!(state.stored_tip(), 4);
+            assert_eq!([state.proof(two, &[]).unwrap(), state.proof(four, &[]).unwrap()], *proofs);
+        }
+        let parts = {
+            let chain = node.chain.read().unwrap();
+            chain.state_parts(&chain.head()).unwrap()
+        };
+        let sibling = build(&node, blocks[3], 4, &[]);
+        node.chain.write().unwrap().set_canonical(sibling).unwrap();
+        assert!(parts.open().unwrap().is_none(), "a reorg since the parts were taken");
     }
 }

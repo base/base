@@ -168,6 +168,11 @@ impl Misses {
 }
 
 impl<'d> NodeState<'d> {
+    /// The datadir's tip when this state opened.
+    pub const fn stored_tip(&self) -> u64 {
+        self.view.tip()
+    }
+
     /// The state of `view`, reading block hashes from `block_hashes`.
     pub fn new(view: StateView<'d>, block_hashes: std::sync::Arc<HashMap<u64, B256>>) -> Self {
         Self {

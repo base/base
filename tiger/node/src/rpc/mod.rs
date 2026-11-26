@@ -97,6 +97,9 @@ mod sequencer;
 mod shared;
 mod state;
 
+/// Most times a request takes a state's parts again after the datadir changed under them.
+const STATE_ATTEMPTS: usize = 3;
+
 fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result<T, RpcError> {
     let value = params.get(index).cloned().unwrap_or(Value::Null);
     serde_json::from_value(value).map_err(params::invalid_params)
@@ -312,9 +315,20 @@ impl Node {
     }
 
     /// `eth_getProof` at the post-state of `block`.
+    /// The state is opened after the chain lock is released: a proof below the head walks every
+    /// in-memory block above the stored tip, seconds at a deep in-memory layer.
     fn proof(&self, block: &StoredBlock, address: Address, keys: &[JsonStorageKey]) -> Result<Value, RpcError> {
-        let chain = self.chain.read().expect("chain lock");
-        self.rpc_state(&chain, block)?.proof_json(address, keys)
+        for _ in 0..STATE_ATTEMPTS {
+            let parts = {
+                let chain = self.chain.read().expect("chain lock");
+                Self::check_state_held(&chain, block)?;
+                chain.state_parts(block).map_err(RpcError::internal)?
+            };
+            if let Some(local) = parts.open().map_err(RpcError::internal)? {
+                return self.rpc_state_of(local, block).proof_json(address, keys);
+            }
+        }
+        Err(RpcError::internal("the datadir kept changing under eth_getProof".into()))
     }
 
 

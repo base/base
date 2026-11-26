@@ -56,11 +56,22 @@ impl Node {
         chain: &'d Chain,
         block: &StoredBlock,
     ) -> Result<RpcState<'d>, RpcError> {
+        Self::check_state_held(chain, block)?;
+        Ok(self.rpc_state_of(chain.state_after(block).map_err(RpcError::internal)?, block))
+    }
+
+    /// An error when the datadir pruned the post-state of canonical `block`.
+    pub(super) fn check_state_held(chain: &Chain, block: &StoredBlock) -> Result<(), RpcError> {
         if block.number() < chain.earliest_state() && chain.is_canonical(&block.hash) {
             return Err(Self::pruned(block.number(), chain.earliest_state()));
         }
-        Ok(RpcState {
-            local: chain.state_after(block).map_err(RpcError::internal)?,
+        Ok(())
+    }
+
+    /// `local`, the post-state of `block`, for a request's reads.
+    pub(super) fn rpc_state_of<'d>(&'d self, local: NodeState<'d>, block: &StoredBlock) -> RpcState<'d> {
+        RpcState {
+            local,
             upstream: self.upstream.as_ref(),
             block_hash: block.hash,
             state_root: block.header.state_root,
@@ -69,7 +80,7 @@ impl Node {
             codes: RefCell::default(),
             code_owners: RefCell::default(),
             failure: RefCell::default(),
-        })
+        }
     }
 }
 
