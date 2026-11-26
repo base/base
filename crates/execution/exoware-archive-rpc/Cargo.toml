@@ -33,6 +33,10 @@ reth-storage-api = { workspace = true, features = ["db-api"] }
 reth-rpc-eth-types.workspace = true
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
 reth-transaction-pool.workspace = true
+reth-trie-common.workspace = true
+
+# ethereum
+revm.workspace = true
 
 # alloy
 alloy-eips = { workspace = true, features = ["std"] }
@@ -46,11 +50,12 @@ jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 # misc
 async-trait.workspace = true
+futures.workspace = true
 clap = { workspace = true, features = ["derive"] }
 humantime.workspace = true
 eyre.workspace = true
 tracing.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
 
 [dev-dependencies]
 base-protocol.workspace = true

@@ -15,8 +15,8 @@ use tokio::sync::OnceCell;
 use tracing::{error, info, warn};
 
 use crate::{
-    ArchiveConverter, ArchiveEth, ArchiveEthApiServer, ArchiveHandle, ArchiveProvider,
-    ExowareArchiveArgs, ProviderSource, RetentionCache,
+    ArchiveConverter, ArchiveEth, ArchiveEthApiServer, ArchiveExecutor, ArchiveHandle,
+    ArchiveProvider, ExowareArchiveArgs, ExowareHistory, ProviderSource, RetentionCache,
 };
 
 /// How long a retention read is reused and a failed reader open fails fast.
@@ -141,6 +141,18 @@ impl BaseNodeExtension for ExowareArchiveExtension {
                 max_logs_per_response: Some(rpc.rpc_max_logs_per_response.unwrap_or_max() as usize),
             };
             let eth_api = ctx.registry.eth_api().clone();
+            // The node's own execution and tracing paths (`eth_call`, `eth_callMany`,
+            // `trace_*`, `debug_trace*`) read pruned state, blocks and transactions from the
+            // archive through this hook; the `debug_` and `trace_` handlers share this API.
+            let history = ExowareHistory {
+                archive: Arc::clone(&archive),
+                provider: provider.clone(),
+                converter: ArchiveConverter::new(Arc::clone(&chain_spec)),
+                retention: RetentionCache::new(RETENTION_TTL),
+                executor: Arc::new(ArchiveExecutor::new()?),
+                execution_budget: args.archive_exoware_timeout,
+            };
+            eth_api.set_pruned_history(Arc::new(history))?;
             let api = ArchiveEth {
                 eth: eth_api.clone(),
                 filter: ctx.registry.eth_handlers().filter.clone(),

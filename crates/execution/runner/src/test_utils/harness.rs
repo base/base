@@ -18,6 +18,7 @@ use base_test_utils::build_test_genesis;
 use eyre::{Result, eyre};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use reth_provider::{BlockNumReader, BlockReader, BlockReaderIdExt, ChainSpecProvider};
+use reth_rpc_server_types::RpcModuleSelection;
 use tokio::time::sleep;
 
 use crate::{
@@ -51,6 +52,7 @@ pub struct TestHarnessBuilder {
     engine_api_store: Option<PathBuf>,
     retention: Option<LocalNodeRetention>,
     max_logs_per_response: Option<u64>,
+    rpc_modules: Option<RpcModuleSelection>,
 }
 
 impl TestHarnessBuilder {
@@ -107,6 +109,13 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Serve `modules` over HTTP and WS, as `--http.api` and `--ws.api` do, instead of the
+    /// default modules.
+    pub fn with_rpc_modules(mut self, modules: RpcModuleSelection) -> Self {
+        self.rpc_modules = Some(modules);
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
@@ -123,6 +132,7 @@ impl TestHarnessBuilder {
             self.engine_api_store,
             self.retention,
             self.max_logs_per_response,
+            self.rpc_modules,
         )
         .await?;
         let engine = node.engine_api()?;

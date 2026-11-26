@@ -23,5 +23,14 @@ pub use eth::{
     PendingPool,
 };
 
+mod executor;
+pub use executor::ArchiveExecutor;
+
+mod state;
+pub use state::{ArchiveStateProvider, ExecutionFailure};
+
+mod history;
+pub use history::ExowareHistory;
+
 mod extension;
 pub use extension::{ExowareArchiveExtension, RETENTION_TTL};

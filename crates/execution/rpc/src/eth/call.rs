@@ -28,7 +28,7 @@ use reth_rpc_eth_api::{
     },
 };
 use reth_rpc_eth_types::{
-    EthApiError,
+    EthApiError, StateCacheDb,
     error::{AsEthApiError, FromEthApiError},
     simulate::{self, EthSimulateError},
 };
@@ -350,6 +350,20 @@ where
             .await;
         drop(guard);
         result
+    }
+
+    /// reth's default, unless a [`PrunedHistory`](crate::PrunedHistory) hook is installed:
+    /// then see [`BaseEthApi::execution_task`].
+    fn spawn_with_state_at_block<F, R>(
+        &self,
+        at: impl Into<BlockId>,
+        f: F,
+    ) -> impl Future<Output = Result<R, Self::Error>> + Send
+    where
+        F: FnOnce(Self, StateCacheDb) -> Result<R, Self::Error> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.execution_task(at.into(), f)
     }
 
     #[inline]

@@ -18,6 +18,7 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
+use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
 
 use crate::{
@@ -74,8 +75,9 @@ impl LocalNode {
     /// Launch a new local node with the provided extensions and chain spec, and
     /// `rpc_gas_cap` as its `--rpc.gascap` and `engine_api_store` as its
     /// `--debug.engine-api-store` when set. `retention` replaces the default (archive) prune
-    /// and static-file settings when set, and `max_logs_per_response` sets
-    /// `--rpc.max-logs-per-response`.
+    /// and static-file settings when set, `max_logs_per_response` sets
+    /// `--rpc.max-logs-per-response`, and `rpc_modules` replaces the default `--http.api` and
+    /// `--ws.api` modules when set.
     pub async fn new(
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<BaseChainSpec>,
@@ -83,6 +85,7 @@ impl LocalNode {
         engine_api_store: Option<PathBuf>,
         retention: Option<LocalNodeRetention>,
         max_logs_per_response: Option<u64>,
+        rpc_modules: Option<RpcModuleSelection>,
     ) -> Result<Self> {
         let exec = Runtime::test();
 
@@ -106,6 +109,11 @@ impl LocalNode {
         }
         if let Some(max) = max_logs_per_response {
             rpc_args.rpc_max_logs_per_response = max.into();
+        }
+        if let Some(modules) = rpc_modules {
+            // reth requires the same modules on HTTP and WS when they share a port.
+            rpc_args.ws_api = Some(modules.clone());
+            rpc_args.http_api = Some(modules);
         }
 
         let base_node = BaseNode::new(RollupArgs::default());

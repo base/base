@@ -7,7 +7,8 @@ use std::{
 
 use alloy_primitives::B256;
 use base_exoware_archive::{
-    ArchiveError, ArchiveMetrics, ArchiveReader, BlockVerifier, ExowareStore, ReaderLimits,
+    ArchiveError, ArchiveMetrics, ArchiveReader, ArchiveRequest, BlockVerifier, ExowareSession,
+    ExowareStore, ReaderLimits,
 };
 use tokio::sync::OnceCell;
 use tracing::warn;
@@ -103,6 +104,24 @@ impl<P: ArchiveProvider> ArchiveHandle<P> {
         tokio::time::timeout(self.budget, fut).await.map_err(|_| {
             ArchiveError::store("request", format!("budget of {:?} exceeded", self.budget))
         })?
+    }
+
+    /// Runs `read` inside one archive request (open the reader, begin, read, conclude) within
+    /// the per-request store budget.
+    pub async fn request<T>(
+        &self,
+        read: impl AsyncFnOnce(
+            &NodeArchiveReader<P>,
+            &ArchiveRequest<ExowareSession>,
+        ) -> Result<T, ArchiveError>,
+    ) -> Result<T, ArchiveError> {
+        self.bounded(async {
+            let reader = self.reader().await?;
+            let request = reader.begin().await?;
+            let result = read(reader, &request).await;
+            reader.conclude(&request, result).await
+        })
+        .await
     }
 
     /// Whether `err` is a store outage rather than bad data or a retention change.

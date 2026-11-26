@@ -429,14 +429,7 @@ where
             &base_exoware_archive::ArchiveRequest<base_exoware_archive::ExowareSession>,
         ) -> Result<T, ArchiveError>,
     ) -> Result<T, ArchiveError> {
-        self.archive
-            .bounded(async {
-                let reader = self.archive.reader().await?;
-                let request = reader.begin().await?;
-                let result = read(reader, &request).await;
-                reader.conclude(&request, result).await
-            })
-            .await
+        self.archive.request(read).await
     }
 
     /// Requires the archived block to carry the hash the request named.

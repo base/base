@@ -17,9 +17,18 @@ use base_common_precompiles::NonceManagerStorage;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_base_tx_rpc_node::TxBaseRpcExtension;
 use base_execution_chainspec::BaseChainSpec;
-use base_exoware_archive::{ArchiveKey, ArchiveStore, BlockVerifier, ExowareArchive, ExowareStore};
-use base_exoware_archive_rpc::{ExowareArchiveArgs, ExowareArchiveExtension};
-use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, LocalNodeRetention, TestHarness};
+use base_execution_rpc::{PrunedHistory, PrunedState};
+use base_exoware_archive::{
+    ArchiveKey, ArchiveStore, BlockCodec, BlockVerifier, ExowareArchive, ExowareStore, Family,
+    ReaderLimits, StateKey, StoreSession,
+};
+use base_exoware_archive_rpc::{
+    ArchiveConverter, ArchiveExecutor, ArchiveHandle, ExowareArchiveArgs, ExowareArchiveExtension,
+    ExowareHistory, ProviderSource, RETENTION_TTL, RetentionCache,
+};
+use base_node_runner::test_utils::{
+    L1_BLOCK_INFO_DEPOSIT_TX, LocalNodeRetention, RethRpcModule, RpcModuleSelection, TestHarness,
+};
 use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::{
     Account, build_test_genesis, build_test_genesis_cobalt, build_test_genesis_everest,
@@ -28,9 +37,11 @@ use reth_chainspec::EthChainSpec;
 use reth_node_core::args::{PruningArgs, StaticFilesArgs};
 use reth_prune_types::PruneSegment;
 use reth_storage_api::{
-    BlockNumReader, BlockReader, PruneCheckpointReader, StateProviderFactory, errors::ProviderError,
+    BlockHashReader, BlockNumReader, BlockReader, PruneCheckpointReader, StateProviderFactory,
+    errors::ProviderError,
 };
 use serde_json::{Value, json};
+use tokio::sync::OnceCell;
 
 /// EIP-4444 "pruned history" error code.
 const PRUNED_HISTORY: i64 = 4444;
@@ -52,6 +63,25 @@ const NAMESPACE: &str = "e2e-archive/";
 /// Runtime code: `sstore(0, calldataload(0)); log1(0, 0, calldataload(0))`.
 const RUNTIME: [u8; 13] =
     [0x60, 0x00, 0x35, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xa1, 0x00];
+
+/// Runtime code reading slot 0 back: `mstore(0, sload(0)); return(0, 32)`. Installed over
+/// the contract with a state override, which keeps the contract's storage.
+const READER: [u8; 11] = [0x60, 0x00, 0x54, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3];
+
+/// Init code of a creation call returning `blockhash(number - 1)` and the caller's balance,
+/// so a historical call depends on local block hashes and on archived state.
+const PROBE: [u8; 19] = [
+    0x43, 0x60, 0x01, 0x90, 0x03, 0x40, 0x60, 0x00, 0x52, 0x33, 0x31, 0x60, 0x20, 0x52, 0x60, 0x40,
+    0x60, 0x00, 0xf3,
+];
+
+/// Init code of a creation call returning `blockhash(number - 1)`.
+const HASH_PROBE: [u8; 14] =
+    [0x43, 0x60, 0x01, 0x90, 0x03, 0x40, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3];
+
+/// `eth_callMany` index inside an active block: after the deposits and the first user
+/// transaction (the deployment in block 1, the transfer after), before the contract call.
+const MIDDLE_INDEX: u64 = 3;
 
 /// Init code returning [`RUNTIME`].
 fn init_code() -> Bytes {
@@ -126,7 +156,14 @@ async fn archive_node(
     args: ExowareArchiveArgs,
     max_logs: Option<u64>,
 ) -> TestHarness {
-    let mut builder = TestHarness::builder().with_chain_spec(chain_spec).with_retention(retention);
+    let mut builder = TestHarness::builder()
+        .with_chain_spec(chain_spec)
+        .with_retention(retention)
+        .with_rpc_modules(RpcModuleSelection::from([
+            RethRpcModule::Eth,
+            RethRpcModule::Debug,
+            RethRpcModule::Trace,
+        ]));
     if let Some(max) = max_logs {
         builder = builder.with_max_logs_per_response(max);
     }
@@ -182,6 +219,7 @@ fn number_requests(
             "eth_getTransactionCount",
             json!([Account::Alice.address(), { "blockNumber": tag }]),
         ));
+        out.extend(execution_requests(*number, *hash, contract));
     }
     if with_range_logs {
         let last = format!("0x{:x}", blocks.last().expect("blocks").0);
@@ -192,6 +230,102 @@ fn number_requests(
         ));
     }
     out
+}
+
+/// Execution requests at block `number` (hash `hash`): calls that read archived state and
+/// local block hashes, a bundle replayed after part of the block, and traces of the block.
+fn execution_requests(number: u64, hash: B256, contract: Address) -> Vec<(&'static str, Value)> {
+    let tag = format!("0x{number:x}");
+    let alice = Account::Alice.address();
+    let probe = json!({ "from": alice, "input": Bytes::from(PROBE) });
+    let reader = json!({ contract.to_string(): { "code": Bytes::from(READER) } });
+    let mut out = vec![
+        ("eth_call", json!([probe, tag])),
+        ("eth_call", json!([probe, { "blockHash": hash }])),
+        ("eth_call", json!([{ "to": contract }, tag, reader])),
+        ("eth_call", json!([{ "to": contract }, format!("0x{:x}", number - 1), reader])),
+        ("trace_block", json!([tag])),
+        ("debug_traceBlockByNumber", json!([tag, {}])),
+        ("debug_traceBlockByNumber", json!([tag, { "tracer": "callTracer" }])),
+    ];
+    // `blockhash(number - 1)`, then slot 0 of the contract read through the override.
+    let bundle = json!([{ "transactions": [
+        { "from": alice, "input": Bytes::from(HASH_PROBE) },
+        { "from": alice, "to": contract },
+    ] }]);
+    let at = |index: u64| json!({ "blockNumber": tag, "transactionIndex": index });
+    out.push(("eth_callMany", json!([bundle, at(MIDDLE_INDEX), reader])));
+    if number <= ACTIVE_BLOCKS {
+        out.push(("eth_callMany", json!([bundle, at(tx_count(number)), reader])));
+    }
+    out
+}
+
+/// Transactions in active block `number`: two deposits, the deployment in block 1, then the
+/// transfer and the contract call.
+const fn tx_count(number: u64) -> u64 {
+    if number == 1 { 5 } else { 4 }
+}
+
+/// Value active block `number` stores in the contract's slot 0 (0 before block 1).
+fn slot_after(number: u64) -> B256 {
+    if number == 0 { B256::ZERO } else { B256::from(U256::from(100 + number)) }
+}
+
+/// Exact execution answers at active blocks, while the node still holds them (the parity
+/// check then holds them after pruning): a historical call sees the parent's hash through
+/// `BLOCKHASH` and the caller's balance at the block; the slot is the block's value at N and
+/// the parent's at N - 1; a bundle at the middle index sees the parent's slot and one at the
+/// transaction count the block's.
+async fn check_execution_values(client: &RpcClient, hashes: &[B256], contract: Address) {
+    let alice = Account::Alice.address();
+    let word = |value: &Value, at: usize| -> B256 {
+        let bytes: Bytes = serde_json::from_value(value.clone()).expect("hex output");
+        B256::from_slice(&bytes[at * 32..at * 32 + 32])
+    };
+    for number in 1..=ACTIVE_BLOCKS {
+        let requests = execution_requests(number, hashes[number as usize], contract);
+        let parent = hashes[number as usize - 1];
+        let balance = call(client, "eth_getBalance", json!([alice, format!("0x{number:x}")])).await;
+        let balance: U256 = serde_json::from_value(balance).expect("balance");
+        for (method, params) in &requests[..2] {
+            let value = call(client, method, params.clone()).await;
+            assert_eq!(
+                word(&value, 0),
+                parent,
+                "{method} {params}: BLOCKHASH is the parent's hash"
+            );
+            assert_eq!(
+                U256::from_be_bytes(word(&value, 1).0),
+                balance,
+                "{method} {params}: the caller's balance at block {number}"
+            );
+        }
+        for (request, slot) in [(&requests[2], number), (&requests[3], number - 1)] {
+            let value = call(client, request.0, request.1.clone()).await;
+            assert_eq!(word(&value, 0), slot_after(slot), "{} {}: slot 0", request.0, request.1);
+        }
+        let middle_slot = if number == 1 { B256::ZERO } else { slot_after(number - 1) };
+        for (request, slot) in [(&requests[7], middle_slot), (&requests[8], slot_after(number))] {
+            let value = call(client, request.0, request.1.clone()).await;
+            assert_eq!(
+                value,
+                json!([[{ "value": parent }, { "value": slot }]]),
+                "{} {}: the bundle's exact outputs",
+                request.0,
+                request.1
+            );
+        }
+    }
+}
+
+/// Traces of mined transaction `hash`.
+fn transaction_traces(hash: B256) -> Vec<(&'static str, Value)> {
+    vec![
+        ("debug_traceTransaction", json!([hash, {}])),
+        ("debug_traceTransaction", json!([hash, { "tracer": "callTracer" }])),
+        ("debug_traceTransaction", json!([hash, { "tracer": "prestateTracer" }])),
+    ]
 }
 
 /// Hash-addressed requests over the active blocks and transactions.
@@ -210,6 +344,7 @@ fn hash_requests(blocks: &[(u64, B256)], tx_hashes: &[B256]) -> Vec<(&'static st
     for hash in tx_hashes {
         out.push(("eth_getTransactionByHash", json!([hash])));
         out.push(("eth_getTransactionReceipt", json!([hash])));
+        out.extend(transaction_traces(*hash));
     }
     out
 }
@@ -305,6 +440,31 @@ async fn lookup_only_pruning_resolves_hashes_in_archive() {
         name: "lookup",
         retention,
         pruned: PruneSegment::TransactionLookup,
+        max_logs: None,
+        full: false,
+    };
+    tokio::time::timeout(E2E_TIMEOUT, pruned_node_parity(scenario))
+        .await
+        .expect("e2e run timed out");
+}
+
+/// Body-only pruning: state, receipts and the transaction lookup stay local, but blocks and
+/// the bodies traces replay come from the archive.
+#[tokio::test(flavor = "multi_thread")]
+async fn body_only_pruning_serves_blocks_from_archive() {
+    let retention = LocalNodeRetention {
+        pruning: PruningArgs {
+            block_interval: Some(1),
+            minimum_distance: Some(RETENTION),
+            bodies_distance: Some(RETENTION),
+            ..Default::default()
+        },
+        static_files: short_retention().static_files,
+    };
+    let scenario = Scenario {
+        name: "bodies",
+        retention,
+        pruned: PruneSegment::Bodies,
         max_logs: None,
         full: false,
     };
@@ -450,6 +610,176 @@ async fn pending_hash_polling_skips_the_store() {
     .expect("test timed out");
 }
 
+/// An unpruned node with the archive on executes and traces recent blocks successfully with
+/// zero store connections.
+#[tokio::test(flavor = "multi_thread")]
+async fn unpruned_execution_makes_zero_store_reads() {
+    tokio::time::timeout(E2E_TIMEOUT, async {
+        let (url, connections) = counting_store().await;
+        let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
+        let harness = archive_node(
+            chain_spec,
+            LocalNodeRetention::default(),
+            archive_args(&url, false),
+            None,
+        )
+        .await;
+        let client = harness.rpc_client().expect("rpc client");
+        let (contract, tx_hashes) = build_active_blocks(&harness).await;
+        let provider = harness.blockchain_provider();
+        let mut requests = Vec::new();
+        for number in 1..=ACTIVE_BLOCKS {
+            let block = provider.block_by_number(number).expect("read").expect("block exists");
+            let hash = alloy_primitives::Sealable::hash_slow(&block.header);
+            requests.extend(execution_requests(number, hash, contract));
+        }
+        for hash in &tx_hashes {
+            requests.extend(transaction_traces(*hash));
+        }
+        for (method, params) in &requests {
+            let value = call(&client, method, params.clone()).await;
+            assert!(
+                value.get("code").is_none() && value.get("transport").is_none(),
+                "{method} {params} succeeds on an unpruned node, got {value}"
+            );
+        }
+        assert_eq!(
+            connections.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "{} recent executions and traces make zero store connections",
+            requests.len()
+        );
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// An execution paused across an archive prune is refused at its conclusion (4444), also
+/// when the prune deleted the posting a later read needed and the reader fell back to the
+/// node's state at the archive's head.
+///
+/// This drives `ExowareHistory` directly: pausing an RPC execution between two of its store
+/// reads would need a per-request interposer on the store, but the node's reads and the
+/// exporter's writes share one URL and one multiplexed HTTP/2 connection, so a proxy cannot
+/// hold one without stalling the prune it waits for. `archived_task`, which every RPC
+/// execution over archived state goes through, turns the failed conclusion into 4444 (see
+/// its unit tests).
+#[tokio::test(flavor = "multi_thread")]
+async fn execution_paused_across_an_archive_prune_is_refused() {
+    tokio::time::timeout(E2E_TIMEOUT, async {
+        let (simulator, url) = exoware_simulator::open_temp().await.expect("simulator starts");
+        let store = Arc::new(
+            ExowareStore::connect(&url, NAMESPACE, Duration::from_secs(5)).expect("store"),
+        );
+        let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
+        let mut args = archive_args(&url, true);
+        // Segment 0 stays served until the archive's head reaches segment `RETAIN`; the node
+        // prunes block 2 well before that, even when its pruner lags the head.
+        const RETAIN: u64 = 16;
+        args.archive_exoware_retain_segments = Some(RETAIN);
+        args.archive_exoware_prune_grace_segments = 1;
+        let harness =
+            archive_node(Arc::clone(&chain_spec), short_retention(), args.clone(), None).await;
+        build_active_blocks(&harness).await;
+        let provider = harness.blockchain_provider();
+        let number = 2;
+        while provider
+            .get_prune_checkpoint(PruneSegment::AccountHistory)
+            .expect("checkpoint read")
+            .and_then(|c| c.block_number)
+            .is_none_or(|pruned| pruned < number)
+        {
+            harness.advance_chain(BLOCKS_PER_SEGMENT).await.expect("advance");
+        }
+        let head = harness.latest_block().number;
+        wait_for_segment(&store, head / BLOCKS_PER_SEGMENT - 2).await;
+        let highest = ExowareArchive::<ExowareStore>::highest_marker(&store.session())
+            .await
+            .expect("marker read")
+            .expect("published")
+            .segment;
+        assert!(
+            highest < RETAIN,
+            "segment 0 is still served when the execution starts ({highest})"
+        );
+
+        let hash = provider.block_hash(number).expect("read").expect("canonical hash");
+        let history = ExowareHistory {
+            archive: Arc::new(ArchiveHandle {
+                store: Arc::clone(&store),
+                node: Arc::new(ProviderSource::new(provider.clone())),
+                verifier: BlockVerifier::new(Arc::clone(&chain_spec)),
+                chain_id: chain_spec.chain().id(),
+                genesis_hash: chain_spec.genesis_hash(),
+                limits: ReaderLimits::default(),
+                budget: Duration::from_secs(5),
+                retry_after: RETENTION_TTL,
+                reader: OnceCell::new(),
+                open_failed_at: Default::default(),
+            }),
+            provider: provider.clone(),
+            converter: ArchiveConverter::new(Arc::clone(&chain_spec)),
+            retention: RetentionCache::new(RETENTION_TTL),
+            executor: Arc::new(ArchiveExecutor::new().expect("runtime")),
+            execution_budget: Duration::from_secs(120),
+        };
+        let PrunedState { state, conclude, deadline } = history
+            .state_at(number, hash, std::time::Instant::now())
+            .await
+            .expect("archived state opens");
+        assert!(
+            deadline > std::time::Instant::now() + Duration::from_secs(100),
+            "the execution budget bounds the whole execution"
+        );
+        let state = Arc::new(std::sync::Mutex::new(state));
+        let read = |address: Address| {
+            let state = Arc::clone(&state);
+            tokio::task::spawn_blocking(move || {
+                state.lock().expect("state").basic_account(&address)
+            })
+        };
+        let alice = read(Account::Alice.address()).await.expect("read task");
+        assert!(
+            alice.as_ref().is_ok_and(|account| account.is_some_and(|a| a.nonce == 4)),
+            "Alice sent four transactions by the end of block 2, got {alice:?}"
+        );
+
+        // The archive moves past segment 0 and physically deletes its rows.
+        let bob_posting = ArchiveKey::state(&StateKey::account(Account::Bob.address()), 0);
+        let mut deleted = false;
+        for _ in 0..2 * RETAIN {
+            harness.advance_chain(BLOCKS_PER_SEGMENT).await.expect("advance");
+            let head = harness.latest_block().number;
+            wait_for_segment(&store, head / BLOCKS_PER_SEGMENT - 2).await;
+            if store.session().get(&bob_posting).await.expect("posting read").is_none() {
+                deleted = true;
+                break;
+            }
+        }
+        assert!(deleted, "the archive physically pruned segment 0");
+        // With its posting gone the read either finds no change and falls back to the node at
+        // the request's archive head (the silent miss) or, once the node pruned that head too,
+        // fails. Neither may become a success.
+        let bob = read(Account::Bob.address()).await.expect("read task");
+        assert!(
+            matches!(bob, Ok(_) | Err(ProviderError::StateAtBlockPruned(2))),
+            "the late read is a miss or a typed refusal, got {bob:?}"
+        );
+        let err = conclude.await.expect_err("the execution is refused at its conclusion");
+        // The marker re-check wins over the read's own outcome; the earliest block moves
+        // with the exporter, so only the prefix is fixed.
+        assert!(
+            err.to_string().starts_with(
+                "pruned history unavailable: block 2 is pruned from the archive (earliest archived block "
+            ),
+            "the refusal names the prune, got {err}"
+        );
+        simulator.abort();
+    })
+    .await
+    .expect("test timed out");
+}
+
 /// Forged locators: an unknown block hash whose locator points at block 2 resolves in the
 /// archive, then fails the hash check, and is 4444 rather than a wrong block or null. A forged
 /// transaction locator is only consulted when the node's transaction lookup is pruned
@@ -481,6 +811,20 @@ async fn check_forged_locators(
             value["code"],
             json!(PRUNED_HISTORY),
             "{name}: {method} {params} with a forged locator is 4444, got {value}"
+        );
+    }
+    let trace = call(client, "debug_traceTransaction", json!([forged_tx, {}])).await;
+    if lookup_pruned {
+        assert_eq!(
+            trace["code"],
+            json!(PRUNED_HISTORY),
+            "{name}: tracing a transaction with a forged locator is 4444, got {trace}"
+        );
+    } else {
+        assert_eq!(
+            trace,
+            json!({ "code": -32000, "message": "transaction not found" }),
+            "{name}: tracing an unknown transaction keeps reth's error while the lookup is unpruned"
         );
     }
     for (method, params) in [
@@ -568,6 +912,10 @@ async fn pruned_node_parity(scenario: Scenario) {
         .into_iter()
         .chain(hash_requests(&blocks, &tx_hashes))
         .collect();
+    let genesis = provider.block_hash(0).expect("read").expect("genesis hash");
+    let hashes: Vec<B256> =
+        std::iter::once(genesis).chain(blocks.iter().map(|(_, hash)| *hash)).collect();
+    check_execution_values(&client, &hashes, contract).await;
     let mut expected = Vec::with_capacity(requests.len());
     for (method, params) in &requests {
         expected.push(call(&client, method, params.clone()).await);
@@ -712,9 +1060,11 @@ async fn pruned_node_parity(scenario: Scenario) {
         scenario.pruned
     );
     if scenario.full {
-        let pruned_state = provider
-            .history_by_block_number(1)
-            .and_then(|state| state.basic_account(&Account::Alice.address()));
+        // reth opens pruned state and refuses it on its first read, which is the refusal the
+        // execution path probes for before running anything.
+        let opened = provider.history_by_block_number(1);
+        assert!(opened.is_ok(), "pruned state opens and refuses only when read");
+        let pruned_state = opened.and_then(|state| state.basic_account(&Account::Alice.address()));
         assert!(
             matches!(
                 pruned_state,
@@ -827,6 +1177,9 @@ async fn pruned_node_parity(scenario: Scenario) {
         call(&client, "eth_getBlockByNumber", json!([format!("0x{:x}", head + 1), false])).await;
     assert_eq!(next, Value::Null, "block {} does not exist yet", head + 1);
 
+    check_failure_mid_execution(&client, &store, contract, &tx_hashes).await;
+    check_failure_in_trace_output(&client, &store, tx_hashes[5]).await;
+
     // Store down: number-addressed reads in the pruned range and hashes the node can place
     // are 4444 with a reason, an unknown hash keeps the node's `null`, and recent blocks are
     // still served locally.
@@ -839,6 +1192,11 @@ async fn pruned_node_parity(scenario: Scenario) {
         ("eth_getStorageAt", json!([contract, "0x0", "0x2"])),
         ("eth_getLogs", json!([{ "fromBlock": "0x1", "toBlock": "0x3" }])),
         ("eth_getBlockByHash", json!([blocks[1].1, true])),
+        ("eth_call", execution_requests(2, blocks[1].1, contract)[0].1.clone()),
+        ("eth_callMany", execution_requests(2, blocks[1].1, contract)[7].1.clone()),
+        ("trace_block", json!(["0x2"])),
+        ("debug_traceBlockByNumber", json!(["0x2", {}])),
+        ("debug_traceTransaction", json!([tx_hashes[1], {}])),
     ] {
         let value = call(&client, method, params.clone()).await;
         assert_eq!(
@@ -873,6 +1231,85 @@ async fn pruned_node_parity(scenario: Scenario) {
         latest["number"],
         json!(format!("0x{head:x}")),
         "recent blocks are served locally with the store down"
+    );
+}
+
+/// A store row that fails verification only when the EVM reads it: the contract's slot-0
+/// posting in segment 0 is overwritten after export. Executions over archived state that
+/// read the slot (a call, a bundle, block traces and a prestate trace, which would otherwise
+/// swallow the read error) are 4444 with a reason, never a result.
+async fn check_failure_mid_execution(
+    client: &RpcClient,
+    store: &ExowareStore,
+    contract: Address,
+    tx_hashes: &[B256],
+) {
+    store
+        .put(&[(ArchiveKey::state(&StateKey::storage(contract, B256::ZERO), 0), vec![0xff].into())])
+        .await
+        .expect("corrupt the posting");
+    let at = execution_requests(3, B256::ZERO, contract);
+    for (method, params) in [
+        ("eth_call", at[2].1.clone()),
+        ("eth_callMany", at[7].1.clone()),
+        ("trace_block", json!(["0x3"])),
+        ("debug_traceBlockByNumber", json!(["0x3", { "tracer": "callTracer" }])),
+        ("debug_traceTransaction", json!([tx_hashes[6], { "tracer": "prestateTracer" }])),
+    ] {
+        let value = call(client, method, params.clone()).await;
+        assert_eq!(
+            value["code"],
+            json!(PRUNED_HISTORY),
+            "{method} {params} over a corrupt posting is 4444, got {value}"
+        );
+        assert!(
+            value["message"].as_str().is_some_and(|m| m.starts_with("pruned history unavailable")),
+            "{method} {params} names pruned history, got {value}"
+        );
+    }
+}
+
+/// A read failure only trace output reaches: block 3's archived changeset gives a fee
+/// recipient a code hash the node has no bytecode for. Executing the block's transfer only
+/// credits that account, so its default trace is unchanged; the prestate tracer then loads
+/// the code for its output and swallows the error (`code_by_hash_ref(..).ok()`), yet the
+/// answer is exactly 4444, never a prestate without the code.
+async fn check_failure_in_trace_output(client: &RpcClient, store: &ExowareStore, transfer: B256) {
+    let default = call(client, "debug_traceTransaction", json!([transfer, {}])).await;
+    assert!(default.get("code").is_none(), "the transfer traces before the change, got {default}");
+    let key = ArchiveKey::block(Family::AccountChanges, 3);
+    let raw = store.session().get(&key).await.expect("changeset read").expect("block 3 row");
+    let mut changes = BlockCodec::decode_account_changes(&raw).expect("changeset decodes");
+    let recipient = changes
+        .iter_mut()
+        .find(|change| {
+            change.address != Account::Alice.address()
+                && change.address != Account::Bob.address()
+                && change.before.is_some_and(|before| before.balance > U256::ZERO)
+        })
+        .expect("block 3 credits a funded fee recipient");
+    let address = recipient.address;
+    if let Some(before) = recipient.before.as_mut() {
+        before.code_hash = B256::repeat_byte(0xcd);
+    }
+    let row = BlockCodec::encode_account_changes(3, &changes).expect("changeset encodes");
+    store.put(&[(key, row.into())]).await.expect("rewrite the changeset");
+
+    let after = call(client, "debug_traceTransaction", json!([transfer, {}])).await;
+    assert_eq!(after, default, "executing the transfer never reads {address}'s code");
+    let prestate =
+        call(client, "debug_traceTransaction", json!([transfer, { "tracer": "prestateTracer" }]))
+            .await;
+    assert_eq!(
+        prestate,
+        json!({
+            "code": PRUNED_HISTORY,
+            "message": format!(
+                "pruned history unavailable: local read failed: bytecode {} is missing on the node",
+                B256::repeat_byte(0xcd)
+            ),
+        }),
+        "a code read only the prestate output makes is exactly 4444"
     );
 }
 
