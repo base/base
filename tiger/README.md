@@ -96,6 +96,11 @@ the consensus node sees, p50 / p90 / p99 in ms:
   150 ms from 14 to 6, with p50 unchanged (11.7 ms).
 - Memory: about 1.0 to 1.2 GB anonymous at the default persistence threshold, against
   base-reth's 3.8 to 5.2 GB on the same host.
+- RPC reads never hold up block import. `eth_getProof` at a block below the head is slower
+  than base-reth's flat ~4 ms when the block is deep in a large in-memory layer (live, 2048
+  threshold, p50: depth 1 4.9 ms, depth 10 30 ms, depth 100 165 ms, depth 1000 566 ms), since
+  tiger recomputes the trie along what the blocks above it changed; base-reth keeps each
+  in-memory block's cumulative trie nodes.
 
 **Persistence.** tiger takes base-reth's `--engine.persistence-threshold`,
 `--engine.memory-block-buffer-target` and `--engine.persistence-backpressure-threshold` with
