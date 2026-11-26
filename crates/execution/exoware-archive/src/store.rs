@@ -200,7 +200,9 @@ mod tests {
     use super::*;
 
     /// Frames are bounded by bytes: a worst-case frame of maximum-size values fits the SDK's
-    /// response budget.
+    /// response budget. This checks the constant only; that `get_many` and `range` pass it to
+    /// the SDK is visible at their call sites (the SDK session is a concrete type with no
+    /// recording seam).
     #[test]
     fn frame_rows_fit_the_response_budget() {
         assert_eq!(GET_MANY_BATCH, 15, "15 rows of up to 32 MiB per frame");

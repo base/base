@@ -360,6 +360,16 @@ mod tests {
         let txs: usize = fixture.blocks[8..16].iter().map(|b| b.body.transactions.len()).sum();
         assert_eq!(count(Family::TxHash), txs, "one tx locator per transaction");
         assert_eq!(count(Family::LogAddress), 3, "three log contracts");
+        assert_eq!(
+            count(Family::LogTopic),
+            10,
+            "ten log topic postings (pinned with the golden digest)"
+        );
+        assert_eq!(
+            count(Family::StateHistory),
+            10,
+            "ten state postings (pinned with the golden digest)"
+        );
     }
 
     /// Splitting a segment into batches of any size gives the same rows and marker as one

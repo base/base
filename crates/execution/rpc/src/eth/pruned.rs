@@ -262,12 +262,13 @@ where
 
     /// Runs execution `f` over the state at `at`, as `Call::spawn_with_state_at_block`.
     ///
-    /// Unset hook, `pending` and `latest`: reth's default. Otherwise the node's state is
-    /// opened and read once on the blocking pool before `f` runs, which makes reth's
-    /// provider decide (from fresh account and storage history checkpoints) whether the
-    /// state is pruned. A typed prune refusal hands `f` back unused and it runs on the
-    /// hook's state instead (see [`Self::archived_task`]); any other local error is returned
-    /// unchanged.
+    /// Unset hook, `pending` and `latest`: reth's default. Otherwise (including `eth_call` at
+    /// `latest`, which reth resolves to the block hash before calling this, and every trace)
+    /// the node's state is opened and read once on the blocking pool before `f` runs, which
+    /// makes reth's provider decide (from fresh account and storage history checkpoints)
+    /// whether the state is pruned. A typed prune refusal hands `f` back unused and it runs on
+    /// the hook's state instead (see [`Self::archived_task`]); any other local error is
+    /// returned unchanged.
     pub fn execution_task<F, R>(
         &self,
         at: BlockId,
@@ -344,8 +345,11 @@ where
             )))
         };
         let task = self.spawn_blocking_io(move |this: Self| f(this, Self::execution_db(state)));
-        let result = tokio::time::timeout_at(deadline.into(), task).await.map_err(|_| late())?;
-        conclude.await.map_err(Self::pruned_error)?;
+        let (result, conclusion) =
+            tokio::time::timeout_at(deadline.into(), async move { (task.await, conclude.await) })
+                .await
+                .map_err(|_| late())?;
+        conclusion.map_err(Self::pruned_error)?;
         if Instant::now() > deadline {
             return Err(late());
         }
@@ -642,20 +646,41 @@ mod tests {
         );
         assert_eq!(code(err), 4444, "a late execution is 4444");
 
-        let deadline = Instant::now() + Duration::from_millis(50);
-        let late = PrunedState {
+        // A conclusion that never finishes is cut off at the deadline and dropped, whatever
+        // the hook's own timeouts are.
+        let (entered_tx, entered) = tokio::sync::oneshot::channel::<()>();
+        let (dropped_tx, dropped) = tokio::sync::oneshot::channel::<()>();
+        let stuck = PrunedState {
             state: Box::new(archived_state()),
-            conclude: Box::pin(async {
-                tokio::time::sleep(Duration::from_millis(150)).await;
-                Ok(())
+            conclude: Box::pin(async move {
+                /// Signals when the conclusion future is dropped.
+                struct OnDrop(Option<tokio::sync::oneshot::Sender<()>>);
+                impl Drop for OnDrop {
+                    fn drop(&mut self) {
+                        self.0.take().map(|tx| tx.send(()));
+                    }
+                }
+                let _guard = OnDrop(Some(dropped_tx));
+                entered_tx.send(()).expect("test waits for the conclusion");
+                std::future::pending::<Result<(), PrunedHistoryError>>().await
             }),
-            deadline,
+            deadline: Instant::now() + Duration::from_millis(50),
         };
-        let err = api
-            .archived_task(1, late, |_, _| Ok(()))
-            .await
-            .expect_err("a conclusion past the deadline fails");
+        let err = tokio::time::timeout(
+            Duration::from_secs(2),
+            api.archived_task(1, stuck, |_, _| Ok(())),
+        )
+        .await
+        .expect("the deadline ends the wait, not the watchdog")
+        .expect_err("a conclusion past the deadline fails");
+        assert_eq!(
+            err.to_string(),
+            "pruned history unavailable: execution over archived block 1 exceeded its deadline",
+            "a stuck conclusion is the deadline error"
+        );
         assert_eq!(code(err), 4444, "no late success");
+        entered.await.expect("the conclusion was awaited");
+        dropped.await.expect("the stuck conclusion was dropped");
     }
 
     /// A block whose body the node lacks is the hook's copy only when one is installed and
@@ -676,7 +701,7 @@ mod tests {
         );
 
         let serving = Arc::new(FakeHistory { block: Some(block.clone()), ..Default::default() });
-        let (api_some, _, _) = api(Some(serving));
+        let (api_some, _, _) = api(Some(Arc::clone(&serving)));
         let served = api_some.recovered_block(id).await.expect("archived").expect("block");
         assert_eq!(served.hash(), block.hash(), "the hook's block is served");
         let (served, bal) = api_some
@@ -686,17 +711,50 @@ mod tests {
             .expect("block");
         assert_eq!(served.hash(), block.hash(), "the hook's block is served by hash");
         assert!(bal.is_none(), "an archived block has no cached BAL");
+        let asked = serving.calls.lock().expect("calls").len();
         assert!(
             api_some.recovered_block(BlockId::number(2)).await.expect("unknown").is_none(),
+            "a block the node has no header for is a miss"
+        );
+        assert_eq!(
+            serving.calls.lock().expect("calls").len(),
+            asked,
             "a block the node has no header for never asks the hook"
         );
 
-        let mut other = block.clone();
-        other.set_block_number(7);
-        let (api_wrong, _, _) =
-            api(Some(Arc::new(FakeHistory { block: Some(other), ..Default::default() })));
-        let err = api_wrong.recovered_block(id).await.expect_err("wrong block");
-        assert_eq!(code(err), 4444, "a block that is not the requested one is 4444");
+        // A wrong number and a wrong hash are each refused on their own.
+        let mut wrong_number = block.clone();
+        wrong_number.set_block_number(7);
+        let wrong_number_hash = wrong_number.hash();
+        let wrong_hash = RecoveredBlock::new_sealed(
+            SealedBlock::new_unchecked(block.clone_block(), B256::repeat_byte(0xee)),
+            block.senders().to_vec(),
+        );
+        for (served, reason) in [
+            (
+                wrong_number,
+                format!(
+                    "pruned history unavailable: archived block 7 ({wrong_number_hash}) is not \
+                     the requested block 1 ({})",
+                    block.hash()
+                ),
+            ),
+            (
+                wrong_hash,
+                format!(
+                    "pruned history unavailable: archived block 1 ({}) is not the requested \
+                     block 1 ({})",
+                    B256::repeat_byte(0xee),
+                    block.hash()
+                ),
+            ),
+        ] {
+            let (api_wrong, _, _) =
+                api(Some(Arc::new(FakeHistory { block: Some(served), ..Default::default() })));
+            let err = api_wrong.recovered_block(id).await.expect_err("wrong block");
+            assert_eq!(err.to_string(), reason, "a block that is not the requested one");
+            assert_eq!(code(err), 4444, "a block that is not the requested one is 4444");
+        }
     }
 
     /// The hook-less view (and its clones) answers blocks and transactions from the node
@@ -784,15 +842,36 @@ mod tests {
             "located, then the block read"
         );
 
+        // Same header (so the same hash), two transactions: index 1 is in range but holds
+        // another transaction.
+        let mut body = block.body().clone();
+        let other: BaseTxEnvelope = TxLegacy { nonce: 4, gas_limit: 21_000, ..Default::default() }
+            .into_signed(Signature::test_signature())
+            .into();
+        body.transactions.push(other);
+        let two = RecoveredBlock::new_sealed(
+            SealedBlock::new_unchecked(
+                BaseBlock { header: block.header().clone(), body },
+                block.hash(),
+            ),
+            vec![Address::repeat_byte(0x11), Address::repeat_byte(0x12)],
+        );
         let (api_wrong, _, _) = api(Some(Arc::new(FakeHistory {
-            block: Some(block.clone()),
+            block: Some(two),
             location: Some((1, block.hash(), 1)),
             ..Default::default()
         })));
         let err = api_wrong
             .transaction_and_block_and_maybe_bal(tx_hash)
             .await
-            .expect_err("index past the block");
+            .expect_err("index holding another transaction");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "pruned history unavailable: block 1 does not hold transaction {tx_hash} at index 1"
+            ),
+            "the location's index holds another transaction"
+        );
         assert_eq!(code(err), 4444, "a location that does not hold the hash is 4444");
     }
 }

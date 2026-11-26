@@ -11,6 +11,7 @@ use base_exoware_archive::{
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_rpc_eth_api::QueryLimits;
+use reth_storage_api::DatabaseProviderFactory;
 use tokio::sync::OnceCell;
 use tracing::{error, info, warn};
 
@@ -115,6 +116,9 @@ impl BaseNodeExtension for ExowareArchiveExtension {
         let export_url = url.clone();
         let hooks = hooks.add_rpc_module(move |ctx| {
             let provider = ctx.provider().clone();
+            // Fail fast on retention the archive cannot cover: the provider holds the node's
+            // effective prune modes (CLI flags merged with `reth.toml`).
+            args.validate_retention(provider.database_provider_ro()?.prune_modes_ref())?;
             let chain_spec = provider.chain_spec();
             let store = Self::store(&args, &url)?;
             info!(

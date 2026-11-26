@@ -25,6 +25,15 @@ Without `--archive.exoware.url` it is a no-op and the node is unchanged.
 | `--archive.exoware.timeout` | 5s | Store budget per RPC request and per exporter store call |
 | `--archive.exoware.prune-grace-segments` | 2 | Segments kept below the earliest served one before rows are deleted, ≥ 1 |
 | `--archive.exoware.export-batch-blocks` | 256 | Blocks the exporter loads, encodes and writes at a time, 1..=65536; bounds its block memory |
+| `--archive.exoware.min-retention-margin` | 4096 | Blocks of history the node must keep beyond one segment (see below) |
+
+The node refuses to start when the archive cannot cover its retention. The archive's head `H`
+trails the node's head by the finality lag plus up to one segment, blocks above `H` are not
+archived yet, and keys unchanged since `H` are read from the node's own history at `H`. So each
+of account history, storage history, bodies, receipts and the transaction lookup must be
+unpruned, pruned before a fixed block, or kept for more than `segment-blocks` +
+`min-retention-margin` blocks; `full` pruning is refused. The default margin of 4096 blocks
+covers L1 finality (~13 minutes) at 200 ms blocks; at 2 s blocks about 512 suffices.
 
 The store API key is read by the Exoware SDK from `EXOWARE_API_KEY` only. There is no flag
 and it is never logged. There is no audit-interval flag; audits are on demand
@@ -118,8 +127,11 @@ resolver:
 
 Limits: results are only as trustworthy as the archived state rows (there is no state root to
 check them against). Each uncached slot is at least 2 sequential store round trips, so large
-traces are slow on a remote store. With the hook installed, executions at `latest` pay one extra
-local account read. State roots, proofs and witnesses are unsupported (4444), and so is
+traces are slow on a remote store. With the hook installed, every execution except `pending`
+pays one extra local account read before it starts (the probe that makes reth decide whether
+the state is pruned). reth resolves `latest`, `safe`, `finalized` and `earliest` to a block hash
+before an execution starts, so `eth_call` at `latest` pays it too; only a caller that passes the
+literal `latest` tag to the execution seam skips it. State roots, proofs and witnesses are unsupported (4444), and so is
 `hashed_post_state` for a destroyed account.
 
 ## Gaps

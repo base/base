@@ -1214,12 +1214,13 @@ mod tests {
         }
     }
 
-    /// A local read that fails with an internal error while the pruner advances is detected
-    /// through a fresh retention read (the warm cache is bypassed) and goes to the archive;
-    /// a failure for a block still above the boundary, a pruned refusal and invalid params
-    /// keep the node's error unchanged, the latter two without a retention read.
+    /// Classification only (routing is covered by the archive e2e): a local read that fails
+    /// with an internal error while the pruner advances is recognised as raced through a
+    /// fresh retention read (the warm cache is bypassed); a failure for a block still above
+    /// the boundary is not, and a pruned refusal and invalid params are not raced and cost no
+    /// retention read.
     #[test]
-    fn local_failures_that_raced_the_pruner_go_to_the_archive() {
+    fn raced_failures_are_classified_by_fresh_retention() {
         let before = LocalRetention::default();
         let pruned = LocalRetention { earliest_body: 5, receipts_pruned: Some(4), ..before };
         let cache = RetentionCache::new(Duration::from_secs(3600));
@@ -1228,7 +1229,6 @@ mod tests {
         assert_eq!(node.reads(), 1, "one warm-up read");
 
         let err = node.read_block().expect_err("the hook fails the first read");
-        let original = err.clone();
         assert!(
             ArchiveRpcBoundary::raced_prune(&err, 1, AnswerNeeds::Body, &cache, || node
                 .read_retention()),
@@ -1252,12 +1252,6 @@ mod tests {
             "block 7 is above every boundary: the local error stands"
         );
         assert_eq!(node.reads(), 4, "each failed read checks fresh retention once");
-        assert_eq!(
-            (err.code(), err.message()),
-            (original.code(), original.message()),
-            "the node's error is unchanged"
-        );
-        assert_eq!(node.read_block(), Ok(Some(1)), "the hook fails only once");
 
         let refused = ArchiveRpcBoundary::error(ArchiveError::Pruned { block: 1, earliest: 8 });
         let invalid =
@@ -1278,22 +1272,35 @@ mod tests {
     #[test]
     fn archive_errors_map_once_at_the_boundary() {
         let pruned = ArchiveRpcBoundary::error(ArchiveError::Pruned { block: 1, earliest: 8 });
-        assert_eq!(pruned.code(), 4444, "pruned is 4444");
-        assert_eq!(
-            pruned.message(),
-            "pruned history unavailable: block 1 is pruned from the archive (earliest archived block 8)",
-            "message names the reason"
-        );
-        let outage = ArchiveRpcBoundary::error(ArchiveError::store("get", "connection refused"));
-        assert_eq!(outage.code(), 4444, "outage is 4444");
-        let fault = ArchiveRpcBoundary::error(ArchiveError::unavailable(
-            base_exoware_archive::Family::Body,
-            "root mismatch",
-        ));
-        assert_eq!(fault.code(), 4444, "integrity fault is 4444");
-        let limit = ArchiveRpcBoundary::error(ArchiveError::LimitExceeded { reason: "x".into() });
-        assert_eq!(limit.code(), INVALID_PARAMS_CODE, "limits are invalid params");
         assert!(ArchiveRpcBoundary::is_pruned(&pruned), "recognised as pruned");
+        for (err, code, message) in [
+            (
+                pruned,
+                4444,
+                "pruned history unavailable: block 1 is pruned from the archive (earliest archived block 8)",
+            ),
+            (
+                ArchiveRpcBoundary::error(ArchiveError::store("get", "connection refused")),
+                4444,
+                "pruned history unavailable: store get failed: connection refused",
+            ),
+            (
+                ArchiveRpcBoundary::error(ArchiveError::unavailable(
+                    base_exoware_archive::Family::Body,
+                    "root mismatch",
+                )),
+                4444,
+                "pruned history unavailable: archive Body unavailable: root mismatch",
+            ),
+            (
+                ArchiveRpcBoundary::error(ArchiveError::LimitExceeded { reason: "x".into() }),
+                INVALID_PARAMS_CODE,
+                "log query exceeds archive limits: x",
+            ),
+        ] {
+            assert_eq!((err.code(), err.message()), (code, message), "{message}: code and reason");
+            assert!(err.data().is_none(), "{message}: no data");
+        }
     }
 
     /// Hash answers: found wins, a genuine miss or an unresolved outage keeps the node's null,
@@ -1368,16 +1375,28 @@ mod tests {
             ArchiveRpcBoundary::check_max_logs(Some(1), &logs[..2], 3, 3).is_ok(),
             "single block is exempt"
         );
-        for (max, from) in [(2, 1), (1, 3), (0, 1), (3, 1)] {
+        // The reader's early stop (`crossed_max_logs`) and the final check both render reth's
+        // own error for the same crossing, pinned against `EthFilterError`.
+        for (max, from, crossing, retry_to) in
+            [(2, 1, 5, 4), (1, 3, 3, 3), (0, 1, 3, 2), (3, 1, 9, 8)]
+        {
+            let reth = ErrorObjectOwned::from(
+                reth_rpc::eth::filter::EthFilterError::QueryExceedsMaxResults {
+                    max_logs: max,
+                    from_block: from,
+                    to_block: retry_to,
+                },
+            );
             let checked =
                 ArchiveRpcBoundary::check_max_logs(Some(max), &logs, from, 10).unwrap_err();
-            let crossing = logs[max].inner.block_number.unwrap();
             let early = ArchiveRpcBoundary::crossed_max_logs(max, from, crossing);
-            assert_eq!(
-                (early.code(), early.message()),
-                (checked.code(), checked.message()),
-                "the reader's early stop at block {crossing} renders the same error (max {max}, from {from})"
-            );
+            for (ours, path) in [(checked, "final check"), (early, "early stop")] {
+                assert_eq!(
+                    (ours.code(), ours.message(), ours.data().is_none()),
+                    (reth.code(), reth.message(), true),
+                    "{path} matches reth (max {max}, from {from}, crossing at {crossing})"
+                );
+            }
         }
     }
 
@@ -1412,15 +1431,23 @@ mod tests {
     /// The retry block is read back from reth's own limit error.
     #[test]
     fn retry_block_is_parsed_from_reth_errors() {
+        use reth_rpc::eth::filter::EthFilterError;
+        let too_many_logs = ErrorObjectOwned::from(EthFilterError::QueryExceedsMaxResults {
+            max_logs: 3,
+            from_block: 10,
+            to_block: 42,
+        });
+        assert_eq!(ArchiveRpcBoundary::retry_to(&too_many_logs), Some(42), "retry to 42");
+        let too_many_blocks = ErrorObjectOwned::from(EthFilterError::QueryExceedsMaxBlocks(5));
+        assert_eq!(
+            ArchiveRpcBoundary::retry_to(&too_many_blocks),
+            None,
+            "block cap is not a log cap"
+        );
         assert_eq!(
             ArchiveRpcBoundary::retry_to(&ArchiveRpcBoundary::too_many_logs(3, 10, 42)),
             Some(42),
-            "retry to 42"
-        );
-        assert_eq!(
-            ArchiveRpcBoundary::retry_to(&ArchiveRpcBoundary::too_many_blocks(5)),
-            None,
-            "block cap is not a log cap"
+            "our own rendering parses the same"
         );
     }
 

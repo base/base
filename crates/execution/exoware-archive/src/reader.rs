@@ -1169,10 +1169,10 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
 mod tests {
     use super::*;
     use crate::{
-        AuditFinding, BlockCodec, ExowareStore, SegmentAuditor,
+        AuditFinding, BlockCodec, BlockData, ExowareStore, SegmentAuditor,
         test_utils::{
             CONTRACT_CODE, ChainFixture, FaultyStore, FixtureNode, SPARSE_BLOCKS, SPARSE_SLOT,
-            TEST_N, TEST_TIMEOUT, TestSimulator, publish_through, publisher, reader,
+            TEST_N, TEST_TIMEOUT, TestSimulator, dump, publish_through, publisher, reader,
         },
     };
 
@@ -1274,15 +1274,20 @@ mod tests {
             let sim = TestSimulator::start().await;
             let (fixture, archive) = published(&sim, "t10/").await;
             assert_eq!(SPARSE_BLOCKS, [8, 12, 31, 32], "cases below assume these change blocks");
-            let r = reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await;
+            // The node serves state only at H = 31, so a read delegated at the requested
+            // block fails instead of returning the oracle's value.
+            let node =
+                FixtureNode { state_only_at: Some(31), ..FixtureNode::new(Arc::clone(&fixture)) };
+            let state_reads = Arc::clone(&node.state_reads);
+            let r = reader(archive.clone(), node).await;
             let sparse = fixture.sparse;
             let slot_owner = fixture.contracts[1];
-            for (block, case) in [
-                (7, "change at next segment offset 0"),
-                (8, "change at B"),
-                (12, "next change at H"),
-                (20, "no posting in seg(B), change at H"),
-                (31, "B = H, next change at H + 1: node at H"),
+            for (block, case, node_reads) in [
+                (7, "change at next segment offset 0", vec![]),
+                (8, "change at B", vec![]),
+                (12, "next change at H", vec![]),
+                (20, "no posting in seg(B), change at H", vec![]),
+                (31, "B = H, next change at H + 1: node at H", vec![31, 31]),
             ] {
                 let state = &fixture.states[block as usize];
                 assert_eq!(
@@ -1294,6 +1299,11 @@ mod tests {
                     r.storage_at(slot_owner, SPARSE_SLOT, block).await.unwrap(),
                     state.storage.get(&(slot_owner, SPARSE_SLOT)).copied().unwrap_or_default(),
                     "storage: {case}"
+                );
+                assert_eq!(
+                    std::mem::take(&mut *state_reads.lock().unwrap()),
+                    node_reads,
+                    "node state reads: {case}"
                 );
             }
             assert_ne!(
@@ -1412,6 +1422,18 @@ mod tests {
 
             let request = r.begin().await.unwrap();
             let candidates = r.log_candidates_in(&request, &filters[0]).await.unwrap();
+            // Posting algebra per block: some log from c0 and some log with topic0 e0, not
+            // necessarily the same log.
+            let oracle: Vec<u64> = fixture.blocks[1..32]
+                .iter()
+                .filter(|b| {
+                    let logs = || b.receipts.iter().flat_map(|r| r.as_receipt().logs.iter());
+                    logs().any(|l| l.address == c0)
+                        && logs().any(|l| l.topics().first() == Some(&e0))
+                })
+                .map(BlockData::number)
+                .collect();
+            assert_eq!(candidates, oracle, "exact candidates from the fixture's logs");
             for false_positive in [5, 12, 19, 26] {
                 assert!(
                     candidates.contains(&false_positive),
@@ -1549,6 +1571,17 @@ mod tests {
                 p.publish_segment(segment).await.unwrap();
             }
             let r = reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await;
+            let block_hash = fixture.blocks[9].hash();
+            let tx_hash = fixture.blocks[9].body.transactions[1].tx_hash();
+            assert_eq!(
+                r.block_number_by_hash(block_hash).await,
+                Ok(Some(9)),
+                "the block hash resolves before the prune"
+            );
+            assert!(
+                r.transaction_by_hash(tx_hash).await.is_ok_and(|tx| tx.is_some()),
+                "the transaction hash resolves before the prune"
+            );
             let block_request = r.begin().await.unwrap();
             let tx_request = r.begin().await.unwrap();
             let unknown = r.begin().await.unwrap();
@@ -1569,19 +1602,21 @@ mod tests {
                 Some(2),
                 "segments below 2 pruned"
             );
-            let block = r.block_number_by_hash_in(&block_request, fixture.blocks[9].hash()).await;
+            let rows = dump(archive.store.as_ref()).await;
+            for (key, what) in [
+                (ArchiveKey::block_hash(block_hash, 1), "block"),
+                (ArchiveKey::tx_hash(tx_hash, 1), "transaction"),
+            ] {
+                assert!(!rows.iter().any(|(k, _)| *k == key), "the {what} locator row is deleted");
+            }
+            let block = r.block_number_by_hash_in(&block_request, block_hash).await;
             assert_eq!(block, Ok(None), "the locator range finds nothing");
             assert_eq!(
                 r.conclude(&block_request, block).await,
                 Err(ArchiveError::Pruned { block: 8, earliest: 24 }),
                 "block hash miss after prune rejected"
             );
-            let tx = r
-                .transaction_by_hash_in(
-                    &tx_request,
-                    fixture.blocks[9].body.transactions[1].tx_hash(),
-                )
-                .await;
+            let tx = r.transaction_by_hash_in(&tx_request, tx_hash).await;
             assert_eq!(tx, Ok(None), "the tx locator range finds nothing");
             assert_eq!(
                 r.conclude(&tx_request, tx).await,
@@ -1641,26 +1676,28 @@ mod tests {
             assert!(expected.len() > 3, "the wildcard filter matches logs in many blocks");
             let request = r.begin().await.unwrap();
             let candidates = r.log_candidates_in(&request, &filter).await.unwrap();
+            assert_eq!(
+                candidates,
+                fixture.blocks[1..32]
+                    .iter()
+                    .filter(|b| b.header.logs_bloom != Bloom::ZERO)
+                    .map(BlockData::number)
+                    .collect::<Vec<_>>(),
+                "wildcard candidates are the fixture's blocks with logs"
+            );
             for chunk in [1, 3, LOG_BLOCKS_PER_READ] {
                 faulty.take_get_many();
                 let logs = r.logs_in_chunks(&request, &filter, None, chunk).await.unwrap();
                 let got: Vec<_> =
                     logs.iter().map(|l| (l.block_number, l.log_index, l.log.clone())).collect();
                 assert_eq!(got, expected, "chunks of {chunk} blocks give the oracle's logs");
-                let calls = faulty.take_get_many();
+                // Three rows (header, body, receipts) per candidate, one get_many per chunk.
+                let sizes: Vec<usize> =
+                    candidates.chunks(chunk).map(|blocks| 3 * blocks.len()).collect();
                 assert_eq!(
-                    calls.len(),
-                    candidates.len().div_ceil(chunk),
-                    "one get_many per chunk of {chunk}"
-                );
-                assert!(
-                    calls.iter().all(|keys| *keys <= 3 * chunk),
-                    "a get_many holds at most {chunk} blocks: {calls:?}"
-                );
-                assert_eq!(
-                    calls.iter().sum::<usize>(),
-                    3 * candidates.len(),
-                    "every candidate read once"
+                    faulty.take_get_many(),
+                    sizes,
+                    "get_many sizes, in order, for chunks of {chunk}"
                 );
             }
             let full = r.logs_in(&request, &filter, None).await.unwrap();
@@ -1713,9 +1750,9 @@ mod tests {
             let fits =
                 r.logs_in_chunks(&request, &filter, Some(expected.len()), chunk).await.unwrap();
             assert_eq!(
-                fits.len(),
-                expected.len(),
-                "a cap equal to the match count is not exceeded"
+                fits.into_iter().map(|l| (l.block_number, l.log_index, l.log)).collect::<Vec<_>>(),
+                expected,
+                "a cap equal to the match count returns every log"
             );
             assert_eq!(
                 faulty.take_get_many().len(),

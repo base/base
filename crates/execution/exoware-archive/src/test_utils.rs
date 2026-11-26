@@ -390,6 +390,10 @@ pub struct FixtureNode {
     pub headers_from: u64,
     /// Whether the sender table is empty (senders must be recovered).
     pub senders_pruned: bool,
+    /// The only block whose state the node serves; unset serves every block.
+    pub state_only_at: Option<u64>,
+    /// Blocks of the account and storage reads asked of the node, in order.
+    pub state_reads: Arc<std::sync::Mutex<Vec<u64>>>,
 }
 
 impl FixtureNode {
@@ -402,6 +406,19 @@ impl FixtureNode {
             availability: LocalAvailability::default(),
             headers_from: 0,
             senders_pruned: false,
+            state_only_at: None,
+            state_reads: Arc::default(),
+        }
+    }
+
+    /// Records a state read at `block`, refusing it unless the node serves that block.
+    fn state_read(&self, block: u64) -> Result<(), ArchiveError> {
+        self.state_reads.lock().expect("state reads").push(block);
+        match self.state_only_at {
+            Some(only) if only != block => {
+                Err(ArchiveError::Local { reason: format!("no state at block {block}") })
+            }
+            _ => Ok(()),
         }
     }
 
@@ -462,6 +479,7 @@ impl NodeState for FixtureNode {
         block: u64,
         address: Address,
     ) -> Result<Option<AccountInfo>, ArchiveError> {
+        self.state_read(block)?;
         Ok(self.fixture.states[block as usize].accounts.get(&address).copied())
     }
 
@@ -471,6 +489,7 @@ impl NodeState for FixtureNode {
         address: Address,
         slot: B256,
     ) -> Result<U256, ArchiveError> {
+        self.state_read(block)?;
         Ok(self.fixture.states[block as usize]
             .storage
             .get(&(address, slot))
@@ -522,6 +541,8 @@ pub struct FaultyStore<S> {
     pub faults: Mutex<Vec<PutFault>>,
     /// Puts seen, including faulted ones.
     pub puts: Mutex<usize>,
+    /// Rows of every put attempt, including faulted ones, in order.
+    pub put_log: Mutex<Vec<Vec<(Bytes, Bytes)>>>,
     /// Remaining reads (through any session) that fail.
     pub failing_reads: Arc<AtomicUsize>,
     /// Key counts of every `get_many` (through any session), in call order.
@@ -539,6 +560,7 @@ impl<S> FaultyStore<S> {
             inner,
             faults: Mutex::new(faults),
             puts: Mutex::new(0),
+            put_log: Mutex::new(Vec::new()),
             failing_reads: Arc::new(AtomicUsize::new(0)),
             get_many_keys: Arc::new(Mutex::new(Vec::new())),
             first_put_barrier: None,
@@ -560,6 +582,11 @@ impl<S> FaultyStore<S> {
     /// Takes the key counts of the `get_many` calls seen since the last take.
     pub fn take_get_many(&self) -> Vec<usize> {
         std::mem::take(&mut *self.get_many_keys.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Rows of every put attempt so far, including faulted ones.
+    pub fn put_rows(&self) -> Vec<Vec<(Bytes, Bytes)>> {
+        self.put_log.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     /// Puts seen so far.
@@ -633,6 +660,7 @@ impl<S: ArchiveStore> ArchiveStore for FaultyStore<S> {
         {
             barrier.wait().await;
         }
+        self.put_log.lock().unwrap_or_else(PoisonError::into_inner).push(rows.to_vec());
         let index = {
             let mut puts = self.puts.lock().unwrap_or_else(PoisonError::into_inner);
             *puts += 1;

@@ -100,39 +100,49 @@ mod tests {
     }
 
     /// A read from a tokio blocking thread inside `block_on` (reth's execution spawner) is
-    /// answered, including a read that needs the executor's own blocking pool.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn reads_from_reths_spawner_path_are_answered() {
+    /// answered, including a read that needs a blocking thread. The caller's runtime has one
+    /// blocking thread, which the caller occupies, so the read's blocking work can only run on
+    /// the executor's own pool.
+    #[test]
+    fn reads_from_reths_spawner_path_are_answered() {
+        let caller = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .expect("caller runtime");
         let executor = std::sync::Arc::new(ArchiveExecutor::new().expect("runtime"));
-        let handle = tokio::runtime::Handle::current();
+        let handle = caller.handle().clone();
         let inner = std::sync::Arc::clone(&executor);
-        let answer = tokio::task::spawn_blocking(move || {
-            handle.block_on(async move {
-                inner.run(
-                    async {
-                        tokio::task::spawn_blocking(|| 7u64)
-                            .await
-                            .map_err(|err| ArchiveError::Local { reason: err.to_string() })
-                    },
-                    soon(),
-                )
-            })
-        })
-        .await
-        .expect("blocking task joins");
+        let answer = caller
+            .block_on(caller.spawn_blocking(move || {
+                handle.block_on(async move {
+                    inner.run(
+                        async {
+                            tokio::task::spawn_blocking(|| 7u64)
+                                .await
+                                .map_err(|err| ArchiveError::Local { reason: err.to_string() })
+                        },
+                        soon(),
+                    )
+                })
+            }))
+            .expect("blocking task joins");
         assert_eq!(answer, Ok(7), "the read is answered from inside reth's block_on");
     }
 
     /// A read past the deadline is aborted and reported as a store error, without waiting
-    /// for the read.
+    /// for the read; the read had started, so its drop is the abort, not a never-run future.
     #[test]
     fn deadline_aborts_the_read() {
         let executor = ArchiveExecutor::new().expect("runtime");
         let started = Instant::now();
         let (dropped_tx, dropped_rx) = mpsc::channel::<()>();
+        let (polled_tx, polled_rx) = mpsc::channel::<()>();
         let result: Result<(), _> = executor.run(
             async move {
                 let _guard = dropped_tx;
+                polled_tx.send(()).expect("test waits for the first poll");
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 Ok(())
             },
@@ -144,6 +154,7 @@ mod tests {
             "a late read is a store error"
         );
         assert!(started.elapsed() < Duration::from_secs(5), "the caller does not wait for it");
+        assert_eq!(polled_rx.try_recv(), Ok(()), "the read started before the deadline");
         assert_eq!(
             dropped_rx.recv_timeout(Duration::from_secs(5)),
             Err(RecvTimeoutError::Disconnected),

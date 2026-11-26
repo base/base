@@ -832,6 +832,50 @@ mod tests {
                 expected.sort_by_key(|c| (c.address, c.slot));
                 assert_eq!(storage, expected, "storage changes {n}");
             }
+            // Posting rows of segments 0..4 from the fixture's changes and logs, independently of
+            // `SegmentBuilder`: key → set of block offsets.
+            let mut expected: std::collections::BTreeMap<Bytes, Vec<u16>> = Default::default();
+            for block in &fixture.blocks[..32] {
+                let (segment, offset) = (block.number() / TEST_N, (block.number() % TEST_N) as u16);
+                let mut keys: Vec<Bytes> = Vec::new();
+                keys.extend(
+                    block
+                        .account_changes
+                        .iter()
+                        .map(|c| ArchiveKey::state(&crate::StateKey::account(c.address), segment)),
+                );
+                keys.extend(block.storage_changes.iter().map(|c| {
+                    ArchiveKey::state(&crate::StateKey::storage(c.address, c.slot), segment)
+                }));
+                for receipt in &block.receipts {
+                    for log in &receipt.as_receipt().logs {
+                        keys.push(ArchiveKey::log_address(log.address, segment));
+                        keys.extend(log.topics().iter().enumerate().map(|(position, topic)| {
+                            ArchiveKey::log_topic(position as u8, *topic, segment)
+                        }));
+                    }
+                }
+                for key in keys {
+                    let offsets = expected.entry(key).or_default();
+                    if offsets.last() != Some(&offset) {
+                        offsets.push(offset);
+                    }
+                }
+            }
+            let stored: std::collections::BTreeMap<Bytes, Vec<u16>> = dump(archive.store.as_ref())
+                .await
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    let family = ArchiveKey::family(&key)?;
+                    matches!(family, Family::StateHistory | Family::LogAddress | Family::LogTopic)
+                        .then(|| {
+                            let set =
+                                crate::OffsetSet::decode(family, &value).expect("posting decodes");
+                            (key, set.iter().collect())
+                        })
+                })
+                .collect();
+            assert_eq!(stored, expected, "every posting key and its offsets match the fixture");
             assert_eq!(
                 reader.block(32).await.unwrap_err(),
                 ArchiveError::NotArchived { block: 32, highest: Some(31) },
@@ -982,7 +1026,18 @@ mod tests {
                 "segment invisible"
             );
             let partial = dump(plain.store.as_ref()).await;
-            assert!(partial.len() > 1, "first chunk was written");
+            let attempts = faulty.put_rows();
+            let mut expected: Vec<(Bytes, Bytes)> =
+                vec![(ArchiveKey::config(), Bytes::from(config.encode()))];
+            expected.extend(attempts[0].iter().cloned());
+            expected.sort();
+            assert_eq!(partial, expected, "exactly the config row and the acked first chunk");
+            assert!(
+                attempts[0]
+                    .iter()
+                    .all(|(k, _)| ArchiveKey::family(k).is_some_and(|f| f.keyed_by_block())),
+                "the first chunk holds block rows only (no index rows)"
+            );
             assert!(
                 partial.iter().all(|(k, _)| ArchiveKey::family(k) != Some(Family::Marker)),
                 "no marker"
@@ -1031,6 +1086,25 @@ mod tests {
                 .await
                 .unwrap();
                 let first = p.publish_segment(0).await.unwrap();
+                let attempts = faulty.put_rows();
+                let is_marker = |rows: &Vec<(Bytes, Bytes)>| {
+                    rows.iter().any(|(k, _)| ArchiveKey::family(k) == Some(Family::Marker))
+                };
+                match expected_first {
+                    "data" => {
+                        assert_eq!(attempts[1], attempts[2], "the lost-ack data chunk is replayed byte for byte");
+                        assert_eq!(
+                            attempts.iter().filter(|rows| **rows == attempts[1]).count(),
+                            2,
+                            "the lost-ack chunk is written exactly twice"
+                        );
+                    }
+                    _ => assert_eq!(
+                        attempts.iter().filter(|rows| is_marker(rows)).count(),
+                        1,
+                        "the lost-ack marker is not put again"
+                    ),
+                }
                 match expected_first {
                     "data" => assert!(
                         matches!(first, PublishOutcome::Published { puts, .. } if puts == p.options.plan_chunks(&p.build_segment(0).await.unwrap(), faulty.key_prefix_len()).unwrap().len() + 1),
@@ -1045,8 +1119,9 @@ mod tests {
         .await;
     }
 
-    /// Test 6: marker `k` is refused while marker `k − 1` is missing, before and after rows
-    /// are written.
+    /// Test 6: marker `k` is refused while marker `k − 1` is missing, on the public path and
+    /// on the internal one. Both attempts fail at the entry check; the re-check before the
+    /// marker put is the same `require_predecessor` call.
     #[tokio::test(flavor = "multi_thread")]
     async fn contiguity_is_enforced() {
         bounded(async {
@@ -1540,9 +1615,9 @@ mod tests {
         }
     }
 
-    /// P3: publication streams a segment in `export_batch_blocks` batches. The most blocks
-    /// loaded at once equals the batch size, and batch sizes 1, 3 and the whole segment give
-    /// identical markers and byte-identical store contents.
+    /// P3: publication reads a segment in `export_batch_blocks` batches. The most headers read
+    /// between availability checks equals the batch size, and batch sizes 1, 3 and the whole
+    /// segment give identical markers and byte-identical store contents.
     #[tokio::test(flavor = "multi_thread")]
     async fn streamed_publication_is_bounded_and_batch_independent() {
         bounded(async {

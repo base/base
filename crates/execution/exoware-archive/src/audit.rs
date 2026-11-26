@@ -352,11 +352,33 @@ mod tests {
 
     use super::*;
     use crate::{
-        LogFilter,
+        LogFilter, SegmentRows,
         test_utils::{
-            ChainFixture, FixtureNode, TEST_N, TEST_TIMEOUT, TestSimulator, publish_through, reader,
+            ChainFixture, FixtureNode, TEST_N, TEST_TIMEOUT, TestSimulator, dump, publish_through,
+            reader,
         },
     };
+
+    /// Digest of segment 1's rows rebuilt from the fixture, with `edit` applied to the key
+    /// set first; computed from raw rows, independently of the auditor.
+    fn rebuilt_digest(
+        fixture: &ChainFixture,
+        config: &ArchiveConfig,
+        edit: impl FnOnce(&mut std::collections::BTreeMap<Bytes, Bytes>),
+    ) -> B256 {
+        let first = (config.first_block(1)) as usize;
+        let built = SegmentRows::build(config, 1, &fixture.blocks[first..first + TEST_N as usize])
+            .expect("segment 1 builds");
+        let mut rows: std::collections::BTreeMap<Bytes, Bytes> = built.rows.into_iter().collect();
+        edit(&mut rows);
+        let mut digest = SegmentDigest::default();
+        for (key, value) in &rows {
+            // Malformed extras have no well-formed family; their family byte decides the digest.
+            let family = Family::from_byte(key[1]).expect("family byte");
+            digest.update(family, key, value);
+        }
+        digest.finish()
+    }
 
     /// A3: a deleted posting goes unnoticed by log reads (postings only detect false
     /// positives) but the audit reports the missing row and the digest mismatch.
@@ -370,6 +392,31 @@ mod tests {
             publish_through(&archive, &fixture, config, 1).await;
             let address = fixture.contracts[2];
             let key = ArchiveKey::log_address(address, 1);
+            let filter =
+                LogFilter { from: 8, to: 15, addresses: vec![address], topics: Default::default() };
+            assert!(!fixture.expected_logs(&filter).is_empty(), "the address logs in segment 1");
+            let r = reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await;
+            let logs = |found: Vec<crate::ArchivedLog>| {
+                found.into_iter().map(|l| (l.block_number, l.log_index, l.log)).collect::<Vec<_>>()
+            };
+            assert_eq!(
+                logs(r.logs(&filter).await.unwrap()),
+                fixture.expected_logs(&filter),
+                "before the deletion the posting serves every log"
+            );
+            let marker = ExowareArchive::<crate::ExowareStore>::marker(&archive.store.session(), 1)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                marker.digest,
+                rebuilt_digest(&fixture, &config, |_| {}),
+                "the marker digest is the fixture's rows' digest"
+            );
+            assert!(
+                dump(archive.store.as_ref()).await.iter().any(|(k, _)| *k == key),
+                "the posting exists before the deletion"
+            );
             archive
                 .store
                 .prune(&[PrunePolicy {
@@ -385,10 +432,6 @@ mod tests {
                 }])
                 .await
                 .unwrap();
-            let filter =
-                LogFilter { from: 8, to: 15, addresses: vec![address], topics: Default::default() };
-            assert!(!fixture.expected_logs(&filter).is_empty(), "the address logs in segment 1");
-            let r = reader(archive.clone(), FixtureNode::new(Arc::clone(&fixture))).await;
             assert_eq!(
                 r.logs(&filter).await.unwrap(),
                 vec![],
@@ -397,13 +440,21 @@ mod tests {
 
             let auditor = SegmentAuditor::new(archive.clone(), config, fixture.verifier());
             let report = auditor.audit_segment(1).await.unwrap();
-            assert_eq!(report.findings.len(), 2, "missing row and digest: {:?}", report.findings);
+            let without_posting = rebuilt_digest(&fixture, &config, |rows| {
+                rows.remove(&key).expect("the posting is a segment row");
+            });
+            assert_ne!(without_posting, marker.digest, "the deletion changes the digest");
             assert_eq!(
-                report.findings[0],
-                AuditFinding::RowMissing { family: Family::LogAddress, key: hex::encode(&key) },
-                "row"
+                report.findings,
+                vec![
+                    AuditFinding::RowMissing { family: Family::LogAddress, key: hex::encode(&key) },
+                    AuditFinding::DigestMismatch {
+                        marker: marker.digest,
+                        stored_rows: without_posting
+                    },
+                ],
+                "the missing row, then the digest of the rows without it"
             );
-            assert!(matches!(report.findings[1], AuditFinding::DigestMismatch { .. }), "digest");
             assert!(auditor.audit_segment(0).await.unwrap().is_clean(), "segment 0 clean");
         })
         .await
@@ -439,30 +490,23 @@ mod tests {
                     .await
                     .unwrap();
                 let report = auditor.audit_segment(1).await.unwrap();
-                let stored_rows = report.findings.iter().find_map(|f| match f {
-                    AuditFinding::DigestMismatch { stored_rows, .. } => Some(*stored_rows),
-                    _ => None,
+                let with_extra = rebuilt_digest(&fixture, &config, |rows| {
+                    rows.insert(Bytes::from(extra.clone()), Bytes::from_static(b"x"));
                 });
+                assert_ne!(with_extra, marker.digest, "{label}: the extra changes the digest");
                 assert_eq!(
-                    report.findings.first(),
-                    Some(&AuditFinding::UnexpectedRow {
-                        family: Family::Receipts,
-                        key: hex::encode(&extra)
-                    }),
-                    "{label}: the inserted row is reported first"
-                );
-                assert_eq!(
-                    report.findings.last(),
-                    Some(&AuditFinding::DigestMismatch {
-                        marker: marker.digest,
-                        stored_rows: stored_rows.expect("digest mismatch")
-                    }),
-                    "{label}: the extra enters the stored-row digest"
-                );
-                assert_ne!(
-                    stored_rows,
-                    Some(marker.digest),
-                    "{label}: digest differs from the marker"
+                    report.findings,
+                    vec![
+                        AuditFinding::UnexpectedRow {
+                            family: Family::Receipts,
+                            key: hex::encode(&extra)
+                        },
+                        AuditFinding::DigestMismatch {
+                            marker: marker.digest,
+                            stored_rows: with_extra
+                        },
+                    ],
+                    "{label}: exactly the inserted row, then the digest of the rows with it"
                 );
                 archive
                     .store

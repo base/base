@@ -298,9 +298,25 @@ mod tests {
             8,
             "segment links"
         );
-        assert!(
-            BlockVerifier::verify_linkage(&headers, fixture.blocks[14].hash()).is_err(),
+        assert_eq!(
+            BlockVerifier::verify_linkage(&headers, fixture.blocks[14].hash()).unwrap_err(),
+            ArchiveError::unavailable(
+                Family::Header,
+                format!(
+                    "segment's last header does not hash to the marker's {}",
+                    fixture.blocks[14].hash()
+                )
+            ),
             "wrong last hash"
+        );
+        // An interior parent broken while the real terminal hash is kept.
+        let mut broken = headers;
+        broken[4].parent_hash = B256::repeat_byte(0x77);
+        let last = broken[7].hash_slow();
+        assert_eq!(
+            BlockVerifier::verify_linkage(&broken, last).unwrap_err(),
+            ArchiveError::unavailable(Family::Header, "header 12 does not link to header 11"),
+            "an interior break is found even with the terminal hash intact"
         );
     }
 

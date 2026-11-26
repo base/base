@@ -1280,7 +1280,8 @@ mod tests {
     }
 
     /// The node command accepts the `--archive.exoware.*` flags without clashing with reth's
-    /// own args, and leaves the archive off when no url is given.
+    /// own args, and leaves the archive off when no url is given. Building the runner only
+    /// shows the flags reach it; the archive's installation is covered by the archive e2e.
     #[test]
     fn test_standard_node_args_parses_exoware_archive_flags() {
         let off = CommandParser::<StandardNodeArgs>::parse_from(["reth"]).args;
@@ -1311,7 +1312,7 @@ mod tests {
             },
             "archive flags land in the flattened args"
         );
-        StandardBaseRethNode::runner(args).expect("runner installs the archive extension");
+        StandardBaseRethNode::runner(args).expect("the runner builds with the archive flags");
     }
 
     #[test]

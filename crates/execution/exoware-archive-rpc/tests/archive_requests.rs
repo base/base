@@ -155,6 +155,32 @@ async fn counted(client: &RpcClient, method: &'static str, params: Value) -> (Va
     (value, archive_requests() - before)
 }
 
+/// Every archive-routed method at block 1 (number-addressed), over state, bodies, receipts
+/// and executions: `deposit` is block 1's L1 info deposit hash.
+fn routed_requests(deposit: B256) -> Vec<(&'static str, Value)> {
+    let alice = base_test_utils::Account::Alice.address();
+    // `L1Block.number()`, which reads the contract's storage.
+    let l1_number =
+        json!({ "to": "0x4200000000000000000000000000000000000015", "input": "0x8381f58a" });
+    vec![
+        ("eth_getBlockByNumber", json!(["0x1", true])),
+        ("eth_getBlockReceipts", json!(["0x1"])),
+        ("eth_getLogs", json!([{ "fromBlock": "0x1", "toBlock": "0x1" }])),
+        ("eth_getBalance", json!([alice, "0x1"])),
+        ("eth_getTransactionCount", json!([alice, "0x1"])),
+        ("eth_getCode", json!(["0x4200000000000000000000000000000000000015", "0x1"])),
+        ("eth_getStorageAt", json!(["0x4200000000000000000000000000000000000015", "0x0", "0x1"])),
+        ("eth_call", json!([l1_number, "0x1"])),
+        (
+            "eth_callMany",
+            json!([[{ "transactions": [l1_number] }], { "blockNumber": "0x1", "transactionIndex": 1 }]),
+        ),
+        ("trace_block", json!(["0x1"])),
+        ("debug_traceBlockByNumber", json!(["0x1", {}])),
+        ("debug_traceTransaction", json!([deposit, {}])),
+    ]
+}
+
 /// Calls `eth_getBlockByNumber(number, full)`, as [`counted`] does.
 async fn counted_block(client: &RpcClient, number: u64, full: bool) -> (Value, u64) {
     counted(client, "eth_getBlockByNumber", json!([format!("0x{number:x}"), full])).await
@@ -165,6 +191,8 @@ async fn counted_block(client: &RpcClient, number: u64, full: bool) -> (Value, u
 /// store down. The node's local delegate never asks the archive a second time. A block hash
 /// the node does not know is never pruned history, so all five hash-addressed block methods
 /// keep the node's answer with zero archive requests, even with a locator for it in the store.
+/// Every archive-routed method answers block 1 with zero archive requests while the node holds
+/// it, and after pruning with the same JSON and at least one archive request each.
 #[tokio::test(flavor = "multi_thread")]
 async fn block_reads_over_pruned_bodies_make_one_archive_request() {
     tokio::time::timeout(E2E_TIMEOUT, async {
@@ -180,12 +208,17 @@ async fn block_reads_over_pruned_bodies_make_one_archive_request() {
             archive_exoware_provision: true,
             archive_exoware_segment_blocks: BLOCKS_PER_SEGMENT,
             archive_exoware_timeout: Duration::from_secs(2),
+            archive_exoware_min_retention_margin: 32,
             ..ExowareArchiveArgs::default()
         };
         let harness = TestHarness::builder()
             .with_chain_spec(chain_spec)
             .with_retention(short_retention())
-            .with_rpc_modules(RpcModuleSelection::from([RethRpcModule::Eth]))
+            .with_rpc_modules(RpcModuleSelection::from([
+                RethRpcModule::Eth,
+                RethRpcModule::Debug,
+                RethRpcModule::Trace,
+            ]))
             .with_rpc_cache_blocks(RPC_CACHE_BLOCKS)
             .with_ext::<ExowareArchiveExtension>(args)
             .build()
@@ -203,6 +236,17 @@ async fn block_reads_over_pruned_bodies_make_one_archive_request() {
         }
         let (unpruned, requests) = counted_block(&client, 1, true).await;
         assert_eq!(requests, 0, "a retained block makes no archive request");
+        let deposit = alloy_primitives::keccak256(l1_info_deposit(1));
+        let mut retained = Vec::new();
+        for (method, params) in routed_requests(deposit) {
+            let (value, requests) = counted(&client, method, params.clone()).await;
+            assert!(
+                value.get("code").is_none() && !value.is_null(),
+                "{method} {params} succeeds on retained history: {value}"
+            );
+            assert_eq!(requests, 0, "{method} over retained history makes no archive request");
+            retained.push(value);
+        }
         assert_eq!(
             unpruned["transactions"].as_array().map(Vec::len),
             Some(2),
@@ -219,6 +263,17 @@ async fn block_reads_over_pruned_bodies_make_one_archive_request() {
         let (archived, requests) = counted_block(&client, 1, true).await;
         assert_eq!(archived, unpruned, "the archive serves block 1 with every deposit field");
         assert_eq!(requests, 1, "full = true over pruned bodies makes one archive request");
+        for ((method, params), before) in routed_requests(deposit).into_iter().zip(&retained) {
+            let (value, requests) = counted(&client, method, params.clone()).await;
+            assert_eq!(
+                &value, before,
+                "{method} {params} after pruning matches the retained answer"
+            );
+            assert!(
+                requests >= 1,
+                "{method} over pruned history reaches the archive, got {requests}"
+            );
+        }
 
         let unknown = B256::repeat_byte(0xb2);
         store

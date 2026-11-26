@@ -3,7 +3,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod args;
-pub use args::{DEFAULT_SEGMENT_BLOCKS, ExowareArchiveArgs};
+pub use args::{DEFAULT_MIN_RETENTION_MARGIN, DEFAULT_SEGMENT_BLOCKS, ExowareArchiveArgs};
 
 mod source;
 pub use source::{ArchiveProvider, ProviderSource};
