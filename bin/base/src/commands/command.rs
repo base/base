@@ -2,10 +2,11 @@
 
 use base_batcher_cli::BatcherArgs;
 use base_cli_utils::RuntimeManager;
-use base_execution_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
-use base_node_core::BaseNode;
+use base_execution_cli::{
+    chainspec::BaseChainSpecParser,
+    commands::{MaintenanceCommand, base_proofs},
+};
 use clap::Subcommand;
-use reth_cli_runner::CliRunner;
 
 use crate::{
     commands::{
@@ -86,9 +87,7 @@ impl BaseCommand {
             }
             Self::Proofs(command) => {
                 chain_resolver.reject_for_reth_command("base proofs")?;
-                let runner = CliRunner::try_default_runtime()?;
-                let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c((*command).execute::<BaseNode>(runtime))
+                MaintenanceCommand::BaseProofs(*command).run_with_default_runner()
             }
             Self::Snapshot(snapshot) => {
                 chain_resolver.reject_for_reth_command("base snapshot")?;

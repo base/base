@@ -2,11 +2,9 @@
 
 use base_execution_cli::{
     chainspec::BaseChainSpecParser,
-    commands::{SnapshotManifestCommand, download},
+    commands::{MaintenanceCommand, SnapshotManifestCommand, download},
 };
-use base_node_core::BaseNode;
 use clap::{Parser, Subcommand};
-use reth_cli_runner::CliRunner;
 
 /// Snapshot manifest generation and download utilities.
 #[derive(Parser, Debug)]
@@ -33,8 +31,7 @@ impl SnapshotSubcommand {
         match self {
             Self::Manifest(command) => command.execute(),
             Self::Download(command) => {
-                let runner = CliRunner::try_default_runtime()?;
-                runner.run_blocking_until_ctrl_c((*command).execute::<BaseNode>())
+                MaintenanceCommand::Download(*command).run_with_default_runner()
             }
         }
     }
