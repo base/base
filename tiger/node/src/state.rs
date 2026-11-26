@@ -85,6 +85,25 @@ impl ParentState for Rc<WitnessState> {
     }
 }
 
+/// The values before a block of every account and slot it touched, in [`BlockChanges`]' form:
+/// what reverts the block (its wipes are not reverted: the caller checks for them).
+pub fn block_befores(changes: &BlockStateAccumulator) -> BlockChanges {
+    let mut out = BlockChanges::default();
+    for (address, account) in changes.accounts_sorted() {
+        let info = account.original.as_ref().map(|info| AccountInfo {
+            nonce: info.nonce,
+            balance: info.balance,
+            code_hash: info.code_hash,
+        });
+        out.accounts.push((address, info));
+    }
+    for (key, slot) in changes.storage() {
+        out.storage.push((key.address(), key.key(), slot.original));
+    }
+    out.storage.sort_by_key(|(address, slot, _)| (*address, *slot));
+    out
+}
+
 /// A block's state changes in the state database's form.
 pub fn block_changes(changes: &BlockStateAccumulator) -> BlockChanges {
     let mut out = BlockChanges::default();

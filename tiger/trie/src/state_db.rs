@@ -13,7 +13,7 @@
 //! - State at an older block is the current state with the changesets of later blocks reverted
 //!   in memory; roots and proofs there run the same trie code over that overlay.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_trie::{KECCAK_EMPTY, Nibbles};
@@ -702,7 +702,7 @@ impl StateDb {
             return Err(TrieError::Corrupt(format!("view at {block} below the history pruned up to block {pruned}")));
         }
         let overlays = overlays.into_iter().map(|c| (c.normalized(), c)).collect();
-        Ok(StateView { db: self, txn, block, tip, mem: None, overlays, state: std::cell::OnceCell::new() })
+        Ok(StateView { db: self, txn, block, tip, mem: None, mem_reverts: None, overlays, state: std::cell::OnceCell::new() })
     }
 
     /// A read view of the state after the canonical blocks merged in `mem` (over the stored tip)
@@ -712,7 +712,164 @@ impl StateDb {
         let txn = self.datadir.db.read()?;
         let tip = Datadir::tip_in(&txn, &self.datadir.db)?.ok_or_else(|| TrieError::Corrupt("empty datadir".into()))?;
         let overlays = overlays.into_iter().map(|c| (c.normalized(), c)).collect();
-        Ok(StateView { db: self, txn, block: tip, tip, mem: Some(mem), overlays, state: std::cell::OnceCell::new() })
+        Ok(StateView { db: self, txn, block: tip, tip, mem: Some(mem), mem_reverts: None, overlays, state: std::cell::OnceCell::new() })
+    }
+
+    /// A read view of the state after an in-memory canonical block below the head of `mem`, as
+    /// `mem` with the blocks after it reverted, then `overlays` on top. `newer` are the hashed
+    /// changes of the blocks after it up to `mem`'s head; `from` gives what the keys they change
+    /// held at the block. The trie walks only those keys over `mem`'s trie, which agrees with
+    /// the block's everywhere else, so the cost follows the newer blocks, not the older ones.
+    /// No newer block may wipe a storage or delete an account (the caller overlays the older
+    /// blocks instead); the tables must not hold blocks above it (the caller checks
+    /// [`StateView::tip`]).
+    pub fn view_mem_before(
+        &self,
+        mem: std::sync::Arc<MemState>,
+        newer: &[&HashedState],
+        from: RevertFrom<'_>,
+        overlays: Vec<BlockChanges>,
+    ) -> Result<StateView<'_>, TrieError> {
+        assert!(!self.partial, "a partial state keeps no in-memory layer");
+        if newer.iter().any(|state| state.storages.values().any(|storage| storage.wiped)) {
+            return Err(TrieError::Corrupt("a reverted block wipes a storage".into()));
+        }
+        let txn = self.datadir.db.read()?;
+        let tip = Datadir::tip_in(&txn, &self.datadir.db)?.ok_or_else(|| TrieError::Corrupt("empty datadir".into()))?;
+        let reverts = match from {
+            RevertFrom::Befores(befores) => {
+                // The oldest block touching a key read its value at the block.
+                let mut reverts = HashedState::default();
+                for before in befores {
+                    reverts.extend(&before.hashed());
+                }
+                reverts
+            }
+            RevertFrom::Older(older) => {
+                let Reverted { values: mut reverts, accounts, slots } = Reverted::before(newer, older)?;
+                for key in accounts {
+                    reverts.accounts.insert(key, self.tip_account(&txn, key)?);
+                }
+                for (key, wanted) in slots {
+                    for slot in wanted {
+                        let value = self.tip_slot(&txn, key, slot)?;
+                        reverts.set_slot(key, slot, value);
+                    }
+                }
+                reverts
+            }
+        };
+        let overlays = overlays.into_iter().map(|c| (c.normalized(), c)).collect();
+        Ok(StateView {
+            db: self,
+            txn,
+            block: tip,
+            tip,
+            mem: Some(mem),
+            mem_reverts: Some(reverts),
+            overlays,
+            state: std::cell::OnceCell::new(),
+        })
+    }
+}
+
+/// Where [`StateDb::view_mem_before`] finds what the keys the reverted blocks change held.
+#[derive(Debug, Clone, Copy)]
+pub enum RevertFrom<'a> {
+    /// The reverted blocks' values before each (see [`BlockChanges`]), newest first.
+    Befores(&'a [&'a BlockChanges]),
+    /// The hashed changes of the in-memory blocks up to the view's block, newest first: each
+    /// key takes the newest one's value, else the tables'.
+    Older(&'a [&'a HashedState]),
+}
+
+/// What the keys some in-memory blocks change held before them ([`StateDb::view_mem_before`]).
+#[derive(Debug, Default)]
+pub struct Reverted {
+    /// The values older in-memory blocks set.
+    pub values: HashedState,
+    /// The accounts no older in-memory block sets: their values are the tables'.
+    pub accounts: Vec<B256>,
+    /// The slots, by account, no older in-memory block sets: their values are the tables'.
+    pub slots: Vec<(B256, Vec<B256>)>,
+}
+
+impl Reverted {
+    /// The values the keys `newer` change held after the newest of `older` (newest first): set
+    /// by the newest older block that sets them, with the accounts and slots no older block
+    /// sets (which read their values from the tables). Each older block costs the smaller of
+    /// its changes and the keys still unresolved.
+    pub fn before(newer: &[&HashedState], older: &[&HashedState]) -> Result<Self, TrieError> {
+        let mut accounts: HashSet<B256> = HashSet::new();
+        let mut slots: HashMap<B256, HashSet<B256>> = HashMap::new();
+        for state in newer {
+            accounts.extend(state.accounts.keys().copied());
+            for (key, storage) in &state.storages {
+                slots.entry(*key).or_default().extend(storage.slots.keys().copied());
+            }
+        }
+        let mut reverts = HashedState::default();
+        for state in older {
+            if accounts.is_empty() && slots.is_empty() {
+                break;
+            }
+            if state.accounts.len() < accounts.len() {
+                for (key, account) in &state.accounts {
+                    if accounts.remove(key) {
+                        reverts.accounts.insert(*key, *account);
+                    }
+                }
+            } else {
+                accounts.retain(|key| match state.accounts.get(key) {
+                    Some(account) => {
+                        reverts.accounts.insert(*key, *account);
+                        false
+                    }
+                    None => true,
+                });
+            }
+            let mut resolve = |key: &B256, wanted: &mut HashSet<B256>, storage: &HashedStorage| {
+                if storage.wiped {
+                    // A wipe (or deletion) clears every slot it does not set again.
+                    for slot in wanted.drain() {
+                        reverts.set_slot(*key, slot, storage.slots.get(&slot).copied().unwrap_or_default());
+                    }
+                } else if storage.slots.len() < wanted.len() {
+                    for (slot, value) in &storage.slots {
+                        if wanted.remove(slot) {
+                            reverts.set_slot(*key, *slot, *value);
+                        }
+                    }
+                } else {
+                    wanted.retain(|slot| match storage.slots.get(slot) {
+                        Some(value) => {
+                            reverts.set_slot(*key, *slot, *value);
+                            false
+                        }
+                        None => true,
+                    });
+                }
+            };
+            if state.storages.len() < slots.len() {
+                for (key, storage) in &state.storages {
+                    if let Some(wanted) = slots.get_mut(key) {
+                        resolve(key, wanted, storage);
+                        if wanted.is_empty() {
+                            slots.remove(key);
+                        }
+                    }
+                }
+            } else {
+                slots.retain(|key, wanted| {
+                    if let Some(storage) = state.storages.get(key) {
+                        resolve(key, wanted, storage);
+                    }
+                    !wanted.is_empty()
+                });
+            }
+        }
+        let slots = slots.into_iter().map(|(key, wanted)| (key, wanted.into_iter().collect())).collect();
+        Ok(Self { values: reverts, accounts: accounts.into_iter().collect(), slots })
     }
 }
 
@@ -725,6 +882,9 @@ pub struct StateView<'d> {
     tip: u64,
     /// The in-memory canonical blocks between the stored tip and the overlays.
     mem: Option<std::sync::Arc<MemState>>,
+    /// The values, at an in-memory block below `mem`'s head, of the keys the blocks after it
+    /// change ([`StateDb::view_mem_before`]); read before `mem`.
+    mem_reverts: Option<HashedState>,
     overlays: Vec<(Normalized, BlockChanges)>,
     /// Reverts to `block` plus the overlays, in hashed space, built on first use.
     state: std::cell::OnceCell<HashedState>,
@@ -745,8 +905,11 @@ impl StateView<'_> {
         if let Some(state) = self.state.get() {
             return Ok(state);
         }
-        let mut state =
-            if self.block < self.tip { self.db.reverts(&self.txn, self.block + 1, self.tip)? } else { HashedState::default() };
+        let mut state = if self.block < self.tip {
+            self.db.reverts(&self.txn, self.block + 1, self.tip)?
+        } else {
+            self.mem_reverts.clone().unwrap_or_default()
+        };
         for (_, changes) in &self.overlays {
             state.extend(&changes.hashed());
         }
@@ -761,7 +924,8 @@ impl StateView<'_> {
             }
         }
         let key = hash_key(address.as_slice());
-        if let Some(account) = self.mem.as_ref().and_then(|mem| mem.hashed.accounts.get(&key)) {
+        let reverted = self.mem_reverts.as_ref().and_then(|reverts| reverts.accounts.get(&key));
+        if let Some(account) = reverted.or_else(|| self.mem.as_ref().and_then(|mem| mem.hashed.accounts.get(&key))) {
             return Ok(account.map(AccountInfo::from_account));
         }
         if self.block < self.tip {
@@ -795,6 +959,14 @@ impl StateView<'_> {
         }
         let key = hash_key(address.as_slice());
         let hashed_slot = hash_key(slot.as_slice());
+        if let Some(storage) = self.mem_reverts.as_ref().and_then(|reverts| reverts.storages.get(&key)) {
+            if let Some(value) = storage.slots.get(&hashed_slot) {
+                return Ok(*value);
+            }
+            if storage.wiped {
+                return Ok(U256::ZERO);
+            }
+        }
         if let Some(storage) = self.mem.as_ref().and_then(|mem| mem.hashed.storages.get(&key)) {
             if let Some(value) = storage.slots.get(&hashed_slot) {
                 return Ok(*value);
@@ -913,7 +1085,7 @@ impl StateView<'_> {
                 started.elapsed().as_micros() - hashed_us
             );
         }
-        let reusable = self.block == self.tip && self.overlays.is_empty();
+        let reusable = self.block == self.tip && self.overlays.is_empty() && self.mem_reverts.is_none();
         if !reusable {
             let root = self.state_root(Some(extra))?;
             return Ok(PreparedRoot { root, state: changes, txn_id: 0, block: 0, trie: None, layered: false });
@@ -968,7 +1140,7 @@ impl StateView<'_> {
 
     /// Whether this view's roots can use the live trie: a full state at its tip.
     fn live_capable(&self) -> bool {
-        self.db.live_enabled && !self.db.partial && self.block == self.tip && self.overlays.is_empty()
+        self.db.live_enabled && !self.db.partial && self.block == self.tip && self.overlays.is_empty() && self.mem_reverts.is_none()
     }
 
     /// The root after `changes` over this view and its trie updates, from the live trie kept

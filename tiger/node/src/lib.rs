@@ -22,7 +22,7 @@ mod exec_cache;
 pub use exec_cache::ExecCache;
 
 mod state;
-pub use state::{Misses, NodeDb, NodeState, ParentState, StateReadError, TransactionChanges, block_changes};
+pub use state::{Misses, NodeDb, NodeState, ParentState, StateReadError, TransactionChanges, block_befores, block_changes};
 
 mod chain;
 pub use chain::{

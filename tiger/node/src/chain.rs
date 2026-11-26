@@ -33,11 +33,11 @@ use alloy_primitives::{Address, B256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, BaseTxEnvelope as SignedTx};
 use base_tiger_store::{Fault, Segment, Table, WriteTxn};
-use base_tiger_trie::{BlockChanges, MemState, PreparedRoot, StateDb, TrieError};
+use base_tiger_trie::{BlockChanges, HashedState, MemState, PreparedRoot, RevertFrom, StateDb, TrieError};
 use serde_json::json;
 
 use crate::{
-    ExecutionWitness, Executed, Genesis, NodeState, Upstream, block_changes, genesis::genesis_changes,
+    ExecutionWitness, Executed, Genesis, NodeState, Upstream, block_befores, block_changes, genesis::genesis_changes,
 };
 
 /// Blocks `BLOCKHASH` can reach.
@@ -50,6 +50,10 @@ type BlockHashes = Arc<HashMap<u64, B256>>;
 /// Blocks this far below the head or deeper leave memory (base-reth's engine tree keeps a
 /// similar window of executed blocks in memory).
 const MEMORY_DEPTH: u64 = 64;
+/// Blocks this far below the head or deeper drop their values before the block
+/// ([`Chain::befores`]): a state at most this deep reverts the blocks above it with them. At
+/// ~150 KB a mainnet block, ~40 MB.
+const BEFORES_DEPTH: u64 = 256;
 /// A full node persists canonical blocks once more than this many are in memory: the default of
 /// `--engine.persistence-threshold`, as in base-reth.
 pub const PERSISTENCE_THRESHOLD: u64 = 70;
@@ -123,7 +127,20 @@ impl FoundBlock {
 #[derive(Debug)]
 enum StateBase {
     Mem(Arc<MemState>),
+    /// An in-memory canonical block below the head: the in-memory layer with the blocks after
+    /// it reverted ([`StateDb::view_mem_before`]): the validations of the blocks after it up to
+    /// the layer's head, and where their keys' values at the block come from.
+    MemBefore { number: u64, mem: Arc<MemState>, newer: Vec<Arc<Validation>>, from: RevertSource },
     Stored(u64),
+}
+
+/// What a [`StateBase::MemBefore`] reverts the newer blocks with (see [`RevertFrom`]).
+#[derive(Debug)]
+enum RevertSource {
+    /// The newer blocks' values before them, newest first.
+    Befores(Vec<Arc<BlockChanges>>),
+    /// The validations of the in-memory blocks up to the state's block, newest first.
+    Older(Vec<Arc<Validation>>),
 }
 
 /// What [`Chain::state_after`] opens, taken under the chain lock. An RPC call opens it with
@@ -153,14 +170,44 @@ impl StateParts {
         let state = self.open_on(&self.db)?;
         let reorged = self.epoch.load(Ordering::SeqCst) != self.started;
         // A persistence commit of blocks above the layer's head would show their later values.
-        let overtaken = matches!(&self.base, StateBase::Mem(mem) if state.stored_tip() > mem.head);
+        let overtaken = match &self.base {
+            StateBase::Mem(mem) => state.stored_tip() > mem.head,
+            StateBase::MemBefore { .. } | StateBase::Stored(_) => false,
+        };
         Ok((!reorged && !overtaken).then_some(state))
+    }
+
+    /// The hashed changes of prepared blocks.
+    fn hashed(validations: &[Arc<Validation>]) -> Vec<&HashedState> {
+        validations
+            .iter()
+            .map(|validation| match &**validation {
+                Validation::Prepared(prepared) => prepared.hashed(),
+                Validation::Witness(_) => unreachable!("a full state's canonical blocks are prepared"),
+            })
+            .collect()
     }
 
     fn open_on<'d>(&self, db: &'d StateDb) -> Result<NodeState<'d>, String> {
         let overlays = self.overlays.iter().map(|changes| BlockChanges::clone(changes)).collect();
         let view = match &self.base {
             StateBase::Mem(mem) => db.view_mem(Arc::clone(mem), overlays),
+            StateBase::MemBefore { number, mem, newer, from } => {
+                let (befores, older): (Vec<&BlockChanges>, Vec<&HashedState>) = match from {
+                    RevertSource::Befores(befores) => (befores.iter().map(|before| &**before).collect(), Vec::new()),
+                    RevertSource::Older(older) => (Vec::new(), Self::hashed(older)),
+                };
+                let from = match from {
+                    RevertSource::Befores(_) => RevertFrom::Befores(&befores),
+                    RevertSource::Older(_) => RevertFrom::Older(&older),
+                };
+                let view = db.view_mem_before(Arc::clone(mem), &Self::hashed(newer), from, overlays.clone());
+                // A persistence commit past the block since: the stored block reads its own state.
+                match view {
+                    Ok(view) if view.tip() > *number => db.view(*number, overlays),
+                    view => view,
+                }
+            }
             StateBase::Stored(number) => db.view(*number, overlays),
         }
         .map_err(|error| error.to_string())?;
@@ -242,6 +289,9 @@ pub struct Chain {
     blocks: HashMap<B256, Arc<StoredBlock>>,
     /// What validating in-memory blocks left for their commit.
     validations: HashMap<B256, Arc<Validation>>,
+    /// The values before each recent block of what it touched ([`crate::state::block_befores`]),
+    /// within [`BEFORES_DEPTH`] of the head, for states below the head ([`Self::mem_before`]).
+    befores: HashMap<B256, Arc<BlockChanges>>,
     /// The first block the datadir holds: the genesis block, or a stateless start block.
     first: u64,
     /// The first block whose body and receipts the datadir holds: `first`, or above it in a
@@ -421,6 +471,7 @@ impl Chain {
             db: Arc::new(db),
             blocks: HashMap::new(),
             validations: HashMap::new(),
+            befores: HashMap::new(),
             first: genesis.header.number,
             earliest: genesis.header.number,
             earliest_state: genesis.header.number,
@@ -755,6 +806,8 @@ impl Chain {
         overlays.reverse();
         let base = if self.batched() && number == self.head.number() {
             StateBase::Mem(Arc::clone(&self.mem))
+        } else if let Some(base) = self.mem_before(number) {
+            base
         } else if let Some(at) = number.checked_sub(self.disk.0).filter(|&above| above > 0 && self.batched()) {
             // A canonical block below the head: the canonical blocks up to it as overlays.
             let canon = self.canon[..at as usize].iter().map(|block| {
@@ -776,6 +829,49 @@ impl Chain {
             epoch: Arc::clone(&self.epoch),
             started: self.epoch.load(Ordering::SeqCst),
         })
+    }
+
+    /// The state base of in-memory canonical block `number` below the head as the in-memory
+    /// layer with the blocks after it reverted, when that walks fewer blocks than overlaying the
+    /// ones up to it on the stored tip: the trie then recomputes only what the blocks after it
+    /// changed. `None` when the blocks after it wipe a storage (or delete an account), which
+    /// a revert cannot express, or the layer's blocks lack their prepared roots.
+    fn mem_before(&self, number: u64) -> Option<StateBase> {
+        if !self.batched() || number <= self.disk.0 || number >= self.head.number() {
+            return None;
+        }
+        let at = (number - self.disk.0) as usize;
+        let validations = |blocks: &[Arc<StoredBlock>]| -> Option<Vec<Arc<Validation>>> {
+            blocks
+                .iter()
+                .map(|block| {
+                    let validation = self.validations.get(&block.hash)?;
+                    matches!(&**validation, Validation::Prepared(_)).then(|| Arc::clone(validation))
+                })
+                .collect()
+        };
+        let newer = validations(&self.canon[at..])?;
+        let wipes = |validation: &Arc<Validation>| match &**validation {
+            Validation::Prepared(prepared) => prepared.hashed().storages.values().any(|storage| storage.wiped),
+            Validation::Witness(_) => true,
+        };
+        if newer.iter().any(wipes) {
+            return None;
+        }
+        let befores: Option<Vec<Arc<BlockChanges>>> =
+            self.canon[at..].iter().rev().map(|block| self.befores.get(&block.hash).cloned()).collect();
+        let from = match befores {
+            Some(befores) => RevertSource::Befores(befores),
+            // Without the values before, the older blocks are searched: worth it only when
+            // they are more than the newer ones.
+            None if newer.len() < at => {
+                let mut older = validations(&self.canon[..at])?;
+                older.reverse();
+                RevertSource::Older(older)
+            }
+            None => return None,
+        };
+        Some(StateBase::MemBefore { number, mem: Arc::clone(&self.mem), newer, from })
     }
 
     /// [`Self::block_hashes`], shared with the recent blocks' states: a block's are reused, and a
@@ -864,6 +960,7 @@ impl Chain {
             Some(Arc::new(block_changes(&executed.changes))),
         ));
         self.blocks.insert(hash, Arc::clone(&block));
+        self.befores.insert(hash, Arc::new(block_befores(&executed.changes)));
         if let Some(validation) = validation {
             self.validations.insert(hash, Arc::new(validation));
         }
@@ -1271,6 +1368,8 @@ impl Chain {
         // Persisted blocks need no validation any more.
         let (blocks, disk) = (&self.blocks, self.disk.0);
         self.validations.retain(|hash, _| blocks.get(hash).is_some_and(|block| block.number() > disk));
+        let low = self.head.number().saturating_sub(BEFORES_DEPTH).max(disk);
+        self.befores.retain(|hash, _| blocks.get(hash).is_some_and(|block| block.number() > low));
     }
 
     /// Applies a forkchoice update whose blocks are all stored, and persists it. `safe` and
@@ -1311,6 +1410,8 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+
+    use evm2::evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS};
 
     use crate::{BlockExecution, Node, rpc::test_utils::node};
 
@@ -1442,4 +1543,62 @@ mod tests {
         node.chain.write().unwrap().set_canonical(sibling).unwrap();
         assert!(parts.open().unwrap().is_none(), "a reorg since the parts were taken");
     }
+
+    /// A state below the head reverts the in-memory blocks above it (with their values before,
+    /// or by searching the blocks below) and answers what the same block answers once stored:
+    /// proofs, accounts and slots, including accounts created after it.
+    #[test]
+    fn states_below_the_head_revert_the_blocks_above() {
+        let node = node();
+        node.chain.write().unwrap().set_persistence(1_000, 0, None).unwrap();
+        let mut hash = node.chain.read().unwrap().head().hash;
+        let addresses: Vec<Address> = (1..=6u8).map(Address::with_last_byte).collect();
+        for n in 0..12usize {
+            // Each block pays two of the addresses, so some are created after the states below.
+            let txs = [deposit(addresses[n % 6]), deposit(addresses[(n * 5 + 1) % 6])];
+            hash = build(&node, hash, 2, &txs);
+            node.chain.write().unwrap().set_canonical(hash).unwrap();
+        }
+        let window = U256::from(8191);
+        let read = |chain: &super::Chain, number: u64| {
+            let block = chain.canonical_block(number).unwrap();
+            let state = chain.state_after(&block).unwrap();
+            let beacon = U256::from(block.header.timestamp) % window;
+            let history = U256::from(number - 1) % window;
+            let mut out = Vec::new();
+            for address in &addresses {
+                out.push(format!("{:?}", state.account(address).unwrap()));
+                out.push(format!("{:?}", state.proof(*address, &[]).unwrap()));
+            }
+            for (address, slots) in [(BEACON_ROOTS_ADDRESS, vec![beacon, beacon + window]), (HISTORY_STORAGE_ADDRESS, vec![history])] {
+                for slot in &slots {
+                    out.push(state.storage(&address, slot).unwrap().to_string());
+                }
+                out.push(format!("{:?}", state.proof(address, &slots).unwrap()));
+            }
+            out
+        };
+        let (with_befores, searched) = {
+            let mut chain = node.chain.write().unwrap();
+            for number in 1..12 {
+                let parts = chain.state_parts(&chain.canonical_block(number).unwrap()).unwrap();
+                assert!(matches!(parts.base, super::StateBase::MemBefore { .. }), "block {number} reverts");
+            }
+            let with_befores: Vec<_> = (1..12).map(|number| read(&chain, number)).collect();
+            chain.befores.clear();
+            // Without the values before, only the states nearer the head than the stored tip
+            // revert; the rest overlay the blocks below them.
+            let searched: Vec<_> = (1..12).map(|number| read(&chain, number)).collect();
+            (with_befores, searched)
+        };
+        node.chain.write().unwrap().set_persistence(0, 0, None).unwrap();
+        while node.persist_once().unwrap() {}
+        let chain = node.chain.read().unwrap();
+        for number in 1..12u64 {
+            let stored = read(&chain, number);
+            assert_eq!(with_befores[number as usize - 1], stored, "block {number} with the values before");
+            assert_eq!(searched[number as usize - 1], stored, "block {number} searched");
+        }
+    }
+
 }

@@ -315,8 +315,8 @@ impl Node {
     }
 
     /// `eth_getProof` at the post-state of `block`.
-    /// The state is opened after the chain lock is released: a proof below the head walks every
-    /// in-memory block above the stored tip, seconds at a deep in-memory layer.
+    /// The state is opened after the chain lock is released: a proof below the head walks the
+    /// in-memory blocks it reverts or overlays, many at a deep in-memory layer.
     fn proof(&self, block: &StoredBlock, address: Address, keys: &[JsonStorageKey]) -> Result<Value, RpcError> {
         for _ in 0..STATE_ATTEMPTS {
             let parts = {
