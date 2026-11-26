@@ -75,6 +75,9 @@ base-common-evm.workspace = true
 base-common-genesis.workspace = true
 base-consensus-engine.workspace = true
 base-consensus-providers.workspace = true
+base-execution-consensus.workspace = true
+reth-consensus.workspace = true
+reth-chainspec.workspace = true
 base-node-runner = { path = ".", features = ["test-utils"] }
 tempfile.workspace = true
 serde_json.workspace = true

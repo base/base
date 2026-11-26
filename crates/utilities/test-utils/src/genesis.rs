@@ -2,9 +2,10 @@
 
 use std::collections::BTreeMap;
 
+use alloy_eips::eip1559::BaseFeeParams;
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
-use alloy_primitives::{Address, B256, Bytes, U256, utils::parse_ether};
-use base_common_consensus::Predeploys;
+use alloy_primitives::{Address, B64, B256, U256, utils::parse_ether};
+use base_common_consensus::{JovianExtraData, Predeploys};
 use base_common_evm::BaseTime;
 
 use crate::Account;
@@ -115,7 +116,15 @@ pub fn build_test_genesis() -> Genesis {
         difficulty: U256::ZERO,
         nonce: 0,
         timestamp: 1,
-        extra_data: Bytes::from_static(&[0x00]),
+        // Jovian is active at genesis, so the base fee of block 1 is computed from this header's
+        // Jovian-encoded EIP-1559 parameters (no minimum base fee). Any other encoding leaves
+        // it undefined and makes block 1 fail consensus validation.
+        extra_data: JovianExtraData::encode(
+            B64::from((EIP1559_DENOMINATOR << 32) | EIP1559_ELASTICITY),
+            BaseFeeParams::new(EIP1559_DENOMINATOR.into(), EIP1559_ELASTICITY.into()),
+            0,
+        )
+        .expect("valid EIP-1559 parameters"),
         mix_hash: B256::ZERO,
         coinbase: Address::ZERO,
         ..Default::default()

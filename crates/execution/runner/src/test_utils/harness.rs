@@ -369,7 +369,11 @@ impl TestHarness {
 mod tests {
     use alloy_primitives::U256;
     use alloy_provider::Provider;
+    use base_execution_consensus::BaseBeaconConsensus;
     use base_test_utils::{Account, DEVNET_CHAIN_ID};
+    use reth_chainspec::EthChainSpec;
+    use reth_consensus::HeaderValidator;
+    use reth_provider::HeaderProvider;
 
     use super::*;
 
@@ -389,6 +393,35 @@ mod tests {
         let new_block_number = provider.get_block_number().await?;
         assert_eq!(new_block_number, block_number + 5);
 
+        Ok(())
+    }
+
+    /// Block 1 passes full consensus validation against the test genesis. reth skips that
+    /// validation when the locally built block reaches the engine tree before `newPayload`
+    /// does, so an invalid block 1 was accepted or rejected depending on that race; this
+    /// checks it directly. The genesis `extra_data` must be Jovian-encoded (Jovian is active
+    /// at genesis): with any other encoding the base fee after genesis cannot be computed.
+    #[tokio::test]
+    async fn first_block_is_valid_against_the_test_genesis() -> Result<()> {
+        let harness = TestHarness::new().await?;
+        harness.advance_chain(1).await?;
+        let provider = harness.blockchain_provider();
+        let genesis = provider.sealed_header(0)?.expect("genesis header");
+        let first = provider.sealed_header(1)?.expect("block 1 header");
+        let chain_spec = harness.chain_spec();
+        assert_eq!(
+            chain_spec.next_block_base_fee(genesis.header(), first.timestamp),
+            Some(980_000_000),
+            "the base fee after genesis is the genesis fee lowered by 1/50 for an empty parent"
+        );
+        assert_eq!(first.base_fee_per_gas, Some(980_000_000), "block 1 carries that base fee");
+        let validated =
+            BaseBeaconConsensus::new(chain_spec).validate_header_against_parent(&first, &genesis);
+        assert!(
+            validated.is_ok(),
+            "block 1 is valid against genesis without relying on the built-payload shortcut: \
+             {validated:?}"
+        );
         Ok(())
     }
 }
