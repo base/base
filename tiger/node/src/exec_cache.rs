@@ -10,8 +10,8 @@
 //!
 //! It is bounded by entry counts (code by bytes), sized from live probes on Base mainnet: at
 //! 128k accounts and 1.5M slots, ~14% of the validating thread's slot misses (21% of the prewarm
-//! workers') were entries the cache had evicted, half of them read from disk; 2.5M slots keep
-//! 99% of those. When the head moves, a shard over its cap drops entries spread evenly over its
+//! workers') were entries the cache had evicted, half of them read from disk; at 2.5M slots
+//! those that fault fell by 30 to 37%, at no CPU cost. When the head moves, a shard over its cap drops entries spread evenly over its
 //! table. At its caps it holds about 16 MB of accounts, 370 MB of slots and 64 MiB of code: the
 //! slot tables' bucket count is a power of two, so any slot cap from 1.64M to 3.26M (with its
 //! overshoot) costs the same 2^18 buckets of 89 bytes per shard.
