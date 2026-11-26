@@ -90,9 +90,37 @@ the reader only checks them for consistency with the archived account changes (s
 Responses are built by `ArchiveConverter` with the node's own Base response constructors, so
 they equal what the node served before it pruned.
 
+## Historical execution
+
+`eth_call`, `eth_callMany`, `trace_block`, `debug_traceTransaction` and
+`debug_traceBlockByNumber` run reth's own EVM for pruned blocks. The extension installs
+`ExowareHistory` as `BaseEthApi`'s `PrunedHistory` hook, which takes over only at the execution
+seam (`Call::spawn_with_state_at_block`), the recovered-block loader and the transaction+block
+resolver:
+
+- State: the node opens its own state first and reads it once. If it refuses with
+  `StateAtBlockPruned` or `InsufficientChangesets`, the execution runs once on
+  `ArchiveStateProvider` (account, storage and code at the end of block N, from the archived
+  before-values and the node's bytecodes and canonical hashes). Other errors are unchanged.
+- Async store reads run on a dedicated `archive-exec` runtime. One absolute deadline
+  (`--archive.exoware.timeout` from the start of the request) covers the state open, the
+  blocking-task wait, every read and the marker recheck; finishing late is 4444.
+- Any archive failure during execution, including one a tracer swallows (`prestateTracer`
+  code reads), and a failed marker recheck return 4444, never a result.
+- Pruned bodies (missing or `BlockExpired`) load as verified archived blocks with no BAL.
+  Transactions keep the node's location when it has one; the archive locator is used only
+  when the node cannot place the hash.
+
+Limits: results are only as trustworthy as the archived state rows (there is no state root to
+check them against). Each uncached slot is at least 2 sequential store round trips, so large
+traces are slow on a remote store. With the hook installed, executions at `latest` pay one extra
+local account read. State roots, proofs and witnesses are unsupported (4444), and so is
+`hashed_post_state` for a destroyed account.
+
 ## Gaps
 
-- Historical `eth_call`, `eth_estimateGas`, tracing and `eth_createAccessList` are not routed.
+- `eth_estimateGas`, `eth_createAccessList`, `eth_simulateV1`, `trace_filter`,
+  `debug_storageRangeAt` and `eth_getProof` over pruned history are not tested and may refuse.
 - Uncle methods, log filters (`eth_newFilter`) and subscriptions are not routed.
 - Retention reads are cached for 2 s (`RETENTION_TTL`), and an answer whose deposit fields
   are present is never rechecked. A visibly incomplete answer always rereads retention, so
