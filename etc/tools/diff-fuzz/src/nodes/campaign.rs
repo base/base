@@ -419,12 +419,15 @@ impl RpcCampaign {
     /// answers vary only now and then, such as which of several invalid overrides base-reth
     /// names (it iterates a randomly seeded map).
     pub const REFERENCE_RETRIES: usize = 3;
+    /// Times the reference is asked again for a request at the `pending` block, whose random
+    /// `prevRandao` changes the result only for some values, so three retries can all agree.
+    pub const PENDING_REFERENCE_RETRIES: usize = 12;
 
     /// Compares the replies to one case and records the outcome.
     ///
     /// `serving` are the nodes that answered, in `replies` order; with them, a disagreement is
     /// checked and shrunk. The request is sent to the reference again (up to
-    /// [`Self::REFERENCE_RETRIES`] times), and if any answer differs the answer is not
+    /// [`Self::REFERENCE_RETRIES`] times, [`Self::PENDING_REFERENCE_RETRIES`] at `pending`), and if any answer differs the answer is not
     /// deterministic (such as a `pending` block's random `prevRandao`) and the case is counted
     /// in `nondeterministic` instead of becoming a finding. The first case of a new signature
     /// is minimized (see [`Self::minimize`]).
@@ -493,14 +496,17 @@ impl RpcCampaign {
             .filter(|(_, value)| value.get("transport").is_some())
             .map(|(name, _)| name.as_str())
             .collect();
+        let retries = if case.body.contains("\"pending\"") {
+            Self::PENDING_REFERENCE_RETRIES
+        } else {
+            Self::REFERENCE_RETRIES
+        };
         if !verdict.agree
             && failed.is_empty()
             && let Some(reference) = serving.first()
-            && let Some(again) =
-                (0..Self::REFERENCE_RETRIES).map(|_| reference.send(&case.body)).find(|again| {
-                    RpcCompare::normalize(&case.method, again, config.strict_errors)
-                        != normalized[0].1
-                })
+            && let Some(again) = (0..retries).map(|_| reference.send(&case.body)).find(|again| {
+                RpcCompare::normalize(&case.method, again, config.strict_errors) != normalized[0].1
+            })
         {
             let mut s = summary.lock().expect("lock");
             s.requests += 1;
