@@ -42,7 +42,8 @@ differential fuzz harness against base-reth.
 - **Fast state root**: a parallel trie walker on threads started once, with large storages on
   jobs of their own, that skips hashed-state reads its stored branches already answer.
 - **Prewarm and caches**: speculative execution and trie-path walks ahead of the serial block,
-  a bounded cross-block execution cache, and a memo of signature recoveries.
+  a run-ahead that reads a cold transaction's slots concurrently (`TIGER_RUN_AHEAD=0` turns it
+  off), a bounded cross-block execution cache, and a memo of signature recoveries.
 - **Built-in benchmarking**: `tiger bench` replays real mainnet blocks through the validation path
   (see [Benchmarks](#benchmarks)); `TIGER_VALIDATION_LOG=1` times every block a live node imports.
 - **Fault injection**: `TIGER_FAULT` crashes, tears writes or fills the disk at chosen writes,
@@ -86,9 +87,13 @@ the consensus node sees, p50 / p90 / p99 in ms:
 - Execution alone is at parity with base-reth (p50 8.8 ms vs about 9).
 - On the warm replay bench, validation (execution plus state root) takes p50 3.4 ms per block,
   with the state root at 1.2 ms.
-- The remaining live gap is the tail, from execution's cold reads: in slow blocks 94% of
-  execution is the validating thread waiting on disk, mostly one heavy transaction walking a
-  chain of dependent cold slots. Work continues there.
+- The remaining live gap was the tail, from execution's cold reads: in slow blocks 94% of
+  execution was the validating thread waiting on disk, mostly one heavy transaction walking a
+  chain of dependent cold slots. The prewarm run-ahead re-executes such a transaction with
+  unread slots as zero while fetcher threads read them concurrently, so each pass reaches one
+  level deeper. In a live A/B at 2048 (one 10-minute window each, 2026-11-26) it cut the insert
+  p99 from 109 to 72 ms (base-reth 86 and 77), exec p99 from 70 to 41 ms, and blocks over
+  150 ms from 14 to 6, with p50 unchanged (11.7 ms).
 - Memory: about 1.0 to 1.2 GB anonymous at the default persistence threshold, against
   base-reth's 3.8 to 5.2 GB on the same host.
 
