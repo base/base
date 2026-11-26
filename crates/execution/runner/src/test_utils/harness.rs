@@ -26,7 +26,7 @@ use crate::{
     test_utils::{
         BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, NODE_STARTUP_DELAY_MS,
         engine::{EngineApi, IpcEngine},
-        node::{LocalNode, LocalNodeProvider, LocalNodeRetention},
+        node::{LocalNode, LocalNodeProvider, LocalNodeRetention, LocalNodeRpc},
         tracing::init_silenced_tracing,
     },
 };
@@ -48,11 +48,9 @@ pub struct PreparedBlock {
 pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn BaseNodeExtension>>,
     chain_spec: Option<Arc<BaseChainSpec>>,
-    rpc_gas_cap: Option<u64>,
+    rpc: LocalNodeRpc,
     engine_api_store: Option<PathBuf>,
     retention: Option<LocalNodeRetention>,
-    max_logs_per_response: Option<u64>,
-    rpc_modules: Option<RpcModuleSelection>,
 }
 
 impl TestHarnessBuilder {
@@ -86,7 +84,7 @@ impl TestHarnessBuilder {
     /// Set the node's `--rpc.gascap`, the gas bound for `eth_call` and
     /// `eth_estimateGas`. Defaults to reth's default.
     pub const fn with_rpc_gas_cap(mut self, rpc_gas_cap: u64) -> Self {
-        self.rpc_gas_cap = Some(rpc_gas_cap);
+        self.rpc.gas_cap = Some(rpc_gas_cap);
         self
     }
 
@@ -105,14 +103,21 @@ impl TestHarnessBuilder {
 
     /// Set the node's `--rpc.max-logs-per-response`.
     pub const fn with_max_logs_per_response(mut self, max: u64) -> Self {
-        self.max_logs_per_response = Some(max);
+        self.rpc.max_logs_per_response = Some(max);
         self
     }
 
     /// Serve `modules` over HTTP and WS, as `--http.api` and `--ws.api` do, instead of the
     /// default modules.
     pub fn with_rpc_modules(mut self, modules: RpcModuleSelection) -> Self {
-        self.rpc_modules = Some(modules);
+        self.rpc.modules = Some(modules);
+        self
+    }
+
+    /// Set the node's `--rpc-cache.max-blocks`, for tests that need blocks to leave the RPC
+    /// block cache.
+    pub const fn with_rpc_cache_blocks(mut self, max: u32) -> Self {
+        self.rpc.cache_blocks = Some(max);
         self
     }
 
@@ -128,11 +133,9 @@ impl TestHarnessBuilder {
         let node = LocalNode::new(
             self.extensions,
             chain_spec,
-            self.rpc_gas_cap,
+            self.rpc,
             self.engine_api_store,
             self.retention,
-            self.max_logs_per_response,
-            self.rpc_modules,
         )
         .await?;
         let engine = node.engine_api()?;

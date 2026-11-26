@@ -58,6 +58,8 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
 
 [dev-dependencies]
+base-exoware-archive = { workspace = true, features = ["metrics"] }
+reth-node-metrics.workspace = true
 base-protocol.workspace = true
 base-test-utils.workspace = true
 base-common-precompiles.workspace = true
@@ -68,7 +70,7 @@ reth-node-core.workspace = true
 alloy-genesis.workspace = true
 alloy-rpc-client.workspace = true
 serde_json = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
 
 [features]
 default = []

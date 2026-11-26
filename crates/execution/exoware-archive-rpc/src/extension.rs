@@ -153,10 +153,13 @@ impl BaseNodeExtension for ExowareArchiveExtension {
                 execution_budget: args.archive_exoware_timeout,
             };
             eth_api.set_pruned_history(Arc::new(history))?;
+            // `ArchiveEth` owns routing for the read methods it serves: its local calls use a
+            // view without the hook, so each such request reaches the archive at most once.
+            let local_eth = eth_api.without_pruned_history();
             let api = ArchiveEth {
-                eth: eth_api.clone(),
+                eth: local_eth.clone(),
                 filter: ctx.registry.eth_handlers().filter.clone(),
-                base_tx: TxBaseEthApiExt::new(eth_api),
+                base_tx: TxBaseEthApiExt::new(local_eth),
                 provider,
                 archive,
                 converter: ArchiveConverter::new(chain_spec),

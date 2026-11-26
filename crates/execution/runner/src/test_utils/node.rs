@@ -59,6 +59,19 @@ impl fmt::Debug for LocalNode {
     }
 }
 
+/// RPC server settings for a test node; each unset field keeps reth's default.
+#[derive(Debug, Clone, Default)]
+pub struct LocalNodeRpc {
+    /// `--rpc.gascap`, the gas bound for `eth_call` and `eth_estimateGas`.
+    pub gas_cap: Option<u64>,
+    /// `--rpc.max-logs-per-response`.
+    pub max_logs_per_response: Option<u64>,
+    /// `--http.api` and `--ws.api` modules (reth requires them equal on a shared port).
+    pub modules: Option<RpcModuleSelection>,
+    /// `--rpc-cache.max-blocks`.
+    pub cache_blocks: Option<u32>,
+}
+
 /// Prune and static-file settings for a test node that keeps only recent history.
 ///
 /// Static-file segments are pruned a whole file at a time, so a short retention window only
@@ -72,20 +85,15 @@ pub struct LocalNodeRetention {
 }
 
 impl LocalNode {
-    /// Launch a new local node with the provided extensions and chain spec, and
-    /// `rpc_gas_cap` as its `--rpc.gascap` and `engine_api_store` as its
-    /// `--debug.engine-api-store` when set. `retention` replaces the default (archive) prune
-    /// and static-file settings when set, `max_logs_per_response` sets
-    /// `--rpc.max-logs-per-response`, and `rpc_modules` replaces the default `--http.api` and
-    /// `--ws.api` modules when set.
+    /// Launch a new local node with the provided extensions and chain spec, `rpc` as its RPC
+    /// server settings, and `engine_api_store` as its `--debug.engine-api-store` when set.
+    /// `retention` replaces the default (archive) prune and static-file settings when set.
     pub async fn new(
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<BaseChainSpec>,
-        rpc_gas_cap: Option<u64>,
+        rpc: LocalNodeRpc,
         engine_api_store: Option<PathBuf>,
         retention: Option<LocalNodeRetention>,
-        max_logs_per_response: Option<u64>,
-        rpc_modules: Option<RpcModuleSelection>,
     ) -> Result<Self> {
         let exec = Runtime::test();
 
@@ -104,16 +112,19 @@ impl LocalNode {
         let mut rpc_args =
             RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
         rpc_args.auth_ipc_path = unique_ipc_path;
-        if let Some(rpc_gas_cap) = rpc_gas_cap {
+        if let Some(rpc_gas_cap) = rpc.gas_cap {
             rpc_args.rpc_gas_cap = rpc_gas_cap;
         }
-        if let Some(max) = max_logs_per_response {
+        if let Some(max) = rpc.max_logs_per_response {
             rpc_args.rpc_max_logs_per_response = max.into();
         }
-        if let Some(modules) = rpc_modules {
+        if let Some(modules) = rpc.modules {
             // reth requires the same modules on HTTP and WS when they share a port.
             rpc_args.ws_api = Some(modules.clone());
             rpc_args.http_api = Some(modules);
+        }
+        if let Some(max) = rpc.cache_blocks {
+            rpc_args.rpc_state_cache.max_blocks = max;
         }
 
         let base_node = BaseNode::new(RollupArgs::default());

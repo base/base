@@ -4987,6 +4987,7 @@ dependencies = [
  "jsonrpsee",
  "reth-chainspec",
  "reth-node-core",
+ "reth-node-metrics",
  "reth-primitives-traits",
  "reth-prune-types",
  "reth-rpc-convert",

@@ -90,6 +90,10 @@ the reader only checks them for consistency with the archived account changes (s
 Responses are built by `ArchiveConverter` with the node's own Base response constructors, so
 they equal what the node served before it pruned.
 
+Each RPC request reaches the archive at most once: `ArchiveEth`'s local calls use
+`BaseEthApi::without_pruned_history()`, so the execution hook below never reads the archive for
+a request `ArchiveEth` already routes. The `requests` counter counts archive read requests begun.
+
 ## Historical execution
 
 `eth_call`, `eth_callMany`, `trace_block`, `debug_traceTransaction` and

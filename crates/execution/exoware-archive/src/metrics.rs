@@ -28,4 +28,6 @@ base_metrics::define_metrics! {
     exporter_running: gauge,
     #[describe("Prune passes completed")]
     prune_runs: counter,
+    #[describe("Archive read requests begun (one per RPC read or execution that reached the archive)")]
+    requests: counter,
 }

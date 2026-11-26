@@ -237,6 +237,7 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
 
     /// Starts a request: opens a session and resolves the highest marker in it.
     pub async fn begin(&self) -> Result<ArchiveRequest<S::Session>, ArchiveError> {
+        ArchiveMetrics::requests().increment(1);
         let session = self.archive.store.session();
         let snapshot =
             ExowareArchive::<S>::highest_marker(&session).await?.map(|highest| ArchiveSnapshot {

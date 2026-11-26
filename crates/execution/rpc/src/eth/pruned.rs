@@ -140,9 +140,16 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
         self.inner.pruned.set(hook).map_err(|_| PrunedHistoryAlreadySet)
     }
 
-    /// The installed pruned-history hook, if any.
+    /// The installed pruned-history hook, if any and this handle consults it.
     pub fn pruned_history(&self) -> Option<&PrunedHistoryFor<N::Provider>> {
-        self.inner.pruned.get()
+        self.inner.pruned.get().filter(|_| self.consults_history)
+    }
+
+    /// A handle over the same state that never consults the pruned-history hook, so its
+    /// blocks, transactions and executions are the node's own answers. A caller that routes
+    /// pruned reads to the archive itself uses it, so one request reaches the archive once.
+    pub fn without_pruned_history(&self) -> Self {
+        Self { inner: Arc::clone(&self.inner), consults_history: false }
     }
 
     /// Whether `err` is the node's state provider refusing history as pruned. reth checks
@@ -690,6 +697,46 @@ mod tests {
             api(Some(Arc::new(FakeHistory { block: Some(other), ..Default::default() })));
         let err = api_wrong.recovered_block(id).await.expect_err("wrong block");
         assert_eq!(code(err), 4444, "a block that is not the requested one is 4444");
+    }
+
+    /// The hook-less view (and its clones) answers blocks and transactions from the node
+    /// alone, never asking the hook, while the handle it came from still uses it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_hookless_view_never_asks_the_hook() {
+        let (_, _, block) = api(None);
+        let tx_hash = block.body().transactions[0].tx_hash();
+        let serving = Arc::new(FakeHistory {
+            block: Some(block.clone()),
+            location: Some((1, block.hash(), 0)),
+            ..Default::default()
+        });
+        let (api, _, _) = api(Some(Arc::clone(&serving)));
+        let hookless = api.without_pruned_history().clone();
+        assert!(hookless.pruned_history().is_none(), "the view has no hook");
+        assert!(
+            hookless.recovered_block(BlockId::number(1)).await.expect("local").is_none(),
+            "a missing body is the node's miss"
+        );
+        assert!(
+            hookless.transaction_and_block_and_maybe_bal(tx_hash).await.expect("local").is_none(),
+            "an unplaced transaction is the node's miss"
+        );
+        assert!(
+            serving.calls.lock().expect("calls").is_empty(),
+            "the hook-less view never asks the hook"
+        );
+
+        let served = api.recovered_block(BlockId::number(1)).await.expect("archived");
+        assert_eq!(
+            served.map(|served| served.hash()),
+            Some(block.hash()),
+            "the original handle still serves the hook's block"
+        );
+        assert_eq!(
+            *serving.calls.lock().expect("calls"),
+            vec![format!("recovered_block 1 {}", block.hash())],
+            "only the original handle asked"
+        );
     }
 
     /// A transaction the node cannot place is located by the hook and read from the hook's

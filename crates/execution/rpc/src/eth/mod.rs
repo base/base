@@ -72,11 +72,14 @@ pub type EthApiNodeBackend<N, Rpc> = EthApiInner<N, Rpc>;
 pub struct BaseEthApi<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Gateway to node's core components.
     inner: Arc<BaseEthApiInner<N, Rpc>>,
+    /// Whether this handle consults the pruned-history hook; see
+    /// [`BaseEthApi::without_pruned_history`].
+    consults_history: bool,
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> Clone for BaseEthApi<N, Rpc> {
     fn clone(&self) -> Self {
-        Self { inner: Arc::clone(&self.inner) }
+        Self { inner: Arc::clone(&self.inner), consults_history: self.consults_history }
     }
 }
 
@@ -95,7 +98,7 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
             base_time,
             pruned: OnceLock::new(),
         });
-        Self { inner }
+        Self { inner, consults_history: true }
     }
 
     /// Build a [`BaseEthApi`] using [`BaseEthApiBuilder`].
