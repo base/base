@@ -11,7 +11,7 @@ use base_common_consensus::{BaseTransactionInfo, DepositInfo};
 use base_common_base_tx::NonceManagerSlots;
 use serde_json::{Value, json};
 
-use crate::{Node, RpcError, chain::StoredBlock};
+use crate::{FoundBlock, Node, RpcError, chain::StoredBlock};
 
 /// JSON-RPC options, named and defaulted as base-reth's flags.
 #[derive(Debug, Clone)]
@@ -231,20 +231,22 @@ impl Node {
         if let Some(number) = expired {
             return Err(Self::pruned(number, chain.earliest()));
         }
-        Ok(match id {
-            None => Some(chain.head()),
+        let found = match id {
+            None => Some(FoundBlock::Memory(chain.head())),
             Some(BlockId::Number(tag)) => match tag {
-                BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => Some(chain.head()),
+                BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => Some(FoundBlock::Memory(chain.head())),
                 // reth's earliest block is number zero, whatever the genesis number.
-                BlockNumberOrTag::Earliest => chain.canonical_block(0),
-                BlockNumberOrTag::Safe => chain.block(&forkchoice.safe),
-                BlockNumberOrTag::Finalized => chain.block(&forkchoice.finalized),
-                BlockNumberOrTag::Number(number) => chain.canonical_block(number),
+                BlockNumberOrTag::Earliest => chain.find_canonical(0),
+                BlockNumberOrTag::Safe => chain.find_block(&forkchoice.safe),
+                BlockNumberOrTag::Finalized => chain.find_block(&forkchoice.finalized),
+                BlockNumberOrTag::Number(number) => chain.find_canonical(number),
             },
             Some(BlockId::Hash(hash)) => chain
-                .block(&hash.block_hash)
-                .filter(|block| !hash.require_canonical.unwrap_or(false) || chain.is_canonical(&block.hash)),
-        })
+                .find_block(&hash.block_hash)
+                .filter(|_| !hash.require_canonical.unwrap_or(false) || chain.is_canonical(&hash.block_hash)),
+        };
+        drop(chain);
+        found.map_or(Ok(None), |found| found.load().map_err(RpcError::internal))
     }
 
     /// The block a `*ByHash` method (a bare hash) or a `*ByNumber` method (a number or tag)
@@ -258,7 +260,9 @@ impl Node {
             if let Some(number) = chain.expired(&hash) {
                 return Err(Self::pruned(number, chain.earliest()));
             }
-            return Ok(chain.block(&hash));
+            let found = chain.find_block(&hash);
+            drop(chain);
+            return found.map_or(Ok(None), |found| found.load().map_err(RpcError::internal));
         }
         let tag: BlockNumberOrTag = serde_json::from_value(param).map_err(invalid)?;
         self.find_block(Some(&json!(tag)))

@@ -114,7 +114,9 @@ impl Node {
         // Most calls hold the chain read lock throughout, which a block's insert waits for.
         let elapsed = started.elapsed();
         if elapsed >= SLOW_CALL && std::env::var_os("TIGER_VALIDATION_LOG").is_some() {
-            crate::Log::line(format!("tiger: slow call {method} {:.1}ms", elapsed.as_secs_f64() * 1e3));
+            // The first parameter when it is a string: the block hash, number or tag of block reads.
+            let first = params.get(0).and_then(Value::as_str).unwrap_or("-");
+            crate::Log::line(format!("tiger: slow call {method} {first} {:.1}ms", elapsed.as_secs_f64() * 1e3));
         }
         result
     }

@@ -88,6 +88,37 @@ pub enum Validation {
     Witness(ExecutionWitness),
 }
 
+/// A block [`Chain::find_block`] or [`Chain::find_canonical`] found: held in memory, or
+/// canonical in the datadir, where [`Self::load`] reads it. An RPC call loads it after releasing
+/// the chain lock, so a slow datadir read does not hold up a block's insert behind the lock.
+#[derive(Debug)]
+pub enum FoundBlock {
+    /// Held in memory.
+    Memory(Arc<StoredBlock>),
+    /// Canonical block `number`, with hash `hash`, in the datadir.
+    Datadir {
+        /// The datadir.
+        db: Arc<StateDb>,
+        /// The block number.
+        number: u64,
+        /// The block hash.
+        hash: B256,
+    },
+}
+
+impl FoundBlock {
+    /// The block. Read without the chain lock, a reorg may have unwound it from the datadir
+    /// meanwhile: it is then not found (`None`), or its read fails.
+    pub fn load(self) -> Result<Option<Arc<StoredBlock>>, String> {
+        match self {
+            Self::Memory(block) => Ok(Some(block)),
+            Self::Datadir { db, number, hash } => {
+                Ok(Chain::load(&db, number)?.filter(|block| block.hash == hash).map(Arc::new))
+            }
+        }
+    }
+}
+
 /// One block with its execution results.
 #[derive(Debug, Clone)]
 pub struct StoredBlock {
@@ -399,7 +430,7 @@ impl Chain {
                 None => return Err(format!("datadir has no genesis block {genesis_number}")),
             }
         }
-        chain.head = Arc::new(chain.load(tip)?.ok_or_else(|| format!("datadir has state up to block {tip} but no block {tip}"))?);
+        chain.head = Arc::new(Self::load(&chain.db, tip)?.ok_or_else(|| format!("datadir has state up to block {tip} but no block {tip}"))?);
         {
             let txn = chain.db.datadir.db.read().map_err(|error| error.to_string())?;
             if let Some(bytes) = txn
@@ -469,8 +500,8 @@ impl Chain {
     }
 
     /// Reads canonical block `number` from the datadir.
-    fn load(&self, number: u64) -> Result<Option<StoredBlock>, String> {
-        let datadir = &self.db.datadir;
+    fn load(db: &StateDb, number: u64) -> Result<Option<StoredBlock>, String> {
+        let datadir = &db.datadir;
         let read = || -> Result<Option<StoredBlock>, base_tiger_store::StoreError> {
             let Some((header, hash)) = datadir.header(number)? else { return Ok(None) };
             let missing = || base_tiger_store::StoreError::Corrupt(format!("block {number} has a header but no body"));
@@ -492,7 +523,7 @@ impl Chain {
 
     /// Reads canonical block `number`, which the datadir must hold.
     fn load_canonical(&self, number: u64) -> Arc<StoredBlock> {
-        match self.load(number) {
+        match Self::load(&self.db, number) {
             Ok(Some(block)) => Arc::new(block),
             Ok(None) => panic!("canonical block {number} is not in the datadir"),
             Err(error) => panic!("{error}"),
@@ -506,14 +537,19 @@ impl Chain {
 
     /// The block with hash `hash`: in memory, or canonical in the datadir.
     pub fn block(&self, hash: &B256) -> Option<Arc<StoredBlock>> {
+        Some(self.held(self.find_block(hash)?))
+    }
+
+    /// Where block `hash` is ([`Self::block`] without reading the datadir).
+    pub fn find_block(&self, hash: &B256) -> Option<FoundBlock> {
         if let Some(block) = self.blocks.get(hash) {
-            return Some(Arc::clone(block));
+            return Some(FoundBlock::Memory(Arc::clone(block)));
         }
         if *hash == self.head.hash {
-            return Some(Arc::clone(&self.head));
+            return Some(FoundBlock::Memory(Arc::clone(&self.head)));
         }
         let number = self.db.datadir.block_number(*hash).unwrap_or_else(|error| panic!("reading block {hash}: {error}"))?;
-        (number >= self.earliest).then(|| self.load_canonical(number))
+        (number >= self.earliest).then(|| FoundBlock::Datadir { db: Arc::clone(&self.db), number, hash: *hash })
     }
 
     /// The header of known block `hash`, also below [`Self::earliest`].
@@ -576,17 +612,31 @@ impl Chain {
 
     /// The canonical block at `number`.
     pub fn canonical_block(&self, number: u64) -> Option<Arc<StoredBlock>> {
+        Some(self.held(self.find_canonical(number)?))
+    }
+
+    /// `found`, read under the chain lock, where the datadir must hold it.
+    fn held(&self, found: FoundBlock) -> Arc<StoredBlock> {
+        match found {
+            FoundBlock::Memory(block) => block,
+            FoundBlock::Datadir { number, .. } => self.load_canonical(number),
+        }
+    }
+
+    /// Where the canonical block at `number` is ([`Self::canonical_block`] without reading the
+    /// datadir).
+    pub fn find_canonical(&self, number: u64) -> Option<FoundBlock> {
         if number < self.earliest {
             return None;
         }
         let hash = self.canonical_hash(number)?;
-        Some(self.blocks.get(&hash).cloned().unwrap_or_else(|| {
-            if hash == self.head.hash {
-                Arc::clone(&self.head)
-            } else {
-                self.in_canon(number).cloned().unwrap_or_else(|| self.load_canonical(number))
-            }
-        }))
+        let held = self.blocks.get(&hash).cloned().or_else(|| {
+            if hash == self.head.hash { Some(Arc::clone(&self.head)) } else { self.in_canon(number).cloned() }
+        });
+        Some(match held {
+            Some(block) => FoundBlock::Memory(block),
+            None => FoundBlock::Datadir { db: Arc::clone(&self.db), number, hash },
+        })
     }
 
     /// Whether `hash` is on the canonical chain.

@@ -26,7 +26,7 @@ pub use state::{Misses, NodeDb, NodeState, ParentState, StateReadError, Transact
 
 mod chain;
 pub use chain::{
-    BLOCK_HASH_WINDOW, Chain, Forkchoice, MEMORY_BLOCK_BUFFER_TARGET, MemRebuild, PERSISTENCE_BACKPRESSURE_THRESHOLD, PERSISTENCE_THRESHOLD, PersistBatch, StatelessStart,
+    BLOCK_HASH_WINDOW, Chain, Forkchoice, FoundBlock, MEMORY_BLOCK_BUFFER_TARGET, MemRebuild, PERSISTENCE_BACKPRESSURE_THRESHOLD, PERSISTENCE_THRESHOLD, PersistBatch, StatelessStart,
     StoredBlock, Validation,
 };
 
