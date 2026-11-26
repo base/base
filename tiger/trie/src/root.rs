@@ -292,30 +292,38 @@ const MAX_ROOT_THREADS: usize = 16;
 /// them under the same account subtree are not hashed one after the other.
 const OWN_JOB_SLOTS: usize = 32;
 
+/// Changed storages with more changed slots than this are hashed as 16 subtrees in parallel
+/// (see [`SplitJob`]): one large storage on one thread is otherwise the root's long pole, its
+/// cold trie reads one after another.
+const SPLIT_SLOTS: usize = 64;
+
 /// The storage roots and storage trie changes of accounts whose storage changed, by hashed
 /// address, as [`TrieView::state_root`] computes them with `retain`.
 type StorageRoots = HashMap<B256, (B256, StorageTrieUpdates)>;
 
-/// A large changed storage hashed by its own job (see [`OWN_JOB_SLOTS`]) for the subtree
-/// walking its account. Whichever claims it first computes it: its own job, or the subtree
-/// when that job could not run (its worker saw another state).
+/// A result computed once by whichever thread claims it first, which the others wait for: a
+/// job of its own, or the account subtree that needs it when that job could not run (its
+/// worker saw another state).
 #[derive(Debug)]
-struct OwnJob {
-    address: B256,
+struct Claim<T> {
     claimed: AtomicBool,
-    result: Mutex<Option<Result<(B256, StorageTrieUpdates), TrieError>>>,
+    result: Mutex<Option<Result<T, TrieError>>>,
     ready: Condvar,
 }
 
-impl OwnJob {
-    /// Computes the storage root here unless already claimed.
-    fn run(&self, view: &TrieView<'_, Ro>) {
+impl<T> Claim<T> {
+    const fn new() -> Self {
+        Self { claimed: AtomicBool::new(false), result: Mutex::new(None), ready: Condvar::new() }
+    }
+
+    /// Computes the result with `compute` here unless already claimed.
+    fn run(&self, compute: impl FnOnce() -> Result<T, TrieError>) {
         if self.claimed.swap(true, Ordering::AcqRel) {
             return;
         }
-        // Filled even if the computation panics, so the subtree waiting for it does not hang.
-        struct Fill<'a>(&'a OwnJob, Option<Result<(B256, StorageTrieUpdates), TrieError>>);
-        impl Drop for Fill<'_> {
+        // Filled even if the computation panics, so a thread waiting for it does not hang.
+        struct Fill<'a, T>(&'a Claim<T>, Option<Result<T, TrieError>>);
+        impl<T> Drop for Fill<'_, T> {
             fn drop(&mut self) {
                 let result = self.1.take().unwrap_or_else(|| Err(TrieError::Unknown("a storage root job panicked".into())));
                 *self.0.result.lock().expect("unpoisoned") = Some(result);
@@ -323,12 +331,12 @@ impl OwnJob {
             }
         }
         let mut fill = Fill(self, None);
-        fill.1 = Some(view.storage_root_updates(self.address));
+        fill.1 = Some(compute());
     }
 
-    /// The storage root, computed here when no one claimed it yet, else waited for.
-    fn take(&self, view: &TrieView<'_, Ro>) -> Result<(B256, StorageTrieUpdates), TrieError> {
-        self.run(view);
+    /// The result, computed here with `compute` when no one claimed it yet, else waited for.
+    fn take(&self, compute: impl FnOnce() -> Result<T, TrieError>) -> Result<T, TrieError> {
+        self.run(compute);
         let mut result = self.result.lock().expect("unpoisoned");
         loop {
             match result.take() {
@@ -339,8 +347,75 @@ impl OwnJob {
     }
 }
 
-/// One account-trie partition's part of a parallel state root: the subtree of the keys starting
-/// with one nibble.
+/// A large changed storage hashed by its own job (see [`OWN_JOB_SLOTS`]) for the subtree
+/// walking its account.
+#[derive(Debug)]
+struct OwnJob {
+    address: B256,
+    root: Claim<(B256, StorageTrieUpdates)>,
+}
+
+/// A very large changed storage (see [`SPLIT_SLOTS`]) hashed as the 16 subtrees under its root
+/// on jobs of their own, which the subtree walking its account joins into the storage root.
+#[derive(Debug)]
+struct SplitJob {
+    address: B256,
+    parts: Vec<Claim<Partition>>,
+}
+
+impl SplitJob {
+    /// The storage root and its trie changes from the 16 subtrees (computed here when not
+    /// claimed), as [`TrieView::storage_root_updates`] computes them.
+    fn take(&self, view: &TrieView<'_, Ro>) -> Result<(B256, StorageTrieUpdates), TrieError> {
+        let mut parts = Vec::with_capacity(16);
+        for (nibble, part) in self.parts.iter().enumerate() {
+            parts.push(part.take(|| view.walk_storage_partition(self.address, nibble as u8))?);
+        }
+        let mut state_mask = TrieMask::default();
+        let mut stack = Vec::with_capacity(16);
+        for (nibble, part) in parts.iter().enumerate() {
+            if let Some(node) = &part.node {
+                state_mask.set_bit(nibble as u8);
+                stack.push(node.clone());
+            }
+        }
+        // A root that is not a branch (at most one subtree) is the subtree's own top node.
+        if stack.len() < 2 {
+            return view.storage_root_updates(self.address);
+        }
+        let root = keccak256(alloy_rlp::encode(BranchNode { stack, state_mask }));
+        let mut updates = StorageTrieUpdates::default();
+        for part in parts {
+            TrieUpdates::merge_nodes(&mut updates.nodes, part.updated, part.removed);
+        }
+        Ok((root, updates))
+    }
+}
+
+/// The large changed storages a parallel state root hashes on jobs of their own.
+#[derive(Debug)]
+struct StorageJobs {
+    split: Vec<SplitJob>,
+    own: Vec<OwnJob>,
+}
+
+impl StorageJobs {
+    /// The storage root of `address` if one of these jobs computes it.
+    fn take(&self, view: &TrieView<'_, Ro>, address: &B256) -> Option<Result<(B256, StorageTrieUpdates), TrieError>> {
+        if let Some(job) = self.split.iter().find(|job| job.address == *address) {
+            return Some(job.take(view));
+        }
+        let job = self.own.iter().find(|job| job.address == *address)?;
+        Some(job.root.take(|| view.storage_root_updates(*address)))
+    }
+
+    fn has(&self, address: &B256) -> bool {
+        self.split.iter().any(|job| job.address == *address) || self.own.iter().any(|job| job.address == *address)
+    }
+}
+
+/// One partition of a parallel root: the subtree of the keys starting with one nibble, of the
+/// account trie or of one storage trie.
 #[derive(Debug, Default)]
 struct Partition {
     /// The reference (inline node or hash) to the subtree's top node, `None` when it holds no keys.
@@ -348,7 +423,7 @@ struct Partition {
     /// Branch nodes the hash builder stored, and stored paths the walker found stale.
     updated: Vec<(Nibbles, BranchNodeCompact)>,
     removed: Vec<Nibbles>,
-    /// The changed-storage accounts that are leaves of the subtree.
+    /// The changed-storage accounts that are leaves of the subtree (account trie only).
     storage_leaves: Vec<B256>,
 }
 
@@ -439,24 +514,35 @@ impl<'t> TrieView<'t, Ro> {
         // Large storages first, each as its own job, then one job per subtree, which hashes its
         // other changed storages itself and walks: a walk waits only for its own storages. Jobs
         // are claimed in order, so every large storage is claimed before any subtree waits.
-        let mut large: Vec<(usize, B256)> = (self.state.storages.iter())
+        let mut large: Vec<(usize, B256, bool)> = (self.state.storages.iter())
             .filter(|(_, storage)| storage.slots.len() > OWN_JOB_SLOTS)
-            .map(|(address, storage)| (storage.slots.len(), *address))
+            .map(|(address, storage)| (storage.slots.len(), *address, storage.slots.len() > SPLIT_SLOTS && !storage.wiped))
             .collect();
         large.sort_by(|a, b| b.cmp(a));
-        let own: Arc<Vec<OwnJob>> = Arc::new(
-            (large.into_iter())
-                .map(|(_, address)| OwnJob { address, claimed: AtomicBool::new(false), result: Mutex::new(None), ready: Condvar::new() })
-                .collect(),
-        );
-        let first = own.len();
-        let jobs = Arc::clone(&own);
-        let Some(results) = self.parallel(threads, first + 16, move |view, index| match index.checked_sub(first) {
-            None => {
-                jobs[index].run(view);
-                Ok(None)
+        let split = (large.iter().filter(|(_, _, split)| *split))
+            .map(|(_, address, _)| SplitJob { address: *address, parts: (0..16).map(|_| Claim::new()).collect() })
+            .collect::<Vec<_>>();
+        let own = (large.iter().filter(|(_, _, split)| !*split)).map(|(_, address, _)| OwnJob { address: *address, root: Claim::new() });
+        let jobs = Arc::new(StorageJobs { own: own.collect(), split });
+        // The split storages' subtrees first, then the other large storages, then the account
+        // subtrees, which wait only for their own storages.
+        let (parts, first) = (jobs.split.len() * 16, jobs.split.len() * 16 + jobs.own.len());
+        let shared = Arc::clone(&jobs);
+        let Some(results) = self.parallel(threads, first + 16, move |view, index| {
+            if index < parts {
+                let job = &shared.split[index / 16];
+                let nibble = (index % 16) as u8;
+                job.parts[index % 16].run(|| view.walk_storage_partition(job.address, nibble));
+                return Ok(None);
             }
-            Some(nibble) => view.partition_with_storage(nibble as u8, &jobs).map(Some),
+            match index.checked_sub(first) {
+                None => {
+                    let job = &shared.own[index - parts];
+                    job.root.run(|| view.storage_root_updates(job.address));
+                    Ok(None)
+                }
+                Some(nibble) => view.partition_with_storage(nibble as u8, &shared).map(Some),
+            }
         })?
         else {
             return self.state_root(true);
@@ -528,18 +614,20 @@ impl<'t> TrieView<'t, Ro> {
     }
 
     /// The storage roots of the changed storages whose keys start with `nibble` (from their own
-    /// job in `own` for large ones), then that account subtree's walk over them (see
+    /// jobs in `jobs` for large ones), then that account subtree's walk over them (see
     /// [`Self::walk_partition`]).
-    fn partition_with_storage(&self, nibble: u8, own: &[OwnJob]) -> Result<(Partition, StorageRoots), TrieError> {
+    fn partition_with_storage(&self, nibble: u8, jobs: &StorageJobs) -> Result<(Partition, StorageRoots), TrieError> {
         let mut roots = StorageRoots::new();
         let mine = |key: &B256| key[0] >> 4 == nibble;
         for address in self.state.storages.keys().filter(|key| mine(key)) {
-            if !own.iter().any(|job| job.address == *address) {
+            if !jobs.has(address) {
                 roots.insert(*address, self.storage_root_updates(*address)?);
             }
         }
-        for job in own.iter().filter(|job| mine(&job.address)) {
-            roots.insert(job.address, job.take(self)?);
+        for address in self.state.storages.keys().filter(|key| mine(key)) {
+            if let Some(root) = jobs.take(self, address) {
+                roots.insert(*address, root?);
+            }
         }
         let hashes = roots.iter().map(|(address, (root, _))| (*address, *root)).collect();
         Ok((self.walk_partition(nibble, &hashes)?, roots))
@@ -598,6 +686,54 @@ impl<'t> TrieView<'t, Ro> {
         if partition.node.is_none() {
             let top = builder.take_proof_nodes().get(&prefix).map(|rlp| RlpNode::from_rlp(rlp));
             partition.node = Some(top.ok_or_else(|| TrieError::Corrupt(format!("no top node in account subtree {nibble:x}")))?);
+        }
+        let (_, updated) = builder.split();
+        partition.updated = updated.into_iter().filter(|(path, _)| path.first() == Some(nibble)).collect();
+        Ok(partition)
+    }
+
+    /// Walks the subtree of `address`'s storage keys starting with `nibble`, as
+    /// [`Self::walk_partition`] walks an account subtree: with placeholder branches at the
+    /// neighboring nibbles, so the hash builder builds, stores and references the subtree's
+    /// nodes exactly as a walk of the whole storage trie does. Not for a wiped storage.
+    fn walk_storage_partition(&self, address: B256, nibble: u8) -> Result<Partition, TrieError> {
+        let prefix = Nibbles::from_nibbles([nibble]);
+        let changed = self.state.storages.get(&address).into_iter().flat_map(|storage| storage.slots.keys());
+        let changed = changed.filter(|key| key[0] >> 4 == nibble);
+        let cursor = NibbleTrieCursor { inner: self.storage_trie_cursor(address, false)?, nibble };
+        let walker = TrieWalker::new(cursor, PrefixSet::new(nibble_keys(changed)), true)?;
+        let mut builder = HashBuilder::default().with_updates(true).with_proof_retainer(ProofRetainer::new(vec![prefix]));
+        let placeholder = |nibble: u8| Nibbles::from_nibbles([nibble]);
+        if nibble == 15 {
+            builder.add_branch(placeholder(14), B256::ZERO, false);
+        }
+        let mut iter = TrieNodeIter::new(walker, NibbleHashedCursor { inner: self.storage_cursor(address)?, nibble });
+        let mut partition = Partition::default();
+        let mut empty = true;
+        while let Some(element) = iter.try_next()? {
+            empty = false;
+            match element {
+                TrieElement::Branch(key, hash, stored) => {
+                    if key == prefix {
+                        partition.node = Some(RlpNode::word_rlp(&hash));
+                    }
+                    builder.add_branch(key, hash, stored);
+                }
+                TrieElement::Leaf(slot, value) => builder.add_leaf(Nibbles::unpack(slot), &storage_leaf(value)),
+            }
+        }
+        partition.removed = iter.walker.removed_keys.take().unwrap_or_default();
+        if empty {
+            return Ok(partition);
+        }
+        if nibble < 15 {
+            builder.add_branch(placeholder(nibble + 1), B256::ZERO, false);
+        }
+        builder.root();
+        if partition.node.is_none() {
+            let top = builder.take_proof_nodes().get(&prefix).map(|rlp| RlpNode::from_rlp(rlp));
+            let missing = || TrieError::Corrupt(format!("no top node in storage subtree {nibble:x} of {address}"));
+            partition.node = Some(top.ok_or_else(missing)?);
         }
         let (_, updated) = builder.split();
         partition.updated = updated.into_iter().filter(|(path, _)| path.first() == Some(nibble)).collect();
@@ -858,14 +994,25 @@ mod tests {
                     }
                 }
                 // Now and then many slots of a few accounts, so large storages get their own
-                // parallel jobs, at times two under one account subtree.
+                // parallel jobs, at times two under one account subtree, and very large ones are
+                // split into subtrees, with some of their stored slots removed.
                 let existing: Vec<B256> = next.keys().copied().collect();
                 for _ in 0..(if existing.is_empty() || rng.below(3) > 0 { 0 } else { 1 + rng.below(3) }) {
                     let key = existing[rng.below(existing.len() as u64) as usize];
-                    for _ in 0..OWN_JOB_SLOTS as u64 + 1 + rng.below(40) {
-                        let (slot, value) = (rng.key(1), U256::from(1 + rng.below(5)));
+                    let extra = if rng.below(2) == 0 { 40 } else { 2 * SPLIT_SLOTS as u64 };
+                    for _ in 0..OWN_JOB_SLOTS as u64 + 1 + rng.below(extra) {
+                        let stored = next[&key].1.keys().nth(rng.below(64) as usize).copied();
+                        let (slot, value) = match stored {
+                            Some(slot) if rng.below(4) == 0 => (slot, U256::ZERO),
+                            _ => (rng.key(1), U256::from(1 + rng.below(5))),
+                        };
                         state.set_slot(key, slot, value);
-                        next.get_mut(&key).unwrap().1.insert(slot, value);
+                        let storage = &mut next.get_mut(&key).unwrap().1;
+                        if value.is_zero() {
+                            storage.remove(&slot);
+                        } else {
+                            storage.insert(slot, value);
+                        }
                     }
                 }
                 model = next;
