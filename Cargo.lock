@@ -5910,19 +5910,12 @@ dependencies = [
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
- "anyhow",
  "base-common-chains",
- "blake3",
- "humantime",
- "rayon",
+ "base-snapshot-manifest",
  "reth-cli-commands",
  "reth-node-core",
  "reth-prune-types",
  "serde_json",
- "tar",
- "tempfile",
- "tracing",
- "zstd",
 ]
 
 [[package]]
@@ -6097,6 +6090,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-snapshot-manifest"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "humantime",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tracing",
+ "zstd",
+]
+
+[[package]]
 name = "base-snapshotter"
 version = "0.0.0"
 dependencies = [
@@ -6106,7 +6115,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
- "base-reth-cli",
+ "base-snapshot-manifest",
  "bollard",
  "bytes",
  "clap",

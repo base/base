@@ -25,7 +25,7 @@ use aws_sdk_s3::{
     primitives::ByteStream,
     types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
-use base_reth_cli::{
+use base_snapshot_manifest::{
     ChunkFilename, ComponentManifest, ProgressDisplay, SnapshotArchiveSink, SnapshotArchiveWriter,
     SnapshotManifest, SnapshotManifestExt,
 };
@@ -1833,7 +1833,7 @@ mod tests {
     fn build_published_manifest_sets_chunk_files_and_leaves_proofs_as_sibling() {
         use std::collections::BTreeMap;
 
-        use base_reth_cli::{ChunkedArchive, SingleArchive};
+        use base_snapshot_manifest::{ChunkedArchive, SingleArchive};
 
         let mut components = BTreeMap::new();
         components.insert(
