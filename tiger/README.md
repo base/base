@@ -57,12 +57,13 @@ and 219 crates in all, against 766 for `base-reth-node`. Every direct dependency
 
 **Correctness.** The differential fuzz harness (`etc/tools/diff-*`) runs base-reth as the
 reference and tiger as another adapter, in every mode: block execution, chain, system config,
-trie, RPC, sync and crash-recovery campaigns. Recent clean runs include 907,605 strict RPC
-requests, 284k chain-fuzz blocks, 290k execution-fuzz and 241k Everest-fuzz cases, 112k mainnet
+trie, RPC, sync and crash-recovery campaigns. Recent clean runs include 1,823,715 RPC requests
+aimed at blocks just below the head (56k `eth_getProof`, with 2,000 blocks in memory), 907,605
+strict RPC requests, 284k chain-fuzz blocks, 290k execution-fuzz and 241k Everest-fuzz cases, 112k mainnet
 fuzz cases, sync runs with reorgs, gaps and kills, and state campaigns with injected crashes, torn
 writes and full disks, all with 0 findings. Every divergence it found was fixed at its root (a
 reproducer test where it would catch a regression), except the two accepted differences in
-SCOPE.md. 1,260 unit and integration tests.
+SCOPE.md. 1,262 unit and integration tests.
 
 **Speed on Base mainnet.** Measured on one host (eagle, shared with a live base-reth) following
 the tip, in clean 10-minute windows with other work paused; insert is the `newPayload` latency
