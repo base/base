@@ -141,7 +141,7 @@ impl BlockChanges {
 
 impl From<std::io::Error> for TrieError {
     fn from(err: std::io::Error) -> Self {
-        Self::Corrupt(format!("io: {err}"))
+        Self::Store(format!("io: {err}"))
     }
 }
 
@@ -149,7 +149,8 @@ impl From<StoreError> for TrieError {
     fn from(err: StoreError) -> Self {
         match err {
             StoreError::Mdbx(err) => Self::Mdbx(err),
-            other => Self::Corrupt(other.to_string()),
+            StoreError::Corrupt(text) => Self::Corrupt(text),
+            other => Self::Store(other.to_string()),
         }
     }
 }

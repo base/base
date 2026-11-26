@@ -61,7 +61,7 @@ requests, 284k chain-fuzz blocks, 290k execution-fuzz and 241k Everest-fuzz case
 fuzz cases, sync runs with reorgs, gaps and kills, and state campaigns with injected crashes, torn
 writes and full disks, all with 0 findings. Every divergence it found was fixed at its root (a
 reproducer test where it would catch a regression), except the two accepted differences in
-SCOPE.md. 1,258 unit and integration tests.
+SCOPE.md. 1,260 unit and integration tests.
 
 **Speed on Base mainnet.** Measured on one host (eagle, shared with a live base-reth) following
 the tip, in clean 10-minute windows with other work paused; insert is the `newPayload` latency
@@ -74,6 +74,8 @@ the consensus node sees, p50 / p90 / p99 in ms:
 | 11:32 | 22.2 / 75 / 258 | 16.5 / 47 / 139 | 1.35× |
 | 15:48 (state root reads fewer pages) | 25.1 / 92 / 299 | 20.3 / 56 / 169 | 1.24× |
 | 17:38 (fewer trie reads, in-memory trie answers) | 21.9 / 85 / 262 | 22.5 / 69 / 206 | 0.97× |
+| 21:48 (persistence off the chain lock) | 18.0 / 58 / 174 | 18.9 / 49 / 142 | 0.95× |
+| 23:40 (base-reth's persistence flags, 30 min) | 14.3 / 41 / 164 | 15.3 / 34 / 109 | 0.93× |
 
 - In the 15:48 and 17:38 windows the host was busier (base-reth's p50 above its usual 12 to
   18 ms), so compare the ratios. tiger's state root p50 went from 17.3 ms (14:06) to 10.8 ms
@@ -84,10 +86,29 @@ the consensus node sees, p50 / p90 / p99 in ms:
 - Execution alone is at parity with base-reth (p50 8.8 ms vs about 9).
 - On the warm replay bench, validation (execution plus state root) takes p50 3.4 ms per block,
   with the state root at 1.2 ms.
-- The remaining live gap is cold reads: sampled live, the validating thread waits on disk reads
-  78% of its time. Most of those reads are the state root's trie and hashed-state pages; work
-  continues there.
-- Memory: about 1.2 GB anonymous against base-reth's 4.2 to 4.8 GB on the same host.
+- The remaining live gap is the tail, from execution's cold reads: in slow blocks 94% of
+  execution is the validating thread waiting on disk, mostly one heavy transaction walking a
+  chain of dependent cold slots. Work continues there.
+- Memory: about 1.0 to 1.2 GB anonymous at the default persistence threshold, against
+  base-reth's 3.8 to 5.2 GB on the same host.
+
+**Persistence.** tiger takes base-reth's `--engine.persistence-threshold`,
+`--engine.memory-block-buffer-target` and `--engine.persistence-backpressure-threshold` with
+base-reth's defaults (70, 5, and the larger of 160 and twice the threshold). Base runs base-reth
+with a threshold of 2048, and tiger with the same flags persists like it. Live, by threshold
+(23:40 window for 2048):
+
+| Threshold | Dirty MDBX pages per block | Persist ms per block | tiger anonymous memory |
+| --- | --- | --- | --- |
+| 70 | 3.1 MB | 115 | 1.0–1.2 GB |
+| 256 | 2.0 MB | 60 | 1.6–1.7 GB |
+| 1024 | 1.1 MB | 39 | 1.4–3.3 GB |
+| 2048 | 0.9 MB | 37 | 2.9–5.7 GB |
+
+Bigger batches rewrite fewer pages per block, but do not change the insert tail. A shutdown
+flushes the whole in-memory layer, about 4 minutes at 2048, as base-reth does.
+`TIGER_MDBX_WRITEMAP=1` (base-reth's write-mapped MDBX) was slower on ZFS: 61 ms per block at
+2048, with page faults in place of `pwrite`.
 
 Profile-guided builds (`pgo.sh`) cut instructions 8.6% but showed no live gain, since live
 latency is reads, not CPU (see [Optimized builds](#optimized-builds)).

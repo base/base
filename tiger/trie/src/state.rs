@@ -12,6 +12,8 @@ use base_tiger_store::{Account, MdbxError};
 pub enum TrieError {
     /// The database refused.
     Mdbx(MdbxError),
+    /// Another store (RocksDB, static files or the file system) refused.
+    Store(String),
     /// Stored data is inconsistent.
     Corrupt(String),
     /// A witness lacks a node the operation needs.
@@ -39,6 +41,7 @@ impl std::fmt::Display for TrieError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Mdbx(err) => write!(f, "{err}"),
+            Self::Store(text) => write!(f, "{text}"),
             Self::Corrupt(text) => write!(f, "corrupt trie data: {text}"),
             Self::MissingNode { owner, path, hash } => match owner {
                 Some(owner) => write!(f, "missing storage trie node {hash} at path {path:?} of account {owner}"),
