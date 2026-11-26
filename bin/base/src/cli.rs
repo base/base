@@ -68,9 +68,13 @@ impl BaseCli {
         }
 
         let metrics_enabled = self.metrics.enabled;
-        MetricsConfig::from(self.metrics)
-            .init_with_builder(base_batcher_cli::configure_prometheus)
-            .wrap_err("failed to install Prometheus recorder")?;
+        let metrics_config = MetricsConfig::from(self.metrics);
+        #[cfg(feature = "batcher")]
+        let metrics_result =
+            metrics_config.init_with_builder(base_batcher_cli::configure_prometheus);
+        #[cfg(not(feature = "batcher"))]
+        let metrics_result = metrics_config.init();
+        metrics_result.wrap_err("failed to install Prometheus recorder")?;
         if metrics_enabled {
             base_cli_utils::register_version_metrics!();
         }
@@ -249,9 +253,11 @@ mod tests {
         assert!(!payload.contains("excluded_span"), "OTLP filter was ignored: {payload}");
     }
 
+    #[cfg(feature = "batcher")]
     /// The sequencer URLs flag a batcher command requires.
     const BATCHER_SEQUENCER_URLS: [&str; 2] = ["--sequencer-urls", "http://localhost:7545"];
 
+    #[cfg(feature = "batcher")]
     #[test]
     fn parses_batcher_configuration() {
         let cli = BaseCli::try_parse_from([
@@ -283,6 +289,7 @@ mod tests {
         assert!(config.stopped);
     }
 
+    #[cfg(feature = "batcher")]
     #[test]
     fn batcher_uses_shared_observability_settings() {
         let args = ["base", "batcher", "--l1-rpc-url", "http://localhost:8545"];
@@ -298,6 +305,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "batcher")]
     #[test]
     fn batcher_uses_l1_rpc_url_and_accepts_aliases() {
         for flag in ["--l1-eth-rpc", "--l1-rpc-url", "--l1"] {
@@ -321,6 +329,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "batcher")]
     #[test]
     fn batcher_rejects_top_level_chain_selection() {
         let args =
@@ -388,6 +397,7 @@ mod tests {
         assert!(rendered.contains("cannot be used multiple times"));
     }
 
+    #[cfg(feature = "reth-commands")]
     #[test]
     fn preserves_base_chain_alongside_reth_subcommand_chain() {
         let cli =

@@ -7,6 +7,7 @@ mod consensus;
 mod dev;
 mod execution;
 mod follow;
+#[cfg(feature = "reth-commands")]
 mod reth;
 mod rpc;
 mod sequencer;
