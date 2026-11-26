@@ -3,13 +3,13 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
+use base_cli_utils::TraceArgs;
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig, RegistrarError,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::Parser;
-use reth_node_core::args::TraceArgs;
 use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.

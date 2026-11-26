@@ -7,7 +7,7 @@ mod cli;
 
 #[tokio::main]
 async fn main() {
-    let _ = reth_node_core::args::DefaultTraceValues::default()
+    let _ = base_cli_utils::DefaultTraceValues::default()
         .with_service_name("base-proof-tee-registrar")
         .try_init();
     let result: eyre::Result<()> = async {

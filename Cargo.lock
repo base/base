@@ -2875,7 +2875,6 @@ dependencies = [
  "reth-cli-runner",
  "reth-cli-util",
  "reth-config",
- "reth-node-core",
  "rstest",
  "serde",
  "serde_json",
@@ -3384,7 +3383,6 @@ dependencies = [
  "base-cli-utils",
  "clap",
  "eyre",
- "reth-node-core",
 ]
 
 [[package]]
@@ -3440,7 +3438,6 @@ dependencies = [
  "metrics-process",
  "opentelemetry 0.32.0",
  "opentelemetry_sdk 0.32.1",
- "reth-node-core",
  "reth-tracing-otlp",
  "rstest",
  "serde",
@@ -3450,6 +3447,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -3778,7 +3776,6 @@ dependencies = [
  "libp2p",
  "metrics",
  "reqwest 0.13.4",
- "reth-node-core",
  "rstest",
  "serde",
  "serde_json",
@@ -5514,7 +5511,6 @@ dependencies = [
  "clap",
  "eyre",
  "humantime",
- "reth-node-core",
  "serde",
  "tokio",
  "url",
@@ -5730,7 +5726,6 @@ dependencies = [
  "base-proposer",
  "clap",
  "eyre",
- "reth-node-core",
  "tokio",
 ]
 
@@ -5793,7 +5788,6 @@ dependencies = [
  "base-prover-service-client",
  "clap",
  "eyre",
- "reth-node-core",
  "serde",
  "tokio",
  "tokio-util",
@@ -5830,7 +5824,6 @@ dependencies = [
  "clap",
  "eyre",
  "jsonrpsee",
- "reth-node-core",
  "serde",
  "tokio",
  "tracing",
@@ -5898,7 +5891,6 @@ dependencies = [
  "base-prover-service-client",
  "clap",
  "eyre",
- "reth-node-core",
  "serde",
  "tokio-util",
  "tracing",

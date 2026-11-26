@@ -2,7 +2,7 @@
 
 use std::net::SocketAddr;
 
-use base_cli_utils::{LogConfig, RuntimeManager};
+use base_cli_utils::{LogConfig, RuntimeManager, TraceArgs};
 use base_prover_service::{
     ProverServiceServer, ServerConfig, StatusPoller, WorkerApiConfig, WorkerQueueConfig,
 };
@@ -11,7 +11,6 @@ use base_prover_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServ
 use clap::Parser;
 use eyre::eyre;
 use jsonrpsee::server::{Server, ServerConfig as JsonRpcServerConfig};
-use reth_node_core::args::TraceArgs;
 use tracing::info;
 
 base_cli_utils::define_log_args!("BASE_PROVER_SERVICE");

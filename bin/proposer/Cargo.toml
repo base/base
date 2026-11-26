@@ -19,6 +19,5 @@ workspace = true
 eyre.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["full"] }
-reth-node-core = { workspace = true, features = ["otlp"] }
 base-cli-utils = { workspace = true, features = ["otlp"] }
 base-proposer = { workspace = true, features = ["metrics"] }
