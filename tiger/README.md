@@ -68,7 +68,7 @@ SCOPE.md. 1,260 unit and integration tests.
 the tip, in clean 10-minute windows with other work paused; insert is the `newPayload` latency
 the consensus node sees, p50 / p90 / p99 in ms:
 
-| Window (UTC, 2026-11-25) | tiger insert | base-reth insert | tiger / base-reth (p50) |
+| Window (UTC, 2026-11-25 unless noted) | tiger insert | base-reth insert | tiger / base-reth (p50) |
 | --- | --- | --- | --- |
 | 05:59 (start of the day's tuning) | 44.7 / 122 / 399 | 15.9 / 44 / 129 | 2.8× |
 | 08:40 | 26.3 / 89 / 344 | 17.5 / 44 / 108 | 1.5× |
@@ -77,6 +77,7 @@ the consensus node sees, p50 / p90 / p99 in ms:
 | 17:38 (fewer trie reads, in-memory trie answers) | 21.9 / 85 / 262 | 22.5 / 69 / 206 | 0.97× |
 | 21:48 (persistence off the chain lock) | 18.0 / 58 / 174 | 18.9 / 49 / 142 | 0.95× |
 | 23:40 (base-reth's persistence flags, 30 min) | 14.3 / 41 / 164 | 15.3 / 34 / 109 | 0.93× |
+| 26th 07:26 (prewarm run-ahead on, base-reth's flags) | 11.7 / 26 / 72 | 12.8 / 26 / 77 | 0.91× |
 
 - In the 15:48 and 17:38 windows the host was busier (base-reth's p50 above its usual 12 to
   18 ms), so compare the ratios. tiger's state root p50 went from 17.3 ms (14:06) to 10.8 ms
