@@ -60,10 +60,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    BlobFeePolicy, BlobTxBuilder, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps,
-    NonceManager, RpcErrorClassifier, SendHandle, SendOutcome, SendResponse, SendState,
-    SignerConfig, TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
-    TxMetrics,
+    BlobFeePolicy, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager,
+    RpcErrorClassifier, SendHandle, SendOutcome, SendResponse, SendState, SignerConfig,
+    TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
 };
 
 /// Number of wei in one gwei (10^9), as `f64` for fractional-precision
@@ -706,6 +705,14 @@ where
             )));
         }
 
+        #[cfg(not(feature = "kzg"))]
+        if is_blob {
+            let _ = cached_sidecar;
+            return Err(TxManagerError::Unsupported(
+                "blob transactions require the `kzg` feature on base-tx-manager".to_string(),
+            ));
+        }
+
         let (tip_cap, fee_cap, blob_fee_cap) = if is_blob {
             // Blob transactions: the policy's fees, with the overrides as a floor,
             // such as the replacement fees the send loop computed. The policy's
@@ -773,10 +780,11 @@ where
         //
         // Reuse a cached sidecar when available (fee bump iterations) to
         // avoid recomputing KZG proofs from the same blob data.
+        #[cfg(feature = "kzg")]
         let built_sidecar = if is_blob {
             let sidecar = match cached_sidecar {
                 Some(cached) => cached,
-                None => Arc::new(BlobTxBuilder::build_sidecar(&candidate.blobs)?),
+                None => Arc::new(crate::BlobTxBuilder::build_sidecar(&candidate.blobs)?),
             };
             tx_request.sidecar = Some((*sidecar).clone().into());
             tx_request.populate_blob_hashes();
@@ -785,6 +793,8 @@ where
         } else {
             None
         };
+        #[cfg(not(feature = "kzg"))]
+        let built_sidecar: Option<Arc<BlobTransactionSidecarEip7594>> = None;
 
         // Step 5: Gas estimation.
         //
@@ -1907,8 +1917,9 @@ mod tests {
 
     use alloy_consensus::{
         Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, TxEip1559,
-        TxEip4844, TxEip4844WithSidecar,
     };
+    #[cfg(feature = "kzg")]
+    use alloy_consensus::{TxEip4844, TxEip4844WithSidecar};
     use alloy_eips::{Encodable2718, eip4844::Blob};
     use alloy_json_rpc::{RequestPacket, ResponsePacket};
     use alloy_network::EthereumWallet;
@@ -1942,9 +1953,11 @@ mod tests {
     };
 
     use super::{PreparedTx, SimpleTxManager, TxEnvelope};
+    #[cfg(feature = "kzg")]
+    use crate::BlobTxBuilder;
     use crate::{
-        BlobFeePolicy, BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendOutcome,
-        SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError, metrics::MockTxMetrics,
+        BlobFeePolicy, GasPriceCaps, NonceManager, NoopTxMetrics, SendOutcome, SendState,
+        TxCandidate, TxManager, TxManagerConfig, TxManagerError, metrics::MockTxMetrics,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -2111,6 +2124,7 @@ mod tests {
         assert!(send_state.has_published());
     }
 
+    #[cfg(feature = "kzg")]
     #[rstest]
     #[case::canonical_rpc_hash(false)]
     #[case::mismatched_rpc_hash(true)]
@@ -2891,6 +2905,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "kzg")]
     /// Pushes the responses that price and sign a blob tx version: its L1 prices (the latest
     /// block, with a 1 gwei base fee, and a 1 gwei blob base fee) and its gas estimate.
     fn push_blob_pricing(asserter: &Asserter) {
@@ -2921,6 +2936,31 @@ mod tests {
     /// A mocked provider over `asserter`.
     fn mocked(asserter: &Asserter) -> RootProvider {
         ProviderBuilder::default().connect_mocked_client(asserter.clone())
+    }
+
+    #[cfg(not(feature = "kzg"))]
+    #[test]
+    fn craft_tx_rejects_blob_candidate_when_kzg_feature_disabled() {
+        Runner::start(Config::seeded(42), |ctx| async move {
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            let manager = blob_manager(
+                &ctx,
+                mocked(&asserter),
+                (1_000_000_000, 10_000_000_000),
+                blob_send_metrics(),
+            )
+            .await;
+            let err = manager
+                .craft_tx(&blob_candidate(), None)
+                .await
+                .expect_err("blob candidate should fail when kzg feature is disabled");
+            assert!(
+                matches!(&err, TxManagerError::Unsupported(msg) if msg.contains("kzg")),
+                "expected Unsupported mentioning kzg, got {err:?}",
+            );
+            assert!(asserter.read_q().is_empty(), "should reject before making fee/gas RPC calls");
+        });
     }
 
     /// A manager over `provider`, whose first response must be the chain ID, with one
@@ -2997,6 +3037,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "kzg")]
     /// A blob tx still pending after the resubmission timeout is replaced with doubled fees,
     /// which raises the fees the next blob txs start from. Whichever version lands, the
     /// replacement or the first version, the next blob tx, here with two blobs, is then
@@ -3097,6 +3138,7 @@ mod tests {
     #[case::below_minimum_price(
         "transaction gas price below minimum: gas tip cap 10000000, minimum needed 15000000"
     )]
+    #[cfg(feature = "kzg")]
     fn a_first_blob_tx_refused_for_its_fees_is_replaced_right_away(
         #[case] rejection: &'static str,
     ) {
@@ -3126,6 +3168,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "kzg")]
     /// A blob tx replacement the node refuses for its fees, as when a version whose
     /// publication got no answer reached the mempool, is replaced right away from the
     /// refused fees.
@@ -3163,6 +3206,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "kzg")]
     /// A first blob tx version the node already knows, as when the same signed version was
     /// sent before without an answer, is published as it is: no fee is raised.
     #[test]
@@ -3190,6 +3234,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "kzg")]
     /// A blob tx version whose publication fails with an RPC error, such as a network error,
     /// is sent again as it is after the publish retry delay: nothing is signed again and no
     /// fee is raised. This holds for a first version and for a version just escalated after a
@@ -3234,6 +3279,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "kzg")]
     /// A blob tx replacement sent again after a network error, which the node then already
     /// knows, is tracked under its own hash, so it is found when it lands.
     #[test]
@@ -3318,6 +3364,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "kzg")]
     /// A first blob tx version whose publication got no answer is sent again as it is after
     /// the publish retry delay. Whatever the node then answers, the send follows that version,
     /// which may be in a mempool: it confirms when the version lands, and no fee is raised.
@@ -3363,6 +3410,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "kzg")]
     /// A first blob tx version whose publications never get an answer is followed as
     /// published once its resends are used up: the send confirms when it lands.
     #[test]
@@ -3443,6 +3491,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "kzg")]
     /// A first blob tx version whose publication fails on the network is not sent again once
     /// the mempool deadline expired during the publish retry delay: the send fails.
     #[test]
@@ -3468,6 +3517,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "kzg")]
     /// A blob tx version whose publication fails on the network is not sent again once the
     /// manager is closed during the publish retry delay. This holds for a first version and
     /// for a replacement.
@@ -3513,6 +3563,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "kzg")]
     /// A blob tx whose doubled `max_priority_fee_per_gas` would pass the upper bound is not
     /// replaced: at each resubmission timeout, nothing is read or signed, and the same
     /// version is sent again. Here its publishes get no answer until the endpoint recovers,
@@ -3555,6 +3606,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "kzg")]
     /// A first blob tx version the node refuses for its fees, and whose replacement would
     /// pass the upper bound, fails the send: nothing was published, so no receipt can come.
     #[test]

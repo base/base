@@ -4,11 +4,17 @@ mod common;
 
 use std::sync::Arc;
 
-use alloy_consensus::{TxEip1559, TxEip4844Variant, TxEnvelope};
-use alloy_eips::{BlockNumberOrTag, eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
+#[cfg(feature = "kzg")]
+use alloy_consensus::TxEip4844Variant;
+use alloy_consensus::{TxEip1559, TxEnvelope};
+use alloy_eips::eip4844::Blob;
+#[cfg(feature = "kzg")]
+use alloy_eips::{BlockNumberOrTag, eip7594::CELLS_PER_EXT_BLOB};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Bytes, TxKind, U256};
-use alloy_provider::{Provider, RootProvider};
+#[cfg(feature = "kzg")]
+use alloy_provider::Provider;
+use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::{
     FeeCalculator, FeeOverride, NoopTxMetrics, PreparedTx, SignerConfig, SimpleTxManager,
@@ -29,6 +35,7 @@ fn decode_eip1559(prepared: &PreparedTx) -> TxEip1559 {
     }
 }
 
+#[cfg(feature = "kzg")]
 fn single_blob_candidate() -> TxCandidate {
     TxCandidate {
         to: Some(TEST_RECIPIENT),
@@ -116,6 +123,7 @@ async fn craft_tx_rejects_blob_without_recipient() {
     );
 }
 
+#[cfg(feature = "kzg")]
 #[tokio::test]
 async fn craft_tx_produces_valid_signed_blob_transaction() {
     // This test also implicitly verifies that `estimate_gas` succeeds when
@@ -157,6 +165,7 @@ async fn craft_tx_produces_valid_signed_blob_transaction() {
     );
 }
 
+#[cfg(feature = "kzg")]
 #[tokio::test]
 async fn craft_tx_produces_cell_proof_sidecar_by_default() {
     let (manager, _anvil) = setup().await;
@@ -506,6 +515,7 @@ async fn craft_tx_with_fee_overrides_uses_network_when_overrides_below() {
     assert!(prepared.gas_fee_cap > 1, "network fee cap should override the 1-wei override");
 }
 
+#[cfg(feature = "kzg")]
 /// A blob transaction refuses a priority fee override above the policy's upper bound for
 /// its blob count, instead of signing it.
 #[tokio::test]
@@ -592,6 +602,7 @@ async fn increase_gas_price_fee_limit_exceeded() {
 
 // ── blob fee policy ─────────────────────────────────────────────────
 
+#[cfg(feature = "kzg")]
 /// A new blob transaction is priced per blob from the lower bound and the current base fee
 /// and blob base fee, without the fee limit that applies to regular transactions.
 #[tokio::test]
@@ -622,6 +633,7 @@ async fn craft_tx_prices_a_blob_tx_per_blob_from_l1_prices() {
     assert_eq!(prepared.blob_fee_cap, Some(tx.max_fee_per_blob_gas));
 }
 
+#[cfg(feature = "kzg")]
 /// The fees of a blob transaction are floored by the given fees, such as a replacement
 /// priced by the send loop: a fee the override leaves out or sets lower keeps the policy's
 /// value, the `max_fee_per_gas` covering the raised tip.
@@ -646,6 +658,7 @@ async fn craft_tx_floors_a_blob_tx_by_the_given_fees() {
     assert_eq!(tx.gas_limit, 1_000_000);
 }
 
+#[cfg(feature = "kzg")]
 /// The base fee and blob base fee of the latest block.
 async fn l1_prices(manager: &SimpleTxManager<RootProvider>) -> (u128, u128) {
     let base_fee = u128::from(

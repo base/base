@@ -4,11 +4,11 @@
 //! [`BlobTransactionSidecarEip7594`] sidecars
 //! (cell proofs, 128 proofs/blob) on all supported networks.
 
-use alloy_eips::{
-    eip4844::Blob,
-    eip7594::{BlobTransactionSidecarEip7594, MAX_BLOBS_PER_TX_FUSAKA},
-};
+use alloy_eips::eip7594::MAX_BLOBS_PER_TX_FUSAKA;
+#[cfg(feature = "kzg")]
+use alloy_eips::{eip4844::Blob, eip7594::BlobTransactionSidecarEip7594};
 
+#[cfg(feature = "kzg")]
 use crate::TxManagerError;
 
 /// Maximum number of blobs allowed per transaction.
@@ -17,9 +17,11 @@ use crate::TxManagerError;
 pub const MAX_BLOBS_PER_TX: usize = MAX_BLOBS_PER_TX_FUSAKA as usize;
 
 /// Builder for EIP-7594 blob sidecars.
+#[cfg(feature = "kzg")]
 #[derive(Debug)]
 pub struct BlobTxBuilder;
 
+#[cfg(feature = "kzg")]
 impl BlobTxBuilder {
     /// Builds an EIP-7594 cell-proof sidecar from boxed blobs.
     ///
@@ -30,14 +32,13 @@ impl BlobTxBuilder {
         blobs: &[Box<Blob>],
     ) -> Result<BlobTransactionSidecarEip7594, TxManagerError> {
         let unboxed: Vec<Blob> = blobs.iter().map(|b| *b.as_ref()).collect();
-
         BlobTransactionSidecarEip7594::try_from_blobs(unboxed).map_err(|e| {
             TxManagerError::Unsupported(format!("EIP-7594 cell proof computation failed: {e}"))
         })
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "kzg"))]
 mod tests {
     use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
     use rstest::rstest;
