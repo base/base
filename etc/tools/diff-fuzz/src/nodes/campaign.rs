@@ -467,10 +467,20 @@ impl RpcCampaign {
             normalized.iter_mut().for_each(|(_, v)| *v = Self::without_block_encoding(v));
         } else if let Some((cause, index)) = known {
             *summary.lock().expect("lock").known.entry(cause.into()).or_default() += 1;
-            normalized.remove(index);
-            replies.remove(index);
-            if index < serving.len() {
-                serving.remove(index);
+            if cause == Self::KNOWN_BASE_OVERRIDE_ORDER {
+                // Every node named an account with both fields, and any node may pick a
+                // different one (tiger iterates the overrides in no fixed order either), so the
+                // cause explains them all: only base's reply is kept.
+                let base = normalized[index].0.clone();
+                normalized.retain(|(name, _)| *name == base);
+                replies.retain(|(name, _)| *name == base);
+                serving.retain(|node| node.name == base);
+            } else {
+                normalized.remove(index);
+                replies.remove(index);
+                if index < serving.len() {
+                    serving.remove(index);
+                }
             }
         }
         let (replies, serving) = (replies.as_slice(), serving.as_slice());

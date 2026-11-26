@@ -266,7 +266,8 @@ impl<'a> RpcGen<'a> {
         self.index.head().number
     }
 
-    /// A block number from just before genesis to just past the head, mostly inside.
+    /// A block number from just before genesis to just past the head, mostly inside. A share sits
+    /// just below the head, where nodes still hold the blocks in memory.
     fn block_number(&mut self) -> u64 {
         let (genesis, head) = (self.genesis(), self.head());
         match self.rng.below(20) {
@@ -275,6 +276,7 @@ impl<'a> RpcGen<'a> {
             2 => 0,
             3 => genesis,
             4 | 5 => head,
+            6..9 => head.saturating_sub(self.rng.range(1, 64)).max(genesis),
             _ => self.rng.range(genesis, head),
         }
     }
