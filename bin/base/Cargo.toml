@@ -34,7 +34,6 @@ base-builder-metering.workspace = true
 base-consensus-engine.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
-base-shadow-indexer.workspace = true
 base-observability-events.workspace = true
 base-cli-utils = { workspace = true, features = ["otlp"] }
 
@@ -75,6 +74,7 @@ tokio = { workspace = true, features = ["net", "time", "macros", "process", "rt-
 default = [ "asm-keccak", "jemalloc", "keccak-cache-global" ]
 asm-keccak = [ "base-execution-cli/asm-keccak" ]
 keccak-cache-global = [ "base-execution-cli/keccak-cache-global" ]
+shadow-indexer = [ "base-execution-cli/shadow-indexer" ]
 jemalloc = [
 	"base-builder-core/jemalloc",
 	"base-execution-cli/jemalloc",

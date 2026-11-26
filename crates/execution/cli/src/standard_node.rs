@@ -20,10 +20,10 @@ use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
+#[cfg(feature = "shadow-indexer")]
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension, ShadowRetentionConfig};
-use base_shadow_indexer_db::{
-    DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
-};
+#[cfg(feature = "shadow-indexer")]
+use base_shadow_indexer_db::{PgConnectionParams, ShadowDbConfig};
 use base_tx_forwarding::{
     DEFAULT_FIFO_PERCENT, DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS,
     TxForwardingConfig, TxForwardingExtension,
@@ -127,6 +127,12 @@ impl Default for ResourceMeteringArgs {
     }
 }
 
+/// Default Postgres port for the shadow indexer database.
+const DEFAULT_SHADOW_INDEXER_PORT: u16 = 5432;
+/// Default database name for the shadow indexer.
+const DEFAULT_SHADOW_INDEXER_DATABASE: &str = "shadow_metrics";
+/// Default Postgres role for the shadow indexer.
+const DEFAULT_SHADOW_INDEXER_USERNAME: &str = "app";
 /// Default maximum number of open shadow indexer database connections.
 const DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS: u32 = 5;
 /// Default timeout when acquiring a shadow indexer database connection.
@@ -165,7 +171,7 @@ pub struct ShadowIndexerArgs {
     #[arg(
         long = "shadow-indexer.db-port",
         env = "SHADOW_INDEXER_DB_PORT",
-        default_value_t = DEFAULT_PORT,
+        default_value_t = DEFAULT_SHADOW_INDEXER_PORT,
         requires = "enable_shadow_indexer"
     )]
     pub shadow_indexer_db_port: u16,
@@ -174,7 +180,7 @@ pub struct ShadowIndexerArgs {
     #[arg(
         long = "shadow-indexer.db-name",
         env = "SHADOW_INDEXER_DB_NAME",
-        default_value = DEFAULT_DATABASE,
+        default_value = DEFAULT_SHADOW_INDEXER_DATABASE,
         requires = "enable_shadow_indexer"
     )]
     pub shadow_indexer_db_name: String,
@@ -183,7 +189,7 @@ pub struct ShadowIndexerArgs {
     #[arg(
         long = "shadow-indexer.db-user",
         env = "SHADOW_INDEXER_DB_USER",
-        default_value = DEFAULT_USERNAME,
+        default_value = DEFAULT_SHADOW_INDEXER_USERNAME,
         requires = "enable_shadow_indexer"
     )]
     pub shadow_indexer_db_user: String,
@@ -234,9 +240,9 @@ impl Default for ShadowIndexerArgs {
             enable_shadow_indexer: false,
             shadow_indexer_db_host: None,
             shadow_indexer_db_password: None,
-            shadow_indexer_db_port: DEFAULT_PORT,
-            shadow_indexer_db_name: DEFAULT_DATABASE.to_string(),
-            shadow_indexer_db_user: DEFAULT_USERNAME.to_string(),
+            shadow_indexer_db_port: DEFAULT_SHADOW_INDEXER_PORT,
+            shadow_indexer_db_name: DEFAULT_SHADOW_INDEXER_DATABASE.to_string(),
+            shadow_indexer_db_user: DEFAULT_SHADOW_INDEXER_USERNAME.to_string(),
             shadow_indexer_max_connections: DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS,
             shadow_indexer_connection_timeout: humantime::parse_duration(
                 DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT,
@@ -476,6 +482,28 @@ impl StandardNodeArgs {
     }
 }
 
+impl ShadowIndexerArgs {
+    /// Validates shadow-indexer CLI arguments against the active build configuration.
+    pub fn validate(&self) -> eyre::Result<()> {
+        #[cfg(feature = "shadow-indexer")]
+        {
+            let _ = ShadowIndexerConfig::try_from(self)?;
+            Ok(())
+        }
+        #[cfg(not(feature = "shadow-indexer"))]
+        {
+            if self.enable_shadow_indexer {
+                eyre::bail!(
+                    "--enable-shadow-indexer (env ENABLE_SHADOW_INDEXER) requires building with \
+                     --features shadow-indexer"
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+#[cfg(feature = "shadow-indexer")]
 impl TryFrom<&ShadowIndexerArgs> for ShadowIndexerConfig {
     type Error = eyre::Error;
 
@@ -627,6 +655,23 @@ impl StandardBaseRethNode {
         Ok(())
     }
 
+    /// Validates and installs the shadow indexer extension when enabled in the build.
+    pub fn install_shadow_indexer_extension<SB: PayloadServiceBuilder>(
+        runner: &mut BaseNodeRunner<SB>,
+        args: &ShadowIndexerArgs,
+    ) -> eyre::Result<()> {
+        #[cfg(feature = "shadow-indexer")]
+        {
+            runner.install_ext::<ShadowIndexerExtension>(ShadowIndexerConfig::try_from(args)?);
+            Ok(())
+        }
+        #[cfg(not(feature = "shadow-indexer"))]
+        {
+            let _ = runner;
+            args.validate()
+        }
+    }
+
     /// Validates execution upgrade signal arguments before node setup.
     ///
     /// Execution upgrade-signal polling is configured independently from consensus polling, so a
@@ -758,7 +803,7 @@ impl StandardBaseRethNode {
             MeteringConfig::disabled()
         };
         runner.install_ext::<MeteringExtension>(metering_config);
-        runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
+        Self::install_shadow_indexer_extension(&mut runner, &args.shadow_indexer)?;
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         // Query nodes proxy validity metadata to their sequencer; forwarders submit locally.
         if args.rpc.enable_tx_forwarding || args.rpc.rollup_args.sequencer.is_some() {
@@ -1311,6 +1356,18 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "shadow-indexer"))]
+    #[test]
+    fn test_shadow_indexer_enable_errors_when_feature_disabled() {
+        let args =
+            ShadowIndexerArgs { enable_shadow_indexer: true, ..ShadowIndexerArgs::default() };
+        let error =
+            args.validate().expect_err("enabled shadow indexer should error without feature");
+        assert!(error.to_string().contains("--features shadow-indexer"));
+        ShadowIndexerArgs::default().validate().expect("disabled args should succeed");
+    }
+
+    #[cfg(feature = "shadow-indexer")]
     #[test]
     fn test_shadow_indexer_retention_defaults_to_thirty_days() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
@@ -1330,6 +1387,7 @@ mod tests {
         assert_eq!(config.retention.interval, Duration::from_secs(60 * 60));
     }
 
+    #[cfg(feature = "shadow-indexer")]
     #[test]
     fn test_shadow_indexer_rejects_zero_retention() {
         let args = ShadowIndexerArgs {
@@ -1346,6 +1404,7 @@ mod tests {
         assert!(error.to_string().contains("--shadow-indexer.retention"));
     }
 
+    #[cfg(feature = "shadow-indexer")]
     #[test]
     fn test_shadow_indexer_rejects_zero_retention_interval() {
         let args = ShadowIndexerArgs {
@@ -1362,6 +1421,7 @@ mod tests {
         assert!(error.to_string().contains("--shadow-indexer.retention-interval"));
     }
 
+    #[cfg(feature = "shadow-indexer")]
     #[test]
     fn test_standard_node_args_defaults_shadow_indexer_connection_fields() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
@@ -1377,9 +1437,9 @@ mod tests {
         let config = ShadowIndexerConfig::try_from(&args.shadow_indexer)
             .expect("host and password are enough to build the config");
 
-        assert_eq!(config.db.connection.port, DEFAULT_PORT);
-        assert_eq!(config.db.connection.database, DEFAULT_DATABASE);
-        assert_eq!(config.db.connection.username, DEFAULT_USERNAME);
+        assert_eq!(config.db.connection.port, base_shadow_indexer_db::DEFAULT_PORT);
+        assert_eq!(config.db.connection.database, base_shadow_indexer_db::DEFAULT_DATABASE);
+        assert_eq!(config.db.connection.username, base_shadow_indexer_db::DEFAULT_USERNAME);
     }
 
     #[test]
@@ -1394,6 +1454,7 @@ mod tests {
         assert!(error.to_string().contains("--enable-shadow-indexer"));
     }
 
+    #[cfg(feature = "shadow-indexer")]
     #[test]
     fn test_shadow_indexer_config_requires_db_host_when_enabled() {
         let args =
@@ -1404,6 +1465,7 @@ mod tests {
         assert!(error.to_string().contains("--shadow-indexer.db-host"));
     }
 
+    #[cfg(feature = "shadow-indexer")]
     #[test]
     fn test_shadow_indexer_config_requires_db_password_when_enabled() {
         let args = ShadowIndexerArgs {
@@ -1417,6 +1479,7 @@ mod tests {
         assert!(error.to_string().contains("--shadow-indexer.db-password"));
     }
 
+    #[cfg(feature = "shadow-indexer")]
     #[test]
     fn test_shadow_indexer_config_disabled_by_default() {
         let config = ShadowIndexerConfig::try_from(&ShadowIndexerArgs::default())
