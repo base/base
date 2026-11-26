@@ -290,12 +290,13 @@ const MAX_ROOT_THREADS: usize = 16;
 
 /// Changed storages with more changed slots than this get their own parallel job, so two of
 /// them under the same account subtree are not hashed one after the other.
-const OWN_JOB_SLOTS: usize = 32;
+const OWN_JOB_SLOTS: usize = 16;
 
 /// Changed storages with more changed slots than this are hashed as 16 subtrees in parallel
 /// (see [`SplitJob`]): one large storage on one thread is otherwise the root's long pole, its
-/// cold trie reads one after another.
-const SPLIT_SLOTS: usize = 64;
+/// cold trie reads one after another. While the datadir commits, a read that faults costs 1 to 2
+/// ms, so even 20 slots on cold paths (\~100 node reads) take over 100 ms on one thread.
+const SPLIT_SLOTS: usize = 16;
 
 /// The storage roots and storage trie changes of accounts whose storage changed, by hashed
 /// address, as [`TrieView::state_root`] computes them with `retain`.
