@@ -454,8 +454,9 @@ impl RpcCampaign {
                     .or_else(|| Self::settled_unfunded_fee(case, &replies, &normalized))
             })
             .flatten()
-            .or_else(|| Self::persisted_blockhash(case, head, &normalized))
+            // Before the BLOCKHASH cause: a request every node refused ran no code.
             .or_else(|| Self::override_order(case, &replies))
+            .or_else(|| Self::persisted_blockhash(case, head, &normalized))
             .or_else(|| Self::precompile_delegation(case, &normalized));
         if Self::simulate_encoding_only(case, &normalized) {
             *summary
