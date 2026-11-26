@@ -79,6 +79,7 @@ the consensus node sees, p50 / p90 / p99 in ms:
 | 21:48 (persistence off the chain lock) | 18.0 / 58 / 174 | 18.9 / 49 / 142 | 0.95× |
 | 23:40 (base-reth's persistence flags, 30 min) | 14.3 / 41 / 164 | 15.3 / 34 / 109 | 0.93× |
 | 26th 07:26 (prewarm run-ahead on, base-reth's flags) | 11.7 / 26 / 72 | 12.8 / 26 / 77 | 0.91× |
+| 26th, ~9,000 blocks (big storage tries hashed in parallel) | 12.7 / 32 / 87 | 14.1 / 32 / 89 | 0.90× |
 
 - In the 15:48 and 17:38 windows the host was busier (base-reth's p50 above its usual 12 to
   18 ms), so compare the ratios. tiger's state root p50 went from 17.3 ms (14:06) to 10.8 ms
