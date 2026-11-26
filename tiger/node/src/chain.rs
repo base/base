@@ -1552,7 +1552,9 @@ mod tests {
         let node = node();
         node.chain.write().unwrap().set_persistence(1_000, 0, None).unwrap();
         let mut hash = node.chain.read().unwrap().head().hash;
-        let addresses: Vec<Address> = (1..=6u8).map(Address::with_last_byte).collect();
+        // 0x…10, the depositor, is touched by both of a block's deposits: its value before the
+        // block is the first transaction's original, not the second's.
+        let addresses: Vec<Address> = (1..=6u8).chain([0x10]).map(Address::with_last_byte).collect();
         for n in 0..12usize {
             // Each block pays two of the addresses, so some are created after the states below.
             let txs = [deposit(addresses[n % 6]), deposit(addresses[(n * 5 + 1) % 6])];
