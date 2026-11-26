@@ -37,7 +37,7 @@ base-runtime = { workspace = true, features = ["tokio"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
-base-consensus-rpc = { workspace = true, features = ["client"] }
+base-consensus-rpc-types = { workspace = true, features = ["rpc-client"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
@@ -58,7 +58,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"
 metrics = [
 	"base-batcher-core/metrics",
 	"base-batcher-encoder/metrics",
-	"base-consensus-rpc/metrics",
 	"base-metrics/metrics",
 	"base-tx-manager/metrics",
 	"dep:metrics",

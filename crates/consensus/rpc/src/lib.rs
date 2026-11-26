@@ -10,6 +10,19 @@
 #[macro_use]
 extern crate tracing;
 
+#[cfg(feature = "client")]
+pub use base_consensus_rpc_types::{
+    AdminApiClient, BaseApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient,
+    SyncStatusApiClient,
+};
+pub use base_consensus_rpc_types::{
+    AdminApiServer, BaseApiServer, BaseP2PApiServer, ClusterMembership, ConductorApiServer,
+    Connectedness, DevEngineApiServer, Direction, GossipScores, HealthzApiServer, HealthzResponse,
+    OutputResponse, PeerCount, PeerDump, PeerInfo, PeerScores, PeerStats, ReqRespScores,
+    RollupNodeApiServer, SafeHeadResponse, ServerInfo, ServerSuffrage, SyncStatusApiServer,
+    TopicScores, UnknownServerSuffrage, WsServer,
+};
+
 mod admin;
 pub use admin::{AdminNetworkAccess, AdminRpc, NetworkAdminQuery, NetworkAdminQuerySender};
 
@@ -26,18 +39,7 @@ mod dev;
 pub use dev::DevEngineRpc;
 
 mod health;
-pub use health::{HealthzResponse, HealthzRpc};
-
-mod jsonrpsee;
-#[cfg(feature = "client")]
-pub use jsonrpsee::{
-    AdminApiClient, BaseApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient,
-};
-pub use jsonrpsee::{
-    AdminApiServer, BaseApiServer, BaseP2PApiServer, ClusterMembership, ConductorApiServer,
-    DevEngineApiServer, HealthzApiServer, RollupNodeApiServer, ServerInfo, ServerSuffrage,
-    UnknownServerSuffrage, WsServer,
-};
+pub use health::HealthzRpc;
 
 mod l1_watcher;
 pub use l1_watcher::{L1State, L1WatcherQueries, L1WatcherQuerySender};
@@ -45,20 +47,12 @@ pub use l1_watcher::{L1State, L1WatcherQueries, L1WatcherQuerySender};
 mod net;
 pub use net::P2pRpc;
 
-mod output;
-pub use output::OutputResponse;
-
 mod p2p;
 
 mod response;
 
 mod rollup;
 pub use rollup::RollupRpc;
-
-mod sync;
-#[cfg(feature = "client")]
-pub use sync::SyncStatusApiClient;
-pub use sync::SyncStatusApiServer;
 
 mod ws;
 pub use ws::WsRPC;

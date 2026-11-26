@@ -6,97 +6,36 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
-use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::SyncStatus;
 use base_upgrade_signal::{UpgradeReadiness, UpgradeSignalApplySummary};
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
 use getrandom as _; // required for compiling wasm32-unknown-unknown
 use ipnet::IpNet;
-use jsonrpsee::{
-    core::{RpcResult, SubscriptionResult},
-    proc_macros::rpc,
+#[cfg(feature = "rpc-server")]
+use jsonrpsee::core::{RpcResult, SubscriptionResult};
+use jsonrpsee::proc_macros::rpc;
+
+use crate::{
+    ClusterMembership, HealthzResponse, OutputResponse, PeerCount, PeerDump, PeerInfo, PeerStats,
+    SafeHeadResponse,
 };
-use serde::{Deserialize, Serialize};
-
-use crate::{OutputResponse, health::HealthzResponse};
-
-/// Live Raft cluster membership snapshot returned by `conductor_clusterMembership`.
-///
-/// Mirrors the upstream op-conductor `ClusterMembership` struct.
-/// See: <https://github.com/ethereum-optimism/optimism/blob/develop/op-conductor/consensus/iface.go>
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClusterMembership {
-    /// All servers currently known to the Raft configuration.
-    pub servers: Vec<ServerInfo>,
-    /// Raft configuration index — increments on every membership change.
-    pub version: u64,
-}
-
-/// A single member of the Raft cluster.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ServerInfo {
-    /// Stable Raft server identifier (e.g. `"sequencer-1"`).
-    ///
-    /// Matches the `server_id` operators configure per node and the parameter
-    /// expected by `conductor_transferLeaderToServer`.
-    pub id: String,
-    /// Raft binary-protocol address (e.g. `"op-conductor-1:5051"`).
-    ///
-    /// **NOT** the JSON-RPC URL — the Raft consensus port is distinct from the
-    /// HTTP RPC port. Callers that need to talk JSON-RPC to a peer must derive
-    /// the RPC URL separately (typically by extracting the host and applying a
-    /// port template from local configuration).
-    pub addr: String,
-    /// Whether this server can vote in Raft elections.
-    pub suffrage: ServerSuffrage,
-}
-
-/// Raft suffrage (voting eligibility) for a cluster member.
-///
-/// Wire format is an integer (`0` = voter, `1` = nonvoter), matching the
-/// upstream `ServerSuffrage` enum in op-conductor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(try_from = "u8", into = "u8")]
-pub enum ServerSuffrage {
-    /// Server is eligible to vote in Raft elections.
-    Voter,
-    /// Server is a non-voting member (replica only).
-    Nonvoter,
-}
-
-impl TryFrom<u8> for ServerSuffrage {
-    type Error = UnknownServerSuffrage;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::Voter),
-            1 => Ok(Self::Nonvoter),
-            other => Err(UnknownServerSuffrage(other)),
-        }
-    }
-}
-
-impl From<ServerSuffrage> for u8 {
-    fn from(value: ServerSuffrage) -> Self {
-        match value {
-            ServerSuffrage::Voter => 0,
-            ServerSuffrage::Nonvoter => 1,
-        }
-    }
-}
-
-/// Error returned when an unknown `ServerSuffrage` discriminant is decoded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("unknown server suffrage discriminant: {0}")]
-pub struct UnknownServerSuffrage(pub u8);
 
 /// Base rollup node RPC interface.
 ///
 /// https://docs.optimism.io/builders/node-operators/json-rpc
 /// https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/node/api.go#L114
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "optimism"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "optimism"))]
+#[cfg_attr(
+    all(feature = "rpc-server", not(feature = "rpc-client")),
+    rpc(server, namespace = "optimism")
+)]
+#[cfg_attr(
+    all(not(feature = "rpc-server"), feature = "rpc-client"),
+    rpc(client, namespace = "optimism")
+)]
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "optimism")
+)]
 pub trait RollupNodeApi {
     /// Get the output root at a specific block.
     #[method(name = "outputAtBlock")]
@@ -126,8 +65,18 @@ pub trait RollupNodeApi {
 ///
 /// Read-only, non-admin methods intended for node operators — including external operators — so they
 /// are exposed on the public RPC without requiring the (privileged) `admin` namespace to be enabled.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "base"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "base"))]
+#[cfg_attr(
+    all(feature = "rpc-server", not(feature = "rpc-client")),
+    rpc(server, namespace = "base")
+)]
+#[cfg_attr(
+    all(not(feature = "rpc-server"), feature = "rpc-client"),
+    rpc(client, namespace = "base")
+)]
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "base")
+)]
 pub trait BaseApi {
     /// Reports whether this node is ready for the contract-backed upgrades scheduled on L1.
     ///
@@ -149,8 +98,18 @@ pub trait BaseApi {
 }
 
 /// The opp2p namespace handles peer interactions.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "opp2p"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "opp2p"))]
+#[cfg_attr(
+    all(feature = "rpc-server", not(feature = "rpc-client")),
+    rpc(server, namespace = "opp2p")
+)]
+#[cfg_attr(
+    all(not(feature = "rpc-server"), feature = "rpc-client"),
+    rpc(client, namespace = "opp2p")
+)]
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "opp2p")
+)]
 pub trait BaseP2PApi {
     /// Returns information of node
     #[method(name = "self")]
@@ -226,8 +185,12 @@ pub trait BaseP2PApi {
 }
 
 /// Websockets API for the node.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "ws"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "ws"))]
+#[cfg_attr(all(feature = "rpc-server", not(feature = "rpc-client")), rpc(server, namespace = "ws"))]
+#[cfg_attr(all(not(feature = "rpc-server"), feature = "rpc-client"), rpc(client, namespace = "ws"))]
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "ws")
+)]
 #[async_trait]
 pub trait Ws {
     /// Subscribes to the stream of finalized head updates.
@@ -244,8 +207,18 @@ pub trait Ws {
 }
 
 /// Development RPC API for engine state introspection.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "dev"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "dev"))]
+#[cfg_attr(
+    all(feature = "rpc-server", not(feature = "rpc-client")),
+    rpc(server, namespace = "dev")
+)]
+#[cfg_attr(
+    all(not(feature = "rpc-server"), feature = "rpc-client"),
+    rpc(client, namespace = "dev")
+)]
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "dev")
+)]
 #[async_trait]
 pub trait DevEngineApi {
     /// Subscribe to engine queue length updates.
@@ -258,8 +231,18 @@ pub trait DevEngineApi {
 }
 
 /// The admin namespace for the consensus node.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "admin"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "admin"))]
+#[cfg_attr(
+    all(feature = "rpc-server", not(feature = "rpc-client")),
+    rpc(server, namespace = "admin")
+)]
+#[cfg_attr(
+    all(not(feature = "rpc-server"), feature = "rpc-client"),
+    rpc(client, namespace = "admin")
+)]
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "admin")
+)]
 #[async_trait]
 pub trait AdminApi {
     /// Posts the unsafe payload.
@@ -311,8 +294,9 @@ pub trait AdminApi {
 }
 
 /// The healthcheck API for the consensus node.
-#[cfg_attr(not(feature = "client"), rpc(server))]
-#[cfg_attr(feature = "client", rpc(server, client))]
+#[cfg_attr(all(feature = "rpc-server", not(feature = "rpc-client")), rpc(server))]
+#[cfg_attr(all(not(feature = "rpc-server"), feature = "rpc-client"), rpc(client))]
+#[cfg_attr(all(feature = "rpc-server", feature = "rpc-client"), rpc(server, client))]
 pub trait HealthzApi {
     /// Gets the health of the base-node.
     #[method(name = "healthz")]
@@ -323,8 +307,18 @@ pub trait HealthzApi {
 ///
 /// Implemented by op-conductor nodes. See:
 /// <https://github.com/ethereum-optimism/optimism/blob/develop/op-conductor/rpc/api.go>
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "conductor"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "conductor"))]
+#[cfg_attr(
+    all(feature = "rpc-server", not(feature = "rpc-client")),
+    rpc(server, namespace = "conductor")
+)]
+#[cfg_attr(
+    all(not(feature = "rpc-server"), feature = "rpc-client"),
+    rpc(client, namespace = "conductor")
+)]
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "conductor")
+)]
 pub trait ConductorApi {
     /// Returns whether this node is the current Raft leader.
     #[method(name = "leader")]
@@ -382,7 +376,7 @@ pub trait ConductorApi {
     async fn conductor_cluster_membership(&self) -> RpcResult<ClusterMembership>;
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rpc-server"))]
 mod tests {
     use core::net::IpAddr;
 
@@ -391,8 +385,6 @@ mod tests {
     use async_trait::async_trait;
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-    use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
-    use base_consensus_safedb::SafeHeadResponse;
     use base_protocol::SyncStatus;
     use base_upgrade_signal::UpgradeSignalApplySummary;
     use ipnet::IpNet;
@@ -403,11 +395,13 @@ mod tests {
     use rstest::rstest;
 
     use super::{
-        AdminApiServer, BaseApiServer, BaseP2PApiServer, ClusterMembership, ConductorApiServer,
-        DevEngineApiServer, HealthzApiServer, RollupNodeApiServer, ServerSuffrage,
-        UpgradeReadiness, WsServer,
+        AdminApiServer, BaseApiServer, BaseP2PApiServer, ConductorApiServer, DevEngineApiServer,
+        HealthzApiServer, RollupNodeApiServer, UpgradeReadiness, WsServer,
     };
-    use crate::{OutputResponse, health::HealthzResponse};
+    use crate::{
+        ClusterMembership, HealthzResponse, OutputResponse, PeerCount, PeerDump, PeerInfo,
+        PeerStats, SafeHeadResponse, ServerSuffrage,
+    };
 
     struct StubRollupNodeApi;
 

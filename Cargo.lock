@@ -3099,7 +3099,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-genesis",
  "base-common-network",
- "base-consensus-rpc",
+ "base-consensus-rpc-types",
  "base-metrics",
  "base-protocol",
  "base-retry",
@@ -3905,6 +3905,7 @@ dependencies = [
  "base-common-rpc-types-engine",
  "base-consensus-disc",
  "base-consensus-peers",
+ "base-consensus-rpc-types",
  "base-metrics",
  "base-protocol",
  "derive_more 2.1.1",
@@ -3919,9 +3920,7 @@ dependencies = [
  "multihash",
  "rand 0.9.5",
  "rstest",
- "serde",
  "serde_json",
- "serde_repr",
  "sha2 0.10.9",
  "snap",
  "tempfile",
@@ -4009,6 +4008,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-consensus-peer-types"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "thiserror 2.0.21",
+ "url",
+]
+
+[[package]]
 name = "base-consensus-peers"
 version = "0.0.0"
 dependencies = [
@@ -4017,6 +4025,7 @@ dependencies = [
  "arbitrary",
  "arbtest",
  "base-common-chains",
+ "base-consensus-peer-types",
  "derive_more 2.1.1",
  "dirs 6.0.0",
  "discv5",
@@ -4030,7 +4039,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "unsigned-varint 0.8.0",
- "url",
 ]
 
 [[package]]
@@ -4084,21 +4092,41 @@ dependencies = [
  "base-common-rpc-types-engine",
  "base-consensus-engine",
  "base-consensus-gossip",
+ "base-consensus-rpc-types",
  "base-consensus-safedb",
  "base-protocol",
  "base-upgrade-signal",
- "getrandom 0.4.3",
  "ipnet",
  "jsonrpsee",
  "libp2p",
  "mockall",
  "rstest",
- "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "base-consensus-rpc-types"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "async-trait",
+ "base-common-genesis",
+ "base-common-rpc-types-engine",
+ "base-protocol",
+ "base-upgrade-signal",
+ "derive_more 2.1.1",
+ "getrandom 0.4.3",
+ "ipnet",
+ "jsonrpsee",
+ "rstest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4108,9 +4136,9 @@ dependencies = [
  "alloy-eips 2.5.0",
  "alloy-primitives",
  "async-trait",
+ "base-consensus-rpc-types",
  "base-protocol",
  "redb",
- "serde",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -6770,9 +6798,8 @@ dependencies = [
  "base-common-genesis",
  "base-common-network",
  "base-common-precompiles",
- "base-consensus-gossip",
- "base-consensus-peers",
- "base-consensus-rpc",
+ "base-consensus-peer-types",
+ "base-consensus-rpc-types",
  "base-proof-contracts",
  "base-proof-submission",
  "base-protocol",
@@ -6781,12 +6808,15 @@ dependencies = [
  "base-tx-manager",
  "base-upgrade-signal",
  "base64 0.22.1",
+ "bs58",
  "chrono",
  "clap",
  "crossterm",
  "dirs 6.0.0",
+ "enr",
  "futures",
  "jsonrpsee",
+ "k256 0.13.4",
  "mockall",
  "ratatui",
  "rstest",

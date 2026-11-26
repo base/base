@@ -4,8 +4,10 @@ use std::{fmt, future::Future, time::Duration};
 
 use alloy_primitives::B256;
 use base_common_genesis::RollupConfig;
-use base_consensus_gossip::{PeerDump, PeerInfo, PeerStats};
-use base_consensus_rpc::{AdminApiClient, BaseApiClient, BaseP2PApiClient, RollupNodeApiClient};
+use base_consensus_rpc_types::{
+    AdminApiClient, BaseApiClient, BaseP2PApiClient, PeerDump, PeerInfo, PeerStats,
+    RollupNodeApiClient,
+};
 use base_protocol::SyncStatus;
 use base_upgrade_signal::UpgradeReadiness;
 use jsonrpsee::{
