@@ -20,6 +20,7 @@ reth-primitives-traits.workspace = true
 
 # op-reth
 base-common-chains.workspace = true
+base-common-genesis-json.workspace = true
 
 # ethereum
 alloy-eips.workspace = true

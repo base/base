@@ -169,6 +169,7 @@ base-common-evm2 = { path = "crates/common/evm2", default-features = false }
 base-common-blobs = { path = "crates/common/blobs", default-features = false }
 base-common-l1-fees = { path = "crates/common/l1-fees", default-features = false }
 base-common-genesis = { path = "crates/common/genesis", default-features = false }
+base-common-genesis-json = { path = "crates/common/genesis-json" }
 base-common-base-tx = { path = "crates/common/base-tx", default-features = false }
 base-common-consensus = { path = "crates/common/consensus", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
