@@ -577,12 +577,16 @@ impl PrewarmBlock<'_> {
             }
             stats.taken.fetch_add(1, Ordering::Relaxed);
             let Ok((_, tx)) = Transactions::decode(&self.transactions[index]) else { continue };
-            for _ in 0..RUN_AHEAD_PASSES {
+            // Passes guess unread slots as zero and one in turn: a zero fails checks such as
+            // `require(info.rank > 0)` and ends a pass at the first unread entry of a batch, a
+            // one fails checks such as `require(!claimed[id])`.
+            for pass in 0..RUN_AHEAD_PASSES {
                 if done.load(Ordering::Relaxed) {
                     return;
                 }
                 stats.passes.fetch_add(1, Ordering::Relaxed);
                 let missed = state.ahead_misses();
+                state.ahead_guess(U256::from(pass % 2));
                 let Ok(mut executor) = BaseBlockExecutor::for_block(self.spec, &env, state.database()) else { return };
                 let _ = executor.execute_transaction(&first);
                 let _ = executor.execute_transaction(&tx);

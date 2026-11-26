@@ -130,8 +130,8 @@ pub fn block_changes(changes: &BlockStateAccumulator) -> BlockChanges {
 }
 
 /// A run-ahead state's reads: the slots fetched for it, where it sends the ones not fetched yet,
-/// and how many reads it has answered as zero.
-type AheadReads = (std::sync::Arc<crate::prewarm::Fetches>, std::sync::mpsc::Sender<(Address, U256)>, Cell<usize>);
+/// how many reads it has answered with a guess, and the guess.
+type AheadReads = (std::sync::Arc<crate::prewarm::Fetches>, std::sync::mpsc::Sender<(Address, U256)>, Cell<usize>, Cell<U256>);
 
 /// The node's state after one stored block: a database view at a canonical block plus the
 /// in-memory blocks of a side branch on top, and the block hashes `BLOCKHASH` reads.
@@ -151,7 +151,7 @@ pub struct NodeState<'d> {
     /// The cross-block execution cache, when this is the state at the cache's head.
     cache: Option<(std::sync::Arc<crate::ExecCache>, u64)>,
     /// When running ahead ([`Self::running_ahead`]): the slots fetched for it, where it sends
-    /// the ones not fetched yet, and how many reads it has answered as zero.
+    /// the ones not fetched yet, and how many reads it has answered with a guess.
     ahead: Option<AheadReads>,
     /// When timing reads ([`Self::timing_reads`]): where datadir storage reads are counted.
     slow: Option<&'d crate::prewarm::SlowReads<'d>>,
@@ -228,7 +228,7 @@ impl<'d> NodeState<'d> {
     }
 
     /// This state with storage reads that neither the execution cache nor `fetches` answer sent
-    /// to `fetch` and answered as zero instead of read, so a speculative execution never waits
+    /// to `fetch` and answered with a guess (zero until [`Self::ahead_guess`]) instead of read, so a speculative execution never waits
     /// on the datadir and names the slots it reaches while fetchers read them (a prewarm's
     /// run-ahead). Its values are wrong wherever it misses: only for speculation that discards
     /// them. None when not cached.
@@ -238,7 +238,7 @@ impl<'d> NodeState<'d> {
         fetch: std::sync::mpsc::Sender<(Address, U256)>,
     ) -> Option<Self> {
         self.cache.as_ref()?;
-        self.ahead = Some((fetches, fetch, Cell::new(0)));
+        self.ahead = Some((fetches, fetch, Cell::new(0), Cell::new(U256::ZERO)));
         Some(self)
     }
 
@@ -264,9 +264,16 @@ impl<'d> NodeState<'d> {
         }
     }
 
-    /// How many storage reads a run-ahead state has answered as zero so far.
+    /// How many storage reads a run-ahead state has answered with a guess so far.
     pub(crate) fn ahead_misses(&self) -> usize {
-        self.ahead.as_ref().map_or(0, |(_, _, misses)| misses.get())
+        self.ahead.as_ref().map_or(0, |(_, _, misses, _)| misses.get())
+    }
+
+    /// Answers a run-ahead state's later unfetched reads with `guess`.
+    pub(crate) fn ahead_guess(&self, guess: U256) {
+        if let Some((_, _, _, current)) = &self.ahead {
+            current.set(guess);
+        }
     }
 
     /// The reads collected as missing (empty when not collecting).
@@ -340,10 +347,10 @@ impl<'d> NodeState<'d> {
             return Ok(value);
         }
         self.check_stop()?;
-        if let Some((fetches, fetch, misses)) = &self.ahead {
+        if let Some((fetches, fetch, misses, guess)) = &self.ahead {
             return Ok(fetches.read(*address, *slot, fetch).unwrap_or_else(|| {
                 misses.set(misses.get() + 1);
-                U256::ZERO
+                guess.get()
             }));
         }
         let started = self.slow.as_ref().map(|_| std::time::Instant::now());
