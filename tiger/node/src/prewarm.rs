@@ -376,7 +376,7 @@ pub(crate) fn warm_while<R>(
     let receiver = Mutex::new(receiver);
     let paths = Mutex::new(Paths::default());
     let run_ahead = RunAhead::new();
-    thread::scope(|scope| {
+    let (result, stopped) = thread::scope(|scope| {
         for worker in 0..workers {
             let (done, changed, run_ahead) = (&done, changed.clone(), &run_ahead);
             // A speculation runs over state the block does not see; whatever it hits must not
@@ -401,18 +401,27 @@ pub(crate) fn warm_while<R>(
             });
         }
         let result = validate();
-        // The workers stop at their next transaction, the walkers at their next path.
+        // Every prewarm thread's reads fail from here (see [`NodeState::stopping_on`]): the
+        // workers stop at their next read, the walkers at their next path.
         done.store(true, Ordering::Relaxed);
+        let stopped = std::time::Instant::now();
         // The run-ahead threads end when their channel closes, the fetchers when theirs does.
         drop(lock(&run_ahead.take).take());
-        if run_ahead_stats() {
-            let fetched = lock(&run_ahead.fetches.slots).len();
-            let stats = &run_ahead.stats;
-            let (taken, passes) = (stats.taken.load(Ordering::Relaxed), stats.passes.load(Ordering::Relaxed));
-            eprintln!("tiger: run-ahead block={} txs={} taken={taken} passes={passes} fetched={fetched}", header.number, transactions.len());
-        }
-        result
-    })
+        (result, stopped)
+    });
+    if run_ahead_stats() {
+        let fetched = lock(&run_ahead.fetches.slots).len();
+        let stats = &run_ahead.stats;
+        let (taken, passes) = (stats.taken.load(Ordering::Relaxed), stats.passes.load(Ordering::Relaxed));
+        // How long the block waited for its prewarm threads to end after validating.
+        let join_us = stopped.elapsed().as_micros();
+        eprintln!(
+            "tiger: run-ahead block={} txs={} taken={taken} passes={passes} fetched={fetched} join_us={join_us}",
+            header.number,
+            transactions.len()
+        );
+    }
+    result
 }
 
 /// One walker: walks the trie paths of the changes the workers send until they are all walked
@@ -424,7 +433,7 @@ fn walk_paths(
     paths: &Mutex<Paths>,
     done: &AtomicBool,
 ) {
-    let Ok(state) = chain.state_after(parent) else { return };
+    let Ok(state) = chain.state_after(parent).map(|state| state.stopping_on(done)) else { return };
     let paths = || paths.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     while !done.load(Ordering::Relaxed) {
         let next = paths().queued.pop_front();
@@ -453,7 +462,7 @@ fn fetch_slots(
     fetches: &Fetches,
     done: &AtomicBool,
 ) {
-    let Ok(state) = chain.state_after(parent) else { return };
+    let Ok(state) = chain.state_after(parent).map(|state| state.stopping_on(done)) else { return };
     // The channel disconnects when the run-ahead threads end, which they do soon after `done`.
     loop {
         // The receiver's lock is released before the read, so the fetchers read concurrently.
@@ -512,7 +521,7 @@ impl PrewarmBlock<'_> {
     /// One prewarm worker: transactions `1 + worker`, `1 + worker + workers`, …, each sent to
     /// the walkers as it commits.
     fn warm(&self, worker: usize, workers: usize, changed: &mpsc::Sender<BlockChanges>, done: &AtomicBool, slow: Option<&SlowReads<'_>>) {
-        let Ok(mut state) = self.chain.state_after(self.parent) else { return };
+        let Ok(mut state) = self.chain.state_after(self.parent).map(|state| state.stopping_on(done)) else { return };
         if let Some(slow) = slow {
             state = state.timing_reads(slow);
         }
@@ -557,7 +566,7 @@ impl PrewarmBlock<'_> {
         &self,
         run_ahead: &RunAhead, fetch: mpsc::Sender<(Address, U256)>, done: &AtomicBool) {
         let (fetches, stats) = (&run_ahead.fetches, &run_ahead.stats);
-        let Ok(state) = self.chain.state_after(self.parent) else { return };
+        let Ok(state) = self.chain.state_after(self.parent).map(|state| state.stopping_on(done)) else { return };
         let Some(state) = state.running_ahead(Arc::clone(fetches), fetch) else { return };
         let env = BlockExecution::env(self.header);
         let Some(Ok((_, first))) = self.transactions.first().map(Transactions::decode) else { return };

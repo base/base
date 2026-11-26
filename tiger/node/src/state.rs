@@ -155,6 +155,8 @@ pub struct NodeState<'d> {
     ahead: Option<AheadReads>,
     /// When timing reads ([`Self::timing_reads`]): where datadir storage reads are counted.
     slow: Option<&'d crate::prewarm::SlowReads<'d>>,
+    /// When set ([`Self::stopping_on`]): reads that would go to the datadir fail once it is.
+    stop: Option<&'d std::sync::atomic::AtomicBool>,
     /// Time spent computing state and storage roots on this state.
     root_time: Cell<std::time::Duration>,
     /// The executing block's state root, computed as its transactions commit: started by the
@@ -204,6 +206,7 @@ impl<'d> NodeState<'d> {
             cache: None,
             ahead: None,
             slow: None,
+            stop: None,
             root_time: Cell::new(std::time::Duration::ZERO),
             live: RefCell::new(None),
         }
@@ -243,6 +246,22 @@ impl<'d> NodeState<'d> {
     pub(crate) fn timing_reads(mut self, slow: &'d crate::prewarm::SlowReads<'d>) -> Self {
         self.slow = Some(slow);
         self
+    }
+
+    /// This state with reads that miss the execution cache failing once `stop` is set, so a
+    /// speculation over it (a prewarm thread) ends at its next read when the block it
+    /// speculates for is done, instead of holding up the block's import while it reads on.
+    pub(crate) fn stopping_on(mut self, stop: &'d std::sync::atomic::AtomicBool) -> Self {
+        self.stop = Some(stop);
+        self
+    }
+
+    /// Fails when this state's [`Self::stopping_on`] flag is set.
+    fn check_stop(&self) -> Result<(), String> {
+        match self.stop {
+            Some(stop) if stop.load(std::sync::atomic::Ordering::Relaxed) => Err(self.record("the speculation was stopped")),
+            _ => Ok(()),
+        }
     }
 
     /// How many storage reads a run-ahead state has answered as zero so far.
@@ -296,6 +315,7 @@ impl<'d> NodeState<'d> {
         if let Some(account) = self.cache.as_ref().and_then(|(cache, generation)| cache.account(*generation, address)) {
             return Ok(account);
         }
+        self.check_stop()?;
         match self.view.account(*address) {
             Ok(account) => {
                 if let Some((cache, generation)) = &self.cache {
@@ -319,6 +339,7 @@ impl<'d> NodeState<'d> {
         if let Some(value) = self.cache.as_ref().and_then(|(cache, generation)| cache.storage(*generation, address, slot)) {
             return Ok(value);
         }
+        self.check_stop()?;
         if let Some((fetches, fetch, misses)) = &self.ahead {
             return Ok(fetches.read(*address, *slot, fetch).unwrap_or_else(|| {
                 misses.set(misses.get() + 1);
@@ -360,6 +381,7 @@ impl<'d> NodeState<'d> {
         if let Some(code) = self.cache.as_ref().and_then(|(cache, _)| cache.code(hash)) {
             return Ok(code);
         }
+        self.check_stop()?;
         match self.view.code(*hash) {
             Ok(Some(code)) => {
                 let code = Bytecode::new_raw(code);
@@ -390,6 +412,7 @@ impl<'d> NodeState<'d> {
 
     /// The `eth_getProof` proof of `address` and `slots`.
     pub fn proof(&self, address: Address, slots: &[U256]) -> Result<AccountProof, String> {
+        self.check_stop()?;
         self.view.proof(address, slots).map_err(|error| self.record_trie(error))
     }
 
