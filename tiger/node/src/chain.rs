@@ -644,6 +644,16 @@ impl Chain {
         Some(self.held(self.find_block(hash)?))
     }
 
+    /// Whether block `hash`, numbered `number`, is stored. A block above the datadir's tip as
+    /// this chain knows it is looked up in memory only: the datadir cannot hold it, and its
+    /// random-hash read can fault in cold pages under the chain lock.
+    pub fn has_block(&self, hash: &B256, number: u64) -> bool {
+        if number > self.disk.0 {
+            return self.blocks.contains_key(hash) || *hash == self.head.hash;
+        }
+        self.find_block(hash).is_some()
+    }
+
     /// Where block `hash` is ([`Self::block`] without reading the datadir).
     pub fn find_block(&self, hash: &B256) -> Option<FoundBlock> {
         if let Some(block) = self.blocks.get(hash) {

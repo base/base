@@ -426,7 +426,7 @@ impl Node {
         if std::env::var_os("TIGER_VALIDATION_LOG").is_some() {
             crate::Log::line(format!("tiger: block {} chain read lock {:.2}ms", header.number, locking.elapsed().as_secs_f64() * 1e3));
         }
-        if chain.block(&hash).is_some() {
+        if chain.has_block(&hash, header.number) {
             return Ok(Err(Imported::Known));
         }
         let Some(parent) = chain.block(&parent_hash) else {
