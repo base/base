@@ -39,7 +39,15 @@ pub use parkable::{
 
 mod metrics;
 pub use metrics::{
-    BuilderMetrics, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
+    BuilderMetrics, StoragePrefetchMetrics, ValidityEvaluationCounters, ValidityEvaluationOutcome,
+    ValidityMetrics,
+};
+
+mod storage_prefetch;
+pub use storage_prefetch::{
+    StoragePrefetchBlockState, StoragePrefetchContract, StoragePrefetchHook, StoragePrefetchJob,
+    StoragePrefetchLease, StoragePrefetchOpener, StoragePrefetchPool, StoragePrefetchReader,
+    StoragePrefetchRelease, StoragePrefetchSession, StoragePrefetchStats,
 };
 
 mod resting;

@@ -129,6 +129,37 @@ base_metrics::define_metrics! {
     payload_ready_hints_sent_total: counter,
 }
 
+base_metrics::define_metrics! {
+    base_builder,
+    struct = StoragePrefetchMetrics,
+    #[describe("Storage slots queued for read-only storage-trie prefetch during block building")]
+    storage_prefetch_slots_issued_total: counter,
+    #[describe("Storage-trie prefetch chunks queued during block building")]
+    storage_prefetch_chunks_issued_total: counter,
+    #[describe("Storage slots whose prefetch was dropped because the prefetch queue was full")]
+    storage_prefetch_slots_dropped_total: counter,
+    #[describe("Storage-trie prefetch chunks dropped because the prefetch queue was full")]
+    storage_prefetch_chunks_dropped_total: counter,
+    #[describe("Storage-trie prefetch chunks whose proof completed")]
+    storage_prefetch_chunks_completed_total: counter,
+    #[describe("Queued storage-trie prefetch chunks discarded because their build had ended")]
+    storage_prefetch_chunks_cancelled_total: counter,
+    #[describe("Storage-trie prefetch chunks that failed to open a state provider or build a proof")]
+    storage_prefetch_errors_total: counter,
+    #[describe("Storage-trie prefetch chunks that completed after the state root started")]
+    storage_prefetch_chunks_late_total: counter,
+    #[describe("Time by which a storage-trie prefetch chunk completed before the state root started, in seconds")]
+    storage_prefetch_lead_time: histogram,
+    #[describe("Storage slots per block whose prefetch completed before the state root started")]
+    storage_prefetch_slots_before_root: histogram,
+    #[describe("Time per block from the first storage-trie prefetch start to the last completion, in seconds")]
+    storage_prefetch_wall_duration: histogram,
+    #[describe("Sealed blocks that issued storage-trie prefetches")]
+    storage_prefetch_blocks_total: counter,
+    #[describe("native_payload_state_root_duration of pool builds that issued or dropped storage-trie prefetches, in seconds")]
+    storage_prefetch_block_state_root_duration: histogram,
+}
+
 impl ValidityMetrics {
     /// Records the total validity predicate evaluation time accumulated across one build.
     pub fn record_predicate_eval_duration(duration: Duration) {
