@@ -684,6 +684,25 @@ where
             return;
         }
 
+        // If the one-shot startup query failed, retry it here rather than sending an FCU
+        // with an uninitialized forkchoice.
+        if self.engine.state().sync_state.unsafe_head() == L2BlockInfo::default() {
+            match self.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await {
+                Ok(Some(head)) => self.engine.seed_state(EngineSyncStateUpdate {
+                    unsafe_head: Some(head),
+                    ..Default::default()
+                }),
+                Ok(None) => {
+                    debug!(target: "engine", "Validator EL sync probe skipped: latest head unavailable");
+                    return;
+                }
+                Err(err) => {
+                    warn!(target: "engine", error = %err, "Validator EL sync probe failed to query latest head");
+                    return;
+                }
+            }
+        }
+
         match self
             .engine
             .probe_el_sync(
