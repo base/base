@@ -320,6 +320,7 @@ impl Args {
 
         Ok(BuilderConfig {
             state_provider_metrics: false,
+            storage_prefetch: None,
             da_config: Default::default(),
             gas_limit_config: Default::default(),
             max_uncompressed_block_size: self.max_uncompressed_block_size,
