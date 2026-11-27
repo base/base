@@ -155,8 +155,20 @@ impl NodeClient {
             return None;
         };
         let result = body.get("result")?;
-        let hits = result
-            .get("hits")?
+        let Some(hits) = result.get("hits") else {
+            // Tiger's form, the adapter protocol's coverage map: `{"tiger:edge:<index>": count}`.
+            // It does not report its counter map size.
+            let mut hits: Vec<(u64, u64)> = result
+                .as_object()?
+                .iter()
+                .filter_map(|(name, count)| {
+                    Some((name.rsplit_once(":edge:")?.1.parse().ok()?, count.as_u64()?))
+                })
+                .collect();
+            hits.sort_unstable();
+            return Some(CoverageReading { counters: 0, hits });
+        };
+        let hits = hits
             .as_array()?
             .iter()
             .filter_map(|pair| Some((pair.get(0)?.as_u64()?, pair.get(1)?.as_u64()?)))

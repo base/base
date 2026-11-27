@@ -214,6 +214,8 @@ zeroes its counters. Production builds do not have the method. The builds are:
   `--JsonRpc.EnabledModules`.
 - needlefish: the `-Ddiff-coverage` build, which keeps the `-ffuzz` counters of the RPC, JSON,
   HTTP, and EVM functions.
+- tiger: the `edge-coverage` build, which answers with the adapter protocol's coverage map
+  (`{"tiger:edge:<index>": count}`) instead; the harness reads either form.
 
 Counters are process-wide, so the harness sends each coverage node one request at a time and
 reads its coverage right after every request, Engine API calls and the campaign's own extra
