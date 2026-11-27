@@ -388,12 +388,16 @@ impl BaseReceiptBuilder {
         // We're computing the jovian blob gas used before building the receipt since the inputs get
         // consumed by the `build_receipt` function.
         chain_spec.is_feature_active_at_timestamp(BaseFeature::DaFootprint, timestamp).then(|| {
-            // Estimate the size of the transaction in bytes and multiply by the DA
-            // footprint gas scalar.
+            // Deposits are excluded from the block DA footprint by the Jovian spec.
+            // Keep the receipt field present, but report zero for deposit transactions.
             // Jovian specs: `https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit`
-            let da_size = estimate_tx_compressed_size(tx_signed.encoded_2718().as_slice())
-                .saturating_div(FJORD_TX_SIZE_SCALE)
-                .saturating_mul(l1_block_info.da_footprint_gas_scalar.unwrap_or_default().into());
+            let da_size = if tx_signed.is_deposit() {
+                0
+            } else {
+                estimate_tx_compressed_size(tx_signed.encoded_2718().as_slice())
+                    .saturating_div(FJORD_TX_SIZE_SCALE)
+                    .saturating_mul(l1_block_info.da_footprint_gas_scalar.unwrap_or_default().into())
+            };
 
             core_receipt.blob_gas_used = Some(da_size);
         });
@@ -698,6 +702,47 @@ mod tests {
         .unwrap();
 
         (receipt, tx)
+    }
+
+    #[test]
+    fn blob_gas_used_is_zero_for_deposit_receipt_post_jovian() {
+        let from = Address::with_last_byte(0xde);
+        let tx = BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+            from,
+            to: TxKind::Create,
+            gas_limit: 100_000,
+            ..Default::default()
+        }));
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
+            da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
+            ..Default::default()
+        };
+
+        let receipt = BaseReceiptBuilder::new(
+            &BaseChainSpec::mainnet(),
+            ConvertReceiptInput::<BasePrimitives> {
+                tx: Recovered::new_unchecked(&tx, from),
+                receipt: BaseReceipt::Deposit(DepositReceipt {
+                    inner: Receipt {
+                        status: Eip658Value::Eip658(true),
+                        cumulative_gas_used: 100,
+                        logs: vec![],
+                    },
+                    deposit_nonce: Some(1),
+                    deposit_receipt_version: Some(1),
+                }),
+                gas_used: 100,
+                next_log_index: 0,
+                meta: TransactionMeta {
+                    timestamp: ChainConfig::mainnet().jovian_timestamp,
+                    ..Default::default()
+                },
+            },
+            &mut l1_block_info,
+        )
+        .unwrap();
+
+        assert_eq!(receipt.core_receipt.blob_gas_used, Some(0));
     }
 
     #[test]
