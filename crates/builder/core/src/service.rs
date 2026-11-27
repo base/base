@@ -20,7 +20,7 @@ use reth_provider::CanonStateSubscriptions;
 use tokio::sync::broadcast;
 use tracing::info;
 
-use crate::{BuilderConfig, NodeBounds, PoolBounds};
+use crate::{BuilderConfig, NodeBounds, PoolBounds, StoragePrefetchPool};
 
 /// Spawns the native Base payload builder behind reth's basic payload job generator.
 ///
@@ -59,6 +59,18 @@ where
         // validation path are instrumented by the same switch.
         let mut builder_config = self.builder_config;
         builder_config.state_provider_metrics = ctx.config().engine.state_provider_metrics;
+
+        // Prefetch threads read MDBX outside reth's task manager. Stop them in the node's
+        // graceful shutdown, which reth waits for before the process exits and tears MDBX down;
+        // builds never wait on it.
+        if let Some(prefetch) = builder_config.storage_prefetch.clone() {
+            ctx.task_executor().spawn_with_graceful_shutdown_signal(|shutdown| async move {
+                let guard = shutdown.await;
+                let stop = move || prefetch.shutdown(StoragePrefetchPool::SHUTDOWN_TIMEOUT);
+                let _ = tokio::task::spawn_blocking(stop).await;
+                drop(guard);
+            });
+        }
 
         let payload_builder =
             base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
