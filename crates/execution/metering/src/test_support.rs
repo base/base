@@ -20,6 +20,10 @@ use crate::{MeterBundleInput, MeterBundleOutput, MeteredOpcodes, meter_bundle};
 pub struct TestSupport;
 
 impl TestSupport {
+    /// Max fee for transactions included in built blocks. It is above the ~980M wei base fee
+    /// of the first block on the test genesis.
+    pub const BLOCK_MAX_FEE: u128 = 1_000_000_000;
+
     /// Signs `builder` as an EIP-1559 transaction.
     pub fn sign(builder: TransactionBuilder) -> BaseTransactionSigned {
         let signed = builder.into_eip1559();

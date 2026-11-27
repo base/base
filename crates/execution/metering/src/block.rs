@@ -174,7 +174,7 @@ mod tests {
                 .to(to)
                 .value(1_000)
                 .gas_limit(21_000)
-                .max_fee_per_gas(10)
+                .max_fee_per_gas(TestSupport::BLOCK_MAX_FEE)
                 .max_priority_fee_per_gas(1),
         );
         let tx_hash = tx.tx_hash();
@@ -218,7 +218,7 @@ mod tests {
                 .to(to_1)
                 .value(1_000)
                 .gas_limit(21_000)
-                .max_fee_per_gas(10)
+                .max_fee_per_gas(TestSupport::BLOCK_MAX_FEE)
                 .max_priority_fee_per_gas(1),
         );
         let tx_hash_1 = tx_1.tx_hash();
@@ -232,7 +232,7 @@ mod tests {
                 .to(to_2)
                 .value(2_000)
                 .gas_limit(21_000)
-                .max_fee_per_gas(15)
+                .max_fee_per_gas(TestSupport::BLOCK_MAX_FEE + 5)
                 .max_priority_fee_per_gas(2),
         );
         let tx_hash_2 = tx_2.tx_hash();
@@ -289,7 +289,7 @@ mod tests {
                 .to(Address::random())
                 .value(1_000)
                 .gas_limit(21_000)
-                .max_fee_per_gas(10)
+                .max_fee_per_gas(TestSupport::BLOCK_MAX_FEE)
                 .max_priority_fee_per_gas(1),
         );
 

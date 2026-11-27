@@ -1256,7 +1256,7 @@ mod tests {
                 .to(to)
                 .value(1_000)
                 .gas_limit(21_000)
-                .max_fee_per_gas(10)
+                .max_fee_per_gas(MIN_BASEFEE as u128)
                 .max_priority_fee_per_gas(1),
         );
         let tx_hash = tx.tx_hash();
@@ -1270,12 +1270,12 @@ mod tests {
         assert_eq!(result.from_address, Account::Alice.address());
         assert_eq!(result.to_address, Some(to));
         assert_eq!(result.tx_hash, tx_hash);
-        assert_eq!(result.gas_price, U256::from(10));
+        assert_eq!(result.gas_price, U256::from(MIN_BASEFEE));
         assert_eq!(result.gas_used, 21_000);
-        assert_eq!(result.coinbase_diff, (U256::from(21_000) * U256::from(10)),);
+        assert_eq!(result.coinbase_diff, (U256::from(21_000) * U256::from(MIN_BASEFEE)),);
 
         assert_eq!(output.total_gas_used, 21_000);
-        assert_eq!(output.total_gas_fees, U256::from(21_000) * U256::from(10));
+        assert_eq!(output.total_gas_fees, U256::from(21_000) * U256::from(MIN_BASEFEE));
 
         let mut concatenated = Vec::with_capacity(32);
         concatenated.extend_from_slice(tx_hash.as_slice());
@@ -1587,7 +1587,7 @@ mod tests {
                 .to(existing_account)
                 .value(1)
                 .gas_limit(21_000)
-                .max_fee_per_gas(MIN_BASEFEE as u128)
+                .max_fee_per_gas(TestSupport::BLOCK_MAX_FEE)
                 .max_priority_fee_per_gas(0),
         );
         harness
@@ -1668,7 +1668,7 @@ mod tests {
                 .to(existing_account)
                 .value(1)
                 .gas_limit(21_000)
-                .max_fee_per_gas(MIN_BASEFEE as u128)
+                .max_fee_per_gas(TestSupport::BLOCK_MAX_FEE)
                 .max_priority_fee_per_gas(0),
         );
         harness
@@ -1742,7 +1742,7 @@ mod tests {
                 .to(to)
                 .value(1_000)
                 .gas_limit(21_000)
-                .max_fee_per_gas(10)
+                .max_fee_per_gas(MIN_BASEFEE as u128)
                 .max_priority_fee_per_gas(1),
         );
 
@@ -2198,7 +2198,7 @@ mod tests {
                 .to(to_1)
                 .value(1_000)
                 .gas_limit(21_000)
-                .max_fee_per_gas(10)
+                .max_fee_per_gas(MIN_BASEFEE as u128)
                 .max_priority_fee_per_gas(1),
         );
 
@@ -2211,7 +2211,7 @@ mod tests {
                 .to(to_2)
                 .value(2_000)
                 .gas_limit(21_000)
-                .max_fee_per_gas(15)
+                .max_fee_per_gas(MIN_BASEFEE as u128 + 5)
                 .max_priority_fee_per_gas(2),
         );
 
@@ -2228,23 +2228,23 @@ mod tests {
         assert_eq!(result_1.from_address, Account::Alice.address());
         assert_eq!(result_1.to_address, Some(to_1));
         assert_eq!(result_1.tx_hash, tx_hash_1);
-        assert_eq!(result_1.gas_price, U256::from(10));
+        assert_eq!(result_1.gas_price, U256::from(MIN_BASEFEE));
         assert_eq!(result_1.gas_used, 21_000);
-        assert_eq!(result_1.coinbase_diff, (U256::from(21_000) * U256::from(10)),);
+        assert_eq!(result_1.coinbase_diff, (U256::from(21_000) * U256::from(MIN_BASEFEE)),);
 
         // Check second transaction
         let result_2 = &output.results[1];
         assert_eq!(result_2.from_address, Account::Bob.address());
         assert_eq!(result_2.to_address, Some(to_2));
         assert_eq!(result_2.tx_hash, tx_hash_2);
-        assert_eq!(result_2.gas_price, U256::from(15));
+        assert_eq!(result_2.gas_price, U256::from(MIN_BASEFEE + 5));
         assert_eq!(result_2.gas_used, 21_000);
-        assert_eq!(result_2.coinbase_diff, U256::from(21_000) * U256::from(15),);
+        assert_eq!(result_2.coinbase_diff, U256::from(21_000) * U256::from(MIN_BASEFEE + 5),);
 
         // Check aggregated values
         assert_eq!(output.total_gas_used, 42_000);
-        let expected_total_fees =
-            U256::from(21_000) * U256::from(10) + U256::from(21_000) * U256::from(15);
+        let expected_total_fees = U256::from(21_000) * U256::from(MIN_BASEFEE)
+            + U256::from(21_000) * U256::from(MIN_BASEFEE + 5);
         assert_eq!(output.total_gas_fees, expected_total_fees);
 
         // Check bundle hash includes both transactions
