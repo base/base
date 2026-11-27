@@ -4,12 +4,16 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
-use alloy_primitives::TxHash;
+use alloy_network::ReceiptResponse;
+use alloy_primitives::{Bytes, TxHash};
 #[cfg(target_os = "linux")]
 use base_builder_core::test_utils::ExternalNode;
-use base_builder_core::test_utils::{ChainDriver, Ipc, TransactionBuilderExt, setup_test_instance};
+use base_builder_core::{
+    BuilderConfig, StoragePrefetchPool,
+    test_utils::{ChainDriver, Ipc, LocalInstance, TransactionBuilderExt, setup_test_instance},
+};
 use tokio::{join, task::yield_now};
 use tracing::info;
 
@@ -184,5 +188,69 @@ async fn chain_produces_big_tx() -> eyre::Result<()> {
     // deposit + big tx (no gas limit to exclude it)
     assert_eq!(txs.len(), 2, "Should have 2 transactions (deposit + big tx)");
 
+    Ok(())
+}
+
+/// Slots the heavy-writer contract writes on deployment and on every call: twice the prefetch
+/// gate, so each such block prefetches the contract's storage trie.
+const HEAVY_WRITER_SLOTS: u8 = 64;
+
+/// Init code of a contract that sets slots `0..HEAVY_WRITER_SLOTS` to 1 and whose runtime code
+/// sets every one of them to the current block number.
+fn heavy_writer_init_code() -> Bytes {
+    // NUMBER, PUSH1 slot, SSTORE for each slot, then STOP.
+    let mut runtime: Vec<u8> =
+        (0..HEAVY_WRITER_SLOTS).flat_map(|slot| [0x43, 0x60, slot, 0x55]).collect();
+    runtime.push(0x00);
+    // PUSH1 1, PUSH1 slot, SSTORE for each slot.
+    let mut init: Vec<u8> =
+        (0..HEAVY_WRITER_SLOTS).flat_map(|slot| [0x60, 0x01, 0x60, slot, 0x55]).collect();
+    // CODECOPY(0, runtime offset, runtime length), then RETURN(0, runtime length).
+    let copy_and_return_len = 15;
+    let offset = u16::try_from(init.len() + copy_and_return_len).expect("init code fits");
+    let length = u16::try_from(runtime.len()).expect("runtime code fits");
+    init.push(0x61);
+    init.extend(length.to_be_bytes());
+    init.push(0x61);
+    init.extend(offset.to_be_bytes());
+    init.extend([0x60, 0x00, 0x39, 0x61]);
+    init.extend(length.to_be_bytes());
+    init.extend([0x60, 0x00, 0xf3]);
+    init.extend(runtime);
+    init.into()
+}
+
+/// Must hold: a builder with storage prefetch enabled stops the prefetch worker and release
+/// threads in the node's graceful shutdown. A thread still reading MDBX when the process exits
+/// races MDBX's process-wide teardown and aborts the process.
+#[tokio::test]
+async fn storage_prefetch_threads_stop_with_the_node() -> eyre::Result<()> {
+    let pool = Arc::new(StoragePrefetchPool::spawn()?);
+    let config =
+        BuilderConfig { storage_prefetch: Some(Arc::clone(&pool)), ..BuilderConfig::for_tests() };
+    let instance = LocalInstance::new(config).await?;
+    let driver = instance.driver().await?;
+
+    let deploy = driver
+        .create_transaction()
+        .with_create()
+        .with_input(heavy_writer_init_code())
+        .with_gas_limit(3_000_000)
+        .send()
+        .await?;
+    driver.build_new_block().await?;
+    let receipt = deploy.get_receipt().await?;
+    assert!(receipt.status(), "the heavy writer must deploy");
+    let contract = receipt.contract_address().expect("a deployment has a contract address");
+
+    // The call rewrites every slot the parent state holds, so its build prefetches them.
+    let call =
+        driver.create_transaction().with_to(contract).with_gas_limit(1_000_000).send().await?;
+    driver.build_new_block().await?;
+    assert!(call.get_receipt().await?.status(), "the heavy write must succeed");
+
+    drop(driver);
+    drop(instance);
+    assert_eq!(pool.live_threads(), 0, "a prefetch thread outlived the node's shutdown");
     Ok(())
 }

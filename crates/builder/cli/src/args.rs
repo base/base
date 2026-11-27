@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, RejectionCache,
-    ResourceMeteringConfig, SequencerLeadershipConfig, SharedMeteringProvider,
+    ResourceMeteringConfig, SequencerLeadershipConfig, SharedMeteringProvider, StoragePrefetchPool,
     ValiditySignatureMode,
 };
 use base_builder_metering::MeteringStore;
@@ -229,6 +229,16 @@ pub struct Args {
     )]
     pub manifest_precheck_enabled: bool,
 
+    /// Read ahead, while a block executes, the storage-trie pages its state root will need for
+    /// contracts the block writes heavily. Read-only; does not change the block.
+    #[arg(
+        long = "builder.storage-prefetch",
+        env = "BUILDER_STORAGE_PREFETCH",
+        default_value_t = false,
+        action = clap::ArgAction::Set
+    )]
+    pub storage_prefetch: bool,
+
     /// Transaction event journal configuration
     #[command(flatten)]
     pub transaction_events: TransactionEventsArgs,
@@ -271,6 +281,7 @@ impl Default for Args {
             rejection_cache_max_capacity: 100_000,
             rejection_cache_ttl_secs: 1800,
             manifest_precheck_enabled: true,
+            storage_prefetch: false,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
         }
@@ -318,9 +329,23 @@ impl Args {
             );
         }
 
+        let storage_prefetch = if self.storage_prefetch {
+            let pool = StoragePrefetchPool::spawn()
+                .wrap_err("failed to start the storage-trie prefetch pool")?;
+            info!(
+                gate_slots = StoragePrefetchPool::GATE_SLOTS,
+                workers = StoragePrefetchPool::WORKERS,
+                queue_chunks = StoragePrefetchPool::QUEUE_CHUNKS,
+                "storage-trie prefetch enabled"
+            );
+            Some(Arc::new(pool))
+        } else {
+            None
+        };
+
         Ok(BuilderConfig {
             state_provider_metrics: false,
-            storage_prefetch: None,
+            storage_prefetch,
             da_config: Default::default(),
             gas_limit_config: Default::default(),
             max_uncompressed_block_size: self.max_uncompressed_block_size,
@@ -405,6 +430,29 @@ mod tests {
         assert_eq!(args.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         let config = convert(args);
         assert!(config.manifest_precheck_enabled);
+    }
+
+    #[test]
+    fn storage_prefetch_is_off_unless_enabled() {
+        let unset = CommandParser::try_parse_from(["builder"]).unwrap();
+        assert!(!unset.args.storage_prefetch);
+        assert!(convert(unset.args).storage_prefetch.is_none());
+    }
+
+    #[test]
+    fn storage_prefetch_has_one_flag() {
+        let enabled =
+            CommandParser::try_parse_from(["builder", "--builder.storage-prefetch=true"]).unwrap();
+        assert!(convert(enabled.args).storage_prefetch.is_some());
+
+        for removed in [
+            "--builder.storage-prefetch-gate",
+            "--builder.storage-prefetch-workers",
+            "--builder.storage-prefetch-queue",
+        ] {
+            let parsed = CommandParser::try_parse_from(["builder", removed, "2"]);
+            assert!(parsed.is_err(), "{removed} is a constant, not a flag");
+        }
     }
 
     #[test]
