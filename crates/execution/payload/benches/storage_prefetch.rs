@@ -21,7 +21,7 @@ use revm::{
     state::{Account, EvmState, EvmStorageSlot, TransactionId},
 };
 
-/// Existing slots a batched claim changes in one contract on the slowest observed blocks.
+/// Existing slots one batched claim changes in one contract, the heavy write the gate targets.
 const BATCH_SLOTS: u64 = 725;
 
 fn touched(balance: u64) -> Account {
