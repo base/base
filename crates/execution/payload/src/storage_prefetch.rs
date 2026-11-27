@@ -27,7 +27,7 @@ use alloy_primitives::{
     Address, B256, keccak256,
     map::{AddressMap, B256Map, B256Set},
 };
-use crossbeam_channel::{Sender, TryRecvError, TrySendError, select};
+use crossbeam_channel::{Sender, TryRecvError, select};
 use parking_lot::Mutex;
 use reth_storage_api::{StateProofProvider, StateProviderFactory, errors::ProviderError};
 use reth_trie_common::{MultiProofTargetsV2, ProofV2Target};
@@ -50,8 +50,8 @@ pub type StoragePrefetchOpener =
 /// Worker threads shared by every build of one payload builder.
 ///
 /// The pool's sizes are constants rather than settings: `--builder.storage-prefetch` is its only
-/// flag. The threads exit on [`Self::shutdown`], or once the pool and every session and hook it
-/// started are dropped.
+/// flag. The threads exit on [`Self::shutdown`] or when the pool is dropped, even while sessions and
+/// hooks it started are still alive; those then send nothing more and free their own readers.
 #[derive(Debug)]
 pub struct StoragePrefetchPool {
     sender: Sender<StoragePrefetchJob>,
@@ -68,10 +68,10 @@ impl StoragePrefetchPool {
     /// Distinct changed slots, updated or created, that one contract must exceed in one block
     /// before its slots are prefetched.
     ///
-    /// Most blocks change a handful of slots per contract, which the root reads quickly; the
-    /// slow roots come from contracts with hundreds of changed slots (725 on the slowest observed
-    /// blocks). Counting created slots, this gate triggers on 92% of slow blocks and 25% of
-    /// ordinary ones.
+    /// Most blocks change a handful of slots per contract, which the root reads quickly. The
+    /// root stalls on contracts that change hundreds of slots at once, such as a batched claim
+    /// that writes 725. The gate sits well below such writes and well above the handful of slots
+    /// an ordinary transaction changes.
     pub const GATE_SLOTS: usize = 32;
 
     /// Worker threads that read storage-trie pages.
@@ -88,7 +88,7 @@ impl StoragePrefetchPool {
     pub const CHUNK_SLOTS: usize = 32;
 
     /// Chunks that may wait for a worker; the hook drops and counts further chunks rather than
-    /// wait. 256 chunks hold 8,192 slots, eleven times the largest observed heavy write.
+    /// wait. 256 chunks hold 8,192 slots, about eleven times a 725-slot batched claim.
     pub const QUEUE_CHUNKS: usize = 256;
 
     /// Longest the node's shutdown waits in [`Self::shutdown`] for a chunk being read and for
@@ -174,7 +174,7 @@ impl StoragePrefetchPool {
     /// Stops the pool's threads and waits up to `timeout` for them to exit, returning whether
     /// they did. A worker finishes the chunk it is reading and leaves queued chunks unread; the
     /// release thread frees the readers already handed to it. A build still running afterwards
-    /// drops its chunks and frees its own readers.
+    /// sends no more chunks and frees its own readers.
     pub fn shutdown(&self, timeout: Duration) -> bool {
         drop(self.stop.lock().take());
         let deadline = Instant::now() + timeout;
@@ -655,7 +655,7 @@ impl StoragePrefetchHook {
     }
 
     /// Sends `slots` to the pool in chunks, dropping and counting any chunk the full queue
-    /// refuses. Never waits.
+    /// refuses. Once the pool has stopped it sends nothing more and counts nothing. Never waits.
     fn enqueue(
         state: &Arc<StoragePrefetchBlockState>,
         sender: &Sender<StoragePrefetchJob>,
@@ -673,13 +673,16 @@ impl StoragePrefetchHook {
             state.slots_issued.fetch_add(count, Ordering::AcqRel);
             let job =
                 StoragePrefetchJob { state: Arc::clone(state), address, slots: chunk.to_vec() };
-            if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) = sender.try_send(job)
-            {
-                state.chunks_issued.fetch_sub(1, Ordering::AcqRel);
-                state.slots_issued.fetch_sub(count, Ordering::AcqRel);
-                state.chunks_dropped.fetch_add(1, Ordering::AcqRel);
-                state.slots_dropped.fetch_add(count, Ordering::AcqRel);
+            let Err(error) = sender.try_send(job) else { continue };
+            state.chunks_issued.fetch_sub(1, Ordering::AcqRel);
+            state.slots_issued.fetch_sub(count, Ordering::AcqRel);
+            // A stopped pool reads nothing more. Its chunks are neither issued nor dropped, so
+            // the dropped counters only ever mean a full queue.
+            if error.is_disconnected() {
+                return;
             }
+            state.chunks_dropped.fetch_add(1, Ordering::AcqRel);
+            state.slots_dropped.fetch_add(count, Ordering::AcqRel);
         }
     }
 }
@@ -1207,5 +1210,24 @@ mod tests {
             "a queued chunk was read after shutdown"
         );
         assert_eq!(session.state().stats().chunks_started, 1);
+    }
+
+    /// Must hold: a build still running after the pool stopped counts nothing as dropped, so the
+    /// dropped counters only ever mean a full queue, and the block is not reported as prefetched.
+    #[test]
+    fn a_stopped_pool_counts_no_drops() {
+        let probe = Arc::new(ReaderProbe::default());
+        let (opener, _release) = gated_opener(&probe);
+        let pool = pool(1, 64);
+        assert!(pool.shutdown(Duration::from_secs(10)));
+        let session = pool.session(opener);
+
+        commit_without_waiting(&session, writes(Address::repeat_byte(10), 725, 0, 0));
+
+        let stats = session.state().stats();
+        assert_eq!((stats.chunks_dropped, stats.slots_dropped), (0, 0));
+        assert_eq!((stats.chunks_issued, stats.slots_issued), (0, 0));
+        assert!(!session.finish(1, Duration::ZERO), "a stopped pool reported a prefetched block");
+        assert_eq!(probe.opened.load(Ordering::SeqCst), 0);
     }
 }
