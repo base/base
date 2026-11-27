@@ -51,7 +51,8 @@ pub type StoragePrefetchOpener =
 ///
 /// The pool's sizes are constants rather than settings: `--builder.storage-prefetch` is its only
 /// flag. The threads exit on [`Self::shutdown`] or when the pool is dropped, even while sessions and
-/// hooks it started are still alive; those then send nothing more and free their own readers.
+/// hooks it started are still alive. Once every worker has exited and its receiver has
+/// disconnected, those sessions and hooks send nothing more and free their own readers.
 #[derive(Debug)]
 pub struct StoragePrefetchPool {
     sender: Sender<StoragePrefetchJob>,
@@ -173,8 +174,10 @@ impl StoragePrefetchPool {
 
     /// Stops the pool's threads and waits up to `timeout` for them to exit, returning whether
     /// they did. A worker finishes the chunk it is reading and leaves queued chunks unread; the
-    /// release thread frees the readers already handed to it. A build still running afterwards
-    /// sends no more chunks and frees its own readers.
+    /// release thread frees the readers already handed to it. Once it returns `true`, every
+    /// worker's receiver has disconnected, and a build still running sends no more chunks and
+    /// frees its own readers. After a timeout a worker can still hold its receiver, so until that
+    /// worker exits a build can still queue chunks and count full-queue drops.
     pub fn shutdown(&self, timeout: Duration) -> bool {
         drop(self.stop.lock().take());
         let deadline = Instant::now() + timeout;
@@ -655,7 +658,8 @@ impl StoragePrefetchHook {
     }
 
     /// Sends `slots` to the pool in chunks, dropping and counting any chunk the full queue
-    /// refuses. Once the pool has stopped it sends nothing more and counts nothing. Never waits.
+    /// refuses. Once every worker's receiver has disconnected, after a completed shutdown or a
+    /// pool drop, it sends nothing more and counts nothing. Never waits.
     fn enqueue(
         state: &Arc<StoragePrefetchBlockState>,
         sender: &Sender<StoragePrefetchJob>,
