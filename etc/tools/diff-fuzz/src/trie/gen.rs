@@ -484,7 +484,9 @@ impl TrieGen {
         for _ in 0..blocks {
             let mut unwind = 0;
             if fork_at == Some(case.blocks.len() as u64) {
-                unwind = self.rng.range(3, 5);
+                // Earlier random unwinds can leave fewer blocks than the fork's unwind; never
+                // unwind past the empty state.
+                unwind = self.rng.range(3, 5).min(states.len() as u64 - 1);
                 states.truncate(states.len() - unwind as usize);
             } else if states.len() > 2 && self.rng.chance(6) {
                 unwind = self.rng.range(1, (states.len() as u64 - 1).min(3));

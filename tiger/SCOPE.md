@@ -226,6 +226,12 @@ transaction gossip, and NAT traversal (UPnP). The external IP comes from configu
   behavior, which resolves the delegation first and runs the delegate's code, in every call path.
   No account can carry a delegation at a precompile address on chain, so only RPC state
   overrides (`eth_call`, `eth_estimateGas`, `eth_createAccessList`) reach it.
+- **A value transfer that overflows the recipient's balance** (fuzz finding R11). base-reth
+  (revm) fails the transfer with `OverflowPayment`: a top-level call answers -32003 "EVM error:
+  OverflowPayment", and an inner CALL fails. Tiger keeps evm2's `State::transfer`, which
+  saturates the recipient's balance at 2^256−1 and succeeds. No real balance comes near 2^256,
+  so only RPC state overrides (`eth_call`, `eth_estimateGas`, `eth_createAccessList`) reach it;
+  matching base-reth would need a change to evm2.
 - **A stateless node cannot wipe storage it does not hold** (fuzz finding S2). When a block
   deletes an account whose storage is not empty, a partial datadir cannot record the slots the
   wipe removes, so that block can never commit. The stateless node exits with `tiger: fatal:

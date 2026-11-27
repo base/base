@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::keccak256;
+use alloy_primitives::{U256, keccak256};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -460,7 +460,8 @@ impl RpcCampaign {
             // Before the BLOCKHASH cause: a request every node refused ran no code.
             .or_else(|| Self::override_order(case, &replies))
             .or_else(|| Self::persisted_blockhash(case, head, &normalized))
-            .or_else(|| Self::precompile_delegation(case, &normalized));
+            .or_else(|| Self::precompile_delegation(case, &normalized))
+            .or_else(|| Self::overflowing_balance(case, &normalized));
         if Self::simulate_encoding_only(case, &normalized) {
             *summary
                 .lock()
@@ -671,6 +672,12 @@ impl RpcCampaign {
     /// sign an authorization for a precompile address); accepted as won't-fix (finding R7).
     pub const ACCEPTED_PRECOMPILE_DELEGATION: &str =
         "accepted: 7702 delegation on a precompile (R7, won't fix)";
+    /// A value transfer onto a state-override balance that overflows U256: base/base (revm)
+    /// fails the transfer with `OverflowPayment` (an EVM error at the top level, a failed CALL
+    /// inside), tiger (evm2) saturates the balance. Only overrides reach it (no real balance
+    /// comes near 2^256); accepted as won't-fix (finding R11).
+    pub const ACCEPTED_OVERFLOWING_BALANCE: &str =
+        "accepted: transfer overflows an overridden balance (R11, won't fix)";
     /// base/base accepts a JSON number as a call's `type`.
     pub const KNOWN_BASE_INTEGER_TYPE: &str = "base: integer type accepted";
 
@@ -1094,6 +1101,40 @@ impl RpcCampaign {
             precompile && code.len() == 2 + 46 && code.starts_with("0xef0100")
         });
         delegated.then_some((Self::ACCEPTED_PRECOMPILE_DELEGATION, base))
+    }
+
+    /// [`Self::ACCEPTED_OVERFLOWING_BALANCE`] with base's index, when the nodes disagree on an
+    /// eth\_call, eth\_estimateGas or eth\_createAccessList whose state overrides give some
+    /// account a balance that a transfer could overflow: adding 2^128 (above any real balance on
+    /// these chains), the call's `value`, or another override's balance exceeds U256.
+    pub fn overflowing_balance(
+        case: &RpcCase,
+        normalized: &[(String, Value)],
+    ) -> Option<(&'static str, usize)> {
+        let base = normalized.iter().position(|(n, _)| n == "base")?;
+        if normalized.iter().all(|(_, v)| *v == normalized[base].1)
+            || !matches!(
+                case.method.as_str(),
+                "eth_call" | "eth_estimateGas" | "eth_createAccessList"
+            )
+        {
+            return None;
+        }
+        let body: Value = serde_json::from_str(&case.body).ok()?;
+        let quantity = |v: &Value| v.as_str().and_then(|s| s.parse::<U256>().ok());
+        let balances: Vec<U256> = body["params"][2]
+            .as_object()?
+            .values()
+            .filter_map(|o| quantity(&o["balance"]))
+            .collect();
+        let value = quantity(&body["params"][0]["value"]).unwrap_or_default();
+        let overflows = balances.iter().enumerate().any(|(i, balance)| {
+            let other = balances.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, b)| *b);
+            other
+                .chain([U256::from(1) << 128, value])
+                .any(|added| balance.checked_add(added).is_none())
+        });
+        overflows.then_some((Self::ACCEPTED_OVERFLOWING_BALANCE, base))
     }
 
     /// [`Self::SETTLED_UNFUNDED_FEE`] with Nethermind's index, when it explains `case`: a priced
@@ -1934,5 +1975,59 @@ mod tests {
         assert_eq!(RpcCampaign::precompile_delegation(&case(past, &delegation), &ok), None);
         let high = "0x1000000000000000000000000000000000000004";
         assert_eq!(RpcCampaign::precompile_delegation(&case(high, &delegation), &ok), None);
+    }
+
+    #[test]
+    fn overflowing_balance_needs_an_override_a_transfer_can_overflow() {
+        let differ = vec![
+            (
+                "base".to_owned(),
+                json!({"id":1,"error":{"code":-32003,"message":"EVM error: OverflowPayment"}}),
+            ),
+            ("tiger".to_owned(), json!({"id":1,"result":"0x"})),
+        ];
+        let same = vec![differ[0].clone(), ("tiger".to_owned(), differ[0].1.clone())];
+        let to = "0x00000000000000000000000000000000000000aa";
+        let from = "0x00000000000000000000000000000000000000bb";
+        let case = |value: &str, overrides: Value| {
+            RpcCase::new(
+                "call",
+                "eth_call",
+                json!([{"to": to, "value": value}, "latest", overrides]),
+            )
+        };
+        let max = format!("{:#x}", U256::MAX);
+        let near = format!("{:#x}", U256::MAX - (U256::from(1) << 127));
+        // 2^256 - 2^127 overflows once 2^128 is added: any real balance could overflow it.
+        for balance in [&max, &near] {
+            assert_eq!(
+                RpcCampaign::overflowing_balance(
+                    &case("0x2", json!({to: {"balance": balance}})),
+                    &differ
+                ),
+                Some((RpcCampaign::ACCEPTED_OVERFLOWING_BALANCE, 0))
+            );
+        }
+        // Agreeing nodes need no explanation.
+        assert_eq!(
+            RpcCampaign::overflowing_balance(&case("0x2", json!({to: {"balance": max}})), &same),
+            None
+        );
+        // 2^255 is far from overflowing with real balances or a small value...
+        let half = format!("{:#x}", U256::from(1) << 255);
+        assert_eq!(
+            RpcCampaign::overflowing_balance(&case("0x2", json!({to: {"balance": half}})), &differ),
+            None
+        );
+        // ...but not when the call's value or another override's balance can reach 2^255.
+        assert!(
+            RpcCampaign::overflowing_balance(&case(&half, json!({to: {"balance": half}})), &differ)
+                .is_some()
+        );
+        let both = json!({to: {"balance": half}, from: {"balance": half}});
+        assert!(RpcCampaign::overflowing_balance(&case("0x0", both), &differ).is_some());
+        // Other methods are compared as usual.
+        let estimate = RpcCase::new("call", "eth_getBalance", json!([to, "latest"]));
+        assert_eq!(RpcCampaign::overflowing_balance(&estimate, &differ), None);
     }
 }
