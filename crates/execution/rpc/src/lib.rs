@@ -28,7 +28,11 @@ pub use config::{BaseEthConfigApiServer, BaseEthConfigHandler};
 pub use engine::BaseEngineApiClient;
 pub use engine::{BaseEngineApi, BaseEngineApiServer, ENGINE_CAPABILITIES};
 pub use error::{BaseEthApiError, BaseInvalidTransactionError, SequencerClientError};
-pub use eth::{BaseEthApi, BaseEthApiBuilder, BaseReceiptBuilder, BaseTimeCache};
+pub use eth::{
+    BaseEthApi, BaseEthApiBuilder, BaseReceiptBuilder, BaseTimeCache, CachedBal,
+    LocatedTransaction, PrunedHistory, PrunedHistoryAlreadySet, PrunedHistoryError,
+    PrunedHistoryFor, PrunedState, TransactionLocation,
+};
 pub use metrics::{DebugApiExtMetrics, DebugApis, EthApiExtMetrics, SequencerMetrics};
 #[cfg(feature = "client")]
 pub use miner::MinerApiExtClient;

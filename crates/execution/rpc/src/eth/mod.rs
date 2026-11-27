@@ -1,6 +1,11 @@
 //! Base `eth_` endpoint implementation.
 
 pub mod proofs;
+mod pruned;
+pub use pruned::{
+    PrunedHistory, PrunedHistoryAlreadySet, PrunedHistoryError, PrunedHistoryFor, PrunedState,
+    TransactionLocation,
+};
 pub mod receipt;
 pub mod transaction;
 
@@ -8,6 +13,8 @@ mod base_time;
 pub use base_time::BaseTimeCache;
 
 mod block;
+pub use block::CachedBal;
+pub use transaction::LocatedTransaction;
 mod call;
 mod pending_block;
 mod pubsub;
@@ -15,7 +22,7 @@ mod pubsub;
 use std::{
     fmt::{self, Formatter},
     marker::PhantomData,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use alloy_primitives::U256;
@@ -65,11 +72,14 @@ pub type EthApiNodeBackend<N, Rpc> = EthApiInner<N, Rpc>;
 pub struct BaseEthApi<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Gateway to node's core components.
     inner: Arc<BaseEthApiInner<N, Rpc>>,
+    /// Whether this handle consults the pruned-history hook; see
+    /// [`BaseEthApi::without_pruned_history`].
+    consults_history: bool,
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> Clone for BaseEthApi<N, Rpc> {
     fn clone(&self) -> Self {
-        Self { inner: Arc::clone(&self.inner) }
+        Self { inner: Arc::clone(&self.inner), consults_history: self.consults_history }
     }
 }
 
@@ -86,8 +96,9 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
             sequencer_client,
             min_suggested_priority_fee,
             base_time,
+            pruned: OnceLock::new(),
         });
-        Self { inner }
+        Self { inner, consults_history: true }
     }
 
     /// Build a [`BaseEthApi`] using [`BaseEthApiBuilder`].
@@ -301,6 +312,8 @@ pub struct BaseEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     min_suggested_priority_fee: U256,
     /// Shared cache of validated `BaseTime` timestamps.
     base_time: BaseTimeCache,
+    /// Archive serving history the node has pruned; unset leaves reth's defaults.
+    pruned: OnceLock<PrunedHistoryFor<N::Provider>>,
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApiInner<N, Rpc> {

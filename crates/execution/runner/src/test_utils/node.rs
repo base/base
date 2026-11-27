@@ -13,11 +13,12 @@ use reth_db::{
 };
 use reth_node_builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
-    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
+    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, PruningArgs, RpcServerArgs, StaticFilesArgs},
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
+use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
 
 use crate::{
@@ -58,15 +59,41 @@ impl fmt::Debug for LocalNode {
     }
 }
 
+/// RPC server settings for a test node; each unset field keeps reth's default.
+#[derive(Debug, Clone, Default)]
+pub struct LocalNodeRpc {
+    /// `--rpc.gascap`, the gas bound for `eth_call` and `eth_estimateGas`.
+    pub gas_cap: Option<u64>,
+    /// `--rpc.max-logs-per-response`.
+    pub max_logs_per_response: Option<u64>,
+    /// `--http.api` and `--ws.api` modules (reth requires them equal on a shared port).
+    pub modules: Option<RpcModuleSelection>,
+    /// `--rpc-cache.max-blocks`.
+    pub cache_blocks: Option<u32>,
+}
+
+/// Prune and static-file settings for a test node that keeps only recent history.
+///
+/// Static-file segments are pruned a whole file at a time, so a short retention window only
+/// takes effect with small `blocks_per_file_*` values.
+#[derive(Debug, Clone, Default)]
+pub struct LocalNodeRetention {
+    /// `--prune.*` settings.
+    pub pruning: PruningArgs,
+    /// `--static-files.*` settings.
+    pub static_files: StaticFilesArgs,
+}
+
 impl LocalNode {
-    /// Launch a new local node with the provided extensions and chain spec, and
-    /// `rpc_gas_cap` as its `--rpc.gascap` and `engine_api_store` as its
-    /// `--debug.engine-api-store` when set.
+    /// Launch a new local node with the provided extensions and chain spec, `rpc` as its RPC
+    /// server settings, and `engine_api_store` as its `--debug.engine-api-store` when set.
+    /// `retention` replaces the default (archive) prune and static-file settings when set.
     pub async fn new(
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<BaseChainSpec>,
-        rpc_gas_cap: Option<u64>,
+        rpc: LocalNodeRpc,
         engine_api_store: Option<PathBuf>,
+        retention: Option<LocalNodeRetention>,
     ) -> Result<Self> {
         let exec = Runtime::test();
 
@@ -85,8 +112,19 @@ impl LocalNode {
         let mut rpc_args =
             RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
         rpc_args.auth_ipc_path = unique_ipc_path;
-        if let Some(rpc_gas_cap) = rpc_gas_cap {
+        if let Some(rpc_gas_cap) = rpc.gas_cap {
             rpc_args.rpc_gas_cap = rpc_gas_cap;
+        }
+        if let Some(max) = rpc.max_logs_per_response {
+            rpc_args.rpc_max_logs_per_response = max.into();
+        }
+        if let Some(modules) = rpc.modules {
+            // reth requires the same modules on HTTP and WS when they share a port.
+            rpc_args.ws_api = Some(modules.clone());
+            rpc_args.http_api = Some(modules);
+        }
+        if let Some(max) = rpc.cache_blocks {
+            rpc_args.rpc_state_cache.max_blocks = max;
         }
 
         let base_node = BaseNode::new(RollupArgs::default());
@@ -104,6 +142,10 @@ impl LocalNode {
         // that reth 2.3.0 now consults during state-root/proof work.
         node_config.engine.persistence_threshold = 0;
         node_config.debug.engine_api_store = engine_api_store;
+        if let Some(retention) = retention {
+            node_config = node_config.with_pruning(retention.pruning);
+            node_config.static_files = retention.static_files;
+        }
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
         node_config = node_config

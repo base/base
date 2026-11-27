@@ -12,6 +12,7 @@ use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
 };
+use base_exoware_archive_rpc::{ExowareArchiveArgs, ExowareArchiveExtension};
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
@@ -267,6 +268,10 @@ pub struct StandardNodeArgs {
     /// Shadow indexer `ExEx` arguments.
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// Exoware archive arguments.
+    #[command(flatten)]
+    pub exoware_archive: ExowareArchiveArgs,
 }
 
 /// CLI arguments for a Base execution node embedded by the unified RPC command.
@@ -458,6 +463,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
             rpc: args,
             metering: MeteringArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            exoware_archive: ExowareArchiveArgs::default(),
         }
     }
 }
@@ -714,6 +720,12 @@ impl StandardBaseRethNode {
         //     and eth_call.
         //   - ProofsHistoryExtension: registers eth_getProof variants (disjoint from
         //     the above, so it can sit anywhere in the chain).
+        //   - ExowareArchiveExtension (only with --archive.exoware.url): owns the
+        //     pruned-history eth_ reads (blocks, transactions, receipts, balance,
+        //     nonce, storage, code, logs) and re-registers eth_getTransactionCount,
+        //     delegating to TxBaseRpcExtension's override, so it must stay installed
+        //     after TxBaseRpcExtension. Any other extension overriding one of these
+        //     methods must compose with it, not replace it.
         // New extensions touching the same RPC methods MUST coordinate ownership
         // here rather than relying on install order.
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig {
@@ -788,6 +800,9 @@ impl StandardBaseRethNode {
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.install_ext::<TxBaseRpcExtension>(());
+        // After `TxBaseRpcExtension`: the archive re-registers `eth_getTransactionCount` and
+        // delegates local reads to the Base transaction override.
+        runner.install_ext::<ExowareArchiveExtension>(args.exoware_archive);
         Ok(runner)
     }
 
@@ -1262,6 +1277,42 @@ mod tests {
             args.metering.metering_metered_opcodes,
             vec!["SSTORE".to_string(), "SLOAD".to_string()]
         );
+    }
+
+    /// The node command accepts the `--archive.exoware.*` flags without clashing with reth's
+    /// own args, and leaves the archive off when no url is given. Building the runner only
+    /// shows the flags reach it; the archive's installation is covered by the archive e2e.
+    #[test]
+    fn test_standard_node_args_parses_exoware_archive_flags() {
+        let off = CommandParser::<StandardNodeArgs>::parse_from(["reth"]).args;
+        assert_eq!(off.exoware_archive, ExowareArchiveArgs::default(), "no flags keeps defaults");
+        assert!(!off.exoware_archive.enabled(), "unset url leaves the archive off");
+
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--archive.exoware.url",
+            "http://127.0.0.1:9000",
+            "--archive.exoware.export",
+            "--archive.exoware.provision",
+            "--archive.exoware.segment-blocks",
+            "16",
+            "--archive.exoware.prune-grace-segments",
+            "4",
+        ])
+        .args;
+        assert_eq!(
+            args.exoware_archive,
+            ExowareArchiveArgs {
+                archive_exoware_url: Some("http://127.0.0.1:9000".to_string()),
+                archive_exoware_export: true,
+                archive_exoware_provision: true,
+                archive_exoware_segment_blocks: 16,
+                archive_exoware_prune_grace_segments: 4,
+                ..ExowareArchiveArgs::default()
+            },
+            "archive flags land in the flattened args"
+        );
+        StandardBaseRethNode::runner(args).expect("the runner builds with the archive flags");
     }
 
     #[test]

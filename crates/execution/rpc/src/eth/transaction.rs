@@ -3,10 +3,12 @@
 use std::{
     fmt::{Debug, Formatter},
     future::Future,
+    sync::Arc,
     time::Duration,
 };
 
 use alloy_consensus::{BlockHeader, Typed2718};
+use alloy_eips::BlockId;
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_chains::{BaseFeature, Upgrades};
@@ -19,16 +21,16 @@ use base_observability_events::{
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::ChainSpecProvider;
-use reth_primitives_traits::{SignedTransaction, SignerRecoverable, WithEncoded};
+use reth_primitives_traits::{RecoveredBlock, SignedTransaction, SignerRecoverable, WithEncoded};
 use reth_rpc_eth_api::{
-    EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, RpcReceipt,
-    TxInfoMapper,
+    EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, RpcNodeCoreExt,
+    RpcReceipt, TxInfoMapper,
     helpers::{EthTransactions, LoadReceipt, LoadTransaction, SpawnBlocking, spec::SignersForRpc},
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
 use reth_storage_api::{
-    BlockReader, BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider,
-    errors::ProviderError,
+    BlockBodyIndicesProvider, BlockHashReader, BlockReader, BlockReaderIdExt, ProviderBlock,
+    ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError,
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
@@ -36,7 +38,7 @@ use reth_transaction_pool::{
 use tracing::{debug, instrument, warn};
 
 use super::BaseTimeCache;
-use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError};
+use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, PrunedHistoryError};
 
 impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
@@ -219,6 +221,148 @@ where
         }
 
         Ok(None)
+    }
+
+    /// reth's default, unless a [`PrunedHistory`](crate::PrunedHistory) hook is installed: then
+    /// see [`BaseEthApi::archived_transaction_and_block`].
+    async fn transaction_and_block_and_maybe_bal(
+        &self,
+        hash: B256,
+    ) -> Result<Option<LocatedTransaction<Self::Provider>>, Self::Error> {
+        if self.pruned_history().is_some() {
+            return self.archived_transaction_and_block(hash).await;
+        }
+        let (transaction, at) = match self.transaction_by_hash_at(hash).await? {
+            None => return Ok(None),
+            Some(res) => res,
+        };
+
+        // Note: this is always either hash or pending
+        let block_hash = match at {
+            BlockId::Hash(hash) => hash.block_hash,
+            _ => return Ok(None),
+        };
+        let block_and_bal = self
+            .cache()
+            .get_recovered_block_and_maybe_bal(block_hash)
+            .await
+            .map_err(Self::Error::from_eth_err)?;
+        Ok(block_and_bal.map(|(block, bal)| (transaction, block, bal)))
+    }
+}
+
+impl<N, Rpc> BaseEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    Rpc: RpcConvert<Primitives = N::Primitives>,
+{
+    /// Where the node's transaction lookup and block indices place `hash`, without reading
+    /// the transaction itself (its body may be pruned): `None` when the lookup has no entry.
+    pub fn indexed_location(
+        &self,
+        hash: B256,
+    ) -> Result<Option<crate::TransactionLocation>, BaseEthApiError> {
+        let provider = self.provider();
+        let Some(id) = provider.transaction_id(hash).map_err(BaseEthApiError::from_eth_err)? else {
+            return Ok(None);
+        };
+        let Some(number) =
+            provider.block_by_transaction_id(id).map_err(BaseEthApiError::from_eth_err)?
+        else {
+            return Ok(None);
+        };
+        let indices = provider.block_body_indices(number).map_err(BaseEthApiError::from_eth_err)?;
+        let block_hash = provider.block_hash(number).map_err(BaseEthApiError::from_eth_err)?;
+        Ok(indices.zip(block_hash).and_then(|(indices, block_hash)| {
+            id.checked_sub(indices.first_tx_num()).map(|index| (number, block_hash, index))
+        }))
+    }
+}
+
+/// A mined transaction, its block and the block's cached access list.
+pub type LocatedTransaction<P> = (
+    TransactionSource<ProviderTx<P>>,
+    Arc<RecoveredBlock<ProviderBlock<P>>>,
+    Option<crate::eth::CachedBal>,
+);
+
+impl<N, Rpc> BaseEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+{
+    /// The transaction and its block with the pruned-history hook installed. A transaction the
+    /// node places (from its row, or from its lookup entry and block indices when the body is
+    /// pruned) keeps that identity; only one the node cannot place is located by the hook. Its
+    /// block comes from the node or, when the node pruned the body, from the hook. A pooled
+    /// transaction is `None`, as in reth. An archived block has no cached BAL, and the
+    /// transaction at the located index must hash to `hash` (else 4444).
+    pub async fn archived_transaction_and_block(
+        &self,
+        hash: B256,
+    ) -> Result<Option<LocatedTransaction<N::Provider>>, BaseEthApiError> {
+        let Some(hook) = self.pruned_history().cloned() else { return Ok(None) };
+        let local = match LoadTransaction::transaction_by_hash_at(self, hash).await {
+            Ok(Some((source, BlockId::Hash(at)))) => match &source {
+                TransactionSource::Block { block_number, index, .. } => {
+                    Some((*block_number, at.block_hash, *index))
+                }
+                TransactionSource::Pool(_) => return Ok(None),
+            },
+            Ok(Some(_)) => return Ok(None),
+            Ok(None) => None,
+            Err(err) if Self::is_prune_refusal(&err) => None,
+            Err(err) => return Err(err),
+        };
+        let local = match local {
+            Some(location) => Some(location),
+            None => self.spawn_blocking_io(move |this| this.indexed_location(hash)).await?,
+        };
+        let located = match local {
+            Some(location) => Some(location),
+            None => hook.transaction_location(hash).await.map_err(Self::pruned_error)?,
+        };
+        let Some((number, block_hash, index)) = located else { return Ok(None) };
+        let cached = self
+            .cache()
+            .get_recovered_block_and_maybe_bal(block_hash)
+            .await
+            .map_err(BaseEthApiError::from_eth_err);
+        let (block, bal) = match self.block_fallback(&cached) {
+            None => cached?.ok_or_else(|| {
+                Self::pruned_error(PrunedHistoryError::new(format!(
+                    "block {number} ({block_hash}) of transaction {hash} is missing"
+                )))
+            })?,
+            Some(hook) => {
+                let block =
+                    Self::pruned_block(&hook, number, block_hash).await?.ok_or_else(|| {
+                        Self::pruned_error(PrunedHistoryError::new(format!(
+                            "block {number} ({block_hash}) of transaction {hash} is not archived"
+                        )))
+                    })?;
+                (block, None)
+            }
+        };
+        let Some(transaction) = block
+            .find_indexed(hash)
+            .filter(|tx| tx.index() as u64 == index)
+            .map(|tx| tx.recovered_tx().cloned())
+        else {
+            return Err(Self::pruned_error(PrunedHistoryError::new(format!(
+                "block {number} does not hold transaction {hash} at index {index}"
+            ))));
+        };
+        let source = TransactionSource::Block {
+            transaction,
+            index,
+            block_hash,
+            block_number: number,
+            block_timestamp: block.timestamp(),
+            base_fee: block.base_fee_per_gas(),
+        };
+        Ok(Some((source, block, bal)))
     }
 }
 

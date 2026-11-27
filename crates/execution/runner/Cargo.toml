@@ -27,6 +27,7 @@ reth-tracing = { workspace = true, optional = true }
 reth-tasks = { workspace = true, optional = true }
 reth-node-core = { workspace = true, optional = true }
 reth-rpc-layer = { workspace = true, optional = true }
+reth-rpc-server-types = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 
 # op-reth
@@ -74,6 +75,9 @@ base-common-evm.workspace = true
 base-common-genesis.workspace = true
 base-consensus-engine.workspace = true
 base-consensus-providers.workspace = true
+base-execution-consensus.workspace = true
+reth-consensus.workspace = true
+reth-chainspec.workspace = true
 base-node-runner = { path = ".", features = ["test-utils"] }
 tempfile.workspace = true
 serde_json.workspace = true
@@ -101,6 +105,7 @@ test-utils = [
 	"dep:reth-node-core",
 	"dep:reth-primitives-traits",
 	"dep:reth-rpc-layer",
+	"dep:reth-rpc-server-types",
 	"dep:reth-tasks",
 	"dep:reth-tracing",
 	"dep:tower",

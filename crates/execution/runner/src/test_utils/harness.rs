@@ -18,6 +18,7 @@ use base_test_utils::build_test_genesis;
 use eyre::{Result, eyre};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use reth_provider::{BlockNumReader, BlockReader, BlockReaderIdExt, ChainSpecProvider};
+use reth_rpc_server_types::RpcModuleSelection;
 use tokio::time::sleep;
 
 use crate::{
@@ -25,7 +26,7 @@ use crate::{
     test_utils::{
         BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, NODE_STARTUP_DELAY_MS,
         engine::{EngineApi, IpcEngine},
-        node::{LocalNode, LocalNodeProvider},
+        node::{LocalNode, LocalNodeProvider, LocalNodeRetention, LocalNodeRpc},
         tracing::init_silenced_tracing,
     },
 };
@@ -47,8 +48,9 @@ pub struct PreparedBlock {
 pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn BaseNodeExtension>>,
     chain_spec: Option<Arc<BaseChainSpec>>,
-    rpc_gas_cap: Option<u64>,
+    rpc: LocalNodeRpc,
     engine_api_store: Option<PathBuf>,
+    retention: Option<LocalNodeRetention>,
 }
 
 impl TestHarnessBuilder {
@@ -82,13 +84,40 @@ impl TestHarnessBuilder {
     /// Set the node's `--rpc.gascap`, the gas bound for `eth_call` and
     /// `eth_estimateGas`. Defaults to reth's default.
     pub const fn with_rpc_gas_cap(mut self, rpc_gas_cap: u64) -> Self {
-        self.rpc_gas_cap = Some(rpc_gas_cap);
+        self.rpc.gas_cap = Some(rpc_gas_cap);
         self
     }
 
     /// Record every engine API message to `dir`, as `--debug.engine-api-store` does.
     pub fn with_engine_api_store(mut self, dir: PathBuf) -> Self {
         self.engine_api_store = Some(dir);
+        self
+    }
+
+    /// Prune the node's history as `--prune.*` and `--static-files.*` flags would, for tests
+    /// of short-retention nodes.
+    pub fn with_retention(mut self, retention: LocalNodeRetention) -> Self {
+        self.retention = Some(retention);
+        self
+    }
+
+    /// Set the node's `--rpc.max-logs-per-response`.
+    pub const fn with_max_logs_per_response(mut self, max: u64) -> Self {
+        self.rpc.max_logs_per_response = Some(max);
+        self
+    }
+
+    /// Serve `modules` over HTTP and WS, as `--http.api` and `--ws.api` do, instead of the
+    /// default modules.
+    pub fn with_rpc_modules(mut self, modules: RpcModuleSelection) -> Self {
+        self.rpc.modules = Some(modules);
+        self
+    }
+
+    /// Set the node's `--rpc-cache.max-blocks`, for tests that need blocks to leave the RPC
+    /// block cache.
+    pub const fn with_rpc_cache_blocks(mut self, max: u32) -> Self {
+        self.rpc.cache_blocks = Some(max);
         self
     }
 
@@ -101,9 +130,14 @@ impl TestHarnessBuilder {
             Arc::new(BaseChainSpec::from_genesis(genesis))
         });
 
-        let node =
-            LocalNode::new(self.extensions, chain_spec, self.rpc_gas_cap, self.engine_api_store)
-                .await?;
+        let node = LocalNode::new(
+            self.extensions,
+            chain_spec,
+            self.rpc,
+            self.engine_api_store,
+            self.retention,
+        )
+        .await?;
         let engine = node.engine_api()?;
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
@@ -335,7 +369,11 @@ impl TestHarness {
 mod tests {
     use alloy_primitives::U256;
     use alloy_provider::Provider;
+    use base_execution_consensus::BaseBeaconConsensus;
     use base_test_utils::{Account, DEVNET_CHAIN_ID};
+    use reth_chainspec::EthChainSpec;
+    use reth_consensus::HeaderValidator;
+    use reth_provider::HeaderProvider;
 
     use super::*;
 
@@ -355,6 +393,35 @@ mod tests {
         let new_block_number = provider.get_block_number().await?;
         assert_eq!(new_block_number, block_number + 5);
 
+        Ok(())
+    }
+
+    /// Block 1 passes full consensus validation against the test genesis. reth skips that
+    /// validation when the locally built block reaches the engine tree before `newPayload`
+    /// does, so an invalid block 1 was accepted or rejected depending on that race; this
+    /// checks it directly. The genesis `extra_data` must be Jovian-encoded (Jovian is active
+    /// at genesis): with any other encoding the base fee after genesis cannot be computed.
+    #[tokio::test]
+    async fn first_block_is_valid_against_the_test_genesis() -> Result<()> {
+        let harness = TestHarness::new().await?;
+        harness.advance_chain(1).await?;
+        let provider = harness.blockchain_provider();
+        let genesis = provider.sealed_header(0)?.expect("genesis header");
+        let first = provider.sealed_header(1)?.expect("block 1 header");
+        let chain_spec = harness.chain_spec();
+        assert_eq!(
+            chain_spec.next_block_base_fee(genesis.header(), first.timestamp),
+            Some(980_000_000),
+            "the base fee after genesis is the genesis fee lowered by 1/50 for an empty parent"
+        );
+        assert_eq!(first.base_fee_per_gas, Some(980_000_000), "block 1 carries that base fee");
+        let validated =
+            BaseBeaconConsensus::new(chain_spec).validate_header_against_parent(&first, &genesis);
+        assert!(
+            validated.is_ok(),
+            "block 1 is valid against genesis without relying on the built-payload shortcut: \
+             {validated:?}"
+        );
         Ok(())
     }
 }

@@ -156,6 +156,9 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
+exoware-sdk = "2026.11.0"
+exoware-simulator = "2026.11.0"
+roaring = "0.11.4"
 # Base Primitives
 base-bundles = { path = "crates/common/bundles" }
 base-common-signer = { path = "crates/common/signer" }
@@ -219,6 +222,8 @@ base-execution-base-tx-rpc = { path = "crates/execution/base-tx-rpc" }
 base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db" }
 base-execution-base-tx-rpc-node = { path = "crates/execution/base-tx-rpc-node" }
 base-execution-base-tx = { path = "crates/execution/base-tx", default-features = false }
+base-exoware-archive = { path = "crates/execution/exoware-archive" }
+base-exoware-archive-rpc = { path = "crates/execution/exoware-archive-rpc" }
 
 # Infra
 base-acceptance = { path = "acceptance" }

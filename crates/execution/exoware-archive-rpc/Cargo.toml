@@ -1,0 +1,78 @@
+[package]
+name = "base-exoware-archive-rpc"
+description = "Node wiring for the Exoware archive: reth block source, segment exporter and archive-backed eth_ reads"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-exoware-archive.workspace = true
+base-execution-rpc.workspace = true
+base-execution-evm.workspace = true
+base-node-runner.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-base-tx-rpc.workspace = true
+base-common-rpc-types = { workspace = true, features = ["reth"] }
+base-common-consensus = { workspace = true, features = ["std", "reth"] }
+base-common-chains.workspace = true
+
+# reth
+reth-chainspec.workspace = true
+reth-rpc-eth-api.workspace = true
+reth-rpc-convert.workspace = true
+reth-prune-types.workspace = true
+reth-storage-api = { workspace = true, features = ["db-api"] }
+reth-rpc-eth-types.workspace = true
+reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
+reth-transaction-pool.workspace = true
+reth-trie-common.workspace = true
+
+# ethereum
+revm.workspace = true
+
+# alloy
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-primitives.workspace = true
+alloy-serde.workspace = true
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+
+# rpc
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+
+# misc
+async-trait.workspace = true
+futures.workspace = true
+clap = { workspace = true, features = ["derive"] }
+humantime.workspace = true
+eyre.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
+
+[dev-dependencies]
+base-exoware-archive = { workspace = true, features = ["metrics"] }
+reth-node-metrics.workspace = true
+base-protocol.workspace = true
+base-test-utils.workspace = true
+base-common-precompiles.workspace = true
+base-execution-base-tx-rpc-node.workspace = true
+base-node-runner = { workspace = true, features = ["test-utils"] }
+exoware-simulator.workspace = true
+reth-node-core.workspace = true
+reth-rpc.workspace = true
+alloy-genesis.workspace = true
+alloy-rpc-client.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
+
+[features]
+default = []
+metrics = [ "base-exoware-archive/metrics" ]
