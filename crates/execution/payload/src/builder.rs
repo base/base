@@ -63,9 +63,9 @@ use crate::{
     HoldInterrupt, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
     PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
-    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    StateChangeEffects, StoragePrefetchMetrics, StoragePrefetchSession, ValidityEvaluationCounters,
+    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -241,6 +241,7 @@ where
         begin_dormancy: impl FnOnce(B256, u64, Option<&TransitionState>) -> Option<DormancyBuild> + 'a,
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
+        Client: Clone + 'static,
         Txs: ParkablePayloadTransactions<
             Pooled: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
@@ -266,12 +267,19 @@ where
         tracing::Span::current().record("parent_num", ctx.parent().number());
 
         let pool = self.pool.clone();
-        let builder = Builder::new(best)
+        let mut builder = Builder::new(best)
             .with_permanent_eviction(move |hashes| {
                 let _ = pool.remove_transactions(hashes);
             })
             .with_resting_predicates(self.resting_predicates.clone())
             .with_dormancy(begin_dormancy);
+        if let Some(prefetch) = &self.config.storage_prefetch {
+            // Each worker opens its own read-only view of the parent state, at most once per
+            // build; the session releases every view when the build ends.
+            builder = builder.with_storage_prefetch(
+                prefetch.parent_state_session(self.client.clone(), ctx.parent().hash()),
+            );
+        }
 
         let state_provider = crate::BuilderStateProvider::new(
             self.client.state_by_block_hash(ctx.parent().hash())?,
@@ -334,7 +342,11 @@ where
 impl<Pool, Client, Evm, N, Attrs> PayloadBuilder for BasePayloadBuilder<Pool, Client, Evm, Attrs>
 where
     N: PayloadPrimitives,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader + Clone,
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec: Upgrades>
+        + BlockReader
+        + Clone
+        + 'static,
     Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,
@@ -462,6 +474,8 @@ pub struct Builder<'a, Txs> {
     /// Starts the build against the validity pool's dormancy index; used from Denim on.
     #[debug(skip)]
     begin_dormancy: Box<BeginDormancyFn<'a>>,
+    /// Reads ahead the storage-trie pages the state root will need; ends with the build.
+    storage_prefetch: Option<StoragePrefetchSession>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
@@ -481,6 +495,7 @@ impl<'a, Txs> Builder<'a, Txs> {
             evict_permanently_rejected: Box::new(|_| {}),
             resting_predicates: None,
             begin_dormancy: Box::new(|_, _, _| None),
+            storage_prefetch: None,
         }
     }
 
@@ -508,6 +523,13 @@ impl<'a, Txs> Builder<'a, Txs> {
         self.begin_dormancy = Box::new(begin);
         self
     }
+
+    /// Prefetches, during execution, the storage-trie pages the state root will need for
+    /// contracts the build writes heavily. The session ends when the build returns.
+    pub fn with_storage_prefetch(mut self, session: StoragePrefetchSession) -> Self {
+        self.storage_prefetch = Some(session);
+        self
+    }
 }
 
 impl<Txs> Builder<'_, Txs> {
@@ -531,7 +553,13 @@ impl<Txs> Builder<'_, Txs> {
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
-        let Self { best, evict_permanently_rejected, resting_predicates, begin_dormancy } = self;
+        let Self {
+            best,
+            evict_permanently_rejected,
+            resting_predicates,
+            begin_dormancy,
+            storage_prefetch,
+        } = self;
         // The pool iterator's hold watches the job's cancellation through a weak reference. A
         // dropped `CancelOnDrop` clone cancels the job, so only this owner, dropped with `ctx` when
         // the build returns, keeps one.
@@ -548,8 +576,13 @@ impl<Txs> Builder<'_, Txs> {
 
         let mut builder = ctx.block_builder(&mut db)?;
 
+        // The prefetch warms pages for the serial state root. A parallel state-root job reads
+        // the trie itself while the block executes, so the prefetch is skipped alongside it.
+        let storage_prefetch = storage_prefetch.filter(|_| state_root_handle.is_none());
         if let Some(task) = state_root_handle.as_mut() {
             builder.evm_mut().db_mut().set_state_hook(Some(Box::new(task.take_state_hook())));
+        } else if let Some(prefetch) = &storage_prefetch {
+            builder.evm_mut().db_mut().set_state_hook(Some(Box::new(prefetch.hook())));
         }
 
         // 1. apply pre-execution changes
@@ -608,6 +641,14 @@ impl<Txs> Builder<'_, Txs> {
                 resting.as_ref(),
                 dormancy.as_mut(),
             )?;
+            if cancelled.is_none()
+                && let Some(prefetch) = &storage_prefetch
+            {
+                // The build loop stopped selecting transactions. Dropping the prefetch hook sends
+                // each triggered contract's last partial chunk now, ahead of the state root.
+                prefetch.end_execution();
+                builder.evm_mut().db_mut().set_state_hook(None);
+            }
             if !info.permanently_rejected_txs.is_empty() {
                 let rejected = std::mem::take(&mut info.permanently_rejected_txs);
                 let count = rejected.len();
@@ -637,6 +678,16 @@ impl<Txs> Builder<'_, Txs> {
             }
         }
         let execution_duration = build_start.elapsed();
+        // Only a prefetching build reads the clock here, to report how long sealing took.
+        let state_root_start = storage_prefetch.as_ref().map(|prefetch| {
+            let start = Instant::now();
+            // Without pool transactions the hook is still installed; ending execution here sends
+            // the last partial chunks before the root starts.
+            prefetch.end_execution();
+            builder.evm_mut().db_mut().set_state_hook(None);
+            prefetch.mark_root_started();
+            start
+        });
         // Start the end-of-block sweep now so it overlaps the state root.
         let resting = resting
             .zip(resting_predicates.as_ref())
@@ -676,6 +727,9 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list,
         } = debug_span!("finish_payload", block_num)
             .in_scope(|| builder.finish(state_provider, state_root))?;
+        let prefetched = storage_prefetch
+            .zip(state_root_start)
+            .is_some_and(|(prefetch, start)| prefetch.finish(block_num, start.elapsed()));
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -711,7 +765,14 @@ impl<Txs> Builder<'_, Txs> {
         // records its inclusion.
         if !no_tx_pool {
             BuilderMetrics::record_inclusion(&info.inclusion);
-            BuilderMetrics::record_native_build(execution_duration, build_start.elapsed());
+            let total = build_start.elapsed();
+            BuilderMetrics::record_native_build(execution_duration, total);
+            if prefetched {
+                // The same blocks and span as `native_payload_state_root_duration`, so the two
+                // compare directly.
+                StoragePrefetchMetrics::storage_prefetch_block_state_root_duration()
+                    .record(total.saturating_sub(execution_duration).as_secs_f64());
+            }
         }
 
         if no_tx_pool || ctx.is_one_shot_building_active() {
@@ -3630,5 +3691,488 @@ mod tests {
             "the cache hit must be timed as well as the read-through; recording only the \
              read-through would hide the benefit of a warm cache"
         );
+    }
+
+    mod storage_prefetch {
+        use std::{collections::BTreeMap, sync::Arc, thread, time::Duration};
+
+        use alloy_consensus::{Header, SignableTransaction, TxEip1559};
+        use alloy_eips::eip2718::Encodable2718;
+        use alloy_genesis::GenesisAccount;
+        use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, keccak256};
+        use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
+        use base_common_evm::BaseTime;
+        use base_execution_txpool::BasePooledTransaction;
+        use reth_basic_payload_builder::BuildOutcomeKind;
+        use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
+        use reth_chainspec::{ChainSpecBuilder, MAINNET};
+        use reth_db_common::init::init_genesis;
+        use reth_execution_types::BlockExecutionOutput;
+        use reth_primitives_traits::{Account, RecoveredBlock, SignedTransaction};
+        use reth_provider::{
+            HeaderProvider, ProviderFactory, StateProviderFactory,
+            providers::BlockchainProvider,
+            test_utils::{MockNodeTypesWithDB, create_test_provider_factory_with_chain_spec},
+        };
+        use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
+        use reth_storage_api::{StateProvider, StateRootProvider, errors::ProviderError};
+        use reth_transaction_pool::PoolTransaction;
+        use reth_trie_common::{HashedPostState, HashedStorage, SortedTrieData};
+        use revm::{
+            database::OnStateHook,
+            state::{Account as EvmAccount, EvmState, EvmStorageSlot, TransactionId},
+        };
+
+        use super::{
+            Builder, DENIM_TIMESTAMP, TestParkableTransactions, funded_provider,
+            pool_payload_context, sequencer_attribute_tx,
+        };
+        use crate::{
+            BaseBuiltPayload, StoragePrefetchBlockState, StoragePrefetchOpener,
+            StoragePrefetchPool, StoragePrefetchReader, StoragePrefetchSession,
+        };
+
+        /// Contract whose code overwrites its first [`HEAVY_WRITES`] slots.
+        const HEAVY_WRITER: Address = Address::repeat_byte(0xab);
+        /// Existing slots the transaction changes; above the default gate of 32.
+        const HEAVY_WRITES: u64 = 100;
+        /// Slots the contract holds in the parent state.
+        const HEAVY_STORAGE: u64 = 400;
+        /// Slots of the heavy writer that the unpersisted child block rewrites; the heavy write
+        /// does not touch them, so execution reads the same values on either parent.
+        const CHILD_SLOTS: std::ops::Range<u64> = 200..260;
+
+        /// `SSTORE(i, 0x1000 + i)` for each slot `i` below [`HEAVY_WRITES`], then `STOP`.
+        fn heavy_writer_code() -> Bytes {
+            let mut code = Vec::new();
+            for slot in 0..HEAVY_WRITES as u16 {
+                code.push(0x61); // PUSH2 value
+                code.extend_from_slice(&(0x1000 + slot).to_be_bytes());
+                code.push(0x61); // PUSH2 slot
+                code.extend_from_slice(&slot.to_be_bytes());
+                code.push(0x55); // SSTORE
+            }
+            code.push(0x00);
+            code.into()
+        }
+
+        fn heavy_writer_storage() -> impl Iterator<Item = (B256, U256)> {
+            (0..HEAVY_STORAGE).map(|slot| (B256::from(U256::from(slot)), U256::from(slot + 1)))
+        }
+
+        fn heavy_write_transaction() -> BasePooledTransaction {
+            let envelope = BaseTxEnvelope::Eip1559(
+                TxEip1559 {
+                    chain_id: 8_453,
+                    nonce: 0,
+                    gas_limit: 1_000_000,
+                    max_fee_per_gas: 2_000_000_000,
+                    max_priority_fee_per_gas: 1,
+                    to: TxKind::Call(HEAVY_WRITER),
+                    ..Default::default()
+                }
+                .into_signed(Signature::test_signature()),
+            );
+            let encoded_len = envelope.encode_2718_len();
+            BasePooledTransaction::new(
+                envelope.try_into_recovered().expect("test signature must recover"),
+                encoded_len,
+            )
+        }
+
+        /// The parent state twice: for execution, and in MDBX with its tries, which the serial
+        /// state root and the prefetch read.
+        struct ParentState {
+            execution: StateProviderTest,
+            factory: ProviderFactory<MockNodeTypesWithDB>,
+        }
+
+        impl ParentState {
+            fn new() -> Self {
+                // The test signature recovers to a sender that depends on the signed body.
+                let sender = heavy_write_transaction().sender();
+                let mut execution = funded_provider(&[sender]);
+                execution.insert_account(
+                    HEAVY_WRITER,
+                    Account::default(),
+                    Some(heavy_writer_code()),
+                    heavy_writer_storage().collect(),
+                );
+
+                let mut genesis = MAINNET.genesis.clone();
+                genesis.alloc = BTreeMap::from([
+                    (sender, GenesisAccount::default().with_balance(U256::MAX)),
+                    (
+                        Predeploys::BASE_TIME,
+                        GenesisAccount::default()
+                            .with_code(Some(BaseTime::proxy_bytecode()))
+                            .with_storage(Some(BTreeMap::from([(
+                                B256::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+                                B256::left_padding_from(Predeploys::PROXY_ADMIN.as_slice()),
+                            )]))),
+                    ),
+                    (
+                        HEAVY_WRITER,
+                        GenesisAccount::default()
+                            .with_code(Some(heavy_writer_code()))
+                            .with_storage(Some(
+                                heavy_writer_storage()
+                                    .map(|(slot, value)| (slot, B256::from(value)))
+                                    .collect(),
+                            )),
+                    ),
+                ]);
+                // The full genesis, header included, so a `BlockchainProvider` can open on it.
+                let factory = create_test_provider_factory_with_chain_spec(Arc::new(
+                    ChainSpecBuilder::mainnet().genesis(genesis).build(),
+                ));
+                init_genesis(&factory).expect("insert parent state");
+                Self { execution, factory }
+            }
+
+            fn opener(&self) -> StoragePrefetchOpener {
+                let factory = self.factory.clone();
+                Box::new(move || factory.latest().map(|state| state as StoragePrefetchReader))
+            }
+
+            /// A canonical in-memory child of the persisted parent that rewrites slots
+            /// [`CHILD_SLOTS`] of the heavy writer, as a sequencer's parent block always is, and
+            /// the provider that serves it through reth's overlay of unpersisted blocks.
+            fn unpersisted_child(&self) -> (BlockchainProvider<MockNodeTypesWithDB>, B256) {
+                let client = BlockchainProvider::new(self.factory.clone()).expect("open provider");
+                let genesis = self.factory.sealed_header(0).expect("read").expect("genesis");
+                let hashed_state = HashedPostState::from_hashed_storage(
+                    keccak256(HEAVY_WRITER),
+                    HashedStorage::from_iter(CHILD_SLOTS.map(|slot| {
+                        (keccak256(B256::from(U256::from(slot))), U256::from(0x5000 + slot))
+                    })),
+                );
+                let (state_root, trie_updates) = self
+                    .factory
+                    .latest()
+                    .expect("parent state")
+                    .state_root_with_updates(hashed_state.clone())
+                    .expect("child state root");
+                let header = Header {
+                    parent_hash: genesis.hash(),
+                    number: 1,
+                    state_root,
+                    ..Default::default()
+                };
+                let block = RecoveredBlock::new_unhashed(
+                    reth_ethereum_primitives::Block { header, body: Default::default() },
+                    Vec::new(),
+                );
+                let child = block.hash();
+                let executed = ExecutedBlock::new(
+                    Arc::new(block),
+                    Arc::new(BlockExecutionOutput {
+                        result: Default::default(),
+                        state: Default::default(),
+                    }),
+                    SortedTrieData::new(
+                        Arc::new(hashed_state.into_sorted()),
+                        Arc::new(trie_updates.into_sorted()),
+                    ),
+                );
+                client
+                    .canonical_in_memory_state()
+                    .update_chain(NewCanonicalChain::Commit { new: vec![executed] });
+                (client, child)
+            }
+
+            /// Builds the heavy-write block on this parent with the serial state root, as in
+            /// production, optionally prefetching.
+            fn build(
+                &self,
+                prefetch: Option<StoragePrefetchSession>,
+            ) -> BaseBuiltPayload<BasePrimitives> {
+                let root_state = self.factory.latest().expect("parent state");
+                self.build_on(root_state.as_ref(), prefetch)
+            }
+
+            /// Builds the heavy-write block with its serial state root on `root_state`.
+            fn build_on(
+                &self,
+                root_state: &dyn StateProvider,
+                prefetch: Option<StoragePrefetchSession>,
+            ) -> BaseBuiltPayload<BasePrimitives> {
+                self.build_with(root_state, prefetch, false)
+            }
+
+            /// Replays the heavy write as a `no_tx_pool` build, the way derived attributes and the
+            /// payload-builder cutover rebuild a block the sequencer already composed.
+            fn build_replay(
+                &self,
+                prefetch: Option<StoragePrefetchSession>,
+            ) -> BaseBuiltPayload<BasePrimitives> {
+                let root_state = self.factory.latest().expect("parent state");
+                self.build_with(root_state.as_ref(), prefetch, true)
+            }
+
+            /// Builds the heavy write from the pool, or from the payload attributes on a replay.
+            fn build_with(
+                &self,
+                root_state: &dyn StateProvider,
+                prefetch: Option<StoragePrefetchSession>,
+                replay: bool,
+            ) -> BaseBuiltPayload<BasePrimitives> {
+                let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+                let pooled = if replay {
+                    ctx.config.attributes.no_tx_pool = true;
+                    ctx.config.attributes.transactions =
+                        vec![sequencer_attribute_tx(&heavy_write_transaction())];
+                    Vec::new()
+                } else {
+                    vec![heavy_write_transaction()]
+                };
+                let transactions = TestParkableTransactions::new(pooled);
+                let mut builder = Builder::new(|_, _, _| transactions);
+                if let Some(prefetch) = prefetch {
+                    builder = builder.with_storage_prefetch(prefetch);
+                }
+                let outcome = builder
+                    .build(
+                        StateProviderDatabase::new((&self.execution).into_evm_state_provider()),
+                        root_state,
+                        None,
+                        ctx,
+                    )
+                    .expect("payload must build");
+                match outcome {
+                    BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => {
+                        payload
+                    }
+                    other => panic!("expected a built payload, got {other:?}"),
+                }
+            }
+        }
+
+        fn block_bytes(payload: &BaseBuiltPayload<BasePrimitives>) -> Vec<u8> {
+            alloy_rlp::encode(payload.block().clone_block())
+        }
+
+        fn pool(workers: usize, queue_capacity: usize) -> StoragePrefetchPool {
+            StoragePrefetchPool::spawn_sized(workers, queue_capacity).expect("spawn pool")
+        }
+
+        fn wait_until_settled(state: &StoragePrefetchBlockState) {
+            for _ in 0..10_000 {
+                if state.stats().is_settled() && state.stats().live_readers == 0 {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            panic!("prefetch did not settle: {:?}", state.stats());
+        }
+
+        /// Must hold: the prefetch reads the parent state while the serial root does, and the
+        /// block, its state root included, is byte-identical to a build without it.
+        #[test]
+        fn storage_prefetch_does_not_change_the_payload() {
+            let parent = ParentState::new();
+            let without = parent.build(None);
+            let included = without.block().body().transactions.len();
+            assert_eq!(included, 1, "the heavy write must be included");
+
+            let pool = pool(4, 256);
+            let session = pool.session(parent.opener());
+            let state = Arc::clone(session.state());
+            let with = parent.build(Some(session));
+
+            assert_eq!(with.block().state_root, without.block().state_root);
+            assert_eq!(block_bytes(&with), block_bytes(&without));
+            assert_eq!(with.block().hash(), without.block().hash());
+
+            wait_until_settled(&state);
+            let stats = state.stats();
+            assert_eq!(stats.slots_issued, HEAVY_WRITES);
+            assert_eq!(stats.chunks_dropped, 0);
+            assert_eq!(stats.errors, 0, "prefetch proofs must succeed on the parent state");
+            assert_eq!(
+                stats.chunks_completed + stats.chunks_cancelled,
+                HEAVY_WRITES.div_ceil(StoragePrefetchPool::CHUNK_SLOTS as u64)
+            );
+            assert_eq!(stats.live_readers, 0, "a reader outlived the build");
+        }
+
+        /// The prefetch state-root histogram compares with
+        /// `native_payload_state_root_duration` on the same blocks: a replay that triggers the
+        /// prefetch records neither, and a pool build that triggers it records the native sample.
+        #[cfg(feature = "metrics")]
+        #[test]
+        fn the_prefetch_root_duration_matches_the_native_sample_of_pool_builds_only() {
+            const PREFETCH: &str = "base_builder_storage_prefetch_block_state_root_duration";
+            const NATIVE: &str = "base_builder_native_payload_state_root_duration";
+            let parent = ParentState::new();
+            let pool = pool(4, 256);
+            let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+            let handle = recorder.handle();
+
+            metrics::with_local_recorder(&recorder, || {
+                let session = pool.session(parent.opener());
+                let state = Arc::clone(session.state());
+                let replay = parent.build_replay(Some(session));
+                assert_eq!(replay.block().body().transactions.len(), 1);
+                assert!(state.stats().chunks_issued > 0, "the replay must trigger the prefetch");
+                let rendered = handle.render();
+                assert!(!rendered.contains(PREFETCH), "a replay recorded a prefetch sample");
+                assert!(!rendered.contains(NATIVE));
+
+                let session = pool.session(parent.opener());
+                let pool_build = Arc::clone(session.state());
+                parent.build(Some(session));
+                // The process must not exit while a worker or the release thread still reads
+                // MDBX.
+                wait_until_settled(&state);
+                wait_until_settled(&pool_build);
+            });
+
+            let rendered = handle.render();
+            let sample = |name: &str, suffix: &str| {
+                let prefix = format!("{name}_{suffix} ");
+                rendered
+                    .lines()
+                    .find_map(|line| line.strip_prefix(prefix.as_str()))
+                    .unwrap_or_else(|| panic!("no `{prefix}` in {rendered}"))
+                    .to_string()
+            };
+            assert_eq!(sample(PREFETCH, "count"), "1");
+            assert_eq!(sample(NATIVE, "count"), "1");
+            assert_eq!(sample(PREFETCH, "sum"), sample(NATIVE, "sum"));
+        }
+
+        /// The prefetch reads real storage-trie pages: every chunk of the heavy write proves
+        /// successfully on the MDBX parent state when the session outlives the reads.
+        #[test]
+        fn storage_prefetch_proofs_succeed_on_the_parent_state() {
+            let parent = ParentState::new();
+            let pool = pool(2, 256);
+            let session = pool.session(parent.opener());
+            let state = Arc::clone(session.state());
+            let mut writes = EvmAccount::default();
+            for slot in 0..HEAVY_WRITES {
+                let mut value = EvmStorageSlot::new(U256::from(slot + 1), TransactionId::default());
+                value.present_value = U256::from(0x1000 + slot);
+                writes.storage.insert(U256::from(slot), value);
+            }
+            let mut hook = session.hook();
+            hook.on_state(EvmState::from_iter([(HEAVY_WRITER, writes)]));
+            session.mark_root_started();
+            drop(hook);
+
+            for _ in 0..10_000 {
+                if session.state().stats().is_settled() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            let stats = session.state().stats();
+            assert_eq!(stats.errors, 0, "prefetch proofs must succeed on the parent state");
+            assert_eq!(
+                stats.chunks_completed,
+                HEAVY_WRITES.div_ceil(StoragePrefetchPool::CHUNK_SLOTS as u64)
+            );
+            session.finish(1, Duration::ZERO);
+            // The release thread frees the parked readers after the session ends; the process
+            // must not exit while it still holds MDBX transactions.
+            wait_until_settled(&state);
+        }
+
+        /// Must hold: on a parent that is still in memory, as on a sequencer, the prefetch reads
+        /// through the same `state_by_block_hash` overlay provider production opens, every proof
+        /// succeeds, and the block is byte-identical to a build without it.
+        #[test]
+        fn storage_prefetch_through_the_unpersisted_parent_overlay_does_not_change_the_payload() {
+            let parent = ParentState::new();
+            let (client, child) = parent.unpersisted_child();
+            let root_state = client.state_by_block_hash(child).expect("in-memory parent state");
+            let without = parent.build_on(root_state.as_ref(), None);
+            assert_ne!(
+                without.block().state_root,
+                parent.build(None).block().state_root,
+                "the state root must read the in-memory child"
+            );
+
+            let pool = pool(4, 256);
+            let session = pool.parent_state_session(client.clone(), child);
+            let state = Arc::clone(session.state());
+            let with = parent.build_on(root_state.as_ref(), Some(session));
+            assert_eq!(with.block().state_root, without.block().state_root);
+            assert_eq!(block_bytes(&with), block_bytes(&without));
+            assert_eq!(with.block().hash(), without.block().hash());
+            wait_until_settled(&state);
+            assert_eq!(state.stats().errors, 0, "prefetch proofs must succeed on the overlay");
+
+            // Every chunk proves on the overlay when the session outlives the reads.
+            let session = pool.parent_state_session(client, child);
+            let state = Arc::clone(session.state());
+            let mut writes = EvmAccount::default();
+            for slot in CHILD_SLOTS.start - 30..CHILD_SLOTS.end {
+                let mut value = EvmStorageSlot::new(U256::from(slot + 1), TransactionId::default());
+                value.present_value = U256::from(0x9000 + slot);
+                writes.storage.insert(U256::from(slot), value);
+            }
+            let mut hook = session.hook();
+            hook.on_state(EvmState::from_iter([(HEAVY_WRITER, writes)]));
+            session.end_execution();
+            drop(hook);
+            session.mark_root_started();
+            let chunks = (CHILD_SLOTS.end - CHILD_SLOTS.start + 30)
+                .div_ceil(StoragePrefetchPool::CHUNK_SLOTS as u64);
+            for _ in 0..10_000 {
+                if session.state().stats().is_settled() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            let stats = session.state().stats();
+            assert_eq!(stats.errors, 0, "prefetch proofs must succeed on the overlay");
+            assert_eq!(stats.chunks_completed, chunks);
+            session.finish(1, Duration::ZERO);
+            // The release thread frees the parked readers after the session ends; the process
+            // must not exit while it still holds MDBX transactions.
+            wait_until_settled(&state);
+        }
+
+        /// Must hold: a pool whose only worker is stuck neither delays nor changes the build.
+        /// The overflow is dropped, the queued chunk is discarded when the build ends, and the
+        /// stuck chunk releases everything once it returns.
+        #[test]
+        fn a_stalled_storage_prefetch_pool_neither_delays_nor_changes_the_payload() {
+            let parent = Arc::new(ParentState::new());
+            let without = parent.build(None);
+
+            let (release_tx, release_rx) = crossbeam_channel::bounded::<()>(0);
+            let stalled: StoragePrefetchOpener = Box::new(move || {
+                let _ = release_rx.recv();
+                Err(ProviderError::UnsupportedProvider)
+            });
+            let pool = pool(1, 1);
+            let session = pool.session(stalled);
+            let state = Arc::clone(session.state());
+
+            let (built_tx, built_rx) = crossbeam_channel::bounded(1);
+            let builder_parent = Arc::clone(&parent);
+            thread::spawn(move || {
+                let _ = built_tx.send(builder_parent.build(Some(session)));
+            });
+            let with = built_rx
+                .recv_timeout(Duration::from_secs(30))
+                .expect("the build waited on a stalled prefetch pool");
+            assert_eq!(block_bytes(&with), block_bytes(&without));
+
+            assert!(state.is_cancelled(), "the build returned without ending its prefetch");
+            let stats = state.stats();
+            let chunks = HEAVY_WRITES.div_ceil(StoragePrefetchPool::CHUNK_SLOTS as u64);
+            assert_eq!(stats.chunks_issued + stats.chunks_dropped, chunks);
+            assert!(stats.chunks_dropped >= chunks - 2, "overflow must be dropped: {stats:?}");
+
+            drop(release_tx);
+            wait_until_settled(&state);
+            let stats = state.stats();
+            assert!(stats.chunks_started <= 1, "a chunk started after the build ended: {stats:?}");
+            assert_eq!(stats.chunks_started + stats.chunks_cancelled, stats.chunks_issued);
+        }
     }
 }

@@ -20,6 +20,7 @@ use crate::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
     RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
     ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
+    StoragePrefetchPool,
 };
 
 /// Settings for the Base payload builder.
@@ -57,6 +58,9 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Pool that reads ahead, during execution, the storage-trie pages the state root will need
+    /// for contracts a block writes heavily. `None` disables the prefetch.
+    pub storage_prefetch: Option<Arc<StoragePrefetchPool>>,
 }
 
 impl Default for BaseBuilderConfig {
@@ -71,6 +75,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            storage_prefetch: None,
         }
     }
 }
@@ -92,6 +97,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            storage_prefetch: None,
         }
     }
 

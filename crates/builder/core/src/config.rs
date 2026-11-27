@@ -10,7 +10,7 @@ use base_execution_payload_builder::{
 
 use crate::{
     BuilderMetrics, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
-    SharedMeteringProvider,
+    SharedMeteringProvider, StoragePrefetchPool,
 };
 
 /// Configuration values for the Base block builder.
@@ -56,6 +56,10 @@ pub struct BuilderConfig {
     /// IO from the engine's validation-path IO. Adds overhead to every state read, so this is
     /// driven by reth's `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+
+    /// Pool that reads ahead, during execution, the storage-trie pages the state root will need
+    /// for contracts a block writes heavily. `None` disables the prefetch.
+    pub storage_prefetch: Option<Arc<StoragePrefetchPool>>,
 }
 
 impl BuilderConfig {
@@ -74,6 +78,7 @@ impl BuilderConfig {
             resource_metering: self.resource_metering.clone(),
             rejection_cache: self.rejection_cache.clone(),
             state_provider_metrics: self.state_provider_metrics,
+            storage_prefetch: self.storage_prefetch.clone(),
         }
     }
 
@@ -99,6 +104,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .field("state_provider_metrics", &self.state_provider_metrics)
+            .field("storage_prefetch", &self.storage_prefetch.is_some())
             .finish()
     }
 }
@@ -120,6 +126,7 @@ impl Default for BuilderConfig {
             rejection_cache: RejectionCache::default(),
             manifest_precheck_enabled: true,
             state_provider_metrics: false,
+            storage_prefetch: None,
         }
     }
 }
