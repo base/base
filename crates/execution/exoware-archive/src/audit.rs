@@ -7,7 +7,8 @@
 //!
 //! Block families (`0x10`–`0x15`) are keyed by block number, so the audit enumerates every
 //! stored key of the segment's block range, through the whole prefix interval of the last
-//! block's key, and reports keys that the rebuild does not produce; those rows also enter the
+//! block's key, reassembles values from their continuation parts, reports an absent part as a
+//! missing row, and reports keys that the rebuild does not produce; those rows also enter the
 //! digest of the stored rows, so they show as a digest mismatch too. Blocks are read and
 //! rebuilt in batches (`batch_blocks`), and the digest is computed per family as rows are read,
 //! the same way the exporter computes the marker's.
@@ -16,14 +17,15 @@
 //! by scanning the whole family. The audit checks every expected hash-led row but cannot report
 //! extras there.
 
+use std::collections::BTreeMap;
+
 use alloy_primitives::{B256, hex};
 use bytes::Bytes;
-use exoware_sdk::RangeMode;
 
 use crate::{
     ArchiveConfig, ArchiveError, ArchiveKey, ArchiveMetrics, ArchiveStore, BlockCodec, BlockData,
-    BlockVerifier, DEFAULT_EXPORT_BATCH_BLOCKS, ExowareArchive, Family, SegmentBuilder,
-    SegmentDigest, StoreSession,
+    BlockVerifier, DEFAULT_EXPORT_BATCH_BLOCKS, ExowareArchive, Family, PartAssembly,
+    SegmentBuilder, SegmentDigest, StoreSession, ValueParts,
 };
 
 /// One problem found by an audit.
@@ -114,6 +116,17 @@ pub struct SegmentAuditor<S> {
     pub verifier: BlockVerifier,
     /// Blocks read and rebuilt at a time, as the exporter streams them.
     pub batch_blocks: u64,
+}
+
+/// One block's value of one family while the audit reads its rows.
+#[derive(Debug, Clone)]
+enum Cell {
+    /// No base row seen.
+    Missing,
+    /// Base row seen; continuation parts are appended as they arrive.
+    Building(PartAssembly),
+    /// A finding was recorded for the value.
+    Failed,
 }
 
 /// State carried across the batches of one audit.
@@ -222,48 +235,104 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
         to: u64,
     ) -> Result<(), ArchiveError> {
         let n = (to - from + 1) as usize;
+        let parts = ValueParts::default();
         let mut columns: Vec<Vec<Option<Bytes>>> = Vec::with_capacity(Family::BLOCK.len());
+        // Stored block rows of the batch by key, base and continuation rows alike, to compare
+        // with the rebuild.
+        let mut stored_rows: BTreeMap<Bytes, Bytes> = BTreeMap::new();
         for family in Family::BLOCK {
-            // Block keys have a fixed length, so every key between block `to`'s key and the
-            // next block's key extends block `to`'s key. Scanning through the next block's key
-            // (inclusive) covers that whole prefix interval; the next key itself belongs to the
-            // next batch or segment and is skipped. The limit leaves room for malformed keys
-            // between the expected ones.
+            // Every key between block `to`'s key and the next block's key extends block `to`'s
+            // key: its continuation parts and any malformed key. Scanning through the next
+            // block's key (inclusive) covers that whole prefix interval; the next key itself
+            // belongs to the next batch or segment and is skipped. The scan pages, so any number
+            // of continuation parts and malformed keys is read.
             let next_key = to.checked_add(1).map(|next| ArchiveKey::block(family, next));
             let end = next_key.clone().unwrap_or_else(|| {
                 let mut end = ArchiveKey::block(family, to).to_vec();
                 end.extend([0xff; 64]);
                 Bytes::from(end)
             });
-            let rows = session
-                .range(
-                    &ArchiveKey::block(family, from),
-                    &end,
-                    n.saturating_mul(2).saturating_add(1),
-                    RangeMode::Forward,
-                )
-                .await?;
-            let mut column = vec![None; n];
+            let rows = ExowareArchive::<S>::range_all(
+                session,
+                &ArchiveKey::block(family, from),
+                &end,
+                n.saturating_mul(2).saturating_add(1),
+            )
+            .await?;
+            let mut cells: Vec<Cell> = vec![Cell::Missing; n];
             for (key, value) in rows {
                 if next_key.as_ref() == Some(&key) {
                     continue;
                 }
                 // Rows of one family arrive in key order, batch after batch.
                 pass.stored.update(family, &key, &value);
-                match ArchiveKey::number(&key)
-                    .filter(|b| (from..=to).contains(b) && ArchiveKey::family(&key) == Some(family))
-                {
-                    Some(number) => column[(number - from) as usize] = Some(value),
-                    None => pass
-                        .unexpected
-                        .push(AuditFinding::UnexpectedRow { family, key: hex::encode(&key) }),
+                let Some(number) = ArchiveKey::number(&key).filter(|b| {
+                    (from..=to).contains(b) && ArchiveKey::family(&key) == Some(family)
+                }) else {
+                    pass.unexpected
+                        .push(AuditFinding::UnexpectedRow { family, key: hex::encode(&key) });
+                    continue;
+                };
+                let cell = &mut cells[(number - from) as usize];
+                match (ArchiveKey::part(&key), &mut *cell) {
+                    (None, _) => match parts.assemble(family, number, value.clone()) {
+                        Ok(assembly) => *cell = Cell::Building(assembly),
+                        Err(err) => {
+                            pass.findings.push(AuditFinding::BlockInvalid {
+                                block: number,
+                                reason: err.to_string(),
+                            });
+                            *cell = Cell::Failed;
+                        }
+                    },
+                    (Some(_), Cell::Building(assembly)) if assembly.next_part().is_none() => {
+                        // The rebuild never produces a part after a short one.
+                        pass.unexpected
+                            .push(AuditFinding::UnexpectedRow { family, key: hex::encode(&key) });
+                        continue;
+                    }
+                    (Some(part), Cell::Building(assembly))
+                        if assembly.next_part() != Some(part) =>
+                    {
+                        let missing = assembly.next_key().unwrap_or_default();
+                        pass.findings
+                            .push(AuditFinding::RowMissing { family, key: hex::encode(&missing) });
+                        *cell = Cell::Failed;
+                    }
+                    (Some(part), Cell::Building(assembly)) => {
+                        if let Err(err) = assembly.push(part, &value) {
+                            pass.findings.push(AuditFinding::BlockInvalid {
+                                block: number,
+                                reason: err.to_string(),
+                            });
+                            *cell = Cell::Failed;
+                        }
+                    }
+                    // A part without its base row: the base row is reported missing below.
+                    (Some(_), Cell::Missing | Cell::Failed) => {}
                 }
+                stored_rows.insert(key, value);
             }
-            for (i, value) in column.iter().enumerate() {
-                if value.is_none() {
-                    pass.findings
-                        .push(AuditFinding::BlockRowMissing { family, block: from + i as u64 });
-                }
+            let mut column = Vec::with_capacity(n);
+            for (i, cell) in cells.into_iter().enumerate() {
+                let block = from + i as u64;
+                column.push(match cell {
+                    Cell::Missing => {
+                        pass.findings.push(AuditFinding::BlockRowMissing { family, block });
+                        None
+                    }
+                    Cell::Failed => None,
+                    Cell::Building(assembly) => match assembly.next_key() {
+                        Some(missing) => {
+                            pass.findings.push(AuditFinding::RowMissing {
+                                family,
+                                key: hex::encode(&missing),
+                            });
+                            None
+                        }
+                        None => assembly.finish().ok(),
+                    },
+                });
             }
             columns.push(column);
         }
@@ -299,10 +368,15 @@ impl<S: ArchiveStore> SegmentAuditor<S> {
         let rebuilt = pass.builder.push_batch(&blocks)?;
         for (key, expected) in rebuilt {
             let family = ArchiveKey::family(&key).unwrap_or(Family::Config);
-            let Some(index) = Family::BLOCK.iter().position(|f| *f == family) else { continue };
-            let number = ArchiveKey::number(&key).unwrap_or_default();
-            if columns[index][(number - from) as usize].as_ref() != Some(&expected) {
-                pass.findings.push(AuditFinding::RowMismatch { family, key: hex::encode(&key) });
+            match stored_rows.get(&key) {
+                None => {
+                    pass.findings.push(AuditFinding::RowMissing { family, key: hex::encode(&key) })
+                }
+                Some(value) if *value != expected => {
+                    pass.findings
+                        .push(AuditFinding::RowMismatch { family, key: hex::encode(&key) });
+                }
+                Some(_) => {}
             }
         }
         Ok(())

@@ -322,6 +322,24 @@ impl ChainFixture {
         Self::new(5 * TEST_N + 1, 13)
     }
 
+    /// Replaces the deposit input of block `number` with `len` zero bytes, so the block's body
+    /// grows past any size of interest, and relinks every later header. Receipts, changesets
+    /// and state are unchanged: the input does not enter them.
+    pub fn with_deposit_input(mut self, number: u64, len: usize) -> Self {
+        let block = &mut self.blocks[number as usize];
+        let BaseTxEnvelope::Deposit(deposit) = &block.body.transactions[0] else {
+            panic!("block {number} starts with a deposit");
+        };
+        let mut deposit = deposit.inner().clone();
+        deposit.input = AlloyBytes::from(vec![0u8; len]);
+        block.body.transactions[0] = BaseTxEnvelope::Deposit(deposit.seal_slow());
+        block.header.transactions_root = calculate_transaction_root(&block.body.transactions);
+        for next in number as usize + 1..self.blocks.len() {
+            self.blocks[next].header.parent_hash = self.blocks[next - 1].hash();
+        }
+        self
+    }
+
     /// Archive config for this chain.
     pub fn config(
         &self,
@@ -547,6 +565,8 @@ pub struct FaultyStore<S> {
     pub failing_reads: Arc<AtomicUsize>,
     /// Key counts of every `get_many` (through any session), in call order.
     pub get_many_keys: Arc<Mutex<Vec<usize>>>,
+    /// Keys of every `get` (through any session), in call order.
+    pub get_keys: Arc<Mutex<Vec<Bytes>>>,
     /// Barrier the first put waits on.
     pub first_put_barrier: Option<Arc<tokio::sync::Barrier>>,
     /// Whether the first put has passed the barrier.
@@ -563,6 +583,7 @@ impl<S> FaultyStore<S> {
             put_log: Mutex::new(Vec::new()),
             failing_reads: Arc::new(AtomicUsize::new(0)),
             get_many_keys: Arc::new(Mutex::new(Vec::new())),
+            get_keys: Arc::new(Mutex::new(Vec::new())),
             first_put_barrier: None,
             barrier_passed: AtomicBool::new(false),
         }
@@ -582,6 +603,11 @@ impl<S> FaultyStore<S> {
     /// Takes the key counts of the `get_many` calls seen since the last take.
     pub fn take_get_many(&self) -> Vec<usize> {
         std::mem::take(&mut *self.get_many_keys.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Takes the keys of the `get` calls seen since the last take.
+    pub fn take_gets(&self) -> Vec<Bytes> {
+        std::mem::take(&mut *self.get_keys.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// Rows of every put attempt so far, including faulted ones.
@@ -604,6 +630,8 @@ pub struct FaultySession<Sess> {
     pub failing_reads: Arc<AtomicUsize>,
     /// Shared `get_many` key-count log.
     pub get_many_keys: Arc<Mutex<Vec<usize>>>,
+    /// Shared `get` key log.
+    pub get_keys: Arc<Mutex<Vec<Bytes>>>,
 }
 
 impl<Sess> FaultySession<Sess> {
@@ -620,6 +648,7 @@ impl<Sess> FaultySession<Sess> {
 #[async_trait]
 impl<Sess: StoreSession> StoreSession for FaultySession<Sess> {
     async fn get(&self, key: &Bytes) -> Result<Option<Bytes>, ArchiveError> {
+        self.get_keys.lock().unwrap_or_else(PoisonError::into_inner).push(key.clone());
         self.fail("get")?;
         self.inner.get(key).await
     }
@@ -651,6 +680,7 @@ impl<S: ArchiveStore> ArchiveStore for FaultyStore<S> {
             inner: self.inner.session(),
             failing_reads: Arc::clone(&self.failing_reads),
             get_many_keys: Arc::clone(&self.get_many_keys),
+            get_keys: Arc::clone(&self.get_keys),
         }
     }
 

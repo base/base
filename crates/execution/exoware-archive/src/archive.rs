@@ -12,7 +12,7 @@ use tracing::info;
 
 use crate::{
     ArchiveConfig, ArchiveError, ArchiveKey, ArchiveMetrics, ArchiveStore, Family, NUMBER_LEN,
-    SegmentMarker, StoreSession,
+    PART_INDEX_LEN, SegmentMarker, StoreSession,
 };
 
 /// Default number of segments kept below the earliest served segment before physical pruning.
@@ -124,6 +124,34 @@ impl<S: ArchiveStore> ExowareArchive<S> {
         Ok(Some(HighestMarker { segment, marker: SegmentMarker::decode(&value)? }))
     }
 
+    /// Reads the inclusive range `[start, end]` forward in pages of `page` rows (at least one),
+    /// continuing after the last key while pages come back full. For scans whose row count is
+    /// not known in advance, such as block rows with continuation parts.
+    pub async fn range_all(
+        session: &S::Session,
+        start: &Bytes,
+        end: &Bytes,
+        page: usize,
+    ) -> Result<Vec<(Bytes, Bytes)>, ArchiveError> {
+        let page = page.max(1);
+        let mut out = Vec::new();
+        let mut from = start.clone();
+        loop {
+            let rows = session.range(&from, end, page, RangeMode::Forward).await?;
+            let full = rows.len() == page;
+            if let Some((last, _)) = rows.last() {
+                // The smallest key after `last`.
+                let mut next = last.to_vec();
+                next.push(0);
+                from = next.into();
+            }
+            out.extend(rows);
+            if !full || from > *end {
+                return Ok(out);
+            }
+        }
+    }
+
     /// Reads marker `segment`.
     pub async fn marker(
         session: &S::Session,
@@ -139,11 +167,18 @@ impl<S: ArchiveStore> ExowareArchive<S> {
     /// Prune policy deleting rows of `family` below segment `cutoff`: logical selector prefix
     /// `gen ‖ family` (the SDK adds the namespace), a binary regex that skips the lookup fields
     /// and captures the trailing 8 bytes, `U64Be` ordering and `GreaterThanOrEqual` retention.
-    /// Block families compare block numbers against `N · cutoff`.
+    /// Block families compare block numbers against `N · cutoff`, and their regex also matches
+    /// continuation keys, capturing the block number before the 2-byte part index.
     pub fn prune_policy(config: &ArchiveConfig, family: Family, cutoff: u64) -> PrunePolicy {
-        let threshold = if family.keyed_by_block() { config.first_block(cutoff) } else { cutoff };
-        let payload_regex =
-            format!("(?s-u)^.{{{}}}(?P<{PRUNE_CAPTURE}>.{{{NUMBER_LEN}}})$", family.fields_len());
+        let (threshold, part) = if family.keyed_by_block() {
+            (config.first_block(cutoff), format!("(?:.{{{PART_INDEX_LEN}}})?"))
+        } else {
+            (cutoff, String::new())
+        };
+        let payload_regex = format!(
+            "(?s-u)^.{{{}}}(?P<{PRUNE_CAPTURE}>.{{{NUMBER_LEN}}}){part}$",
+            family.fields_len()
+        );
         PrunePolicy {
             scope: KeysScope {
                 selector: Selector {
@@ -187,6 +222,48 @@ mod tests {
         SegmentRows,
         test_utils::{ChainFixture, TEST_N, TEST_TIMEOUT, TestSimulator, dump, publish_through},
     };
+
+    /// Block-family prune policies delete continuation rows with their base rows: below the
+    /// cutoff both go, at or above it both stay.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn prune_deletes_continuation_rows() {
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            let sim = TestSimulator::start().await;
+            let fixture = ChainFixture::standard();
+            let config = fixture.config(TEST_N, 0, None);
+            let archive = sim.archive("t-prune-parts/", &config).await;
+            let value = Bytes::from_static(b"v");
+            let kept = [
+                ArchiveKey::block(Family::Body, 16),
+                ArchiveKey::block_part(Family::Body, 16, 1),
+                ArchiveKey::block_part(Family::Body, 16, u16::MAX),
+            ];
+            let dropped = [
+                ArchiveKey::block(Family::Body, 15),
+                ArchiveKey::block_part(Family::Body, 15, 1),
+                ArchiveKey::block_part(Family::Body, 15, u16::MAX),
+            ];
+            let rows: Vec<(Bytes, Bytes)> =
+                kept.iter().chain(&dropped).map(|k| (k.clone(), value.clone())).collect();
+            archive.store.put(&rows).await.unwrap();
+            archive
+                .store
+                .prune(&[ExowareArchive::<crate::ExowareStore>::prune_policy(
+                    &config,
+                    Family::Body,
+                    2,
+                )])
+                .await
+                .unwrap();
+            let after: Vec<Bytes> =
+                dump(archive.store.as_ref()).await.into_iter().map(|(k, _)| k).collect();
+            let mut expected = vec![ArchiveKey::config()];
+            expected.extend(kept);
+            assert_eq!(after, expected, "rows of block 15 deleted, rows of block 16 kept");
+        })
+        .await
+        .expect("test timed out");
+    }
 
     /// Test 9 / A2: prune removes exactly the rows of segments below the cutoff in every
     /// family, keeps markers and config, and leaves a neighboring namespace untouched.

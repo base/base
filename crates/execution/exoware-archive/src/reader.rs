@@ -28,8 +28,8 @@ use tracing::{error, warn};
 
 use crate::{
     AccountInfo, ArchiveConfig, ArchiveError, ArchiveKey, ArchiveMetrics, ArchiveStore, BlockBody,
-    BlockCodec, BlockVerifier, ExowareArchive, Family, NodeState, OffsetSet, SegmentMarker,
-    StateKey, StoreSession,
+    BlockCodec, BlockVerifier, ExowareArchive, Family, NodeState, OffsetSet, PartAssembly,
+    SegmentMarker, StateKey, StoreSession, ValueParts,
 };
 
 /// Default maximum address plus topic alternatives in one log query.
@@ -321,6 +321,92 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         })
     }
 
+    /// Requires block `number`'s `family` base row, read at `ArchiveKey::block(family, number)`,
+    /// and completes it from its continuation parts. A base value shorter than
+    /// [`crate::VALUE_PART_LEN`] is returned without another read; a missing or over-long part
+    /// is [`ArchiveError::Unavailable`].
+    pub async fn require_block_row(
+        session: &S::Session,
+        value: Option<Bytes>,
+        family: Family,
+        number: u64,
+    ) -> Result<Bytes, ArchiveError> {
+        let base = Self::require_row(value, family, number)?;
+        ValueParts::default()
+            .read(family, number, base, |part| {
+                let key = ArchiveKey::block_part(family, number, part);
+                async move { session.get(&key).await }
+            })
+            .await
+    }
+
+    /// Reads the `family` values of blocks `first..=last` with a range scan, reassembling
+    /// continuation parts from the scan (and, for block `last`, by point reads past the scan's
+    /// end). Returns `(block, value)` in block order; the caller checks for absent blocks. When
+    /// no value continues, this is one range request of `last − first + 1` rows.
+    pub async fn block_range_in(
+        &self,
+        request: &ArchiveRequest<S::Session>,
+        family: Family,
+        first: u64,
+        last: u64,
+    ) -> Result<Vec<(u64, Bytes)>, ArchiveError> {
+        let start = ArchiveKey::block(family, first);
+        let end = ArchiveKey::block(family, last);
+        let page = (last - first + 1) as usize;
+        let mut rows = request.session.range(&start, &end, page, RangeMode::Forward).await?;
+        // Continuation parts take room in the page: read on while a full page stops short of
+        // block `last`'s key.
+        while rows.len() >= page && rows.last().is_some_and(|(key, _)| *key != end) {
+            let mut from = rows.last().map(|(key, _)| key.to_vec()).unwrap_or_default();
+            from.push(0);
+            let more = request.session.range(&from.into(), &end, page, RangeMode::Forward).await?;
+            if more.is_empty() {
+                break;
+            }
+            rows.extend(more);
+        }
+        let parts = ValueParts::default();
+        let mut out = Vec::with_capacity(page);
+        let mut current: Option<PartAssembly> = None;
+        for (key, value) in rows {
+            let number = ArchiveKey::number(&key)
+                .filter(|n| (first..=last).contains(n) && ArchiveKey::family(&key) == Some(family))
+                .ok_or_else(|| {
+                    ArchiveError::unavailable(family, "block range returned a foreign key")
+                })?;
+            match ArchiveKey::part(&key) {
+                None => {
+                    if let Some(done) = current.take() {
+                        out.push((done.number, done.finish()?));
+                    }
+                    current = Some(parts.assemble(family, number, value)?);
+                }
+                Some(part) => match current.as_mut().filter(|a| a.number == number) {
+                    Some(assembly) => assembly.push(part, &value)?,
+                    None => {
+                        return Err(ArchiveError::unavailable(
+                            family,
+                            format!("continuation part {part} of block {number} has no base row"),
+                        ));
+                    }
+                },
+            }
+        }
+        if let Some(assembly) = current {
+            let number = assembly.number;
+            let session = &request.session;
+            let value = assembly
+                .read_rest(|part| {
+                    let key = ArchiveKey::block_part(family, number, part);
+                    async move { session.get(&key).await }
+                })
+                .await?;
+            out.push((number, value));
+        }
+        Ok(out)
+    }
+
     /// Verifies a fetched header for block `number` and returns its hash: against the node's
     /// canonical hash when the node has it, else by linkage within the segment to the marker.
     pub async fn verify_header(
@@ -377,15 +463,7 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         };
         let first = self.config.first_block(segment);
         let last = self.config.last_block(segment);
-        let rows = request
-            .session
-            .range(
-                &ArchiveKey::block(Family::Header, first),
-                &ArchiveKey::block(Family::Header, last),
-                self.config.blocks_per_segment as usize,
-                RangeMode::Forward,
-            )
-            .await?;
+        let rows = self.block_range_in(request, Family::Header, first, last).await?;
         if rows.len() as u64 != self.config.blocks_per_segment {
             return Err(ArchiveError::unavailable(
                 Family::Header,
@@ -424,8 +502,10 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
     ) -> Result<(Header, B256), ArchiveError> {
         self.check_range(request, number)?;
         let raw = request.session.get(&ArchiveKey::block(Family::Header, number)).await?;
-        let header = BlockCodec::decode_header(&Self::require_row(raw, Family::Header, number)?)
-            .map_err(Self::integrity)?;
+        let header = BlockCodec::decode_header(
+            &Self::require_block_row(&request.session, raw, Family::Header, number).await?,
+        )
+        .map_err(Self::integrity)?;
         let hash = self.verify_header(request, number, &header).await?;
         Ok((header, hash))
     }
@@ -445,17 +525,16 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             ])
             .await?
             .into_iter();
-        let header = BlockCodec::decode_header(&Self::require_row(
-            values.next().flatten(),
-            Family::Header,
-            number,
-        )?)
+        let session = &request.session;
+        let header = BlockCodec::decode_header(
+            &Self::require_block_row(session, values.next().flatten(), Family::Header, number)
+                .await?,
+        )
         .map_err(Self::integrity)?;
-        let body = BlockCodec::decode_body(&Self::require_row(
-            values.next().flatten(),
-            Family::Body,
-            number,
-        )?)
+        let body = BlockCodec::decode_body(
+            &Self::require_block_row(session, values.next().flatten(), Family::Body, number)
+                .await?,
+        )
         .map_err(Self::integrity)?;
         let hash = self.verify_header(request, number, &header).await?;
         self.verifier.verify_body(&header, &body)?;
@@ -479,11 +558,9 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         }
         let number = header.number;
         let raw = request.session.get(&ArchiveKey::block(Family::AccountChanges, number)).await?;
-        let changes = BlockCodec::decode_account_changes(&Self::require_row(
-            raw,
-            Family::AccountChanges,
-            number,
-        )?)
+        let changes = BlockCodec::decode_account_changes(
+            &Self::require_block_row(&request.session, raw, Family::AccountChanges, number).await?,
+        )
         .map_err(Self::integrity)?;
         self.verifier.verify_deposit_nonces(header, senders, receipts, &changes)
     }
@@ -498,18 +575,14 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         let families = [Family::Header, Family::Body, Family::Receipts, Family::Senders];
         let keys: Vec<Bytes> = families.iter().map(|f| ArchiveKey::block(*f, number)).collect();
         let values = request.session.get_many(&keys).await?;
-        let mut rows = families
-            .iter()
-            .zip(values)
-            .map(|(family, value)| Self::require_row(value, *family, number));
-        let header = BlockCodec::decode_header(&rows.next().expect("header row")?)
-            .map_err(Self::integrity)?;
-        let body =
-            BlockCodec::decode_body(&rows.next().expect("body row")?).map_err(Self::integrity)?;
-        let receipts = BlockCodec::decode_receipts(&rows.next().expect("receipts row")?)
-            .map_err(Self::integrity)?;
-        let senders = BlockCodec::decode_senders(&rows.next().expect("senders row")?)
-            .map_err(Self::integrity)?;
+        let mut rows = Vec::with_capacity(families.len());
+        for (family, value) in families.iter().zip(values) {
+            rows.push(Self::require_block_row(&request.session, value, *family, number).await?);
+        }
+        let header = BlockCodec::decode_header(&rows[0]).map_err(Self::integrity)?;
+        let body = BlockCodec::decode_body(&rows[1]).map_err(Self::integrity)?;
+        let receipts = BlockCodec::decode_receipts(&rows[2]).map_err(Self::integrity)?;
+        let senders = BlockCodec::decode_senders(&rows[3]).map_err(Self::integrity)?;
         let hash = self.verify_header(request, number, &header).await?;
         self.verifier.verify_body(&header, &body)?;
         self.verifier.verify_receipts(&header, body.transactions.len(), &receipts)?;
@@ -748,11 +821,9 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             return self.node.account_at(highest, address).await;
         };
         let raw = request.session.get(&ArchiveKey::block(Family::AccountChanges, change)).await?;
-        let changes = BlockCodec::decode_account_changes(&Self::require_row(
-            raw,
-            Family::AccountChanges,
-            change,
-        )?)
+        let changes = BlockCodec::decode_account_changes(
+            &Self::require_block_row(&request.session, raw, Family::AccountChanges, change).await?,
+        )
         .map_err(Self::integrity)?;
         let index = changes.binary_search_by_key(&address, |c| c.address).map_err(|_| {
             ArchiveError::unavailable(
@@ -779,11 +850,9 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
             return self.node.storage_at(highest, address, slot).await;
         };
         let raw = request.session.get(&ArchiveKey::block(Family::StorageChanges, change)).await?;
-        let changes = BlockCodec::decode_storage_changes(&Self::require_row(
-            raw,
-            Family::StorageChanges,
-            change,
-        )?)
+        let changes = BlockCodec::decode_storage_changes(
+            &Self::require_block_row(&request.session, raw, Family::StorageChanges, change).await?,
+        )
         .map_err(Self::integrity)?;
         let index = changes.binary_search_by_key(&(address, slot), |c| (c.address, c.slot)).map_err(|_| {
             ArchiveError::unavailable(
@@ -864,24 +933,16 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         while start <= filter.to {
             let end = filter.to.min(start.saturating_add(HEADER_PAGE - 1));
             let span = end - start + 1;
-            let rows = request
-                .session
-                .range(
-                    &ArchiveKey::block(Family::Header, start),
-                    &ArchiveKey::block(Family::Header, end),
-                    span as usize,
-                    RangeMode::Forward,
-                )
-                .await?;
+            let rows = self.block_range_in(request, Family::Header, start, end).await?;
             if rows.len() as u64 != span {
                 return Err(ArchiveError::unavailable(
                     Family::Header,
                     format!("{} of {span} headers present", rows.len()),
                 ));
             }
-            for (key, value) in rows {
+            for (number, value) in rows {
                 let header = BlockCodec::decode_header(&value).map_err(Self::integrity)?;
-                if ArchiveKey::number(&key) != Some(header.number) {
+                if number != header.number {
                     return Err(ArchiveError::unavailable(
                         Family::Header,
                         "header row holds another block",
@@ -1050,20 +1111,19 @@ impl<S: ArchiveStore, N: NodeState + ?Sized> ArchiveReader<S, N> {
         let values = request.session.get_many(&keys).await?;
         for (number, rows) in chunk.iter().zip(values.chunks_exact(families.len())) {
             let number = *number;
-            let header = BlockCodec::decode_header(&Self::require_row(
-                rows[0].clone(),
-                Family::Header,
-                number,
-            )?)
+            let session = &request.session;
+            let header = BlockCodec::decode_header(
+                &Self::require_block_row(session, rows[0].clone(), Family::Header, number).await?,
+            )
             .map_err(Self::integrity)?;
-            let body =
-                BlockCodec::decode_body(&Self::require_row(rows[1].clone(), Family::Body, number)?)
-                    .map_err(Self::integrity)?;
-            let receipts = BlockCodec::decode_receipts(&Self::require_row(
-                rows[2].clone(),
-                Family::Receipts,
-                number,
-            )?)
+            let body = BlockCodec::decode_body(
+                &Self::require_block_row(session, rows[1].clone(), Family::Body, number).await?,
+            )
+            .map_err(Self::integrity)?;
+            let receipts = BlockCodec::decode_receipts(
+                &Self::require_block_row(session, rows[2].clone(), Family::Receipts, number)
+                    .await?,
+            )
             .map_err(Self::integrity)?;
             let block_hash = self.verify_header(request, number, &header).await?;
             self.verifier.verify_body(&header, &body)?;
@@ -1179,6 +1239,59 @@ mod tests {
     /// Runs `fut` under the per-test network budget.
     async fn bounded<F: std::future::Future>(fut: F) -> F::Output {
         tokio::time::timeout(TEST_TIMEOUT, fut).await.expect("test timed out")
+    }
+
+    /// A block range scan reassembles values from continuation parts in the scan, pages on
+    /// when parts fill the page, and reads the parts of the last block past the scan's end.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn block_range_reassembles_parts() {
+        bounded(async {
+            let sim = TestSimulator::start().await;
+            let fixture = Arc::new(ChainFixture::standard());
+            let config = fixture.config(TEST_N, 0, None);
+            let archive = sim.archive("t-range-parts/", &config).await;
+            let full = Bytes::from(vec![7u8; crate::VALUE_PART_LEN]);
+            let values: [(u64, Vec<Bytes>); 3] = [
+                (10, vec![full.clone(), Bytes::from_static(b"ten")]),
+                (11, vec![Bytes::from_static(b"eleven")]),
+                (12, vec![full.clone(), full.clone(), Bytes::new()]),
+            ];
+            for (number, parts) in &values {
+                for (part, value) in parts.iter().enumerate() {
+                    let key = if part == 0 {
+                        ArchiveKey::block(Family::Body, *number)
+                    } else {
+                        ArchiveKey::block_part(Family::Body, *number, part as u16)
+                    };
+                    archive.store.put(&[(key, value.clone())]).await.unwrap();
+                }
+            }
+            let faulty = Arc::new(FaultyStore::new(Arc::clone(&archive.store), vec![]));
+            let r = reader(
+                ExowareArchive::new(Arc::clone(&faulty)),
+                FixtureNode::new(Arc::clone(&fixture)),
+            )
+            .await;
+            assert_eq!(faulty.take_gets(), vec![ArchiveKey::config()], "open reads the config");
+            let request = r.begin().await.unwrap();
+            let found = r.block_range_in(&request, Family::Body, 10, 12).await.unwrap();
+            let expected: Vec<(u64, Bytes)> =
+                values.iter().map(|(n, parts)| (*n, Bytes::from(parts.concat()))).collect();
+            assert_eq!(found.len(), 3, "three blocks");
+            assert!(found == expected, "every value reassembled byte for byte");
+            assert_eq!(
+                faulty.take_gets(),
+                vec![
+                    ArchiveKey::block_part(Family::Body, 12, 1),
+                    ArchiveKey::block_part(Family::Body, 12, 2),
+                ],
+                "only the last block's parts are point reads"
+            );
+            let short = r.block_range_in(&request, Family::Body, 11, 11).await.unwrap();
+            assert_eq!(short, vec![(11, Bytes::from_static(b"eleven"))], "a single short value");
+            assert!(faulty.take_gets().is_empty(), "a short value needs no part read");
+        })
+        .await;
     }
 
     /// Publishes segments 0..=3 (H = 31) of the standard fixture into `namespace`.

@@ -11,7 +11,13 @@ mod error;
 pub use error::ArchiveError;
 
 mod keys;
-pub use keys::{ArchiveKey, FORMAT_VERSION, Family, NUMBER_LEN, StateKey, StateKind};
+pub use keys::{
+    ArchiveKey, FORMAT_VERSION, Family, NUMBER_LEN, PART_INDEX_LEN, StateKey, StateKind,
+    VALUE_PART_LEN,
+};
+
+mod parts;
+pub use parts::{PartAssembly, ValueParts};
 
 mod offsets;
 pub use offsets::{COMPACT_MAX, OffsetSet, TAG_COMPACT, TAG_ROARING};

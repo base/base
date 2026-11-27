@@ -95,6 +95,15 @@ pub enum ArchiveError {
         /// Store limit.
         max: usize,
     },
+    /// A block-family value needs more than `u16::MAX` continuation parts; the segment cannot
+    /// be published.
+    #[error("value of {len} bytes needs more than u16::MAX continuation parts (max {max} bytes)")]
+    TooManyParts {
+        /// Value length.
+        len: usize,
+        /// Largest value length that fits.
+        max: usize,
+    },
     /// The node no longer has the data needed to export a block.
     #[error("local {table} for block {block} is pruned (earliest local block {earliest})")]
     LocalDataPruned {

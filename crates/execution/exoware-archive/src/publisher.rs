@@ -106,7 +106,9 @@ impl PublisherOptions {
 
     /// Splits rows of `segment` into `Put`s of at most `max_batch_rows` rows and
     /// `max_batch_bytes` encoded bytes. A row larger than the byte target gets its own `Put`; a
-    /// value above the store's 32 `MiB` limit is a terminal error for the segment.
+    /// value above the store's 32 `MiB` limit is a terminal error for the segment. That check is
+    /// a defensive invariant: [`SegmentBuilder`] splits block-family values into continuation
+    /// parts of at most [`crate::VALUE_PART_LEN`] bytes, so its rows never exceed the limit.
     pub fn plan_row_chunks(
         &self,
         segment: u64,
@@ -659,7 +661,8 @@ impl<S: ArchiveStore, B: BlockSource + ?Sized> SegmentPublisher<S, B> {
                     | ArchiveError::LinkageQuarantined { .. }
                     | ArchiveError::ConfigMismatch { .. }
                     | ArchiveError::ConfigMissing
-                    | ArchiveError::ValueTooLarge { .. }),
+                    | ArchiveError::ValueTooLarge { .. }
+                    | ArchiveError::TooManyParts { .. }),
                 ) => {
                     error!(error = %err, "archive export halted");
                     return Err(err);
@@ -1729,6 +1732,146 @@ mod tests {
         assert_eq!(p.lag_blocks(4, 40), 9, "after markers 2 and 3, blocks 32..=40 pending");
     }
 
+    /// A block whose body exceeds the store's value limit publishes as a base row of exactly
+    /// [`crate::VALUE_PART_LEN`] bytes plus one continuation row, reads back byte-identical
+    /// with exactly one extra `get`, audits clean, and once the continuation row is deleted
+    /// fails reads with `Unavailable` and audits as exactly that missing row.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn oversized_body_publishes_in_parts() {
+        bounded(async {
+            const BIG: u64 = 3;
+            let sim = TestSimulator::start().await;
+            let fixture = Arc::new(
+                ChainFixture::standard().with_deposit_input(BIG, MAX_VALUE_LEN + 1024),
+            );
+            let config = fixture.config(TEST_N, 0, None);
+            let archive = sim.archive("t-parts/", &config).await;
+            let body = BlockCodec::encode_body(&fixture.blocks[BIG as usize].body);
+            assert!(body.len() > MAX_VALUE_LEN + 1024, "the body is above the value limit");
+            let expected = SegmentRows::build(&config, 0, &fixture.blocks[..TEST_N as usize])
+                .expect("the oversized segment builds");
+            assert!(
+                expected.rows.iter().all(|(_, v)| v.len() <= MAX_VALUE_LEN),
+                "no built row exceeds the value limit"
+            );
+            assert!(
+                fast_options().plan_chunks(&expected, archive.store.key_prefix_len()).is_ok(),
+                "the planner accepts every built row"
+            );
+
+            let node = FixtureNode::new(Arc::clone(&fixture));
+            let p = publisher(archive.clone(), node.clone(), config).await;
+            assert!(
+                matches!(p.publish_segment(0).await, Ok(PublishOutcome::Published { rows, .. }) if rows == expected.marker.row_count),
+                "segment 0 publishes"
+            );
+            let session = archive.store.session();
+            let marker = ExowareArchive::<ExowareStore>::marker(&session, 0)
+                .await
+                .unwrap()
+                .expect("marker written");
+            assert_eq!(marker, expected.marker, "marker equals the built one");
+
+            let stored = dump(archive.store.as_ref()).await;
+            let segment_rows: Vec<(Bytes, Bytes)> = stored
+                .iter()
+                .filter(|(k, _)| ArchiveKey::family(k).is_some_and(Family::is_segment_row))
+                .cloned()
+                .collect();
+            assert_eq!(segment_rows, expected.rows, "stored rows equal the built rows");
+            assert_eq!(
+                marker.row_count,
+                segment_rows.len() as u64,
+                "the marker counts the continuation row"
+            );
+            let part = ArchiveKey::block_part(Family::Body, BIG, 1);
+            let body_rows: Vec<(Bytes, usize)> = segment_rows
+                .iter()
+                .filter(|(k, _)| ArchiveKey::family(k) == Some(Family::Body))
+                .filter(|(k, _)| ArchiveKey::number(k) == Some(BIG))
+                .map(|(k, v)| (k.clone(), v.len()))
+                .collect();
+            assert_eq!(
+                body_rows,
+                vec![
+                    (ArchiveKey::block(Family::Body, BIG), MAX_VALUE_LEN),
+                    (part.clone(), body.len() - MAX_VALUE_LEN),
+                ],
+                "the body is exactly two rows: a full base part and the rest"
+            );
+            for family in Family::BLOCK {
+                let count = segment_rows
+                    .iter()
+                    .filter(|(k, _)| ArchiveKey::family(k) == Some(family))
+                    .count();
+                let parts = usize::from(family == Family::Body);
+                assert_eq!(count, TEST_N as usize + parts, "{family:?} rows in segment 0");
+            }
+
+            let faulty = Arc::new(FaultyStore::new(Arc::clone(&archive.store), vec![]));
+            let r = reader(ExowareArchive::new(Arc::clone(&faulty)), node).await;
+            assert_eq!(faulty.take_gets(), vec![ArchiveKey::config()], "open reads the config");
+            let archived = r.block(BIG).await.expect("the oversized block reads");
+            assert_eq!(archived.body, fixture.blocks[BIG as usize].body, "body decodes identically");
+            assert_eq!(archived.hash, fixture.blocks[BIG as usize].hash(), "block hash");
+            assert_eq!(
+                faulty.take_gets(),
+                vec![part.clone(), ArchiveKey::block(Family::AccountChanges, BIG)],
+                "one continuation read, then the Regolith deposit-nonce changeset"
+            );
+            let (_, _, read_body) = {
+                let request = r.begin().await.unwrap();
+                r.body_in(&request, BIG).await.expect("body_in reads the parts")
+            };
+            assert_eq!(BlockCodec::encode_body(&read_body), body, "byte-identical body");
+            faulty.take_gets();
+            r.block(BIG - 1).await.expect("a normal block reads");
+            assert_eq!(
+                faulty.take_gets(),
+                vec![ArchiveKey::block(Family::AccountChanges, BIG - 1)],
+                "a block below the part length reads no continuation"
+            );
+
+            let auditor = SegmentAuditor::new(archive.clone(), config, fixture.verifier());
+            assert!(auditor.audit_segment(0).await.unwrap().is_clean(), "audit clean");
+
+            archive
+                .store
+                .prune(&[exoware_sdk::prune_policy::PrunePolicy {
+                    scope: exoware_sdk::prune_policy::KeysScope {
+                        selector: exoware_sdk::selector::Selector {
+                            prefix: part.clone(),
+                            payload_regex: "(?s-u)^$".into(),
+                        },
+                        group_by: Default::default(),
+                        order_by: None,
+                    },
+                    retain: exoware_sdk::prune_policy::RetainPolicy::DropAll,
+                }])
+                .await
+                .unwrap();
+            assert_eq!(
+                dump(archive.store.as_ref()).await.len(),
+                stored.len() - 1,
+                "exactly the continuation row is deleted"
+            );
+            assert_eq!(
+                r.block(BIG).await.unwrap_err(),
+                ArchiveError::unavailable(
+                    Family::Body,
+                    format!("value of block {BIG} is missing continuation part 1 (corrupt store)")
+                ),
+                "a missing part is unavailable, not a truncated body"
+            );
+            assert_eq!(
+                auditor.audit_segment(0).await.unwrap().findings,
+                vec![AuditFinding::RowMissing { family: Family::Body, key: hex::encode(&part) }],
+                "the audit reports exactly the missing continuation row"
+            );
+        })
+        .await;
+    }
+
     /// A9: a row above the batch target goes in its own put; a value above 32 `MiB` is terminal.
     #[test]
     fn oversized_rows_are_isolated() {
@@ -1761,11 +1904,15 @@ mod tests {
             vec![0..2, 2..3, 3..6, 6..8, 8..9],
             "oversized row alone, row and byte limits respected"
         );
+        // `SegmentBuilder` never emits such a row (see `oversized_body_publishes_in_parts`); the
+        // planner still refuses a raw one.
         let huge = SegmentRows { rows: vec![row(0, MAX_VALUE_LEN + 1)], ..rows };
         assert!(
             matches!(options.plan_chunks(&huge, 13), Err(ArchiveError::ValueTooLarge { len, .. }) if len == MAX_VALUE_LEN + 1),
             "value above 32 MiB"
         );
+        let full = SegmentRows { rows: vec![row(0, MAX_VALUE_LEN)], ..huge };
+        assert_eq!(options.plan_chunks(&full, 13).unwrap(), vec![0..1], "a full part is accepted");
         assert_eq!(
             PutSize::entry(10, 0),
             1 + 1 + 1 + 1 + 10,

@@ -8,7 +8,9 @@ serves verified reads from it, with no S3 bucket, `NippyJar` files or `SlateDB`.
 
 - **Format**: fixed-width keys `gen ‖ family ‖ fields ‖ (segment | block):u64be`, canonical
   RLP/EIP-2718 values, offset-set postings, a config row and a per-segment marker carrying a
-  SHA-256 digest of the segment's rows (see [Marker digest](#marker-digest)).
+  SHA-256 digest of the segment's rows (see [Marker digest](#marker-digest)). Block-family
+  values too large for one store value continue in part rows (see
+  [Continuation parts](#continuation-parts)).
 - **Publication** (`SegmentPublisher`): rows are a pure function of finalized block data, so
   any number of nodes can publish the same segment without compare-and-swap. A segment
   becomes visible when its marker is written, after every row is acknowledged and after the
@@ -20,7 +22,8 @@ serves verified reads from it, with no S3 bucket, `NippyJar` files or `SlateDB`.
   algebra and an exact filter on verified receipts.
 - **Audit** (`SegmentAuditor`): rebuilds a segment from its stored block rows and compares
   every row and the digest with the marker.
-- **Pruning**: one Exoware `Prune` policy per family, keyed on the trailing number.
+- **Pruning**: one Exoware `Prune` policy per family, keyed on the trailing number (the block
+  number for continuation parts).
 
 ## Writer trust model
 
@@ -67,6 +70,27 @@ Typed transactions are raw EIP-2718 bytes placed directly in the body's RLP list
 extra RLP string wrapping. An absent account before-value is `present = 0` with every
 other field zeroed. Receipts are stored in full, including the deposit nonce, even when
 the Regolith receipt root excludes it.
+
+## Continuation parts
+
+A store value holds at most `MAX_VALUE_LEN` (32 `MiB`) bytes, and a Base block can carry more
+body or receipt data than that. Every block family (`0x10`–`0x15`) therefore splits values at
+`VALUE_PART_LEN`, a format constant equal to `MAX_VALUE_LEN`:
+
+- A value shorter than `VALUE_PART_LEN` is one row at `gen ‖ family ‖ n`, unchanged.
+- A longer value, or one of exactly `VALUE_PART_LEN` bytes, puts its first `VALUE_PART_LEN`
+  bytes at `gen ‖ family ‖ n` and the following slices at continuation keys
+  `gen ‖ family ‖ n ‖ part:u16be`, part 1 first. Every part but the last is exactly
+  `VALUE_PART_LEN` bytes; when the length is a multiple of it, a final empty part follows, so a
+  part shorter than `VALUE_PART_LEN` always ends the value. A value needing more than
+  `u16::MAX` continuations is refused with `TooManyParts`.
+
+Continuation keys sort after their base key and before block `n + 1`'s key, so block-family
+range scans and the audit see them in order. They are ordinary segment rows: the marker's
+`row_count` and digest cover them, the audit reports a missing part as a missing row, and
+pruning deletes them with their block. A reader reads part 1, 2, … only after a base value of
+exactly `VALUE_PART_LEN` bytes, so a value below the limit costs no extra read; a missing or
+over-long part is `Unavailable`, never a truncated value.
 
 ## Marker digest
 

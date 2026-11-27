@@ -7,7 +7,7 @@ use bytes::Bytes;
 
 use crate::{
     ArchiveConfig, ArchiveError, ArchiveKey, BlockCodec, BlockData, Family, OffsetSet,
-    SegmentDigest, SegmentMarker, StateKey,
+    SegmentDigest, SegmentMarker, StateKey, ValueParts,
 };
 
 /// Every row of one segment, sorted by key, plus its marker.
@@ -63,8 +63,9 @@ pub struct SegmentTail {
 
 /// Builds one segment's rows from its blocks in consecutive batches.
 ///
-/// Each batch returns its block-family rows (`0x10`–`0x15`) for immediate writing and folds
-/// them into the digest, so only one batch of blocks is held at a time. Index rows (locators
+/// Each batch returns its block-family rows (`0x10`–`0x15`, with continuation parts for values
+/// of [`crate::VALUE_PART_LEN`] bytes or more) for immediate writing and folds them into the
+/// digest, so only one batch of blocks is held at a time. Index rows (locators
 /// and postings, `0x01`–`0x05`) and the digest state accumulate until [`Self::finish`]. The
 /// result does not depend on how the blocks are split into batches.
 #[derive(Debug)]
@@ -152,30 +153,28 @@ impl SegmentBuilder {
             self.next += 1;
             let offset = self.config.offset_of(number);
 
-            rows.insert(
-                ArchiveKey::block(Family::Header, number),
-                BlockCodec::encode_header(&block.header),
-            )?;
-            rows.insert(
-                ArchiveKey::block(Family::Body, number),
-                BlockCodec::encode_body(&block.body),
-            )?;
-            rows.insert(
-                ArchiveKey::block(Family::Receipts, number),
-                BlockCodec::encode_receipts(&block.receipts),
-            )?;
-            rows.insert(
-                ArchiveKey::block(Family::Senders, number),
-                BlockCodec::encode_senders(&block.senders),
-            )?;
-            rows.insert(
-                ArchiveKey::block(Family::AccountChanges, number),
-                BlockCodec::encode_account_changes(number, &block.account_changes)?,
-            )?;
-            rows.insert(
-                ArchiveKey::block(Family::StorageChanges, number),
-                BlockCodec::encode_storage_changes(number, &block.storage_changes)?,
-            )?;
+            let parts = ValueParts::default();
+            let values = [
+                (Family::Header, BlockCodec::encode_header(&block.header)),
+                (Family::Body, BlockCodec::encode_body(&block.body)),
+                (Family::Receipts, BlockCodec::encode_receipts(&block.receipts)),
+                (Family::Senders, BlockCodec::encode_senders(&block.senders)),
+                (
+                    Family::AccountChanges,
+                    BlockCodec::encode_account_changes(number, &block.account_changes)?,
+                ),
+                (
+                    Family::StorageChanges,
+                    BlockCodec::encode_storage_changes(number, &block.storage_changes)?,
+                ),
+            ];
+            for (family, value) in values {
+                // A value of `VALUE_PART_LEN` bytes or more continues in part rows, so no row
+                // exceeds the store's value limit.
+                for (key, part) in parts.rows(family, number, value)? {
+                    rows.insert(key, part)?;
+                }
+            }
 
             self.index
                 .insert(ArchiveKey::block_hash(hash, segment), number.to_be_bytes().to_vec())?;
@@ -217,8 +216,8 @@ impl SegmentBuilder {
             }
         }
         let rows: Vec<(Bytes, Bytes)> = rows.rows.into_iter().collect();
-        // Within a batch rows are ordered by family, then block; across batches each family's
-        // blocks keep ascending, so every family digest sees its rows in key order.
+        // Within a batch rows are ordered by family, then block, then part; across batches each
+        // family's blocks keep ascending, so every family digest sees its rows in key order.
         for (key, value) in &rows {
             self.digest.update(ArchiveKey::family(key).unwrap_or(Family::Config), key, value);
         }
