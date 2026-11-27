@@ -674,6 +674,58 @@ where
         }
     }
 
+    /// Re-probes the execution layer while a validator is waiting for EL sync to complete.
+    ///
+    /// Uses the current engine forkchoice without changing any heads. A validator only becomes
+    /// ready after the execution layer explicitly returns `VALID`; `SYNCING` and transient
+    /// errors leave the readiness gate closed.
+    pub async fn probe_validator_el_sync(&mut self) {
+        if self.engine.state().el_sync_finished {
+            return;
+        }
+
+        // If the one-shot startup query failed, retry it here rather than sending an FCU
+        // with an uninitialized forkchoice.
+        if self.engine.state().sync_state.unsafe_head() == L2BlockInfo::default() {
+            match self.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await {
+                Ok(Some(head)) => self.engine.seed_state(EngineSyncStateUpdate {
+                    unsafe_head: Some(head),
+                    ..Default::default()
+                }),
+                Ok(None) => {
+                    debug!(target: "engine", "Validator EL sync probe skipped: latest head unavailable");
+                    return;
+                }
+                Err(err) => {
+                    warn!(target: "engine", error = %err, "Validator EL sync probe failed to query latest head");
+                    return;
+                }
+            }
+        }
+
+        match self
+            .engine
+            .probe_el_sync(
+                Arc::clone(&self.client),
+                Arc::clone(&self.rollup),
+                EngineSyncStateUpdate::default(),
+            )
+            .await
+        {
+            Ok(true) => info!(
+                target: "engine",
+                unsafe_head = %self.engine.state().sync_state.unsafe_head().block_info.number,
+                "Validator EL sync probe confirmed canonical chain"
+            ),
+            Ok(false) => debug!(target: "engine", "Validator EL sync is still pending"),
+            Err(err) => warn!(
+                target: "engine",
+                error = ?err,
+                "Validator EL sync probe failed; will retry"
+            ),
+        }
+    }
+
     /// Re-probes the execution layer while a sequencer is waiting for EL sync to complete.
     pub async fn probe_sequencer_el_sync(&mut self, active_sequencer: bool) {
         if self.engine.state().el_sync_finished {

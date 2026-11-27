@@ -8,7 +8,11 @@ use base_consensus_engine::{
     Metrics as EngineMetrics, SealTaskError,
 };
 use opentelemetry::context::FutureExt as OtelFutureExt;
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::mpsc,
+    task::JoinHandle,
+    time::{self, MissedTickBehavior},
+};
 use tracing::{error, warn};
 
 use crate::{
@@ -56,6 +60,12 @@ where
             }
             self.processor.bootstrap_validator(reth_head.ok().flatten()).await;
 
+            // A validator can receive SYNCING before the EL finishes its startup pipeline.
+            // Keep checking the unchanged forkchoice until the EL confirms it as VALID.
+            let mut probe_interval = time::interval(std::time::Duration::from_secs(5));
+            probe_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            probe_interval.tick().await; // Consume interval's immediate first tick.
+
             loop {
                 let _iter_timer =
                     base_metrics::timed!(EngineMetrics::engine_processor_iteration_duration());
@@ -67,7 +77,17 @@ where
 
                 let request = base_metrics::time!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds(),
-                    { request_channel.recv().await }
+                    {
+                        tokio::select! {
+                            request = request_channel.recv() => request,
+                            _ = probe_interval.tick(),
+                                if !self.processor.engine_state().el_sync_finished =>
+                            {
+                                self.processor.probe_validator_el_sync().await;
+                                continue;
+                            }
+                        }
+                    }
                 );
                 let Some(request) = request else {
                     error!(target: "engine", "Engine processing request receiver closed unexpectedly");
