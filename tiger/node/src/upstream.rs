@@ -31,6 +31,8 @@ const MAX_READY_WITNESSES: usize = 512;
 
 /// The largest upstream response read (a witness of a full mainnet block is a few megabytes).
 const MAX_RESPONSE_BYTES: usize = 256 * 1024 * 1024;
+/// The longest response status or header line read.
+const MAX_HEADER_LINE: usize = 8 * 1024;
 
 /// An execution witness as base-reth's `debug_executionWitness` returns it.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -314,59 +316,70 @@ impl Upstream {
             body.len()
         )?;
         stream.flush()?;
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
-        let status = line.split_whitespace().nth(1).unwrap_or_default().to_owned();
-        if status != "200" {
-            return Err(std::io::Error::other(format!("HTTP status {}", line.trim())));
-        }
-        let (mut length, mut chunked) = (None, false);
-        loop {
-            line.clear();
-            reader.read_line(&mut line)?;
-            let header = line.trim_end();
-            if header.is_empty() {
-                break;
-            }
-            let Some((name, value)) = header.split_once(':') else { continue };
-            let value = value.trim();
-            if name.eq_ignore_ascii_case("content-length") {
-                length = Some(value.parse::<usize>().map_err(std::io::Error::other)?);
-            } else if name.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked") {
-                chunked = true;
-            }
-        }
-        let mut body = Vec::new();
-        if chunked {
-            loop {
-                line.clear();
-                reader.read_line(&mut line)?;
-                let size = usize::from_str_radix(line.trim().split(';').next().unwrap_or("0"), 16)
-                    .map_err(std::io::Error::other)?;
-                if size == 0 {
-                    break;
-                }
-                if body.len() + size > MAX_RESPONSE_BYTES {
-                    return Err(std::io::Error::other("response too large"));
-                }
-                let start = body.len();
-                body.resize(start + size, 0);
-                reader.read_exact(&mut body[start..])?;
-                let mut crlf = [0u8; 2];
-                reader.read_exact(&mut crlf)?;
-            }
-        } else if let Some(length) = length {
-            if length > MAX_RESPONSE_BYTES {
-                return Err(std::io::Error::other("response too large"));
-            }
-            body.resize(length, 0);
-            reader.read_exact(&mut body)?;
-        } else {
-            reader.take(MAX_RESPONSE_BYTES as u64).read_to_end(&mut body)?;
+        let (status, body) = read_response(&mut BufReader::new(stream), MAX_RESPONSE_BYTES)?;
+        if status.split_whitespace().nth(1) != Some("200") {
+            return Err(std::io::Error::other(format!("HTTP status {status}")));
         }
         Ok(body)
     }
+}
+
+/// Reads an HTTP/1.1 response: its status line (trimmed) and its body, which may be at most
+/// `max` bytes (whole, chunked, or to the end of the stream).
+pub(crate) fn read_response(reader: &mut impl BufRead, max: usize) -> std::io::Result<(String, Vec<u8>)> {
+    fn read_line(reader: &mut impl BufRead, line: &mut String) -> std::io::Result<()> {
+        line.clear();
+        match reader.take(MAX_HEADER_LINE as u64).read_line(line)? {
+            0 => Err(std::io::Error::other("connection closed")),
+            _ => Ok(()),
+        }
+    }
+    let mut line = String::new();
+    read_line(reader, &mut line)?;
+    let status = line.trim().to_owned();
+    let (mut length, mut chunked) = (None, false);
+    loop {
+        read_line(reader, &mut line)?;
+        let header = line.trim_end();
+        if header.is_empty() {
+            break;
+        }
+        let Some((name, value)) = header.split_once(':') else { continue };
+        let value = value.trim();
+        if name.trim().eq_ignore_ascii_case("content-length") {
+            length = Some(value.parse::<usize>().map_err(std::io::Error::other)?);
+        } else if name.trim().eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked") {
+            chunked = true;
+        }
+    }
+    let too_large = || std::io::Error::other("response too large");
+    let mut body = Vec::new();
+    if chunked {
+        loop {
+            read_line(reader, &mut line)?;
+            let size = usize::from_str_radix(line.trim().split(';').next().unwrap_or("0"), 16)
+                .map_err(std::io::Error::other)?;
+            if size == 0 {
+                break;
+            }
+            if body.len() + size > max {
+                return Err(too_large());
+            }
+            let start = body.len();
+            body.resize(start + size, 0);
+            reader.read_exact(&mut body[start..])?;
+            read_line(reader, &mut line)?;
+        }
+    } else if let Some(length) = length {
+        if length > max {
+            return Err(too_large());
+        }
+        body.resize(length, 0);
+        reader.read_exact(&mut body)?;
+    } else {
+        reader.take(max as u64).read_to_end(&mut body)?;
+    }
+    Ok((status, body))
 }
 
 /// The accounts and storage slots a block reads, and the accounts it deletes (with no slots) and

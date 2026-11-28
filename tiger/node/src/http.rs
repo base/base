@@ -39,20 +39,21 @@ impl core::fmt::Debug for JwtSecret {
 }
 
 impl JwtSecret {
-    /// Parses a hex secret (an optional `0x` prefix and surrounding whitespace are allowed).
-    pub fn from_hex(text: &str) -> Result<Self, String> {
-        let text = text.trim();
-        let text = text.strip_prefix("0x").unwrap_or(text);
-        let bytes = alloy_primitives::hex::decode(text).map_err(|error| format!("JWT secret: {error}"))?;
-        let bytes: [u8; 32] = bytes.try_into().map_err(|_| "JWT secret must be 32 bytes".to_owned())?;
-        Ok(Self(bytes))
-    }
-
     /// Reads the secret file, or creates it with a random secret (as base-reth does) when it
     /// does not exist.
     pub fn load_or_create(path: &std::path::Path) -> Result<Self, String> {
+        Self::key_file(path, "JWT secret").map(Self)
+    }
+
+    /// The 32-byte key in `path` (hex, `0x` optional), created at random when the file does not
+    /// exist, as base-reth creates its JWT secret and `discovery-secret`.
+    pub fn key_file(path: &std::path::Path, what: &str) -> Result<[u8; 32], String> {
         match std::fs::read_to_string(path) {
-            Ok(text) => Self::from_hex(&text),
+            Ok(text) => {
+                let text = text.trim();
+                let bytes = alloy_primitives::hex::decode(text.strip_prefix("0x").unwrap_or(text)).map_err(|error| format!("{what}: {error}"))?;
+                bytes.try_into().map_err(|_| format!("{what} must be 32 bytes"))
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let mut bytes = [0u8; 32];
                 let mut random = std::fs::File::open("/dev/urandom").map_err(|error| error.to_string())?;
@@ -62,7 +63,7 @@ impl JwtSecret {
                 }
                 std::fs::write(path, alloy_primitives::hex::encode(bytes))
                     .map_err(|error| format!("writing {}: {error}", path.display()))?;
-                Ok(Self(bytes))
+                Ok(bytes)
             }
             Err(error) => Err(format!("reading {}: {error}", path.display())),
         }

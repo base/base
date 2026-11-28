@@ -265,38 +265,9 @@ impl NetArgs {
     /// The node key in `path` (hex), created at random when missing, as base-reth's
     /// `discovery-secret`.
     fn secret_key(path: &std::path::Path) -> Result<SecretKey, String> {
-        let bytes = match std::fs::read_to_string(path) {
-            Ok(text) => alloy_primitives_hex_decode(text.trim())?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let mut bytes = [0u8; 32];
-                std::io::Read::read_exact(
-                    &mut std::fs::File::open("/dev/urandom").map_err(|e| e.to_string())?,
-                    &mut bytes,
-                )
-                .map_err(|e| e.to_string())?;
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                }
-                let text: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-                std::fs::write(path, text).map_err(|e| format!("writing {}: {e}", path.display()))?;
-                bytes
-            }
-            Err(error) => return Err(format!("reading {}: {error}", path.display())),
-        };
+        let bytes = JwtSecret::key_file(path, "node key")?;
         SecretKey::from_byte_array(bytes).map_err(|error| format!("node key {}: {error}", path.display()))
     }
-}
-
-fn alloy_primitives_hex_decode(text: &str) -> Result<[u8; 32], String> {
-    let text = text.strip_prefix("0x").unwrap_or(text);
-    if text.len() != 64 {
-        return Err("node key must be 32 bytes of hex".into());
-    }
-    let mut out = [0u8; 32];
-    for (index, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&text[2 * index..2 * index + 2], 16).map_err(|e| e.to_string())?;
-    }
-    Ok(out)
 }
 
 fn main() -> ExitCode {

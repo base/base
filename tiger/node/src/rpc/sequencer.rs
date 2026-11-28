@@ -4,7 +4,7 @@
 //! over HTTP/1.1.
 
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufReader, Write},
     net::{TcpStream, ToSocketAddrs},
     time::Duration,
 };
@@ -23,8 +23,6 @@ use crate::{Node, RpcError};
 const SEQUENCER_TIMEOUT: Duration = Duration::from_secs(10);
 /// The largest sequencer response read.
 const SEQUENCER_RESPONSE_BYTES_MAX: usize = 4 * 1024 * 1024;
-/// The longest response header line read.
-const SEQUENCER_HEADER_LINE_MAX: usize = 8 * 1024;
 
 impl Node {
     /// Answers the pool methods; `None` for other methods.
@@ -109,56 +107,9 @@ impl Node {
             body.len()
         );
         stream.write_all(request.as_bytes()).map_err(|error| error.to_string())?;
-        let mut reader = BufReader::new(stream.take(SEQUENCER_RESPONSE_BYTES_MAX as u64));
-        let mut line = String::new();
-        let mut read_line = |line: &mut String| -> Result<(), String> {
-            line.clear();
-            let read = reader.by_ref().take(SEQUENCER_HEADER_LINE_MAX as u64).read_line(line).map_err(|e| e.to_string())?;
-            if read == 0 {
-                return Err("sequencer closed the connection".into());
-            }
-            Ok(())
-        };
-        read_line(&mut line)?;
-        let status = line.split_whitespace().nth(1).unwrap_or_default().to_owned();
-        let (mut length, mut chunked) = (None, false);
-        loop {
-            read_line(&mut line)?;
-            let header = line.trim_end();
-            if header.is_empty() {
-                break;
-            }
-            if let Some((name, value)) = header.split_once(':') {
-                match name.trim().to_ascii_lowercase().as_str() {
-                    "content-length" => length = value.trim().parse::<usize>().ok(),
-                    "transfer-encoding" => chunked = value.trim().eq_ignore_ascii_case("chunked"),
-                    _ => {}
-                }
-            }
-        }
-        drop(read_line);
-        let mut body = Vec::new();
-        if chunked {
-            loop {
-                line.clear();
-                reader.read_line(&mut line).map_err(|error| error.to_string())?;
-                let size = usize::from_str_radix(line.trim().split(';').next().unwrap_or_default(), 16)
-                    .map_err(|_| "sequencer sent a malformed chunk".to_owned())?;
-                if size == 0 {
-                    break;
-                }
-                let start = body.len();
-                body.resize(start + size, 0);
-                reader.read_exact(&mut body[start..]).map_err(|error| error.to_string())?;
-                line.clear();
-                reader.read_line(&mut line).map_err(|error| error.to_string())?;
-            }
-        } else if let Some(length) = length {
-            body.resize(length.min(SEQUENCER_RESPONSE_BYTES_MAX), 0);
-            reader.read_exact(&mut body).map_err(|error| error.to_string())?;
-        } else {
-            reader.read_to_end(&mut body).map_err(|error| error.to_string())?;
-        }
+        let (status, body) = crate::upstream::read_response(&mut BufReader::new(stream), SEQUENCER_RESPONSE_BYTES_MAX)
+            .map_err(|error| format!("sequencer: {error}"))?;
+        let status = status.split_whitespace().nth(1).unwrap_or_default();
         // A JSON-RPC error may come with a non-200 status; only a body that is not JSON-RPC fails.
         if !status.starts_with('2') && serde_json::from_slice::<Value>(&body).is_err() {
             return Err(format!("sequencer answered HTTP {status}"));
