@@ -21,6 +21,10 @@ call charges the same gas, writes the same storage, and emits the same logs as i
 Each precompile has one logic implementation for all its versions, with a check on the version
 wherever one differs: `PolicyRegistry` for the policy registry, and `B20Logic` for the B-20 tokens
 (the asset and stablecoin kinds share the core; the asset's own methods are in `b20_asset`).
+A version dials its precompile's canonical `sol!` interface minus the selectors later forks added
+(`B20Version::dials_b20`/`dials_asset`, `PolicyVersion::valid_selector`). Where a Beryl type
+differs (`IB20V1`'s `PausableFeature`, `IPolicyRegistryV1`'s `PolicyType`), Beryl calls decode
+against the Beryl interface first, so they fail with Beryl's error bytes.
 
 `lookup(address)` resolves a call target: fixed addresses first, then B-20 token addresses, the
 same order base-reth's `PrecompilesMap` uses. `fixed()` lists the fixed addresses, which are the

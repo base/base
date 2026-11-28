@@ -1,23 +1,16 @@
-//! ABI dispatch for the `B20Factory` precompile.
-//!
-//! The dispatcher owns everything that is *not* version-specific: it resolves the
-//! active version from the block's hardfork (via [`FactoryVersions`]) and routes
-//! `createB20`'s business logic to it. `getB20Address`, `isB20`, and
-//! `isB20Initialized` are answered via version-invariant computations/pass-throughs.
+//! ABI dispatch for the `B20Factory` precompile: `createB20` runs the factory logic, and
+//! `getB20Address`, `isB20` and `isB20Initialized` are version-invariant computations.
 
 use alloc::{string::String, vec::Vec};
 
-use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_primitives::{B256, Bytes};
 use alloy_sol_types::{SolCall, SolType, SolValue, abi};
 use base_common_genesis::BaseUpgrade;
 use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
-use crate::{
-    B20FactoryStorage, B20Variant, CalldataGas, Factory, FactoryV1, FactoryVersion,
-    FactoryVersions, IB20Factory,
-};
+use crate::{B20FactoryStorage, B20Variant, Calldata, FactoryVersions, IB20Factory};
 
-impl<'a> B20FactoryStorage<'a> {
+impl B20FactoryStorage<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -28,58 +21,31 @@ impl<'a> B20FactoryStorage<'a> {
         if !ctx.call_value().is_zero() {
             return ctx.error_result(BasePrecompileError::revert(IB20Factory::NonPayable {}));
         }
-        if let Err(error) = CalldataGas::deduct(ctx, calldata) {
+        if let Err(error) = Calldata::deduct_gas(ctx, calldata) {
             return ctx.error_result(error);
         }
-        // Gate by hardfork: resolve the active version once.
-        let Some(version) = FactoryVersions::from_base_upgrade(upgrade) else {
+        if FactoryVersions::from_base_upgrade(upgrade).is_none() {
             return ctx.error_result(BasePrecompileError::Revert(Bytes::new()));
-        };
-        ctx.result_output(self.route(ctx, calldata, version, upgrade), |b| b)
-    }
-
-    /// Creates a token at a deterministic address derived from `(caller, variant, salt)`,
-    /// pinned to factory `V1`. `upgrade` selects the policy-logic version the created token
-    /// is bound to.
-    pub fn create_b20(
-        &mut self,
-        caller: Address,
-        call: IB20Factory::createB20Call,
-        upgrade: BaseUpgrade,
-    ) -> Result<Address> {
-        let address_hash = keccak256((caller, call.salt).abi_encode());
-        let request = CreateB20Request::from_call(&call);
-        FactoryV1.create_b20_decoded(
-            self,
-            request.variant,
-            request.params,
-            &request.init_calls,
-            address_hash,
-            upgrade,
-        )
+        }
+        ctx.result_output(self.route(ctx, calldata, upgrade), |b| b)
     }
 
     fn route(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-        version: FactoryVersion,
         upgrade: BaseUpgrade,
     ) -> Result<Bytes> {
         let should_revert_selector =
             ctx.storage_features().selector_only_abi_decode_errors_enabled();
-        match CreateB20Request::try_from_calldata(calldata, version, should_revert_selector) {
-            Some(Ok(request)) => {
-                return self.run_create_b20(ctx, version, upgrade, request);
-            }
+        match CreateB20Request::try_from_calldata(calldata, should_revert_selector) {
+            Some(Ok(request)) => return self.run_create_b20(ctx, upgrade, request),
             Some(Err(error)) => return Err(error),
             None => {}
         }
-
-        let logic = version.implementation();
-        match version.abi().decode(calldata)? {
+        match Calldata::decode_call(calldata)? {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
-                self.run_create_b20(ctx, version, upgrade, CreateB20Request::from_call(&call))
+                self.run_create_b20(ctx, upgrade, CreateB20Request::from_call(&call))
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
                 let v = B20Variant::from_abi(call.variant).expect(
@@ -90,11 +56,11 @@ impl<'a> B20FactoryStorage<'a> {
                 Ok(IB20Factory::getB20AddressCall::abi_encode_returns(&addr).into())
             }
             IB20Factory::IB20FactoryCalls::isB20(call) => {
-                let result = logic.is_b20(self, call.token)?;
+                let result = self.is_b20(call.token)?;
                 Ok(IB20Factory::isB20Call::abi_encode_returns(&result).into())
             }
             IB20Factory::IB20FactoryCalls::isB20Initialized(call) => {
-                let initialized = logic.is_b20_initialized(self, call.token)?;
+                let initialized = self.is_b20_initialized(call.token)?;
                 Ok(IB20Factory::isB20InitializedCall::abi_encode_returns(&initialized).into())
             }
         }
@@ -103,19 +69,16 @@ impl<'a> B20FactoryStorage<'a> {
     fn run_create_b20(
         &mut self,
         ctx: StorageCtx<'_>,
-        version: FactoryVersion,
         upgrade: BaseUpgrade,
         request: CreateB20Request<'_>,
     ) -> Result<Bytes> {
-        let logic = version.implementation();
         let caller = ctx.caller();
         assert!(
             B20Variant::from_abi(request.variant).is_some(),
             "decode paths reject non-canonical discriminants before dispatch"
         );
         let address_hash = ctx.metered_keccak256(&(caller, request.salt).abi_encode())?;
-        let token = logic.create_b20_decoded(
-            self,
+        let token = self.create_b20_decoded(
             request.variant,
             request.params,
             &request.init_calls,
@@ -134,16 +97,9 @@ struct CreateB20Request<'a> {
 }
 
 impl<'a> CreateB20Request<'a> {
-    fn try_from_calldata(
-        calldata: &'a [u8],
-        version: FactoryVersion,
-        should_revert_selector: bool,
-    ) -> Option<Result<Self>> {
+    fn try_from_calldata(calldata: &'a [u8], should_revert_selector: bool) -> Option<Result<Self>> {
         let selector = calldata.first_chunk::<4>().copied()?;
         if selector != IB20Factory::createB20Call::SELECTOR {
-            return None;
-        }
-        if !version.abi().valid_selector(selector) {
             return None;
         }
         let rest = &calldata[4..];
@@ -187,13 +143,13 @@ mod tests {
     use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
     use base_common_genesis::BaseUpgrade;
     use base_tiger_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, StorageCtx,
+        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx,
     };
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
         B20AssetExtensionStorage, B20AssetStorage, B20Token, B20FactoryStorage,
-        B20StablecoinStorage, B20Variant, FactoryVersion, IB20, IB20Factory, PolicyRegistryStorage,
+        B20StablecoinStorage, B20Variant, Calldata, IB20, IB20Factory, PolicyRegistryStorage,
         PolicyVersion, StablecoinAccounting, TokenAccounting,
     };
 
@@ -1077,7 +1033,6 @@ mod tests {
                 B20FactoryStorage::new(ctx).route(
                     ctx,
                     &calldata,
-                    FactoryVersion::V1,
                     BaseUpgrade::Beryl,
                 )
             });
@@ -1089,7 +1044,7 @@ mod tests {
             );
 
             if let Err(err) = outcome {
-                let control = FactoryVersion::V1.abi().decode(&calldata).unwrap_err();
+                let control = decode(&calldata).unwrap_err();
                 assert_eq!(err, control, "row `{name}`: error bytes must match owned decode");
                 match err {
                     BasePrecompileError::AbiDecodeFailed { selector, .. } => {
@@ -1128,7 +1083,7 @@ mod tests {
             storage.set_caller(Address::repeat_byte(0x01));
             StorageCtx::enter(&mut storage, |ctx| {
                 B20FactoryStorage::new(ctx)
-                    .route(ctx, calldata, FactoryVersion::V1, upgrade)
+                    .route(ctx, calldata, upgrade)
                     .unwrap_err()
             })
         };
@@ -1239,7 +1194,7 @@ mod tests {
 
         // Beryl gate: no fast error — the reject misses the borrowed path and falls through.
         assert!(
-            super::CreateB20Request::try_from_calldata(&calldata, FactoryVersion::V1, false)
+            super::CreateB20Request::try_from_calldata(&calldata, false)
                 .is_none(),
             "Beryl reject must miss the borrowed path (no bounded short-circuit)"
         );
@@ -1247,7 +1202,7 @@ mod tests {
         let owned_msg =
             IB20Factory::createB20Call::abi_decode_validate(&calldata).unwrap_err().to_string();
 
-        let factory_err = FactoryVersion::V1.abi().decode(&calldata).unwrap_err();
+        let factory_err = decode(&calldata).unwrap_err();
         let BasePrecompileError::AbiDecodeFailed { selector, error } = &factory_err else {
             panic!("expected AbiDecodeFailed, got {factory_err:?}");
         };
@@ -1258,7 +1213,7 @@ mod tests {
         storage.set_caller(Address::repeat_byte(0x01));
         let route_err = StorageCtx::enter(&mut storage, |ctx| {
             B20FactoryStorage::new(ctx)
-                .route(ctx, &calldata, FactoryVersion::V1, BaseUpgrade::Beryl)
+                .route(ctx, &calldata, BaseUpgrade::Beryl)
                 .unwrap_err()
         });
         assert_eq!(route_err, factory_err);
@@ -1281,5 +1236,62 @@ mod tests {
         );
         assert_eq!(owned_msg.len(), error.len(), "SolCall and FactoryAbi diagnostics must match");
         assert_eq!(revert_len, 4 + error.len(), "Beryl revert is selector || error string");
+    }
+
+    fn decode(calldata: &[u8]) -> Result<IB20Factory::IB20FactoryCalls> {
+        Calldata::decode_call(calldata)
+    }
+
+    fn valid_calldata() -> alloc::vec::Vec<u8> {
+        IB20Factory::isB20Call { token: Address::repeat_byte(0x42) }.abi_encode()
+    }
+
+    /// `FactoryAbi::decode` replaced `decode_precompile_call!` on the execution path. The macro
+    /// decodes first and consults `valid_selector` only on the error path; `decode` checks the
+    /// selector first. The orderings must be observationally identical, because every one of these
+    /// outcomes is consensus data.
+    #[test]
+    fn decode_preserves_legacy_macro_semantics() {
+        // Short calldata: no selector to report.
+        for truncated in [[].as_slice(), &[0x01], &[0x01, 0x02, 0x03]] {
+            assert_eq!(
+                decode(truncated).unwrap_err(),
+                BasePrecompileError::UnknownFunctionSelector([0u8; 4])
+            );
+        }
+
+        // Unknown selector, whatever the payload length.
+        let unknown = [0xde, 0xad, 0xbe, 0xef];
+        assert_eq!(
+            decode(&unknown).unwrap_err(),
+            BasePrecompileError::UnknownFunctionSelector(unknown)
+        );
+        let mut unknown_padded = unknown.to_vec();
+        unknown_padded.extend_from_slice(&[0u8; 32]);
+        assert_eq!(
+            decode(&unknown_padded).unwrap_err(),
+            BasePrecompileError::UnknownFunctionSelector(unknown)
+        );
+
+        // Known selector, calldata truncated below MIN_DATA_LENGTH: AbiDecodeFailed, not unknown.
+        let selector = IB20Factory::isB20Call::SELECTOR;
+        let err = decode(&selector).unwrap_err();
+        let BasePrecompileError::AbiDecodeFailed { selector: got, error } = err else {
+            panic!("truncated args on a known selector must be AbiDecodeFailed, got {err:?}");
+        };
+        assert_eq!(got, selector);
+        // The interface name is embedded in the short-calldata error, and thus on the wire.
+        assert!(error.contains("IB20FactoryCalls"), "unexpected decoder message: {error}");
+
+        // Known selector, dirty high-order padding: rejected rather than silently truncated.
+        let mut dirty = valid_calldata();
+        dirty[4] = 0xff;
+        assert!(matches!(
+            decode(&dirty).unwrap_err(),
+            BasePrecompileError::AbiDecodeFailed { .. }
+        ));
+
+        // Well-formed call decodes.
+        assert!(decode(&valid_calldata()).is_ok());
     }
 }

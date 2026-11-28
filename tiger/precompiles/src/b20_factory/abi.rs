@@ -1,6 +1,4 @@
-//! The `IB20Factory` wire surface frozen at Beryl, the fork where the factory activates. Also the
-//! canonical live surface, re-exported unqualified by [`super`].
-//! A new wire surface goes in a new `abi/vN.rs`; see [`super`].
+//! The `IB20Factory` wire surface, frozen at Beryl, the fork where the factory activates.
 
 use alloy_sol_types::sol;
 
@@ -107,9 +105,11 @@ sol! {
 mod tests {
     use alloc::vec::Vec;
 
+    use alloy_primitives::{Address, B256};
     use alloy_sol_types::{SolCall, SolEnum, SolInterface};
 
     use super::IB20Factory;
+    use crate::B20Variant;
 
     /// The interface name reaches consensus data via `AbiDecodeFailed` on short calldata, so it is
     /// pinned here rather than left to a future rename. See the module docs.
@@ -144,5 +144,53 @@ mod tests {
 
         assert_eq!(selectors.len(), 4);
         assert_eq!(selectors, expected);
+    }
+
+    #[test]
+    fn every_b20_variant_discriminant_decodes() {
+        for discriminant in 0..IB20Factory::B20Variant::COUNT {
+            IB20Factory::B20Variant::try_from(discriminant as u8)
+                .expect("generated B20Variant discriminant should decode");
+        }
+    }
+
+    /// The ABI ordinal of each variant *is* byte `[10]` of every token that variant deploys
+    /// (`B20Variant::address_prefix`), spliced in as plaintext rather than hashed. Reordering the
+    /// `sol!` enum would keep every selector, topic0 and error selector identical while silently
+    /// remapping the entire deployed token address space, so the binding is pinned end to end:
+    /// ABI ordinal -> Rust discriminant -> derived address -> recovered variant.
+    #[test]
+    fn abi_ordinals_are_the_address_discriminants() {
+        let cases = [
+            (IB20Factory::B20Variant::ASSET, B20Variant::Asset, B20Variant::ASSET_DISCRIMINANT),
+            (
+                IB20Factory::B20Variant::STABLECOIN,
+                B20Variant::Stablecoin,
+                B20Variant::STABLECOIN_DISCRIMINANT,
+            ),
+        ];
+
+        let creator = Address::repeat_byte(0x11);
+        let salt = B256::repeat_byte(0x22);
+
+        for (abi_variant, rust_variant, discriminant) in cases {
+            assert_eq!(
+                abi_variant as u8, discriminant,
+                "ABI ordinal for {rust_variant:?} moved; every token it deploys would remap"
+            );
+            assert_eq!(B20Variant::from_abi(abi_variant), Some(rust_variant));
+
+            let (address, _) = rust_variant.compute_address(creator, salt);
+            assert_eq!(
+                address.as_slice()[10],
+                abi_variant as u8,
+                "address byte [10] must be the ABI ordinal for {rust_variant:?}"
+            );
+            assert_eq!(
+                B20Variant::from_address(address),
+                Some(rust_variant),
+                "address derived for {rust_variant:?} must recover it"
+            );
+        }
     }
 }

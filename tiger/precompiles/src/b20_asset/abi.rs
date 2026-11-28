@@ -1,11 +1,7 @@
-//! The asset B-20 wire surface frozen at Cobalt, which added the ERC-8056 scheduled-multiplier
-//! selectors. Also the canonical live surface, re-exported unqualified by [`super`].
-//! A new wire surface goes in a new `abi/vN.rs`; see [`super`].
-//!
-//! [`IB20Asset`] defines only the asset-specific surface. All inherited selectors come from
-//! [`crate::IB20`] defined in `common/abi.rs`. Being canonical, this module also owns the
-//! advertised ERC-165 ids;
-//! `super` is kept to pure re-exports.
+//! The asset B-20 wire surface (`IB20Asset`), canonical since Cobalt, which added the ERC-8056
+//! scheduled-multiplier selectors (see [`crate::B20Version`] for the selectors Beryl dials).
+//! [`IB20Asset`] defines only the asset-specific surface; inherited selectors come from
+//! [`crate::IB20`].
 
 use alloy_primitives::FixedBytes;
 use alloy_sol_types::sol;
@@ -193,102 +189,11 @@ sol! {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, FixedBytes, b256};
-    use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface};
+    use alloy_primitives::FixedBytes;
+    use alloy_sol_types::{SolCall, SolInterface};
 
     use super::{ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset};
-    use crate::{AbiFingerprint, IB20, IB20AssetV1};
-
-    /// Absolute wire fingerprint for Beryl's surface. Catches both-sides drift that relative
-    /// V1==V2 asserts miss (alloy Display / signature changes that move every copy together).
-    const V1_ABI_FINGERPRINT: B256 =
-        b256!("cdd0644c49fc7cc90ae0e7153ee2c92ab2b82ac4450a07be4095d68318d173f5");
-
-    /// Absolute wire fingerprint for Cobalt's (canonical) surface.
-    const V2_ABI_FINGERPRINT: B256 =
-        b256!("691ec59a8cf08af7730fa6a98c1fcc71ad6a5bfb2b563540b323e644169f034d");
-
-    /// `IB20Asset` declares no enum, so this surface passes `0` for the count and no ordinals to
-    /// [`AbiFingerprint`] — there is no discriminant here that escapes the ABI the way the
-    /// factory's `B20Variant` rides byte `[10]` of every token address.
-    fn v1_abi_fingerprint() -> B256 {
-        AbiFingerprint::compute(
-            IB20AssetV1::IB20AssetCalls::selectors(),
-            IB20AssetV1::IB20AssetEvents::SELECTORS.iter().copied().map(B256::new),
-            IB20AssetV1::IB20AssetErrors::selectors(),
-            0,
-            [],
-        )
-    }
-
-    fn v2_abi_fingerprint() -> B256 {
-        AbiFingerprint::compute(
-            IB20Asset::IB20AssetCalls::selectors(),
-            IB20Asset::IB20AssetEvents::SELECTORS.iter().copied().map(B256::new),
-            IB20Asset::IB20AssetErrors::selectors(),
-            0,
-            [],
-        )
-    }
-
-    #[test]
-    fn v1_abi_fingerprint_is_pinned() {
-        assert_eq!(v1_abi_fingerprint(), V1_ABI_FINGERPRINT);
-    }
-
-    #[test]
-    fn v2_abi_fingerprint_is_pinned() {
-        assert_eq!(v2_abi_fingerprint(), V2_ABI_FINGERPRINT);
-    }
-
-    /// Events and errors carried over from Beryl keep their topic0 / selector. A signature drift
-    /// here would change the logs and revert data of ops that both surfaces share.
-    #[test]
-    fn shared_events_and_errors_keep_their_signatures() {
-        assert_eq!(
-            IB20AssetV1::MultiplierUpdated::SIGNATURE_HASH,
-            IB20Asset::MultiplierUpdated::SIGNATURE_HASH
-        );
-        assert_eq!(
-            IB20AssetV1::ExtraMetadataUpdated::SIGNATURE_HASH,
-            IB20Asset::ExtraMetadataUpdated::SIGNATURE_HASH
-        );
-        assert_eq!(
-            IB20AssetV1::Announcement::SIGNATURE_HASH,
-            IB20Asset::Announcement::SIGNATURE_HASH
-        );
-        assert_eq!(
-            IB20AssetV1::EndAnnouncement::SIGNATURE_HASH,
-            IB20Asset::EndAnnouncement::SIGNATURE_HASH
-        );
-
-        assert_eq!(
-            IB20AssetV1::AnnouncementIdAlreadyUsed::SELECTOR,
-            IB20Asset::AnnouncementIdAlreadyUsed::SELECTOR
-        );
-        assert_eq!(
-            IB20AssetV1::InvalidMetadataKey::SELECTOR,
-            IB20Asset::InvalidMetadataKey::SELECTOR
-        );
-        assert_eq!(
-            IB20AssetV1::InvalidMultiplier::SELECTOR,
-            IB20Asset::InvalidMultiplier::SELECTOR
-        );
-        assert_eq!(IB20AssetV1::LengthMismatch::SELECTOR, IB20Asset::LengthMismatch::SELECTOR);
-        assert_eq!(IB20AssetV1::EmptyBatch::SELECTOR, IB20Asset::EmptyBatch::SELECTOR);
-        assert_eq!(
-            IB20AssetV1::AnnouncementInProgress::SELECTOR,
-            IB20Asset::AnnouncementInProgress::SELECTOR
-        );
-        assert_eq!(
-            IB20AssetV1::InternalCallMalformed::SELECTOR,
-            IB20Asset::InternalCallMalformed::SELECTOR
-        );
-        assert_eq!(
-            IB20AssetV1::InternalCallFailed::SELECTOR,
-            IB20Asset::InternalCallFailed::SELECTOR
-        );
-    }
+    use crate::IB20;
 
     /// XORs the selectors of an interface's members into its ERC-165 interface id.
     fn xor(selectors: &[[u8; 4]]) -> FixedBytes<4> {

@@ -1,17 +1,14 @@
 //! ABI dispatch for the stablecoin B-20 variant: resolves the active version from the hardfork,
 //! answers `currency()`, and routes everything else to the shared B-20 dispatcher.
 
-use alloc::string::ToString;
-
 use alloy_primitives::Bytes;
 use alloy_sol_types::{SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
-use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
+use base_tiger_precompile_storage::{PrecompileResult, StorageCtx};
 
 use crate::{
-    B20Abi, B20Logic, B20Token, B20Variant, B20Version,
-    IB20Stablecoin::{self, IB20StablecoinCalls as SC},
-    PolicyAccounting, StablecoinAccounting, Token,
+    B20Logic, B20Token, B20Variant, B20Version, Calldata, IB20Stablecoin::IB20StablecoinCalls as SC,
+    PolicyAccounting, StablecoinAccounting,
 };
 
 impl<S: StablecoinAccounting, A: PolicyAccounting> B20Token<S, A> {
@@ -36,16 +33,13 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20Token<S, A> {
         privileged: bool,
     ) -> base_tiger_precompile_storage::Result<Bytes> {
         if let Some(selector) = calldata.first_chunk::<4>().copied()
-            && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)
+            && SC::valid_selector(selector)
         {
-            let call = IB20Stablecoin::IB20StablecoinCalls::abi_decode_validate(calldata).map_err(
-                |error| BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() },
-            )?;
-            return Ok(match call {
-                SC::currency(_) => self.accounting().currency()?.abi_encode().into(),
+            return Ok(match Calldata::decode(calldata, selector)? {
+                SC::currency(_) => self.accounting.currency()?.abi_encode().into(),
             });
         }
-        let call = B20Abi::of(version).decode(calldata)?;
+        let call = version.decode_b20(calldata)?;
         // Stablecoin precision is fixed at 6 by the protocol spec; never read from storage, to
         // avoid the zero-return window during the factory bootstrap (BOP-349/PSRC-27).
         let decimals = |_: &S| {

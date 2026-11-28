@@ -12,9 +12,8 @@ use alloy_sol_types::SolEvent;
 use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    AssetAccounting, B20AssetStorage, B20Guards, B20Logic, B20Token, B20TokenRole, B20Version,
-    IB20, IB20Asset, PolicyAccounting, Token,
-};
+    AssetAccounting, B20AssetStorage, B20Logic, B20Token, B20TokenRole, B20Version,
+    IB20, IB20Asset, PolicyAccounting, };
 
 impl B20Logic {
     /// Role identifier for asset operators: `keccak256("OPERATOR_ROLE")`. Required for
@@ -33,7 +32,7 @@ impl B20Logic {
         caller: Address,
         privileged: bool,
     ) -> Result<()> {
-        if privileged { Ok(()) } else { B20Guards::ensure_role(token, caller, Self::OPERATOR_ROLE) }
+        if privileged { Ok(()) } else { token.ensure_role(caller, Self::OPERATOR_ROLE) }
     }
 
     /// Sets the current multiplier. V1 just writes it; from V2 it is an instantaneous failsafe
@@ -51,27 +50,27 @@ impl B20Logic {
             if new_multiplier.is_zero() {
                 return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
             }
-            token.accounting_mut().set_multiplier(new_multiplier)?;
-            return token.accounting_mut().emit_event(
+            token.accounting.set_multiplier(new_multiplier)?;
+            return token.accounting.emit_event(
                 IB20Asset::MultiplierUpdated { multiplier: new_multiplier }.encode_log_data(),
             );
         }
-        let now = token.accounting().timestamp()?;
+        let now = token.accounting.timestamp()?;
         self.ensure_operator_role(token, caller, privileged)?;
         if new_multiplier.is_zero() || new_multiplier > Self::MAX_UI_MULTIPLIER {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
         }
-        let pending_multiplier = U256::from(token.accounting().pending_multiplier()?);
-        let pending_effective_at = U256::from(token.accounting().pending_effective_at()?);
+        let pending_multiplier = U256::from(token.accounting.pending_multiplier()?);
+        let pending_effective_at = U256::from(token.accounting.pending_effective_at()?);
         let live_pending = pending_effective_at > now;
 
         let old = self.effective_multiplier(token)?;
-        token.accounting_mut().set_multiplier(new_multiplier)?;
+        token.accounting.set_multiplier(new_multiplier)?;
         if pending_effective_at != U256::ZERO {
-            token.accounting_mut().clear_pending_multiplier_and_effective_at()?;
+            token.accounting.clear_pending_multiplier_and_effective_at()?;
         }
         if live_pending {
-            token.accounting_mut().emit_event(
+            token.accounting.emit_event(
                 IB20Asset::UIMultiplierUpdateCancelled {
                     cancelledMultiplier: pending_multiplier,
                     cancelledEffectiveAt: pending_effective_at,
@@ -79,10 +78,10 @@ impl B20Logic {
                 .encode_log_data(),
             )?;
         }
-        token.accounting_mut().emit_event(
+        token.accounting.emit_event(
             IB20Asset::MultiplierUpdated { multiplier: new_multiplier }.encode_log_data(),
         )?;
-        token.accounting_mut().emit_event(
+        token.accounting.emit_event(
             IB20Asset::UIMultiplierUpdated {
                 oldMultiplier: old,
                 newMultiplier: new_multiplier,
@@ -102,14 +101,14 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Metadata)?;
+            token.ensure_token_role(caller, B20TokenRole::Metadata)?;
         }
         if key.is_empty() {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidMetadataKey {}));
         }
-        token.accounting_mut().set_extra_metadata_value(key.as_str(), value.clone())?;
+        token.accounting.set_extra_metadata_value(key.as_str(), value.clone())?;
         token
-            .accounting_mut()
+            .accounting
             .emit_event(IB20Asset::ExtraMetadataUpdated { key, value }.encode_log_data())
     }
 
@@ -125,9 +124,9 @@ impl B20Logic {
         // The pause and role guards below are the sole authorization gate for the batch: the inner
         // mints run privileged to avoid re-checking per recipient. Check order: PAUSE -> ROLE ->
         // INPUT -> BUSINESS.
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::MINT)?;
+        token.ensure_not_paused(IB20::PausableFeature::MINT)?;
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
+            token.ensure_token_role(caller, B20TokenRole::Mint)?;
         }
         if recipients.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Asset::LengthMismatch {
@@ -155,12 +154,12 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         self.ensure_operator_role(token, caller, privileged)?;
-        if token.accounting().is_announcement_id_used(id.as_str())? {
+        if token.accounting.is_announcement_id_used(id.as_str())? {
             return Err(BasePrecompileError::revert(IB20Asset::AnnouncementIdAlreadyUsed { id }));
         }
-        token.accounting_mut().mark_announcement_id_used(id.as_str())?;
+        token.accounting.mark_announcement_id_used(id.as_str())?;
         token
-            .accounting_mut()
+            .accounting
             .emit_event(IB20Asset::Announcement { caller, id, description, uri }.encode_log_data())
     }
 
@@ -170,7 +169,7 @@ impl B20Logic {
         token: &mut B20Token<S, A>,
         id: String,
     ) -> Result<()> {
-        token.accounting_mut().emit_event(IB20Asset::EndAnnouncement { id }.encode_log_data())
+        token.accounting.emit_event(IB20Asset::EndAnnouncement { id }.encode_log_data())
     }
 
     /// `balance` times the multiplier, over WAD.
@@ -204,7 +203,7 @@ impl B20Logic {
         token: &B20Token<S, A>,
         account: Address,
     ) -> Result<U256> {
-        let balance = token.accounting().balance_of(account)?;
+        let balance = token.accounting.balance_of(account)?;
         self.to_scaled_balance(token, balance)
     }
 
@@ -214,18 +213,18 @@ impl B20Logic {
         token: &B20Token<S, A>,
     ) -> Result<U256> {
         if self.version == B20Version::V1 {
-            return token.accounting().multiplier();
+            return token.accounting.multiplier();
         }
-        let now = token.accounting().timestamp()?;
-        let effective_at = token.accounting().pending_effective_at()?;
+        let now = token.accounting.timestamp()?;
+        let effective_at = token.accounting.pending_effective_at()?;
         if effective_at != 0 && now >= U256::from(effective_at) {
-            let pending = token.accounting().pending_multiplier()?;
+            let pending = token.accounting.pending_multiplier()?;
             // Both setters reject zero, so a stored pending is never zero. Do not fall back to
             // WAD: the Solidity reference also returns the raw pending value.
             debug_assert!(pending != 0, "matured pending multiplier must be non-zero");
             return Ok(U256::from(pending));
         }
-        token.accounting().multiplier()
+        token.accounting.multiplier()
     }
 
     /// (V2) The pending multiplier while it is scheduled, else the one in effect.
@@ -233,10 +232,10 @@ impl B20Logic {
         &self,
         token: &B20Token<S, A>,
     ) -> Result<U256> {
-        let now = token.accounting().timestamp()?;
-        let effective_at = token.accounting().pending_effective_at()?;
+        let now = token.accounting.timestamp()?;
+        let effective_at = token.accounting.pending_effective_at()?;
         if U256::from(effective_at) > now {
-            return Ok(U256::from(token.accounting().pending_multiplier()?));
+            return Ok(U256::from(token.accounting.pending_multiplier()?));
         }
         self.effective_multiplier(token)
     }
@@ -247,7 +246,7 @@ impl B20Logic {
         token: &B20Token<S, A>,
     ) -> Result<U256> {
         let multiplier = self.effective_multiplier(token)?;
-        let supply = token.accounting().total_supply()?;
+        let supply = token.accounting.total_supply()?;
         let product =
             supply.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?;
         Ok(product / B20AssetStorage::WAD)
@@ -262,7 +261,7 @@ impl B20Logic {
         effective_at: U256,
         privileged: bool,
     ) -> Result<()> {
-        let now = token.accounting().timestamp()?;
+        let now = token.accounting.timestamp()?;
         self.ensure_operator_role(token, caller, privileged)?;
         if new_multiplier.is_zero() || new_multiplier > Self::MAX_UI_MULTIPLIER {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
@@ -278,7 +277,7 @@ impl B20Logic {
             }));
         }
 
-        let pending_effective_at = token.accounting().pending_effective_at()?;
+        let pending_effective_at = token.accounting.pending_effective_at()?;
         // A live pending blocks a new schedule.
         if U256::from(pending_effective_at) > now {
             return Err(BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateExists {
@@ -287,16 +286,16 @@ impl B20Logic {
         }
         // Fold a matured pending into the current multiplier before overwriting it.
         if pending_effective_at != 0 {
-            let matured = U256::from(token.accounting().pending_multiplier()?);
-            token.accounting_mut().set_multiplier(matured)?;
+            let matured = U256::from(token.accounting.pending_multiplier()?);
+            token.accounting.set_multiplier(matured)?;
         }
 
-        let old = token.accounting().multiplier()?;
+        let old = token.accounting.multiplier()?;
         // Narrowing is safe because the guards above enforce the storage field bounds.
         token
-            .accounting_mut()
+            .accounting
             .set_pending_and_effective_at(new_multiplier.to::<u128>(), effective_at.to::<u64>())?;
-        token.accounting_mut().emit_event(
+        token.accounting.emit_event(
             IB20Asset::UIMultiplierUpdated {
                 oldMultiplier: old,
                 newMultiplier: new_multiplier,
@@ -313,16 +312,16 @@ impl B20Logic {
         caller: Address,
         privileged: bool,
     ) -> Result<()> {
-        let now = token.accounting().timestamp()?;
+        let now = token.accounting.timestamp()?;
         self.ensure_operator_role(token, caller, privileged)?;
-        let pending_multiplier = U256::from(token.accounting().pending_multiplier()?);
-        let pending_effective_at = U256::from(token.accounting().pending_effective_at()?);
+        let pending_multiplier = U256::from(token.accounting.pending_multiplier()?);
+        let pending_effective_at = U256::from(token.accounting.pending_effective_at()?);
         // A pending maturing at exactly `now` has already taken effect and is not cancellable.
         if pending_effective_at <= now {
             return Err(BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {}));
         }
-        token.accounting_mut().clear_pending_multiplier_and_effective_at()?;
-        token.accounting_mut().emit_event(
+        token.accounting.clear_pending_multiplier_and_effective_at()?;
+        token.accounting.emit_event(
             IB20Asset::UIMultiplierUpdateCancelled {
                 cancelledMultiplier: pending_multiplier,
                 cancelledEffectiveAt: pending_effective_at,
@@ -357,7 +356,7 @@ mod tests {
         use crate::{
             AssetAccounting, B20Logic, B20Version, B20AssetStorage, B20Token, B20PolicyType,
             B20TokenRole, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, PermitArgs,
-            PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
+            PolicyRegistryStorage, PolicyVersion, TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x21);
@@ -393,21 +392,21 @@ mod tests {
 
         /// Grants `role` to `account` and keeps the admin member-count consistent.
         fn grant(tok: &mut Tok, role: B256, account: Address) {
-            tok.accounting_mut().set_role(role, account, true).unwrap();
-            let next = tok.accounting().role_member_count(role).unwrap() + U256::ONE;
-            tok.accounting_mut().set_role_member_count(role, next).unwrap();
+            tok.accounting.set_role(role, account, true).unwrap();
+            let next = tok.accounting.role_member_count(role).unwrap() + U256::ONE;
+            tok.accounting.set_role_member_count(role, next).unwrap();
         }
 
         /// Credits `account` with `amount` and grows total supply to match.
         fn fund(tok: &mut Tok, account: Address, amount: U256) {
-            let bal = tok.accounting().balance_of(account).unwrap();
-            tok.accounting_mut().set_balance(account, bal + amount).unwrap();
-            let supply = tok.accounting().total_supply().unwrap();
-            tok.accounting_mut().set_total_supply(supply + amount).unwrap();
+            let bal = tok.accounting.balance_of(account).unwrap();
+            tok.accounting.set_balance(account, bal + amount).unwrap();
+            let supply = tok.accounting.total_supply().unwrap();
+            tok.accounting.set_total_supply(supply + amount).unwrap();
         }
 
         fn last_event_sig(tok: &Tok) -> B256 {
-            tok.accounting().events.last().unwrap().topics()[0]
+            tok.accounting.events.last().unwrap().topics()[0]
         }
 
         fn anvil_owner() -> Address {
@@ -425,7 +424,7 @@ mod tests {
             deadline: U256,
         ) -> PermitArgs {
             let domain_sep = LOGIC.domain_separator(tok, CHAIN_ID).unwrap();
-            let nonce = tok.accounting().nonce(owner).unwrap();
+            let nonce = tok.accounting.nonce(owner).unwrap();
             let mut args =
                 PermitArgs { owner, spender, value, deadline, v: 0, r: B256::ZERO, s: B256::ZERO };
             let signing_hash = args.signing_hash(domain_sep, nonce);
@@ -452,8 +451,8 @@ mod tests {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
             LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(70u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(70u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
@@ -489,19 +488,19 @@ mod tests {
         fn transfer_from_decrements_finite_allowance() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(10u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
         }
 
         #[test]
         fn transfer_from_infinite_allowance_is_not_decremented() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::MAX).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::MAX).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::MAX);
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::MAX);
         }
 
         // --- approve ---
@@ -510,7 +509,7 @@ mod tests {
         fn approve_sets_allowance_and_emits() {
             let mut tok = token();
             LOGIC.approve(&mut tok, ALICE, BOB, U256::from(50u64)).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(50u64));
             assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
         }
 
@@ -520,14 +519,14 @@ mod tests {
         fn mint_privileged_increases_supply_and_balance() {
             let mut tok = token();
             LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(100u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(100u64));
         }
 
         #[test]
         fn mint_reverts_over_supply_cap() {
             let mut tok = token();
-            tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
+            tok.accounting.set_supply_cap(U256::from(50u64)).unwrap();
             let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
             assert_eq!(
                 err,
@@ -585,22 +584,22 @@ mod tests {
             );
             grant(&mut tok, B20TokenRole::Burn.id(), ALICE);
             LOGIC.burn(&mut tok, ALICE, U256::from(40u64)).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(60u64));
         }
 
         #[test]
         fn burn_blocked_destroys_from_unauthorized_account() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::TransferSender.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 )
                 .unwrap();
             LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
             assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
         }
 
@@ -638,7 +637,7 @@ mod tests {
         fn grant_role_privileged_grants_and_emits() {
             let mut tok = token();
             LOGIC.grant_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
             assert_eq!(last_event_sig(&tok), IB20::RoleGranted::SIGNATURE_HASH);
         }
 
@@ -658,9 +657,9 @@ mod tests {
             LOGIC
                 .grant_role_unchecked(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
                 .unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
             assert_eq!(
-                tok.accounting().role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+                tok.accounting.role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
                 U256::ONE
             );
         }
@@ -670,9 +669,9 @@ mod tests {
         #[test]
         fn update_policy_sets_new_id() {
             let mut tok = token();
-            tok.policy_storage_mut().create_existing_policy(7);
+            tok.policy.create_existing_policy(7);
             LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
-            assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
+            assert_eq!(tok.accounting.policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
         }
 
         #[test]
@@ -694,8 +693,8 @@ mod tests {
             let owner = anvil_owner();
             let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
             LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
-            assert_eq!(tok.accounting().allowance(owner, BOB).unwrap(), U256::from(500u64));
-            assert_eq!(tok.accounting().nonce(owner).unwrap(), U256::ONE);
+            assert_eq!(tok.accounting.allowance(owner, BOB).unwrap(), U256::from(500u64));
+            assert_eq!(tok.accounting.nonce(owner).unwrap(), U256::ONE);
         }
 
         #[test]
@@ -721,21 +720,21 @@ mod tests {
         #[test]
         fn to_scaled_balance_two_to_one_multiplier() {
             let mut tok = token();
-            tok.accounting_mut().set_multiplier(B20AssetStorage::WAD * U256::from(2u64)).unwrap();
+            tok.accounting.set_multiplier(B20AssetStorage::WAD * U256::from(2u64)).unwrap();
             assert_eq!(LOGIC.to_scaled_balance(&tok, U256::from(50u64)).unwrap(), U256::from(100u64));
         }
 
         #[test]
         fn scaled_balance_of_derives_from_balance() {
             let mut tok = token();
-            tok.accounting_mut().set_balance(ALICE, U256::from(75u64)).unwrap();
+            tok.accounting.set_balance(ALICE, U256::from(75u64)).unwrap();
             assert_eq!(LOGIC.scaled_balance_of(&tok, ALICE).unwrap(), U256::from(75u64));
         }
 
         #[test]
         fn to_scaled_balance_overflows_when_product_exceeds_u256_max() {
             let mut tok = token();
-            tok.accounting_mut().set_multiplier(U256::MAX / U256::from(2u64) + U256::ONE).unwrap();
+            tok.accounting.set_multiplier(U256::MAX / U256::from(2u64) + U256::ONE).unwrap();
             assert_eq!(
                 LOGIC.to_scaled_balance(&tok, U256::from(2u64)).unwrap_err(),
                 BasePrecompileError::under_overflow()
@@ -754,7 +753,7 @@ mod tests {
             let mut tok = token();
             let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
             LOGIC.update_multiplier(&mut tok, ADMIN, new_multiplier, true).unwrap();
-            assert_eq!(tok.accounting().multiplier().unwrap(), new_multiplier);
+            assert_eq!(tok.accounting.multiplier().unwrap(), new_multiplier);
             assert_eq!(last_event_sig(&tok), IB20Asset::MultiplierUpdated::SIGNATURE_HASH);
         }
 
@@ -774,9 +773,9 @@ mod tests {
                     false,
                 )
                 .unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(200u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(300u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(200u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(300u64));
         }
 
         #[test]
@@ -834,13 +833,13 @@ mod tests {
                     false,
                 )
                 .unwrap();
-            assert_eq!(tok.accounting().extra_metadata("category").unwrap(), "real-world-asset");
+            assert_eq!(tok.accounting.extra_metadata("category").unwrap(), "real-world-asset");
             assert_eq!(last_event_sig(&tok), IB20Asset::ExtraMetadataUpdated::SIGNATURE_HASH);
             // Empty value clears the entry.
             LOGIC
                 .update_extra_metadata(&mut tok, ADMIN, "category".to_string(), String::new(), false)
                 .unwrap();
-            assert_eq!(tok.accounting().extra_metadata("category").unwrap(), "");
+            assert_eq!(tok.accounting.extra_metadata("category").unwrap(), "");
         }
 
         #[test]
@@ -858,11 +857,11 @@ mod tests {
         fn begin_announce_marks_id_and_emits() {
             let mut tok = token();
             let id = "2026-Q1-split".to_string();
-            assert!(!tok.accounting().is_announcement_id_used(&id).unwrap());
+            assert!(!tok.accounting.is_announcement_id_used(&id).unwrap());
             LOGIC
                 .begin_announce(&mut tok, ADMIN, id.clone(), "split".to_string(), String::new(), true)
                 .unwrap();
-            assert!(tok.accounting().is_announcement_id_used(&id).unwrap());
+            assert!(tok.accounting.is_announcement_id_used(&id).unwrap());
             assert_eq!(last_event_sig(&tok), IB20Asset::Announcement::SIGNATURE_HASH);
         }
 
@@ -870,7 +869,7 @@ mod tests {
         fn begin_announce_rejects_reused_id() {
             let mut tok = token();
             let id = "dup".to_string();
-            tok.accounting_mut().mark_announcement_id_used(&id).unwrap();
+            tok.accounting.mark_announcement_id_used(&id).unwrap();
             let err = LOGIC
                 .begin_announce(&mut tok, ADMIN, id.clone(), String::new(), String::new(), true)
                 .unwrap_err();
@@ -889,17 +888,17 @@ mod tests {
         #[test]
         fn decimals_reads_storage() {
             let mut tok = token();
-            assert_eq!(AssetAccounting::decimals(tok.accounting()).unwrap(), 6);
-            tok.accounting_mut().decimals = 18;
-            assert_eq!(AssetAccounting::decimals(tok.accounting()).unwrap(), 18);
+            assert_eq!(AssetAccounting::decimals(&tok.accounting).unwrap(), 6);
+            tok.accounting.decimals = 18;
+            assert_eq!(AssetAccounting::decimals(&tok.accounting).unwrap(), 18);
         }
 
         #[test]
         fn is_initialized_reflects_storage() {
             let mut tok = token();
-            assert!(tok.accounting().is_initialized().unwrap());
-            tok.accounting_mut().initialized = false;
-            assert!(!tok.accounting().is_initialized().unwrap());
+            assert!(tok.accounting.is_initialized().unwrap());
+            tok.accounting.initialized = false;
+            assert!(!tok.accounting.is_initialized().unwrap());
         }
 
         /// Pins this version's frozen EIP-712 domain typehash to the exact type string it must hash.
@@ -932,7 +931,7 @@ mod tests {
         use crate::{
             AssetAccounting, B20Logic, B20Version, B20AssetStorage, B20Token, B20PolicyType,
             B20TokenRole, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, PermitArgs,
-            PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
+            PolicyRegistryStorage, PolicyVersion, TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x21);
@@ -969,25 +968,25 @@ mod tests {
 
         /// Grants `role` to `account` and keeps the admin member-count consistent.
         fn grant(tok: &mut Tok, role: B256, account: Address) {
-            tok.accounting_mut().set_role(role, account, true).unwrap();
-            let next = tok.accounting().role_member_count(role).unwrap() + U256::ONE;
-            tok.accounting_mut().set_role_member_count(role, next).unwrap();
+            tok.accounting.set_role(role, account, true).unwrap();
+            let next = tok.accounting.role_member_count(role).unwrap() + U256::ONE;
+            tok.accounting.set_role_member_count(role, next).unwrap();
         }
 
         /// Credits `account` with `amount` and grows total supply to match.
         fn fund(tok: &mut Tok, account: Address, amount: U256) {
-            let bal = tok.accounting().balance_of(account).unwrap();
-            tok.accounting_mut().set_balance(account, bal + amount).unwrap();
-            let supply = tok.accounting().total_supply().unwrap();
-            tok.accounting_mut().set_total_supply(supply + amount).unwrap();
+            let bal = tok.accounting.balance_of(account).unwrap();
+            tok.accounting.set_balance(account, bal + amount).unwrap();
+            let supply = tok.accounting.total_supply().unwrap();
+            tok.accounting.set_total_supply(supply + amount).unwrap();
         }
 
         fn last_event_sig(tok: &Tok) -> B256 {
-            tok.accounting().events.last().unwrap().topics()[0]
+            tok.accounting.events.last().unwrap().topics()[0]
         }
 
         fn last_event(tok: &Tok) -> LogData {
-            tok.accounting().events.last().unwrap().clone()
+            tok.accounting.events.last().unwrap().clone()
         }
 
         fn wad() -> U256 {
@@ -995,7 +994,7 @@ mod tests {
         }
 
         fn set_now(tok: &mut Tok, now: U256) {
-            tok.accounting_mut().timestamp = now;
+            tok.accounting.timestamp = now;
         }
 
         fn anvil_owner() -> Address {
@@ -1013,7 +1012,7 @@ mod tests {
             deadline: U256,
         ) -> PermitArgs {
             let domain_sep = LOGIC.domain_separator(tok, CHAIN_ID).unwrap();
-            let nonce = tok.accounting().nonce(owner).unwrap();
+            let nonce = tok.accounting.nonce(owner).unwrap();
             let mut args =
                 PermitArgs { owner, spender, value, deadline, v: 0, r: B256::ZERO, s: B256::ZERO };
             let signing_hash = args.signing_hash(domain_sep, nonce);
@@ -1040,8 +1039,8 @@ mod tests {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
             LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(70u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(70u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
@@ -1077,19 +1076,19 @@ mod tests {
         fn transfer_from_decrements_finite_allowance() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(10u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
         }
 
         #[test]
         fn transfer_from_infinite_allowance_is_not_decremented() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::MAX).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::MAX).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::MAX);
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::MAX);
         }
 
         // --- approve ---
@@ -1098,7 +1097,7 @@ mod tests {
         fn approve_sets_allowance_and_emits() {
             let mut tok = token();
             LOGIC.approve(&mut tok, ALICE, BOB, U256::from(50u64)).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(50u64));
             assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
         }
 
@@ -1108,14 +1107,14 @@ mod tests {
         fn mint_privileged_increases_supply_and_balance() {
             let mut tok = token();
             LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(100u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(100u64));
         }
 
         #[test]
         fn mint_reverts_over_supply_cap() {
             let mut tok = token();
-            tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
+            tok.accounting.set_supply_cap(U256::from(50u64)).unwrap();
             let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
             assert_eq!(
                 err,
@@ -1194,22 +1193,22 @@ mod tests {
             );
             grant(&mut tok, B20TokenRole::Burn.id(), ALICE);
             LOGIC.burn(&mut tok, ALICE, U256::from(40u64)).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(60u64));
         }
 
         #[test]
         fn burn_blocked_destroys_from_unauthorized_account() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::TransferSender.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 )
                 .unwrap();
             LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
             assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
         }
 
@@ -1217,13 +1216,13 @@ mod tests {
 
         /// Points `SEIZE_EXEMPT_POLICY` at the always-block policy, making every account seizable.
         fn make_seizable(tok: &mut Tok) {
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(B20PolicyType::SeizeExempt.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID)
                 .unwrap();
         }
 
         fn event_sigs(tok: &Tok) -> Vec<B256> {
-            tok.accounting().events.iter().map(|e| e.topics()[0]).collect()
+            tok.accounting.events.iter().map(|e| e.topics()[0]).collect()
         }
 
         #[test]
@@ -1232,13 +1231,13 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(100u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            let supply = tok.accounting().total_supply().unwrap();
+            let supply = tok.accounting.total_supply().unwrap();
 
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(40u64), MEMO).unwrap();
 
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), supply, "seize is a transfer");
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(40u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), supply, "seize is a transfer");
             assert_eq!(
                 event_sigs(&tok),
                 vec![
@@ -1307,7 +1306,7 @@ mod tests {
 
             assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: ALICE }));
             assert_eq!(
-                tok.accounting().balance_of(ALICE).unwrap(),
+                tok.accounting.balance_of(ALICE).unwrap(),
                 U256::from(100u64),
                 "balance unchanged"
             );
@@ -1345,7 +1344,7 @@ mod tests {
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             if let Some((policy_type, policy_id)) = policy {
                 // A transfer-receiver policy must not affect seize; a seize-receiver policy must.
-                tok.accounting_mut().set_policy_id(policy_type.id(), policy_id).unwrap();
+                tok.accounting.set_policy_id(policy_type.id(), policy_id).unwrap();
             }
 
             let result = LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(amount), MEMO);
@@ -1360,7 +1359,7 @@ mod tests {
                 ),
                 None => {
                     result.unwrap();
-                    assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(amount));
+                    assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(amount));
                 }
             }
         }
@@ -1370,7 +1369,7 @@ mod tests {
             let mut tok = token();
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // SEIZE_EXEMPT unset => ALICE not seizable; SEIZE_RECEIVER blocks BOB. Exempt check fires first.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -1387,7 +1386,7 @@ mod tests {
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // ALICE is seizable and has zero balance, but the receiver policy forbids BOB first.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -1444,7 +1443,7 @@ mod tests {
         fn grant_role_privileged_grants_and_emits() {
             let mut tok = token();
             LOGIC.grant_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
             assert_eq!(last_event_sig(&tok), IB20::RoleGranted::SIGNATURE_HASH);
         }
 
@@ -1464,9 +1463,9 @@ mod tests {
             LOGIC
                 .grant_role_unchecked(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
                 .unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
             assert_eq!(
-                tok.accounting().role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+                tok.accounting.role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
                 U256::ONE
             );
         }
@@ -1476,9 +1475,9 @@ mod tests {
         #[test]
         fn update_policy_sets_new_id() {
             let mut tok = token();
-            tok.policy_storage_mut().create_existing_policy(7);
+            tok.policy.create_existing_policy(7);
             LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
-            assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
+            assert_eq!(tok.accounting.policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
         }
 
         #[test]
@@ -1500,8 +1499,8 @@ mod tests {
             let owner = anvil_owner();
             let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
             LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
-            assert_eq!(tok.accounting().allowance(owner, BOB).unwrap(), U256::from(500u64));
-            assert_eq!(tok.accounting().nonce(owner).unwrap(), U256::ONE);
+            assert_eq!(tok.accounting.allowance(owner, BOB).unwrap(), U256::from(500u64));
+            assert_eq!(tok.accounting.nonce(owner).unwrap(), U256::ONE);
         }
 
         #[test]
@@ -1523,15 +1522,15 @@ mod tests {
             let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
 
             // `signed_permit` computes the domain separator during setup, so measure deltas.
-            let keccak_before = tok.accounting().keccak_charges.get();
-            let gas_before = tok.accounting().gas_deducted.get();
+            let keccak_before = tok.accounting.keccak_charges.get();
+            let gas_before = tok.accounting.gas_deducted.get();
 
             LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
 
             // domain separator (name, version, encoded) + signing digest (struct hash, digest) = 5.
-            assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5);
+            assert_eq!(tok.accounting.keccak_charges.get() - keccak_before, 5);
             // Fixed ECRECOVER-comparable recovery charge, applied exactly once.
-            assert_eq!(tok.accounting().gas_deducted.get() - gas_before, PermitArgs::RECOVER_GAS);
+            assert_eq!(tok.accounting.gas_deducted.get() - gas_before, PermitArgs::RECOVER_GAS);
         }
 
         #[test]
@@ -1545,17 +1544,17 @@ mod tests {
             args.owner = Address::repeat_byte(0xcc);
 
             const ITERATIONS: u64 = 8;
-            let keccak_before = tok.accounting().keccak_charges.get();
-            let gas_before = tok.accounting().gas_deducted.get();
+            let keccak_before = tok.accounting.keccak_charges.get();
+            let gas_before = tok.accounting.gas_deducted.get();
             for _ in 0..ITERATIONS {
                 assert!(LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).is_err());
             }
 
             // A caught-revert loop no longer runs for free: hashing and recovery metering scale
             // linearly with the number of calls.
-            assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5 * ITERATIONS);
+            assert_eq!(tok.accounting.keccak_charges.get() - keccak_before, 5 * ITERATIONS);
             assert_eq!(
-                tok.accounting().gas_deducted.get() - gas_before,
+                tok.accounting.gas_deducted.get() - gas_before,
                 PermitArgs::RECOVER_GAS * ITERATIONS
             );
         }
@@ -1571,21 +1570,21 @@ mod tests {
         #[test]
         fn to_scaled_balance_two_to_one_multiplier() {
             let mut tok = token();
-            tok.accounting_mut().set_multiplier(B20AssetStorage::WAD * U256::from(2u64)).unwrap();
+            tok.accounting.set_multiplier(B20AssetStorage::WAD * U256::from(2u64)).unwrap();
             assert_eq!(LOGIC.to_scaled_balance(&tok, U256::from(50u64)).unwrap(), U256::from(100u64));
         }
 
         #[test]
         fn scaled_balance_of_derives_from_balance() {
             let mut tok = token();
-            tok.accounting_mut().set_balance(ALICE, U256::from(75u64)).unwrap();
+            tok.accounting.set_balance(ALICE, U256::from(75u64)).unwrap();
             assert_eq!(LOGIC.scaled_balance_of(&tok, ALICE).unwrap(), U256::from(75u64));
         }
 
         #[test]
         fn to_scaled_balance_overflows_when_product_exceeds_u256_max() {
             let mut tok = token();
-            tok.accounting_mut().set_multiplier(U256::MAX / U256::from(2u64) + U256::ONE).unwrap();
+            tok.accounting.set_multiplier(U256::MAX / U256::from(2u64) + U256::ONE).unwrap();
             assert_eq!(
                 LOGIC.to_scaled_balance(&tok, U256::from(2u64)).unwrap_err(),
                 BasePrecompileError::under_overflow()
@@ -1604,10 +1603,10 @@ mod tests {
             let mut tok = token();
             let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
             LOGIC.update_multiplier(&mut tok, ADMIN, new_multiplier, true).unwrap();
-            assert_eq!(tok.accounting().multiplier().unwrap(), new_multiplier);
+            assert_eq!(tok.accounting.multiplier().unwrap(), new_multiplier);
             // V2's instant setter emits the deprecated `MultiplierUpdated` (backward compat) then the
             // ERC-8056 `UIMultiplierUpdated`.
-            let events = &tok.accounting().events;
+            let events = &tok.accounting.events;
             assert_eq!(
                 events[events.len() - 2].topics()[0],
                 IB20Asset::MultiplierUpdated::SIGNATURE_HASH
@@ -1631,9 +1630,9 @@ mod tests {
                     false,
                 )
                 .unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(200u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(300u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(200u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(300u64));
         }
 
         #[test]
@@ -1691,13 +1690,13 @@ mod tests {
                     false,
                 )
                 .unwrap();
-            assert_eq!(tok.accounting().extra_metadata("category").unwrap(), "real-world-asset");
+            assert_eq!(tok.accounting.extra_metadata("category").unwrap(), "real-world-asset");
             assert_eq!(last_event_sig(&tok), IB20Asset::ExtraMetadataUpdated::SIGNATURE_HASH);
             // Empty value clears the entry.
             LOGIC
                 .update_extra_metadata(&mut tok, ADMIN, "category".to_string(), String::new(), false)
                 .unwrap();
-            assert_eq!(tok.accounting().extra_metadata("category").unwrap(), "");
+            assert_eq!(tok.accounting.extra_metadata("category").unwrap(), "");
         }
 
         #[test]
@@ -1715,11 +1714,11 @@ mod tests {
         fn begin_announce_marks_id_and_emits() {
             let mut tok = token();
             let id = "2026-Q1-split".to_string();
-            assert!(!tok.accounting().is_announcement_id_used(&id).unwrap());
+            assert!(!tok.accounting.is_announcement_id_used(&id).unwrap());
             LOGIC
                 .begin_announce(&mut tok, ADMIN, id.clone(), "split".to_string(), String::new(), true)
                 .unwrap();
-            assert!(tok.accounting().is_announcement_id_used(&id).unwrap());
+            assert!(tok.accounting.is_announcement_id_used(&id).unwrap());
             assert_eq!(last_event_sig(&tok), IB20Asset::Announcement::SIGNATURE_HASH);
         }
 
@@ -1727,7 +1726,7 @@ mod tests {
         fn begin_announce_rejects_reused_id() {
             let mut tok = token();
             let id = "dup".to_string();
-            tok.accounting_mut().mark_announcement_id_used(&id).unwrap();
+            tok.accounting.mark_announcement_id_used(&id).unwrap();
             let err = LOGIC
                 .begin_announce(&mut tok, ADMIN, id.clone(), String::new(), String::new(), true)
                 .unwrap_err();
@@ -1746,17 +1745,17 @@ mod tests {
         #[test]
         fn decimals_reads_storage() {
             let mut tok = token();
-            assert_eq!(AssetAccounting::decimals(tok.accounting()).unwrap(), 6);
-            tok.accounting_mut().decimals = 18;
-            assert_eq!(AssetAccounting::decimals(tok.accounting()).unwrap(), 18);
+            assert_eq!(AssetAccounting::decimals(&tok.accounting).unwrap(), 6);
+            tok.accounting.decimals = 18;
+            assert_eq!(AssetAccounting::decimals(&tok.accounting).unwrap(), 18);
         }
 
         #[test]
         fn is_initialized_reflects_storage() {
             let mut tok = token();
-            assert!(tok.accounting().is_initialized().unwrap());
-            tok.accounting_mut().initialized = false;
-            assert!(!tok.accounting().is_initialized().unwrap());
+            assert!(tok.accounting.is_initialized().unwrap());
+            tok.accounting.initialized = false;
+            assert!(!tok.accounting.is_initialized().unwrap());
         }
 
         // --- ERC-8056 scheduled multiplier (V2 divergences) ---
@@ -1806,7 +1805,8 @@ mod tests {
                 .encode_log_data()
             );
             assert_eq!(LOGIC.new_ui_multiplier(&tok).unwrap(), target);
-            assert_eq!(tok.accounting().pending_effective_at().map(U256::from).unwrap(), effective_at);
+            let pending_effective_at = tok.accounting.pending_effective_at().map(U256::from);
+            assert_eq!(pending_effective_at.unwrap(), effective_at);
         }
 
         #[test]
@@ -1922,7 +1922,7 @@ mod tests {
                 .encode_log_data()
             );
             // Slot 1 (current) now holds the folded matured multiplier and is still effective.
-            assert_eq!(tok.accounting().multiplier().unwrap(), first);
+            assert_eq!(tok.accounting.multiplier().unwrap(), first);
             assert_eq!(LOGIC.effective_multiplier(&tok).unwrap(), first);
             // The second flips in on maturity.
             set_now(&mut tok, second_effective_at);
@@ -1947,7 +1947,7 @@ mod tests {
                 }
                 .encode_log_data()
             );
-            assert_eq!(tok.accounting().pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
             // No-live-pending invariant.
             assert_eq!(LOGIC.new_ui_multiplier(&tok).unwrap(), LOGIC.effective_multiplier(&tok).unwrap());
         }
@@ -2009,7 +2009,7 @@ mod tests {
             set_now(&mut tok, now);
             LOGIC.update_multiplier(&mut tok, ALICE, instant, true).unwrap();
 
-            let events = &tok.accounting().events;
+            let events = &tok.accounting.events;
             assert_eq!(
                 events[events.len() - 3],
                 IB20Asset::UIMultiplierUpdateCancelled {
@@ -2031,7 +2031,7 @@ mod tests {
                 }
                 .encode_log_data()
             );
-            assert_eq!(tok.accounting().pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
             assert_eq!(LOGIC.effective_multiplier(&tok).unwrap(), instant);
         }
 
@@ -2049,7 +2049,7 @@ mod tests {
 
             // MultiplierUpdated + UIMultiplierUpdated are emitted (no cancellation for a matured
             // pending, which folds into `old` silently); `old` is the matured effective value.
-            let events = &tok.accounting().events;
+            let events = &tok.accounting.events;
             assert_eq!(
                 events[events.len() - 2],
                 IB20Asset::MultiplierUpdated { multiplier: instant }.encode_log_data()
@@ -2065,10 +2065,10 @@ mod tests {
             );
             let cancelled_sig = IB20Asset::UIMultiplierUpdateCancelled::SIGNATURE_HASH;
             assert!(
-                !tok.accounting().events.iter().any(|log| log.topics()[0] == cancelled_sig),
+                !tok.accounting.events.iter().any(|log| log.topics()[0] == cancelled_sig),
                 "no cancellation event for a matured pending"
             );
-            assert_eq!(tok.accounting().pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
         }
 
         #[test]
@@ -2094,14 +2094,15 @@ mod tests {
             assert_eq!(LOGIC.new_ui_multiplier(&tok).unwrap(), LOGIC.effective_multiplier(&tok).unwrap());
             assert_eq!(LOGIC.new_ui_multiplier(&tok).unwrap(), target);
             // A matured pending keeps its (now past) effectiveAt until a set/cancel materializes it.
-            assert_eq!(tok.accounting().pending_effective_at().map(U256::from).unwrap(), effective_at);
+            let pending_effective_at = tok.accounting.pending_effective_at().map(U256::from);
+            assert_eq!(pending_effective_at.unwrap(), effective_at);
         }
 
         #[test]
         fn scaled_reads_use_effective_multiplier() {
             let mut tok = token();
-            tok.accounting_mut().set_balance(ALICE, U256::from(100u64)).unwrap();
-            tok.accounting_mut().set_total_supply(U256::from(100u64)).unwrap();
+            tok.accounting.set_balance(ALICE, U256::from(100u64)).unwrap();
+            tok.accounting.set_total_supply(U256::from(100u64)).unwrap();
             let target = wad() * U256::from(2u64);
             let effective_at = U256::from(100u64);
             set_now(&mut tok, U256::from(1u64));
@@ -2182,7 +2183,7 @@ mod tests {
         use crate::{
             AssetAccounting, B20Logic, B20Version, B20AssetStorage, B20Token, B20PolicyType,
             B20TokenRole, B20Variant, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting,
-            PermitArgs, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
+            PermitArgs, PolicyRegistryStorage, PolicyVersion, TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x21);
@@ -2219,17 +2220,17 @@ mod tests {
 
         /// Grants `role` to `account` and keeps the admin member-count consistent.
         fn grant(tok: &mut Tok, role: B256, account: Address) {
-            tok.accounting_mut().set_role(role, account, true).unwrap();
-            let next = tok.accounting().role_member_count(role).unwrap() + U256::ONE;
-            tok.accounting_mut().set_role_member_count(role, next).unwrap();
+            tok.accounting.set_role(role, account, true).unwrap();
+            let next = tok.accounting.role_member_count(role).unwrap() + U256::ONE;
+            tok.accounting.set_role_member_count(role, next).unwrap();
         }
 
         /// Credits `account` with `amount` and grows total supply to match.
         fn fund(tok: &mut Tok, account: Address, amount: U256) {
-            let bal = tok.accounting().balance_of(account).unwrap();
-            tok.accounting_mut().set_balance(account, bal + amount).unwrap();
-            let supply = tok.accounting().total_supply().unwrap();
-            tok.accounting_mut().set_total_supply(supply + amount).unwrap();
+            let bal = tok.accounting.balance_of(account).unwrap();
+            tok.accounting.set_balance(account, bal + amount).unwrap();
+            let supply = tok.accounting.total_supply().unwrap();
+            tok.accounting.set_total_supply(supply + amount).unwrap();
         }
 
         /// Returns a B-20 address other than [`TOKEN`].
@@ -2238,11 +2239,11 @@ mod tests {
         }
 
         fn last_event_sig(tok: &Tok) -> B256 {
-            tok.accounting().events.last().unwrap().topics()[0]
+            tok.accounting.events.last().unwrap().topics()[0]
         }
 
         fn last_event(tok: &Tok) -> LogData {
-            tok.accounting().events.last().unwrap().clone()
+            tok.accounting.events.last().unwrap().clone()
         }
 
         fn wad() -> U256 {
@@ -2250,7 +2251,7 @@ mod tests {
         }
 
         fn set_now(tok: &mut Tok, now: U256) {
-            tok.accounting_mut().timestamp = now;
+            tok.accounting.timestamp = now;
         }
 
         fn anvil_owner() -> Address {
@@ -2268,7 +2269,7 @@ mod tests {
             deadline: U256,
         ) -> PermitArgs {
             let domain_sep = LOGIC.domain_separator(tok, CHAIN_ID).unwrap();
-            let nonce = tok.accounting().nonce(owner).unwrap();
+            let nonce = tok.accounting.nonce(owner).unwrap();
             let mut args =
                 PermitArgs { owner, spender, value, deadline, v: 0, r: B256::ZERO, s: B256::ZERO };
             let signing_hash = args.signing_hash(domain_sep, nonce);
@@ -2295,8 +2296,8 @@ mod tests {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
             LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(70u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(70u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
@@ -2320,7 +2321,7 @@ mod tests {
             let err = LOGIC.transfer(&mut tok, ALICE, TOKEN, U256::from(1u64), true).unwrap_err();
 
             assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(10u64));
         }
 
         #[test]
@@ -2331,7 +2332,7 @@ mod tests {
 
             LOGIC.transfer(&mut tok, ALICE, receiver, U256::from(1u64), true).unwrap();
 
-            assert_eq!(tok.accounting().balance_of(receiver).unwrap(), U256::ONE);
+            assert_eq!(tok.accounting.balance_of(receiver).unwrap(), U256::ONE);
         }
 
         #[test]
@@ -2360,13 +2361,13 @@ mod tests {
             const SENDER_POLICY: u64 = (1u64 << 56) | 4;
             const RECEIVER_POLICY: u64 = (1u64 << 56) | 5;
 
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(B20PolicyType::TransferExecutor.id(), EXECUTOR_POLICY)
                 .unwrap();
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(B20PolicyType::TransferSender.id(), SENDER_POLICY)
                 .unwrap();
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(B20PolicyType::TransferReceiver.id(), RECEIVER_POLICY)
                 .unwrap();
 
@@ -2379,7 +2380,7 @@ mod tests {
                 })
             );
 
-            tok.policy_storage_mut().allow(EXECUTOR_POLICY, ALICE);
+            tok.policy.allow(EXECUTOR_POLICY, ALICE);
             let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
             assert_eq!(
                 err,
@@ -2389,7 +2390,7 @@ mod tests {
                 })
             );
 
-            tok.policy_storage_mut().allow(SENDER_POLICY, ALICE);
+            tok.policy.allow(SENDER_POLICY, ALICE);
             let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
             assert_eq!(
                 err,
@@ -2406,19 +2407,19 @@ mod tests {
         fn transfer_from_decrements_finite_allowance() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(10u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
         }
 
         #[test]
         fn transfer_from_infinite_allowance_is_not_decremented() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::MAX).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::MAX).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::MAX);
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::MAX);
         }
 
         #[test]
@@ -2453,7 +2454,7 @@ mod tests {
         fn approve_sets_allowance_and_emits() {
             let mut tok = token();
             LOGIC.approve(&mut tok, ALICE, BOB, U256::from(50u64)).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(50u64));
             assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
         }
 
@@ -2463,14 +2464,14 @@ mod tests {
         fn mint_privileged_increases_supply_and_balance() {
             let mut tok = token();
             LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(100u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(100u64));
         }
 
         #[test]
         fn mint_reverts_over_supply_cap() {
             let mut tok = token();
-            tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
+            tok.accounting.set_supply_cap(U256::from(50u64)).unwrap();
             let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
             assert_eq!(
                 err,
@@ -2501,7 +2502,7 @@ mod tests {
             let err = LOGIC.mint(&mut tok, ADMIN, TOKEN, U256::from(1u64), true).unwrap_err();
 
             assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::ZERO);
         }
 
         #[test]
@@ -2514,7 +2515,7 @@ mod tests {
                 err,
                 BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
             );
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::ZERO);
         }
 
         // --- burn ---
@@ -2533,22 +2534,22 @@ mod tests {
             );
             grant(&mut tok, B20TokenRole::Burn.id(), ALICE);
             LOGIC.burn(&mut tok, ALICE, U256::from(40u64)).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(60u64));
         }
 
         #[test]
         fn burn_blocked_destroys_from_unauthorized_account() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::TransferSender.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 )
                 .unwrap();
             LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
             assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
         }
 
@@ -2556,13 +2557,13 @@ mod tests {
 
         /// Points `SEIZE_EXEMPT_POLICY` at the always-block policy, making every account seizable.
         fn make_seizable(tok: &mut Tok) {
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(B20PolicyType::SeizeExempt.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID)
                 .unwrap();
         }
 
         fn event_sigs(tok: &Tok) -> Vec<B256> {
-            tok.accounting().events.iter().map(|e| e.topics()[0]).collect()
+            tok.accounting.events.iter().map(|e| e.topics()[0]).collect()
         }
 
         #[test]
@@ -2571,13 +2572,13 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(100u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            let supply = tok.accounting().total_supply().unwrap();
+            let supply = tok.accounting.total_supply().unwrap();
 
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(40u64), MEMO).unwrap();
 
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), supply, "seize is a transfer");
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(40u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), supply, "seize is a transfer");
             assert_eq!(
                 event_sigs(&tok),
                 vec![
@@ -2637,7 +2638,7 @@ mod tests {
                 .unwrap_err();
 
             assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(10u64));
         }
 
         #[test]
@@ -2649,8 +2650,8 @@ mod tests {
 
             LOGIC.seize_with_memo(&mut tok, ADMIN, TOKEN, BOB, U256::from(10u64), MEMO).unwrap();
 
-            assert_eq!(tok.accounting().balance_of(TOKEN).unwrap(), U256::ZERO);
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(TOKEN).unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(10u64));
         }
 
         #[test]
@@ -2686,7 +2687,7 @@ mod tests {
 
             assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: ALICE }));
             assert_eq!(
-                tok.accounting().balance_of(ALICE).unwrap(),
+                tok.accounting.balance_of(ALICE).unwrap(),
                 U256::from(100u64),
                 "balance unchanged"
             );
@@ -2703,14 +2704,14 @@ mod tests {
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // A normal transfer to BOB would revert on this; seize does not consult it.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::TransferReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 )
                 .unwrap();
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(50u64));
         }
 
         #[test]
@@ -2719,7 +2720,7 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(50u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -2744,7 +2745,7 @@ mod tests {
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // SEIZE_RECEIVER_POLICY left unset => ALWAYS_ALLOW => any destination is allowed.
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(50u64));
         }
 
         #[test]
@@ -2753,14 +2754,14 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(50u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_ALLOW_ID,
                 )
                 .unwrap();
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(50u64));
         }
 
         #[test]
@@ -2768,7 +2769,7 @@ mod tests {
             let mut tok = token();
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // SEIZE_EXEMPT unset => ALICE not seizable; SEIZE_RECEIVER blocks BOB. Exempt check fires first.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -2785,7 +2786,7 @@ mod tests {
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // ALICE is seizable and has zero balance, but the receiver policy forbids BOB first.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -2857,7 +2858,7 @@ mod tests {
         fn grant_role_privileged_grants_and_emits() {
             let mut tok = token();
             LOGIC.grant_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
             assert_eq!(last_event_sig(&tok), IB20::RoleGranted::SIGNATURE_HASH);
         }
 
@@ -2877,9 +2878,9 @@ mod tests {
             LOGIC
                 .grant_role_unchecked(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
                 .unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
             assert_eq!(
-                tok.accounting().role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+                tok.accounting.role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
                 U256::ONE
             );
         }
@@ -2889,9 +2890,9 @@ mod tests {
         #[test]
         fn update_policy_sets_new_id() {
             let mut tok = token();
-            tok.policy_storage_mut().create_existing_policy(7);
+            tok.policy.create_existing_policy(7);
             LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
-            assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
+            assert_eq!(tok.accounting.policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
         }
 
         #[test]
@@ -2913,8 +2914,8 @@ mod tests {
             let owner = anvil_owner();
             let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
             LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
-            assert_eq!(tok.accounting().allowance(owner, BOB).unwrap(), U256::from(500u64));
-            assert_eq!(tok.accounting().nonce(owner).unwrap(), U256::ONE);
+            assert_eq!(tok.accounting.allowance(owner, BOB).unwrap(), U256::from(500u64));
+            assert_eq!(tok.accounting.nonce(owner).unwrap(), U256::ONE);
         }
 
         #[test]
@@ -2936,15 +2937,15 @@ mod tests {
             let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
 
             // `signed_permit` computes the domain separator during setup, so measure deltas.
-            let keccak_before = tok.accounting().keccak_charges.get();
-            let gas_before = tok.accounting().gas_deducted.get();
+            let keccak_before = tok.accounting.keccak_charges.get();
+            let gas_before = tok.accounting.gas_deducted.get();
 
             LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
 
             // domain separator (name, version, encoded) + signing digest (struct hash, digest) = 5.
-            assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5);
+            assert_eq!(tok.accounting.keccak_charges.get() - keccak_before, 5);
             // Fixed ECRECOVER-comparable recovery charge, applied exactly once.
-            assert_eq!(tok.accounting().gas_deducted.get() - gas_before, PermitArgs::RECOVER_GAS);
+            assert_eq!(tok.accounting.gas_deducted.get() - gas_before, PermitArgs::RECOVER_GAS);
         }
 
         #[test]
@@ -2958,17 +2959,17 @@ mod tests {
             args.owner = Address::repeat_byte(0xcc);
 
             const ITERATIONS: u64 = 8;
-            let keccak_before = tok.accounting().keccak_charges.get();
-            let gas_before = tok.accounting().gas_deducted.get();
+            let keccak_before = tok.accounting.keccak_charges.get();
+            let gas_before = tok.accounting.gas_deducted.get();
             for _ in 0..ITERATIONS {
                 assert!(LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).is_err());
             }
 
             // A caught-revert loop no longer runs for free: hashing and recovery metering scale
             // linearly with the number of calls.
-            assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5 * ITERATIONS);
+            assert_eq!(tok.accounting.keccak_charges.get() - keccak_before, 5 * ITERATIONS);
             assert_eq!(
-                tok.accounting().gas_deducted.get() - gas_before,
+                tok.accounting.gas_deducted.get() - gas_before,
                 PermitArgs::RECOVER_GAS * ITERATIONS
             );
         }
@@ -2984,21 +2985,21 @@ mod tests {
         #[test]
         fn to_scaled_balance_two_to_one_multiplier() {
             let mut tok = token();
-            tok.accounting_mut().set_multiplier(B20AssetStorage::WAD * U256::from(2u64)).unwrap();
+            tok.accounting.set_multiplier(B20AssetStorage::WAD * U256::from(2u64)).unwrap();
             assert_eq!(LOGIC.to_scaled_balance(&tok, U256::from(50u64)).unwrap(), U256::from(100u64));
         }
 
         #[test]
         fn scaled_balance_of_derives_from_balance() {
             let mut tok = token();
-            tok.accounting_mut().set_balance(ALICE, U256::from(75u64)).unwrap();
+            tok.accounting.set_balance(ALICE, U256::from(75u64)).unwrap();
             assert_eq!(LOGIC.scaled_balance_of(&tok, ALICE).unwrap(), U256::from(75u64));
         }
 
         #[test]
         fn to_scaled_balance_overflows_when_product_exceeds_u256_max() {
             let mut tok = token();
-            tok.accounting_mut().set_multiplier(U256::MAX / U256::from(2u64) + U256::ONE).unwrap();
+            tok.accounting.set_multiplier(U256::MAX / U256::from(2u64) + U256::ONE).unwrap();
             assert_eq!(
                 LOGIC.to_scaled_balance(&tok, U256::from(2u64)).unwrap_err(),
                 BasePrecompileError::under_overflow()
@@ -3031,10 +3032,10 @@ mod tests {
             let mut tok = token();
             let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
             LOGIC.update_multiplier(&mut tok, ADMIN, new_multiplier, true).unwrap();
-            assert_eq!(tok.accounting().multiplier().unwrap(), new_multiplier);
+            assert_eq!(tok.accounting.multiplier().unwrap(), new_multiplier);
             // V2's instant setter emits the deprecated `MultiplierUpdated` (backward compat) then the
             // ERC-8056 `UIMultiplierUpdated`.
-            let events = &tok.accounting().events;
+            let events = &tok.accounting.events;
             assert_eq!(
                 events[events.len() - 2].topics()[0],
                 IB20Asset::MultiplierUpdated::SIGNATURE_HASH
@@ -3058,9 +3059,9 @@ mod tests {
                     false,
                 )
                 .unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(200u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(300u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(200u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(300u64));
         }
 
         #[test]
@@ -3172,13 +3173,13 @@ mod tests {
                     false,
                 )
                 .unwrap();
-            assert_eq!(tok.accounting().extra_metadata("category").unwrap(), "real-world-asset");
+            assert_eq!(tok.accounting.extra_metadata("category").unwrap(), "real-world-asset");
             assert_eq!(last_event_sig(&tok), IB20Asset::ExtraMetadataUpdated::SIGNATURE_HASH);
             // Empty value clears the entry.
             LOGIC
                 .update_extra_metadata(&mut tok, ADMIN, "category".to_string(), String::new(), false)
                 .unwrap();
-            assert_eq!(tok.accounting().extra_metadata("category").unwrap(), "");
+            assert_eq!(tok.accounting.extra_metadata("category").unwrap(), "");
         }
 
         #[test]
@@ -3211,11 +3212,11 @@ mod tests {
         fn begin_announce_marks_id_and_emits() {
             let mut tok = token();
             let id = "2026-Q1-split".to_string();
-            assert!(!tok.accounting().is_announcement_id_used(&id).unwrap());
+            assert!(!tok.accounting.is_announcement_id_used(&id).unwrap());
             LOGIC
                 .begin_announce(&mut tok, ADMIN, id.clone(), "split".to_string(), String::new(), true)
                 .unwrap();
-            assert!(tok.accounting().is_announcement_id_used(&id).unwrap());
+            assert!(tok.accounting.is_announcement_id_used(&id).unwrap());
             assert_eq!(last_event_sig(&tok), IB20Asset::Announcement::SIGNATURE_HASH);
         }
 
@@ -3223,7 +3224,7 @@ mod tests {
         fn begin_announce_rejects_reused_id() {
             let mut tok = token();
             let id = "dup".to_string();
-            tok.accounting_mut().mark_announcement_id_used(&id).unwrap();
+            tok.accounting.mark_announcement_id_used(&id).unwrap();
             let err = LOGIC
                 .begin_announce(&mut tok, ADMIN, id.clone(), String::new(), String::new(), true)
                 .unwrap_err();
@@ -3257,17 +3258,17 @@ mod tests {
         #[test]
         fn decimals_reads_storage() {
             let mut tok = token();
-            assert_eq!(AssetAccounting::decimals(tok.accounting()).unwrap(), 6);
-            tok.accounting_mut().decimals = 18;
-            assert_eq!(AssetAccounting::decimals(tok.accounting()).unwrap(), 18);
+            assert_eq!(AssetAccounting::decimals(&tok.accounting).unwrap(), 6);
+            tok.accounting.decimals = 18;
+            assert_eq!(AssetAccounting::decimals(&tok.accounting).unwrap(), 18);
         }
 
         #[test]
         fn is_initialized_reflects_storage() {
             let mut tok = token();
-            assert!(tok.accounting().is_initialized().unwrap());
-            tok.accounting_mut().initialized = false;
-            assert!(!tok.accounting().is_initialized().unwrap());
+            assert!(tok.accounting.is_initialized().unwrap());
+            tok.accounting.initialized = false;
+            assert!(!tok.accounting.is_initialized().unwrap());
         }
 
         // --- ERC-8056 scheduled multiplier (V2 divergences) ---
@@ -3317,7 +3318,8 @@ mod tests {
                 .encode_log_data()
             );
             assert_eq!(LOGIC.new_ui_multiplier(&tok).unwrap(), target);
-            assert_eq!(tok.accounting().pending_effective_at().map(U256::from).unwrap(), effective_at);
+            let pending_effective_at = tok.accounting.pending_effective_at().map(U256::from);
+            assert_eq!(pending_effective_at.unwrap(), effective_at);
         }
 
         #[test]
@@ -3433,7 +3435,7 @@ mod tests {
                 .encode_log_data()
             );
             // Slot 1 (current) now holds the folded matured multiplier and is still effective.
-            assert_eq!(tok.accounting().multiplier().unwrap(), first);
+            assert_eq!(tok.accounting.multiplier().unwrap(), first);
             assert_eq!(LOGIC.effective_multiplier(&tok).unwrap(), first);
             // The second flips in on maturity.
             set_now(&mut tok, second_effective_at);
@@ -3458,7 +3460,7 @@ mod tests {
                 }
                 .encode_log_data()
             );
-            assert_eq!(tok.accounting().pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
             // No-live-pending invariant.
             assert_eq!(LOGIC.new_ui_multiplier(&tok).unwrap(), LOGIC.effective_multiplier(&tok).unwrap());
         }
@@ -3520,7 +3522,7 @@ mod tests {
             set_now(&mut tok, now);
             LOGIC.update_multiplier(&mut tok, ALICE, instant, true).unwrap();
 
-            let events = &tok.accounting().events;
+            let events = &tok.accounting.events;
             assert_eq!(
                 events[events.len() - 3],
                 IB20Asset::UIMultiplierUpdateCancelled {
@@ -3542,7 +3544,7 @@ mod tests {
                 }
                 .encode_log_data()
             );
-            assert_eq!(tok.accounting().pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
             assert_eq!(LOGIC.effective_multiplier(&tok).unwrap(), instant);
         }
 
@@ -3560,7 +3562,7 @@ mod tests {
 
             // MultiplierUpdated + UIMultiplierUpdated are emitted (no cancellation for a matured
             // pending, which folds into `old` silently); `old` is the matured effective value.
-            let events = &tok.accounting().events;
+            let events = &tok.accounting.events;
             assert_eq!(
                 events[events.len() - 2],
                 IB20Asset::MultiplierUpdated { multiplier: instant }.encode_log_data()
@@ -3576,10 +3578,10 @@ mod tests {
             );
             let cancelled_sig = IB20Asset::UIMultiplierUpdateCancelled::SIGNATURE_HASH;
             assert!(
-                !tok.accounting().events.iter().any(|log| log.topics()[0] == cancelled_sig),
+                !tok.accounting.events.iter().any(|log| log.topics()[0] == cancelled_sig),
                 "no cancellation event for a matured pending"
             );
-            assert_eq!(tok.accounting().pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.pending_effective_at().map(U256::from).unwrap(), U256::ZERO);
         }
 
         #[test]
@@ -3605,14 +3607,15 @@ mod tests {
             assert_eq!(LOGIC.new_ui_multiplier(&tok).unwrap(), LOGIC.effective_multiplier(&tok).unwrap());
             assert_eq!(LOGIC.new_ui_multiplier(&tok).unwrap(), target);
             // A matured pending keeps its (now past) effectiveAt until a set/cancel materializes it.
-            assert_eq!(tok.accounting().pending_effective_at().map(U256::from).unwrap(), effective_at);
+            let pending_effective_at = tok.accounting.pending_effective_at().map(U256::from);
+            assert_eq!(pending_effective_at.unwrap(), effective_at);
         }
 
         #[test]
         fn scaled_reads_use_effective_multiplier() {
             let mut tok = token();
-            tok.accounting_mut().set_balance(ALICE, U256::from(100u64)).unwrap();
-            tok.accounting_mut().set_total_supply(U256::from(100u64)).unwrap();
+            tok.accounting.set_balance(ALICE, U256::from(100u64)).unwrap();
+            tok.accounting.set_total_supply(U256::from(100u64)).unwrap();
             let target = wad() * U256::from(2u64);
             let effective_at = U256::from(100u64);
             set_now(&mut tok, U256::from(1u64));

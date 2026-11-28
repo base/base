@@ -4,9 +4,9 @@ use base_common_genesis::BaseUpgrade;
 use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, CalldataGas,
+    ActivationFeature, ActivationRegistryStorage, Calldata,
     IPolicyRegistry::{self, IPolicyRegistryCalls as C},
-    PolicyRegistry, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
+    PolicyRegistry, PolicyRegistryStorage, PolicyVersions,
 };
 
 impl PolicyRegistryStorage<'_> {
@@ -23,7 +23,7 @@ impl PolicyRegistryStorage<'_> {
         if !ctx.call_value().is_zero() {
             return ctx.error_result(BasePrecompileError::revert(IPolicyRegistry::NonPayable {}));
         }
-        if let Err(error) = CalldataGas::deduct(ctx, calldata) {
+        if let Err(error) = Calldata::deduct_gas(ctx, calldata) {
             return ctx.error_result(error);
         }
         // Gate by hardfork: resolve the active version once. `None` is unreachable in
@@ -31,49 +31,36 @@ impl PolicyRegistryStorage<'_> {
         let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
             return ctx.error_result(BasePrecompileError::Revert(Bytes::new()));
         };
-        let abi = version.abi();
-        let result = match calldata.first_chunk::<4>().copied() {
-            None => Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4])),
-            // View calls bypass the activation gate. They still clear the wire gate, inside
-            // `route`, which decodes every call against the active surface.
-            Some(sel)
-                if abi.valid_selector(sel)
-                    && (sel == IPolicyRegistry::isAuthorizedCall::SELECTOR
-                        || sel == IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::SELECTOR
-                        || sel == IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::SELECTOR
-                        || sel == IPolicyRegistry::policyExistsCall::SELECTOR
-                        || sel == IPolicyRegistry::policyAdminCall::SELECTOR
-                        || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR
-                        || sel == IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR
-                        || sel == IPolicyRegistry::invertedPolicyIdCall::SELECTOR) =>
-            {
-                self.route(calldata, version)
+        // Views bypass the activation gate; writes need the feature activated. Every call clears
+        // the wire gate first, so malformed arguments fail regardless of activation state.
+        let result = version.decode(calldata).and_then(|call| {
+            let view = matches!(
+                call,
+                C::isAuthorized(_)
+                    | C::MIN_COMPOSITE_CHILD_POLICIES(_)
+                    | C::MAX_COMPOSITE_CHILD_POLICIES(_)
+                    | C::policyExists(_)
+                    | C::policyAdmin(_)
+                    | C::pendingPolicyAdmin(_)
+                    | C::compositePolicyChildIds(_)
+                    | C::invertedPolicyId(_)
+            );
+            if !view {
+                ActivationRegistryStorage::new(ctx)
+                    .ensure_activated(ActivationFeature::PolicyRegistry.id())?;
             }
-            Some(sel) if abi.valid_selector(sel) => {
-                // Validate ABI encoding before the activation gate so that malformed
-                // arguments return AbiDecodeFailed regardless of activation state.
-                abi.abi_decode_validate(calldata, sel).and_then(|()| {
-                    ActivationRegistryStorage::new(ctx)
-                        .ensure_activated(ActivationFeature::PolicyRegistry.id())
-                        .and_then(|()| self.route(calldata, version))
-                })
-            }
-            // Selectors a later fork introduced are absent from this surface, so they land here and
-            // stay unknown — the composite selectors at Beryl among them.
-            Some(sel) => Err(BasePrecompileError::UnknownFunctionSelector(sel)),
-        };
+            self.route(call, PolicyRegistry::new(version))
+        });
         ctx.result_output(result, |b| b)
     }
 
-    /// Decodes calldata against the active wire surface and routes each operation to the active
-    /// version's logic.
+    /// Routes a decoded call to the active version's logic.
     fn route(
         &mut self,
-        calldata: &[u8],
-        version: PolicyVersion,
+        call: C,
+        logic: PolicyRegistry,
     ) -> base_tiger_precompile_storage::Result<Bytes> {
-        let logic = version.implementation();
-        match version.abi().decode(calldata)? {
+        match call {
             C::createPolicy(call) => {
                 let id = logic.create_policy(self, call.admin, call.policyType)?;
                 Ok(IPolicyRegistry::createPolicyCall::abi_encode_returns(&id).into())

@@ -1,7 +1,5 @@
-//! The shared B-20 wire surface frozen at Cobalt. Also the canonical live surface, re-exported
-//! unqualified by [`super`]. A new wire surface goes in a new `abi/vN.rs`; see [`super`].
-//!
-//! Being canonical, this module also owns the absolute fingerprints for every frozen common surface.
+//! The common B-20 wire surface (`IB20`), canonical since Cobalt, and the one Beryl type that
+//! differs from it ([`IB20V1`]).
 //!
 //! # Frozen — do not edit
 //!
@@ -155,75 +153,51 @@ sol! {
     }
 }
 
+/// Beryl's `IB20` calls whose decode differs from canonical: its `PausableFeature` has no
+/// `SEIZE`. The interface keeps the name `IB20`, and the zero-argument `pausedFeatures` keeps its
+/// minimum calldata length at canonical's zero; both reach the wire in decode errors.
+mod v1 {
+    alloy_sol_types::sol! {
+        #[derive(Debug, PartialEq, Eq)]
+        interface IB20 {
+            enum PausableFeature {
+                /// Transfer operations.
+                TRANSFER,
+                /// Mint operations.
+                MINT,
+                /// Burn operations.
+                BURN
+            }
+
+            function pausedFeatures() external view returns (PausableFeature[] memory);
+            function isPaused(PausableFeature feature) external view returns (bool);
+            function pause(PausableFeature[] calldata features) external;
+            function unpause(PausableFeature[] calldata features) external;
+        }
+    }
+}
+pub use v1::IB20 as IB20V1;
+
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, b256};
-    use alloy_sol_types::{SolEnum, SolInterface};
+    use alloy_sol_types::SolInterface;
 
-    use super::IB20;
-    use crate::{AbiFingerprint, IB20V1};
-
-    /// Absolute wire fingerprint for Beryl's surface. Catches both-sides drift that relative
-    /// V1==V2 asserts miss (alloy Display / signature changes that move every copy together).
-    ///
-    /// This surface passes its `PausableFeature` ordinals to [`AbiFingerprint`], and they are
-    /// load-bearing exactly as `B20Variant`'s are for the factory:
-    /// `B20PausableFeature::mask` derives the pause storage bit as `1 << (feature as u8)`, so a
-    /// `sol!` reorder of `TRANSFER`/`MINT`/`BURN` would silently remap which bit each feature
-    /// toggles while leaving every selector, topic0, error selector and `COUNT` identical.
-    const V1_ABI_FINGERPRINT: B256 =
-        b256!("bcece6954307d847db07d6f723438cd1fa93ae40fe0c4c7ee5578779cb502661");
-
-    /// Absolute wire fingerprint for Cobalt's (canonical) surface. Diverges from V1: Cobalt adds
-    /// the seize surface (`seizeWithMemo`, the `SEIZE_ROLE`/`SEIZE_EXEMPT_POLICY`/`SEIZE_RECEIVER_POLICY`
-    /// getters, the `Seized` event, the `AccountNotSeizable` error, and the `SEIZE` pause feature).
-    const V2_ABI_FINGERPRINT: B256 =
-        b256!("040ce4a6601295ef3caa0a4095a60295cf95726b6e783dcc40eb2dc42d5716eb");
-
-    fn v1_abi_fingerprint() -> B256 {
-        AbiFingerprint::compute(
-            IB20V1::IB20Calls::selectors(),
-            IB20V1::IB20Events::SELECTORS.iter().copied().map(B256::new),
-            IB20V1::IB20Errors::selectors(),
-            IB20V1::PausableFeature::COUNT,
-            [
-                IB20V1::PausableFeature::TRANSFER as u8,
-                IB20V1::PausableFeature::MINT as u8,
-                IB20V1::PausableFeature::BURN as u8,
-            ],
-        )
-    }
-
-    fn v2_abi_fingerprint() -> B256 {
-        AbiFingerprint::compute(
-            IB20::IB20Calls::selectors(),
-            IB20::IB20Events::SELECTORS.iter().copied().map(B256::new),
-            IB20::IB20Errors::selectors(),
-            IB20::PausableFeature::COUNT,
-            [
-                IB20::PausableFeature::TRANSFER as u8,
-                IB20::PausableFeature::MINT as u8,
-                IB20::PausableFeature::BURN as u8,
-                IB20::PausableFeature::SEIZE as u8,
-            ],
-        )
-    }
-
-    #[test]
-    fn v1_abi_fingerprint_is_pinned() {
-        assert_eq!(v1_abi_fingerprint(), V1_ABI_FINGERPRINT);
-    }
-
-    #[test]
-    fn v2_abi_fingerprint_is_pinned() {
-        assert_eq!(v2_abi_fingerprint(), V2_ABI_FINGERPRINT);
-    }
+    use super::{IB20, IB20V1};
 
     /// `SolInterface::NAME` lands in consensus data: the short-calldata branch of
     /// `abi_decode_validate` builds its error from it, and `AbiDecodeFailed` puts that string on
-    /// the wire. Renaming the frozen interface would change historical revert payloads.
+    /// the wire. Renaming either interface would change historical revert payloads.
     #[test]
     fn interface_name_is_frozen() {
         assert_eq!(IB20::IB20Calls::NAME, "IB20Calls");
+        assert_eq!(IB20V1::IB20Calls::NAME, "IB20Calls");
+    }
+
+    /// Below `MIN_DATA_LENGTH` arguments, decode fails on the interface name rather than the
+    /// call, so V1's double decode must share canonical's minimum to keep V1's error bytes.
+    #[test]
+    fn surfaces_share_a_minimum_calldata_length() {
+        assert_eq!(IB20V1::IB20Calls::MIN_DATA_LENGTH, 0);
+        assert_eq!(IB20::IB20Calls::MIN_DATA_LENGTH, 0);
     }
 }

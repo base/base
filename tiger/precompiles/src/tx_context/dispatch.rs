@@ -5,17 +5,13 @@ use alloy_sol_types::SolCall;
 use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
+    Calldata,
     ITransactionContext::{self, ITransactionContextCalls as C},
-    macros::decode_precompile_call,
     tx_context::storage::TxContextStorage,
 };
 
-/// Base transaction getter output price per 32-byte word: the EVM copy-word cost
-/// (`W_copy`). Unlike the sibling nonce-manager dispatcher —
-/// which prices *input* calldata words at `G_SHA3WORD` (see
-/// [`crate::nonce::dispatch`]) — the transaction-context getters price the
-/// *returned* words per the Base transaction output schedule, so the two dispatchers use
-/// deliberately different word costs.
+/// Base transaction getter output price per 32-byte word: the EVM copy-word cost (`W_copy`).
+/// The getters price their *returned* words, unlike the nonce manager's input calldata words.
 const OUTPUT_WORD_GAS: u64 = 3;
 
 impl TxContextStorage<'_> {
@@ -42,7 +38,7 @@ impl TxContextStorage<'_> {
     }
 
     fn inner(&self, calldata: &[u8]) -> base_tiger_precompile_storage::Result<Bytes> {
-        match decode_precompile_call!(calldata, ITransactionContext::ITransactionContextCalls) {
+        match Calldata::decode_call(calldata)? {
             C::getTransactionSender(_) => Ok(
                 ITransactionContext::getTransactionSenderCall::abi_encode_returns(&self.sender()?)
                     .into(),

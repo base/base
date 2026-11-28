@@ -18,28 +18,20 @@ use alloy_sol_types::{SolEvent, SolValue};
 use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20_MAX_SUPPLY_CAP, B20CreditRecipientStrategy, B20Guards, B20PausableFeature, B20PolicyType,
-    B20TokenRole, Eip712Domain, IB20, NonZeroAddress, PermitArgs, PolicyAccounting,
-    PolicyRegistry, PolicyVersion, Token, TokenAccounting, TransferPolicyIds,
+    B20_MAX_SUPPLY_CAP, B20CreditRecipientStrategy, B20PausableFeature, B20PolicyType,
+    B20TokenRole, B20Version, Eip712Domain, IB20, NonZeroAddress, PermitArgs, PolicyAccounting,
+    PolicyRegistry, PolicyVersion, TokenAccounting, TransferPolicyIds,
 };
 
-/// An activated version of the B-20 token logic (asset and stablecoin alike).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum B20Version {
-    /// Introduced at Beryl, the B-20 activation fork.
-    V1,
-    /// Introduced at Cobalt.
-    V2,
-    /// Introduced at Denim.
-    V3,
-}
-
-/// A B-20 token: its storage, the policy registry's storage, and the registry's version.
+/// A B-20 token: its storage, the policy registry's storage, and the registry's logic.
 #[derive(Debug, Clone)]
 pub struct B20Token<S, A> {
-    accounting: S,
-    policy: A,
-    policy_version: PolicyVersion,
+    /// The token's storage.
+    pub accounting: S,
+    /// The policy registry's storage.
+    pub policy: A,
+    /// The policy registry's logic, of the version the fork activates.
+    pub registry: PolicyRegistry,
 }
 
 impl<S: TokenAccounting, A: PolicyAccounting> B20Token<S, A> {
@@ -49,36 +41,7 @@ impl<S: TokenAccounting, A: PolicyAccounting> B20Token<S, A> {
         policy: A,
         policy_version: PolicyVersion,
     ) -> Self {
-        Self { accounting, policy, policy_version }
-    }
-}
-
-impl<S: TokenAccounting, A: PolicyAccounting> Token for B20Token<S, A> {
-    type Accounting = S;
-    type PolicyAccounting = A;
-
-    fn accounting(&self) -> &S {
-        &self.accounting
-    }
-
-    fn accounting_mut(&mut self) -> &mut S {
-        &mut self.accounting
-    }
-
-    fn policy(&self) -> PolicyRegistry {
-        PolicyRegistry::new(self.policy_version)
-    }
-
-    fn policy_storage(&self) -> &A {
-        &self.policy
-    }
-
-    fn policy_storage_mut(&mut self) -> &mut A {
-        &mut self.policy
-    }
-
-    fn token_address(&self) -> Address {
-        self.accounting.token_address()
+        Self { accounting, policy, registry: PolicyRegistry::new(policy_version) }
     }
 }
 
@@ -143,7 +106,7 @@ impl B20Logic {
     ) -> Result<()> {
         let invalid = if self.version >= B20Version::V3 {
             B20CreditRecipientStrategy::ExcludingZeroAndSelf
-                .recipient(to, token.token_address())
+                .recipient(to, token.accounting.token_address())
                 .is_err()
         } else {
             to == Address::ZERO
@@ -170,23 +133,20 @@ impl B20Logic {
         if let Some(policies) = policies {
             let v3 = self.version >= B20Version::V3;
             if v3 {
-                B20Guards::ensure_authorized_by_id(
-                    token,
+                token.ensure_authorized_by_id(
                     B20PolicyType::TransferExecutor.id(),
                     policies.executor,
                     caller,
                 )?;
             }
             if !v3 || caller != from || policies.executor != policies.sender {
-                B20Guards::ensure_authorized_by_id(
-                    token,
+                token.ensure_authorized_by_id(
                     B20PolicyType::TransferSender.id(),
                     policies.sender,
                     from,
                 )?;
             }
-            B20Guards::ensure_authorized_by_id(
-                token,
+            token.ensure_authorized_by_id(
                 B20PolicyType::TransferReceiver.id(),
                 policies.receiver,
                 to,
@@ -211,8 +171,8 @@ impl B20Logic {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
         if !privileged {
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferSender, from)?;
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferReceiver, to)?;
+            token.ensure_policy_type(B20PolicyType::TransferSender, from)?;
+            token.ensure_policy_type(B20PolicyType::TransferReceiver, to)?;
         }
         self.move_balance(token, from, to, amount)
     }
@@ -226,7 +186,7 @@ impl B20Logic {
         to: Address,
         amount: U256,
     ) -> Result<()> {
-        let from_balance = token.accounting().balance_of(from)?;
+        let from_balance = token.accounting.balance_of(from)?;
         if from_balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
                 sender: from,
@@ -236,12 +196,12 @@ impl B20Logic {
         }
         let new_from_balance =
             from_balance.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting_mut().set_balance(from, new_from_balance)?;
-        let to_balance = token.accounting().balance_of(to)?;
+        token.accounting.set_balance(from, new_from_balance)?;
+        let to_balance = token.accounting.balance_of(to)?;
         let new_to_balance =
             to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting_mut().set_balance(to, new_to_balance)?;
-        token.accounting_mut().emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
+        token.accounting.set_balance(to, new_to_balance)?;
+        token.accounting.emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
     }
 
     /// Supply-reducing core of the burn operations, without pause or role checks.
@@ -251,7 +211,7 @@ impl B20Logic {
         from: Address,
         amount: U256,
     ) -> Result<()> {
-        let balance = token.accounting().balance_of(from)?;
+        let balance = token.accounting.balance_of(from)?;
         if balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
                 sender: from,
@@ -259,13 +219,13 @@ impl B20Logic {
                 needed: amount,
             }));
         }
-        token.accounting_mut().set_balance(from, balance - amount)?;
-        let supply = token.accounting().total_supply()?;
+        token.accounting.set_balance(from, balance - amount)?;
+        let supply = token.accounting.total_supply()?;
         let new_supply =
             supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting_mut().set_total_supply(new_supply)?;
+        token.accounting.set_total_supply(new_supply)?;
         token
-            .accounting_mut()
+            .accounting
             .emit_event(IB20::Transfer { from, to: Address::ZERO, amount }.encode_log_data())
     }
 
@@ -277,19 +237,17 @@ impl B20Logic {
         account: Address,
         sender: Address,
     ) -> Result<()> {
-        if !token.accounting().has_role(role, account)? {
+        if !token.accounting.has_role(role, account)? {
             return Ok(());
         }
-        token.accounting_mut().set_role(role, account, false)?;
+        token.accounting.set_role(role, account, false)?;
         if role == B20TokenRole::DefaultAdmin.id() {
-            let current = token.accounting().role_member_count(role)?;
+            let current = token.accounting.role_member_count(role)?;
             let next =
                 current.checked_sub(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            token.accounting_mut().set_role_member_count(role, next)?;
+            token.accounting.set_role_member_count(role, next)?;
         }
-        token
-            .accounting_mut()
-            .emit_event(IB20::RoleRevoked { role, account, sender }.encode_log_data())
+        token.accounting.emit_event(IB20::RoleRevoked { role, account, sender }.encode_log_data())
     }
 
     /// Ensures role-admin mutations are still reachable.
@@ -299,7 +257,7 @@ impl B20Logic {
         caller: Address,
     ) -> Result<()> {
         let admin_role = B20TokenRole::DefaultAdmin.id();
-        if token.accounting().role_member_count(admin_role)? == U256::ZERO {
+        if token.accounting.role_member_count(admin_role)? == U256::ZERO {
             return Err(BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: caller,
                 neededRole: admin_role,
@@ -343,7 +301,7 @@ impl B20Logic {
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
+        token.ensure_not_paused(IB20::PausableFeature::TRANSFER)?;
         if self.version == B20Version::V1 {
             return self.transfer_inner_v1(token, caller, to, amount, privileged);
         }
@@ -353,7 +311,7 @@ impl B20Logic {
         if privileged {
             return self.transfer_inner(token, caller, caller, to, amount, None);
         }
-        let policies = token.accounting().transfer_policy_ids()?;
+        let policies = token.accounting.transfer_policy_ids()?;
         self.transfer_inner(token, caller, caller, to, amount, Some(&policies))
     }
 
@@ -367,13 +325,13 @@ impl B20Logic {
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
+        token.ensure_not_paused(IB20::PausableFeature::TRANSFER)?;
         // Validate before allowance / transfer-policy-id SLOADs.
         self.ensure_recipient(token, to)?;
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
-        let allowance = token.accounting().allowance(from, caller)?;
+        let allowance = token.accounting.allowance(from, caller)?;
         let is_infinite = allowance == U256::MAX;
         if !is_infinite && allowance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientAllowance {
@@ -384,17 +342,16 @@ impl B20Logic {
         }
         if self.version == B20Version::V1 {
             if !privileged && caller != from {
-                B20Guards::ensure_policy_type(token, B20PolicyType::TransferExecutor, caller)?;
+                token.ensure_policy_type(B20PolicyType::TransferExecutor, caller)?;
             }
             self.transfer_inner_v1(token, from, to, amount, privileged)?;
         } else if privileged {
             self.transfer_inner(token, caller, from, to, amount, None)?;
         } else {
             // One SLOAD fetches all transfer policy ids for the executor and sender/receiver checks.
-            let policies = token.accounting().transfer_policy_ids()?;
+            let policies = token.accounting.transfer_policy_ids()?;
             if self.version == B20Version::V2 && caller != from {
-                B20Guards::ensure_authorized_by_id(
-                    token,
+                token.ensure_authorized_by_id(
                     B20PolicyType::TransferExecutor.id(),
                     policies.executor,
                     caller,
@@ -405,7 +362,7 @@ impl B20Logic {
         if is_infinite {
             return Ok(());
         }
-        token.accounting_mut().set_allowance(from, caller, allowance - amount)
+        token.accounting.set_allowance(from, caller, allowance - amount)
     }
 
     /// Sets the caller's allowance for `spender`.
@@ -422,9 +379,9 @@ impl B20Logic {
         if spender == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSpender { spender }));
         }
-        token.accounting_mut().set_allowance(caller, spender, amount)?;
+        token.accounting.set_allowance(caller, spender, amount)?;
         token
-            .accounting_mut()
+            .accounting
             .emit_event(IB20::Approval { owner: caller, spender, amount }.encode_log_data())
     }
 
@@ -435,7 +392,7 @@ impl B20Logic {
         caller: Address,
         memo: B256,
     ) -> Result<()> {
-        token.accounting_mut().emit_event(IB20::Memo { caller, memo }.encode_log_data())
+        token.accounting.emit_event(IB20::Memo { caller, memo }.encode_log_data())
     }
 
     /// Mints `amount` to `to`.
@@ -447,14 +404,14 @@ impl B20Logic {
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::MINT)?;
+        token.ensure_not_paused(IB20::PausableFeature::MINT)?;
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
+            token.ensure_token_role(caller, B20TokenRole::Mint)?;
         }
         self.ensure_recipient(token, to)?;
-        B20Guards::ensure_policy_type(token, B20PolicyType::MintReceiver, to)?;
-        let supply = token.accounting().total_supply()?;
-        let cap = token.accounting().supply_cap()?;
+        token.ensure_policy_type(B20PolicyType::MintReceiver, to)?;
+        let supply = token.accounting.total_supply()?;
+        let cap = token.accounting.supply_cap()?;
         let new_supply =
             supply.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
         if new_supply > cap {
@@ -463,13 +420,13 @@ impl B20Logic {
                 attempted: new_supply,
             }));
         }
-        token.accounting_mut().set_total_supply(new_supply)?;
-        let to_balance = token.accounting().balance_of(to)?;
+        token.accounting.set_total_supply(new_supply)?;
+        let to_balance = token.accounting.balance_of(to)?;
         let new_balance =
             to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting_mut().set_balance(to, new_balance)?;
+        token.accounting.set_balance(to, new_balance)?;
         token
-            .accounting_mut()
+            .accounting
             .emit_event(IB20::Transfer { from: Address::ZERO, to, amount }.encode_log_data())
     }
 
@@ -480,8 +437,8 @@ impl B20Logic {
         caller: Address,
         amount: U256,
     ) -> Result<()> {
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::BURN)?;
-        B20Guards::ensure_token_role(token, caller, B20TokenRole::Burn)?;
+        token.ensure_not_paused(IB20::PausableFeature::BURN)?;
+        token.ensure_token_role(caller, B20TokenRole::Burn)?;
         self.burn_inner(token, caller, amount)
     }
 
@@ -494,15 +451,13 @@ impl B20Logic {
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::BURN)?;
+        token.ensure_not_paused(IB20::PausableFeature::BURN)?;
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::BurnBlocked)?;
+            token.ensure_token_role(caller, B20TokenRole::BurnBlocked)?;
         }
-        B20Guards::ensure_blocked(token, from)?;
+        token.ensure_blocked(from)?;
         self.burn_inner(token, from, amount)?;
-        token
-            .accounting_mut()
-            .emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
+        token.accounting.emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
     }
 
     /// (V2) Moves `amount` from a seizable `from` to `to`, with a memo.
@@ -515,8 +470,8 @@ impl B20Logic {
         amount: U256,
         memo: B256,
     ) -> Result<()> {
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::SEIZE)?;
-        B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
+        token.ensure_not_paused(IB20::PausableFeature::SEIZE)?;
+        token.ensure_token_role(caller, B20TokenRole::Seize)?;
         // A valid recipient guards against a disguised burn (and from V3 a balance stranded on
         // this token); `from != 0` guards against a disguised mint, matching `transfer_inner`.
         self.ensure_recipient(token, to)?;
@@ -526,16 +481,14 @@ impl B20Logic {
         if from == to {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
-        B20Guards::ensure_seizable(token, from)?;
+        token.ensure_seizable(from)?;
         // Gate the destination like `mint` gates `MintReceiver`: an unset scope is always-allow, so
         // a treasury need not be allowlisted by default.
-        B20Guards::ensure_policy_type(token, B20PolicyType::SeizeReceiver, to)?;
+        token.ensure_policy_type(B20PolicyType::SeizeReceiver, to)?;
         self.move_balance(token, from, to, amount)?;
         // `Memo` must immediately follow the `Transfer` (from `move_balance`), before `Seized`.
         self.emit_memo(token, caller, memo)?;
-        token
-            .accounting_mut()
-            .emit_event(IB20::Seized { caller, from, to, amount }.encode_log_data())
+        token.accounting.emit_event(IB20::Seized { caller, from, to, amount }.encode_log_data())
     }
 
     /// Sets (`pause`) or clears the pause bits of `features`.
@@ -552,12 +505,12 @@ impl B20Logic {
         }
         if !privileged {
             let role = if pause { B20TokenRole::Pause } else { B20TokenRole::Unpause };
-            B20Guards::ensure_token_role(token, caller, role)?;
+            token.ensure_token_role(caller, role)?;
         }
         if features.is_empty() {
             return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
         }
-        let mut next = token.accounting().paused()?;
+        let mut next = token.accounting.paused()?;
         for feature in &features {
             if pause {
                 next |= B20PausableFeature::mask(*feature);
@@ -565,13 +518,13 @@ impl B20Logic {
                 next &= !B20PausableFeature::mask(*feature);
             }
         }
-        token.accounting_mut().set_paused(next)?;
+        token.accounting.set_paused(next)?;
         let log = if pause {
             IB20::Paused { updater: caller, features }.encode_log_data()
         } else {
             IB20::Unpaused { updater: caller, features }.encode_log_data()
         };
-        token.accounting_mut().emit_event(log)
+        token.accounting.emit_event(log)
     }
 
     /// Pauses `features`.
@@ -605,18 +558,18 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
+            token.ensure_token_role(caller, B20TokenRole::DefaultAdmin)?;
         }
-        let supply = token.accounting().total_supply()?;
+        let supply = token.accounting.total_supply()?;
         if new_cap < supply || new_cap > B20_MAX_SUPPLY_CAP {
             return Err(BasePrecompileError::revert(IB20::InvalidSupplyCap {
                 currentSupply: supply,
                 proposedCap: new_cap,
             }));
         }
-        let old = token.accounting().supply_cap()?;
-        token.accounting_mut().set_supply_cap(new_cap)?;
-        token.accounting_mut().emit_event(
+        let old = token.accounting.supply_cap()?;
+        token.accounting.set_supply_cap(new_cap)?;
+        token.accounting.emit_event(
             IB20::SupplyCapUpdated { updater: caller, oldSupplyCap: old, newSupplyCap: new_cap }
                 .encode_log_data(),
         )
@@ -631,13 +584,13 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Metadata)?;
+            token.ensure_token_role(caller, B20TokenRole::Metadata)?;
         }
-        token.accounting_mut().set_name(name.clone())?;
+        token.accounting.set_name(name.clone())?;
         token
-            .accounting_mut()
+            .accounting
             .emit_event(IB20::NameUpdated { updater: caller, newName: name }.encode_log_data())?;
-        token.accounting_mut().emit_event(IB20::EIP712DomainChanged {}.encode_log_data())
+        token.accounting.emit_event(IB20::EIP712DomainChanged {}.encode_log_data())
     }
 
     /// Sets the token symbol.
@@ -649,10 +602,10 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Metadata)?;
+            token.ensure_token_role(caller, B20TokenRole::Metadata)?;
         }
-        token.accounting_mut().set_symbol(symbol.clone())?;
-        token.accounting_mut().emit_event(
+        token.accounting.set_symbol(symbol.clone())?;
+        token.accounting.emit_event(
             IB20::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data(),
         )
     }
@@ -666,10 +619,10 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Metadata)?;
+            token.ensure_token_role(caller, B20TokenRole::Metadata)?;
         }
-        token.accounting_mut().set_contract_uri(uri)?;
-        token.accounting_mut().emit_event(IB20::ContractURIUpdated {}.encode_log_data())
+        token.accounting.set_contract_uri(uri)?;
+        token.accounting.emit_event(IB20::ContractURIUpdated {}.encode_log_data())
     }
 
     /// Grants `role` to `account`.
@@ -685,8 +638,8 @@ impl B20Logic {
             self.ensure_role_admin_mutations_available(token, caller)?;
         }
         if !privileged {
-            let admin = token.accounting().role_admin(role)?;
-            B20Guards::ensure_role(token, caller, admin)?;
+            let admin = token.accounting.role_admin(role)?;
+            token.ensure_role(caller, admin)?;
         }
         self.grant_role_unchecked(token, role, account, caller)
     }
@@ -699,19 +652,17 @@ impl B20Logic {
         account: Address,
         sender: Address,
     ) -> Result<()> {
-        if token.accounting().has_role(role, account)? {
+        if token.accounting.has_role(role, account)? {
             return Ok(());
         }
-        token.accounting_mut().set_role(role, account, true)?;
+        token.accounting.set_role(role, account, true)?;
         if role == B20TokenRole::DefaultAdmin.id() {
-            let current = token.accounting().role_member_count(role)?;
+            let current = token.accounting.role_member_count(role)?;
             let next =
                 current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            token.accounting_mut().set_role_member_count(role, next)?;
+            token.accounting.set_role_member_count(role, next)?;
         }
-        token
-            .accounting_mut()
-            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
+        token.accounting.emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
     }
 
     /// Revokes `role` from `account`; the last default admin cannot be revoked.
@@ -725,12 +676,12 @@ impl B20Logic {
     ) -> Result<()> {
         if !privileged {
             self.ensure_role_admin_mutations_available(token, caller)?;
-            let admin = token.accounting().role_admin(role)?;
-            B20Guards::ensure_role(token, caller, admin)?;
+            let admin = token.accounting.role_admin(role)?;
+            token.ensure_role(caller, admin)?;
         }
         if role == B20TokenRole::DefaultAdmin.id()
-            && token.accounting().has_role(role, account)?
-            && token.accounting().role_member_count(role)? == U256::ONE
+            && token.accounting.has_role(role, account)?
+            && token.accounting.role_member_count(role)? == U256::ONE
         {
             return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
         }
@@ -749,8 +700,8 @@ impl B20Logic {
             return Err(BasePrecompileError::revert(IB20::AccessControlBadConfirmation {}));
         }
         if role == B20TokenRole::DefaultAdmin.id()
-            && token.accounting().has_role(role, caller)?
-            && token.accounting().role_member_count(role)? == U256::ONE
+            && token.accounting.has_role(role, caller)?
+            && token.accounting.role_member_count(role)? == U256::ONE
         {
             return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
         }
@@ -764,13 +715,13 @@ impl B20Logic {
         caller: Address,
     ) -> Result<()> {
         let admin_role = B20TokenRole::DefaultAdmin.id();
-        B20Guards::ensure_role(token, caller, admin_role)?;
-        if token.accounting().role_member_count(admin_role)? != U256::ONE {
+        token.ensure_role(caller, admin_role)?;
+        if token.accounting.role_member_count(admin_role)? != U256::ONE {
             return Err(BasePrecompileError::revert(IB20::NotSoleAdmin {}));
         }
         self.revoke_role_unchecked(token, admin_role, caller, caller)?;
         token
-            .accounting_mut()
+            .accounting
             .emit_event(IB20::LastAdminRenounced { previousAdmin: caller }.encode_log_data())
     }
 
@@ -783,13 +734,13 @@ impl B20Logic {
         new_admin_role: B256,
         privileged: bool,
     ) -> Result<()> {
-        let previous_admin_role = token.accounting().role_admin(role)?;
+        let previous_admin_role = token.accounting.role_admin(role)?;
         if !privileged {
             self.ensure_role_admin_mutations_available(token, caller)?;
-            B20Guards::ensure_role(token, caller, previous_admin_role)?;
+            token.ensure_role(caller, previous_admin_role)?;
         }
-        token.accounting_mut().set_role_admin(role, new_admin_role)?;
-        token.accounting_mut().emit_event(
+        token.accounting.set_role_admin(role, new_admin_role)?;
+        token.accounting.emit_event(
             IB20::RoleAdminChanged {
                 role,
                 previousAdminRole: previous_admin_role,
@@ -809,23 +760,23 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
+            token.ensure_token_role(caller, B20TokenRole::DefaultAdmin)?;
         }
         self.ensure_supported_policy_type(policy_scope)?;
         let early_read = self.stablecoin && self.version == B20Version::V1;
         let early_old_policy_id =
-            if early_read { Some(token.accounting().policy_id(policy_scope)?) } else { None };
-        if !token.policy().policy_exists(token.policy_storage(), new_policy_id)? {
+            if early_read { Some(token.accounting.policy_id(policy_scope)?) } else { None };
+        if !token.registry.policy_exists(&token.policy, new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
         }
         let old_policy_id = match early_old_policy_id {
             Some(id) => id,
-            None => token.accounting().policy_id(policy_scope)?,
+            None => token.accounting.policy_id(policy_scope)?,
         };
-        token.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
-        token.accounting_mut().emit_event(
+        token.accounting.set_policy_id(policy_scope, new_policy_id)?;
+        token.accounting.emit_event(
             IB20::PolicyUpdated {
                 policyScope: policy_scope,
                 oldPolicyId: old_policy_id,
@@ -849,15 +800,15 @@ impl B20Logic {
             }));
         }
         let domain_sep = self.domain_separator(token, chain_id)?;
-        let nonce = token.accounting().nonce(args.owner)?;
+        let nonce = token.accounting.nonce(args.owner)?;
         let recovered = if self.version >= B20Version::V2 {
-            let signing_hash = args.metered_signing_hash(token.accounting(), domain_sep, nonce)?;
-            args.metered_recover_signer(token.accounting(), signing_hash)?
+            let signing_hash = args.metered_signing_hash(&token.accounting, domain_sep, nonce)?;
+            args.metered_recover_signer(&token.accounting, signing_hash)?
         } else {
             args.recover_signer(args.signing_hash(domain_sep, nonce))?
         };
         PermitArgs::validate_recovered_address(recovered, args.owner)?;
-        token.accounting_mut().increment_nonce(args.owner)?;
+        token.accounting.increment_nonce(args.owner)?;
         self.approve(token, args.owner, args.spender, args.value)
     }
 
@@ -868,7 +819,7 @@ impl B20Logic {
         feature: IB20::PausableFeature,
     ) -> Result<bool> {
         B20PausableFeature::ensure_one_of(feature, self.pausable_features())?;
-        Ok((token.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
+        Ok((token.accounting.paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
     /// The paused features, in feature order.
@@ -876,7 +827,7 @@ impl B20Logic {
         &self,
         token: &B20Token<S, A>,
     ) -> Result<Vec<IB20::PausableFeature>> {
-        let paused = token.accounting().paused()?;
+        let paused = token.accounting.paused()?;
         Ok(self
             .pausable_features()
             .iter()
@@ -892,7 +843,7 @@ impl B20Logic {
         policy_scope: B256,
     ) -> Result<u64> {
         self.ensure_supported_policy_type(policy_scope)?;
-        token.accounting().policy_id(policy_scope)
+        token.accounting.policy_id(policy_scope)
     }
 
     /// The EIP-712 domain separator.
@@ -901,13 +852,14 @@ impl B20Logic {
         token: &B20Token<S, A>,
         chain_id: u64,
     ) -> Result<B256> {
-        let name = token.accounting().name()?;
-        let name_hash = self.keccak256(token.accounting(), name.as_bytes())?;
-        let version_hash = self.keccak256(token.accounting(), Self::EIP712_VERSION)?;
+        let name = token.accounting.name()?;
+        let name_hash = self.keccak256(&token.accounting, name.as_bytes())?;
+        let version_hash = self.keccak256(&token.accounting, Self::EIP712_VERSION)?;
+        let chain_id = U256::from(chain_id);
+        let address = token.accounting.token_address();
         let encoded =
-            (Self::DOMAIN_TYPEHASH, name_hash, version_hash, U256::from(chain_id), token.token_address())
-                .abi_encode();
-        self.keccak256(token.accounting(), &encoded)
+            (Self::DOMAIN_TYPEHASH, name_hash, version_hash, chain_id, address).abi_encode();
+        self.keccak256(&token.accounting, &encoded)
     }
 
     /// The EIP-5267 domain.
@@ -916,14 +868,14 @@ impl B20Logic {
         token: &B20Token<S, A>,
         chain_id: u64,
     ) -> Result<Eip712Domain> {
-        let name = token.accounting().name()?;
+        let name = token.accounting.name()?;
         Ok((
             // bits 0+1+2+3: name + version + chainId + verifyingContract
             FixedBytes::<1>::from([0x0f]),
             name,
             "1".to_string(),
             U256::from(chain_id),
-            token.token_address(),
+            token.accounting.token_address(),
             B256::ZERO,
             vec![],
         ))
@@ -944,8 +896,9 @@ mod tests {
         use rstest::{fixture, rstest};
 
         use crate::{
-            B20PolicyType, B20Token, B20TokenRole, FakePolicyAccounting, IB20,
-            InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion, B20Logic, B20Version, Token, TokenAccounting,
+            B20Logic, B20PolicyType, B20Token, B20TokenRole, B20Version, FakePolicyAccounting, IB20,
+            InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion,
+            TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x22);
@@ -987,21 +940,21 @@ mod tests {
 
         /// Grants `role` to `account` and keeps the admin member-count consistent.
         fn grant(tok: &mut Tok, role: B256, account: Address) {
-            tok.accounting_mut().set_role(role, account, true).unwrap();
-            let next = tok.accounting().role_member_count(role).unwrap() + U256::ONE;
-            tok.accounting_mut().set_role_member_count(role, next).unwrap();
+            tok.accounting.set_role(role, account, true).unwrap();
+            let next = tok.accounting.role_member_count(role).unwrap() + U256::ONE;
+            tok.accounting.set_role_member_count(role, next).unwrap();
         }
 
         /// Credits `account` with `amount` and grows total supply to match.
         fn fund(tok: &mut Tok, account: Address, amount: U256) {
-            let bal = tok.accounting().balance_of(account).unwrap();
-            tok.accounting_mut().set_balance(account, bal + amount).unwrap();
-            let supply = tok.accounting().total_supply().unwrap();
-            tok.accounting_mut().set_total_supply(supply + amount).unwrap();
+            let bal = tok.accounting.balance_of(account).unwrap();
+            tok.accounting.set_balance(account, bal + amount).unwrap();
+            let supply = tok.accounting.total_supply().unwrap();
+            tok.accounting.set_total_supply(supply + amount).unwrap();
         }
 
         fn last_event_sig(tok: &Tok) -> B256 {
-            tok.accounting().events.last().unwrap().topics()[0]
+            tok.accounting.events.last().unwrap().topics()[0]
         }
 
         fn anvil_owner() -> Address {
@@ -1019,7 +972,7 @@ mod tests {
             deadline: U256,
         ) -> PermitArgs {
             let domain_sep = LOGIC.domain_separator(tok, CHAIN_ID).unwrap();
-            let nonce = tok.accounting().nonce(owner).unwrap();
+            let nonce = tok.accounting.nonce(owner).unwrap();
             let mut args =
                 PermitArgs { owner, spender, value, deadline, v: 0, r: B256::ZERO, s: B256::ZERO };
             let signing_hash = args.signing_hash(domain_sep, nonce);
@@ -1037,8 +990,8 @@ mod tests {
         #[rstest]
         fn transfer_moves_balance_and_emits_transfer(#[from(funded_token)] mut tok: Tok) {
             LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(70u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(70u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
@@ -1084,37 +1037,37 @@ mod tests {
         fn transfer_unprivileged_enforces_transfer_policies(#[from(funded_token)] mut tok: Tok) {
             // ALLOWLIST with no members → sender/receiver policy checks revert.
             const POLICY: u64 = (1u64 << 56) | 7;
-            tok.accounting_mut().set_policy_id(B20PolicyType::TransferSender.id(), POLICY).unwrap();
-            tok.accounting_mut().set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY).unwrap();
-            tok.policy_storage_mut().create_existing_policy(POLICY);
+            tok.accounting.set_policy_id(B20PolicyType::TransferSender.id(), POLICY).unwrap();
+            tok.accounting.set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY).unwrap();
+            tok.policy.create_existing_policy(POLICY);
             assert!(LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).is_err());
             // Authorize both parties → transfer succeeds through the guard path.
-            tok.policy_storage_mut().allow(POLICY, ALICE);
-            tok.policy_storage_mut().allow(POLICY, BOB);
+            tok.policy.allow(POLICY, ALICE);
+            tok.policy.allow(POLICY, BOB);
             LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(10u64));
         }
 
         // --- transfer_from ---
 
         #[rstest]
         fn transfer_from_decrements_finite_allowance(#[from(funded_token)] mut tok: Tok) {
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(10u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
         }
 
         #[rstest]
         fn transfer_from_infinite_allowance_is_not_decremented(#[from(funded_token)] mut tok: Tok) {
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::MAX).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::MAX).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::MAX);
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::MAX);
         }
 
         #[rstest]
         fn transfer_from_reverts_on_insufficient_allowance(#[from(funded_token)] mut tok: Tok) {
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(5u64)).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::from(5u64)).unwrap();
             let err =
                 LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap_err();
             assert_eq!(
@@ -1132,7 +1085,7 @@ mod tests {
         #[rstest]
         fn approve_sets_allowance_and_emits(#[from(token)] mut tok: Tok) {
             LOGIC.approve(&mut tok, ALICE, BOB, U256::from(50u64)).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(50u64));
             assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
         }
 
@@ -1149,16 +1102,16 @@ mod tests {
 
         #[rstest]
         fn mint_privileged_increases_supply_and_balance(#[from(token)] mut tok: Tok) {
-            tok.policy_storage_mut().allow(0, BOB); // MintReceiver policy is enforced even when privileged
+            tok.policy.allow(0, BOB); // MintReceiver policy is enforced even when privileged
             LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(100u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(100u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
         #[rstest]
         fn mint_reverts_over_supply_cap(#[from(token)] mut tok: Tok) {
-            tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
+            tok.accounting.set_supply_cap(U256::from(50u64)).unwrap();
             let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
             assert_eq!(
                 err,
@@ -1195,22 +1148,22 @@ mod tests {
             );
             grant(&mut tok, B20TokenRole::Burn.id(), ALICE);
             LOGIC.burn(&mut tok, ALICE, U256::from(40u64)).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(60u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
         #[rstest]
         fn burn_blocked_destroys_from_unauthorized_account(#[from(funded_token)] mut tok: Tok) {
             // ALWAYS_BLOCK => ALICE is unauthorized/blocked; privileged skips the role check.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::TransferSender.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 )
                 .unwrap();
             LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
             assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
         }
 
@@ -1273,7 +1226,7 @@ mod tests {
         #[rstest]
         fn update_supply_cap_sets_and_emits(#[from(token)] mut tok: Tok) {
             LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(1_000u64), true).unwrap();
-            assert_eq!(tok.accounting().supply_cap().unwrap(), U256::from(1_000u64));
+            assert_eq!(tok.accounting.supply_cap().unwrap(), U256::from(1_000u64));
             assert_eq!(last_event_sig(&tok), IB20::SupplyCapUpdated::SIGNATURE_HASH);
         }
 
@@ -1293,8 +1246,8 @@ mod tests {
         #[rstest]
         fn update_name_emits_name_updated_and_domain_changed(#[from(token)] mut tok: Tok) {
             LOGIC.update_name(&mut tok, ADMIN, "New Name".to_string(), true).unwrap();
-            assert_eq!(tok.accounting().name().unwrap(), "New Name");
-            let events = &tok.accounting().events;
+            assert_eq!(tok.accounting.name().unwrap(), "New Name");
+            let events = &tok.accounting.events;
             assert_eq!(events[events.len() - 2].topics()[0], IB20::NameUpdated::SIGNATURE_HASH);
             assert_eq!(events[events.len() - 1].topics()[0], IB20::EIP712DomainChanged::SIGNATURE_HASH);
         }
@@ -1304,7 +1257,7 @@ mod tests {
         #[rstest]
         fn grant_role_privileged_grants_and_emits(#[from(token)] mut tok: Tok) {
             LOGIC.grant_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
             assert_eq!(last_event_sig(&tok), IB20::RoleGranted::SIGNATURE_HASH);
         }
 
@@ -1312,7 +1265,7 @@ mod tests {
         fn revoke_role_privileged_revokes_and_emits(#[from(token)] mut tok: Tok) {
             grant(&mut tok, B20TokenRole::Mint.id(), ALICE);
             LOGIC.revoke_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
-            assert!(!tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+            assert!(!tok.accounting.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
             assert_eq!(last_event_sig(&tok), IB20::RoleRevoked::SIGNATURE_HASH);
         }
 
@@ -1330,9 +1283,9 @@ mod tests {
             LOGIC
                 .grant_role_unchecked(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
                 .unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
             assert_eq!(
-                tok.accounting().role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+                tok.accounting.role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
                 U256::ONE
             );
         }
@@ -1341,9 +1294,9 @@ mod tests {
 
         #[rstest]
         fn update_policy_sets_new_id(#[from(token)] mut tok: Tok) {
-            tok.policy_storage_mut().create_existing_policy(7);
+            tok.policy.create_existing_policy(7);
             LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
-            assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
+            assert_eq!(tok.accounting.policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
         }
 
         #[rstest]
@@ -1371,8 +1324,8 @@ mod tests {
             let owner = anvil_owner();
             let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
             LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
-            assert_eq!(tok.accounting().allowance(owner, BOB).unwrap(), U256::from(500u64));
-            assert_eq!(tok.accounting().nonce(owner).unwrap(), U256::ONE);
+            assert_eq!(tok.accounting.allowance(owner, BOB).unwrap(), U256::from(500u64));
+            assert_eq!(tok.accounting.nonce(owner).unwrap(), U256::ONE);
         }
 
         #[rstest]
@@ -1399,14 +1352,14 @@ mod tests {
 
         #[rstest]
         fn currency_reads_storage(#[from(token)] tok: Tok) {
-            assert_eq!(crate::StablecoinAccounting::currency(tok.accounting()).unwrap(), "USD");
+            assert_eq!(crate::StablecoinAccounting::currency(&tok.accounting).unwrap(), "USD");
         }
 
         #[rstest]
         fn is_initialized_reflects_storage(#[from(token)] mut tok: Tok) {
-            assert!(tok.accounting().is_initialized().unwrap());
-            tok.accounting_mut().initialized = false;
-            assert!(!tok.accounting().is_initialized().unwrap());
+            assert!(tok.accounting.is_initialized().unwrap());
+            tok.accounting.initialized = false;
+            assert!(!tok.accounting.is_initialized().unwrap());
         }
 
         #[rstest]
@@ -1445,8 +1398,9 @@ mod tests {
         use rstest::{fixture, rstest};
 
         use crate::{
-            B20PolicyType, B20Token, B20TokenRole, FakePolicyAccounting, IB20,
-            InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion, B20Logic, B20Version, Token, TokenAccounting,
+            B20Logic, B20PolicyType, B20Token, B20TokenRole, B20Version, FakePolicyAccounting, IB20,
+            InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion,
+            TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x22);
@@ -1483,21 +1437,21 @@ mod tests {
 
         /// Grants `role` to `account` and keeps the admin member-count consistent.
         fn grant(tok: &mut Tok, role: B256, account: Address) {
-            tok.accounting_mut().set_role(role, account, true).unwrap();
-            let next = tok.accounting().role_member_count(role).unwrap() + U256::ONE;
-            tok.accounting_mut().set_role_member_count(role, next).unwrap();
+            tok.accounting.set_role(role, account, true).unwrap();
+            let next = tok.accounting.role_member_count(role).unwrap() + U256::ONE;
+            tok.accounting.set_role_member_count(role, next).unwrap();
         }
 
         /// Credits `account` with `amount` and grows total supply to match.
         fn fund(tok: &mut Tok, account: Address, amount: U256) {
-            let bal = tok.accounting().balance_of(account).unwrap();
-            tok.accounting_mut().set_balance(account, bal + amount).unwrap();
-            let supply = tok.accounting().total_supply().unwrap();
-            tok.accounting_mut().set_total_supply(supply + amount).unwrap();
+            let bal = tok.accounting.balance_of(account).unwrap();
+            tok.accounting.set_balance(account, bal + amount).unwrap();
+            let supply = tok.accounting.total_supply().unwrap();
+            tok.accounting.set_total_supply(supply + amount).unwrap();
         }
 
         fn last_event_sig(tok: &Tok) -> B256 {
-            tok.accounting().events.last().unwrap().topics()[0]
+            tok.accounting.events.last().unwrap().topics()[0]
         }
 
         fn anvil_owner() -> Address {
@@ -1515,7 +1469,7 @@ mod tests {
             deadline: U256,
         ) -> PermitArgs {
             let domain_sep = LOGIC.domain_separator(tok, CHAIN_ID).unwrap();
-            let nonce = tok.accounting().nonce(owner).unwrap();
+            let nonce = tok.accounting.nonce(owner).unwrap();
             let mut args =
                 PermitArgs { owner, spender, value, deadline, v: 0, r: B256::ZERO, s: B256::ZERO };
             let signing_hash = args.signing_hash(domain_sep, nonce);
@@ -1535,8 +1489,8 @@ mod tests {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
             LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(70u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(70u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
@@ -1612,15 +1566,15 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(100u64));
             // ALLOWLIST with no members → sender/receiver policy checks revert.
             const POLICY: u64 = (1u64 << 56) | 7;
-            tok.accounting_mut().set_policy_id(B20PolicyType::TransferSender.id(), POLICY).unwrap();
-            tok.accounting_mut().set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY).unwrap();
-            tok.policy_storage_mut().create_existing_policy(POLICY);
+            tok.accounting.set_policy_id(B20PolicyType::TransferSender.id(), POLICY).unwrap();
+            tok.accounting.set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY).unwrap();
+            tok.policy.create_existing_policy(POLICY);
             assert!(LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).is_err());
             // Authorize both parties → transfer succeeds through the guard path.
-            tok.policy_storage_mut().allow(POLICY, ALICE);
-            tok.policy_storage_mut().allow(POLICY, BOB);
+            tok.policy.allow(POLICY, ALICE);
+            tok.policy.allow(POLICY, BOB);
             LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(10u64));
         }
 
         // --- transfer_from ---
@@ -1629,26 +1583,26 @@ mod tests {
         fn transfer_from_decrements_finite_allowance() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(10u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
         }
 
         #[test]
         fn transfer_from_infinite_allowance_is_not_decremented() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::MAX).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::MAX).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::MAX);
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::MAX);
         }
 
         #[test]
         fn transfer_from_reverts_on_insufficient_allowance() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(5u64)).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::from(5u64)).unwrap();
             let err =
                 LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap_err();
             assert_eq!(
@@ -1667,7 +1621,7 @@ mod tests {
         fn approve_sets_allowance_and_emits() {
             let mut tok = token();
             LOGIC.approve(&mut tok, ALICE, BOB, U256::from(50u64)).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(50u64));
             assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
         }
 
@@ -1676,17 +1630,17 @@ mod tests {
         #[test]
         fn mint_privileged_increases_supply_and_balance() {
             let mut tok = token();
-            tok.policy_storage_mut().allow(0, BOB); // MintReceiver policy is enforced even when privileged
+            tok.policy.allow(0, BOB); // MintReceiver policy is enforced even when privileged
             LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(100u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(100u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
         #[test]
         fn mint_reverts_over_supply_cap() {
             let mut tok = token();
-            tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
+            tok.accounting.set_supply_cap(U256::from(50u64)).unwrap();
             let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
             assert_eq!(
                 err,
@@ -1726,8 +1680,8 @@ mod tests {
             );
             grant(&mut tok, B20TokenRole::Burn.id(), ALICE);
             LOGIC.burn(&mut tok, ALICE, U256::from(40u64)).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(60u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
@@ -1736,14 +1690,14 @@ mod tests {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
             // ALWAYS_BLOCK => ALICE is unauthorized/blocked; privileged skips the role check.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::TransferSender.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 )
                 .unwrap();
             LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
             assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
         }
 
@@ -1751,13 +1705,13 @@ mod tests {
 
         /// Points `SEIZE_EXEMPT_POLICY` at the always-block policy, making every account seizable.
         fn make_seizable(tok: &mut Tok) {
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(B20PolicyType::SeizeExempt.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID)
                 .unwrap();
         }
 
         fn event_sigs(tok: &Tok) -> Vec<B256> {
-            tok.accounting().events.iter().map(|e| e.topics()[0]).collect()
+            tok.accounting.events.iter().map(|e| e.topics()[0]).collect()
         }
 
         #[test]
@@ -1766,13 +1720,13 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(100u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            let supply = tok.accounting().total_supply().unwrap();
+            let supply = tok.accounting.total_supply().unwrap();
 
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(40u64), MEMO).unwrap();
 
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), supply, "seize is a transfer");
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(40u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), supply, "seize is a transfer");
             assert_eq!(
                 event_sigs(&tok),
                 vec![
@@ -1826,7 +1780,7 @@ mod tests {
 
             assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: ALICE }));
             assert_eq!(
-                tok.accounting().balance_of(ALICE).unwrap(),
+                tok.accounting.balance_of(ALICE).unwrap(),
                 U256::from(100u64),
                 "balance unchanged"
             );
@@ -1842,14 +1796,14 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(50u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::TransferReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 )
                 .unwrap();
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(50u64));
         }
 
         #[test]
@@ -1858,7 +1812,7 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(50u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -1883,7 +1837,7 @@ mod tests {
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // SEIZE_RECEIVER_POLICY left unset => ALWAYS_ALLOW => any destination is allowed.
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(50u64));
         }
 
         #[test]
@@ -1892,14 +1846,14 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(50u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_ALLOW_ID,
                 )
                 .unwrap();
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(50u64));
         }
 
         #[test]
@@ -1907,7 +1861,7 @@ mod tests {
             let mut tok = token();
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // SEIZE_EXEMPT unset => ALICE not seizable; SEIZE_RECEIVER blocks BOB. Exempt check fires first.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -1924,7 +1878,7 @@ mod tests {
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // ALICE is seizable and has zero balance, but the receiver policy forbids BOB first.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -2016,7 +1970,7 @@ mod tests {
         fn update_supply_cap_sets_and_emits() {
             let mut tok = token();
             LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(1_000u64), true).unwrap();
-            assert_eq!(tok.accounting().supply_cap().unwrap(), U256::from(1_000u64));
+            assert_eq!(tok.accounting.supply_cap().unwrap(), U256::from(1_000u64));
             assert_eq!(last_event_sig(&tok), IB20::SupplyCapUpdated::SIGNATURE_HASH);
         }
 
@@ -2024,8 +1978,8 @@ mod tests {
         fn update_name_emits_name_updated_and_domain_changed() {
             let mut tok = token();
             LOGIC.update_name(&mut tok, ADMIN, "New Name".to_string(), true).unwrap();
-            assert_eq!(tok.accounting().name().unwrap(), "New Name");
-            let events = &tok.accounting().events;
+            assert_eq!(tok.accounting.name().unwrap(), "New Name");
+            let events = &tok.accounting.events;
             assert_eq!(events[events.len() - 2].topics()[0], IB20::NameUpdated::SIGNATURE_HASH);
             assert_eq!(events[events.len() - 1].topics()[0], IB20::EIP712DomainChanged::SIGNATURE_HASH);
         }
@@ -2036,7 +1990,7 @@ mod tests {
         fn grant_role_privileged_grants_and_emits() {
             let mut tok = token();
             LOGIC.grant_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
             assert_eq!(last_event_sig(&tok), IB20::RoleGranted::SIGNATURE_HASH);
         }
 
@@ -2045,7 +1999,7 @@ mod tests {
             let mut tok = token();
             grant(&mut tok, B20TokenRole::Mint.id(), ALICE);
             LOGIC.revoke_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
-            assert!(!tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+            assert!(!tok.accounting.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
             assert_eq!(last_event_sig(&tok), IB20::RoleRevoked::SIGNATURE_HASH);
         }
 
@@ -2065,9 +2019,9 @@ mod tests {
             LOGIC
                 .grant_role_unchecked(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
                 .unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
             assert_eq!(
-                tok.accounting().role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+                tok.accounting.role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
                 U256::ONE
             );
         }
@@ -2077,9 +2031,9 @@ mod tests {
         #[test]
         fn update_policy_sets_new_id() {
             let mut tok = token();
-            tok.policy_storage_mut().create_existing_policy(7);
+            tok.policy.create_existing_policy(7);
             LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
-            assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
+            assert_eq!(tok.accounting.policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
         }
 
         #[test]
@@ -2110,8 +2064,8 @@ mod tests {
             let owner = anvil_owner();
             let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
             LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
-            assert_eq!(tok.accounting().allowance(owner, BOB).unwrap(), U256::from(500u64));
-            assert_eq!(tok.accounting().nonce(owner).unwrap(), U256::ONE);
+            assert_eq!(tok.accounting.allowance(owner, BOB).unwrap(), U256::from(500u64));
+            assert_eq!(tok.accounting.nonce(owner).unwrap(), U256::ONE);
         }
 
         #[test]
@@ -2143,15 +2097,15 @@ mod tests {
             let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
 
             // `signed_permit` computes the domain separator during setup, so measure deltas.
-            let keccak_before = tok.accounting().keccak_charges.get();
-            let gas_before = tok.accounting().gas_deducted.get();
+            let keccak_before = tok.accounting.keccak_charges.get();
+            let gas_before = tok.accounting.gas_deducted.get();
 
             LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
 
             // domain separator (name, version, encoded) + signing digest (struct hash, digest) = 5.
-            assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5);
+            assert_eq!(tok.accounting.keccak_charges.get() - keccak_before, 5);
             // Fixed ECRECOVER-comparable recovery charge, applied exactly once.
-            assert_eq!(tok.accounting().gas_deducted.get() - gas_before, PermitArgs::RECOVER_GAS);
+            assert_eq!(tok.accounting.gas_deducted.get() - gas_before, PermitArgs::RECOVER_GAS);
         }
 
         #[test]
@@ -2165,17 +2119,17 @@ mod tests {
             args.owner = Address::repeat_byte(0xcc);
 
             const ITERATIONS: u64 = 8;
-            let keccak_before = tok.accounting().keccak_charges.get();
-            let gas_before = tok.accounting().gas_deducted.get();
+            let keccak_before = tok.accounting.keccak_charges.get();
+            let gas_before = tok.accounting.gas_deducted.get();
             for _ in 0..ITERATIONS {
                 assert!(LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).is_err());
             }
 
             // A caught-revert loop no longer runs for free: hashing and recovery metering scale
             // linearly with the number of calls.
-            assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5 * ITERATIONS);
+            assert_eq!(tok.accounting.keccak_charges.get() - keccak_before, 5 * ITERATIONS);
             assert_eq!(
-                tok.accounting().gas_deducted.get() - gas_before,
+                tok.accounting.gas_deducted.get() - gas_before,
                 PermitArgs::RECOVER_GAS * ITERATIONS
             );
         }
@@ -2185,15 +2139,15 @@ mod tests {
         #[test]
         fn currency_reads_storage() {
             let tok = token();
-            assert_eq!(crate::StablecoinAccounting::currency(tok.accounting()).unwrap(), "USD");
+            assert_eq!(crate::StablecoinAccounting::currency(&tok.accounting).unwrap(), "USD");
         }
 
         #[test]
         fn is_initialized_reflects_storage() {
             let mut tok = token();
-            assert!(tok.accounting().is_initialized().unwrap());
-            tok.accounting_mut().initialized = false;
-            assert!(!tok.accounting().is_initialized().unwrap());
+            assert!(tok.accounting.is_initialized().unwrap());
+            tok.accounting.initialized = false;
+            assert!(!tok.accounting.is_initialized().unwrap());
         }
 
         #[test]
@@ -2232,8 +2186,9 @@ mod tests {
         use k256::ecdsa::SigningKey;
 
         use crate::{
-            B20PolicyType, B20Token, B20TokenRole, B20Variant, FakePolicyAccounting, IB20,
-            InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion, B20Logic, B20Version, Token, TokenAccounting,
+            B20Logic, B20PolicyType, B20Token, B20TokenRole, B20Variant, B20Version,
+            FakePolicyAccounting, IB20, InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage,
+            PolicyVersion, TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x22);
@@ -2269,17 +2224,17 @@ mod tests {
 
         /// Grants `role` to `account` and keeps the admin member-count consistent.
         fn grant(tok: &mut Tok, role: B256, account: Address) {
-            tok.accounting_mut().set_role(role, account, true).unwrap();
-            let next = tok.accounting().role_member_count(role).unwrap() + U256::ONE;
-            tok.accounting_mut().set_role_member_count(role, next).unwrap();
+            tok.accounting.set_role(role, account, true).unwrap();
+            let next = tok.accounting.role_member_count(role).unwrap() + U256::ONE;
+            tok.accounting.set_role_member_count(role, next).unwrap();
         }
 
         /// Credits `account` with `amount` and grows total supply to match.
         fn fund(tok: &mut Tok, account: Address, amount: U256) {
-            let bal = tok.accounting().balance_of(account).unwrap();
-            tok.accounting_mut().set_balance(account, bal + amount).unwrap();
-            let supply = tok.accounting().total_supply().unwrap();
-            tok.accounting_mut().set_total_supply(supply + amount).unwrap();
+            let bal = tok.accounting.balance_of(account).unwrap();
+            tok.accounting.set_balance(account, bal + amount).unwrap();
+            let supply = tok.accounting.total_supply().unwrap();
+            tok.accounting.set_total_supply(supply + amount).unwrap();
         }
 
         /// Returns a B-20 address other than [`TOKEN`].
@@ -2288,7 +2243,7 @@ mod tests {
         }
 
         fn last_event_sig(tok: &Tok) -> B256 {
-            tok.accounting().events.last().unwrap().topics()[0]
+            tok.accounting.events.last().unwrap().topics()[0]
         }
 
         fn anvil_owner() -> Address {
@@ -2306,7 +2261,7 @@ mod tests {
             deadline: U256,
         ) -> PermitArgs {
             let domain_sep = LOGIC.domain_separator(tok, CHAIN_ID).unwrap();
-            let nonce = tok.accounting().nonce(owner).unwrap();
+            let nonce = tok.accounting.nonce(owner).unwrap();
             let mut args =
                 PermitArgs { owner, spender, value, deadline, v: 0, r: B256::ZERO, s: B256::ZERO };
             let signing_hash = args.signing_hash(domain_sep, nonce);
@@ -2326,8 +2281,8 @@ mod tests {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
             LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(70u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(70u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
@@ -2351,7 +2306,7 @@ mod tests {
             let err = LOGIC.transfer(&mut tok, ALICE, TOKEN, U256::from(1u64), true).unwrap_err();
 
             assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(10u64));
         }
 
         #[test]
@@ -2362,7 +2317,7 @@ mod tests {
 
             LOGIC.transfer(&mut tok, ALICE, receiver, U256::from(1u64), true).unwrap();
 
-            assert_eq!(tok.accounting().balance_of(receiver).unwrap(), U256::ONE);
+            assert_eq!(tok.accounting.balance_of(receiver).unwrap(), U256::ONE);
         }
 
         #[test]
@@ -2400,15 +2355,15 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(100u64));
             // ALLOWLIST with no members → sender/receiver policy checks revert.
             const POLICY: u64 = (1u64 << 56) | 7;
-            tok.accounting_mut().set_policy_id(B20PolicyType::TransferSender.id(), POLICY).unwrap();
-            tok.accounting_mut().set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY).unwrap();
-            tok.policy_storage_mut().create_existing_policy(POLICY);
+            tok.accounting.set_policy_id(B20PolicyType::TransferSender.id(), POLICY).unwrap();
+            tok.accounting.set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY).unwrap();
+            tok.policy.create_existing_policy(POLICY);
             assert!(LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).is_err());
             // Authorize both parties → transfer succeeds through the guard path.
-            tok.policy_storage_mut().allow(POLICY, ALICE);
-            tok.policy_storage_mut().allow(POLICY, BOB);
+            tok.policy.allow(POLICY, ALICE);
+            tok.policy.allow(POLICY, BOB);
             LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(10u64));
         }
 
         // Executor, then sender, then receiver. Each call allows the account the previous gate
@@ -2423,13 +2378,13 @@ mod tests {
             const SENDER_POLICY: u64 = (1u64 << 56) | 4;
             const RECEIVER_POLICY: u64 = (1u64 << 56) | 5;
 
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(B20PolicyType::TransferExecutor.id(), EXECUTOR_POLICY)
                 .unwrap();
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(B20PolicyType::TransferSender.id(), SENDER_POLICY)
                 .unwrap();
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(B20PolicyType::TransferReceiver.id(), RECEIVER_POLICY)
                 .unwrap();
 
@@ -2442,7 +2397,7 @@ mod tests {
                 })
             );
 
-            tok.policy_storage_mut().allow(EXECUTOR_POLICY, ALICE);
+            tok.policy.allow(EXECUTOR_POLICY, ALICE);
             let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
             assert_eq!(
                 err,
@@ -2452,7 +2407,7 @@ mod tests {
                 })
             );
 
-            tok.policy_storage_mut().allow(SENDER_POLICY, ALICE);
+            tok.policy.allow(SENDER_POLICY, ALICE);
             let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
             assert_eq!(
                 err,
@@ -2469,19 +2424,19 @@ mod tests {
         fn transfer_from_decrements_finite_allowance() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(10u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(30u64));
         }
 
         #[test]
         fn transfer_from_infinite_allowance_is_not_decremented() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::MAX).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::MAX).unwrap();
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::MAX);
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::MAX);
         }
 
         #[test]
@@ -2499,7 +2454,7 @@ mod tests {
         fn transfer_from_reverts_on_insufficient_allowance() {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
-            tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(5u64)).unwrap();
+            tok.accounting.set_allowance(ALICE, BOB, U256::from(5u64)).unwrap();
             let err =
                 LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap_err();
             assert_eq!(
@@ -2518,7 +2473,7 @@ mod tests {
         fn approve_sets_allowance_and_emits() {
             let mut tok = token();
             LOGIC.approve(&mut tok, ALICE, BOB, U256::from(50u64)).unwrap();
-            assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.allowance(ALICE, BOB).unwrap(), U256::from(50u64));
             assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
         }
 
@@ -2537,17 +2492,17 @@ mod tests {
         #[test]
         fn mint_privileged_increases_supply_and_balance() {
             let mut tok = token();
-            tok.policy_storage_mut().allow(0, BOB); // MintReceiver policy is enforced even when privileged
+            tok.policy.allow(0, BOB); // MintReceiver policy is enforced even when privileged
             LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(100u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(100u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(100u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
         #[test]
         fn mint_reverts_over_supply_cap() {
             let mut tok = token();
-            tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
+            tok.accounting.set_supply_cap(U256::from(50u64)).unwrap();
             let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
             assert_eq!(
                 err,
@@ -2578,7 +2533,7 @@ mod tests {
             let err = LOGIC.mint(&mut tok, ADMIN, TOKEN, U256::from(1u64), true).unwrap_err();
 
             assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::ZERO);
         }
 
         // --- burn / burn_blocked ---
@@ -2597,8 +2552,8 @@ mod tests {
             );
             grant(&mut tok, B20TokenRole::Burn.id(), ALICE);
             LOGIC.burn(&mut tok, ALICE, U256::from(40u64)).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), U256::from(60u64));
             assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
         }
 
@@ -2607,14 +2562,14 @@ mod tests {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(100u64));
             // ALWAYS_BLOCK => ALICE is unauthorized/blocked; privileged skips the role check.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::TransferSender.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 )
                 .unwrap();
             LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
             assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
         }
 
@@ -2631,13 +2586,13 @@ mod tests {
 
         /// Points `SEIZE_EXEMPT_POLICY` at the always-block policy, making every account seizable.
         fn make_seizable(tok: &mut Tok) {
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(B20PolicyType::SeizeExempt.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID)
                 .unwrap();
         }
 
         fn event_sigs(tok: &Tok) -> Vec<B256> {
-            tok.accounting().events.iter().map(|e| e.topics()[0]).collect()
+            tok.accounting.events.iter().map(|e| e.topics()[0]).collect()
         }
 
         #[test]
@@ -2646,13 +2601,13 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(100u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            let supply = tok.accounting().total_supply().unwrap();
+            let supply = tok.accounting.total_supply().unwrap();
 
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(40u64), MEMO).unwrap();
 
-            assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
-            assert_eq!(tok.accounting().total_supply().unwrap(), supply, "seize is a transfer");
+            assert_eq!(tok.accounting.balance_of(ALICE).unwrap(), U256::from(60u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(40u64));
+            assert_eq!(tok.accounting.total_supply().unwrap(), supply, "seize is a transfer");
             assert_eq!(
                 event_sigs(&tok),
                 vec![
@@ -2708,8 +2663,8 @@ mod tests {
 
             LOGIC.seize_with_memo(&mut tok, ADMIN, TOKEN, BOB, U256::from(10u64), MEMO).unwrap();
 
-            assert_eq!(tok.accounting().balance_of(TOKEN).unwrap(), U256::ZERO);
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
+            assert_eq!(tok.accounting.balance_of(TOKEN).unwrap(), U256::ZERO);
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(10u64));
         }
 
         #[test]
@@ -2745,7 +2700,7 @@ mod tests {
 
             assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: ALICE }));
             assert_eq!(
-                tok.accounting().balance_of(ALICE).unwrap(),
+                tok.accounting.balance_of(ALICE).unwrap(),
                 U256::from(100u64),
                 "balance unchanged"
             );
@@ -2761,14 +2716,14 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(50u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::TransferReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 )
                 .unwrap();
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(50u64));
         }
 
         #[test]
@@ -2777,7 +2732,7 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(50u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -2802,7 +2757,7 @@ mod tests {
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // SEIZE_RECEIVER_POLICY left unset => ALWAYS_ALLOW => any destination is allowed.
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(50u64));
         }
 
         #[test]
@@ -2811,14 +2766,14 @@ mod tests {
             fund(&mut tok, ALICE, U256::from(50u64));
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_ALLOW_ID,
                 )
                 .unwrap();
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-            assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+            assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(50u64));
         }
 
         #[test]
@@ -2826,7 +2781,7 @@ mod tests {
             let mut tok = token();
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // SEIZE_EXEMPT unset => ALICE not seizable; SEIZE_RECEIVER blocks BOB. Exempt check fires first.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -2843,7 +2798,7 @@ mod tests {
             make_seizable(&mut tok);
             grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
             // ALICE is seizable and has zero balance, but the receiver policy forbids BOB first.
-            tok.accounting_mut()
+            tok.accounting
                 .set_policy_id(
                     B20PolicyType::SeizeReceiver.id(),
                     PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -2935,7 +2890,7 @@ mod tests {
         fn update_supply_cap_sets_and_emits() {
             let mut tok = token();
             LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(1_000u64), true).unwrap();
-            assert_eq!(tok.accounting().supply_cap().unwrap(), U256::from(1_000u64));
+            assert_eq!(tok.accounting.supply_cap().unwrap(), U256::from(1_000u64));
             assert_eq!(last_event_sig(&tok), IB20::SupplyCapUpdated::SIGNATURE_HASH);
         }
 
@@ -2957,8 +2912,8 @@ mod tests {
         fn update_name_emits_name_updated_and_domain_changed() {
             let mut tok = token();
             LOGIC.update_name(&mut tok, ADMIN, "New Name".to_string(), true).unwrap();
-            assert_eq!(tok.accounting().name().unwrap(), "New Name");
-            let events = &tok.accounting().events;
+            assert_eq!(tok.accounting.name().unwrap(), "New Name");
+            let events = &tok.accounting.events;
             assert_eq!(events[events.len() - 2].topics()[0], IB20::NameUpdated::SIGNATURE_HASH);
             assert_eq!(events[events.len() - 1].topics()[0], IB20::EIP712DomainChanged::SIGNATURE_HASH);
         }
@@ -2969,7 +2924,7 @@ mod tests {
         fn grant_role_privileged_grants_and_emits() {
             let mut tok = token();
             LOGIC.grant_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
             assert_eq!(last_event_sig(&tok), IB20::RoleGranted::SIGNATURE_HASH);
         }
 
@@ -2978,7 +2933,7 @@ mod tests {
             let mut tok = token();
             grant(&mut tok, B20TokenRole::Mint.id(), ALICE);
             LOGIC.revoke_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
-            assert!(!tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+            assert!(!tok.accounting.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
             assert_eq!(last_event_sig(&tok), IB20::RoleRevoked::SIGNATURE_HASH);
         }
 
@@ -2998,9 +2953,9 @@ mod tests {
             LOGIC
                 .grant_role_unchecked(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
                 .unwrap();
-            assert!(tok.accounting().has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+            assert!(tok.accounting.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
             assert_eq!(
-                tok.accounting().role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+                tok.accounting.role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
                 U256::ONE
             );
         }
@@ -3010,9 +2965,9 @@ mod tests {
         #[test]
         fn update_policy_sets_new_id() {
             let mut tok = token();
-            tok.policy_storage_mut().create_existing_policy(7);
+            tok.policy.create_existing_policy(7);
             LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
-            assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
+            assert_eq!(tok.accounting.policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
         }
 
         #[test]
@@ -3043,8 +2998,8 @@ mod tests {
             let owner = anvil_owner();
             let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
             LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
-            assert_eq!(tok.accounting().allowance(owner, BOB).unwrap(), U256::from(500u64));
-            assert_eq!(tok.accounting().nonce(owner).unwrap(), U256::ONE);
+            assert_eq!(tok.accounting.allowance(owner, BOB).unwrap(), U256::from(500u64));
+            assert_eq!(tok.accounting.nonce(owner).unwrap(), U256::ONE);
         }
 
         #[test]
@@ -3076,15 +3031,15 @@ mod tests {
             let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
 
             // `signed_permit` computes the domain separator during setup, so measure deltas.
-            let keccak_before = tok.accounting().keccak_charges.get();
-            let gas_before = tok.accounting().gas_deducted.get();
+            let keccak_before = tok.accounting.keccak_charges.get();
+            let gas_before = tok.accounting.gas_deducted.get();
 
             LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
 
             // domain separator (name, version, encoded) + signing digest (struct hash, digest) = 5.
-            assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5);
+            assert_eq!(tok.accounting.keccak_charges.get() - keccak_before, 5);
             // Fixed ECRECOVER-comparable recovery charge, applied exactly once.
-            assert_eq!(tok.accounting().gas_deducted.get() - gas_before, PermitArgs::RECOVER_GAS);
+            assert_eq!(tok.accounting.gas_deducted.get() - gas_before, PermitArgs::RECOVER_GAS);
         }
 
         #[test]
@@ -3098,17 +3053,17 @@ mod tests {
             args.owner = Address::repeat_byte(0xcc);
 
             const ITERATIONS: u64 = 8;
-            let keccak_before = tok.accounting().keccak_charges.get();
-            let gas_before = tok.accounting().gas_deducted.get();
+            let keccak_before = tok.accounting.keccak_charges.get();
+            let gas_before = tok.accounting.gas_deducted.get();
             for _ in 0..ITERATIONS {
                 assert!(LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).is_err());
             }
 
             // A caught-revert loop no longer runs for free: hashing and recovery metering scale
             // linearly with the number of calls.
-            assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5 * ITERATIONS);
+            assert_eq!(tok.accounting.keccak_charges.get() - keccak_before, 5 * ITERATIONS);
             assert_eq!(
-                tok.accounting().gas_deducted.get() - gas_before,
+                tok.accounting.gas_deducted.get() - gas_before,
                 PermitArgs::RECOVER_GAS * ITERATIONS
             );
         }
@@ -3118,15 +3073,15 @@ mod tests {
         #[test]
         fn currency_reads_storage() {
             let tok = token();
-            assert_eq!(crate::StablecoinAccounting::currency(tok.accounting()).unwrap(), "USD");
+            assert_eq!(crate::StablecoinAccounting::currency(&tok.accounting).unwrap(), "USD");
         }
 
         #[test]
         fn is_initialized_reflects_storage() {
             let mut tok = token();
-            assert!(tok.accounting().is_initialized().unwrap());
-            tok.accounting_mut().initialized = false;
-            assert!(!tok.accounting().is_initialized().unwrap());
+            assert!(tok.accounting.is_initialized().unwrap());
+            tok.accounting.initialized = false;
+            assert!(!tok.accounting.is_initialized().unwrap());
         }
 
         #[test]

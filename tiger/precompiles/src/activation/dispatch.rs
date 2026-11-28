@@ -6,9 +6,8 @@ use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistryStorage, CalldataGas,
+    ActivationAdminConfig, ActivationRegistryStorage, Calldata,
     IActivationRegistry::{self, IActivationRegistryCalls as C},
-    macros::decode_precompile_call,
 };
 
 impl ActivationRegistryStorage<'_> {
@@ -29,7 +28,7 @@ impl ActivationRegistryStorage<'_> {
             return ctx
                 .error_result(BasePrecompileError::revert(IActivationRegistry::NonPayable {}));
         }
-        if let Err(error) = CalldataGas::deduct(ctx, calldata) {
+        if let Err(error) = Calldata::deduct_gas(ctx, calldata) {
             return ctx.error_result(error);
         }
         ctx.result_output(self.inner(calldata, admin_config), |output| output)
@@ -45,7 +44,7 @@ impl ActivationRegistryStorage<'_> {
             return Err(BasePrecompileError::UnknownFunctionSelector(set_admin_selector));
         }
 
-        match decode_precompile_call!(calldata, IActivationRegistry::IActivationRegistryCalls) {
+        match Calldata::decode_call(calldata)? {
             C::isActivated(call) => {
                 let activated = self.is_activated(call.feature)?;
                 Ok(IActivationRegistry::isActivatedCall::abi_encode_returns(&activated).into())

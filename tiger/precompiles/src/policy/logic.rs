@@ -203,7 +203,7 @@ impl PolicyRegistry {
         if !simple {
             return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
         }
-        Ok(policy_type.as_discriminant())
+        Ok(policy_type as u8)
     }
 
     /// First-touch setup for the registry: writes the bytecode marker and the two built-in
@@ -225,11 +225,11 @@ impl PolicyRegistry {
             return Ok(counter);
         }
         debug_assert_eq!(
-            Self::make_id(PolicyType::BLOCKLIST.as_discriminant(), 0),
+            Self::make_id(PolicyType::BLOCKLIST as u8, 0),
             Self::ALWAYS_ALLOW_ID
         );
         debug_assert_eq!(
-            Self::make_id(PolicyType::ALLOWLIST.as_discriminant(), 1),
+            Self::make_id(PolicyType::ALLOWLIST as u8, 1),
             Self::ALWAYS_BLOCK_ID
         );
         storage.mark_initialized()?;
@@ -376,7 +376,7 @@ impl PolicyRegistry {
 
         // Reuse the simple create core for counter/ID/PolicyCreated+PolicyAdminUpdated events.
         let policy_id =
-            self.create_policy_inner(storage, admin, policy_type, policy_type.as_discriminant())?;
+            self.create_policy_inner(storage, admin, policy_type, policy_type as u8)?;
         storage.write_children(policy_id, &child_policy_ids)?;
         storage.emit_event(
             IPolicyRegistry::CompositePolicyUpdated {

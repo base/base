@@ -1,6 +1,6 @@
-//! The `PolicyRegistry` wire surface frozen at Denim, which added inverted policy IDs. Also the
-//! canonical live surface, re-exported unqualified by [`super`].
-//! A new wire surface goes in a new `abi/vN.rs`; see [`super`].
+//! The `PolicyRegistry` wire surface, canonical since Denim (which added inverted policy IDs;
+//! Cobalt added composite policies), and Beryl's surface ([`IPolicyRegistryV1`]), whose
+//! two-type `PolicyType` decides Beryl's decode errors.
 
 use alloy_sol_types::sol;
 
@@ -80,13 +80,48 @@ sol! {
     }
 }
 
+/// The `PolicyRegistry` calls Beryl dials. The interface keeps the name `IPolicyRegistry`,
+/// which reaches the wire in decode errors.
+mod v1 {
+    use alloy_sol_types::sol;
+
+    sol! {
+        #[derive(Debug, PartialEq, Eq)]
+        interface IPolicyRegistry {
+            enum PolicyType {
+                /// Rejects only accounts explicitly added to the blocklist.
+                /// An empty blocklist authorizes everyone.
+                BLOCKLIST,
+                /// Authorizes only accounts explicitly added to the allowlist.
+                /// An empty allowlist rejects everyone.
+                ALLOWLIST
+            }
+
+            function createPolicy(address admin, PolicyType policyType) external returns (uint64);
+            function createPolicyWithAccounts(address admin, PolicyType policyType, address[] calldata accounts) external returns (uint64);
+            /// Pass address(0) as newAdmin to clear a previously staged transfer without nominating a replacement.
+            function stageUpdateAdmin(uint64 policyId, address newAdmin) external;
+            function finalizeUpdateAdmin(uint64 policyId) external;
+            function renounceAdmin(uint64 policyId) external;
+            function updateAllowlist(uint64 policyId, bool allowed, address[] calldata accounts) external;
+            function updateBlocklist(uint64 policyId, bool blocked, address[] calldata accounts) external;
+            function isAuthorized(uint64 policyId, address account) external view returns (bool);
+            function policyExists(uint64 policyId) external view returns (bool);
+            function policyAdmin(uint64 policyId) external view returns (address);
+            function pendingPolicyAdmin(uint64 policyId) external view returns (address);
+        }
+    }
+}
+pub use v1::IPolicyRegistry as IPolicyRegistryV1;
+
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
 
     use alloy_sol_types::{SolCall, SolEnum, SolInterface};
 
-    use super::IPolicyRegistry;
+    use super::{IPolicyRegistry, IPolicyRegistryV1};
+
 
     /// See [`super`] — the interface name reaches consensus data via `AbiDecodeFailed`.
     #[test]
@@ -137,5 +172,72 @@ mod tests {
 
         assert_eq!(selectors.len(), 17);
         assert_eq!(selectors, expected);
+    }
+
+
+    /// The interface name reaches consensus data via `AbiDecodeFailed` on short calldata, so it is
+    /// pinned here rather than left to a future rename. See the module docs.
+    #[test]
+    fn v1_interface_name_is_frozen() {
+        assert_eq!(IPolicyRegistryV1::IPolicyRegistryCalls::NAME, "IPolicyRegistryCalls");
+    }
+
+    /// Beryl's `PolicyType` has exactly two variants. A third would make composite discriminants
+    /// decode at Beryl, changing the revert payload of historical blocks.
+    #[test]
+    fn v1_policy_type_rejects_composite_discriminants() {
+        assert_eq!(IPolicyRegistryV1::PolicyType::COUNT, 2);
+        assert!(IPolicyRegistryV1::PolicyType::try_from(2u8).is_err());
+        assert!(IPolicyRegistryV1::PolicyType::try_from(3u8).is_err());
+    }
+
+    /// The exact selector set dialable at Beryl. Adding or removing one changes which calls
+    /// historical blocks could make.
+    #[test]
+    fn v1_selector_set_is_frozen() {
+        let mut selectors: Vec<[u8; 4]> =
+            IPolicyRegistryV1::IPolicyRegistryCalls::selectors().collect();
+        selectors.sort_unstable();
+
+        let mut expected: Vec<[u8; 4]> = alloc::vec![
+            IPolicyRegistryV1::createPolicyCall::SELECTOR,
+            IPolicyRegistryV1::createPolicyWithAccountsCall::SELECTOR,
+            IPolicyRegistryV1::stageUpdateAdminCall::SELECTOR,
+            IPolicyRegistryV1::finalizeUpdateAdminCall::SELECTOR,
+            IPolicyRegistryV1::renounceAdminCall::SELECTOR,
+            IPolicyRegistryV1::updateAllowlistCall::SELECTOR,
+            IPolicyRegistryV1::updateBlocklistCall::SELECTOR,
+            IPolicyRegistryV1::isAuthorizedCall::SELECTOR,
+            IPolicyRegistryV1::policyExistsCall::SELECTOR,
+            IPolicyRegistryV1::policyAdminCall::SELECTOR,
+            IPolicyRegistryV1::pendingPolicyAdminCall::SELECTOR,
+        ];
+        expected.sort_unstable();
+
+        assert_eq!(selectors.len(), 11);
+        assert_eq!(selectors, expected);
+    }
+
+    #[test]
+    fn every_policy_type_discriminant_decodes() {
+        for discriminant in 0..IPolicyRegistry::PolicyType::COUNT {
+            IPolicyRegistry::PolicyType::try_from(discriminant as u8)
+                .expect("generated PolicyType discriminant should decode");
+        }
+    }
+
+    /// The leaf discriminants must mean the same thing on both surfaces. `PolicyType` rides the
+    /// top byte of every policy ID (`PolicyRegistry::make_id`), so a reordering would silently
+    /// reinterpret every stored policy.
+    #[test]
+    fn shared_policy_type_discriminants_agree_across_surfaces() {
+        assert_eq!(
+            IPolicyRegistryV1::PolicyType::BLOCKLIST as u8,
+            IPolicyRegistry::PolicyType::BLOCKLIST as u8
+        );
+        assert_eq!(
+            IPolicyRegistryV1::PolicyType::ALLOWLIST as u8,
+            IPolicyRegistry::PolicyType::ALLOWLIST as u8
+        );
     }
 }

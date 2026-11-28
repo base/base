@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloy_primitives::U256;
 use base_tiger_precompile_storage::Result;
 
-use crate::{TokenAccounting, macros::reject_frozen_selector};
+use crate::TokenAccounting;
 
 /// Extends [`TokenAccounting`] with asset-token-specific storage slots.
 ///
@@ -13,12 +13,7 @@ use crate::{TokenAccounting, macros::reject_frozen_selector};
 /// not the base B-20 surface.
 pub trait AssetAccounting: TokenAccounting {
     /// Returns the current block timestamp from the active storage context.
-    ///
-    /// A read used only by the scheduled-multiplier surface (asset V2); earlier versions never
-    /// reach it, so the default rejects like the other frozen-selector defaults.
-    fn timestamp(&self) -> Result<U256> {
-        reject_frozen_selector!()
-    }
+    fn timestamp(&self) -> Result<U256>;
 
     /// Returns the current multiplier scaled to WAD (1e18).
     fn multiplier(&self) -> Result<U256>;
@@ -29,25 +24,13 @@ pub trait AssetAccounting: TokenAccounting {
     ///
     /// Packs with [`Self::pending_effective_at`] into a single slot. Introduced with the
     /// scheduled-multiplier feature (asset V2); earlier versions never touch this slot.
-    fn pending_multiplier(&self) -> Result<u128> {
-        reject_frozen_selector!()
-    }
+    fn pending_multiplier(&self) -> Result<u128>;
     /// Returns the timestamp at which the pending multiplier becomes effective; `0` means none.
-    fn pending_effective_at(&self) -> Result<u64> {
-        reject_frozen_selector!()
-    }
+    fn pending_effective_at(&self) -> Result<u64>;
     /// Writes the pending schedule.
-    fn set_pending_and_effective_at(
-        &mut self,
-        _multiplier: u128,
-        _effective_at: u64,
-    ) -> Result<()> {
-        reject_frozen_selector!()
-    }
+    fn set_pending_and_effective_at(&mut self, multiplier: u128, effective_at: u64) -> Result<()>;
     /// Clears the pending schedule, restoring the no-pending state.
-    fn clear_pending_multiplier_and_effective_at(&mut self) -> Result<()> {
-        reject_frozen_selector!()
-    }
+    fn clear_pending_multiplier_and_effective_at(&mut self) -> Result<()>;
 
     /// Returns the extra-metadata value for `key`, or an empty string if unset.
     fn extra_metadata(&self, key: &str) -> Result<String>;

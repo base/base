@@ -5,17 +5,10 @@ use alloy_sol_types::SolCall;
 use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
+    Calldata,
     INonceManager::{self, INonceManagerCalls as C},
-    macros::decode_precompile_call,
     nonce::storage::NonceManagerStorage,
 };
-
-/// Per-word *input* calldata gas charge (`G_SHA3WORD`, the
-/// `gas::KECCAK256WORD`), matching common Base precompile dispatch. This is the
-/// input-word model; the sibling transaction-context dispatcher instead prices
-/// *output* words at `W_copy` (see [`crate::tx_context::dispatch`]), so the two
-/// dispatchers deliberately use different word costs.
-const CALLDATA_WORD_GAS: u64 = 6;
 
 impl NonceManagerStorage<'_> {
     /// ABI-dispatches nonce manager calldata.
@@ -28,8 +21,8 @@ impl NonceManagerStorage<'_> {
         if !ctx.call_value().is_zero() {
             return ctx.error_result(BasePrecompileError::revert(INonceManager::NonPayable {}));
         }
-        let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
-        if let Err(error) = ctx.deduct_gas(calldata_cost) {
+        // Input calldata is priced per word, unlike the transaction context's output words.
+        if let Err(error) = Calldata::deduct_gas(ctx, calldata) {
             return ctx.error_result(error);
         }
         // `getNonce` is a read-only getter and never produces a gas refund.
@@ -37,7 +30,7 @@ impl NonceManagerStorage<'_> {
     }
 
     fn inner(&self, calldata: &[u8]) -> base_tiger_precompile_storage::Result<Bytes> {
-        match decode_precompile_call!(calldata, INonceManager::INonceManagerCalls) {
+        match Calldata::decode_call(calldata)? {
             C::getNonce(call) => Ok(INonceManager::getNonceCall::abi_encode_returns(
                 &self.get_nonce(call.account, call.nonceKey)?,
             )
@@ -64,11 +57,11 @@ mod tests {
             .expect("dispatch should not fail fatally")
     }
 
-    /// Drift tripwire: `CALLDATA_WORD_GAS` is `G_SHA3WORD`.
+    /// Drift tripwire: the calldata word gas equals `G_SHA3WORD`.
     #[test]
     fn gas_matches_evm_reference() {
         assert_eq!(
-            super::CALLDATA_WORD_GAS,
+            crate::Calldata::WORD_GAS,
             base_tiger_precompile_storage::GasSchedule::KECCAK256_WORD
         );
     }

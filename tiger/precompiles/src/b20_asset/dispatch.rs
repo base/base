@@ -12,9 +12,9 @@ use base_common_genesis::BaseUpgrade;
 use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    AssetAbiPair, AssetAccounting, AssetCall, B20AssetStorage, B20Logic, B20Token, B20Version,
+    AssetAccounting, B20AssetStorage, B20Logic, B20Token, B20Version, Calldata,
     IB20Asset::{self, IB20AssetCalls as SC},
-    PolicyAccounting, Token,
+    PolicyAccounting,
 };
 
 impl<S: AssetAccounting, A: PolicyAccounting> B20Token<S, A> {
@@ -50,13 +50,15 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20Token<S, A> {
             Some(Err(error)) => return Err(error),
             None => {}
         }
-        let logic = B20Logic::asset(version);
-        match AssetAbiPair::of(version).decode(calldata)? {
-            AssetCall::Asset(call) => self.handle_asset_call(ctx, call, version, privileged),
-            AssetCall::Common(call) => {
-                self.handle_b20_call(ctx, call, logic, privileged, AssetAccounting::decimals)
-            }
+        // Asset selectors first, then the common surface; the two are disjoint.
+        let selector = Calldata::selector(calldata)?;
+        if version.dials_asset(selector) {
+            let call = Calldata::decode(calldata, selector)?;
+            return self.handle_asset_call(ctx, call, version, privileged);
         }
+        let call = version.decode_b20(calldata)?;
+        let logic = B20Logic::asset(version);
+        self.handle_b20_call(ctx, call, logic, privileged, AssetAccounting::decimals)
     }
 
     fn handle_asset_call(
@@ -79,7 +81,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20Token<S, A> {
             }
             SC::newUIMultiplier(_) => logic.new_ui_multiplier(self)?.abi_encode().into(),
             SC::effectiveAt(_) => {
-                U256::from(self.accounting().pending_effective_at()?).abi_encode().into()
+                U256::from(self.accounting.pending_effective_at()?).abi_encode().into()
             }
             SC::toScaledBalance(c) => {
                 logic.to_scaled_balance(self, c.rawBalance)?.abi_encode().into()
@@ -99,12 +101,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20Token<S, A> {
 
             // --- Announcement reads ---
             SC::isAnnouncementIdUsed(c) => {
-                self.accounting().is_announcement_id_used(c.id.as_str())?.abi_encode().into()
+                self.accounting.is_announcement_id_used(c.id.as_str())?.abi_encode().into()
             }
 
             // --- Extra metadata reads ---
             SC::extraMetadata(c) => {
-                self.accounting().extra_metadata(c.key.as_str())?.abi_encode().into()
+                self.accounting.extra_metadata(c.key.as_str())?.abi_encode().into()
             }
 
             // --- Multiplier mutations ---
@@ -243,7 +245,7 @@ impl<'a> DecodedAnnounce<'a> {
         if selector != IB20Asset::announceCall::SELECTOR {
             return None;
         }
-        if !AssetAbiPair::of(version).asset.valid_selector(selector) {
+        if !version.dials_asset(selector) {
             return None;
         }
         let rest = &calldata[4..];
@@ -303,8 +305,8 @@ mod tests {
     use crate::{
         B20Logic,
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20Version, B20AssetStorage, B20Token, B20TokenRole, FakePolicyAccounting,
-        IB20, IB20Asset, InMemoryTokenAccounting, PolicyVersion, Token, TokenAccounting,
+        B20Version, B20AssetStorage, B20Token, B20TokenRole, Calldata, FakePolicyAccounting,
+        IB20, IB20Asset, InMemoryTokenAccounting, PolicyVersion, TokenAccounting,
     };
 
     type TestAssetToken = B20Token<InMemoryTokenAccounting, FakePolicyAccounting>;
@@ -360,7 +362,7 @@ mod tests {
     ) -> Result<Bytes> {
         let mut storage = storage_with_caller(caller);
         storage.set_timestamp(now);
-        token.accounting_mut().timestamp = now;
+        token.accounting.timestamp = now;
         StorageCtx::enter(&mut storage, |ctx| {
             token.route_asset(ctx, calldata.as_ref(), B20Version::V2, false)
         })
@@ -373,7 +375,7 @@ mod tests {
     #[test]
     fn batch_mint_increases_balances() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((B20TokenRole::Mint.id(), ALICE), true);
+        token.accounting.roles.insert((B20TokenRole::Mint.id(), ALICE), true);
 
         call_asset(
             &mut token,
@@ -385,9 +387,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
-        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(200u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(300u64));
+        assert_eq!(token.accounting.balance_of(ALICE).unwrap(), U256::from(100u64));
+        assert_eq!(token.accounting.balance_of(BOB).unwrap(), U256::from(200u64));
+        assert_eq!(token.accounting.total_supply().unwrap(), U256::from(300u64));
     }
 
     #[test]
@@ -395,22 +397,20 @@ mod tests {
         let mut token = make_token();
         let id = "2026-Q1-split";
 
-        assert!(!token.accounting().is_announcement_id_used(id).unwrap());
-        token.accounting_mut().mark_announcement_id_used(id).unwrap();
-        assert!(token.accounting().is_announcement_id_used(id).unwrap());
+        assert!(!token.accounting.is_announcement_id_used(id).unwrap());
+        token.accounting.mark_announcement_id_used(id).unwrap();
+        assert!(token.accounting.is_announcement_id_used(id).unwrap());
     }
 
     #[test]
     fn extra_metadata_roundtrip() {
         let mut token = make_token();
 
-        assert_eq!(token.accounting().extra_metadata("category").unwrap(), "");
-        token
-            .accounting_mut()
-            .set_extra_metadata_value("category", "real-world-asset".to_string())
+        assert_eq!(token.accounting.extra_metadata("category").unwrap(), "");
+        token.accounting.set_extra_metadata_value("category", "real-world-asset".to_string())
             .unwrap();
         assert_eq!(
-            token.accounting().extra_metadata("category").unwrap(),
+            token.accounting.extra_metadata("category").unwrap(),
             "real-world-asset".to_string()
         );
     }
@@ -423,8 +423,8 @@ mod tests {
     fn announce_inner_system_error_propagates_unchanged() {
         let mut token = make_token();
         // Any balance > 1 overflows when multiplied by this multiplier.
-        token.accounting_mut().multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
-        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
+        token.accounting.multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
+        token.accounting.roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(
             IB20Asset::toScaledBalanceCall { rawBalance: U256::from(2u64) }.abi_encode(),
@@ -448,7 +448,7 @@ mod tests {
     fn announce_inner_ordinary_revert_wraps_as_internal_call_failed() {
         let mut token = make_token();
         // ALICE has OPERATOR_ROLE (needed for announce) but not MINT_ROLE (needed for mint).
-        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
+        token.accounting.roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(IB20::mintCall { to: BOB, amount: U256::ONE }.abi_encode());
         let calldata = IB20Asset::announceCall {
@@ -472,7 +472,7 @@ mod tests {
     #[test]
     fn route_v2_schedules_and_flips_multiplier_lazily() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
+        token.accounting.roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
         let target = B20AssetStorage::WAD * U256::from(3u64);
         let effective_at = U256::from(1_000u64);
 
@@ -646,35 +646,35 @@ mod tests {
     #[test]
     fn aliased_announce_valid_marks_id_used() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
+        token.accounting.roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let tail = IB20Asset::multiplierCall {}.abi_encode(); // zero-arg read: re-dispatches Ok
         let calldata = aliased_announce_calldata(1_024, &tail);
 
         call_asset(&mut token, ALICE, calldata).expect("aliased announce must succeed");
-        assert!(token.accounting().is_announcement_id_used("aliased-id").unwrap());
+        assert!(token.accounting.is_announcement_id_used("aliased-id").unwrap());
     }
 
     /// Borrowed slices route to real state effects. `n` aliased entries produce `n × effect`.
     #[test]
     fn aliased_announce_redispatches_each_entry() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
-        token.accounting_mut().roles.insert((B20TokenRole::Mint.id(), ALICE), true);
+        token.accounting.roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
+        token.accounting.roles.insert((B20TokenRole::Mint.id(), ALICE), true);
 
         let n = 8usize;
         let tail = IB20::mintCall { to: BOB, amount: U256::ONE }.abi_encode();
         let calldata = aliased_announce_calldata(n, &tail);
 
         call_asset(&mut token, ALICE, calldata).expect("aliased mints must succeed");
-        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(n as u64));
+        assert_eq!(token.accounting.balance_of(BOB).unwrap(), U256::from(n as u64));
     }
 
     /// An aliased entry whose bytes invoke `announce` trips the in-progress guard.
     #[test]
     fn aliased_announce_nested_announce_reverts() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
+        token.accounting.roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let tail = IB20Asset::announceCall::SELECTOR.to_vec(); // first 4 bytes == announce selector
         let calldata = aliased_announce_calldata(2, &tail);
@@ -787,7 +787,7 @@ mod tests {
 
             for version in [B20Version::V1, B20Version::V2, B20Version::V3] {
                 let mut token = make_token();
-                token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
+                token.accounting.roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
                 let mut storage = storage_with_caller(ALICE);
                 let outcome = StorageCtx::enter(&mut storage, |ctx| {
                     token.route_asset(ctx, &calldata, version, false)
@@ -800,7 +800,8 @@ mod tests {
                 );
 
                 if let Err(err) = outcome {
-                    let control = crate::AssetAbiPair::of(version).decode(&calldata).unwrap_err();
+                    let control = Calldata::decode_call::<IB20Asset::IB20AssetCalls>(&calldata);
+                    let control = control.unwrap_err();
                     if rejects_via_valid_token
                         && matches!(version, B20Version::V2 | B20Version::V3)
                     {
@@ -845,7 +846,7 @@ mod tests {
     #[test]
     fn empty_internal_calls_announce_succeeds() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
+        token.accounting.roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let calldata = IB20Asset::announceCall {
             internalCalls: Vec::new(),
@@ -856,14 +857,14 @@ mod tests {
         .abi_encode();
 
         call_asset(&mut token, ALICE, calldata).expect("empty announce must succeed");
-        assert!(token.accounting().is_announcement_id_used("empty-calls").unwrap());
+        assert!(token.accounting.is_announcement_id_used("empty-calls").unwrap());
     }
 
     /// A large non-aliased array succeeds. Peak allocation stays O(calldata), not O(n × tail).
     #[test]
     fn large_non_aliased_announce_succeeds() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
+        token.accounting.roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let entry = Bytes::from(IB20Asset::multiplierCall {}.abi_encode());
         let calldata = IB20Asset::announceCall {
@@ -875,14 +876,14 @@ mod tests {
         .abi_encode();
 
         call_asset(&mut token, ALICE, calldata).expect("large announce must succeed");
-        assert!(token.accounting().is_announcement_id_used("many-distinct").unwrap());
+        assert!(token.accounting.is_announcement_id_used("many-distinct").unwrap());
     }
 
     /// An internal call shorter than a selector reverts and preserves the offending bytes.
     #[test]
     fn short_internal_call_reverts_as_malformed() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
+        token.accounting.roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let calldata = IB20Asset::announceCall {
             internalCalls: alloc::vec![Bytes::from_static(&[0x01, 0x02])],

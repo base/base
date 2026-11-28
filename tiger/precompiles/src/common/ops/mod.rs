@@ -5,7 +5,6 @@
 //! identifiers, the non-zero address wrapper, and the EIP-2612 permit argument hashing.
 
 mod guards;
-pub use guards::B20Guards;
 
 mod credit_recipient;
 pub use credit_recipient::{

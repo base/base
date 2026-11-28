@@ -8,7 +8,5 @@ pub use accounting::StablecoinAccounting;
 
 mod dispatch;
 
-mod versions;
-
 mod storage;
 pub use storage::{B20StablecoinExtensionStorage, B20StablecoinInit, B20StablecoinStorage};

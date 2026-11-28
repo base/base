@@ -7,9 +7,9 @@ use alloy_sol_types::{SolCall, SolValue};
 use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
 use crate::{
-    B20Logic, B20PolicyType, B20Token, B20TokenRole, B20Version, CalldataGas,
+    B20Logic, B20PolicyType, B20Token, B20TokenRole, B20Version, Calldata,
     IB20::{self, IB20Calls as C},
-    PermitArgs, PolicyAccounting, Token, TokenAccounting,
+    PermitArgs, PolicyAccounting, TokenAccounting,
 };
 
 impl<S: TokenAccounting, A: PolicyAccounting> B20Token<S, A> {
@@ -26,13 +26,13 @@ impl<S: TokenAccounting, A: PolicyAccounting> B20Token<S, A> {
         if !ctx.call_value().is_zero() {
             return ctx.error_result(BasePrecompileError::revert(IB20::NonPayable {}));
         }
-        if let Err(error) = CalldataGas::deduct(ctx, calldata) {
+        if let Err(error) = Calldata::deduct_gas(ctx, calldata) {
             return ctx.error_result(error);
         }
         let Some(version) = version else {
             return ctx.error_result(BasePrecompileError::Revert(Bytes::new()));
         };
-        match self.accounting().is_initialized() {
+        match self.accounting.is_initialized() {
             Ok(true) => {}
             Ok(false) => return ctx.error_result(BasePrecompileError::Revert(Bytes::new())),
             Err(error) => return ctx.error_result(error),
@@ -52,15 +52,15 @@ impl<S: TokenAccounting, A: PolicyAccounting> B20Token<S, A> {
     ) -> Result<Bytes> {
         let caller = ctx.caller();
         let encoded: Bytes = match call {
-            C::name(_) => self.accounting().name()?.abi_encode().into(),
-            C::symbol(_) => self.accounting().symbol()?.abi_encode().into(),
-            C::decimals(_) => U256::from(decimals(self.accounting())?).abi_encode().into(),
-            C::totalSupply(_) => self.accounting().total_supply()?.abi_encode().into(),
-            C::balanceOf(c) => self.accounting().balance_of(c.account)?.abi_encode().into(),
-            C::allowance(c) => self.accounting().allowance(c.owner, c.spender)?.abi_encode().into(),
-            C::supplyCap(_) => self.accounting().supply_cap()?.abi_encode().into(),
-            C::nonces(c) => self.accounting().nonce(c.owner)?.abi_encode().into(),
-            C::contractURI(_) => self.accounting().contract_uri()?.abi_encode().into(),
+            C::name(_) => self.accounting.name()?.abi_encode().into(),
+            C::symbol(_) => self.accounting.symbol()?.abi_encode().into(),
+            C::decimals(_) => U256::from(decimals(&self.accounting)?).abi_encode().into(),
+            C::totalSupply(_) => self.accounting.total_supply()?.abi_encode().into(),
+            C::balanceOf(c) => self.accounting.balance_of(c.account)?.abi_encode().into(),
+            C::allowance(c) => self.accounting.allowance(c.owner, c.spender)?.abi_encode().into(),
+            C::supplyCap(_) => self.accounting.supply_cap()?.abi_encode().into(),
+            C::nonces(c) => self.accounting.nonce(c.owner)?.abi_encode().into(),
+            C::contractURI(_) => self.accounting.contract_uri()?.abi_encode().into(),
 
             C::DEFAULT_ADMIN_ROLE(_) => B20TokenRole::DefaultAdmin.id().abi_encode().into(),
             C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
@@ -82,8 +82,8 @@ impl<S: TokenAccounting, A: PolicyAccounting> B20Token<S, A> {
             C::SEIZE_EXEMPT_POLICY(_) => B20PolicyType::SeizeExempt.id().abi_encode().into(),
             C::SEIZE_RECEIVER_POLICY(_) => B20PolicyType::SeizeReceiver.id().abi_encode().into(),
 
-            C::hasRole(c) => self.accounting().has_role(c.role, c.account)?.abi_encode().into(),
-            C::getRoleAdmin(c) => self.accounting().role_admin(c.role)?.abi_encode().into(),
+            C::hasRole(c) => self.accounting.has_role(c.role, c.account)?.abi_encode().into(),
+            C::getRoleAdmin(c) => self.accounting.role_admin(c.role)?.abi_encode().into(),
             C::pausedFeatures(_) => logic.paused_features(self)?.abi_encode().into(),
             C::isPaused(c) => logic.is_paused(self, c.feature)?.abi_encode().into(),
             C::policyId(c) => logic.policy_id(self, c.policyScope)?.abi_encode().into(),

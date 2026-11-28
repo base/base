@@ -1,213 +1,203 @@
-//! Version 1 of the B-20 token factory precompile logic, activated at Beryl.
+//! Business logic of the B-20 token factory precompile: one version, activated at Beryl.
 
-use alloc::string::ToString;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_tiger_precompile_storage::{BasePrecompileError, Bytecode, Result};
 
 use crate::{
-    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20Logic, B20Token, B20Version,
-    B20FactoryStorage, B20StablecoinInit, B20StablecoinStorage, B20TokenRole,
-    B20Variant, Factory, IB20Factory, InitCalls, PolicyRegistryStorage, PolicyVersions,
-    Token,
+    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20FactoryStorage, B20Logic,
+    B20StablecoinInit, B20StablecoinStorage, B20Token, B20TokenRole, B20Variant, B20Version,
+    IB20Factory, PolicyAccounting, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
+    TokenAccounting,
 };
+
+/// An activated version of the B-20 token factory logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FactoryVersion {
+    /// Introduced at Beryl, the factory's activation fork.
+    V1,
+}
+
+/// Resolver that selects the factory version active at a given hardfork.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FactoryVersions;
+
+impl FactoryVersions {
+    /// Returns the version active at `upgrade`, or `None` before Beryl, where the factory
+    /// precompile is not installed.
+    pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<FactoryVersion> {
+        upgrade
+            .is_feature_enabled(BaseFeature::TokenFactoryPrecompile)
+            .then_some(FactoryVersion::V1)
+    }
+}
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
 const B20_STABLECOIN_EVENT_PARAMS_VERSION: u8 = 1;
 
-/// ABI-encodes stablecoin-specific `variantParams` for `B20Created`.
-/// DEFAULT and ASSET call sites use `Bytes::new()` directly.
-fn encode_stablecoin_variant_params(currency: &str) -> Bytes {
-    IB20Factory::B20StablecoinEventParams {
-        version: B20_STABLECOIN_EVENT_PARAMS_VERSION,
-        currency: currency.to_string(),
-    }
-    .abi_encode()
-    .into()
-}
-
 /// Initial multiplier storage value. Reads treat zero as WAD precision (1:1).
 const INITIAL_MULTIPLIER: U256 = U256::ZERO;
 
-/// First B-20 token factory logic implementation. Frozen as of its activation at Beryl.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct FactoryV1;
-
-impl FactoryV1 {
-    fn init_stablecoin(
-        &self,
-        storage: &B20FactoryStorage<'_>,
-        token_address: Address,
-        common: CommonParams,
-        init: B20StablecoinInit,
-        init_calls: &InitCalls<'_>,
+impl B20FactoryStorage<'_> {
+    /// Creates a token from decoded `createB20` fields at the address `address_hash` derives.
+    pub fn create_b20_decoded(
+        &mut self,
+        variant: IB20Factory::B20Variant,
+        params: &[u8],
+        init_calls: &[&[u8]],
+        address_hash: B256,
         upgrade: BaseUpgrade,
-    ) -> Result<()> {
-        let policy_version = PolicyVersions::from_base_upgrade(upgrade)
-            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
-        let mut token = B20Token::with_storage_and_policy(
-            B20StablecoinStorage::from_address(token_address, storage.storage),
-            PolicyRegistryStorage::new(storage.storage),
-            policy_version,
-        );
-        let (name, symbol, currency) =
-            (init.name.clone(), init.symbol.clone(), init.currency.clone());
-        token.accounting_mut().initialize(init)?;
-
-        storage.storage.emit_event(
-            B20FactoryStorage::ADDRESS,
-            IB20Factory::B20Created {
-                token: token_address,
-                variant: B20Variant::Stablecoin.abi(),
-                name,
-                symbol,
-                decimals: B20Variant::Stablecoin
-                    .decimals()
-                    .expect("stablecoin has fixed 6-decimal precision"),
-                variantParams: encode_stablecoin_variant_params(&currency),
-            }
-            .encode_log_data(),
-        )?;
-
-        let stablecoin_version = B20Version::stablecoin(upgrade)
-            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
-        if !common.initial_admin.is_zero() {
-            B20Logic::stablecoin(stablecoin_version).grant_role_unchecked(
-                &mut token,
-                B20TokenRole::DefaultAdmin.id(),
-                common.initial_admin,
-                B20FactoryStorage::ADDRESS,
-            )?;
-        }
-        storage.storage.with_caller(B20FactoryStorage::ADDRESS, || {
-            for (index, &calldata) in init_calls.iter().enumerate() {
-                token
-                    .route_stablecoin(storage.storage, calldata, stablecoin_version, true)
-                    .map_err(|err| Self::map_init_call_error(index, err))?;
-            }
-            Ok::<(), BasePrecompileError>(())
-        })?;
-        Ok(())
-    }
-
-    fn init_asset_token(
-        &self,
-        storage: &B20FactoryStorage<'_>,
-        token_address: Address,
-        common: CommonParams,
-        init: B20AssetInit,
-        init_calls: &InitCalls<'_>,
-        upgrade: BaseUpgrade,
-    ) -> Result<()> {
-        let policy_version = PolicyVersions::from_base_upgrade(upgrade)
-            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
-        let mut token = B20Token::with_storage_and_policy(
-            B20AssetStorage::from_address(token_address, storage.storage),
-            PolicyRegistryStorage::new(storage.storage),
-            policy_version,
-        );
-        let (name, symbol, decimals) = (init.name.clone(), init.symbol.clone(), init.decimals);
-        token.accounting_mut().initialize(init)?;
-
-        storage.storage.emit_event(
-            B20FactoryStorage::ADDRESS,
-            IB20Factory::B20Created {
-                token: token_address,
-                variant: B20Variant::Asset.abi(),
-                name,
-                symbol,
-                decimals,
-                variantParams: Bytes::new(),
-            }
-            .encode_log_data(),
-        )?;
-
-        let asset_version = B20Version::asset(upgrade)
-            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
-        if !common.initial_admin.is_zero() {
-            B20Logic::asset(asset_version).grant_role_unchecked(
-                &mut token,
-                B20TokenRole::DefaultAdmin.id(),
-                common.initial_admin,
-                B20FactoryStorage::ADDRESS,
-            )?;
-        }
-        storage.storage.with_caller(B20FactoryStorage::ADDRESS, || {
-            for (index, &calldata) in init_calls.iter().enumerate() {
-                token
-                    .route_asset(storage.storage, calldata, asset_version, true)
-                    .map_err(|err| Self::map_init_call_error(index, err))?;
-            }
-            Ok::<(), BasePrecompileError>(())
-        })?;
-        Ok(())
-    }
-
-    fn check_version(version: u8, variant: B20Variant) -> Result<()> {
+    ) -> Result<Address> {
+        let variant = B20Variant::from_abi(variant)
+            .ok_or_else(|| BasePrecompileError::revert(IB20Factory::InvalidVariant {}))?;
+        ActivationRegistryStorage::new(self.storage)
+            .ensure_activated(variant.activation_feature().id())?;
+        let params = TokenCreateParams::decode(variant, params)?;
+        let version = params.version();
         if version != variant.supported_version() {
             return Err(BasePrecompileError::revert(IB20Factory::UnsupportedVersion {
                 version,
                 variant: variant.abi(),
             }));
         }
-        Ok(())
-    }
-
-    fn map_init_call_error(index: usize, err: BasePrecompileError) -> BasePrecompileError {
-        match err {
-            BasePrecompileError::Revert(bytes) if !bytes.is_empty() => {
-                BasePrecompileError::Revert(bytes)
-            }
-            err if err.is_system_error() => err,
-            _ => BasePrecompileError::revert(IB20Factory::InitCallFailed {
-                index: U256::from(index),
-            }),
-        }
-    }
-}
-
-impl Factory for FactoryV1 {
-    fn create_b20_decoded(
-        &self,
-        storage: &mut B20FactoryStorage<'_>,
-        variant: IB20Factory::B20Variant,
-        params: &[u8],
-        init_calls: &InitCalls<'_>,
-        address_hash: B256,
-        upgrade: BaseUpgrade,
-    ) -> Result<Address> {
-        let variant = B20Variant::from_abi(variant)
-            .ok_or_else(|| BasePrecompileError::revert(IB20Factory::InvalidVariant {}))?;
-        ActivationRegistryStorage::new(storage.storage)
-            .ensure_activated(variant.activation_feature().id())?;
-        let params = TokenCreateParams::decode(variant, params)?;
-        Self::check_version(params.version(), variant)?;
         params.validate()?;
         let (token_address, _) = variant.compute_address_from_hash(address_hash);
 
-        if storage.storage.has_bytecode(token_address)? {
+        if self.storage.has_bytecode(token_address)? {
             return Err(BasePrecompileError::revert(IB20Factory::TokenAlreadyExists {
                 token: token_address,
             }));
         }
 
-        let checkpoint = storage.storage.checkpoint();
-        let stub = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
-        storage.storage.set_code(token_address, stub)?;
-
+        let checkpoint = self.storage.checkpoint();
+        self.storage.set_code(token_address, Bytecode::new_legacy(Bytes::from_static(&[0xef])))?;
         match params {
             TokenCreateParams::Stablecoin { common, init } => {
-                self.init_stablecoin(storage, token_address, common, init, init_calls, upgrade)?;
+                self.init_stablecoin(token_address, common, init, init_calls, upgrade)?;
             }
             TokenCreateParams::Asset { common, init } => {
-                self.init_asset_token(storage, token_address, common, init, init_calls, upgrade)?;
+                self.init_asset(token_address, common, init, init_calls, upgrade)?;
             }
         }
-
         checkpoint.commit();
         Ok(token_address)
+    }
+
+    fn init_stablecoin(
+        &self,
+        token_address: Address,
+        common: CommonParams,
+        init: B20StablecoinInit,
+        init_calls: &[&[u8]],
+        upgrade: BaseUpgrade,
+    ) -> Result<()> {
+        let mut token = B20Token::with_storage_and_policy(
+            B20StablecoinStorage::from_address(token_address, self.storage),
+            PolicyRegistryStorage::new(self.storage),
+            Self::policy_version(upgrade)?,
+        );
+        let (name, symbol, currency) =
+            (init.name.clone(), init.symbol.clone(), init.currency.clone());
+        token.accounting.initialize(init)?;
+        let decimals = B20Variant::Stablecoin.decimals().expect("stablecoin has fixed decimals");
+        let version = B20_STABLECOIN_EVENT_PARAMS_VERSION;
+        let params = IB20Factory::B20StablecoinEventParams { version, currency }.abi_encode();
+        self.emit_created(token_address, B20Variant::Stablecoin, name, symbol, decimals, params)?;
+
+        let version = B20Version::stablecoin(upgrade).ok_or_else(Self::empty_revert)?;
+        let logic = B20Logic::stablecoin(version);
+        self.init_token(&mut token, logic, common.initial_admin, init_calls, |token, calldata| {
+            token.route_stablecoin(self.storage, calldata, version, true)
+        })
+    }
+
+    fn init_asset(
+        &self,
+        token_address: Address,
+        common: CommonParams,
+        init: B20AssetInit,
+        init_calls: &[&[u8]],
+        upgrade: BaseUpgrade,
+    ) -> Result<()> {
+        let mut token = B20Token::with_storage_and_policy(
+            B20AssetStorage::from_address(token_address, self.storage),
+            PolicyRegistryStorage::new(self.storage),
+            Self::policy_version(upgrade)?,
+        );
+        let (name, symbol, decimals) = (init.name.clone(), init.symbol.clone(), init.decimals);
+        token.accounting.initialize(init)?;
+        self.emit_created(token_address, B20Variant::Asset, name, symbol, decimals, Vec::new())?;
+
+        let version = B20Version::asset(upgrade).ok_or_else(Self::empty_revert)?;
+        let logic = B20Logic::asset(version);
+        self.init_token(&mut token, logic, common.initial_admin, init_calls, |token, calldata| {
+            token.route_asset(self.storage, calldata, version, true)
+        })
+    }
+
+    /// The policy-registry version the created token checks against.
+    fn policy_version(upgrade: BaseUpgrade) -> Result<PolicyVersion> {
+        PolicyVersions::from_base_upgrade(upgrade).ok_or_else(Self::empty_revert)
+    }
+
+    fn empty_revert() -> BasePrecompileError {
+        BasePrecompileError::Revert(Bytes::new())
+    }
+
+    fn emit_created(
+        &self,
+        token: Address,
+        variant: B20Variant,
+        name: String,
+        symbol: String,
+        decimals: u8,
+        variant_params: Vec<u8>,
+    ) -> Result<()> {
+        let event = IB20Factory::B20Created {
+            token,
+            variant: variant.abi(),
+            name,
+            symbol,
+            decimals,
+            variantParams: variant_params.into(),
+        };
+        self.storage.emit_event(Self::ADDRESS, event.encode_log_data())
+    }
+
+    /// Grants the initial admin, then runs `init_calls` through `route`, privileged and with the
+    /// factory as the caller. A failing call reverts with its own bytes, or `InitCallFailed`.
+    fn init_token<S: TokenAccounting, A: PolicyAccounting>(
+        &self,
+        token: &mut B20Token<S, A>,
+        logic: B20Logic,
+        initial_admin: Address,
+        init_calls: &[&[u8]],
+        route: impl Fn(&mut B20Token<S, A>, &[u8]) -> Result<Bytes>,
+    ) -> Result<()> {
+        if !initial_admin.is_zero() {
+            let admin_role = B20TokenRole::DefaultAdmin.id();
+            logic.grant_role_unchecked(token, admin_role, initial_admin, Self::ADDRESS)?;
+        }
+        self.storage.with_caller(Self::ADDRESS, || {
+            for (index, &calldata) in init_calls.iter().enumerate() {
+                route(token, calldata).map_err(|err| match err {
+                    BasePrecompileError::Revert(bytes) if !bytes.is_empty() => {
+                        BasePrecompileError::Revert(bytes)
+                    }
+                    err if err.is_system_error() => err,
+                    _ => BasePrecompileError::revert(IB20Factory::InitCallFailed {
+                        index: U256::from(index),
+                    }),
+                })?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -283,28 +273,12 @@ impl TokenCreateParams {
         }
     }
 
-    /// Validates variant-specific invariants after the shared version check.
-    ///
-    /// Each arm owns its own rules. Version is checked first by the caller (`check_version`)
-    /// so that version errors always take precedence over field-level errors.
+    /// Validates variant-specific fields, after the version check. A stablecoin's currency is
+    /// checked by `B20StablecoinStorage::initialize`.
     pub fn validate(&self) -> Result<()> {
-        match self {
-            Self::Stablecoin { init, .. } => Self::validate_stablecoin(init),
-            Self::Asset { init, .. } => Self::validate_asset(init),
-        }
-    }
-
-    /// Validates stablecoin initialization fields.
-    pub const fn validate_stablecoin(_init: &B20StablecoinInit) -> Result<()> {
-        // Currency validation is delegated to `B20StablecoinStorage::initialize`, which rejects
-        // empty values with `MissingRequiredField` and non-A-Z values with `InvalidCurrency`.
-        Ok(())
-    }
-
-    /// Validates asset-token initialization fields.
-    pub fn validate_asset(init: &B20AssetInit) -> Result<()> {
-        if init.decimals < B20AssetStorage::MIN_DECIMALS
-            || init.decimals > B20AssetStorage::MAX_DECIMALS
+        let decimals = B20AssetStorage::MIN_DECIMALS..=B20AssetStorage::MAX_DECIMALS;
+        if let Self::Asset { init, .. } = self
+            && !decimals.contains(&init.decimals)
         {
             return Err(BasePrecompileError::revert(IB20Factory::InvalidDecimals {
                 decimals: init.decimals,
@@ -326,18 +300,42 @@ impl TokenCreateParams {
 mod tests {
     use alloc::string::ToString;
 
-    use alloy_primitives::{Address, B256, U256, address};
+    use alloy_primitives::{Address, B256, U256, address, keccak256};
     use alloy_sol_types::{SolCall, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_tiger_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use base_tiger_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
 
     use crate::{
         B20Version,
         B20Logic,
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20Token,
         B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory, PolicyRegistryStorage,
-        PolicyVersion, Token, TokenAccounting,
+        PolicyVersion, TokenAccounting,
     };
+    use super::{FactoryVersion, FactoryVersions};
+
+    /// The non-dispatch `createB20` entry the tests drive, hashing the address unmetered.
+    trait CreateB20 {
+        fn create_b20(
+            &mut self,
+            caller: Address,
+            call: IB20Factory::createB20Call,
+            upgrade: BaseUpgrade,
+        ) -> Result<Address>;
+    }
+
+    impl CreateB20 for B20FactoryStorage<'_> {
+        fn create_b20(
+            &mut self,
+            caller: Address,
+            call: IB20Factory::createB20Call,
+            upgrade: BaseUpgrade,
+        ) -> Result<Address> {
+            let address_hash = keccak256((caller, call.salt).abi_encode());
+            let init_calls: Vec<&[u8]> = call.initCalls.iter().map(|call| call.as_ref()).collect();
+            self.create_b20_decoded(call.variant, &call.params, &init_calls, address_hash, upgrade)
+        }
+    }
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
     const ACTIVATION_ADMIN_CONFIG: ActivationAdminConfig =
@@ -612,9 +610,9 @@ mod tests {
             B20Logic::asset(B20Version::V1).transfer(&mut token, alice, bob, U256::from(300u64), false).unwrap();
             B20Logic::asset(B20Version::V1).mint(&mut token, alice, alice, U256::from(200u64), true).unwrap();
 
-            assert_eq!(token.accounting().balance_of(alice).unwrap(), U256::from(900u64));
-            assert_eq!(token.accounting().balance_of(bob).unwrap(), U256::from(300u64));
-            assert_eq!(token.accounting().total_supply().unwrap(), U256::from(1_200u64));
+            assert_eq!(token.accounting.balance_of(alice).unwrap(), U256::from(900u64));
+            assert_eq!(token.accounting.balance_of(bob).unwrap(), U256::from(300u64));
+            assert_eq!(token.accounting.total_supply().unwrap(), U256::from(1_200u64));
         });
     }
 
@@ -644,8 +642,8 @@ mod tests {
             let first_token = token_at(first, ctx);
             let second_token = token_at(second, ctx);
 
-            assert_eq!(first_token.token_address(), first);
-            assert_eq!(second_token.token_address(), second);
+            assert_eq!(first_token.accounting.token_address(), first);
+            assert_eq!(second_token.accounting.token_address(), second);
 
             let (_, _, _, _, first_domain_address, _, _) =
                 B20Logic::asset(B20Version::V1).eip712_domain(&first_token, ctx.chain_id()).unwrap();
@@ -692,14 +690,12 @@ mod tests {
                 PolicyVersion::V1,
             );
             assert!(
-                token
-                    .accounting()
-                    .has_role(B20TokenRole::DefaultAdmin.id(), initial_admin)
+                token.accounting.has_role(B20TokenRole::DefaultAdmin.id(), initial_admin)
                     .unwrap()
             );
             assert!(
                 !token
-                    .accounting()
+                    .accounting
                     .has_role(B20TokenRole::DefaultAdmin.id(), Address::ZERO)
                     .unwrap()
             );
@@ -731,16 +727,29 @@ mod tests {
             );
             assert!(
                 !token
-                    .accounting()
+                    .accounting
                     .has_role(B20TokenRole::DefaultAdmin.id(), initial_admin)
                     .unwrap()
             );
             assert!(
                 !token
-                    .accounting()
+                    .accounting
                     .has_role(B20TokenRole::DefaultAdmin.id(), Address::ZERO)
                     .unwrap()
             );
         });
+    }
+
+    #[test]
+    fn resolves_none_before_beryl() {
+        assert_eq!(FactoryVersions::from_base_upgrade(BaseUpgrade::Azul), None);
+    }
+
+    #[test]
+    fn resolves_v1_from_beryl() {
+        assert_eq!(
+            FactoryVersions::from_base_upgrade(BaseUpgrade::Beryl),
+            Some(FactoryVersion::V1)
+        );
     }
 }

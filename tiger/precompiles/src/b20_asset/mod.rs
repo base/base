@@ -1,16 +1,12 @@
 //! Asset B-20 native precompile — asset variant of the B-20 token.
 
 mod abi;
-pub use abi::{ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset, IB20AssetV1, IB20AssetV2};
+pub use abi::{ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset};
 
 mod accounting;
 pub use accounting::AssetAccounting;
 
 mod dispatch;
-
-mod versions;
-pub(crate) use versions::AssetCall;
-pub use versions::{AssetAbi, AssetAbiPair};
 
 mod logic;
 

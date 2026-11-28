@@ -1,25 +1,14 @@
-//! Version manager for the `PolicyRegistry` precompile.
-//!
-//! Single owner of fork routing: which version is active at a given hardfork
-//! ([`PolicyVersions::from_base_upgrade`]), which concrete implementation backs a version
-//! ([`PolicyVersion::implementation`]), and which wire surface it decodes against
-//! ([`PolicyVersion::abi`]). Centralizing fork routing here keeps hardfork logic auditable and off
-//! the execution path, and lets the dispatcher route calls without ever matching on the version
-//! itself.
+//! The `PolicyRegistry` versions, the fork that activates each, and the selectors each dials:
+//! Beryl's [`IPolicyRegistryV1`] surface, then the canonical [`IPolicyRegistry`] surface, without
+//! Denim's `invertedPolicyId` at Cobalt.
 
-use alloc::string::ToString;
-
-use alloy_sol_types::SolInterface;
+use alloy_sol_types::{SolCall, SolInterface};
 use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{
-    IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, IPolicyRegistryV3, PolicyRegistry,
-};
+use crate::{Calldata, IPolicyRegistry, IPolicyRegistryV1};
 
 /// An activated version of the `PolicyRegistry` precompile logic.
-///
-/// Each variant maps to an immutable implementation via [`Self::implementation`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PolicyVersion {
     /// Introduced at Beryl, the fork where the policy registry precompile is installed.
@@ -31,93 +20,38 @@ pub enum PolicyVersion {
 }
 
 impl PolicyVersion {
-    /// Returns the immutable logic implementation for this version.
-    pub const fn implementation(self) -> PolicyRegistry {
-        PolicyRegistry::new(self)
-    }
-    /// Returns the wire (ABI) surface frozen for this version.
-    pub const fn abi(self) -> PolicyAbi {
-        match self {
-            Self::V1 => PolicyAbi::V1,
-            Self::V2 => PolicyAbi::V2,
-            Self::V3 => PolicyAbi::V3,
-        }
-    }
-}
-
-/// A frozen wire (ABI) surface of the `PolicyRegistry` precompile. Reached only through [`PolicyVersion::abi`]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PolicyAbi {
-    /// Wire surface activated at Beryl.
-    V1,
-    /// Wire surface activated at Cobalt.
-    V2,
-    /// Wire surface activated at Denim.
-    V3,
-}
-
-impl PolicyAbi {
-    /// Returns whether `selector` was dialable on this wire surface.
+    /// Returns whether `selector` is on this version's surface.
     pub fn valid_selector(self, selector: [u8; 4]) -> bool {
         match self {
             Self::V1 => IPolicyRegistryV1::IPolicyRegistryCalls::valid_selector(selector),
-            Self::V2 => IPolicyRegistryV2::IPolicyRegistryCalls::valid_selector(selector),
-            Self::V3 => IPolicyRegistryV3::IPolicyRegistryCalls::valid_selector(selector),
-        }
-    }
-
-    /// Validates `calldata` against this wire surface via alloy's `abi_decode_validate`, discarding
-    /// the decoded call.
-    pub fn abi_decode_validate(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
-        match self {
-            Self::V1 => {
-                IPolicyRegistryV1::IPolicyRegistryCalls::abi_decode_validate(calldata).map(|_| ())
-            }
             Self::V2 => {
-                IPolicyRegistryV2::IPolicyRegistryCalls::abi_decode_validate(calldata).map(|_| ())
+                selector != IPolicyRegistry::invertedPolicyIdCall::SELECTOR
+                    && IPolicyRegistry::IPolicyRegistryCalls::valid_selector(selector)
             }
-            Self::V3 => {
-                IPolicyRegistryV3::IPolicyRegistryCalls::abi_decode_validate(calldata).map(|_| ())
-            }
+            Self::V3 => IPolicyRegistry::IPolicyRegistryCalls::valid_selector(selector),
         }
-        .map_err(|error| BasePrecompileError::AbiDecodeFailed {
-            selector,
-            error: error.to_string(),
-        })
     }
 
-    /// Decodes `calldata` into a routable call via alloy's `abi_decode`, gated on this wire surface.
-    ///
-    /// Where the frozen surface differs from canonical (`V1`), the calldata is validated against the
-    /// frozen surface first so a rejection carries that version's consensus error bytes, then
-    /// re-decoded into the canonical enum for routing.
+    /// Decodes a call on this version's surface. V1 first decodes against [`IPolicyRegistryV1`],
+    /// so a composite `PolicyType` fails with Beryl's decode error.
     pub fn decode(self, calldata: &[u8]) -> Result<IPolicyRegistry::IPolicyRegistryCalls> {
-        let Some(selector) = calldata.first_chunk::<4>().copied() else {
-            return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
-        };
+        let selector = Calldata::selector(calldata)?;
         if !self.valid_selector(selector) {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
-        match self {
-            Self::V1 => self.abi_decode_validate(calldata, selector)?,
-            Self::V2 | Self::V3 => {}
+        if self == Self::V1 {
+            Calldata::decode::<IPolicyRegistryV1::IPolicyRegistryCalls>(calldata, selector)?;
         }
-
-        IPolicyRegistry::IPolicyRegistryCalls::abi_decode_validate(calldata).map_err(|error| {
-            BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-        })
+        Calldata::decode(calldata, selector)
     }
 }
 
 /// Resolver that selects the policy-registry version active at a given hardfork.
-///
-/// The version is resolved once per call from the block's active upgrade; there is only
-/// ever one active version at a time.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PolicyVersions;
 
 impl PolicyVersions {
-    /// Returns the version active at `upgrade`, or `None` before the introduction
+    /// Returns the version active at `upgrade`, or `None` before Beryl.
     pub const fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
         match upgrade {
             u if u.is_feature_enabled(BaseFeature::PolicyPrecompileV3) => Some(PolicyVersion::V3),
@@ -135,10 +69,7 @@ mod tests {
     use alloy_sol_types::{SolCall, SolInterface};
     use base_common_genesis::BaseUpgrade;
 
-    use crate::{
-        IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, IPolicyRegistryV3, PolicyAbi,
-        PolicyVersion, PolicyVersions,
-    };
+    use crate::{IPolicyRegistry, IPolicyRegistryV1, PolicyVersion, PolicyVersions};
 
     #[test]
     fn resolves_none_before_beryl() {
@@ -161,22 +92,6 @@ mod tests {
         assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Zenith), Some(PolicyVersion::V3));
     }
 
-    /// The logic axis and the wire axis meet only here. Driven from the fork ladder so the whole
-    /// chain (upgrade -> version -> surface) is pinned, not just the inner lookup.
-    #[test]
-    fn each_fork_resolves_to_its_wire_surface() {
-        assert_eq!(PolicyVersion::V1.abi(), PolicyAbi::V1);
-        assert_eq!(PolicyVersion::V2.abi(), PolicyAbi::V2);
-        assert_eq!(PolicyVersion::V3.abi(), PolicyAbi::V3);
-
-        let beryl = PolicyVersions::from_base_upgrade(BaseUpgrade::Beryl).unwrap();
-        let cobalt = PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt).unwrap();
-        let denim = PolicyVersions::from_base_upgrade(BaseUpgrade::Denim).unwrap();
-        assert_eq!(beryl.abi(), PolicyAbi::V1);
-        assert_eq!(cobalt.abi(), PolicyAbi::V2);
-        assert_eq!(denim.abi(), PolicyAbi::V3);
-    }
-
     /// The dispatcher re-decodes against the canonical surface after a frozen surface accepts, so
     /// every frozen selector must exist on the latest canonical surface. Cobalt adds the five
     /// composite selectors to V1; Denim adds `invertedPolicyId` to V2.
@@ -185,13 +100,14 @@ mod tests {
         let v1: Vec<[u8; 4]> = IPolicyRegistryV1::IPolicyRegistryCalls::selectors().collect();
         for selector in &v1 {
             assert!(
-                PolicyAbi::V2.valid_selector(*selector),
+                PolicyVersion::V2.valid_selector(*selector),
                 "V1 selector {selector:?} missing from the V2 surface"
             );
         }
 
-        let added: Vec<[u8; 4]> = IPolicyRegistryV2::IPolicyRegistryCalls::selectors()
-            .filter(|selector| !PolicyAbi::V1.valid_selector(*selector))
+        let added: Vec<[u8; 4]> = IPolicyRegistry::IPolicyRegistryCalls::selectors()
+            .filter(|selector| PolicyVersion::V2.valid_selector(*selector))
+            .filter(|selector| !PolicyVersion::V1.valid_selector(*selector))
             .collect();
         assert_eq!(added.len(), 5);
         assert!(added.contains(&IPolicyRegistry::createCompositePolicyCall::SELECTOR));
@@ -203,8 +119,8 @@ mod tests {
 
     #[test]
     fn v3_adds_only_inverted_policy_id() {
-        let added: Vec<[u8; 4]> = IPolicyRegistryV3::IPolicyRegistryCalls::selectors()
-            .filter(|selector| !PolicyAbi::V2.valid_selector(*selector))
+        let added: Vec<[u8; 4]> = IPolicyRegistry::IPolicyRegistryCalls::selectors()
+            .filter(|selector| !PolicyVersion::V2.valid_selector(*selector))
             .collect();
         assert_eq!(added, vec![IPolicyRegistry::invertedPolicyIdCall::SELECTOR]);
     }
@@ -217,7 +133,7 @@ mod tests {
     #[test]
     fn surfaces_share_a_minimum_calldata_length() {
         assert_eq!(IPolicyRegistryV1::IPolicyRegistryCalls::MIN_DATA_LENGTH, 32);
-        assert_eq!(IPolicyRegistryV2::IPolicyRegistryCalls::MIN_DATA_LENGTH, 0);
+        assert_eq!(IPolicyRegistry::IPolicyRegistryCalls::MIN_DATA_LENGTH, 0);
     }
 
     /// `SolInterface::NAME` lands in consensus data: the short-calldata branch of
@@ -226,8 +142,7 @@ mod tests {
     #[test]
     fn surface_interface_names_are_frozen() {
         assert_eq!(IPolicyRegistryV1::IPolicyRegistryCalls::NAME, "IPolicyRegistryCalls");
-        assert_eq!(IPolicyRegistryV2::IPolicyRegistryCalls::NAME, "IPolicyRegistryCalls");
-        assert_eq!(IPolicyRegistryV3::IPolicyRegistryCalls::NAME, "IPolicyRegistryCalls");
+        assert_eq!(IPolicyRegistry::IPolicyRegistryCalls::NAME, "IPolicyRegistryCalls");
     }
 
     /// The composite selectors were not dialable at Beryl, so the V1 surface must not know them.
@@ -235,16 +150,16 @@ mod tests {
     #[test]
     fn v1_surface_rejects_composite_selectors() {
         assert!(
-            !PolicyAbi::V1.valid_selector(IPolicyRegistry::createCompositePolicyCall::SELECTOR)
+            !PolicyVersion::V1.valid_selector(IPolicyRegistry::createCompositePolicyCall::SELECTOR)
         );
-        assert!(!PolicyAbi::V1.valid_selector(IPolicyRegistry::updateCompositeCall::SELECTOR));
+        assert!(!PolicyVersion::V1.valid_selector(IPolicyRegistry::updateCompositeCall::SELECTOR));
+        let child_ids = IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR;
+        assert!(!PolicyVersion::V1.valid_selector(child_ids));
+        let create = IPolicyRegistry::createCompositePolicyCall::SELECTOR;
+        assert!(PolicyVersion::V2.valid_selector(create));
+        assert!(PolicyVersion::V2.valid_selector(IPolicyRegistry::updateCompositeCall::SELECTOR));
         assert!(
-            !PolicyAbi::V1.valid_selector(IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR)
-        );
-        assert!(PolicyAbi::V2.valid_selector(IPolicyRegistry::createCompositePolicyCall::SELECTOR));
-        assert!(PolicyAbi::V2.valid_selector(IPolicyRegistry::updateCompositeCall::SELECTOR));
-        assert!(
-            PolicyAbi::V2.valid_selector(IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR)
+            PolicyVersion::V2.valid_selector(IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR)
         );
     }
 }
