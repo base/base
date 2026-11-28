@@ -86,9 +86,47 @@ undocumented-unsafe-blocks = "warn"
 [profile.dev]
 debug = "line-tables-only"
 
-[profile.dev.package."*"]
-debug = false
-opt-level = 2
+[profile.dev.package]
+"*" = { debug = false, opt-level = 2 }
+# Proc macros, build scripts' dependencies and the crates every build script waits on only run
+# while compiling, so they skip the optimization above. `"*"` outranks `build-override`, so they
+# are named. Optimizing them made clean `cargo check`, `cargo build` and `cargo test` about 15s
+# slower, mostly by delaying the RocksDB build. Add a crate here only if no runtime code uses it.
+alloy-rlp-derive = { opt-level = 0 }
+alloy-sol-macro-expander = { opt-level = 0 }
+alloy-sol-macro-input = { opt-level = 0 }
+alloy-tx-macros = { opt-level = 0 }
+aho-corasick = { opt-level = 0 }
+ambassador = { opt-level = 0 }
+ark-ff-macros = { opt-level = 0 }
+auto_impl = { opt-level = 0 }
+autocfg = { opt-level = 0 }
+bindgen = { opt-level = 0 }
+cc = { opt-level = 0 }
+clang-sys = { opt-level = 0 }
+darling_core = { opt-level = 0 }
+derive-where = { opt-level = 0 }
+derive_more-impl = { opt-level = 0 }
+educe = { opt-level = 0 }
+evm2-macros = { opt-level = 0 }
+find-msvc-tools = { opt-level = 0 }
+jobserver = { opt-level = 0 }
+nom = { opt-level = 0 }
+num_enum_derive = { opt-level = 0 }
+pkg-config = { opt-level = 0 }
+proc-macro2 = { opt-level = 0 }
+quote = { opt-level = 0 }
+regex = { opt-level = 0 }
+regex-automata = { opt-level = 0 }
+regex-syntax = { opt-level = 0 }
+serde_derive = { opt-level = 0 }
+serde_with_macros = { opt-level = 0 }
+shlex = { opt-level = 0 }
+strum_macros = { opt-level = 0 }
+syn = { opt-level = 0 }
+syn-solidity = { opt-level = 0 }
+thiserror-impl = { opt-level = 0 }
+version_check = { opt-level = 0 }
 
 [profile.release]
 opt-level = 3
