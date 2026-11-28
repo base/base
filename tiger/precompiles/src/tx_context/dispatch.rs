@@ -2,12 +2,10 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    Calldata,
-    ITransactionContext::{self, ITransactionContextCalls as C},
-    tx_context::storage::TxContextStorage,
+    BasePrecompileError, Calldata, ITransactionContext::{self, ITransactionContextCalls as C},
+    PrecompileResult, StorageCtx, tx_context::storage::TxContextStorage,
 };
 
 /// Base transaction getter output price per 32-byte word: the EVM copy-word cost (`W_copy`).
@@ -37,7 +35,7 @@ impl TxContextStorage<'_> {
         ctx.result_output(result, |output| output)
     }
 
-    fn inner(&self, calldata: &[u8]) -> base_tiger_precompile_storage::Result<Bytes> {
+    fn inner(&self, calldata: &[u8]) -> crate::Result<Bytes> {
         match Calldata::decode_call(calldata)? {
             C::getTransactionSender(_) => Ok(
                 ITransactionContext::getTransactionSenderCall::abi_encode_returns(&self.sender()?)
@@ -61,9 +59,8 @@ impl TxContextStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, b256};
     use alloy_sol_types::{SolCall, SolError};
-    use base_tiger_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use crate::{ITransactionContext, TxContextStorage};
+    use crate::{HashMapStorageProvider, ITransactionContext, StorageCtx, TxContextStorage};
 
     const SENDER: Address = address!("0x1111111111111111111111111111111111111111");
     const PAYER: Address = address!("0x2222222222222222222222222222222222222222");

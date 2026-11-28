@@ -11,15 +11,13 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, Bytes};
 use base_common_genesis::{BaseFeature, BaseUpgrade};
-use base_tiger_precompile_storage::{
-    BasePrecompileError, DelegateCallNotAllowed, PrecompileOutput, PrecompileResult,
-    PrecompileStorageProvider, StorageCtx, StorageFeatures,
-};
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistryStorage, B20AssetStorage, B20Token,
-    B20FactoryStorage, B20StablecoinStorage, B20Variant, NonceManagerStorage,
-    PolicyRegistryStorage, PolicyVersions, TxContextStorage, UpgradeGatedStorageFeatures,
+    ActivationAdminConfig, ActivationRegistryStorage, B20AssetStorage, B20FactoryStorage,
+    B20StablecoinStorage, B20Token, B20Variant, BasePrecompileError, DelegateCallNotAllowed,
+    NonceManagerStorage, PolicyRegistryStorage, PolicyVersions, PrecompileOutput, PrecompileResult,
+    PrecompileStorageProvider, StorageCtx, StorageFeatures, TxContextStorage,
+    UpgradeGatedStorageFeatures,
 };
 
 /// One Base native precompile, as resolved from a call target.
@@ -150,7 +148,7 @@ impl NativePrecompiles {
         debug_assert_eq!(self.lookup(address), Some(precompile));
         if !is_direct_call {
             return BasePrecompileError::revert(DelegateCallNotAllowed {})
-                .into_precompile_result(0, 0);
+                .into_precompile_result(0, StorageFeatures::Legacy);
         }
         assert_eq!(provider.storage_features(), self.storage_features());
         let upgrade = self.upgrade;
@@ -169,7 +167,7 @@ impl NativePrecompiles {
             }
             NativePrecompile::B20Asset => {
                 let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
-                    return Ok(PrecompileOutput::revert(0, Bytes::new(), 0));
+                    return Ok(PrecompileOutput::revert(0, Bytes::new()));
                 };
                 B20Token::with_storage_and_policy(
                     B20AssetStorage::from_address(address, ctx),
@@ -180,7 +178,7 @@ impl NativePrecompiles {
             }
             NativePrecompile::B20Stablecoin => {
                 let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
-                    return Ok(PrecompileOutput::revert(0, Bytes::new(), 0));
+                    return Ok(PrecompileOutput::revert(0, Bytes::new()));
                 };
                 B20Token::with_storage_and_policy(
                     B20StablecoinStorage::from_address(address, ctx),

@@ -14,12 +14,11 @@
 //! - the call's gas is tracked here and applied to the frame's [`GasTracker`] once, from the
 //!   precompile output, as revm's `precompile_output_to_interpreter_result` does.
 
-use alloy_primitives::{Address, B256, KECCAK256_EMPTY, Log, LogData, U256};
-use base_tiger_precompile_storage::{
-    AccountInfo, BasePrecompileError, Bytecode, Checkpoint, GasSchedule, PrecompileStatus,
-    PrecompileStorageProvider, Result, SstoreValues, StorageFeatures,
+use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, Log, LogData, U256};
+use base_tiger_precompiles::{
+    AccountInfo, BasePrecompileError, Checkpoint, GasSchedule, NativePrecompile, NativePrecompiles,
+    PrecompileStatus, PrecompileStorageProvider, Result, SstoreValues, StorageFeatures,
 };
-use base_tiger_precompiles::{NativePrecompile, NativePrecompiles};
 use evm2::{
     ErrorCode, Evm, EvmFeatures, PrecompileError, PrecompileHalt, Precompiles,
     evm::StateCheckpoint,
@@ -74,7 +73,7 @@ impl BasePrecompiles {
 
         let output = match result {
             Ok(output) => output,
-            Err(base_tiger_precompile_storage::PrecompileError::Fatal(message)) => {
+            Err(base_tiger_precompiles::PrecompileError::Fatal(message)) => {
                 return Err(PrecompileError::Fatal(message.into()));
             }
         };
@@ -92,7 +91,7 @@ impl BasePrecompiles {
                 gas.spend(output.gas_used).expect("gas used is within the limit");
                 Err(PrecompileError::Revert(output.bytes))
             }
-            PrecompileStatus::Halt(_) => Err(PrecompileError::Halt(PrecompileHalt::OutOfGas)),
+            PrecompileStatus::Halt => Err(PrecompileError::Halt(PrecompileHalt::OutOfGas)),
         }
     }
 }
@@ -163,7 +162,6 @@ pub struct EvmStorageProvider<'e, 'a> {
     env: CallEnv,
     gas_remaining: u64,
     gas_refunded: i64,
-    state_gas_used: u64,
     /// Open checkpoints, innermost last.
     checkpoints: Vec<StateCheckpoint>,
 }
@@ -179,7 +177,6 @@ impl<'e, 'a> EvmStorageProvider<'e, 'a> {
             env,
             gas_remaining: env.gas_limit,
             gas_refunded: 0,
-            state_gas_used: 0,
             checkpoints: Vec::new(),
         }
     }
@@ -227,19 +224,11 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_, '_> {
         self.evm.block().timestamp
     }
 
-    fn beneficiary(&self) -> Address {
-        self.evm.block().beneficiary
-    }
-
-    fn block_number(&self) -> u64 {
-        self.evm.block().number.to::<u64>()
-    }
-
     fn origin(&self) -> Address {
         self.evm.ext().tx_origin
     }
 
-    fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+    fn set_code(&mut self, address: Address, code: Bytes) -> Result<()> {
         if self.env.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
         }
@@ -257,7 +246,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_, '_> {
             self.deduct_gas(GasSchedule::CREATE)?;
             self.deduct_gas(GasSchedule::keccak256(code_len))?;
         }
-        let code = evm2::bytecode::Bytecode::new_legacy(code.original_bytes().clone());
+        let code = evm2::bytecode::Bytecode::new_legacy(code);
         self.evm.state_mut().account(&address, false).map_err(Self::fatal)?.set_code_slow(code);
         Ok(())
     }
@@ -302,11 +291,6 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_, '_> {
         })
     }
 
-    fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
-        self.deduct_gas(GasSchedule::WARM_STORAGE_READ)?;
-        Ok(self.evm.state_mut().tload(&address, &key))
-    }
-
     fn tload_unmetered(&mut self, address: Address, key: U256) -> Result<U256> {
         Ok(self.evm.state_mut().tload(&address, &key))
     }
@@ -330,7 +314,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_, '_> {
             };
             this.deduct_gas(GasSchedule::SSTORE_STATIC)?;
             this.deduct_gas(GasSchedule::sstore_dynamic(values, is_cold))?;
-            this.refund_gas(GasSchedule::sstore_refund(values));
+            this.gas_refunded += GasSchedule::sstore_refund(values);
             Ok(())
         })
     }
@@ -362,35 +346,12 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_, '_> {
         Ok(())
     }
 
-    fn deduct_state_gas(&mut self, gas: u64) -> Result<()> {
-        // No reservoir in a precompile call: state gas is drawn from regular gas.
-        self.deduct_gas(gas)?;
-        self.state_gas_used = self.state_gas_used.saturating_add(gas);
-        Ok(())
-    }
-
-    fn refund_gas(&mut self, gas: i64) {
-        self.gas_refunded += gas;
-    }
-
-    fn gas_limit(&self) -> u64 {
-        self.env.gas_limit
-    }
-
     fn gas_used(&self) -> u64 {
         self.env.gas_limit - self.gas_remaining
     }
 
-    fn state_gas_used(&self) -> u64 {
-        self.state_gas_used
-    }
-
     fn gas_refunded(&self) -> i64 {
         self.gas_refunded
-    }
-
-    fn reservoir(&self) -> u64 {
-        0
     }
 
     fn storage_features(&self) -> StorageFeatures {
@@ -447,11 +408,10 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_, '_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Bytes, address};
+    use alloy_primitives::address;
     use alloy_sol_types::SolCall;
     use base_common_genesis::BaseUpgrade;
-    use base_tiger_precompile_storage::StorageCtx;
-    use base_tiger_precompiles::{ITransactionContext, TxContextStorage};
+    use base_tiger_precompiles::{ITransactionContext, StorageCtx, TxContextStorage};
     use evm2::{env::BlockEnv, evm::InMemoryDB};
 
     use super::*;
@@ -513,7 +473,7 @@ mod tests {
             Err(BasePrecompileError::StaticCallViolation)
         );
         assert_eq!(
-            provider.set_code(ACCOUNT, Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00]))),
+            provider.set_code(ACCOUNT, Bytes::from_static(&[0x60, 0x00])),
             Err(BasePrecompileError::StaticCallViolation)
         );
         assert_eq!(provider.gas_used(), 0);
@@ -564,13 +524,11 @@ mod tests {
             EvmStorageProvider::new(&mut evm, env(1_000_000, false, StorageFeatures::Legacy));
         assert_eq!(provider.tload_unmetered(ACCOUNT, U256::ZERO).unwrap(), U256::ZERO);
         assert_eq!(provider.gas_used(), 0);
-        assert_eq!(provider.tload(ACCOUNT, U256::ZERO).unwrap(), U256::ZERO);
-        assert_eq!(provider.gas_used(), GasSchedule::WARM_STORAGE_READ);
     }
 
     #[test]
     fn set_code_charges_new_code_on_prefunded_accounts() {
-        let code = Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00]));
+        let code = Bytes::from_static(&[0x60, 0x00]);
         let mut gas_used = Vec::new();
         for balance in [U256::ZERO, U256::from(1)] {
             let mut evm = evm(BaseUpgrade::Cobalt);
@@ -581,7 +539,7 @@ mod tests {
             gas_used.push(provider.gas_used());
             let mut code_hash = B256::ZERO;
             provider.with_account_info(ACCOUNT, &mut |info| code_hash = info.code_hash).unwrap();
-            assert_eq!(code_hash, code.hash_slow());
+            assert_eq!(code_hash, alloy_primitives::keccak256(&code));
         }
         // 2 bytes * 200 + CREATE 32_000 + keccak of one word 36.
         assert_eq!(gas_used, [32_436, 32_436]);

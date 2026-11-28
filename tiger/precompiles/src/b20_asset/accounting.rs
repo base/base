@@ -3,9 +3,8 @@
 use alloc::string::String;
 
 use alloy_primitives::U256;
-use base_tiger_precompile_storage::Result;
 
-use crate::TokenAccounting;
+use crate::{Result, TokenAccounting};
 
 /// Extends [`TokenAccounting`] with asset-token-specific storage slots.
 ///

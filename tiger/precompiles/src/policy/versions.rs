@@ -4,9 +4,8 @@
 
 use alloy_sol_types::{SolCall, SolInterface};
 use base_common_genesis::{BaseFeature, BaseUpgrade};
-use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{Calldata, IPolicyRegistry, IPolicyRegistryV1};
+use crate::{BasePrecompileError, Calldata, IPolicyRegistry, IPolicyRegistryV1, Result};
 
 /// An activated version of the `PolicyRegistry` precompile logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

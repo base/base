@@ -9,11 +9,11 @@ use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, FixedBytes, U256, b256};
 use alloy_sol_types::SolEvent;
-use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
     AssetAccounting, B20AssetStorage, B20Logic, B20Token, B20TokenRole, B20Version,
-    IB20, IB20Asset, PolicyAccounting, };
+    BasePrecompileError, IB20, IB20Asset, PolicyAccounting, Result,
+};
 
 impl B20Logic {
     /// Role identifier for asset operators: `keccak256("OPERATOR_ROLE")`. Required for
@@ -349,7 +349,8 @@ mod tests {
 
         use alloy_primitives::{Address, B256, U256, keccak256};
         use alloy_sol_types::SolEvent;
-        use base_tiger_precompile_storage::{BasePrecompileError, Result};
+
+        use crate::{BasePrecompileError, Result};
         use k256::ecdsa::SigningKey;
 
         use crate::{
@@ -945,7 +946,8 @@ mod tests {
 
         use alloy_primitives::{Address, B256, FixedBytes, LogData, U256, keccak256};
         use alloy_sol_types::SolEvent;
-        use base_tiger_precompile_storage::{BasePrecompileError, Result};
+
+        use crate::{BasePrecompileError, Result};
         use k256::ecdsa::SigningKey;
 
         use crate::{
@@ -2247,7 +2249,8 @@ mod tests {
 
         use alloy_primitives::{Address, B256, FixedBytes, LogData, U256, keccak256};
         use alloy_sol_types::SolEvent;
-        use base_tiger_precompile_storage::BasePrecompileError;
+
+        use crate::BasePrecompileError;
         use k256::ecdsa::SigningKey;
 
         use crate::{

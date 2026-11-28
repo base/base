@@ -9,10 +9,10 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    IPolicyRegistry, IPolicyRegistry::PolicyType, PackedPolicy, PolicyAccounting, PolicyVersion,
+    BasePrecompileError, IPolicyRegistry, IPolicyRegistry::PolicyType, PackedPolicy,
+    PolicyAccounting, PolicyVersion, Result,
 };
 
 /// The `PolicyRegistry` logic of one version.
@@ -647,10 +647,10 @@ mod tests {
 
         use alloy_primitives::{Address, U256, address};
         use alloy_sol_types::SolEvent;
-        use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
         use crate::{
-            FakePolicyAccounting, IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyRegistry, PolicyVersion,
+            BasePrecompileError, FakePolicyAccounting, IPolicyRegistry, IPolicyRegistry::PolicyType,
+            PolicyRegistry, PolicyVersion, Result,
         };
 
         const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
@@ -1254,10 +1254,10 @@ mod tests {
 
         use alloy_primitives::{Address, U256, address};
         use alloy_sol_types::SolEvent;
-        use base_tiger_precompile_storage::BasePrecompileError;
 
         use crate::{
-            FakePolicyAccounting, IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyRegistry, PolicyVersion,
+            BasePrecompileError, FakePolicyAccounting, IPolicyRegistry, IPolicyRegistry::PolicyType,
+            PolicyRegistry, PolicyVersion,
         };
 
         const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
@@ -2183,10 +2183,10 @@ mod tests {
 
         use alloy_primitives::{Address, U256, address};
         use alloy_sol_types::SolEvent;
-        use base_tiger_precompile_storage::BasePrecompileError;
 
         use crate::{
-            FakePolicyAccounting, IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyRegistry, PolicyVersion,
+            BasePrecompileError, FakePolicyAccounting, IPolicyRegistry, IPolicyRegistry::PolicyType,
+            PolicyRegistry, PolicyVersion,
         };
 
         const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");

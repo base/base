@@ -15,12 +15,11 @@ use alloc::{
 
 use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
 use alloy_sol_types::{SolEvent, SolValue};
-use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20_MAX_SUPPLY_CAP, B20CreditRecipientStrategy, B20PausableFeature, B20PolicyType,
-    B20TokenRole, B20Version, Eip712Domain, IB20, NonZeroAddress, PermitArgs, PolicyAccounting,
-    PolicyRegistry, PolicyVersion, TokenAccounting, TransferPolicyIds,
+    B20_MAX_SUPPLY_CAP, B20CreditRecipientStrategy, B20PausableFeature, B20PolicyType, B20TokenRole,
+    B20Version, BasePrecompileError, Eip712Domain, IB20, NonZeroAddress, PermitArgs,
+    PolicyAccounting, PolicyRegistry, PolicyVersion, Result, TokenAccounting, TransferPolicyIds,
 };
 
 /// A B-20 token: its storage, the policy registry's storage, and the registry's logic.
@@ -891,7 +890,8 @@ mod tests {
 
         use alloy_primitives::{Address, B256, U256, keccak256};
         use alloy_sol_types::SolEvent;
-        use base_tiger_precompile_storage::BasePrecompileError;
+
+        use crate::BasePrecompileError;
         use k256::ecdsa::SigningKey;
 
         use crate::{
@@ -1427,7 +1427,8 @@ mod tests {
 
         use alloy_primitives::{Address, B256, U256, keccak256};
         use alloy_sol_types::SolEvent;
-        use base_tiger_precompile_storage::{BasePrecompileError, Result};
+
+        use crate::{BasePrecompileError, Result};
         use k256::ecdsa::SigningKey;
 
         use crate::{
@@ -2237,7 +2238,8 @@ mod tests {
 
         use alloy_primitives::{Address, B256, U256, keccak256};
         use alloy_sol_types::SolEvent;
-        use base_tiger_precompile_storage::BasePrecompileError;
+
+        use crate::BasePrecompileError;
         use k256::ecdsa::SigningKey;
 
         use crate::{

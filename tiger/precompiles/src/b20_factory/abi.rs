@@ -109,6 +109,7 @@ mod tests {
     use alloy_sol_types::{SolCall, SolEnum, SolInterface};
 
     use super::IB20Factory;
+
     use crate::B20Variant;
 
     /// The interface name reaches consensus data via `AbiDecodeFailed` on short calldata, so it is

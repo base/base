@@ -6,9 +6,11 @@ use alloc::{string::String, vec::Vec};
 use alloy_primitives::{B256, Bytes};
 use alloy_sol_types::{SolCall, SolType, SolValue, abi};
 use base_common_genesis::BaseUpgrade;
-use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
-use crate::{B20FactoryStorage, B20Variant, Calldata, FactoryVersions, IB20Factory};
+use crate::{
+    B20FactoryStorage, B20Variant, BasePrecompileError, Calldata, FactoryVersions, IB20Factory,
+    PrecompileResult, Result, StorageCtx,
+};
 
 impl B20FactoryStorage<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler for `upgrade`.
@@ -142,15 +144,13 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_tiger_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx,
-    };
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20AssetExtensionStorage, B20AssetStorage, B20Token, B20FactoryStorage,
-        B20StablecoinStorage, B20Variant, Calldata, IB20, IB20Factory, PolicyRegistryStorage,
-        PolicyVersion, StablecoinAccounting, TokenAccounting,
+        B20AssetExtensionStorage, B20AssetStorage, B20FactoryStorage, B20StablecoinStorage,
+        B20Token, B20Variant, BasePrecompileError, Calldata, HashMapStorageProvider, IB20,
+        IB20Factory, PolicyRegistryStorage, PolicyVersion, Result, StablecoinAccounting, StorageCtx,
+        TokenAccounting,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -286,7 +286,7 @@ mod tests {
     fn invalid_params_encoding_returns_selector_only_at_cobalt() {
         let mut storage = HashMapStorageProvider::new_with_storage_features(
             1,
-            base_tiger_precompile_storage::StorageFeatures::Cobalt,
+            crate::StorageFeatures::Cobalt,
         );
         activate_precompiles(&mut storage);
         let call = IB20Factory::createB20Call {
@@ -1099,12 +1099,12 @@ mod tests {
         // Cobalt: identical fixed diagnostic for tiny and huge payloads — the O(N*M) re-encode never ran.
         let cobalt_small = error_string(reject_error(
             &dirty_aliased(8),
-            base_tiger_precompile_storage::StorageFeatures::Cobalt,
+            crate::StorageFeatures::Cobalt,
             BaseUpgrade::Cobalt,
         ));
         let cobalt_large = error_string(reject_error(
             &dirty_aliased(1_024),
-            base_tiger_precompile_storage::StorageFeatures::Cobalt,
+            crate::StorageFeatures::Cobalt,
             BaseUpgrade::Cobalt,
         ));
         assert_eq!(cobalt_small, "createB20: malformed payload");
@@ -1118,7 +1118,7 @@ mod tests {
         let logical = n * tail.len();
         let beryl_large = error_string(reject_error(
             &dirty_aliased(n),
-            base_tiger_precompile_storage::StorageFeatures::Legacy,
+            crate::StorageFeatures::Legacy,
             BaseUpgrade::Beryl,
         ));
         assert!(
@@ -1146,7 +1146,7 @@ mod tests {
 
         let mut storage = HashMapStorageProvider::new_with_storage_features(
             1,
-            base_tiger_precompile_storage::StorageFeatures::Cobalt,
+            crate::StorageFeatures::Cobalt,
         );
         activate_precompiles(&mut storage);
         storage.set_caller(creator);
@@ -1218,7 +1218,7 @@ mod tests {
         });
         assert_eq!(route_err, factory_err);
 
-        let revert = route_err.into_precompile_result(0, 0).unwrap();
+        let revert = route_err.into_precompile_result(0, crate::StorageFeatures::Legacy).unwrap();
         assert!(revert.is_revert());
         let revert_len = revert.bytes.len();
 

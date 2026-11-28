@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, Bytes, LogData, U256, address, hex, keccak256};
 use alloy_sol_types::SolValue;
 use base_common_genesis::BaseUpgrade;
-use base_tiger_precompile_storage::HashMapStorageProvider;
+use base_tiger_precompiles::HashMapStorageProvider;
 use base_tiger_precompiles::{
     FakePolicyAccounting, IB20, PermitArgs, TokenAccounting, UpgradeGatedStorageFeatures,
 };
@@ -121,7 +121,7 @@ macro_rules! token_golden_harness {
     ) => {
         /// Builds the token under test over `ctx`, backed by `policy`.
         fn token<'a>(
-            ctx: ::base_tiger_precompile_storage::StorageCtx<'a>,
+            ctx: ::base_tiger_precompiles::StorageCtx<'a>,
             policy: ::base_tiger_precompiles::FakePolicyAccounting,
         ) -> $token<$storage<'a>, ::base_tiger_precompiles::FakePolicyAccounting> {
             $token::with_storage_and_policy(
@@ -133,34 +133,34 @@ macro_rules! token_golden_harness {
 
         /// Mutates raw token storage through the accounting port (test setup only).
         fn seed(
-            storage: &mut ::base_tiger_precompile_storage::HashMapStorageProvider,
+            storage: &mut ::base_tiger_precompiles::HashMapStorageProvider,
             f: impl FnOnce(&mut $storage<'_>),
         ) {
-            ::base_tiger_precompile_storage::StorageCtx::enter(storage, |ctx| {
+            ::base_tiger_precompiles::StorageCtx::enter(storage, |ctx| {
                 f(&mut $storage::from_address($crate::common::TOKEN, ctx));
             });
         }
 
         /// Reads token state through the accounting port.
         fn read<R>(
-            storage: &mut ::base_tiger_precompile_storage::HashMapStorageProvider,
+            storage: &mut ::base_tiger_precompiles::HashMapStorageProvider,
             f: impl FnOnce(&$storage<'_>) -> R,
         ) -> R {
-            ::base_tiger_precompile_storage::StorageCtx::enter(storage, |ctx| {
+            ::base_tiger_precompiles::StorageCtx::enter(storage, |ctx| {
                 f(&$storage::from_address($crate::common::TOKEN, ctx))
             })
         }
 
         /// Drives one op through the resolver-gated unprivileged path.
         fn op(
-            storage: &mut ::base_tiger_precompile_storage::HashMapStorageProvider,
+            storage: &mut ::base_tiger_precompiles::HashMapStorageProvider,
             caller: ::alloy_primitives::Address,
             policy: ::base_tiger_precompiles::FakePolicyAccounting,
             calldata: Vec<u8>,
-        ) -> Result<::alloy_primitives::Bytes, ::base_tiger_precompile_storage::BasePrecompileError>
+        ) -> Result<::alloy_primitives::Bytes, ::base_tiger_precompiles::BasePrecompileError>
         {
             storage.set_caller(caller);
-            ::base_tiger_precompile_storage::StorageCtx::enter(storage, |ctx| {
+            ::base_tiger_precompiles::StorageCtx::enter(storage, |ctx| {
                 let version = $resolve($upgrade).expect("the suite's upgrade activates a version");
                 token(ctx, policy).$route(ctx, &calldata, version, false)
             })
@@ -168,14 +168,14 @@ macro_rules! token_golden_harness {
 
         /// Drives one op with factory-init privilege (guards skipped).
         fn op_privileged(
-            storage: &mut ::base_tiger_precompile_storage::HashMapStorageProvider,
+            storage: &mut ::base_tiger_precompiles::HashMapStorageProvider,
             caller: ::alloy_primitives::Address,
             policy: ::base_tiger_precompiles::FakePolicyAccounting,
             calldata: Vec<u8>,
-        ) -> Result<::alloy_primitives::Bytes, ::base_tiger_precompile_storage::BasePrecompileError>
+        ) -> Result<::alloy_primitives::Bytes, ::base_tiger_precompiles::BasePrecompileError>
         {
             storage.set_caller(caller);
-            ::base_tiger_precompile_storage::StorageCtx::enter(storage, |ctx| {
+            ::base_tiger_precompiles::StorageCtx::enter(storage, |ctx| {
                 token(ctx, policy).$route(ctx, &calldata, $version, true)
             })
         }
@@ -224,7 +224,7 @@ macro_rules! unprivileged_revert_gas_harness {
                 .expect_err("reject-path gas golden must revert");
             assert_eq!(
                 err,
-                ::base_tiger_precompile_storage::BasePrecompileError::revert(
+                ::base_tiger_precompiles::BasePrecompileError::revert(
                     ::base_tiger_precompiles::IB20::InvalidReceiver {
                         receiver: ::alloy_primitives::Address::ZERO
                     }

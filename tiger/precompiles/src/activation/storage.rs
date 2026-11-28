@@ -1,9 +1,8 @@
 //! Storage layout and constants for the activation registry.
 
 use alloy_primitives::{Address, B256, IntoLogData, U256, address, b256, uint};
-use base_tiger_precompile_storage::{BasePrecompileError, Result, StorageCtx, StorageLayout};
 
-use crate::IActivationRegistry;
+use crate::{BasePrecompileError, IActivationRegistry, Result, StorageCtx, StorageLayout};
 
 /// Runtime activation registry for Base-native features, rooted at the
 /// `base.activation_registry` ERC-7201 namespace.
@@ -262,12 +261,10 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address, keccak256, uint};
     use alloy_sol_types::{SolCall, SolEvent};
     use base_common_genesis::BaseUpgrade;
-    use base_tiger_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, StorageLayout,
-    };
 
     use crate::{
-        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IActivationRegistry,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, BasePrecompileError,
+        HashMapStorageProvider, IActivationRegistry, Result, StorageCtx, StorageLayout,
     };
 
     const FEATURE: B256 = ActivationFeature::B20Asset.id();

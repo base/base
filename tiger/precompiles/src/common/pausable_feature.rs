@@ -1,9 +1,8 @@
 //! Pause-bit helpers for B-20 tokens.
 
 use alloy_primitives::U256;
-use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
-use crate::IB20;
+use crate::{BasePrecompileError, IB20, Result};
 
 /// Helpers for mapping B-20 pausable features into storage bits.
 #[derive(Debug, Clone, Copy)]

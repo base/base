@@ -1,12 +1,11 @@
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
 use base_common_genesis::BaseUpgrade;
-use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, Calldata,
-    IPolicyRegistry::{self, IPolicyRegistryCalls as C},
-    PolicyRegistry, PolicyRegistryStorage, PolicyVersions,
+    ActivationFeature, ActivationRegistryStorage, BasePrecompileError, Calldata,
+    IPolicyRegistry::{self, IPolicyRegistryCalls as C}, PolicyRegistry, PolicyRegistryStorage,
+    PolicyVersions, PrecompileResult, StorageCtx,
 };
 
 impl PolicyRegistryStorage<'_> {
@@ -59,7 +58,7 @@ impl PolicyRegistryStorage<'_> {
         &mut self,
         call: C,
         logic: PolicyRegistry,
-    ) -> base_tiger_precompile_storage::Result<Bytes> {
+    ) -> crate::Result<Bytes> {
         match call {
             C::createPolicy(call) => {
                 let id = logic.create_policy(self, call.admin, call.policyType)?;
@@ -159,11 +158,11 @@ mod tests {
     use alloy_primitives::{Address, Bytes, address};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_tiger_precompile_storage::{HashMapStorageProvider, PrecompileOutput, StorageCtx};
 
     use crate::{
-        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
-        PolicyRegistry, PolicyRegistryStorage, PolicyVersion,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, HashMapStorageProvider,
+        IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage, PolicyVersion, PrecompileOutput,
+        StorageCtx,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -441,7 +440,7 @@ mod tests {
     fn malformed_known_selector_returns_selector_only_at_cobalt() {
         let mut storage = HashMapStorageProvider::new_with_storage_features(
             1,
-            base_tiger_precompile_storage::StorageFeatures::Cobalt,
+            crate::StorageFeatures::Cobalt,
         );
         let selector = IPolicyRegistry::policyExistsCall::SELECTOR;
 

@@ -2,9 +2,8 @@
 
 use alloy_primitives::{Address, B256, U256, uint};
 use base_common_base_tx::NonceManagerSlots;
-use base_tiger_precompile_storage::{BasePrecompileError, Result, StorageCtx, StorageLayout};
 
-use crate::INonceManager;
+use crate::{BasePrecompileError, INonceManager, Result, StorageCtx, StorageLayout};
 
 /// Persistent 2D nonce manager for Base transactions.
 ///
@@ -314,11 +313,11 @@ impl NonceManagerStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
     use base_common_base_tx::TxBaseGasSchedule;
-    use base_tiger_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, StorageCtx, StorageLayout,
-    };
 
-    use crate::{INonceManager, nonce::storage::NonceManagerStorage};
+    use crate::{
+        BasePrecompileError, HashMapStorageProvider, INonceManager, StorageCtx, StorageLayout,
+        nonce::storage::NonceManagerStorage,
+    };
 
     const ACCOUNT_A: Address = address!("0x1111111111111111111111111111111111111111");
     const ACCOUNT_B: Address = address!("0x2222222222222222222222222222222222222222");

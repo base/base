@@ -9,11 +9,7 @@ use alloc::{format, string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 
-use crate::{
-    error::{BasePrecompileError, Result},
-    neutral::Bytecode,
-    storage_ctx::StorageCtx,
-};
+use super::{BasePrecompileError, Result, StorageCtx};
 
 /// Slot derivation and word packing for Solidity storage layouts.
 #[derive(Debug)]
@@ -22,12 +18,6 @@ pub struct StorageLayout;
 impl StorageLayout {
     /// Bytes of a `uint64` field or dynamic-array element.
     pub const U64_BYTES: usize = 8;
-
-    /// Returns the ERC-7201 root of namespace `id`: `keccak256(keccak256(id) - 1) & ~0xff`.
-    pub fn erc7201_root(id: &str) -> U256 {
-        let inner = U256::from_be_bytes(keccak256(id.as_bytes()).0) - U256::ONE;
-        U256::from_be_bytes(keccak256(inner.to_be_bytes::<32>()).0) & !U256::from(0xff)
-    }
 
     /// Returns the slot of field `offset` in a layout rooted at `root`.
     ///
@@ -140,7 +130,7 @@ macro_rules! uint_storage_value {
         }
     )*};
 }
-uint_storage_value!(u8, u32, u64, u128);
+uint_storage_value!(u8, u32, u64);
 
 impl StorageValue for U256 {
     fn to_word(self) -> U256 {
@@ -342,7 +332,7 @@ impl StorageCtx<'_> {
 
     /// Deploys the one-byte `0xef` marker code that marks `address` as initialized.
     pub fn set_marker_code(&self, address: Address) -> Result<()> {
-        self.set_code(address, Bytecode::new_legacy(Bytes::from_static(&[0xef])))
+        self.set_code(address, Bytes::from_static(&[0xef]))
     }
 }
 

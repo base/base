@@ -202,8 +202,7 @@ for malloc) made exec p90 slower in every round.
 | `evm/` | `base-tiger-evm` | Base block execution on evm2: fork schedule, transactions, fees, precompiles, system calls, upgrade transitions. |
 | `store/` | `base-tiger-store` | Storage in base-reth's datadir format: MDBX (vendored libmdbx), static files, RocksDB indices; `TIGER_FAULT` crash injection. |
 | `trie/` | `base-tiger-trie` | Merkle Patricia trie, state roots, proofs, and the state database over the store. |
-| `precompiles/` | `base-tiger-precompiles` | Base native precompiles (activation and policy registries, B-20 tokens and factory, transaction context, nonce manager), ported from `base-common-precompiles`. |
-| `precompile-storage/` | `base-tiger-precompile-storage` | The `PrecompileStorageProvider` boundary, the fixed gas schedule, and the slot and string/array helpers the native precompiles' hand-written storage layouts use. |
+| `precompiles/` | `base-tiger-precompiles` | Base native precompiles (activation and policy registries, B-20 tokens and factory, transaction context, nonce manager), ported from `base-common-precompiles`, with their storage module: the `PrecompileStorageProvider` boundary, the fixed gas schedule, and the slot and string/array helpers the hand-written storage layouts use. |
 | `net/` | `base-tiger-net` | Peer-to-peer networking and EL sync: discv5, RLPx, eth/69 (client and server), peers, header and body downloader. |
 | `node/` | `base-tiger` | The `tiger` binary: node, Engine API, JSON-RPC, and the differential fuzz adapter. |
 
@@ -257,4 +256,4 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `store/src/datadir.rs` | commit order and heal after reth's static file and RocksDB consistency checks | same | Hand-written. |
 | `store/build.rs` | reth `crates/storage/libmdbx-rs/mdbx-sys/build.rs` | same | Without bindgen. |
 | `precompiles/` | base/base `crates/common/precompiles/` (MIT) | base/base `3001b65c30e2ebb4e28bb19242ceade6bc604e4b` | Without revm adapters, metrics, observers and Ethereum precompile caps; dispatch through `NativePrecompiles::run`. |
-| `precompile-storage/` | base/base `crates/common/precompile-storage/` (MIT) | same | Own `Bytecode`, `Checkpoint` and fixed `GasSchedule` instead of revm types; the evm2 provider lives in `evm/src/native_precompiles.rs`. The `#[contract]`/`Storable` macro framework (base/base `crates/common/precompile-macros/`) and its typed handlers are replaced by hand-written layouts with the same slots and access order. |
+| `precompiles/src/storage/` | base/base `crates/common/precompile-storage/` (MIT) | same | Own `Checkpoint` and fixed `GasSchedule` instead of revm types; the evm2 provider lives in `evm/src/native_precompiles.rs`. The `#[contract]`/`Storable` macro framework (base/base `crates/common/precompile-macros/`) and its typed handlers are replaced by hand-written layouts with the same slots and access order. |

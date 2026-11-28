@@ -9,10 +9,7 @@ sol! {
     error DelegateCallNotAllowed();
 }
 
-use crate::{
-    neutral::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult},
-    provider::StorageFeatures,
-};
+use super::{PrecompileError, PrecompileOutput, PrecompileResult, StorageFeatures};
 
 /// Top-level error type for all Base native precompile operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,11 +98,6 @@ impl BasePrecompileError {
         Self::Panic(PanicKind::EnumConversionError)
     }
 
-    /// Creates an array out-of-bounds panic error.
-    pub const fn array_oob() -> Self {
-        Self::Panic(PanicKind::ArrayOutOfBounds)
-    }
-
     /// Creates an assertion-failure panic error (Solidity `Panic(0x01)`).
     ///
     /// Use for internal invariants that must always hold. It is classified as a
@@ -115,25 +107,14 @@ impl BasePrecompileError {
         Self::Panic(PanicKind::Assert)
     }
 
-    /// ABI-encodes this error and wraps it as a [`PrecompileResult`] (revert or fatal error).
-    ///
-    /// Internal dispatch diagnostics use their legacy encoding before Cobalt activation.
-    pub fn into_precompile_result(self, gas: u64, state_gas: u64) -> PrecompileResult {
-        self.into_precompile_result_with_features(gas, state_gas, StorageFeatures::Legacy)
-    }
-
-    /// Converts this error using the supplied fork-dependent features.
-    pub fn into_precompile_result_with_features(
-        self,
-        gas: u64,
-        state_gas: u64,
-        features: StorageFeatures,
-    ) -> PrecompileResult {
+    /// Converts this error into a [`PrecompileResult`] (revert, out-of-gas halt or fatal error)
+    /// using `gas` used and the fork-dependent `features`; the output carries no refund.
+    pub fn into_precompile_result(self, gas: u64, features: StorageFeatures) -> PrecompileResult {
         let bytes: Bytes = match self {
             Self::Revert(bytes) => bytes,
             Self::Panic(kind) => Panic { code: U256::from(kind as u32) }.abi_encode().into(),
             Self::OutOfGas => {
-                return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0));
+                return Ok(PrecompileOutput::halt());
             }
             Self::SlotOverflow => {
                 return Err(PrecompileError::Fatal("slot overflow".into()));
@@ -151,53 +132,7 @@ impl BasePrecompileError {
                 bytes.into()
             }
         };
-        Ok(PrecompileOutput::revert(gas, bytes, state_gas))
-    }
-}
-
-/// Extension trait to convert `Result<T, BasePrecompileError>` into a [`PrecompileResult`].
-///
-/// Prefer [`StorageCtx::result_output`] over calling this trait directly — it reads all gas
-/// accounting fields from the context automatically. Use this trait only when the context is not
-/// available (e.g. in unit tests).
-pub trait IntoPrecompileResult<T> {
-    /// Converts `self` into a [`PrecompileResult`] using `encode_ok` for the success path.
-    ///
-    /// On success, the accumulated EIP-3529 gas refund (`gas_refunded`) is copied into
-    /// [`PrecompileOutput::gas_refunded`] so revm can include it in transaction-level refund
-    /// accounting under the EIP-3529 cap (`gas_used / 5`).
-    ///
-    /// On error, `gas_refunded` is not propagated: refunds are only meaningful on successful
-    /// execution and the error arm delegates to
-    /// [`BasePrecompileError::into_precompile_result_with_features`].
-    /// `features` selects the fork-dependent error encoding.
-    fn into_precompile_result(
-        self,
-        gas: u64,
-        state_gas: u64,
-        gas_refunded: i64,
-        features: StorageFeatures,
-        encode_ok: impl FnOnce(T) -> Bytes,
-    ) -> PrecompileResult;
-}
-
-impl<T> IntoPrecompileResult<T> for Result<T> {
-    fn into_precompile_result(
-        self,
-        gas: u64,
-        state_gas: u64,
-        gas_refunded: i64,
-        features: StorageFeatures,
-        encode_ok: impl FnOnce(T) -> Bytes,
-    ) -> PrecompileResult {
-        match self {
-            Ok(res) => {
-                let mut out = PrecompileOutput::new(gas, encode_ok(res), state_gas);
-                out.gas_refunded = gas_refunded;
-                Ok(out)
-            }
-            Err(err) => err.into_precompile_result_with_features(gas, state_gas, features),
-        }
+        Ok(PrecompileOutput::revert(gas, bytes))
     }
 }
 
@@ -210,8 +145,8 @@ mod tests {
     #[test]
     fn delegate_call_not_allowed_encodes_to_typed_revert() {
         let expected: Bytes = DelegateCallNotAllowed {}.abi_encode().into();
-        let result =
-            BasePrecompileError::revert(DelegateCallNotAllowed {}).into_precompile_result(0, 0);
+        let result = BasePrecompileError::revert(DelegateCallNotAllowed {})
+            .into_precompile_result(0, StorageFeatures::Legacy);
         let output = result.unwrap();
         assert!(output.is_revert());
         assert_eq!(output.bytes, expected);
@@ -222,7 +157,7 @@ mod tests {
         let selector = [0xde, 0xad, 0xbe, 0xef];
         let output =
             BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() }
-                .into_precompile_result(0, 0)
+                .into_precompile_result(0, StorageFeatures::Legacy)
                 .unwrap();
 
         assert!(output.is_revert());
@@ -234,41 +169,10 @@ mod tests {
         let selector = [0xde, 0xad, 0xbe, 0xef];
         let output =
             BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() }
-                .into_precompile_result_with_features(0, 0, StorageFeatures::Cobalt)
+                .into_precompile_result(0, StorageFeatures::Cobalt)
                 .unwrap();
 
         assert!(output.is_revert());
         assert_eq!(output.bytes, Bytes::from(selector.to_vec()));
-    }
-
-    #[test]
-    fn into_precompile_result_propagates_gas_refunded_on_success() {
-        let ok: Result<Bytes> = Ok(Bytes::from("out"));
-        let out = ok.into_precompile_result(500, 0, 200, StorageFeatures::Legacy, |b| b).unwrap();
-
-        assert!(out.is_success());
-        assert_eq!(out.gas_used, 500);
-        assert_eq!(out.gas_refunded, 200);
-    }
-
-    #[test]
-    fn into_precompile_result_zero_refund_on_success() {
-        let ok: Result<Bytes> = Ok(Bytes::new());
-        let out = ok.into_precompile_result(0, 0, 0, StorageFeatures::Legacy, |b| b).unwrap();
-
-        assert!(out.is_success());
-        assert_eq!(out.gas_refunded, 0);
-    }
-
-    #[test]
-    fn into_precompile_result_error_path_uses_features_without_refund() {
-        let selector = [0xde, 0xad, 0xbe, 0xef];
-        let err: Result<Bytes> =
-            Err(BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() });
-        let out = err.into_precompile_result(100, 0, 999, StorageFeatures::Cobalt, |b| b).unwrap();
-
-        assert!(out.is_revert());
-        assert_eq!(out.bytes, Bytes::from(selector.to_vec()));
-        assert_eq!(out.gas_refunded, 0, "error path must not propagate gas_refunded");
     }
 }

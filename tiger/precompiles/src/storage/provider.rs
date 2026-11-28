@@ -2,13 +2,9 @@
 //!
 //! Defines [`PrecompileStorageProvider`] (the EVM access boundary) and [`StorageFeatures`].
 
-use alloy_primitives::{Address, B256, LogData, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 
-use crate::{
-    error::{BasePrecompileError, Result},
-    gas::GasSchedule,
-    neutral::{AccountInfo, Bytecode, Checkpoint},
-};
+use super::{AccountInfo, Checkpoint, Result};
 
 /// Low-level storage provider for interacting with the EVM.
 ///
@@ -18,15 +14,11 @@ pub trait PrecompileStorageProvider {
     fn chain_id(&self) -> u64;
     /// Returns the current block timestamp.
     fn timestamp(&self) -> U256;
-    /// Returns the current block beneficiary (coinbase).
-    fn beneficiary(&self) -> Address;
-    /// Returns the current block number.
-    fn block_number(&self) -> u64;
     /// Returns the transaction origin (`tx.origin`).
     fn origin(&self) -> Address;
 
-    /// Sets the bytecode at the given address.
-    fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()>;
+    /// Sets the (legacy) bytecode at the given address.
+    fn set_code(&mut self, address: Address, code: Bytes) -> Result<()>;
 
     /// Executes a closure with access to the account info for the given address.
     fn with_account_info(
@@ -37,17 +29,8 @@ pub trait PrecompileStorageProvider {
 
     /// Performs an SLOAD operation (persistent storage read).
     fn sload(&mut self, address: Address, key: U256) -> Result<U256>;
-    /// Performs a TLOAD operation (transient storage read).
-    fn tload(&mut self, address: Address, key: U256) -> Result<U256>;
-    /// Reads transient storage without exposing a TLOAD opcode charge.
-    ///
-    /// Native precompiles whose gas schedule prices the enclosing operation
-    /// independently use this method to access transient backing state. This is a
-    /// **required** method rather than a default delegating to [`Self::tload`]:
-    /// aliasing the two would silently double-charge the moment a provider began
-    /// metering `tload`. Implementations must read the raw transient backing
-    /// store directly and never deduct gas, so metering is composed by the
-    /// metered `tload` wrapper rather than inherited by accident.
+    /// Reads transient storage without a TLOAD charge: the native precompiles that read
+    /// transient storage price the enclosing operation themselves.
     fn tload_unmetered(&mut self, address: Address, key: U256) -> Result<U256>;
     /// Performs an SSTORE operation (persistent storage write).
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()>;
@@ -59,34 +42,13 @@ pub trait PrecompileStorageProvider {
 
     /// Deducts gas from the remaining gas and returns an error if insufficient.
     fn deduct_gas(&mut self, gas: u64) -> Result<()>;
-    /// Deducts state-creating gas (EIP-8037 reservoir model).
-    ///
-    /// Counts only state-creation operations: new account creation and code deposit.
-    /// State gas is tracked separately from regular gas and also deducted from the
-    /// regular gas counter when no reservoir is available.
-    fn deduct_state_gas(&mut self, gas: u64) -> Result<()>;
-    /// Adds a gas refund to the refund counter.
-    fn refund_gas(&mut self, gas: i64);
-    /// Returns the gas limit for this precompile call.
-    fn gas_limit(&self) -> u64;
     /// Returns the gas used so far.
     fn gas_used(&self) -> u64;
-    /// Returns the state-creating gas spent so far (EIP-8037).
-    ///
-    /// Counts only new account creation and code deposit operations.
-    fn state_gas_used(&self) -> u64;
     /// Returns the gas refunded so far.
     fn gas_refunded(&self) -> i64;
-    /// Returns the remaining EIP-8037 state-gas reservoir.
-    ///
-    /// State gas is first deducted from this reservoir before spilling into regular gas.
-    /// Returns zero when no reservoir was provided at construction time.
-    fn reservoir(&self) -> u64;
 
     /// Returns the active persistent-storage features.
-    fn storage_features(&self) -> StorageFeatures {
-        StorageFeatures::Legacy
-    }
+    fn storage_features(&self) -> StorageFeatures;
 
     /// Returns whether the current call context is static.
     fn is_static(&self) -> bool;
@@ -115,17 +77,8 @@ pub trait PrecompileStorageProvider {
     /// Reverts all state changes back to the given checkpoint.
     fn checkpoint_revert(&mut self, checkpoint: Checkpoint);
 
-    /// Computes keccak256 and charges the appropriate gas.
-    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256> {
-        let num_words =
-            u64::try_from(data.len().div_ceil(32)).map_err(|_| BasePrecompileError::OutOfGas)?;
-        let price = GasSchedule::KECCAK256_WORD
-            .checked_mul(num_words)
-            .and_then(|w| w.checked_add(GasSchedule::KECCAK256))
-            .ok_or(BasePrecompileError::OutOfGas)?;
-        self.deduct_gas(price)?;
-        Ok(keccak256(data))
-    }
+    /// Computes keccak256 and charges [`GasSchedule::keccak256`](super::GasSchedule::keccak256).
+    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256>;
 }
 
 /// Resolved native precompile storage behaviors, independent of the chain's schedule.

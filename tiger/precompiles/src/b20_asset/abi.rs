@@ -193,6 +193,7 @@ mod tests {
     use alloy_sol_types::{SolCall, SolInterface};
 
     use super::{ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset};
+
     use crate::IB20;
 
     /// XORs the selectors of an interface's members into its ERC-165 interface id.

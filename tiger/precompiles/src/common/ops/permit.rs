@@ -2,9 +2,8 @@ use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, FixedBytes, U256, keccak256};
 use alloy_sol_types::SolValue;
-use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{IB20, TokenAccounting};
+use crate::{BasePrecompileError, IB20, Result, TokenAccounting};
 
 /// ERC-5267 `eip712Domain()` return tuple: (fields, name, version, chainId, verifyingContract, salt, extensions).
 pub type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
@@ -154,7 +153,8 @@ impl PermitArgs {
 mod tests {
     use alloy_primitives::{Address, B256, U256, keccak256};
     use alloy_sol_types::SolValue;
-    use base_tiger_precompile_storage::BasePrecompileError;
+
+    use crate::BasePrecompileError;
     use k256::ecdsa::SigningKey;
 
     use crate::{IB20, PermitArgs};

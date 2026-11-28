@@ -4,9 +4,11 @@ use alloc::string::String;
 use core::marker::PhantomData;
 
 use alloy_primitives::{Address, B256, LogData, U256, uint};
-use base_tiger_precompile_storage::{BasePrecompileError, Result, StorageCtx, StorageLayout};
 
-use crate::{B20PolicyType, B20TokenRole, IB20, TokenAccounting, TransferPolicyIds};
+use crate::{
+    B20PolicyType, B20TokenRole, BasePrecompileError, IB20, Result, StorageCtx, StorageLayout,
+    TokenAccounting, TransferPolicyIds,
+};
 
 /// Core B-20 storage layout, rooted at the `base.b20` ERC-7201 namespace.
 ///
@@ -273,9 +275,11 @@ impl<K: B20TokenKind> TokenAccounting for B20TokenStorage<'_, K> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256, address};
-    use base_tiger_precompile_storage::{StorageCtx, StorageLayout, setup_storage};
 
-    use crate::{B20AssetStorage, B20CoreStorage, B20PolicyType, TokenAccounting};
+    use crate::{
+        B20AssetStorage, B20CoreStorage, B20PolicyType, StorageCtx, StorageLayout, TokenAccounting,
+        setup_storage,
+    };
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
 

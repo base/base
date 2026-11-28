@@ -8,13 +8,12 @@ use alloc::{
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_genesis::{BaseFeature, BaseUpgrade};
-use base_tiger_precompile_storage::{BasePrecompileError, Bytecode, Result};
 
 use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20FactoryStorage, B20Logic,
     B20StablecoinInit, B20StablecoinStorage, B20Token, B20TokenRole, B20Variant, B20Version,
-    IB20Factory, PolicyAccounting, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
-    TokenAccounting,
+    BasePrecompileError, IB20Factory, PolicyAccounting, PolicyRegistryStorage,
+    PolicyVersion, PolicyVersions, Result, TokenAccounting,
 };
 
 /// An activated version of the B-20 token factory logic.
@@ -76,7 +75,7 @@ impl B20FactoryStorage<'_> {
         }
 
         let checkpoint = self.storage.checkpoint();
-        self.storage.set_code(token_address, Bytecode::new_legacy(Bytes::from_static(&[0xef])))?;
+        self.storage.set_marker_code(token_address)?;
         match params {
             TokenCreateParams::Stablecoin { common, init } => {
                 self.init_stablecoin(token_address, common, init, init_calls, upgrade)?;
@@ -303,14 +302,12 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address, keccak256};
     use alloy_sol_types::{SolCall, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_tiger_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
 
     use crate::{
-        B20Version,
-        B20Logic,
-        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20Token,
-        B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory, PolicyRegistryStorage,
-        PolicyVersion, TokenAccounting,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
+        B20_MAX_SUPPLY_CAP, B20AssetStorage, B20FactoryStorage, B20Logic, B20Token, B20TokenRole,
+        B20Variant, B20Version, HashMapStorageProvider, IB20, IB20Factory, PolicyRegistryStorage,
+        PolicyVersion, Result, StorageCtx, TokenAccounting,
     };
     use super::{FactoryVersion, FactoryVersions};
 

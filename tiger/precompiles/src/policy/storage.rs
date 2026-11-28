@@ -1,9 +1,8 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, LogData, U256, address, uint};
-use base_tiger_precompile_storage::{Result, StorageCtx, StorageLayout};
 
-use crate::PolicyAccounting;
+use crate::{PolicyAccounting, Result, StorageCtx, StorageLayout};
 
 /// A packed policy storage word.
 ///
@@ -189,15 +188,11 @@ impl PolicyAccounting for PolicyRegistryStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bytes, U256, address, keccak256, uint};
-    use base_tiger_precompile_storage::{
-        BasePrecompileError, Bytecode, HashMapStorageProvider, PrecompileStorageProvider,
-        StorageCtx, StorageLayout,
-    };
 
     use crate::{
-        IPolicyRegistry::PolicyType,
-        PolicyAccounting, PolicyRegistry, PolicyVersion,
-        policy::storage::{PackedPolicy, PolicyRegistryStorage},
+        BasePrecompileError, HashMapStorageProvider, IPolicyRegistry::PolicyType,
+        PolicyAccounting, PolicyRegistry, PolicyVersion, PrecompileStorageProvider, StorageCtx,
+        StorageLayout, policy::storage::{PackedPolicy, PolicyRegistryStorage},
     };
 
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
@@ -356,7 +351,7 @@ mod tests {
         PrecompileStorageProvider::set_code(
             &mut s,
             PolicyRegistryStorage::ADDRESS,
-            Bytecode::new_legacy(Bytes::from_static(&[0xef])),
+            Bytes::from_static(&[0xef]),
         )
         .unwrap();
 

@@ -4,11 +4,10 @@
 use alloy_primitives::Bytes;
 use alloy_sol_types::{SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
-use base_tiger_precompile_storage::{PrecompileResult, StorageCtx};
 
 use crate::{
     B20Logic, B20Token, B20Variant, B20Version, Calldata, IB20Stablecoin::IB20StablecoinCalls as SC,
-    PolicyAccounting, StablecoinAccounting,
+    PolicyAccounting, PrecompileResult, StablecoinAccounting, StorageCtx,
 };
 
 impl<S: StablecoinAccounting, A: PolicyAccounting> B20Token<S, A> {
@@ -31,7 +30,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20Token<S, A> {
         calldata: &[u8],
         version: B20Version,
         privileged: bool,
-    ) -> base_tiger_precompile_storage::Result<Bytes> {
+    ) -> crate::Result<Bytes> {
         if let Some(selector) = calldata.first_chunk::<4>().copied()
             && SC::valid_selector(selector)
         {
@@ -54,11 +53,10 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_tiger_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
-        B20Token, FakePolicyAccounting, IB20, InMemoryTokenAccounting, PolicyVersion,
-        B20Version, TestStablecoinToken,
+        B20Token, B20Version, FakePolicyAccounting, HashMapStorageProvider, IB20,
+        InMemoryTokenAccounting, PolicyVersion, StorageCtx, TestStablecoinToken,
     };
 
     const TOKEN: Address = Address::repeat_byte(0x01);

@@ -4,7 +4,8 @@
 use alloc::string::ToString;
 
 use alloy_sol_types::SolInterface;
-use base_tiger_precompile_storage::{BasePrecompileError, Result, StorageCtx};
+
+use crate::{BasePrecompileError, Result, StorageCtx};
 
 /// Calldata helpers for native precompile dispatch.
 #[derive(Debug, Clone, Copy)]
@@ -53,9 +54,11 @@ impl Calldata {
 #[cfg(test)]
 mod tests {
     use alloy_sol_types::SolCall;
-    use base_tiger_precompile_storage::{BasePrecompileError, Result};
+
+    use crate::{BasePrecompileError, Result};
 
     use super::Calldata;
+
     use crate::IPolicyRegistry;
 
     fn decode_policy_call(calldata: &[u8]) -> Result<IPolicyRegistry::IPolicyRegistryCalls> {

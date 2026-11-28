@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 # tiger
 base-tiger-precompiles.workspace = true
-base-tiger-precompile-storage.workspace = true
 
 # base
 base-common-flz.workspace = true

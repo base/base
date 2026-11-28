@@ -3,9 +3,8 @@
 use alloc::string::String;
 
 use alloy_primitives::{U256, uint};
-use base_tiger_precompile_storage::{Result, StorageLayout};
 
-use crate::{AssetAccounting, B20CoreStorage, B20TokenKind, B20TokenStorage};
+use crate::{AssetAccounting, B20CoreStorage, B20TokenKind, B20TokenStorage, Result, StorageLayout};
 
 /// Asset-specific B-20 storage layout, rooted at the `base.b20.asset` ERC-7201 namespace.
 #[derive(Debug)]
@@ -158,9 +157,11 @@ mod tests {
     use alloc::string::String;
 
     use alloy_primitives::{Address, B256, U256, address};
-    use base_tiger_precompile_storage::{StorageCtx, StorageLayout, setup_storage};
+
+    use crate::{StorageCtx, StorageLayout, setup_storage};
 
     use super::{B20AssetExtensionStorage, B20AssetInit, B20AssetStorage};
+
     use crate::{
         AssetAccounting, B20PolicyType, B20TokenKind, B20TokenRole, TokenAccounting,
         TransferPolicyIds,

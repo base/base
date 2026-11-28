@@ -1,5 +1,5 @@
 use base_common_genesis::{BaseFeature, BaseUpgrade};
-use base_tiger_precompile_storage::StorageFeatures;
+use crate::StorageFeatures;
 
 // The two-profile storage API requires these distinct behaviors to activate together. If a
 // future upgrade separates them, extend StorageFeatures before changing either registry entry.

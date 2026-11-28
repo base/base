@@ -1,11 +1,10 @@
 //! Authorization and policy guards for B-20 token operations.
 
 use alloy_primitives::{Address, B256, U256};
-use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20PausableFeature, B20PolicyType, B20Token, B20TokenRole, IB20, PolicyAccounting,
-    TokenAccounting,
+    B20PausableFeature, B20PolicyType, B20Token, B20TokenRole, BasePrecompileError, IB20,
+    PolicyAccounting, Result, TokenAccounting,
 };
 
 impl<S: TokenAccounting, A: PolicyAccounting> B20Token<S, A> {
@@ -85,10 +84,9 @@ impl<S: TokenAccounting, A: PolicyAccounting> B20Token<S, A> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use base_tiger_precompile_storage::BasePrecompileError;
 
     use crate::{
-        B20PolicyType, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
+        B20PolicyType, BasePrecompileError, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
         PolicyRegistryStorage, PolicyVersion, TestStablecoinToken,
     };
 

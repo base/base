@@ -1152,7 +1152,6 @@ dependencies = [
  "base-common-flz",
  "base-common-genesis",
  "base-common-l1-fees",
- "base-tiger-precompile-storage",
  "base-tiger-precompiles",
  "evm2",
  "k256 0.13.4",
@@ -1175,14 +1174,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-tiger-precompile-storage"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
-]
-
-[[package]]
 name = "base-tiger-precompiles"
 version = "0.0.0"
 dependencies = [
@@ -1190,7 +1181,6 @@ dependencies = [
  "alloy-sol-types",
  "base-common-base-tx",
  "base-common-genesis",
- "base-tiger-precompile-storage",
  "k256 0.13.4",
 ]
 

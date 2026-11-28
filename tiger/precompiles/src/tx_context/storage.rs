@@ -1,7 +1,8 @@
 //! Storage layout and constants for the Base transaction context precompile.
 
 use alloy_primitives::{Address, B256, U256, address};
-use base_tiger_precompile_storage::{BasePrecompileError, Result, StorageCtx};
+
+use crate::{BasePrecompileError, Result, StorageCtx};
 
 /// Transient-storage-backed view of the in-flight Base transaction context.
 ///
@@ -141,9 +142,8 @@ impl<'a> TxContextStorage<'a> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, address, b256};
-    use base_tiger_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use crate::tx_context::storage::TxContextStorage;
+    use crate::{HashMapStorageProvider, StorageCtx, tx_context::storage::TxContextStorage};
 
     const SENDER: Address = address!("0x1111111111111111111111111111111111111111");
     const PAYER: Address = address!("0x2222222222222222222222222222222222222222");

@@ -1,21 +1,38 @@
-//! Explicit storage context for Base native precompiles.
+//! Storage and the provider boundary for the native precompiles.
 //!
-//! [`StorageCtx`] is a zero-size token that provides access to the current
-//! scoped [`PrecompileStorageProvider`]. All storage operations within a
-//! precompile call receive a context from [`StorageCtx::enter`].
+//! [`PrecompileStorageProvider`] is the boundary an execution engine implements (storage,
+//! transient storage, logs, account and code access, gas, checkpoints), and [`GasSchedule`] the
+//! fixed gas table base-reth charges for that work. [`StorageCtx`] is the scoped handle a
+//! precompile call works through, created by [`StorageCtx::enter`]. [`StorageLayout`] and the
+//! `StorageCtx` read/write helpers in `layout.rs` implement the precompiles' Solidity storage
+//! layouts.
 
 use alloc::string::ToString;
-#[cfg(any(test, feature = "test-utils"))]
-use alloc::vec::Vec;
 use core::{cell::RefCell, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 
-use crate::{
-    error::{BasePrecompileError, Result},
-    neutral::{AccountInfo, Bytecode, Checkpoint, PrecompileOutput, PrecompileResult},
-    provider::{PrecompileStorageProvider, StorageFeatures},
+mod error;
+pub use error::{BasePrecompileError, DelegateCallNotAllowed, Result};
+
+mod neutral;
+pub use neutral::{
+    AccountInfo, Checkpoint, PrecompileError, PrecompileOutput, PrecompileResult, PrecompileStatus,
 };
+
+mod gas;
+pub use gas::{GasSchedule, SstoreValues};
+
+mod layout;
+pub use layout::{StorageLayout, StorageValue};
+
+mod provider;
+pub use provider::{PrecompileStorageProvider, StorageFeatures};
+
+#[cfg(any(test, feature = "test-utils"))]
+mod test_utils;
+#[cfg(any(test, feature = "test-utils"))]
+pub use test_utils::{HashMapStorageProvider, setup_storage};
 
 type ScopedProvider<'a> = dyn PrecompileStorageProvider + 'a;
 
@@ -94,32 +111,19 @@ impl<'a> StorageCtx<'a> {
     pub fn timestamp(&self) -> U256 {
         self.with_storage(|s| s.timestamp())
     }
-    /// Returns the block beneficiary (coinbase).
-    pub fn beneficiary(&self) -> Address {
-        self.with_storage(|s| s.beneficiary())
-    }
-    /// Returns the current block number.
-    pub fn block_number(&self) -> u64 {
-        self.with_storage(|s| s.block_number())
-    }
     /// Returns the transaction origin (`tx.origin`).
     pub fn origin(&self) -> Address {
         self.with_storage(|s| s.origin())
     }
 
     /// Sets the bytecode at the given address.
-    pub fn set_code(&self, address: Address, code: Bytecode) -> Result<()> {
+    pub fn set_code(&self, address: Address, code: Bytes) -> Result<()> {
         self.try_with_storage(|s| s.set_code(address, code))
     }
 
     /// Performs an SLOAD (persistent storage read).
     pub fn sload(&self, address: Address, key: U256) -> Result<U256> {
         self.try_with_storage(|s| s.sload(address, key))
-    }
-
-    /// Performs a TLOAD (transient storage read).
-    pub fn tload(&self, address: Address, key: U256) -> Result<U256> {
-        self.try_with_storage(|s| s.tload(address, key))
     }
 
     /// Reads transient storage without exposing a TLOAD opcode charge.
@@ -149,29 +153,13 @@ impl<'a> StorageCtx<'a> {
         self.try_with_storage(|s| s.emit_event(address, event))
     }
 
-    /// Adds gas to the refund counter.
-    pub fn refund_gas(&self, gas: i64) {
-        self.with_storage(|s| s.refund_gas(gas))
-    }
-    /// Returns the gas limit for this precompile call.
-    pub fn gas_limit(&self) -> u64 {
-        self.with_storage(|s| s.gas_limit())
-    }
     /// Returns the gas used so far.
     pub fn gas_used(&self) -> u64 {
         self.with_storage(|s| s.gas_used())
     }
-    /// Returns the state-creating gas spent so far (EIP-8037).
-    pub fn state_gas_used(&self) -> u64 {
-        self.with_storage(|s| s.state_gas_used())
-    }
     /// Returns the gas refunded so far.
     pub fn gas_refunded(&self) -> i64 {
         self.with_storage(|s| s.gas_refunded())
-    }
-    /// Returns the remaining EIP-8037 state-gas reservoir.
-    pub fn reservoir(&self) -> u64 {
-        self.with_storage(|s| s.reservoir())
     }
     /// Returns the active persistent-storage features.
     pub fn storage_features(&self) -> StorageFeatures {
@@ -213,42 +201,28 @@ impl<'a> StorageCtx<'a> {
         CheckpointGuard { storage: *self, checkpoint: Some(checkpoint) }
     }
 
-    /// Returns a success [`PrecompileOutput`] with the current gas used and accumulated refund.
-    ///
-    /// The `gas_refunded` field is populated so revm's frame handler can propagate it to the
-    /// transaction-level refund counter, where the EIP-3529 cap (`gas_used / 5`) is applied.
-    pub fn success_output(&self, output: Bytes) -> PrecompileOutput {
-        let mut out = PrecompileOutput::new(self.gas_used(), output, self.state_gas_used());
-        out.gas_refunded = self.gas_refunded();
-        out
-    }
-
     /// Returns a [`PrecompileResult`] constructed from the given error.
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
-        error.into().into_precompile_result_with_features(
-            self.gas_used(),
-            self.state_gas_used(),
-            self.storage_features(),
-        )
+        error.into().into_precompile_result(self.gas_used(), self.storage_features())
     }
 
-    /// Converts a `Result<T>` into a [`PrecompileResult`], reading all gas accounting fields
-    /// from the current context.
+    /// Converts a `Result<T>` into a [`PrecompileResult`] with the call's gas accounting.
     ///
-    /// On success, `encode_ok` encodes the value and the output carries `gas_used`,
-    /// `state_gas_used`, and `gas_refunded` from the context — the same fields that
-    /// [`success_output`](Self::success_output) sets. On error, delegates to
-    /// [`BasePrecompileError::into_precompile_result_with_features`].
-    ///
-    /// Use this instead of calling [`IntoPrecompileResult::into_precompile_result`] directly,
-    /// so callers do not have to manually thread gas values through.
+    /// On success, `encode_ok` encodes the value and the output carries `gas_used` and the
+    /// accumulated `gas_refunded`, which the frame handler adds to the transaction's refund
+    /// counter (where the EIP-3529 cap applies). On error, the output carries no refund; see
+    /// [`BasePrecompileError::into_precompile_result`].
     pub fn result_output<T>(
         &self,
         result: Result<T>,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult {
         match result {
-            Ok(output) => Ok(self.success_output(encode_ok(output))),
+            Ok(output) => {
+                let mut out = PrecompileOutput::new(self.gas_used(), encode_ok(output));
+                out.gas_refunded = self.gas_refunded();
+                Ok(out)
+            }
             Err(error) => self.error_result(error),
         }
     }
@@ -314,84 +288,6 @@ impl Drop for CheckpointGuard<'_> {
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
-use crate::hashmap::HashMapStorageProvider;
-
-#[cfg(any(test, feature = "test-utils"))]
-impl StorageCtx<'_> {
-    fn with_hashmap<R>(&self, f: impl FnOnce(&mut HashMapStorageProvider) -> R) -> R {
-        let mut guard = self.storage.borrow_mut();
-        // SAFETY: Test-utils code always uses `HashMapStorageProvider`. The borrow
-        // guard stays alive for the full callback, preserving `RefCell` borrow checks.
-        let provider = unsafe {
-            &mut *(&mut **guard as *mut dyn PrecompileStorageProvider
-                as *mut HashMapStorageProvider)
-        };
-        f(provider)
-    }
-
-    /// Executes a closure with account info from the test storage provider.
-    pub fn with_test_account_info<T>(
-        &self,
-        address: Address,
-        f: impl FnOnce(Option<&AccountInfo>) -> T,
-    ) -> T {
-        self.with_hashmap(|storage| {
-            let info = storage.get_account_info(address).cloned();
-            f(info.as_ref())
-        })
-    }
-
-    /// Executes a closure with emitted events from the test storage provider.
-    pub fn with_events<T>(&self, address: Address, f: impl FnOnce(&[LogData]) -> T) -> T {
-        self.with_hashmap(|storage| {
-            let events = storage.get_events(address);
-            f(events)
-        })
-    }
-
-    /// Returns account info for the given address (test-utils only).
-    pub fn get_account_info(&self, address: Address) -> Option<AccountInfo> {
-        self.with_test_account_info(address, |account| account.cloned())
-    }
-
-    /// Returns emitted events for the given address (test-utils only).
-    pub fn get_events(&self, address: Address) -> Vec<LogData> {
-        self.with_events(address, <[LogData]>::to_vec)
-    }
-
-    /// Sets the nonce for the given address (test-utils only).
-    pub fn set_nonce(&self, address: Address, nonce: u64) {
-        self.with_hashmap(|storage| storage.set_nonce(address, nonce))
-    }
-
-    /// Overrides the block timestamp (test-utils only).
-    pub fn set_timestamp(&self, timestamp: U256) {
-        self.with_hashmap(|storage| storage.set_timestamp(timestamp))
-    }
-
-    /// Clears all transient storage (test-utils only).
-    pub fn clear_transient(&self) {
-        self.with_hashmap(HashMapStorageProvider::clear_transient)
-    }
-    /// Clears emitted events for the given address (test-utils only).
-    pub fn clear_events(&self, address: Address) {
-        self.with_hashmap(|storage| storage.clear_events(address));
-    }
-    /// Returns the SLOAD counter (test-utils only).
-    pub fn counter_sload(&self) -> u64 {
-        self.with_hashmap(|storage| storage.counter_sload())
-    }
-    /// Returns the SSTORE counter (test-utils only).
-    pub fn counter_sstore(&self) -> u64 {
-        self.with_hashmap(|storage| storage.counter_sstore())
-    }
-    /// Resets the SLOAD/SSTORE counters (test-utils only).
-    pub fn reset_counters(&self) {
-        self.with_hashmap(HashMapStorageProvider::reset_counters)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
@@ -401,13 +297,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "already borrowed")]
     fn test_reentrant_with_storage_panics() {
-        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| ctx.with_storage(|_| ctx.with_storage(|_| ())));
     }
 
     #[test]
     fn test_with_caller_restores_previous_caller() {
-        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new(1);
         let original = Address::repeat_byte(0x11);
         let outer = Address::repeat_byte(0x22);
         let inner = Address::repeat_byte(0x33);
@@ -430,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_checkpoint_commit_and_revert() {
-        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new(1);
         let addr = Address::ZERO;
         let key = U256::from(1);
 
@@ -452,7 +348,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "out-of-order checkpoint commit (expected top of stack)")]
     fn checkpoint_commit_rejects_non_lifo_order() {
-        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new(1);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let outer = ctx.checkpoint();
@@ -464,7 +360,7 @@ mod tests {
 
     #[test]
     fn result_output_success_propagates_gas_refunded() {
-        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new(1);
         let addr = Address::ZERO;
         let key = U256::from(1);
 
@@ -483,7 +379,7 @@ mod tests {
 
     #[test]
     fn result_output_error_does_not_expose_refund() {
-        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new(1);
         let addr = Address::ZERO;
         let key = U256::from(1);
 
@@ -505,7 +401,7 @@ mod tests {
         let error =
             || BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() };
 
-        let mut legacy = crate::hashmap::HashMapStorageProvider::new(1);
+        let mut legacy = HashMapStorageProvider::new(1);
         let legacy_output = StorageCtx::enter(&mut legacy, |ctx| {
             ctx.result_output::<Bytes>(Err(error()), |output| output)
         })
@@ -515,7 +411,7 @@ mod tests {
             Bytes::from([selector.as_slice(), b"decoder error"].concat())
         );
 
-        let mut cobalt = crate::hashmap::HashMapStorageProvider::new_with_storage_features(
+        let mut cobalt = HashMapStorageProvider::new_with_storage_features(
             1,
             StorageFeatures::Cobalt,
         );
@@ -528,7 +424,7 @@ mod tests {
 
     #[test]
     fn result_output_success_no_refund() {
-        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new(1);
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
             ctx.result_output::<Bytes>(Ok(Bytes::new()), |b| b)

@@ -3,6 +3,16 @@
 
 extern crate alloc;
 
+mod storage;
+#[cfg(any(test, feature = "test-utils"))]
+pub use storage::{HashMapStorageProvider, setup_storage};
+pub use storage::{
+    AccountInfo, BasePrecompileError, Checkpoint, CheckpointGuard, DelegateCallNotAllowed,
+    GasSchedule, PrecompileError, PrecompileOutput, PrecompileResult, PrecompileStatus,
+    PrecompileStorageProvider, Result, SstoreValues, StorageCtx, StorageFeatures, StorageLayout,
+    StorageValue,
+};
+
 mod native;
 pub use native::{NativePrecompile, NativePrecompiles};
 

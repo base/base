@@ -9,10 +9,9 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, LogData, U256, keccak256};
-use base_tiger_precompile_storage::Result;
 
 use crate::{
-    PackedPolicy, PolicyAccounting, PolicyRegistryStorage,
+    PackedPolicy, PolicyAccounting, PolicyRegistryStorage, Result,
     b20_asset::{AssetAccounting, B20AssetStorage},
     b20_stablecoin::StablecoinAccounting,
     common::B20Token,

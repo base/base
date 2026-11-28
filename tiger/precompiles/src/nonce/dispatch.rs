@@ -2,12 +2,10 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    Calldata,
-    INonceManager::{self, INonceManagerCalls as C},
-    nonce::storage::NonceManagerStorage,
+    BasePrecompileError, Calldata, INonceManager::{self, INonceManagerCalls as C}, PrecompileResult,
+    StorageCtx, nonce::storage::NonceManagerStorage,
 };
 
 impl NonceManagerStorage<'_> {
@@ -29,7 +27,7 @@ impl NonceManagerStorage<'_> {
         ctx.result_output(self.inner(calldata), |output| output)
     }
 
-    fn inner(&self, calldata: &[u8]) -> base_tiger_precompile_storage::Result<Bytes> {
+    fn inner(&self, calldata: &[u8]) -> crate::Result<Bytes> {
         match Calldata::decode_call(calldata)? {
             C::getNonce(call) => Ok(INonceManager::getNonceCall::abi_encode_returns(
                 &self.get_nonce(call.account, call.nonceKey)?,
@@ -43,16 +41,15 @@ impl NonceManagerStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError};
-    use base_tiger_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use crate::{INonceManager, NonceManagerStorage};
+    use crate::{HashMapStorageProvider, INonceManager, NonceManagerStorage, StorageCtx};
 
     const ACCOUNT: Address = address!("0x1111111111111111111111111111111111111111");
 
     fn dispatch(
         storage: &mut HashMapStorageProvider,
         calldata: &[u8],
-    ) -> base_tiger_precompile_storage::PrecompileOutput {
+    ) -> crate::PrecompileOutput {
         StorageCtx::enter(storage, |ctx| NonceManagerStorage::new(ctx).dispatch(ctx, calldata))
             .expect("dispatch should not fail fatally")
     }
@@ -62,7 +59,7 @@ mod tests {
     fn gas_matches_evm_reference() {
         assert_eq!(
             crate::Calldata::WORD_GAS,
-            base_tiger_precompile_storage::GasSchedule::KECCAK256_WORD
+            crate::GasSchedule::KECCAK256_WORD
         );
     }
 
@@ -119,7 +116,7 @@ mod tests {
     fn dispatch_returns_selector_only_for_decode_failure_at_cobalt() {
         let mut storage = HashMapStorageProvider::new_with_storage_features(
             1,
-            base_tiger_precompile_storage::StorageFeatures::Cobalt,
+            crate::StorageFeatures::Cobalt,
         );
         let selector = INonceManager::getNonceCall::SELECTOR;
 

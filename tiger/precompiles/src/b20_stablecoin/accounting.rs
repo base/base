@@ -2,9 +2,7 @@
 
 use alloc::string::String;
 
-use base_tiger_precompile_storage::Result;
-
-use crate::TokenAccounting;
+use crate::{Result, TokenAccounting};
 
 /// Extends [`TokenAccounting`] with the stablecoin-specific `currency` slot.
 ///

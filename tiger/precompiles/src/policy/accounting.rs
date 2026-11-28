@@ -3,7 +3,8 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, LogData, U256};
-use base_tiger_precompile_storage::Result;
+
+use crate::Result;
 
 /// Raw storage port the policy-registry logic operates on.
 pub trait PolicyAccounting {

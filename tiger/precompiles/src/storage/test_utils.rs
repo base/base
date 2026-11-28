@@ -1,12 +1,13 @@
+//! Test-only storage pieces: the in-memory [`HashMapStorageProvider`], [`StorageCtx`] accessors
+//! for its state, and [`StorageLayout::erc7201_root`] for checking hard-coded namespace roots.
+
 use std::collections::HashMap;
 
-use alloy_primitives::{Address, LogData, U256};
+use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, LogData, U256, keccak256};
 
-use crate::{
-    error::BasePrecompileError,
-    gas::GasSchedule,
-    neutral::{AccountInfo, Bytecode, Checkpoint},
-    provider::{PrecompileStorageProvider, StorageFeatures},
+use super::{
+    AccountInfo, BasePrecompileError, Checkpoint, GasSchedule, PrecompileStorageProvider,
+    StorageCtx, StorageFeatures, StorageLayout,
 };
 
 /// In-memory [`PrecompileStorageProvider`] for unit tests.
@@ -19,8 +20,6 @@ pub struct HashMapStorageProvider {
     accounts: HashMap<Address, AccountInfo>,
     chain_id: u64,
     timestamp: U256,
-    beneficiary: Address,
-    block_number: u64,
     origin: Address,
     caller: Address,
     call_value: U256,
@@ -30,7 +29,6 @@ pub struct HashMapStorageProvider {
     gas_deducted: u64,
     counter_keccak256: u64,
     snapshots: Vec<Snapshot>,
-    state_gas_used: u64,
     gas_refunded: i64,
     storage_features: StorageFeatures,
     /// Emitted events keyed by contract address.
@@ -44,7 +42,6 @@ struct Snapshot {
     accounts: HashMap<Address, AccountInfo>,
     events: HashMap<Address, Vec<LogData>>,
     gas_refunded: i64,
-    state_gas_used: u64,
 }
 
 impl HashMapStorageProvider {
@@ -64,8 +61,6 @@ impl HashMapStorageProvider {
                     .unwrap()
                     .as_secs(),
             ),
-            beneficiary: Address::ZERO,
-            block_number: 0,
             origin: Address::ZERO,
             caller: Address::ZERO,
             call_value: U256::ZERO,
@@ -74,7 +69,6 @@ impl HashMapStorageProvider {
             counter_sstore: 0,
             gas_deducted: 0,
             counter_keccak256: 0,
-            state_gas_used: 0,
             gas_refunded: 0,
             storage_features: StorageFeatures::Legacy,
         }
@@ -99,19 +93,11 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.timestamp
     }
 
-    fn beneficiary(&self) -> Address {
-        self.beneficiary
-    }
-
-    fn block_number(&self) -> u64 {
-        self.block_number
-    }
-
     fn origin(&self) -> Address {
         self.origin
     }
 
-    fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), BasePrecompileError> {
+    fn set_code(&mut self, address: Address, code: Bytes) -> Result<(), BasePrecompileError> {
         if self.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
         }
@@ -126,7 +112,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
 
         let account = self.accounts.entry(address).or_default();
-        account.code_hash = code.hash_slow();
+        account.code_hash = if code.is_empty() { KECCAK256_EMPTY } else { keccak256(&code) };
         Ok(())
     }
 
@@ -187,16 +173,11 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(self.internals.get(&(address, key)).copied().unwrap_or(U256::ZERO))
     }
 
-    fn tload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
-        Ok(self.transient.get(&(address, key)).copied().unwrap_or(U256::ZERO))
-    }
-
     fn tload_unmetered(
         &mut self,
         address: Address,
         key: U256,
     ) -> Result<U256, BasePrecompileError> {
-        // Test backend: `tload` never deducts gas, so the raw read is unmetered.
         Ok(self.transient.get(&(address, key)).copied().unwrap_or(U256::ZERO))
     }
 
@@ -205,42 +186,17 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(())
     }
 
-    fn metered_keccak256(
-        &mut self,
-        data: &[u8],
-    ) -> core::result::Result<alloy_primitives::B256, BasePrecompileError> {
+    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256, BasePrecompileError> {
         self.counter_keccak256 += 1;
-        Ok(alloy_primitives::keccak256(data))
-    }
-
-    fn deduct_state_gas(&mut self, gas: u64) -> Result<(), BasePrecompileError> {
-        // No gas limit in the test provider; just track the cumulative amount.
-        self.state_gas_used = self.state_gas_used.saturating_add(gas);
-        Ok(())
-    }
-
-    fn refund_gas(&mut self, gas: i64) {
-        self.gas_refunded = self.gas_refunded.saturating_add(gas);
-    }
-
-    fn gas_limit(&self) -> u64 {
-        0
+        Ok(keccak256(data))
     }
 
     fn gas_used(&self) -> u64 {
         0
     }
 
-    fn state_gas_used(&self) -> u64 {
-        self.state_gas_used
-    }
-
     fn gas_refunded(&self) -> i64 {
         self.gas_refunded
-    }
-
-    fn reservoir(&self) -> u64 {
-        0
     }
 
     fn storage_features(&self) -> StorageFeatures {
@@ -271,7 +227,6 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             accounts: self.accounts.clone(),
             events: self.events.clone(),
             gas_refunded: self.gas_refunded,
-            state_gas_used: self.state_gas_used,
         });
         Checkpoint { journal_len: idx, logs_len: 0 }
     }
@@ -302,13 +257,16 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             self.accounts = snapshot.accounts;
             self.events = snapshot.events;
             self.gas_refunded = snapshot.gas_refunded;
-            self.state_gas_used = snapshot.state_gas_used;
         }
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
 impl HashMapStorageProvider {
+    /// Adds `gas` to the refund counter.
+    pub const fn refund_gas(&mut self, gas: i64) {
+        self.gas_refunded = self.gas_refunded.saturating_add(gas);
+    }
+
     /// Returns account info for the given address (test-utils only).
     pub fn get_account_info(&self, address: Address) -> Option<&AccountInfo> {
         self.accounts.get(&address)
@@ -406,9 +364,90 @@ impl HashMapStorageProvider {
 }
 
 /// Test helper: returns a fresh `(HashMapStorageProvider, precompile_address)` pair.
-#[cfg(any(test, feature = "test-utils"))]
 pub fn setup_storage() -> (HashMapStorageProvider, Address) {
     (HashMapStorageProvider::new(1), Address::from([0x42u8; 20]))
+}
+
+impl StorageCtx<'_> {
+    fn with_hashmap<R>(&self, f: impl FnOnce(&mut HashMapStorageProvider) -> R) -> R {
+        let mut guard = self.storage.borrow_mut();
+        // SAFETY: Test-utils code always uses `HashMapStorageProvider`. The borrow
+        // guard stays alive for the full callback, preserving `RefCell` borrow checks.
+        let provider = unsafe {
+            &mut *(&mut **guard as *mut dyn PrecompileStorageProvider
+                as *mut HashMapStorageProvider)
+        };
+        f(provider)
+    }
+
+    /// Executes a closure with account info from the test storage provider.
+    pub fn with_test_account_info<T>(
+        &self,
+        address: Address,
+        f: impl FnOnce(Option<&AccountInfo>) -> T,
+    ) -> T {
+        self.with_hashmap(|storage| {
+            let info = storage.get_account_info(address).cloned();
+            f(info.as_ref())
+        })
+    }
+
+    /// Executes a closure with emitted events from the test storage provider.
+    pub fn with_events<T>(&self, address: Address, f: impl FnOnce(&[LogData]) -> T) -> T {
+        self.with_hashmap(|storage| {
+            let events = storage.get_events(address);
+            f(events)
+        })
+    }
+
+    /// Returns account info for the given address (test-utils only).
+    pub fn get_account_info(&self, address: Address) -> Option<AccountInfo> {
+        self.with_test_account_info(address, |account| account.cloned())
+    }
+
+    /// Returns emitted events for the given address (test-utils only).
+    pub fn get_events(&self, address: Address) -> Vec<LogData> {
+        self.with_events(address, <[LogData]>::to_vec)
+    }
+
+    /// Sets the nonce for the given address (test-utils only).
+    pub fn set_nonce(&self, address: Address, nonce: u64) {
+        self.with_hashmap(|storage| storage.set_nonce(address, nonce))
+    }
+
+    /// Overrides the block timestamp (test-utils only).
+    pub fn set_timestamp(&self, timestamp: U256) {
+        self.with_hashmap(|storage| storage.set_timestamp(timestamp))
+    }
+
+    /// Clears all transient storage (test-utils only).
+    pub fn clear_transient(&self) {
+        self.with_hashmap(HashMapStorageProvider::clear_transient)
+    }
+    /// Clears emitted events for the given address (test-utils only).
+    pub fn clear_events(&self, address: Address) {
+        self.with_hashmap(|storage| storage.clear_events(address));
+    }
+    /// Returns the SLOAD counter (test-utils only).
+    pub fn counter_sload(&self) -> u64 {
+        self.with_hashmap(|storage| storage.counter_sload())
+    }
+    /// Returns the SSTORE counter (test-utils only).
+    pub fn counter_sstore(&self) -> u64 {
+        self.with_hashmap(|storage| storage.counter_sstore())
+    }
+    /// Resets the SLOAD/SSTORE counters (test-utils only).
+    pub fn reset_counters(&self) {
+        self.with_hashmap(HashMapStorageProvider::reset_counters)
+    }
+}
+
+impl StorageLayout {
+    /// Returns the ERC-7201 root of namespace `id`: `keccak256(keccak256(id) - 1) & ~0xff`.
+    pub fn erc7201_root(id: &str) -> U256 {
+        let inner = U256::from_be_bytes(keccak256(id.as_bytes()).0) - U256::ONE;
+        U256::from_be_bytes(keccak256(inner.to_be_bytes::<32>()).0) & !U256::from(0xff)
+    }
 }
 
 #[cfg(test)]
@@ -416,20 +455,19 @@ mod tests {
     use alloy_primitives::{Address, U256};
 
     use super::*;
-    use crate::provider::PrecompileStorageProvider;
 
     const ADDR: Address = Address::ZERO;
     const KEY: U256 = U256::ZERO;
 
     #[test]
-    fn set_code_static_violation_before_state_gas_charge() {
+    fn set_code_static_violation_before_gas_charge() {
         let mut p = HashMapStorageProvider::new(1);
         p.set_static(true);
-        let code = Bytecode::new_legacy([0x60u8, 0x00].as_ref().into());
+        let code = Bytes::from_static(&[0x60, 0x00]);
 
         assert_eq!(p.set_code(Address::ZERO, code), Err(BasePrecompileError::StaticCallViolation),);
-        // No state gas must have been charged.
-        assert_eq!(p.state_gas_used(), 0);
+        // No gas must have been charged.
+        assert_eq!(p.gas_deducted(), 0);
     }
 
     #[test]
@@ -497,16 +535,16 @@ mod tests {
         let cp = p.checkpoint();
         p.tstore(ADDR, KEY, U256::from(99u64)).unwrap();
         p.checkpoint_revert(cp);
-        assert_eq!(p.tload(ADDR, KEY).unwrap(), U256::from(10u64));
+        assert_eq!(p.tload_unmetered(ADDR, KEY).unwrap(), U256::from(10u64));
     }
 
     #[test]
     fn checkpoint_revert_restores_accounts() {
         let mut p = HashMapStorageProvider::new(1);
-        let code_before = Bytecode::new_legacy([0x60u8, 0x00].as_ref().into());
+        let code_before = Bytes::from_static(&[0x60, 0x00]);
         p.set_code(ADDR, code_before.clone()).unwrap();
         let cp = p.checkpoint();
-        let code_after = Bytecode::new_legacy([0x60u8, 0x01].as_ref().into());
+        let code_after = Bytes::from_static(&[0x60, 0x01]);
         p.set_code(ADDR, code_after).unwrap();
         p.checkpoint_revert(cp);
         let mut seen_hash = None;
@@ -514,12 +552,11 @@ mod tests {
             seen_hash = Some(info.code_hash);
         })
         .unwrap();
-        assert_eq!(seen_hash.unwrap(), code_before.hash_slow());
+        assert_eq!(seen_hash.unwrap(), keccak256(&code_before));
     }
 
     #[test]
     fn checkpoint_revert_restores_events() {
-        use alloy_primitives::Bytes;
         let mut p = HashMapStorageProvider::new(1);
         let event_before = LogData::new_unchecked(vec![], Bytes::from_static(b"before"));
         p.emit_event(ADDR, event_before).unwrap();
@@ -541,17 +578,6 @@ mod tests {
         assert_eq!(p.gas_refunded(), 1_500);
         p.checkpoint_revert(cp);
         assert_eq!(p.gas_refunded(), 1_000);
-    }
-
-    #[test]
-    fn checkpoint_revert_restores_state_gas_used() {
-        let mut p = HashMapStorageProvider::new(1);
-        p.deduct_state_gas(100).unwrap();
-        let cp = p.checkpoint();
-        p.deduct_state_gas(50).unwrap();
-        assert_eq!(p.state_gas_used(), 150);
-        p.checkpoint_revert(cp);
-        assert_eq!(p.state_gas_used(), 100);
     }
 
     #[test]

@@ -6,9 +6,8 @@
 
 use alloy_sol_types::{SolCall, SolInterface};
 use base_common_genesis::{BaseFeature, BaseUpgrade};
-use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{Calldata, IB20, IB20Asset, IB20V1};
+use crate::{BasePrecompileError, Calldata, IB20, IB20Asset, IB20V1, Result};
 
 /// An activated version of the B-20 token logic (asset and stablecoin alike).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,9 +102,8 @@ mod tests {
     use alloy_primitives::Address;
     use alloy_sol_types::{SolCall, SolInterface};
     use base_common_genesis::BaseUpgrade;
-    use base_tiger_precompile_storage::BasePrecompileError;
 
-    use crate::{B20Version, Calldata, IB20, IB20Asset};
+    use crate::{B20Version, BasePrecompileError, Calldata, IB20, IB20Asset};
 
     const VERSIONS: [B20Version; 3] = [B20Version::V1, B20Version::V2, B20Version::V3];
 

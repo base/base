@@ -3,10 +3,10 @@
 use alloc::string::String;
 
 use alloy_primitives::{U256, uint};
-use base_tiger_precompile_storage::{BasePrecompileError, Result, StorageLayout};
 
 use crate::{
-    B20CoreStorage, B20TokenKind, B20TokenStorage, B20Variant, IB20Factory, StablecoinAccounting,
+    B20CoreStorage, B20TokenKind, B20TokenStorage, B20Variant, BasePrecompileError, IB20Factory,
+    Result, StablecoinAccounting, StorageLayout,
 };
 
 /// Stablecoin-specific B-20 storage layout, rooted at the `base.b20.stablecoin` ERC-7201
@@ -83,11 +83,10 @@ impl StablecoinAccounting for B20StablecoinStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256, address};
-    use base_tiger_precompile_storage::{StorageCtx, StorageLayout, setup_storage};
 
     use crate::{
         B20CoreStorage, B20StablecoinExtensionStorage, B20StablecoinStorage, StablecoinAccounting,
-        TokenAccounting,
+        StorageCtx, StorageLayout, TokenAccounting, setup_storage,
     };
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b022");

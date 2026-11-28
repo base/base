@@ -26,7 +26,7 @@
 use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
-use base_tiger_precompile_storage::{
+use base_tiger_precompiles::{
     BasePrecompileError, HashMapStorageProvider, StorageCtx,
 };
 use base_tiger_precompiles::{

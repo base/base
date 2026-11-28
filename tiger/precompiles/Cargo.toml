@@ -12,9 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# tiger
-base-tiger-precompile-storage.workspace = true
-
 # base
 base-common-genesis.workspace = true
 base-common-base-tx.workspace = true
@@ -25,10 +22,9 @@ alloy-primitives = { workspace = true, features = ["std", "k256"] }
 
 [dev-dependencies]
 k256.workspace = true
-base-tiger-precompile-storage = { workspace = true, features = ["test-utils"] }
 
 [features]
-test-utils = ["base-tiger-precompile-storage/test-utils"]
+test-utils = []
 
 [[test]]
 name = "b20_asset_v1_golden"

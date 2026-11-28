@@ -22,7 +22,7 @@
 use alloy_primitives::{Address, B256, Bytes, U256, b256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
-use base_tiger_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
+use base_tiger_precompiles::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 use base_tiger_precompiles::{
         B20Logic,
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20Token,

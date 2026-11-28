@@ -1,7 +1,5 @@
 use alloy_primitives::{Address, B256, U256, address, b256};
-use base_tiger_precompile_storage::{Result, StorageCtx};
-
-use crate::{B20_MAX_SUPPLY_CAP, B20Variant};
+use crate::{B20_MAX_SUPPLY_CAP, B20Variant, Result, StorageCtx};
 
 /// Maximum total supply for all newly-created B-20 tokens.
 const DEFAULT_SUPPLY_CAP: U256 = B20_MAX_SUPPLY_CAP;
@@ -48,9 +46,11 @@ impl<'a> B20FactoryStorage<'a> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, address, keccak256};
-    use base_tiger_precompile_storage::{Bytecode, HashMapStorageProvider, StorageCtx};
+
+    use crate::{HashMapStorageProvider, StorageCtx};
 
     use super::FACTORY_MARKER_CODE_HASH;
+
     use crate::{B20FactoryStorage, B20Variant};
 
     #[test]
@@ -136,7 +136,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
 
         StorageCtx::enter(&mut storage, |ctx| {
-            ctx.set_code(addr, Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00]))).unwrap();
+            ctx.set_code(addr, Bytes::from_static(&[0x60, 0x00])).unwrap();
 
             let factory = B20FactoryStorage::new(ctx);
             assert!(factory.is_b20(addr).unwrap(), "address must have B20 prefix");
