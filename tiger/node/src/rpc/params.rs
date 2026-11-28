@@ -63,29 +63,16 @@ impl<'a> Sequence<'a> {
 
     /// A required parameter (`seq.next()`).
     pub(super) fn next<T: Deserialize<'a>>(&mut self) -> Result<(), RpcError> {
-        match self.next_inner::<T>() {
-            Some(Ok((_, raw))) => {
-                self.values.push(Some(raw));
-                Ok(())
-            }
-            Some(Err(error)) => Err(error),
-            None => Err(invalid_params("No more params")),
-        }
+        let (_, raw) = self.next_inner::<T>().unwrap_or_else(|| Err(invalid_params("No more params")))?;
+        self.values.push(Some(raw));
+        Ok(())
     }
 
     /// An `Option` parameter (`seq.optional_next()`): absent at the end of the list.
     pub(super) fn optional_next<T: Deserialize<'a>>(&mut self) -> Result<(), RpcError> {
-        match self.next_inner::<Option<T>>() {
-            Some(Ok((_, raw))) => {
-                self.values.push(Some(raw));
-                Ok(())
-            }
-            Some(Err(error)) => Err(error),
-            None => {
-                self.values.push(None);
-                Ok(())
-            }
-        }
+        let raw = self.next_inner::<Option<T>>().transpose()?.map(|(_, raw)| raw);
+        self.values.push(raw);
+        Ok(())
     }
 
     /// The decoded parameters as JSON values, `null` for absent ones.

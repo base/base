@@ -15,7 +15,7 @@ use base_common_rpc_types::BaseLogResponse;
 use serde_json::{Value, json};
 
 use super::param;
-use crate::{Node, RpcError, chain::StoredBlock};
+use crate::{Node, RpcError, chain::{Chain, StoredBlock}};
 
 /// reth's `--rpc.max-blocks-per-filter` default.
 const MAX_BLOCKS_PER_FILTER: u64 = 100_000;
@@ -69,7 +69,7 @@ impl Node {
             "eth_getFilterChanges" => param::<Value>(p, 0).and_then(|id| self.filter_changes(&id)),
             "eth_getFilterLogs" => param::<Value>(p, 0).and_then(|id| self.filter_logs(&id)),
             "eth_uninstallFilter" => param::<Value>(p, 0).map(|id| {
-                let id = Self::filter_id(&id);
+                let id = id.as_str().map(str::to_owned);
                 json!(id.is_some_and(|id| self.filters.filters.lock().expect("filters lock").remove(&id).is_some()))
             }),
             _ => return None,
@@ -121,7 +121,11 @@ impl Node {
 
     /// reth's `convert_block_number` for a filter bound: unset `safe`/`finalized` is `-32001`.
     fn convert_block_number(&self, tag: BlockNumberOrTag) -> Result<u64, RpcError> {
-        let chain = self.chain.read().expect("chain lock");
+        Self::tag_number(&self.chain.read().expect("chain lock"), tag)
+    }
+
+    /// The number `tag` names on `chain`; an unset `safe`/`finalized` is `-32001`.
+    pub(super) fn tag_number(chain: &Chain, tag: BlockNumberOrTag) -> Result<u64, RpcError> {
         Ok(match tag {
             BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => chain.head().number(),
             BlockNumberOrTag::Earliest => 0,
@@ -225,15 +229,11 @@ impl Node {
         json!(id)
     }
 
-    /// A filter id: reth's ids are strings, so a JSON number never names one.
-    fn filter_id(id: &Value) -> Option<String> {
-        id.as_str().map(str::to_owned)
-    }
-
     /// The live filter `id`, or reth's `-32000 filter not found`.
     fn filter(&self, id: &Value) -> Result<(String, Installed), RpcError> {
         let not_found = || RpcError::new(-32000, "filter not found");
-        let id = Self::filter_id(id).ok_or_else(not_found)?;
+        // reth's ids are strings, so a JSON number never names one.
+        let id = id.as_str().map(str::to_owned).ok_or_else(not_found)?;
         let filters = self.filters.filters.lock().expect("filters lock");
         let filter = filters.get(&id).filter(|filter| filter.last_poll.elapsed() < 2 * STALE_FILTER_TTL);
         Ok((id.clone(), filter.cloned().ok_or_else(not_found)?))

@@ -234,7 +234,7 @@ impl Node {
     /// with the Denim schedule's timestamp when `forecast` is set (as base-reth's `eth_call` and
     /// `eth_estimateGas` do) and twelve seconds later otherwise.
     pub(super) fn call_block(&self, tag: Option<&Value>, forecast: bool) -> Result<CallBlock, RpcError> {
-        if tag.and_then(Value::as_str) == Some("pending") {
+        let (parent, number, timestamp, basefee, prevrandao) = if tag.and_then(Value::as_str) == Some("pending") {
             let parent = self.chain.read().expect("chain lock").head();
             let header = &parent.header;
             let number = header.number + 1;
@@ -243,30 +243,26 @@ impl Node {
                 None => header.timestamp + 12,
             };
             let base_fee = BlockRules { chain: &self.spec }.next_base_fee(header, timestamp).unwrap_or_default();
-            let env = BlockEnv::<BaseEvmTypes> {
-                number: U256::from(number),
-                beneficiary: header.beneficiary,
-                timestamp: U256::from(timestamp),
-                gas_limit: U256::from(header.gas_limit),
-                basefee: U256::from(base_fee),
-                prevrandao: U256::from_be_bytes(Self::random_word().0),
-                ..BlockEnv::<BaseEvmTypes>::default()
-            };
-            return Ok(CallBlock { parent, env, spec_timestamp: timestamp });
-        }
-        let parent = self.find_block(tag)?.ok_or_else(|| Self::block_not_found(tag))?;
-        let header = &parent.header;
+            // A fresh unpredictable word, as reth's pending `prevrandao`.
+            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+            (parent, number, timestamp, base_fee, keccak256(nanos.as_nanos().to_le_bytes()))
+        } else {
+            let parent = self.find_block(tag)?.ok_or_else(|| Self::block_not_found(tag))?;
+            let header = &parent.header;
+            let (number, timestamp, base_fee) = (header.number, header.timestamp, header.base_fee_per_gas.unwrap_or_default());
+            let mix_hash = header.mix_hash;
+            (parent, number, timestamp, base_fee, mix_hash)
+        };
         let env = BlockEnv::<BaseEvmTypes> {
-            number: U256::from(header.number),
-            beneficiary: header.beneficiary,
-            timestamp: U256::from(header.timestamp),
-            gas_limit: U256::from(header.gas_limit),
-            basefee: U256::from(header.base_fee_per_gas.unwrap_or_default()),
-            prevrandao: U256::from_be_bytes(header.mix_hash.0),
+            number: U256::from(number),
+            beneficiary: parent.header.beneficiary,
+            timestamp: U256::from(timestamp),
+            gas_limit: U256::from(parent.header.gas_limit),
+            basefee: U256::from(basefee),
+            prevrandao: U256::from_be_bytes(prevrandao.0),
             ..BlockEnv::<BaseEvmTypes>::default()
         };
-        let spec_timestamp = header.timestamp;
-        Ok(CallBlock { parent, env, spec_timestamp })
+        Ok(CallBlock { parent, env, spec_timestamp: timestamp })
     }
 
     /// reth's `-32001 block not found: <id>` for a block a request named, printed as alloy's
@@ -274,12 +270,6 @@ impl Node {
     pub(super) fn block_not_found(tag: Option<&Value>) -> RpcError {
         let id = tag.and_then(|tag| serde_json::from_value::<BlockId>(tag.clone()).ok()).unwrap_or_default();
         RpcError::new(-32001, format!("block not found: {id}"))
-    }
-
-    /// A fresh unpredictable word, as reth's pending `prevrandao`.
-    fn random_word() -> B256 {
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-        keccak256(nanos.as_nanos().to_le_bytes())
     }
 
     /// An EVM for calls on `block`'s environment over the state after its parent block.
@@ -671,14 +661,9 @@ impl Node {
         RpcError::new(code, message)
     }
 
-    /// Whether evm2 reports a halt (anything but success or `REVERT`).
-    fn is_revert(result: &TxResult<BaseEvmTypes>) -> bool {
-        result.stop == InstrStop::Revert
-    }
-
     /// reth's error for a failed execution: code 3 with the revert data, or `-32003` for a halt.
     pub(super) fn failure(result: &TxResult<BaseEvmTypes>, gas: u64) -> RpcError {
-        if Self::is_revert(result) {
+        if result.stop == InstrStop::Revert {
             let mut error = RpcError::new(3, "execution reverted");
             if !result.output.is_empty() {
                 error.data = Some(json!(result.output));
@@ -845,7 +830,7 @@ impl Node {
                 Ok(result) => result,
             };
             if !result.status {
-                if Self::is_revert(&result) && explicit {
+                if result.stop == InstrStop::Revert && explicit {
                     return self.out_of_gas_error(&mut evm, &tx, gas, max_gas_limit, nonce);
                 }
                 return Err(Self::failure_on(&mut evm, &tx.recovered(gas, nonce)?, &result, gas));

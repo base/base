@@ -90,17 +90,10 @@ impl Node {
         let chain = self.chain.read().expect("chain lock");
         let best = chain.head().number();
         let end = match newest {
-            BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => best,
-            BlockNumberOrTag::Earliest => 0,
             BlockNumberOrTag::Number(number) if number > best => {
                 return Err(RpcError::invalid_params(format!("request beyond head block: requested {number}, head {best}")));
             }
-            BlockNumberOrTag::Number(number) => number,
-            BlockNumberOrTag::Safe | BlockNumberOrTag::Finalized => {
-                let forkchoice = chain.forkchoice();
-                let hash = if newest == BlockNumberOrTag::Safe { forkchoice.safe } else { forkchoice.finalized };
-                chain.block(&hash).ok_or_else(|| RpcError::new(-32001, format!("block not found: {newest}")))?.number()
-            }
+            _ => Self::tag_number(&chain, newest)?,
         };
         count = count.min(end + 1);
         let start = end + 1 - count;
