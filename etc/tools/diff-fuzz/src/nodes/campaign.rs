@@ -497,11 +497,12 @@ impl RpcCampaign {
             .filter(|(_, value)| value.get("transport").is_some())
             .map(|(name, _)| name.as_str())
             .collect();
-        let retries = if case.body.contains("\"pending\"") {
-            Self::PENDING_REFERENCE_RETRIES
-        } else {
-            Self::REFERENCE_RETRIES
-        };
+        let pending = case.body.contains("\"pending\"");
+        // A `pending` answer depends on the pending block each node built at that moment, so a
+        // divergence there keeps every node's pending and latest blocks, read before the retries.
+        let blocks = (!verdict.agree && pending).then(|| Self::pending_blocks(serving));
+        let retries =
+            if pending { Self::PENDING_REFERENCE_RETRIES } else { Self::REFERENCE_RETRIES };
         if !verdict.agree
             && failed.is_empty()
             && let Some(reference) = serving.first()
@@ -600,6 +601,7 @@ impl RpcCampaign {
                 "request": serde_json::from_str::<Value>(&case.body).unwrap_or_else(|_| json!(case.body)),
                 "verdict": verdict,
                 "responses": raw,
+                "pendingBlocks": blocks,
             });
             let _ = fs::write(
                 dir.join(format!("{count}.json")),
@@ -1327,6 +1329,28 @@ impl RpcCampaign {
     /// Largest reply saved whole in an example; a larger one is saved as its size and first
     /// bytes.
     pub const MAX_SAVED_REPLY: usize = 1 << 20;
+
+    /// Each node's `pending` block (with full transactions) and `latest` block, as answered.
+    pub fn pending_blocks(serving: &[&NodeClient]) -> BTreeMap<String, Value> {
+        serving
+            .iter()
+            .map(|node| {
+                let read = |tag: &str, full: bool| {
+                    let body = json!({
+                        "jsonrpc": "2.0", "id": 1, "method": "eth_getBlockByNumber",
+                        "params": [tag, full],
+                    });
+                    Self::raw(&[(String::new(), node.send(&body.to_string()))])
+                        .remove("")
+                        .unwrap_or_default()
+                };
+                (
+                    node.name.clone(),
+                    json!({ "pending": read("pending", true), "latest": read("latest", false) }),
+                )
+            })
+            .collect()
+    }
 
     /// Replies by node name, transport failures as `{"transport": text}`.
     pub fn raw(replies: &[(String, Reply)]) -> BTreeMap<String, Value> {
