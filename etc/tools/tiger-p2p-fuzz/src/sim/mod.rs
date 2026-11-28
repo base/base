@@ -18,6 +18,9 @@
 //!   every honest node within `--deadline-ms`;
 //! - eclipse: a victim whose peer-exchange answers come mostly from attackers keeps at least one
 //!   honest outbound peer and keeps receiving messages;
+//! - restart: as eclipse, but the attackers stay dormant until the victim restarts at
+//!   `--restart-ms`, then attack at once; the victim restarts with the anchors and tried peers it
+//!   saved ([`Node::remembered`]), or with nothing under `--no-anchors`;
 //! - requests: an honest requester gets a correct answer for each block despite bad responders;
 //! - bounds: no node panics, and per-connection queues stay below a fixed cap.
 
@@ -102,6 +105,8 @@ struct Options {
     partition: Option<(u64, u64)>,
     fanout: usize,
     fanout_large: Option<usize>,
+    restart_ms: Option<u64>,
+    anchors: bool,
     verbose: bool,
 }
 
@@ -166,7 +171,7 @@ impl Sim {
                 Behavior::Honest
             } else {
                 match opts.scenario.as_str() {
-                    "eclipse" => Behavior::Eclipse,
+                    "eclipse" | "restart" => Behavior::Eclipse,
                     "flood" => Behavior::Flood,
                     "silent" => Behavior::Silent,
                     "requests" => Behavior::BadResponder,
@@ -210,11 +215,15 @@ impl Sim {
         // is the victim and also knows nothing else; attackers know the victim.
         let boots: Vec<(PublicKey, SocketAddr)> =
             (0..2.min(opts.nodes)).map(|i| (nodes[i].key, nodes[i].addr)).collect();
-        let victim = (opts.scenario == "eclipse").then_some(opts.nodes - 1);
+        let victim =
+            matches!(opts.scenario.as_str(), "eclipse" | "restart").then_some(opts.nodes - 1);
         for i in 0..total {
             let mut config = nodes[i].node.config().clone();
             config.bootnodes = boots.iter().filter(|(k, _)| *k != nodes[i].key).copied().collect();
-            if nodes[i].behavior == Behavior::Eclipse
+            if nodes[i].behavior == Behavior::Eclipse && opts.restart_ms.is_some() {
+                // Dormant until the victim restarts (`Sim::restart`): no peers, nobody knows it.
+                config.bootnodes.clear();
+            } else if nodes[i].behavior == Behavior::Eclipse
                 && let Some(v) = victim
             {
                 config.bootnodes.push((nodes[v].key, nodes[v].addr));
@@ -518,14 +527,38 @@ impl Sim {
         }
     }
 
+    /// Restarts the victim, with the peers it saved unless `--no-anchors`, and wakes the dormant
+    /// attackers, who then dial it.
+    fn restart(&mut self) {
+        let v = self.victim.expect("restart has a victim");
+        let conns: Vec<ConnId> =
+            self.links.keys().filter(|(n, _)| *n == v).map(|(_, c)| *c).collect();
+        for conn in conns {
+            self.close_link(v, conn);
+        }
+        let mut config = self.nodes[v].node.config().clone();
+        if self.opts.anchors {
+            (config.anchors, config.tried) = self.nodes[v].node.remembered();
+        }
+        self.nodes[v].node = Node::new(config, self.now);
+        let target = (self.nodes[v].key, self.nodes[v].addr);
+        for i in self.opts.nodes..self.nodes.len() {
+            let mut config = self.nodes[i].node.config().clone();
+            config.bootnodes = vec![target];
+            config.max_outbound = 2;
+            self.nodes[i].node = Node::new(config, self.now);
+        }
+    }
+
     fn run(&mut self) -> Summary {
+        let mut restart_at = self.opts.restart_ms.unwrap_or(u64::MAX);
         let mut next_tick = TICK_MS;
         let mut next_block = 3_000;
         let mut next_attack = 1_000;
         let mut height = 0u64;
         while self.now < self.opts.duration_ms {
             let next_event = self.queue.keys().next().map(|k| k.0).unwrap_or(u64::MAX);
-            let t = next_event.min(next_tick).min(next_block).min(next_attack);
+            let t = next_event.min(next_tick).min(next_block).min(next_attack).min(restart_at);
             self.now = t.max(self.now);
             if let Some((start, end)) = self.opts.partition {
                 let should = self.now >= start && self.now < end;
@@ -547,6 +580,11 @@ impl Sim {
                         }
                     }
                 }
+            }
+            if t == restart_at {
+                restart_at = u64::MAX;
+                self.restart();
+                continue;
             }
             if next_event <= t {
                 let (_, d) = self.queue.pop_first().expect("present");
@@ -633,6 +671,15 @@ impl Sim {
                 continue;
             }
             for i in 0..self.opts.nodes {
+                // A restarting victim may miss what was published while it reconnected.
+                if Some(i) == self.victim
+                    && self
+                        .opts
+                        .restart_ms
+                        .is_some_and(|r| at + self.opts.deadline_ms >= r && at < r + settle)
+                {
+                    continue;
+                }
                 match self.nodes[i].app.accepted_at.get(&id) {
                     Some(t) if t - at <= self.opts.deadline_ms => latencies.push(t - at),
                     // Of 6 or more variants at a height, each node accepts the first 5 it sees,
@@ -779,6 +826,8 @@ fn parse(args: &[String]) -> Result<(Options, u64), String> {
         partition: None,
         fanout: 6,
         fanout_large: None,
+        restart_ms: None,
+        anchors: true,
         verbose: false,
     };
     let mut seeds = 1;
@@ -799,6 +848,8 @@ fn parse(args: &[String]) -> Result<(Options, u64), String> {
             "--payload" => opts.payload = num(value()?)? as usize,
             "--fanout" => opts.fanout = num(value()?)? as usize,
             "--fanout-large" => opts.fanout_large = Some(num(value()?)? as usize),
+            "--restart-ms" => opts.restart_ms = Some(num(value()?)?),
+            "--no-anchors" => opts.anchors = false,
             "--verbose" => opts.verbose = true,
             other => return Err(format!("unknown flag {other}")),
         }
@@ -807,6 +858,12 @@ fn parse(args: &[String]) -> Result<(Options, u64), String> {
         "partition" => opts.partition = Some((40_000, 70_000)),
         "eclipse" | "flood" | "silent" | "requests" if opts.attackers == 0 => {
             opts.attackers = opts.nodes
+        }
+        "restart" => {
+            if opts.attackers == 0 {
+                opts.attackers = opts.nodes;
+            }
+            opts.restart_ms.get_or_insert(60_000);
         }
         "all" => {
             opts.partition = Some((40_000, 70_000));
@@ -819,8 +876,9 @@ fn parse(args: &[String]) -> Result<(Options, u64), String> {
     Ok((opts, seeds))
 }
 
-/// Runs `sim --scenario <gossip|partition|eclipse|flood|silent|requests|equivocate|all>
-/// [--seed S] [--seeds N] [--nodes N] [--attackers N] [--attacker-groups G] [--duration-ms T]`.
+/// Runs `sim --scenario <gossip|partition|eclipse|restart|flood|silent|requests|equivocate|all>
+/// [--seed S] [--seeds N] [--nodes N] [--attackers N] [--attacker-groups G] [--duration-ms T]
+/// [--restart-ms T] [--no-anchors]`.
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let (opts, seeds) = parse(args)?;
     let mut failed = 0;

@@ -27,13 +27,16 @@ base-tiger-p2p-fuzz tp2p live [--seed S]                   # attacking peers aga
 ## Simulation
 
 ```sh
-base-tiger-p2p-fuzz sim --scenario <gossip|partition|eclipse|flood|silent|requests|equivocate|all> \
-  [--seed S] [--seeds N] [--nodes N] [--attackers N] [--attacker-groups G] [--fanout F] [--verbose]
+base-tiger-p2p-fuzz sim --scenario <gossip|partition|eclipse|restart|flood|silent|requests|equivocate|all> \
+  [--seed S] [--seeds N] [--nodes N] [--attackers N] [--attacker-groups G] [--fanout F] \
+  [--restart-ms T] [--no-anchors] [--verbose]
 ```
 
 A deterministic discrete-event simulation of tp2p's sans-IO core (`base_tiger_p2p::Node`): a
 seeded scheduler, a per-node uplink, FIFO links, partitions, drops and delays, and malicious
-nodes (flooding, silent, equivocating, eclipsing with poisoned peer exchange). Every run checks
+nodes (flooding, silent, equivocating, eclipsing with poisoned peer exchange). `restart` keeps
+the eclipse attackers dormant until the victim restarts, with the peers it saved or, under
+`--no-anchors`, with none. Every run checks
 safety (no honest node accepts an invalid message), liveness (every honest node receives every
 accepted message once the network heals), eclipse (a victim keeps at least one honest peer),
 request answers, and that queues stay within their caps.
