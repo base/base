@@ -5,9 +5,9 @@
 //! base-reth). Message ids below are relative to the capability's offset.
 
 use alloy_primitives::{B256, U256};
-use alloy_rlp::{Decodable, Encodable, Header as RlpHeader};
+use alloy_rlp::{Decodable, Encodable, Header as RlpHeader, PayloadView};
 
-use crate::{block::BlockBody, forkid::ForkId, rlpx::LocalCapability};
+use crate::{forkid::ForkId, rlpx::LocalCapability};
 
 pub(crate) use id::*;
 
@@ -78,9 +78,8 @@ pub struct Status {
 impl Status {
     /// Encodes in the format of `self.version`.
     pub fn encode_payload(&self) -> Vec<u8> {
-        let mut out = Vec::new();
         if self.version >= 69 {
-            let fields: [&dyn Encodable; 7] = [
+            encode_list(&[
                 &self.version,
                 &self.network_id,
                 &self.genesis,
@@ -88,26 +87,23 @@ impl Status {
                 &self.earliest,
                 &self.latest,
                 &self.head_hash,
-            ];
-            encode_list(&fields, &mut out);
+            ])
         } else {
             // eth/68 carries total difficulty; base-reth does not check it, Base's is zero.
-            let fields: [&dyn Encodable; 6] = [
+            encode_list(&[
                 &self.version,
                 &self.network_id,
                 &U256::ZERO,
                 &self.head_hash,
                 &self.genesis,
                 &self.fork_id,
-            ];
-            encode_list(&fields, &mut out);
+            ])
         }
-        out
     }
 
     /// Decodes a Status of the negotiated `version`.
     pub fn decode_payload(version: u64, payload: &[u8]) -> alloy_rlp::Result<Self> {
-        let mut items = list_items(&mut &payload[..])?;
+        let mut items = RlpHeader::decode_bytes(&mut &payload[..], true)?;
         let got = u64::decode(&mut items)?;
         if got != version {
             return Err(alloy_rlp::Error::Custom("status version differs from negotiated"));
@@ -158,20 +154,17 @@ pub struct HeadersRequest {
 impl HeadersRequest {
     /// Encodes `[request_id, [start, limit, skip, reverse]]`.
     pub fn encode_payload(&self, request_id: u64) -> Vec<u8> {
-        let mut inner = Vec::new();
         let start: &dyn Encodable = match &self.start {
             BlockId::Hash(hash) => hash,
             BlockId::Number(number) => number,
         };
-        encode_list(&[start, &self.limit, &self.skip, &self.reverse], &mut inner);
-        let mut out = Vec::new();
-        encode_list(&[&request_id, &RawRlp(&inner)], &mut out);
-        out
+        let inner = encode_list(&[start, &self.limit, &self.skip, &self.reverse]);
+        encode_list(&[&request_id, &RawRlp(&inner)])
     }
 
     /// Decodes the request body after the request id.
     pub fn decode(items: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let mut fields = list_items(items)?;
+        let mut fields = RlpHeader::decode_bytes(items, true)?;
         let first = RlpHeader::decode(&mut { fields })?;
         let start = if !first.list && first.payload_length == 32 {
             BlockId::Hash(B256::decode(&mut fields)?)
@@ -202,30 +195,16 @@ impl Encodable for RawRlp<'_> {
 }
 
 /// Encodes `items` as an RLP list.
-pub(crate) fn encode_list(items: &[&dyn Encodable], out: &mut Vec<u8>) {
-    let payload_length = items.iter().map(|i| i.length()).sum();
-    RlpHeader { list: true, payload_length }.encode(out);
-    for item in items {
-        item.encode(out);
-    }
-}
-
-/// Returns the payload of the RLP list at the start of `buf` and advances `buf` past it.
-pub(crate) fn list_items<'a>(buf: &mut &'a [u8]) -> alloy_rlp::Result<&'a [u8]> {
-    let header = RlpHeader::decode(buf)?;
-    if !header.list {
-        return Err(alloy_rlp::Error::UnexpectedString);
-    }
-    let (items, rest) =
-        buf.split_at_checked(header.payload_length).ok_or(alloy_rlp::Error::InputTooShort)?;
-    *buf = rest;
-    Ok(items)
+pub(crate) fn encode_list(items: &[&dyn Encodable]) -> Vec<u8> {
+    let mut out = Vec::new();
+    alloy_rlp::encode_list::<_, dyn Encodable>(items, &mut out);
+    out
 }
 
 /// Splits a request or response payload `[request_id, body]` into the id and the body bytes.
 pub(crate) fn split_request_id(payload: &[u8]) -> alloy_rlp::Result<(u64, &[u8])> {
     let mut buf = payload;
-    let mut items = list_items(&mut buf)?;
+    let mut items = RlpHeader::decode_bytes(&mut buf, true)?;
     let id = u64::decode(&mut items)?;
     Ok((id, items))
 }
@@ -256,18 +235,6 @@ pub(crate) fn encode_list_of_raw<I: AsRef<[u8]>>(items: &[I]) -> Vec<u8> {
     out
 }
 
-/// Encodes `[request_id, [hash, ...]]`, the body of GetBlockBodies and GetReceipts.
-pub(crate) fn encode_hashes_request(request_id: u64, hashes: &[B256]) -> Vec<u8> {
-    let mut out = Vec::new();
-    encode_list(&[&request_id, &hashes.to_vec()], &mut out);
-    out
-}
-
-/// Decodes a list of bodies from a BlockBodies response body.
-pub(crate) fn decode_bodies(mut items: &[u8]) -> alloy_rlp::Result<Vec<BlockBody>> {
-    Vec::<BlockBody>::decode(&mut items)
-}
-
 /// Converts an EIP-2718 receipt (`type || rlp([status, gas, bloom, logs, ...])`, or the bare list
 /// for legacy) into its eth/69 wire form `[type, status, gas, logs, ...]`, which drops the bloom.
 /// Base deposit receipts keep their trailing deposit nonce and version fields.
@@ -277,16 +244,9 @@ pub(crate) fn receipt_to_eth69(receipt: &[u8]) -> alloy_rlp::Result<Vec<u8>> {
         Some(b) => (*b, &receipt[1..]),
         None => return Err(alloy_rlp::Error::InputTooShort),
     };
-    let mut fields = list_items(&mut rest)?;
-    let mut items: Vec<&[u8]> = Vec::new();
-    while !fields.is_empty() {
-        let start = fields;
-        let header = RlpHeader::decode(&mut fields)?;
-        let header_len = start.len() - fields.len();
-        let total = header_len + header.payload_length;
-        items.push(start.get(..total).ok_or(alloy_rlp::Error::InputTooShort)?);
-        fields = &start[total..];
-    }
+    let PayloadView::List(mut items) = RlpHeader::decode_raw(&mut rest)? else {
+        return Err(alloy_rlp::Error::UnexpectedString);
+    };
     if items.len() < 4 {
         return Err(alloy_rlp::Error::Custom("receipt has too few fields"));
     }

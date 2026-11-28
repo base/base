@@ -1,12 +1,10 @@
 //! Cryptographic primitives shared by RLPx and discv5: node keys, ECDH, hashes, and ciphers.
 //!
-//! Everything is a thin call into a small audited crate (secp256k1, `ring` for SHA-256, HMAC and
-//! AES-GCM, RustCrypto `aes` and `ctr` for the AES-CTR that `ring` lacks) or keccak from
-//! alloy-primitives; HKDF and the NIST concat KDF are written here because each is a few lines
-//! over HMAC/SHA-256.
+//! Everything is a thin call into a small audited crate (secp256k1, `ring` for SHA-256, HMAC,
+//! HKDF and AES-GCM, RustCrypto `aes` and `ctr` for the AES-CTR that `ring` lacks).
 
 use aes::cipher::{BlockEncrypt, KeyInit, KeyIvInit, StreamCipher};
-use alloy_primitives::{B256, B512, keccak256};
+use alloy_primitives::{B256, B512};
 use secp256k1::{
     Message, PublicKey, SECP256K1, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -22,12 +20,17 @@ pub(crate) fn random_bytes(buf: &mut [u8]) {
     getrandom::fill(buf).expect("operating system randomness is available");
 }
 
+/// Returns `N` bytes of operating-system randomness.
+pub(crate) fn random_array<const N: usize>() -> [u8; N] {
+    let mut out = [0u8; N];
+    random_bytes(&mut out);
+    out
+}
+
 /// Returns a fresh random secp256k1 secret key.
 pub(crate) fn random_secret_key() -> SecretKey {
     loop {
-        let mut bytes = [0u8; 32];
-        random_bytes(&mut bytes);
-        if let Ok(key) = SecretKey::from_byte_array(bytes) {
+        if let Ok(key) = SecretKey::from_byte_array(random_array()) {
             return key;
         }
     }
@@ -104,31 +107,6 @@ pub(crate) fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
     context.sign().as_ref().try_into().expect("HMAC-SHA-256 tags are 32 bytes")
 }
 
-/// HKDF-SHA-256 (RFC 5869) extract and expand, writing `out.len()` bytes (at most 255 blocks).
-pub(crate) fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], out: &mut [u8]) {
-    assert!(out.len() <= 255 * 32);
-    let prk = hmac_sha256(salt, &[ikm]);
-    let mut previous: Vec<u8> = Vec::new();
-    for (i, chunk) in out.chunks_mut(32).enumerate() {
-        let block = hmac_sha256(&prk, &[&previous, info, &[i as u8 + 1]]);
-        chunk.copy_from_slice(&block[..chunk.len()]);
-        previous = block.to_vec();
-    }
-}
-
-/// The NIST SP 800-56 concatenation KDF with SHA-256 that RLPx's ECIES uses, for 32 bytes.
-pub(crate) fn concat_kdf_32(secret: &B256) -> [u8; 32] {
-    sha256(&[&1u32.to_be_bytes(), secret.as_slice()])
-}
-
-/// Keccak-256 of the concatenation of `parts`.
-pub(crate) fn keccak(parts: &[&[u8]]) -> B256 {
-    if parts.len() == 1 {
-        return keccak256(parts[0]);
-    }
-    keccak256(parts.concat())
-}
-
 /// AES-128 in CTR mode with a big-endian 128-bit counter, applied in place.
 pub(crate) fn aes128_ctr(key: &[u8; 16], iv: &[u8; 16], data: &mut [u8]) {
     let mut cipher = ctr::Ctr128BE::<aes::Aes128>::new(key.into(), iv.into());
@@ -150,12 +128,6 @@ impl Aes256Ctr {
     }
 }
 
-impl std::fmt::Debug for Aes256Ctr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Aes256Ctr")
-    }
-}
-
 /// AES-256 single-block encryption (ECB of one block), used by the RLPx frame MAC.
 pub(crate) struct Aes256Block(aes::Aes256);
 
@@ -168,12 +140,6 @@ impl Aes256Block {
     /// Encrypts one 16-byte block in place.
     pub(crate) fn encrypt(&self, block: &mut [u8; 16]) {
         self.0.encrypt_block(block.into());
-    }
-}
-
-impl std::fmt::Debug for Aes256Block {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Aes256Block")
     }
 }
 
@@ -215,25 +181,12 @@ fn aes128_gcm_key(key: &[u8; 16]) -> aead::LessSafeKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
-
-    #[test]
-    fn hkdf_matches_rfc5869_case_1() {
-        let ikm = [0x0bu8; 22];
-        let salt = hex::decode("000102030405060708090a0b0c").unwrap();
-        let info = hex::decode("f0f1f2f3f4f5f6f7f8f9").unwrap();
-        let mut okm = [0u8; 42];
-        hkdf_sha256(&salt, &ikm, &info, &mut okm);
-        assert_eq!(
-            hex::encode(okm),
-            "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
-        );
-    }
+    use alloy_primitives::keccak256;
 
     #[test]
     fn recoverable_signature_round_trips() {
         let key = random_secret_key();
-        let digest = keccak(&[b"tiger"]);
+        let digest = keccak256(b"tiger");
         let sig = sign_recoverable(digest, &key);
         let public = recover(digest, &sig).unwrap();
         assert_eq!(peer_id(&public), peer_id_of_secret(&key));

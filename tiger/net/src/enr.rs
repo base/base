@@ -12,6 +12,7 @@ use secp256k1::{PublicKey, SecretKey};
 
 use crate::{
     crypto::{PeerId, peer_id, sign_compact, verify_compact},
+    eth::encode_list_of_raw,
     forkid::ForkId,
 };
 
@@ -46,17 +47,15 @@ fn raw<T: Encodable>(value: &T) -> Vec<u8> {
     alloy_rlp::encode(value)
 }
 
-fn content_rlp(seq: u64, pairs: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
+/// The list payload `seq, k1, v1, ...`; the signature covers it wrapped in a list.
+fn content(seq: u64, pairs: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
     let mut payload = Vec::new();
     seq.encode(&mut payload);
     for (key, value) in pairs {
         key.as_slice().encode(&mut payload);
         payload.extend_from_slice(value);
     }
-    let mut out = Vec::new();
-    RlpHeader { list: true, payload_length: payload.len() }.encode(&mut out);
-    out.extend_from_slice(&payload);
-    out
+    payload
 }
 
 impl Enr {
@@ -88,18 +87,14 @@ impl Enr {
             pairs.push((FORK_KEY.to_vec(), raw(&vec![fork_id])));
         }
         pairs.sort();
-        let digest = keccak256(content_rlp(seq, &pairs));
+        let digest = keccak256(encode_list_of_raw(&[content(seq, &pairs)]));
         let signature = sign_compact(digest, key);
         Self { seq, pairs, signature, public_key }
     }
 
-    /// The raw RLP value of `key`.
-    pub fn get(&self, key: &[u8]) -> Option<&[u8]> {
-        self.pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_slice())
-    }
-
+    /// The value of `key`, decoded.
     fn get_decoded<T: Decodable>(&self, key: &[u8]) -> Option<T> {
-        let mut value = self.get(key)?;
+        let mut value = self.pairs.iter().find(|(k, _)| k == key)?.1.as_slice();
         T::decode(&mut value).ok()
     }
 
@@ -145,30 +140,16 @@ impl Enr {
 
     /// The canonical RLP encoding.
     pub fn encode(&self) -> Vec<u8> {
-        let content = content_rlp(self.seq, &self.pairs);
-        let mut buf = &content[..];
-        let header = RlpHeader::decode(&mut buf).expect("own encoding");
-        let mut payload = Vec::with_capacity(content.len() + 66);
-        self.signature.as_slice().encode(&mut payload);
-        payload.extend_from_slice(&buf[..header.payload_length]);
-        let mut out = Vec::new();
-        RlpHeader { list: true, payload_length: payload.len() }.encode(&mut out);
-        out.extend_from_slice(&payload);
-        out
+        encode_list_of_raw(&[alloy_rlp::encode(self.signature), content(self.seq, &self.pairs)])
     }
 
     /// Decodes and verifies a record.
     pub fn decode(buf: &mut &[u8]) -> Result<Self, EnrError> {
         let start = *buf;
-        let header = RlpHeader::decode(buf).map_err(|_| EnrError::Malformed)?;
-        if !header.list || buf.len() < header.payload_length {
+        let mut items = RlpHeader::decode_bytes(buf, true).map_err(|_| EnrError::Malformed)?;
+        if start.len() - buf.len() > MAX_RECORD_SIZE {
             return Err(EnrError::Malformed);
         }
-        if start.len() - buf.len() + header.payload_length > MAX_RECORD_SIZE {
-            return Err(EnrError::Malformed);
-        }
-        let mut items = &buf[..header.payload_length];
-        *buf = &buf[header.payload_length..];
         let signature: [u8; 64] = RlpHeader::decode_bytes(&mut items, false)
             .map_err(|_| EnrError::Malformed)?
             .try_into()
@@ -199,7 +180,7 @@ impl Enr {
             .map_err(|_| EnrError::UnsupportedScheme)?;
         let public_key =
             PublicKey::from_slice(key_bytes).map_err(|_| EnrError::UnsupportedScheme)?;
-        let digest = keccak256(content_rlp(seq, &pairs));
+        let digest = keccak256(encode_list_of_raw(&[content(seq, &pairs)]));
         if !verify_compact(digest, &signature, &public_key) {
             return Err(EnrError::BadSignature);
         }

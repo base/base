@@ -128,28 +128,12 @@ impl Encodable for BlockBody {
 
 impl Decodable for BlockBody {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let header = RlpHeader::decode(buf)?;
-        if !header.list {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-        let (mut items, rest) =
-            buf.split_at_checked(header.payload_length).ok_or(alloy_rlp::Error::InputTooShort)?;
-        *buf = rest;
-        let txs_header = RlpHeader::decode(&mut items)?;
-        if !txs_header.list {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-        let (mut txs, after) = items
-            .split_at_checked(txs_header.payload_length)
-            .ok_or(alloy_rlp::Error::InputTooShort)?;
-        items = after;
+        let mut items = RlpHeader::decode_bytes(buf, true)?;
+        let mut txs = RlpHeader::decode_bytes(&mut items, true)?;
         let mut transactions = Vec::new();
         while !txs.is_empty() {
             let start = txs;
             let tx_header = RlpHeader::decode(&mut txs)?;
-            if txs.len() < tx_header.payload_length {
-                return Err(alloy_rlp::Error::InputTooShort);
-            }
             if tx_header.list {
                 let consumed = start.len() - txs.len() + tx_header.payload_length;
                 transactions.push(Bytes::copy_from_slice(&start[..consumed]));

@@ -47,12 +47,6 @@ pub enum RlpxError {
     NoSharedCapability,
 }
 
-impl std::fmt::Display for RlpxError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
 impl From<io::Error> for RlpxError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
@@ -124,12 +118,7 @@ pub struct Hello {
 impl Decodable for Hello {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         // EIP-8: ignore extra trailing list elements.
-        let header = Header::decode(buf)?;
-        if !header.list || buf.len() < header.payload_length {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-        let mut items = &buf[..header.payload_length];
-        *buf = &buf[header.payload_length..];
+        let mut items = Header::decode_bytes(buf, true)?;
         Ok(Self {
             protocol_version: u64::decode(&mut items)?,
             client_id: String::decode(&mut items)?,
@@ -395,11 +384,6 @@ impl RlpxWriter {
     /// The remote socket address.
     pub fn peer_addr(&self) -> Option<SocketAddr> {
         self.stream.peer_addr().ok()
-    }
-
-    /// Shuts the socket down without a message, which also wakes the reader.
-    pub fn shutdown(&self) {
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
     }
 }
 

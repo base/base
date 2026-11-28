@@ -20,16 +20,17 @@ use std::{
 };
 
 use alloy_primitives::{B256, Bytes, keccak256};
-use alloy_rlp::{Decodable, Encodable};
+use alloy_rlp::{Decodable, Encodable, Header as RlpHeader};
+use ring::hkdf;
 use secp256k1::{PublicKey, SecretKey};
 
 use crate::{
     crypto::{
-        aes128_ctr, aes128_gcm_decrypt, aes128_gcm_encrypt, hkdf_sha256, peer_id, public_key,
-        random_bytes, random_secret_key, sha256, sign_compact, verify_compact,
+        aes128_ctr, aes128_gcm_decrypt, aes128_gcm_encrypt, peer_id, public_key, random_array,
+        random_secret_key, sha256, sign_compact, verify_compact,
     },
     enr::Enr,
-    eth::{encode_list, list_items},
+    eth::encode_list,
     forkid::ForkId,
     network::NodeRecord,
 };
@@ -184,11 +185,12 @@ fn derive_keys(
     id_a: &B256,
     id_b: &B256,
 ) -> ([u8; 16], [u8; 16]) {
-    let mut info = b"discovery v5 key agreement".to_vec();
-    info.extend_from_slice(id_a.as_slice());
-    info.extend_from_slice(id_b.as_slice());
+    let info: [&[u8]; 3] = [b"discovery v5 key agreement", id_a.as_slice(), id_b.as_slice()];
+    let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, challenge).extract(secret);
     let mut keys = [0u8; 32];
-    hkdf_sha256(challenge, secret, &info, &mut keys);
+    prk.expand(&info, hkdf::HKDF_SHA256)
+        .and_then(|okm| okm.fill(&mut keys))
+        .expect("32 bytes is a valid HKDF-SHA-256 output length");
     (keys[..16].try_into().unwrap(), keys[16..].try_into().unwrap())
 }
 
@@ -227,21 +229,18 @@ fn decode_packet<'a>(protocol_id: &[u8; 6], local_id: &B256, data: &'a [u8]) -> 
     }
     let masking_iv: [u8; 16] = data[..16].try_into().unwrap();
     let key: [u8; 16] = local_id[..16].try_into().unwrap();
-    // Unmask the static header first to learn the authdata size, then the whole header.
-    let mut static_header = data[16..16 + STATIC_HEADER].to_vec();
-    aes128_ctr(&key, &masking_iv, &mut static_header);
-    if &static_header[..6] != protocol_id
-        || u16::from_be_bytes([static_header[6], static_header[7]]) != VERSION
-    {
+    // Unmask everything after the IV, then keep the static header and the authdata.
+    let mut header = data[16..].to_vec();
+    aes128_ctr(&key, &masking_iv, &mut header);
+    if &header[..6] != protocol_id || u16::from_be_bytes([header[6], header[7]]) != VERSION {
         return None;
     }
-    let authdata_size = u16::from_be_bytes([static_header[21], static_header[22]]) as usize;
+    let authdata_size = u16::from_be_bytes([header[21], header[22]]) as usize;
     let header_end = 16 + STATIC_HEADER + authdata_size;
     if header_end > data.len() {
         return None;
     }
-    let mut header = data[16..header_end].to_vec();
-    aes128_ctr(&key, &masking_iv, &mut header);
+    header.truncate(header_end - 16);
     Some(Packet {
         masking_iv,
         flag: header[8],
@@ -262,42 +261,28 @@ fn encode_header(
     authdata: &[u8],
     masking_iv: [u8; 16],
 ) -> (Vec<u8>, Vec<u8>) {
-    let mut header = Vec::with_capacity(STATIC_HEADER + authdata.len());
-    header.extend_from_slice(protocol_id);
-    header.extend_from_slice(&VERSION.to_be_bytes());
-    header.push(flag);
-    header.extend_from_slice(nonce);
-    header.extend_from_slice(&(authdata.len() as u16).to_be_bytes());
-    header.extend_from_slice(authdata);
-    let mut ad = masking_iv.to_vec();
-    ad.extend_from_slice(&header);
-    let key: [u8; 16] = dest[..16].try_into().unwrap();
-    aes128_ctr(&key, &masking_iv, &mut header);
     let mut packet = masking_iv.to_vec();
-    packet.extend_from_slice(&header);
+    packet.extend_from_slice(protocol_id);
+    packet.extend_from_slice(&VERSION.to_be_bytes());
+    packet.push(flag);
+    packet.extend_from_slice(nonce);
+    packet.extend_from_slice(&(authdata.len() as u16).to_be_bytes());
+    packet.extend_from_slice(authdata);
+    let ad = packet.clone();
+    let key: [u8; 16] = dest[..16].try_into().unwrap();
+    aes128_ctr(&key, &masking_iv, &mut packet[16..]);
     (packet, ad)
-}
-
-fn random_array<const N: usize>() -> [u8; N] {
-    let mut out = [0u8; N];
-    random_bytes(&mut out);
-    out
 }
 
 fn encode_message(kind: u8, fields: &[&dyn Encodable]) -> Vec<u8> {
     let mut out = vec![kind];
-    encode_list(fields, &mut out);
+    out.extend(encode_list(fields));
     out
 }
 
 impl Discv5 {
-    /// Binds the socket and starts the discovery thread.
+    /// Binds the socket and starts the discovery thread, with Base's protocol id.
     pub fn start(config: Discv5Config) -> io::Result<Self> {
-        Self::start_with_protocol(config, BASE_PROTOCOL_ID)
-    }
-
-    /// Like [`Self::start`] with another protocol id.
-    pub fn start_with_protocol(config: Discv5Config, protocol_id: [u8; 6]) -> io::Result<Self> {
         let socket = UdpSocket::bind(config.listen_addr)?;
         socket.set_read_timeout(Some(Duration::from_millis(100)))?;
         let udp_port = socket.local_addr()?.port();
@@ -323,7 +308,7 @@ impl Discv5 {
             socket,
             key,
             local_id,
-            protocol_id,
+            protocol_id: BASE_PROTOCOL_ID,
             state: Mutex::new(State {
                 ip_learned: ip.is_some(),
                 local_enr,
@@ -359,11 +344,6 @@ impl Discv5 {
     /// The UDP address the socket is bound to.
     pub fn local_addr(&self) -> SocketAddr {
         self.inner.socket.local_addr().expect("bound socket")
-    }
-
-    /// The number of nodes in the routing table.
-    pub fn table_size(&self) -> usize {
-        self.inner.state.lock().unwrap().buckets.iter().map(Vec::len).sum()
     }
 
     /// Stops the discovery thread.
@@ -409,26 +389,33 @@ impl Inner {
         Bytes::from(id.to_be_bytes().to_vec())
     }
 
+    /// Builds a packet of kind `flag` to `dest` with a fresh nonce: the masked header, then the
+    /// message sealed with `key`, or without a key 20 random bytes, which provoke a WHOAREYOU.
+    fn seal(
+        &self,
+        dest: &B256,
+        flag: u8,
+        authdata: &[u8],
+        key: Option<&[u8; 16]>,
+        plaintext: &[u8],
+    ) -> ([u8; 12], Vec<u8>) {
+        let nonce: [u8; 12] = random_array();
+        let (mut packet, ad) =
+            encode_header(&self.protocol_id, dest, flag, &nonce, authdata, random_array());
+        match key {
+            Some(key) => packet.extend(aes128_gcm_encrypt(key, &nonce, plaintext, &ad)),
+            None => packet.extend_from_slice(&random_array::<20>()),
+        }
+        (nonce, packet)
+    }
+
     /// Sends a request to a known contact, through its session or by starting a handshake.
     fn send_request(&self, state: &mut State, node: B256, plaintext: Vec<u8>) {
         let Some(contact) = state.contacts.get(&node) else { return };
         let addr = contact.addr;
-        let nonce: [u8; 12] = random_array();
-        let (mut packet, ad) = encode_header(
-            &self.protocol_id,
-            &node,
-            FLAG_MESSAGE,
-            &nonce,
-            self.local_id.as_slice(),
-            random_array(),
-        );
-        match state.sessions.get(&node) {
-            Some(session) => {
-                packet.extend(aes128_gcm_encrypt(&session.write_key, &nonce, &plaintext, &ad))
-            }
-            // No session: random content provokes a WHOAREYOU, which starts the handshake.
-            None => packet.extend_from_slice(&random_array::<20>()),
-        }
+        let key = state.sessions.get(&node).map(|session| session.write_key);
+        let (nonce, packet) =
+            self.seal(&node, FLAG_MESSAGE, self.local_id.as_slice(), key.as_ref(), &plaintext);
         self.send_to(&packet, addr);
         state.outgoing.insert(nonce, Outgoing { node, plaintext, sent: Instant::now() });
     }
@@ -441,16 +428,8 @@ impl Inner {
 
     fn send_response(&self, state: &State, node: B256, addr: SocketAddr, plaintext: &[u8]) {
         let Some(session) = state.sessions.get(&node) else { return };
-        let nonce: [u8; 12] = random_array();
-        let (mut packet, ad) = encode_header(
-            &self.protocol_id,
-            &node,
-            FLAG_MESSAGE,
-            &nonce,
-            self.local_id.as_slice(),
-            random_array(),
-        );
-        packet.extend(aes128_gcm_encrypt(&session.write_key, &nonce, plaintext, &ad));
+        let key = Some(&session.write_key);
+        let (_, packet) = self.seal(&node, FLAG_MESSAGE, self.local_id.as_slice(), key, plaintext);
         self.send_to(&packet, addr);
     }
 
@@ -532,16 +511,9 @@ impl Inner {
         if enr_seq < state.local_enr.seq {
             authdata.extend_from_slice(&state.local_enr.encode());
         }
-        let nonce: [u8; 12] = random_array();
-        let (mut out, ad) = encode_header(
-            &self.protocol_id,
-            &request.node,
-            FLAG_HANDSHAKE,
-            &nonce,
-            &authdata,
-            random_array(),
-        );
-        out.extend(aes128_gcm_encrypt(&write_key, &nonce, &request.plaintext, &ad));
+        let key = Some(&write_key);
+        let (nonce, out) =
+            self.seal(&request.node, FLAG_HANDSHAKE, &authdata, key, &request.plaintext);
         self.send_to(&out, from);
         state.sessions.insert(request.node, Session { write_key, read_key });
         state.outgoing.insert(nonce, Outgoing { sent: Instant::now(), ..request });
@@ -605,7 +577,7 @@ impl Inner {
     fn on_message(&self, state: &mut State, src: B256, from: SocketAddr, plaintext: &[u8]) {
         let Some((&kind, rest)) = plaintext.split_first() else { return };
         let mut buf = rest;
-        let Ok(mut items) = list_items(&mut buf) else { return };
+        let Ok(mut items) = RlpHeader::decode_bytes(&mut buf, true) else { return };
         let Ok(request_id) = Bytes::decode(&mut items) else { return };
         if request_id.len() > 8 {
             return;
@@ -621,7 +593,8 @@ impl Inner {
                 self.send_response(state, src, from, &pong);
             }
             PONG => {
-                self.complete(state, src);
+                // The response answers every outgoing request to `src`.
+                state.outgoing.retain(|_, o| o.node != src);
                 let _seq = u64::decode(&mut items);
                 if !state.ip_learned
                     && let Ok(ip) = Bytes::decode(&mut items)
@@ -658,9 +631,9 @@ impl Inner {
                 }
             }
             NODES => {
-                self.complete(state, src);
+                state.outgoing.retain(|_, o| o.node != src);
                 let _total = u64::decode(&mut items);
-                let Ok(mut list) = list_items(&mut items) else { return };
+                let Ok(mut list) = RlpHeader::decode_bytes(&mut items, true) else { return };
                 let mut count = 0;
                 while !list.is_empty() && count < BUCKET_SIZE {
                     count += 1;
@@ -675,11 +648,6 @@ impl Inner {
             }
             _ => {}
         }
-    }
-
-    /// Drops outgoing requests to `node` that its response answers.
-    fn complete(&self, state: &mut State, node: B256) {
-        state.outgoing.retain(|_, o| o.node != node);
     }
 
     fn learn_ip(&self, state: &mut State, ip: Ipv4Addr) {
@@ -738,13 +706,7 @@ impl Inner {
         let target = state.lookup_target;
         let mut candidates: Vec<B256> =
             state.contacts.keys().filter(|id| !state.lookup_asked.contains(*id)).copied().collect();
-        candidates.sort_by_key(|id| {
-            let mut xor = [0u8; 32];
-            for (i, b) in xor.iter_mut().enumerate() {
-                *b = id[i] ^ target[i];
-            }
-            xor
-        });
+        candidates.sort_by_key(|id| *id ^ target);
         for node in candidates.into_iter().take(LOOKUP_PARALLELISM) {
             state.lookup_asked.insert(node);
             let distance = log2_distance(&node, &target).max(1) as u16;

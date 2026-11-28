@@ -5,17 +5,18 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::mpsc::RecvTimeoutError,
+    sync::mpsc::{self, RecvTimeoutError, Sender},
     time::{Duration, Instant},
 };
 
 use alloy_primitives::B256;
+use alloy_rlp::{Decodable, Header as RlpHeader};
 
 use crate::{
     block::{BlockBody, SealedHeader},
     crypto::PeerId,
-    eth::{self, BlockId, HeadersRequest, decode_bodies, encode_hashes_request, split_request_id},
-    network::{Network, Penalty, response_channel},
+    eth::{self, BlockId, HeadersRequest, encode_list, split_request_id},
+    network::{Network, Penalty},
     peer::{Peer, Response},
 };
 
@@ -98,7 +99,7 @@ impl Downloader {
         send: impl Fn(&Peer, &J, u64, &std::sync::mpsc::Sender<Response>) -> bool,
         mut handle: impl FnMut(&J, &PeerId, Vec<u8>) -> Result<Step<J>, Rejected>,
     ) -> Result<(), DownloadError> {
-        let (tx, rx) = response_channel();
+        let (tx, rx) = mpsc::channel();
         let mut queue: VecDeque<(J, u32)> = jobs.into_iter().map(|j| (j, 0)).collect();
         let mut inflight: HashMap<u64, (J, u32, std::sync::Arc<Peer>, Instant)> = HashMap::new();
         let mut next_tag = 0u64;
@@ -171,28 +172,18 @@ impl Downloader {
     pub fn headers(&self, request: HeadersRequest) -> Result<Vec<SealedHeader>, DownloadError> {
         let mut out = Vec::new();
         let mut not_found = 0;
-        let result = self.run(
-            vec![request],
-            |peer, request, tag, tx| {
-                peer.request_eth(eth::GET_BLOCK_HEADERS, |id| request.encode_payload(id), tag, tx)
-                    .is_ok()
-            },
-            |request, _, payload| {
-                let headers =
-                    decode_headers(&payload).map_err(|_| Rejected(Penalty::BadResponse))?;
-                if headers.is_empty() {
-                    not_found += 1;
-                    if not_found >= 3 {
-                        return Ok(Step::Done);
-                    }
-                    return Err(Rejected(Penalty::Useless));
+        self.run(vec![request], request_headers, |request, _, payload| {
+            let headers = valid_headers(request, &payload)?;
+            if headers.is_empty() {
+                not_found += 1;
+                if not_found >= 3 {
+                    return Ok(Step::Done);
                 }
-                check_header_run(request, &headers).map_err(Rejected)?;
-                out = headers;
-                Ok(Step::Done)
-            },
-        );
-        result?;
+                return Err(Rejected(Penalty::Useless));
+            }
+            out = headers;
+            Ok(Step::Done)
+        })?;
         if out.is_empty() {
             return Err(DownloadError::NotFound);
         }
@@ -241,32 +232,23 @@ impl Downloader {
             start += limit;
         }
         let mut fetched: HashMap<u64, Vec<SealedHeader>> = HashMap::new();
-        self.run(
-            chunks,
-            |peer, request, tag, tx| {
-                peer.request_eth(eth::GET_BLOCK_HEADERS, |id| request.encode_payload(id), tag, tx)
-                    .is_ok()
-            },
-            |request, _, payload| {
-                let headers =
-                    decode_headers(&payload).map_err(|_| Rejected(Penalty::BadResponse))?;
-                if headers.is_empty() {
-                    return Err(Rejected(Penalty::Useless));
-                }
-                check_header_run(request, &headers).map_err(Rejected)?;
-                let BlockId::Number(first) = request.start else { unreachable!() };
-                let got = headers.len() as u64;
-                fetched.insert(first, headers);
-                if got < request.limit {
-                    return Ok(Step::Remaining(HeadersRequest {
-                        start: BlockId::Number(first + got),
-                        limit: request.limit - got,
-                        ..*request
-                    }));
-                }
-                Ok(Step::Done)
-            },
-        )?;
+        self.run(chunks, request_headers, |request, _, payload| {
+            let headers = valid_headers(request, &payload)?;
+            if headers.is_empty() {
+                return Err(Rejected(Penalty::Useless));
+            }
+            let BlockId::Number(first) = request.start else { unreachable!() };
+            let got = headers.len() as u64;
+            fetched.insert(first, headers);
+            if got < request.limit {
+                return Ok(Step::Remaining(HeadersRequest {
+                    start: BlockId::Number(first + got),
+                    limit: request.limit - got,
+                    ..*request
+                }));
+            }
+            Ok(Step::Done)
+        })?;
         let mut by_number: Vec<SealedHeader> = fetched.into_values().flatten().collect();
         by_number.sort_by_key(|h| std::cmp::Reverse(h.number()));
         let mut out = Vec::with_capacity(by_number.len() + 1);
@@ -331,18 +313,14 @@ impl Downloader {
             jobs,
             |peer, job, tag, tx| {
                 let hashes: Vec<B256> = job.iter().map(|i| headers[*i].hash).collect();
-                peer.request_eth(
-                    eth::GET_BLOCK_BODIES,
-                    |id| encode_hashes_request(id, &hashes),
-                    tag,
-                    tx,
-                )
-                .is_ok()
+                peer.request_eth(eth::GET_BLOCK_BODIES, |id| encode_list(&[&id, &hashes]), tag, tx)
+                    .is_ok()
             },
             |job, _, payload| {
                 let (_, body) =
                     split_request_id(&payload).map_err(|_| Rejected(Penalty::BadResponse))?;
-                let bodies = decode_bodies(body).map_err(|_| Rejected(Penalty::BadResponse))?;
+                let bodies = Vec::<BlockBody>::decode(&mut { body })
+                    .map_err(|_| Rejected(Penalty::BadResponse))?;
                 if bodies.is_empty() {
                     return Err(Rejected(Penalty::Useless));
                 }
@@ -369,13 +347,27 @@ impl Downloader {
     }
 }
 
+/// Issues a GetBlockHeaders request for `request` on `peer`.
+fn request_headers(peer: &Peer, request: &HeadersRequest, tag: u64, tx: &Sender<Response>) -> bool {
+    peer.request_eth(eth::GET_BLOCK_HEADERS, |id| request.encode_payload(id), tag, tx).is_ok()
+}
+
 /// Decodes a BlockHeaders response payload.
 fn decode_headers(payload: &[u8]) -> alloy_rlp::Result<Vec<SealedHeader>> {
     let (_, mut body) = split_request_id(payload)?;
-    let mut items = eth::list_items(&mut body)?;
+    let mut items = RlpHeader::decode_bytes(&mut body, true)?;
     let mut headers = Vec::new();
     while !items.is_empty() {
         headers.push(SealedHeader::decode(&mut items)?);
+    }
+    Ok(headers)
+}
+
+/// Decodes a BlockHeaders response and, unless it is empty, checks it answers `request`.
+fn valid_headers(request: &HeadersRequest, payload: &[u8]) -> Result<Vec<SealedHeader>, Rejected> {
+    let headers = decode_headers(payload).map_err(|_| Rejected(Penalty::BadResponse))?;
+    if !headers.is_empty() {
+        check_header_run(request, &headers).map_err(Rejected)?;
     }
     Ok(headers)
 }

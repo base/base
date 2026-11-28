@@ -5,14 +5,17 @@
 //! MAC states from the ephemeral ECDH secret and both nonces. Only the EIP-8 packet format is
 //! produced and accepted; every client in use sends it.
 
-use alloy_primitives::{B256, Keccak256};
-use alloy_rlp::{Encodable, Header};
+use alloy_primitives::{B256, Keccak256, keccak256};
+use alloy_rlp::Header;
 use secp256k1::{PublicKey, SecretKey};
 
-use crate::crypto::{
-    Aes256Block, Aes256Ctr, PeerId, aes128_ctr, concat_kdf_32, ecdh_x, hmac_sha256, keccak,
-    peer_id, peer_id_of_secret, public_key, random_bytes, random_secret_key, recover, sha256,
-    sign_recoverable,
+use crate::{
+    crypto::{
+        Aes256Block, Aes256Ctr, PeerId, aes128_ctr, ecdh_x, hmac_sha256, peer_id, peer_id_of_secret,
+        public_key, random_array, random_bytes, random_secret_key, recover, sha256,
+        sign_recoverable,
+    },
+    eth::encode_list,
 };
 
 /// Largest handshake packet accepted (EIP-8 packets are about 300 to 600 bytes).
@@ -37,20 +40,24 @@ pub enum EciesError {
     BadRlp,
 }
 
-impl std::fmt::Display for EciesError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+impl From<alloy_rlp::Error> for EciesError {
+    fn from(_: alloy_rlp::Error) -> Self {
+        Self::BadRlp
     }
+}
+
+/// The ECIES AES-128 key and HMAC key from the ECDH secret: the NIST SP 800-56 concatenation
+/// KDF with SHA-256 for 32 bytes, split in two, with the MAC half hashed again.
+fn ecies_keys(shared: &B256) -> ([u8; 16], [u8; 32]) {
+    let key = sha256(&[&1u32.to_be_bytes(), shared.as_slice()]);
+    (key[..16].try_into().unwrap(), sha256(&[&key[16..]]))
 }
 
 /// Encrypts `plain` to `remote` with RLPx's ECIES; `auth_data` is MACed but not sent.
 fn ecies_encrypt(remote: &PublicKey, plain: &[u8], auth_data: &[u8]) -> Vec<u8> {
     let ephemeral = random_secret_key();
-    let mut iv = [0u8; 16];
-    random_bytes(&mut iv);
-    let key = concat_kdf_32(&ecdh_x(remote, &ephemeral));
-    let enc_key: [u8; 16] = key[..16].try_into().unwrap();
-    let mac_key = sha256(&[&key[16..]]);
+    let iv: [u8; 16] = random_array();
+    let (enc_key, mac_key) = ecies_keys(&ecdh_x(remote, &ephemeral));
     let mut out = Vec::with_capacity(plain.len() + ECIES_OVERHEAD);
     out.extend_from_slice(&PublicKey::from_secret_key_global(&ephemeral).serialize_uncompressed());
     out.extend_from_slice(&iv);
@@ -70,9 +77,7 @@ fn ecies_decrypt(secret: &SecretKey, data: &[u8], auth_data: &[u8]) -> Result<Ve
     let remote = PublicKey::from_slice(&data[..65]).map_err(|_| EciesError::BadKey)?;
     let iv: [u8; 16] = data[65..81].try_into().unwrap();
     let (cipher_text, tag) = data[81..].split_at(data.len() - 81 - 32);
-    let key = concat_kdf_32(&ecdh_x(&remote, secret));
-    let enc_key: [u8; 16] = key[..16].try_into().unwrap();
-    let mac_key = sha256(&[&key[16..]]);
+    let (enc_key, mac_key) = ecies_keys(&ecdh_x(&remote, secret));
     if hmac_sha256(&mac_key, &[&iv, cipher_text, auth_data]) != tag {
         return Err(EciesError::BadMac);
     }
@@ -84,10 +89,9 @@ fn ecies_decrypt(secret: &SecretKey, data: &[u8], auth_data: &[u8]) -> Result<Ve
 /// Wraps an RLP body in an EIP-8 packet: 2-byte size prefix, then the ECIES ciphertext of the
 /// body followed by 100 to 300 bytes of random padding.
 fn seal_packet(remote: &PublicKey, body: &[u8]) -> Vec<u8> {
-    let mut pad = [0u8; 1];
-    random_bytes(&mut pad);
+    let pad = random_array::<1>()[0];
     let mut plain = body.to_vec();
-    plain.resize(body.len() + 100 + (pad[0] as usize % 201), 0);
+    plain.resize(body.len() + 100 + (pad as usize % 201), 0);
     random_bytes(&mut plain[body.len()..]);
     let size = (plain.len() + ECIES_OVERHEAD) as u16;
     let mut packet = size.to_be_bytes().to_vec();
@@ -97,11 +101,7 @@ fn seal_packet(remote: &PublicKey, body: &[u8]) -> Vec<u8> {
 
 /// Opens an EIP-8 packet (size prefix included) and returns the RLP list payload's items.
 fn open_packet(secret: &SecretKey, packet: &[u8]) -> Result<Vec<u8>, EciesError> {
-    if packet.len() < 2 || packet.len() > MAX_HANDSHAKE_PACKET {
-        return Err(EciesError::BadLength);
-    }
-    let size = u16::from_be_bytes([packet[0], packet[1]]) as usize;
-    if size != packet.len() - 2 {
+    if packet.len() < 2 || handshake_packet_len([packet[0], packet[1]])? != packet.len() {
         return Err(EciesError::BadLength);
     }
     ecies_decrypt(secret, &packet[2..], &packet[..2])
@@ -116,46 +116,8 @@ pub(crate) fn handshake_packet_len(prefix: [u8; 2]) -> Result<usize, EciesError>
     Ok(len)
 }
 
-fn decode_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], EciesError> {
-    let header = Header::decode(buf).map_err(|_| EciesError::BadRlp)?;
-    if header.list || buf.len() < header.payload_length {
-        return Err(EciesError::BadRlp);
-    }
-    let (value, rest) = buf.split_at(header.payload_length);
-    *buf = rest;
-    Ok(value)
-}
-
 fn decode_fixed<const N: usize>(buf: &mut &[u8]) -> Result<[u8; N], EciesError> {
-    decode_bytes(buf)?.try_into().map_err(|_| EciesError::BadRlp)
-}
-
-/// Returns the payload of the leading RLP list, ignoring trailing data (EIP-8).
-fn list_payload(body: &[u8]) -> Result<&[u8], EciesError> {
-    let mut buf = body;
-    let header = Header::decode(&mut buf).map_err(|_| EciesError::BadRlp)?;
-    if !header.list || buf.len() < header.payload_length {
-        return Err(EciesError::BadRlp);
-    }
-    Ok(&buf[..header.payload_length])
-}
-
-fn encode_list(items: &[&dyn Encodable]) -> Vec<u8> {
-    let payload_length = items.iter().map(|item| item.length()).sum();
-    let mut out = Vec::new();
-    Header { list: true, payload_length }.encode(&mut out);
-    for item in items {
-        item.encode(&mut out);
-    }
-    out
-}
-
-fn xor(a: &B256, b: &B256) -> B256 {
-    let mut out = *a;
-    for (o, x) in out.0.iter_mut().zip(b.0) {
-        *o ^= x;
-    }
-    out
+    Header::decode_bytes(buf, false)?.try_into().map_err(|_| EciesError::BadRlp)
 }
 
 /// The secrets both sides derive at the end of the handshake.
@@ -166,16 +128,16 @@ struct Secrets {
 
 impl Secrets {
     fn derive(ephemeral_shared: &B256, recipient_nonce: &B256, initiator_nonce: &B256) -> Self {
-        let nonce_hash = keccak(&[recipient_nonce.as_slice(), initiator_nonce.as_slice()]);
-        let shared = keccak(&[ephemeral_shared.as_slice(), nonce_hash.as_slice()]);
-        let aes = keccak(&[ephemeral_shared.as_slice(), shared.as_slice()]);
-        let mac = keccak(&[ephemeral_shared.as_slice(), aes.as_slice()]);
+        let nonce_hash = keccak256([recipient_nonce.0, initiator_nonce.0].concat());
+        let shared = keccak256([ephemeral_shared.0, nonce_hash.0].concat());
+        let aes = keccak256([ephemeral_shared.0, shared.0].concat());
+        let mac = keccak256([ephemeral_shared.0, aes.0].concat());
         Self { aes, mac }
     }
 
     fn mac_state(&self, nonce: &B256, packet: &[u8]) -> Keccak256 {
         let mut state = Keccak256::new();
-        state.update(xor(&self.mac, nonce));
+        state.update(self.mac ^ *nonce);
         state.update(packet);
         state
     }
@@ -191,21 +153,12 @@ pub struct Initiator {
 
 impl Initiator {
     /// Starts a handshake with `remote` and returns the state plus the auth packet to send.
-    pub fn new(static_key: &SecretKey, remote: &PeerId) -> Result<Self, EciesError> {
-        let mut nonce = B256::ZERO;
-        random_bytes(&mut nonce.0);
-        Self::with_keys(static_key, remote, random_secret_key(), nonce)
-    }
-
-    fn with_keys(
-        static_key: &SecretKey,
-        remote_id: &PeerId,
-        ephemeral: SecretKey,
-        nonce: B256,
-    ) -> Result<Self, EciesError> {
+    pub fn new(static_key: &SecretKey, remote_id: &PeerId) -> Result<Self, EciesError> {
+        let nonce = B256::from(random_array());
+        let ephemeral = random_secret_key();
         let remote = public_key(remote_id).ok_or(EciesError::BadKey)?;
         let static_shared = ecdh_x(&remote, static_key);
-        let sig = sign_recoverable(xor(&static_shared, &nonce), &ephemeral);
+        let sig = sign_recoverable(static_shared ^ nonce, &ephemeral);
         let id = peer_id_of_secret(static_key);
         let body = encode_list(&[&&sig[..], &id, &nonce, &HANDSHAKE_VERSION]);
         let auth = seal_packet(&remote, &body);
@@ -220,7 +173,7 @@ impl Initiator {
     /// Completes the handshake with the recipient's ack packet (size prefix included).
     pub fn finish(self, static_key: &SecretKey, ack: &[u8]) -> Result<FrameCodec, EciesError> {
         let body = open_packet(static_key, ack)?;
-        let mut items = list_payload(&body)?;
+        let mut items = Header::decode_bytes(&mut body.as_slice(), true)?;
         let remote_ephemeral: [u8; 64] = decode_fixed(&mut items)?;
         let recipient_nonce = B256::from(decode_fixed::<32>(&mut items)?);
         let remote_ephemeral =
@@ -246,9 +199,7 @@ pub struct Accepted {
 
 /// Accepts an auth packet (size prefix included) as the recipient.
 pub(crate) fn accept(static_key: &SecretKey, auth: &[u8]) -> Result<Accepted, EciesError> {
-    let mut nonce = B256::ZERO;
-    random_bytes(&mut nonce.0);
-    accept_with_keys(static_key, auth, random_secret_key(), nonce)
+    accept_with_keys(static_key, auth, random_secret_key(), B256::from(random_array()))
 }
 
 fn accept_with_keys(
@@ -258,14 +209,14 @@ fn accept_with_keys(
     nonce: B256,
 ) -> Result<Accepted, EciesError> {
     let body = open_packet(static_key, auth)?;
-    let mut items = list_payload(&body)?;
+    let mut items = Header::decode_bytes(&mut body.as_slice(), true)?;
     let sig: [u8; 65] = decode_fixed(&mut items)?;
     let remote_id = PeerId::from(decode_fixed::<64>(&mut items)?);
     let initiator_nonce = B256::from(decode_fixed::<32>(&mut items)?);
     let remote = public_key(&remote_id).ok_or(EciesError::BadKey)?;
     let static_shared = ecdh_x(&remote, static_key);
     let remote_ephemeral =
-        recover(xor(&static_shared, &initiator_nonce), &sig).ok_or(EciesError::BadKey)?;
+        recover(static_shared ^ initiator_nonce, &sig).ok_or(EciesError::BadKey)?;
     let ephemeral_public = peer_id(&PublicKey::from_secret_key_global(&ephemeral));
     let body = encode_list(&[&ephemeral_public, &nonce, &HANDSHAKE_VERSION]);
     let ack = seal_packet(&remote, &body);
@@ -318,23 +269,15 @@ fn digest16(mac: &Keccak256) -> [u8; 16] {
     mac.clone().finalize()[..16].try_into().unwrap()
 }
 
-fn header_mac(cipher: &Aes256Block, mac: &mut Keccak256, header_cipher: &[u8]) -> [u8; 16] {
-    let mut seed = digest16(mac);
-    cipher.encrypt(&mut seed);
-    for (s, h) in seed.iter_mut().zip(header_cipher) {
-        *s ^= h;
-    }
-    mac.update(seed);
-    digest16(mac)
-}
-
-fn body_mac(cipher: &Aes256Block, mac: &mut Keccak256, body_cipher: &[u8]) -> [u8; 16] {
-    mac.update(body_cipher);
+/// Advances a frame MAC state and returns the 16-byte MAC. The encrypted seed is XORed with the
+/// header ciphertext for a header MAC, and for a body MAC (the caller absorbs the body ciphertext
+/// first) with the digest it was made from.
+fn frame_mac(cipher: &Aes256Block, mac: &mut Keccak256, header_cipher: Option<&[u8]>) -> [u8; 16] {
     let previous = digest16(mac);
     let mut seed = previous;
     cipher.encrypt(&mut seed);
-    for (s, p) in seed.iter_mut().zip(previous) {
-        *s ^= p;
+    for (s, x) in seed.iter_mut().zip(header_cipher.unwrap_or(&previous)) {
+        *s ^= x;
     }
     mac.update(seed);
     digest16(mac)
@@ -370,14 +313,15 @@ impl FrameEgress {
         header[..3].copy_from_slice(&(payload.len() as u32).to_be_bytes()[1..]);
         header[3..6].copy_from_slice(&HEADER_DATA);
         self.aes.apply(&mut header);
-        let header_mac = header_mac(&self.mac_cipher, &mut self.mac, &header);
+        let header_mac = frame_mac(&self.mac_cipher, &mut self.mac, Some(&header));
         out.extend_from_slice(&header);
         out.extend_from_slice(&header_mac);
         let start = out.len();
         out.extend_from_slice(payload);
         out.resize(start + payload.len().next_multiple_of(16), 0);
         self.aes.apply(&mut out[start..]);
-        let body_mac = body_mac(&self.mac_cipher, &mut self.mac, &out[start..]);
+        self.mac.update(&out[start..]);
+        let body_mac = frame_mac(&self.mac_cipher, &mut self.mac, None);
         out.extend_from_slice(&body_mac);
     }
 }
@@ -387,7 +331,7 @@ impl FrameIngress {
     /// reads [`FrameCodec::body_len`] bytes and passes them to [`Self::decode_body`].
     pub fn decode_header(&mut self, header: &mut [u8; 32]) -> Result<usize, EciesError> {
         let (cipher_text, mac) = header.split_at_mut(16);
-        let expected = header_mac(&self.mac_cipher, &mut self.mac, cipher_text);
+        let expected = frame_mac(&self.mac_cipher, &mut self.mac, Some(&*cipher_text));
         if expected != *mac {
             return Err(EciesError::BadMac);
         }
@@ -409,7 +353,8 @@ impl FrameIngress {
             return Err(EciesError::BadLength);
         }
         let (cipher_text, mac) = body.split_at_mut(body.len() - 16);
-        let expected = body_mac(&self.mac_cipher, &mut self.mac, cipher_text);
+        self.mac.update(&*cipher_text);
+        let expected = frame_mac(&self.mac_cipher, &mut self.mac, None);
         if expected != *mac {
             return Err(EciesError::BadMac);
         }

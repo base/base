@@ -107,32 +107,30 @@ impl ForkSchedule {
         if is_time { head.timestamp >= value } else { head.number >= value }
     }
 
-    /// The fork id at `head`.
-    pub fn fork_id(&self, head: Head) -> ForkId {
-        let mut crc = Crc32::new();
-        crc.update(self.genesis_hash.as_slice());
-        for checkpoint in self.checkpoints() {
-            if !Self::passed(&head, checkpoint) {
-                return ForkId { hash: crc.value(), next: checkpoint.0 };
-            }
-            crc.update(&checkpoint.0.to_be_bytes());
-        }
-        ForkId { hash: crc.value(), next: 0 }
-    }
-
-    /// Checks a remote fork id against ours at `head`, with EIP-2124's rules.
-    pub fn validate(&self, head: Head, remote: ForkId) -> Result<(), ForkIdError> {
+    /// The checkpoints, the fork hash after each prefix of them (`hashes[i]` covers the first
+    /// `i`), and how many of them `head` has passed.
+    fn fork_hashes(&self, head: &Head) -> (Vec<(u64, bool)>, Vec<[u8; 4]>, usize) {
         let checkpoints = self.checkpoints();
-        // hashes[i] is the fork hash after the first i checkpoints.
-        let mut hashes = Vec::with_capacity(checkpoints.len() + 1);
         let mut crc = Crc32::new();
         crc.update(self.genesis_hash.as_slice());
-        hashes.push(crc.value());
+        let mut hashes = vec![crc.value()];
         for checkpoint in &checkpoints {
             crc.update(&checkpoint.0.to_be_bytes());
             hashes.push(crc.value());
         }
-        let passed = checkpoints.iter().take_while(|c| Self::passed(&head, **c)).count();
+        let passed = checkpoints.iter().take_while(|c| Self::passed(head, **c)).count();
+        (checkpoints, hashes, passed)
+    }
+
+    /// The fork id at `head`.
+    pub fn fork_id(&self, head: Head) -> ForkId {
+        let (checkpoints, hashes, passed) = self.fork_hashes(&head);
+        ForkId { hash: hashes[passed], next: checkpoints.get(passed).map_or(0, |c| c.0) }
+    }
+
+    /// Checks a remote fork id against ours at `head`, with EIP-2124's rules.
+    pub fn validate(&self, head: Head, remote: ForkId) -> Result<(), ForkIdError> {
+        let (checkpoints, hashes, passed) = self.fork_hashes(&head);
         let Some(index) = hashes.iter().position(|h| *h == remote.hash) else {
             return Err(ForkIdError::IncompatibleOrStale);
         };
@@ -142,12 +140,7 @@ impl ForkSchedule {
                 // As alloy's ForkFilter: a value above a timestamp older than Ethereum mainnet
                 // is a timestamp, anything smaller a block number.
                 let is_time = remote.next > TIMESTAMP_BEFORE_ETHEREUM_MAINNET;
-                let reached = if is_time {
-                    head.timestamp >= remote.next
-                } else {
-                    head.number >= remote.next
-                };
-                if reached {
+                if Self::passed(&head, (remote.next, is_time)) {
                     return Err(ForkIdError::RemoteStale);
                 }
             }

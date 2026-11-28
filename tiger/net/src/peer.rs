@@ -14,7 +14,7 @@ use std::{
 
 use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes};
-use alloy_rlp::Decodable;
+use alloy_rlp::{Decodable, Header as RlpHeader};
 
 use crate::{
     block::BlockBody,
@@ -471,7 +471,7 @@ fn handle_eth(
         }
         eth::BLOCK_RANGE_UPDATE => {
             let mut buf = payload.as_slice();
-            let mut items = eth::list_items(&mut buf).map_err(breach)?;
+            let mut items = RlpHeader::decode_bytes(&mut buf, true).map_err(breach)?;
             let _earliest = u64::decode(&mut items).map_err(breach)?;
             let latest = u64::decode(&mut items).map_err(breach)?;
             let hash = B256::decode(&mut items).map_err(breach)?;

@@ -13,7 +13,6 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -48,13 +47,8 @@ impl FromStr for NodeRecord {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let rest = s.strip_prefix("enode://").ok_or("missing enode:// prefix")?;
         let (id, rest) = rest.split_once('@').ok_or("missing @")?;
-        let id = PeerId::from_slice(
-            &hex::decode(id)
-                .map_err(|e| e.to_string())?
-                .try_into()
-                .map_err(|_| "id must be 64 bytes".to_string())
-                .map(|v: [u8; 64]| v)?,
-        );
+        let id = hex::decode(id).map_err(|e| e.to_string())?;
+        let id = PeerId::try_from(id.as_slice()).map_err(|_| "id must be 64 bytes")?;
         let (host, query) = rest.split_once('?').unwrap_or((rest, ""));
         let addr =
             host.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("unresolvable host")?;
@@ -306,14 +300,6 @@ impl Network {
         self.inner.table.lock().unwrap().peers.len()
     }
 
-    /// Adds a dial candidate (for example from an admin call or a test).
-    pub fn add_peer(&self, record: NodeRecord) {
-        let mut table = self.inner.table.lock().unwrap();
-        table.last_dial.remove(&record.id);
-        table.candidates.push_front(record);
-        table.candidates.truncate(MAX_REMEMBERED);
-    }
-
     /// A connected peer by id.
     pub fn peer(&self, id: &PeerId) -> Option<Arc<Peer>> {
         self.inner.table.lock().unwrap().peers.get(id).cloned()
@@ -381,11 +367,8 @@ fn listen(inner: Arc<Inner>, listener: TcpListener) {
     while !inner.shutdown.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _)) => {
-                let (inbound, _) = inner.table.lock().unwrap().counts();
-                if inbound >= inner.config.max_inbound {
-                    // Still let trusted peers in: they are identified only after the handshake,
-                    // so accept, and the session drops non-trusted peers over the limit.
-                }
+                // Trusted peers are identified only after the handshake, so accept every
+                // connection; the session drops non-trusted peers over the inbound limit.
                 let _ = stream.set_nonblocking(false);
                 let inner = inner.clone();
                 let _ = thread::Builder::new().name("tiger-net-peer".into()).spawn(move || {
@@ -558,12 +541,6 @@ fn maintain(inner: Arc<Inner>) {
         }
         thread::sleep(Duration::from_millis(500));
     }
-}
-
-/// A channel for collecting responses from several peers at once.
-pub(crate) fn response_channel()
--> (mpsc::Sender<crate::peer::Response>, mpsc::Receiver<crate::peer::Response>) {
-    mpsc::channel()
 }
 
 #[cfg(test)]
