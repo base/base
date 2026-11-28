@@ -544,6 +544,8 @@ impl ConsensusNodeArgs {
                 genesis_signer,
             )
             .await?;
+        #[cfg(feature = "tp2p")]
+        let tp2p_config = self.config.p2p_flags.tp2p.config(&p2p_config.keypair)?;
         let rpc_config = self.config.rpc_flags.clone().into();
 
         let engine_config = EngineConfig {
@@ -577,6 +579,10 @@ impl ConsensusNodeArgs {
         }
         if let Some(path) = self.config.safedb_path.clone() {
             builder = builder.with_safedb_path(path);
+        }
+        #[cfg(feature = "tp2p")]
+        if let Some(config) = tp2p_config {
+            builder = builder.with_tp2p_config(config);
         }
 
         builder.build().await.wrap_err("Failed to build rollup node")

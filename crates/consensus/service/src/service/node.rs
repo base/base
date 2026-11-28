@@ -147,6 +147,9 @@ pub struct RollupNode {
     pub upgrade_signal_config: Option<UpgradeSignalNodeConfig>,
     /// Optional frozen-payload hints from an embedded execution node.
     pub payload_ready: Option<broadcast::Receiver<PayloadReady>>,
+    /// Optional tp2p gossip transport configuration; libp2p alone when unset.
+    #[cfg(feature = "tp2p")]
+    pub tp2p_config: Option<crate::Tp2pConfig>,
 }
 
 impl RollupNode {
@@ -410,6 +413,22 @@ impl RollupNode {
         );
 
         // Create the p2p actor.
+        let network_engine_client =
+            QueuedNetworkEngineClient { engine_actor_request_tx: engine_actor_request_tx.clone() };
+        #[cfg(not(feature = "tp2p"))]
+        let network =
+            NetworkActor::new(network_engine_client, cancellation.clone(), self.network_builder())
+                .await;
+        #[cfg(feature = "tp2p")]
+        let network = crate::SelectedGossipTransport::start(
+            self.network_builder(),
+            &self.p2p_config,
+            self.tp2p_config.as_ref(),
+        )
+        .await
+        .map(|transport| {
+            NetworkActor::with_transport(network_engine_client, cancellation.clone(), transport)
+        });
         let (
             NetworkInboundData {
                 signer,
@@ -418,13 +437,7 @@ impl RollupNode {
                 admin_rpc: net_admin_rpc,
             },
             network,
-        ) = NetworkActor::new(
-            QueuedNetworkEngineClient { engine_actor_request_tx: engine_actor_request_tx.clone() },
-            cancellation.clone(),
-            self.network_builder(),
-        )
-        .await
-        .map_err(|e| format!("Failed to start network actor: {e}"))?;
+        ) = network.map_err(|e| format!("Failed to start network actor: {e}"))?;
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
 

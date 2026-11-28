@@ -22,3 +22,7 @@ base-consensus-cli.workspace = true
 
 # cli
 clap = { workspace = true, features = ["env"] }
+
+[features]
+default = []
+tp2p = [ "base-consensus-cli/tp2p" ]

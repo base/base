@@ -82,6 +82,9 @@ pub struct RollupNodeBuilder {
     pub safedb_path: Option<PathBuf>,
     /// Upgrade signal configuration.
     pub upgrade_signal_config: UpgradeSignalBuilderConfig,
+    /// Optional tp2p gossip transport configuration; libp2p alone when unset.
+    #[cfg(feature = "tp2p")]
+    pub tp2p_config: Option<crate::Tp2pConfig>,
 }
 
 impl RollupNodeBuilder {
@@ -123,7 +126,15 @@ impl RollupNodeBuilder {
                 metrics_config: None,
                 l1_rpc: None,
             },
+            #[cfg(feature = "tp2p")]
+            tp2p_config: None,
         }
+    }
+
+    /// Sets the tp2p gossip transport configuration.
+    #[cfg(feature = "tp2p")]
+    pub fn with_tp2p_config(self, config: crate::Tp2pConfig) -> Self {
+        Self { tp2p_config: Some(config), ..self }
     }
 
     /// Sets the [`EngineConfig`] on the [`RollupNodeBuilder`].
@@ -246,6 +257,8 @@ impl RollupNodeBuilder {
             safedb_path: self.safedb_path,
             upgrade_signal_config,
             payload_ready: None,
+            #[cfg(feature = "tp2p")]
+            tp2p_config: self.tp2p_config,
         })
     }
 

@@ -83,6 +83,10 @@ reqwest.workspace = true
 # metrics
 metrics = { workspace = true, optional = true }
 
+# tp2p (a path dependency into tiger's own workspace; secp256k1 0.31 is the release its API takes)
+base-tiger-p2p = { path = "../../../tiger/p2p", optional = true }
+secp256k1-tp2p = { package = "secp256k1", version = "0.31.1", default-features = false, features = ["std", "global-context"], optional = true }
+
 [dev-dependencies]
 rand.workspace = true
 rstest.workspace = true
@@ -121,3 +125,4 @@ metrics = [
 	"libp2p/metrics",
 	"tower-http/metrics",
 ]
+tp2p = [ "dep:base-tiger-p2p", "dep:secp256k1-tp2p", "libp2p/gossipsub" ]

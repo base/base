@@ -52,3 +52,8 @@ pub use signer::{SignerArgs, SignerArgsParseError};
 
 pub mod p2p;
 pub use p2p::{EmbeddedP2PArgs, P2PArgs, P2PConfigError};
+
+#[cfg(feature = "tp2p")]
+mod tp2p;
+#[cfg(feature = "tp2p")]
+pub use tp2p::Tp2pArgs;

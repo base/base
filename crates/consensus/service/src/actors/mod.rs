@@ -56,6 +56,11 @@ pub use network::{
     NetworkInboundData, QueuedNetworkEngineClient, QueuedUnsafePayloadGossipClient,
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
+#[cfg(feature = "tp2p")]
+pub use network::{
+    RecentBlockHashes, SelectedGossipTransport, Tp2pConfig, Tp2pMode, Tp2pModeParseError, Tp2pPeer,
+    Tp2pPeerParseError, Tp2pStartError, Tp2pTransport,
+};
 
 mod sequencer;
 pub use sequencer::{

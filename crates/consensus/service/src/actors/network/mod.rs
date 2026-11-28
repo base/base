@@ -30,3 +30,11 @@ pub use handler::NetworkHandler;
 
 mod transport;
 pub use transport::GossipTransport;
+
+#[cfg(feature = "tp2p")]
+mod tp2p;
+#[cfg(feature = "tp2p")]
+pub use tp2p::{
+    RecentBlockHashes, SelectedGossipTransport, Tp2pConfig, Tp2pMode, Tp2pModeParseError, Tp2pPeer,
+    Tp2pPeerParseError, Tp2pStartError, Tp2pTransport,
+};

@@ -303,6 +303,11 @@ pub struct P2PNetworkArgs {
     /// This is useful for discovering a wider set of peers.
     #[arg(long = "p2p.discovery.randomize", env = "BASE_NODE_P2P_DISCOVERY_RANDOMIZE")]
     pub discovery_randomize: Option<u64>,
+
+    /// tp2p gossip transport flags.
+    #[cfg(feature = "tp2p")]
+    #[command(flatten)]
+    pub tp2p: crate::Tp2pArgs,
 }
 
 impl Default for P2PNetworkArgs {

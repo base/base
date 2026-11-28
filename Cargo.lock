@@ -3973,6 +3973,7 @@ dependencies = [
  "base-metrics",
  "base-node-runner",
  "base-protocol",
+ "base-tiger-p2p",
  "base-upgrade-signal",
  "bytes",
  "derive_more 2.1.1",
@@ -3994,6 +3995,7 @@ dependencies = [
  "reqwest 0.13.4",
  "revm",
  "rstest",
+ "secp256k1 0.31.1",
  "serde",
  "serde_json",
  "strum 0.27.2",
@@ -6472,6 +6474,14 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "base-tiger-p2p"
+version = "0.0.0"
+dependencies = [
+ "ring",
+ "secp256k1 0.31.1",
 ]
 
 [[package]]

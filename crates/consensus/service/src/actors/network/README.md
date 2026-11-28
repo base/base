@@ -62,3 +62,31 @@ where
     Ok(())
 }
 ```
+
+## tp2p gossip transport
+
+With the default-off `tp2p` Cargo feature (`base-consensus-node/tp2p`,
+`base-consensus-cli/tp2p`, `base-consensus/tp2p`), unsafe payloads can also
+travel over tp2p (`base-tiger-p2p`, `tiger/p2p`), an encrypted std-thread
+peer-to-peer network, selected with `--p2p.tp2p <off|both|only>`:
+
+- `off` (default): libp2p and discv5 only, as without the feature.
+- `both`: libp2p as usual plus tp2p. Payloads are signed once and published on
+  both; a follower takes them from both. Each transport validates with its own
+  `BlockHandler`, so the networks keep independent seen-block state, and
+  `SelectedGossipTransport` forwards a block hash to the engine only once.
+- `only`: tp2p alone; libp2p and discv5 are not started, and the P2P RPC
+  API (`opp2p_*`) gets no answers.
+
+A tp2p gossip message's topic is the payload version (0 to 3) and its data is
+exactly what libp2p publishes on `/optimism/{chain_id}/{version}/blocks`.
+`Tp2pTransport` runs every inbound message through `BlockHandler::handle`
+under that libp2p topic (higher topic bytes become unknown topics and are
+rejected) and returns its verdict to tp2p, which penalizes senders of rejected
+messages. The tp2p network is bound to the L2 chain id and genesis hash.
+
+Flags: `--p2p.tp2p.listen` (default `0.0.0.0:9224`), `--p2p.tp2p.advertise`,
+`--p2p.tp2p.bootnodes` and `--p2p.tp2p.trusted`
+(`tp2p://<compressed pubkey hex>@host:port`, comma-separated), and
+`--p2p.tp2p.priv-path` (default: the libp2p secp256k1 key). The node logs its
+own `tp2p://` address at startup.

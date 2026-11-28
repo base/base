@@ -9,7 +9,9 @@ use std::fmt::Debug;
 
 use alloy_primitives::{Address, ChainId};
 use alloy_signer::{Signature, SignerSync};
-use base_common_rpc_types_engine::PayloadHash;
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope, PayloadHash,
+};
 use derive_more::From;
 
 mod remote;
@@ -80,6 +82,24 @@ impl BlockSignerHandler {
             Self::Remote(signer) => {
                 signer.sign_block_v1(payload_hash, chain_id, sender_address).await?
             }
+        })
+    }
+
+    /// Signs a payload with [`Self::sign_block`] and wraps it in the [`NetworkPayloadEnvelope`]
+    /// that gossip transports encode and publish.
+    pub async fn sign_payload(
+        &self,
+        block: BaseExecutionPayloadEnvelope,
+        chain_id: ChainId,
+        sender_address: Address,
+    ) -> Result<NetworkPayloadEnvelope, BlockSignerError> {
+        let payload_hash = block.payload_hash();
+        let signature = self.sign_block(payload_hash, chain_id, sender_address).await?;
+        Ok(NetworkPayloadEnvelope {
+            payload: block.execution_payload,
+            parent_beacon_block_root: block.parent_beacon_block_root,
+            signature,
+            payload_hash,
         })
     }
 }

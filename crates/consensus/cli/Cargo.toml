@@ -82,3 +82,4 @@ tokio = { workspace = true, features = ["test-util"] }
 [features]
 default = [ "otlp" ]
 otlp = [ "base-cli-utils/otlp", "reth-node-core/otlp" ]
+tp2p = [ "base-consensus-node/tp2p" ]

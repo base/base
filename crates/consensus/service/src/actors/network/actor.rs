@@ -150,6 +150,10 @@ pub enum NetworkActorError {
     /// Failed to sign the payload.
     #[error("Failed to sign the payload: {0}")]
     FailedToSignPayload(#[from] BlockSignerError),
+    /// The tp2p transport failed to start.
+    #[cfg(feature = "tp2p")]
+    #[error(transparent)]
+    Tp2pStart(#[from] crate::Tp2pStartError),
 }
 
 impl From<std::convert::Infallible> for NetworkActorError {

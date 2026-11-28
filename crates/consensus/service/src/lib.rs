@@ -64,6 +64,11 @@ pub use actors::{
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     UpgradeSignalMetricsActor, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
 };
+#[cfg(feature = "tp2p")]
+pub use actors::{
+    RecentBlockHashes, SelectedGossipTransport, Tp2pConfig, Tp2pMode, Tp2pModeParseError, Tp2pPeer,
+    Tp2pPeerParseError, Tp2pStartError, Tp2pTransport,
+};
 
 mod metrics;
 #[cfg(test)]

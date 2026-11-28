@@ -2,9 +2,7 @@ use std::collections::HashSet;
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_common_rpc_types_engine::{
-    BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope, PayloadHash,
-};
+use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope};
 use base_consensus_disc::{Discv5Handler, HandlerRequest};
 use base_consensus_gossip::{
     BlockHandler, ConnectionGate, ConnectionGater, GossipDriver, Metrics, P2pRpcRequest,
@@ -42,6 +40,16 @@ pub struct NetworkHandler {
 }
 
 impl NetworkHandler {
+    /// Publishes an already signed payload on the topic for its timestamp.
+    pub fn publish_signed(&mut self, payload: NetworkPayloadEnvelope) {
+        let timestamp = payload.payload.timestamp();
+        let selector = |handler: &BlockHandler| handler.topic(timestamp);
+        match self.gossip.publish(selector, Some(payload)) {
+            Ok(id) => info!(id = ?id, "Published unsafe payload"),
+            Err(e) => warn!(error = ?e, "Failed to publish unsafe payload"),
+        }
+    }
+
     pub(super) async fn handle_peer_monitoring(&mut self) {
         // Inspect peer scores and ban peers that are below the threshold.
         let Some(ban_peers) = self.gossip.peer_monitoring.as_ref() else {
@@ -122,9 +130,6 @@ impl GossipTransport for NetworkHandler {
     type Error = NetworkActorError;
 
     async fn publish(&mut self, block: BaseExecutionPayloadEnvelope) -> Result<(), Self::Error> {
-        let timestamp = block.execution_payload.timestamp();
-        let selector = |handler: &BlockHandler| handler.topic(timestamp);
-
         let Some(signer) = self.signer.as_ref() else {
             warn!(target: "net", "No local signer available to sign the payload");
             return Ok(());
@@ -132,20 +137,8 @@ impl GossipTransport for NetworkHandler {
 
         let chain_id = self.discovery.chain_id;
         let sender_address = *self.unsafe_block_signer_sender.borrow();
-        let payload_hash: PayloadHash = block.payload_hash();
-        let signature = signer.sign_block(payload_hash, chain_id, sender_address).await?;
-
-        let payload = NetworkPayloadEnvelope {
-            payload: block.execution_payload,
-            parent_beacon_block_root: block.parent_beacon_block_root,
-            signature,
-            payload_hash,
-        };
-
-        match self.gossip.publish(selector, Some(payload)) {
-            Ok(id) => info!(id = ?id, "Published unsafe payload"),
-            Err(e) => warn!(error = ?e, "Failed to publish unsafe payload"),
-        }
+        let payload = signer.sign_payload(block, chain_id, sender_address).await?;
+        self.publish_signed(payload);
 
         Ok(())
     }
