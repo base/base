@@ -48,6 +48,8 @@ pub enum RlpxError {
     Ecies(EciesError),
     /// A message that does not decode, or a protocol violation.
     Protocol(&'static str),
+    /// A message larger than the limit for its kind (10 MiB for eth, 16 MiB for `p2p`).
+    MessageTooBig,
     /// The remote disconnected with this reason code.
     Disconnected(u8),
     /// No capability in common.
@@ -493,19 +495,23 @@ impl RlpxReader {
         let mut cursor = frame;
         let id = u8::decode(&mut cursor)?;
         let ping_or_pong = id == PING || id == PONG;
-        let (max, too_big) = match id {
-            _ if ping_or_pong => (PING_PAYLOAD.len(), "bad ping payload"),
-            id if id >= BASE_PROTOCOL_OFFSET => (MAX_ETH_MESSAGE_SIZE - 1, "message too big"),
-            _ => (MAX_MESSAGE_SIZE, "message too big"),
+        let max = match id {
+            _ if ping_or_pong => PING_PAYLOAD.len(),
+            id if id >= BASE_PROTOCOL_OFFSET => MAX_ETH_MESSAGE_SIZE - 1,
+            _ => MAX_MESSAGE_SIZE,
+        };
+        let too_big = || match ping_or_pong {
+            true => RlpxError::Protocol("bad ping payload"),
+            false => RlpxError::MessageTooBig,
         };
         // The Snappy length prefix is checked against `max` before anything is allocated.
         let payload = if self.snappy {
             snappy::decompress(cursor, max).map_err(|error| match error {
-                SnappyError::TooLarge => RlpxError::Protocol(too_big),
+                SnappyError::TooLarge => too_big(),
                 SnappyError::Truncated | SnappyError::Corrupt => RlpxError::Protocol("bad snappy"),
             })?
         } else if cursor.len() > max {
-            return Err(RlpxError::Protocol(too_big));
+            return Err(too_big());
         } else {
             cursor.to_vec()
         };

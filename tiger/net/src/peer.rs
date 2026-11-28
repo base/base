@@ -273,7 +273,16 @@ pub(crate) fn handshake(
         if Instant::now() > deadline {
             return Err(SessionError::Rlpx(RlpxError::Io(std::io::ErrorKind::TimedOut.into())));
         }
-        let Received::Message(message) = conn.reader.poll()? else { continue };
+        let message = match conn.reader.poll() {
+            Ok(Received::Message(message)) => message,
+            Ok(Received::Idle) => continue,
+            // base-reth's eth handshake disconnects with ProtocolBreach on an oversized message.
+            Err(RlpxError::MessageTooBig) => {
+                let _ = conn.writer.disconnect(DisconnectReason::ProtocolBreach);
+                return Err(SessionError::Rlpx(RlpxError::MessageTooBig));
+            }
+            Err(error) => return Err(error.into()),
+        };
         match P2pMessage::decode(&message)? {
             Some(P2pMessage::Ping) => conn.writer.pong()?,
             Some(P2pMessage::Pong) => {}
@@ -331,7 +340,9 @@ pub(crate) fn run_session(
         // Malformed or oversized messages are a protocol breach to base-reth too.
         SessionError::Breach
         | SessionError::Incompatible
-        | SessionError::Rlpx(RlpxError::Protocol(_)) => DisconnectReason::ProtocolBreach,
+        | SessionError::Rlpx(RlpxError::Protocol(_) | RlpxError::MessageTooBig) => {
+            DisconnectReason::ProtocolBreach
+        }
         SessionError::Rlpx(RlpxError::Disconnected(_)) => DisconnectReason::Requested,
         SessionError::Rlpx(_) => DisconnectReason::TcpError,
     });
@@ -556,9 +567,10 @@ mod tests {
         Chain((0..4).map(|number| Header { number, ..Default::default() }).collect())
     }
 
-    /// Starts a session served by `run_session` and returns the remote end of it after the
-    /// Status exchange, with the eth capability's offset.
-    fn connect_to_session() -> (RlpxConnection, u8) {
+    /// Starts a server that runs `handshake` and then `run_session` on one connection, and
+    /// returns the remote end of that connection before the Status exchange, with the eth
+    /// capability's offset.
+    fn connect_before_status() -> (RlpxConnection, u8) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let server_key = random_secret_key();
@@ -570,14 +582,20 @@ mod tests {
                 RlpxConnection::accept(stream, &server_key, &ETH_CAPABILITIES, "tiger", timeout)
                     .unwrap();
             let (config, chain) = (session_config(), test_chain());
-            let (peer, reader) = handshake(conn, &config, &chain, false, true).unwrap();
+            let Ok((peer, reader)) = handshake(conn, &config, &chain, false, true) else { return };
             run_session(&peer, reader, &config, &chain, &AtomicBool::new(false));
         });
         let key = random_secret_key();
-        let mut conn =
+        let conn =
             RlpxConnection::connect(addr, server_id, &key, &ETH_CAPABILITIES, "remote", timeout)
                 .unwrap();
         let offset = conn.shared[0].offset;
+        (conn, offset)
+    }
+
+    /// Like [`connect_before_status`], after the Status exchange.
+    fn connect_to_session() -> (RlpxConnection, u8) {
+        let (mut conn, offset) = connect_before_status();
         let status = local_status(&session_config(), 69, test_chain().chain_head());
         conn.writer.send(offset + eth::STATUS, &status.encode_payload()).unwrap();
         loop {
@@ -671,6 +689,15 @@ mod tests {
         assert_eq!(read_pongs_until_disconnect(&mut conn), (1, None));
         // An 11 MiB one is refused from its Snappy length prefix.
         let (mut conn, offset) = connect_to_session();
+        let broadcast = alloy_rlp::encode(vec![0u8; 11 * 1024 * 1024]);
+        conn.writer.send(offset + eth::TRANSACTIONS, &broadcast).unwrap();
+        let breach = Some(DisconnectReason::ProtocolBreach as u8);
+        assert_eq!(read_pongs_until_disconnect(&mut conn), (0, breach));
+    }
+
+    #[test]
+    fn eth_message_over_10_mib_before_status_disconnects_with_protocol_breach() {
+        let (mut conn, offset) = connect_before_status();
         let broadcast = alloy_rlp::encode(vec![0u8; 11 * 1024 * 1024]);
         conn.writer.send(offset + eth::TRANSACTIONS, &broadcast).unwrap();
         let breach = Some(DisconnectReason::ProtocolBreach as u8);
