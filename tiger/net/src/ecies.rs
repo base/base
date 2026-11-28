@@ -22,6 +22,9 @@ use crate::{
 pub(crate) const MAX_HANDSHAKE_PACKET: usize = 2048;
 /// Largest RLPx frame payload accepted; frames carry whole messages, capped at 16 MiB.
 pub(crate) const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+/// Largest payload of the first frame after the handshake, the Hello, as base-reth caps it
+/// (`MAX_INITIAL_HANDSHAKE_SIZE` in reth's ECIES codec).
+const MAX_INITIAL_FRAME_SIZE: usize = 2048;
 /// Bytes of ECIES overhead: ephemeral key (65), IV (16), and HMAC tag (32).
 const ECIES_OVERHEAD: usize = 65 + 16 + 32;
 /// The handshake version written into auth and ack bodies.
@@ -248,6 +251,8 @@ pub struct FrameIngress {
     aes: Aes256Ctr,
     mac_cipher: Aes256Block,
     mac: Keccak256,
+    /// No frame header decoded yet: the next frame is the Hello, held to the smaller limit.
+    initial: bool,
 }
 
 impl std::fmt::Debug for FrameEgress {
@@ -295,6 +300,7 @@ impl FrameCodec {
                 aes: Aes256Ctr::new(&secrets.aes),
                 mac_cipher: Aes256Block::new(&secrets.mac),
                 mac: ingress_mac,
+                initial: true,
             },
         }
     }
@@ -328,7 +334,8 @@ impl FrameEgress {
 
 impl FrameIngress {
     /// Checks and decrypts a 32-byte frame header, returning the payload size. The caller then
-    /// reads [`FrameCodec::body_len`] bytes and passes them to [`Self::decode_body`].
+    /// reads [`FrameCodec::body_len`] bytes and passes them to [`Self::decode_body`]. The first
+    /// frame, which carries the Hello, is rejected above 2048 bytes, before its body is read.
     pub fn decode_header(&mut self, header: &mut [u8; 32]) -> Result<usize, EciesError> {
         let (cipher_text, mac) = header.split_at_mut(16);
         let expected = frame_mac(&self.mac_cipher, &mut self.mac, Some(&*cipher_text));
@@ -337,9 +344,11 @@ impl FrameIngress {
         }
         self.aes.apply(cipher_text);
         let size = u32::from_be_bytes([0, cipher_text[0], cipher_text[1], cipher_text[2]]) as usize;
-        if size == 0 || size > MAX_FRAME_SIZE {
+        let max = if self.initial { MAX_INITIAL_FRAME_SIZE } else { MAX_FRAME_SIZE };
+        if size == 0 || size > max {
             return Err(EciesError::BadLength);
         }
+        self.initial = false;
         Ok(size)
     }
 
@@ -464,5 +473,32 @@ mod tests {
         let mut header: [u8; 32] = wire[..32].try_into().unwrap();
         let size = a_codec.ingress.decode_header(&mut header).unwrap();
         assert_eq!(a_codec.ingress.decode_body(&mut wire[32..], size), Err(EciesError::BadMac));
+    }
+
+    #[test]
+    fn first_frame_is_capped_at_2048_bytes() {
+        let codecs = || {
+            let (a, b) = (random_secret_key(), random_secret_key());
+            let initiator = Initiator::new(&a, &peer_id_of_secret(&b)).unwrap();
+            let accepted = accept(&b, initiator.auth_packet()).unwrap();
+            (initiator.finish(&a, &accepted.ack).unwrap().egress, accepted.codec.ingress)
+        };
+        let send = |egress: &mut FrameEgress, ingress: &mut FrameIngress, size: usize| {
+            let mut wire = Vec::new();
+            egress.encode(&vec![0x61; size], &mut wire);
+            let mut header: [u8; 32] = wire[..32].try_into().unwrap();
+            let size = ingress.decode_header(&mut header)?;
+            ingress.decode_body(&mut wire[32..], size).map(<[u8]>::len)
+        };
+        // A first frame of 3000 bytes (a Hello with a 3000-byte client id) or 2049 bytes is
+        // refused at its header.
+        for size in [3000, 2049] {
+            let (mut egress, mut ingress) = codecs();
+            assert_eq!(send(&mut egress, &mut ingress, size), Err(EciesError::BadLength));
+        }
+        // 2048 bytes is allowed, and later frames keep the 16 MiB limit.
+        let (mut egress, mut ingress) = codecs();
+        assert_eq!(send(&mut egress, &mut ingress, 2048), Ok(2048));
+        assert_eq!(send(&mut egress, &mut ingress, 100_000), Ok(100_000));
     }
 }
