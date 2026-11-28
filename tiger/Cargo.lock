@@ -2491,7 +2491,6 @@ dependencies = [
  "once_cell",
  "serdect 0.2.0",
  "sha2 0.10.9",
- "signature 2.2.0",
 ]
 
 [[package]]

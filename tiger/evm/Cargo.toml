@@ -35,4 +35,4 @@ alloy-primitives.workspace = true
 
 [dev-dependencies]
 alloy-sol-types.workspace = true
-k256 = { version = "0.13.4", default-features = false, features = ["ecdsa"] }
+k256.workspace = true
