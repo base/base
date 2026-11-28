@@ -99,6 +99,13 @@ fn diff(flats: &[(String, BTreeMap<String, String>)]) -> Vec<Difference> {
             flats.iter().any(|(name, flat)| name == CANONICAL && flat.contains_key(*field));
         let participants: Vec<&(String, BTreeMap<String, String>)> =
             flats.iter().filter(|(name, _)| name != CANONICAL || canonical_has).collect();
+        // A receipt's optional `output` is compared only when every adapter reports it.
+        if field.starts_with("receipts[")
+            && field.ends_with("].output")
+            && participants.iter().any(|(_, flat)| !flat.contains_key(*field))
+        {
+            continue;
+        }
         let first = participants[0].1.get(*field);
         if participants.iter().all(|(_, flat)| flat.get(*field) == first) {
             continue;
@@ -201,4 +208,36 @@ fn flatten_canonical(header: &HeaderResults) -> BTreeMap<String, String> {
     flat.insert("valid".to_owned(), true.to_string());
     flatten_header(header, &mut flat);
     flat
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(output: Option<&str>) -> (String, BTreeMap<String, String>) {
+        let mut receipt = serde_json::json!({
+            "type": "0x2", "status": "0x0", "cumulativeGasUsed": "0x5208", "logs": []
+        });
+        if let Some(output) = output {
+            receipt["output"] = output.into();
+        }
+        let response: Response = serde_json::from_value(
+            serde_json::json!({ "id": "a", "ok": true, "receipts": [receipt] }),
+        )
+        .expect("response parses");
+        (output.unwrap_or("none").to_owned(), flatten(&response))
+    }
+
+    #[test]
+    fn receipt_output_is_compared_only_when_every_adapter_reports_it() {
+        let revert = response(Some("0x82b42900"));
+        let other = response(Some("0x720caa4f"));
+        let empty = response(Some("0x"));
+        let absent = response(None);
+        assert!(diff(&[revert.clone(), absent.clone()]).is_empty());
+        assert!(diff(&[absent, revert.clone()]).is_empty());
+        let fields = |a, b| diff(&[a, b]).into_iter().map(|d| d.field).collect::<Vec<_>>();
+        assert_eq!(fields(revert.clone(), other), ["receipts[0].output"]);
+        assert_eq!(fields(revert, empty), ["receipts[0].output"]);
+    }
 }

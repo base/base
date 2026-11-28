@@ -166,7 +166,8 @@ validate mode; a transaction that fails validity checks makes the block invalid.
       "cumulativeGasUsed": "0x...",
       "logs": [{ "address": "0x...", "topics": ["0x..."], "data": "0x..." }],
       "depositNonce": "0x...",
-      "depositReceiptVersion": "0x1"
+      "depositReceiptVersion": "0x1",
+      "output": "0x..."
     }
   ],
   "post": {
@@ -190,7 +191,7 @@ validate mode; a transaction that fails validity checks makes the block invalid.
 | `rejected` | Build mode: indices (into `transactions`) of skipped transactions, ascending, with free-text errors. Indices are compared, error texts are not. |
 | `header` | Computed header fields. `withdrawalsRoot`, `requestsHash`, and `blobGasUsed` are present exactly when the fork puts them in the header. `hash` is the hash of the full header assembled from the request inputs and the computed fields (in build mode, `header` inputs plus computed fields, with `parentHash = keccak(ancestors[0])`, `ommersHash` empty-list hash, `difficulty` 0, `nonce` 0, `mixHash = prevRandao`, `withdrawalsRoot` as the fork requires). |
 | `computedBaseFeePerGas` | The base fee the client derives for this block from the parent header and chain rules, as the client computes it (the harness reads up to 256 bits, so a value past `u64` is a difference rather than a bad response). |
-| `receipts` | One per included transaction, in block order. `depositNonce` and `depositReceiptVersion` only on deposit receipts, exactly when the fork stores them in the receipt. |
+| `receipts` | One per included transaction, in block order. `depositNonce` and `depositReceiptVersion` only on deposit receipts, exactly when the fork stores them in the receipt. Optional `output`: the transaction's EVM output, that is its return data on success (for a contract creation, the deployed code), its revert bytes on revert, and `0x` on an exceptional halt (out of gas, invalid opcode, and so on). It is not part of the consensus receipt. |
 | `post` | Every account whose nonce, balance, code hash, or storage changed in this block, with its values after the block, and only the storage slots whose value changed (new value, `0x00..00` when cleared). `wiped: true` marks an account that existed before the block, was destroyed during it (a pre-Cancun `SELFDESTRUCT`, or an EIP-161 removal), and exists after it again (recreated by a `CREATE2`, a value transfer, or a later transaction): its storage starts from empty, so every parent slot not listed in `storage` is zero. Omit it otherwise. An account that existed before and does not exist after is `null`. An account that did not exist before and does not exist after is omitted, even if it was touched. Keys are lower-case. |
 | `coverage` | Optional, never compared. Coverage features of the execution, feature name to hit count (see "Optional coverage"). |
 
@@ -198,7 +199,8 @@ validate mode; a transaction that fails validity checks makes the block invalid.
 
 The harness considers two adapters to agree on a case when all of these match exactly:
 `ok`, `valid`, rejected indices, every `header` field, `computedBaseFeePerGas`, every receipt
-field, and `post`. Any other response field, such as `coverage`, is ignored. A case where any
+field, and `post`. A receipt's `output` is compared only when every adapter reports it for that
+receipt, so an adapter that does not report outputs yet still agrees on everything else. Any other response field, such as `coverage`, is ignored. A case where any
 adapter returns `ok: false` is reported separately (as a harness or adapter bug, not a consensus
 difference) and never counted as agreement.
 

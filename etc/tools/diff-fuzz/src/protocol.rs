@@ -338,6 +338,11 @@ pub struct Receipt {
     /// Deposit receipt version (deposits, Canyon and later).
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_receipt_version: Option<u64>,
+    /// Optional: the transaction's output (return data on success, the deployed code for a
+    /// creation, revert bytes on revert, empty on halt). Compared only when every adapter reports
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<Bytes>,
 }
 
 /// Post-block values of an account the block changed.

@@ -33,7 +33,7 @@ use reth_chainspec::EthChainSpec;
 use reth_consensus::{Consensus, FullConsensus, HeaderValidator};
 use reth_evm::{
     ConfigureEngineEvm, ConfigureEvm, Evm,
-    block::{BlockExecutionError, BlockExecutor},
+    block::{BlockExecutionError, BlockExecutor, TxResult},
     execute::{BlockAssembler, BlockAssemblerInput, BlockBuilder},
 };
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
@@ -47,7 +47,7 @@ use reth_revm::{
 use reth_storage_api::{
     HashedPostStateProvider, StateProvider, StateProviderBox, StateRootProvider,
 };
-use revm::inspector::inspectors::TracerEip3155;
+use revm::{context::result::ResultAndState, inspector::inspectors::TracerEip3155};
 use tracing::warn;
 
 use crate::{Coverage, WitnessState};
@@ -276,6 +276,7 @@ impl DiffAdapter {
         }
 
         let mut rejected = Vec::new();
+        let mut outputs = Vec::new();
         let mut coverage = None;
         let built = match &request.trace {
             None if self.coverage => {
@@ -293,6 +294,7 @@ impl DiffAdapter {
                     request,
                     state,
                     &mut rejected,
+                    &mut outputs,
                     |builder, index| {
                         let tx_type = Self::tx_type(&request.transactions[index]);
                         builder.evm_mut().inspector_mut().begin_tx(tx_type);
@@ -307,8 +309,15 @@ impl DiffAdapter {
             None => {
                 let evm = self.evm_config.evm_with_env(&mut db, evm_env);
                 let mut builder = self.evm_config.create_block_builder(evm, parent, ctx);
-                Self::fill_template(&mut builder, request, state, &mut rejected, |_, _| {})?
-                    .map(|()| builder.finish(state, None))
+                Self::fill_template(
+                    &mut builder,
+                    request,
+                    state,
+                    &mut rejected,
+                    &mut outputs,
+                    |_, _| {},
+                )?
+                .map(|()| builder.finish(state, None))
             }
             Some(dir) => {
                 let tracer = TracerEip3155::new(Box::new(io::sink()));
@@ -319,6 +328,7 @@ impl DiffAdapter {
                     request,
                     state,
                     &mut rejected,
+                    &mut outputs,
                     |builder, index| {
                         let writer = Self::trace_writer(dir, &request.id, index);
                         builder.evm_mut().inspector_mut().set_writer(writer);
@@ -347,7 +357,7 @@ impl DiffAdapter {
             invalid_reason: None,
             rejected,
             header: Some(Self::header_results(&SealedHeader::seal_slow(header))),
-            receipts: built.execution_result.receipts.iter().map(Self::receipt).collect(),
+            receipts: Self::receipts(&built.execution_result.receipts, outputs),
             post: Self::post_state(&bundle),
             coverage,
         })
@@ -458,18 +468,19 @@ impl DiffAdapter {
                 WithEncoded::new(raw.clone(), Recovered::new_unchecked(tx.clone(), *sender))
             },
         );
+        let mut outputs = Vec::new();
         let executed = match &request.trace {
             None => {
                 let evm = self.evm_config.evm_with_env(&mut db, evm_env.clone());
                 let executor = self.evm_config.create_executor(evm, ctx.clone());
-                Self::run_block(executor, txs, |_, _| {})
+                Self::run_block(executor, txs, &mut outputs, |_, _| {})
             }
             Some(dir) => {
                 let tracer = TracerEip3155::new(Box::new(io::sink()));
                 let evm =
                     self.evm_config.evm_with_env_and_inspector(&mut db, evm_env.clone(), tracer);
                 let executor = self.evm_config.create_executor(evm, ctx.clone());
-                Self::run_block(executor, txs, |executor, index| {
+                Self::run_block(executor, txs, &mut outputs, |executor, index| {
                     let writer = Self::trace_writer(dir, &request.id, index);
                     executor.evm_mut().inspector_mut().set_writer(writer);
                 })
@@ -535,7 +546,7 @@ impl DiffAdapter {
             invalid_reason,
             rejected: Vec::new(),
             header: Some(Self::header_results(&assembled)),
-            receipts: output.result.receipts.iter().map(Self::receipt).collect(),
+            receipts: Self::receipts(&output.result.receipts, outputs),
             post: Self::post_state(&output.state),
             coverage: None,
         })
@@ -549,6 +560,7 @@ impl DiffAdapter {
         request: &Request,
         state: &WitnessState,
         rejected: &mut Vec<Rejected>,
+        outputs: &mut Vec<Bytes>,
         mut before_tx: impl FnMut(&mut B, usize),
     ) -> eyre::Result<Result<(), String>> {
         if let Err(error) = builder.apply_pre_execution_changes() {
@@ -566,7 +578,10 @@ impl DiffAdapter {
                 }
             };
             before_tx(builder, index);
-            if let Err(error) = builder.execute_transaction(WithEncoded::new(raw.clone(), tx)) {
+            if let Err(error) = builder.execute_transaction_with_result_closure(
+                WithEncoded::new(raw.clone(), tx),
+                |result| outputs.push(Self::output(result.result())),
+            ) {
                 if let Some(missing) = state.missing() {
                     bail!(missing);
                 }
@@ -586,12 +601,15 @@ impl DiffAdapter {
     pub fn run_block<E: BlockExecutor<Transaction = BaseTxEnvelope>>(
         mut executor: E,
         transactions: impl Iterator<Item = WithEncoded<Recovered<BaseTxEnvelope>>>,
+        outputs: &mut Vec<Bytes>,
         mut before_tx: impl FnMut(&mut E, usize),
     ) -> Result<BlockExecutionResult<E::Receipt>, BlockExecutionError> {
         executor.apply_pre_execution_changes()?;
         for (index, tx) in transactions.enumerate() {
             before_tx(&mut executor, index);
-            executor.execute_transaction(tx)?;
+            executor.execute_transaction_with_result_closure(tx, |result| {
+                outputs.push(Self::output(result.result()));
+            })?;
         }
         executor.finish().map(|(_, result)| result)
     }
@@ -666,6 +684,22 @@ impl DiffAdapter {
         }
     }
 
+    /// The protocol form of a block's receipts, each with its transaction's output.
+    pub fn receipts(receipts: &[BaseReceipt], outputs: Vec<Bytes>) -> Vec<Receipt> {
+        debug_assert_eq!(receipts.len(), outputs.len(), "one output per executed transaction");
+        receipts
+            .iter()
+            .zip(outputs)
+            .map(|(receipt, output)| Receipt { output: Some(output), ..Self::receipt(receipt) })
+            .collect()
+    }
+
+    /// The protocol `output` of an executed transaction: return data on success (the deployed
+    /// code for a creation), revert bytes on revert, empty on halt.
+    pub fn output<H>(result: &ResultAndState<H>) -> Bytes {
+        result.result.output().cloned().unwrap_or_default()
+    }
+
     /// The protocol form of a receipt.
     pub fn receipt(receipt: &BaseReceipt) -> Receipt {
         Receipt {
@@ -683,6 +717,7 @@ impl DiffAdapter {
                 .collect(),
             deposit_nonce: receipt.deposit_nonce(),
             deposit_receipt_version: receipt.deposit_receipt_version(),
+            output: None,
         }
     }
 
