@@ -58,6 +58,9 @@ const LOOKUP_PARALLELISM: usize = 3;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_SESSIONS: usize = 1024;
 const MAX_FOUND: usize = 1024;
+/// How long a verified node waits to replace a full bucket's oldest entry, which is probed in
+/// the meantime (sigp discv5's k-bucket pending timeout).
+const PENDING_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Discovery configuration.
 #[derive(Debug, Clone)]
@@ -100,6 +103,16 @@ struct Contact {
     enr: Option<Enr>,
 }
 
+/// A verified node waiting to replace the oldest entry of its full bucket, which is pinged and
+/// keeps its place if it answers before `replace_at`.
+#[derive(Debug, Clone)]
+struct PendingEntry {
+    id: B256,
+    contact: Contact,
+    oldest: B256,
+    replace_at: Instant,
+}
+
 /// A request we sent, kept until answered, challenged, or timed out.
 #[derive(Debug, Clone)]
 struct Outgoing {
@@ -123,6 +136,8 @@ struct State {
     outgoing: HashMap<[u8; 12], Outgoing>,
     challenges: HashMap<B256, Challenge>,
     buckets: Vec<Vec<B256>>,
+    /// At most one pending entry per bucket, keyed by bucket index.
+    pending: HashMap<usize, PendingEntry>,
     lookup_target: B256,
     lookup_asked: HashSet<B256>,
     lookup_rounds: u32,
@@ -317,6 +332,7 @@ impl Discv5 {
                 outgoing: HashMap::new(),
                 challenges: HashMap::new(),
                 buckets: vec![Vec::new(); 257],
+                pending: HashMap::new(),
                 lookup_target: local_id,
                 lookup_asked: HashSet::new(),
                 lookup_rounds: 0,
@@ -532,32 +548,36 @@ impl Inner {
         let signature = &auth[34..98];
         let ephemeral = &auth[98..131];
         let record = &auth[131..];
-        let Some(challenge) = state.challenges.remove(&src) else { return };
+        let Some(challenge) = state.challenges.get(&src) else { return };
         if challenge.addr != from {
             return;
         }
-        let public_key = if record.is_empty() {
-            match state.contacts.get(&src) {
-                Some(contact) => contact.public_key,
-                None => return,
-            }
+        let challenge = challenge.data.clone();
+        let enr = if record.is_empty() {
+            None
         } else {
             let Ok(enr) = Enr::decode(&mut &record[..]) else { return };
             if enr.node_id() != src {
                 return;
             }
-            let key = *enr.public_key();
-            self.add_contact(state, enr, from);
-            key
+            Some(enr)
         };
-        let digest = id_signature_digest(&challenge.data, ephemeral, &self.local_id);
+        let public_key = match &enr {
+            Some(enr) => *enr.public_key(),
+            None => match state.contacts.get(&src) {
+                Some(contact) => contact.public_key,
+                None => return,
+            },
+        };
+        let digest = id_signature_digest(&challenge, ephemeral, &self.local_id);
         if !verify_compact(digest, signature, &public_key) {
+            // Keep the challenge for the real node's answer, as sigp discv5 does.
             return;
         }
+        state.challenges.remove(&src);
         let Ok(ephemeral_key) = PublicKey::from_slice(ephemeral) else { return };
         let secret = ecdh_compressed(&ephemeral_key, &self.key);
-        let (initiator_key, recipient_key) =
-            derive_keys(&secret, &challenge.data, &src, &self.local_id);
+        let (initiator_key, recipient_key) = derive_keys(&secret, &challenge, &src, &self.local_id);
         let Some(plaintext) = aes128_gcm_decrypt(
             &initiator_key,
             &packet.nonce,
@@ -570,11 +590,20 @@ impl Inner {
             state.sessions.clear();
         }
         state.sessions.insert(src, Session { write_key: recipient_key, read_key: initiator_key });
-        state.contacts.entry(src).or_insert(Contact { public_key, addr: from, enr: None });
+        // The id signature, the ephemeral key and the message all check out, so the record may
+        // enter the table now, at its own UDP endpoint. Like sigp discv5, a record with no UDP
+        // endpoint, or one other than the packet's source, gets a session but no table entry.
+        if let Some(enr) = enr
+            && let Some(udp) = enr.udp_socket()
+            && udp == from
+        {
+            self.add_contact(state, enr, udp, true);
+        }
         self.on_message(state, src, from, &plaintext);
     }
 
     fn on_message(&self, state: &mut State, src: B256, from: SocketAddr, plaintext: &[u8]) {
+        self.on_alive(state, src);
         let Some((&kind, rest)) = plaintext.split_first() else { return };
         let mut buf = rest;
         let Ok(mut items) = RlpHeader::decode_bytes(&mut buf, true) else { return };
@@ -639,7 +668,7 @@ impl Inner {
                     count += 1;
                     let Ok(enr) = Enr::decode(&mut list) else { return };
                     let Some(udp) = enr.udp_socket() else { continue };
-                    self.add_contact(state, enr, udp);
+                    self.add_contact(state, enr, udp, false);
                 }
             }
             TALKREQ => {
@@ -664,7 +693,9 @@ impl Inner {
         );
     }
 
-    fn add_contact(&self, state: &mut State, enr: Enr, udp: SocketAddr) {
+    /// Adds or updates a node in the routing table. `verified` is true only for a record whose
+    /// node completed a handshake with us; records relayed in NODES answers are not.
+    fn add_contact(&self, state: &mut State, enr: Enr, udp: SocketAddr, verified: bool) {
         let id = enr.node_id();
         if id == self.local_id {
             return;
@@ -678,18 +709,62 @@ impl Inner {
             });
         }
         let distance = log2_distance(&self.local_id, &id) as usize;
+        let contact = Contact { public_key: *enr.public_key(), addr: udp, enr: Some(enr) };
         let bucket = &mut state.buckets[distance];
-        if !bucket.contains(&id) {
-            if bucket.len() >= BUCKET_SIZE {
-                // Full bucket: replace the oldest entry (bounded table, no liveness probing).
-                let evicted = bucket.remove(0);
-                state.contacts.remove(&evicted);
-                state.sessions.remove(&evicted);
+        if bucket.contains(&id) || bucket.len() < BUCKET_SIZE {
+            if !bucket.contains(&id) {
+                bucket.push(id);
             }
-            state.buckets[distance].push(id);
+            state.contacts.insert(id, contact);
+            return;
         }
-        let public_key = *enr.public_key();
-        state.contacts.insert(id, Contact { public_key, addr: udp, enr: Some(enr) });
+        // Full bucket, as in sigp discv5: relayed records are dropped, and a verified node waits
+        // as the bucket's pending entry while the oldest entry is pinged.
+        if !verified || state.pending.contains_key(&distance) {
+            return;
+        }
+        let oldest = bucket[0];
+        let replace_at = Instant::now() + PENDING_TIMEOUT;
+        state.pending.insert(distance, PendingEntry { id, contact, oldest, replace_at });
+        let request_id = Self::request_id(state);
+        let ping = encode_message(PING, &[&request_id, &state.local_enr.seq]);
+        self.send_request(state, oldest, ping);
+    }
+
+    /// Records that `node` answered us: if it is the entry a pending node waits to replace, it
+    /// keeps its place, moves to the bucket's tail, and the pending node is dropped.
+    fn on_alive(&self, state: &mut State, node: B256) {
+        let distance = log2_distance(&self.local_id, &node) as usize;
+        if state.pending.get(&distance).is_none_or(|pending| pending.oldest != node) {
+            return;
+        }
+        state.pending.remove(&distance);
+        let bucket = &mut state.buckets[distance];
+        if let Some(position) = bucket.iter().position(|id| *id == node) {
+            bucket.remove(position);
+            bucket.push(node);
+        }
+    }
+
+    /// Replaces the probed entries that did not answer in time with their pending nodes.
+    fn apply_pending(state: &mut State) {
+        let now = Instant::now();
+        let due: Vec<usize> =
+            state.pending.iter().filter(|(_, p)| p.replace_at <= now).map(|(d, _)| *d).collect();
+        for distance in due {
+            let pending = state.pending.remove(&distance).expect("due pending entry");
+            let bucket = &mut state.buckets[distance];
+            if let Some(position) = bucket.iter().position(|id| *id == pending.oldest) {
+                bucket.remove(position);
+                state.contacts.remove(&pending.oldest);
+                state.sessions.remove(&pending.oldest);
+            }
+            if bucket.len() < BUCKET_SIZE && !bucket.contains(&pending.id) {
+                bucket.push(pending.id);
+                state.contacts.insert(pending.id, pending.contact);
+            }
+            assert!(bucket.len() <= BUCKET_SIZE);
+        }
     }
 
     /// Periodic work: expire requests and challenges, and advance the lookup.
@@ -697,6 +772,7 @@ impl Inner {
         let mut state = self.state.lock().unwrap();
         state.outgoing.retain(|_, o| o.sent.elapsed() < REQUEST_TIMEOUT);
         state.challenges.retain(|_, c| c.sent.elapsed() < REQUEST_TIMEOUT);
+        Self::apply_pending(&mut state);
         if state.lookup_rounds >= 8 {
             state.lookup_target = B256::from(random_array::<32>());
             state.lookup_asked.clear();
@@ -841,6 +917,186 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(hex::encode(ct), "a5d12a2d94b8ccb3ba55558229867dc13bfa3648");
+    }
+
+    /// A discovery service without its thread, so tests drive it packet by packet.
+    fn test_inner() -> Inner {
+        let key = random_secret_key();
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let listen_addr = socket.local_addr().unwrap();
+        let local_id = node_id(&PublicKey::from_secret_key_global(&key));
+        let fork_id = ForkId { hash: [1, 2, 3, 4], next: 0 };
+        let local_enr =
+            Enr::build(&key, 1, Some(Ipv4Addr::LOCALHOST), 0, listen_addr.port(), None);
+        Inner {
+            socket,
+            key,
+            local_id,
+            protocol_id: BASE_PROTOCOL_ID,
+            config: Discv5Config {
+                secret_key: key,
+                listen_addr,
+                tcp_port: 0,
+                external_ip: None,
+                fork_id,
+                bootnodes: vec![],
+            },
+            state: Mutex::new(State {
+                local_enr,
+                contacts: HashMap::new(),
+                sessions: HashMap::new(),
+                outgoing: HashMap::new(),
+                challenges: HashMap::new(),
+                buckets: vec![Vec::new(); 257],
+                pending: HashMap::new(),
+                lookup_target: local_id,
+                lookup_asked: HashSet::new(),
+                lookup_rounds: 0,
+                found: Vec::new(),
+                next_request_id: 1,
+                ip_learned: true,
+            }),
+            shutdown: AtomicBool::new(false),
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Tamper {
+        None,
+        IdSignature,
+        EphemeralKey,
+        Message,
+    }
+
+    /// A handshake packet from `remote` answering the WHOAREYOU `inner` sent it, carrying
+    /// `record` and a PING, with one part optionally corrupted.
+    fn handshake_packet(
+        inner: &Inner,
+        remote: &SecretKey,
+        record: &[u8],
+        tamper: Tamper,
+    ) -> Vec<u8> {
+        let remote_id = node_id(&PublicKey::from_secret_key_global(remote));
+        let challenge = inner.state.lock().unwrap().challenges[&remote_id].data.clone();
+        let ephemeral = random_secret_key();
+        let mut ephemeral_public = PublicKey::from_secret_key_global(&ephemeral).serialize();
+        if tamper == Tamper::EphemeralKey {
+            // 33 bytes that are not a compressed secp256k1 point.
+            ephemeral_public = [0x05; 33];
+        }
+        let local_public = PublicKey::from_secret_key_global(&inner.key);
+        let secret = ecdh_compressed(&local_public, &ephemeral);
+        let (write_key, _) = derive_keys(&secret, &challenge, &remote_id, &inner.local_id);
+        let digest = id_signature_digest(&challenge, &ephemeral_public, &inner.local_id);
+        let mut signature = sign_compact(digest, remote);
+        if tamper == Tamper::IdSignature {
+            signature[10] ^= 1;
+        }
+        let mut authdata = remote_id.to_vec();
+        authdata.extend_from_slice(&[64, 33]);
+        authdata.extend_from_slice(&signature);
+        authdata.extend_from_slice(&ephemeral_public);
+        authdata.extend_from_slice(record);
+        let nonce: [u8; 12] = random_array();
+        let (mut packet, ad) = encode_header(
+            &BASE_PROTOCOL_ID,
+            &inner.local_id,
+            FLAG_HANDSHAKE,
+            &nonce,
+            &authdata,
+            random_array(),
+        );
+        let ping = encode_message(PING, &[&Bytes::from_static(&[1]), &1u64]);
+        let mut sealed = aes128_gcm_encrypt(&write_key, &nonce, &ping, &ad);
+        if tamper == Tamper::Message {
+            sealed[0] ^= 1;
+        }
+        packet.extend(sealed);
+        packet
+    }
+
+    #[test]
+    fn handshake_record_enters_the_table_only_after_verification() {
+        // The remote's UDP socket; it receives tiger's WHOAREYOU and PONG and is never read.
+        let remote_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let from = remote_socket.local_addr().unwrap();
+        let run = |record_udp: u16, tamper: Tamper| {
+            let inner = test_inner();
+            let remote = random_secret_key();
+            let remote_id = node_id(&PublicKey::from_secret_key_global(&remote));
+            let ip = (record_udp != 0).then_some(Ipv4Addr::LOCALHOST);
+            let record = Enr::build(&remote, 1, ip, 30303, record_udp, None).encode();
+            inner.send_whoareyou(&mut inner.state.lock().unwrap(), remote_id, from, &[7; 12]);
+            inner.on_packet(&handshake_packet(&inner, &remote, &record, tamper), from);
+            let state = inner.state.lock().unwrap();
+            let in_table = state.buckets.iter().any(|bucket| bucket.contains(&remote_id));
+            let contact = state.contacts.get(&remote_id).map(|contact| contact.addr);
+            assert_eq!(in_table, contact.is_some());
+            (contact, state.sessions.contains_key(&remote_id))
+        };
+        // A valid, correctly signed record with a flipped id signature byte, a garbage
+        // ephemeral key, or an undecryptable message: no session and no table entry.
+        for tamper in [Tamper::IdSignature, Tamper::EphemeralKey, Tamper::Message] {
+            assert_eq!(run(from.port(), tamper), (None, false));
+        }
+        // A verified handshake stores the record's own endpoint.
+        assert_eq!(run(from.port(), Tamper::None), (Some(from), true));
+        // A record with another UDP endpoint, or none, gets a session but no table entry.
+        assert_eq!(run(from.port() ^ 1, Tamper::None), (None, true));
+        assert_eq!(run(0, Tamper::None), (None, true));
+    }
+
+    #[test]
+    fn full_bucket_probes_its_oldest_entry_before_eviction() {
+        let inner = test_inner();
+        // Records at the farthest distance, 256 (half of all node ids).
+        let mut records = Vec::new();
+        while records.len() < BUCKET_SIZE + 2 {
+            let key = random_secret_key();
+            let id = node_id(&PublicKey::from_secret_key_global(&key));
+            if log2_distance(&inner.local_id, &id) == 256 {
+                let port = 40_000 + records.len() as u16;
+                records.push(Enr::build(&key, 1, Some(Ipv4Addr::LOCALHOST), 0, port, None));
+            }
+        }
+        let add = |enr: &Enr, verified: bool| {
+            let mut state = inner.state.lock().unwrap();
+            inner.add_contact(&mut state, enr.clone(), enr.udp_socket().unwrap(), verified);
+        };
+        let bucket = || inner.state.lock().unwrap().buckets[256].clone();
+        for enr in &records[..BUCKET_SIZE] {
+            add(enr, false);
+        }
+        let full = bucket();
+        assert_eq!(full.len(), BUCKET_SIZE);
+        // A relayed record never displaces an entry.
+        add(&records[BUCKET_SIZE], false);
+        assert_eq!(bucket(), full);
+        // A verified node waits while the oldest entry is pinged; an answer keeps the oldest
+        // (moved to the tail) and drops the waiting node.
+        let verified = &records[BUCKET_SIZE + 1];
+        add(verified, true);
+        assert_eq!(bucket(), full);
+        {
+            let mut state = inner.state.lock().unwrap();
+            assert!(state.outgoing.values().any(|request| request.node == full[0]));
+            let pong = encode_message(PONG, &[&Bytes::from_static(&[1]), &1u64]);
+            inner.on_message(&mut state, full[0], "127.0.0.1:1".parse().unwrap(), &pong);
+            assert!(state.pending.is_empty());
+        }
+        let mut rotated = full[1..].to_vec();
+        rotated.push(full[0]);
+        assert_eq!(bucket(), rotated);
+        // When the probed entry stays silent past the timeout, the verified node replaces it.
+        add(verified, true);
+        inner.state.lock().unwrap().pending.get_mut(&256).unwrap().replace_at = Instant::now();
+        inner.tick();
+        let mut replaced = rotated[1..].to_vec();
+        replaced.push(verified.node_id());
+        assert_eq!(bucket(), replaced);
+        let state = inner.state.lock().unwrap();
+        assert!(!state.contacts.contains_key(&full[1]));
+        assert!(state.contacts.contains_key(&verified.node_id()));
     }
 
     #[test]
