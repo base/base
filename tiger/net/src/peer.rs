@@ -676,4 +676,20 @@ mod tests {
         let breach = Some(DisconnectReason::ProtocolBreach as u8);
         assert_eq!(read_pongs_until_disconnect(&mut conn), (0, breach));
     }
+
+    #[test]
+    fn ping_flood_and_bad_ping_payload_disconnect_with_protocol_breach() {
+        let breach = Some(DisconnectReason::ProtocolBreach as u8);
+        // 50 back-to-back Pings: five Pongs, then a disconnect.
+        let (mut conn, _) = connect_to_session();
+        for _ in 0..50 {
+            // Later writes may find the socket already closed.
+            let _ = conn.writer.ping();
+        }
+        assert_eq!(read_pongs_until_disconnect(&mut conn), (5, breach));
+        // A Ping whose payload is `c180` instead of `c0`.
+        let (mut conn, _) = connect_to_session();
+        conn.writer.send(0x02, &[0xc1, 0x80]).unwrap();
+        assert_eq!(read_pongs_until_disconnect(&mut conn), (0, breach));
+    }
 }

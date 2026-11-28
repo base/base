@@ -7,7 +7,7 @@
 use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpStream},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_rlp::{Decodable, Encodable, Header, RlpDecodable, RlpEncodable};
@@ -28,6 +28,10 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 const MAX_ETH_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 /// Message ids below this are reserved for the `p2p` capability.
 pub(crate) const BASE_PROTOCOL_OFFSET: u8 = 0x10;
+/// Pings a peer may send in a burst; one more is allowed per second (reth's p2p stream).
+const PING_TOKEN_BUCKET_CAPACITY: u8 = 5;
+/// The only Ping and Pong payload: the empty RLP list.
+const PING_PAYLOAD: [u8; 1] = [alloy_rlp::EMPTY_LIST_CODE];
 
 /// `p2p` message ids.
 const HELLO: u8 = 0x00;
@@ -210,6 +214,41 @@ pub struct RlpxReader {
     buf: Vec<u8>,
     /// Payload size of the frame whose header was read, waiting for its body.
     pending: Option<usize>,
+    ping_tokens: PingTokenBucket,
+}
+
+/// Limits incoming Pings per connection: up to [`PING_TOKEN_BUCKET_CAPACITY`] at once, refilled
+/// at one per second, as base-reth's p2p stream does.
+#[derive(Debug)]
+struct PingTokenBucket {
+    tokens: u8,
+    last_refill: Instant,
+}
+
+impl PingTokenBucket {
+    fn new(now: Instant) -> Self {
+        Self { tokens: PING_TOKEN_BUCKET_CAPACITY, last_refill: now }
+    }
+
+    /// Takes a token for a Ping received at `now`; false if the bucket is empty.
+    fn try_take(&mut self, now: Instant) -> bool {
+        let refill = now.saturating_duration_since(self.last_refill).as_secs();
+        if refill > 0 {
+            let tokens = u64::from(self.tokens).saturating_add(refill);
+            self.tokens = tokens.min(u64::from(PING_TOKEN_BUCKET_CAPACITY)) as u8;
+            self.last_refill += Duration::from_secs(refill);
+        }
+        if self.tokens == 0 {
+            return false;
+        }
+        // Time spent full earns nothing: refills count from the first token taken.
+        if self.tokens == PING_TOKEN_BUCKET_CAPACITY {
+            self.last_refill = now;
+        }
+        self.tokens -= 1;
+        assert!(self.tokens < PING_TOKEN_BUCKET_CAPACITY);
+        true
+    }
 }
 
 /// The sending half of an RLPx connection.
@@ -304,6 +343,7 @@ impl RlpxConnection {
             snappy: false,
             buf: Vec::new(),
             pending: None,
+            ping_tokens: PingTokenBucket::new(Instant::now()),
         };
         let hello = Hello {
             protocol_version: P2P_VERSION,
@@ -428,6 +468,8 @@ impl RlpxReader {
 
     /// Reads the next frame, waiting at most the socket read timeout for it to complete.
     /// Answers nothing itself: Ping, Pong and Disconnect come back as messages with ids 1..3.
+    /// A Ping or Pong whose payload is not the empty list, or a Ping beyond the rate limit, is
+    /// an error.
     pub fn poll(&mut self) -> Result<Received, RlpxError> {
         let size = match self.pending {
             Some(size) => size,
@@ -450,19 +492,29 @@ impl RlpxReader {
         let frame = self.ingress.decode_body(&mut body, size)?;
         let mut cursor = frame;
         let id = u8::decode(&mut cursor)?;
-        let max =
-            if id >= BASE_PROTOCOL_OFFSET { MAX_ETH_MESSAGE_SIZE - 1 } else { MAX_MESSAGE_SIZE };
+        let ping_or_pong = id == PING || id == PONG;
+        let (max, too_big) = match id {
+            _ if ping_or_pong => (PING_PAYLOAD.len(), "bad ping payload"),
+            id if id >= BASE_PROTOCOL_OFFSET => (MAX_ETH_MESSAGE_SIZE - 1, "message too big"),
+            _ => (MAX_MESSAGE_SIZE, "message too big"),
+        };
         // The Snappy length prefix is checked against `max` before anything is allocated.
         let payload = if self.snappy {
             snappy::decompress(cursor, max).map_err(|error| match error {
-                SnappyError::TooLarge => RlpxError::Protocol("message too big"),
+                SnappyError::TooLarge => RlpxError::Protocol(too_big),
                 SnappyError::Truncated | SnappyError::Corrupt => RlpxError::Protocol("bad snappy"),
             })?
         } else if cursor.len() > max {
-            return Err(RlpxError::Protocol("message too big"));
+            return Err(RlpxError::Protocol(too_big));
         } else {
             cursor.to_vec()
         };
+        if ping_or_pong && payload != PING_PAYLOAD {
+            return Err(RlpxError::Protocol("bad ping payload"));
+        }
+        if id == PING && !self.ping_tokens.try_take(Instant::now()) {
+            return Err(RlpxError::Protocol("too many pings"));
+        }
         Ok(Received::Message(RawMessage { id, payload }))
     }
 
@@ -576,5 +628,69 @@ mod tests {
         let Received::Message(m) = conn.reader.poll().unwrap() else { panic!("idle") };
         assert_eq!((m.id, m.payload), (0x13, payload));
         server.join().unwrap();
+    }
+
+    /// Two ends of an established connection over loopback TCP: (dialer, listener).
+    fn connected_pair() -> (RlpxConnection, RlpxConnection) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_key = random_secret_key();
+        let server_id = peer_id_of_secret(&server_key);
+        let timeout = Duration::from_secs(5);
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            RlpxConnection::accept(stream, &server_key, CAPS, "server", timeout).unwrap()
+        });
+        let key = random_secret_key();
+        let client = RlpxConnection::connect(addr, server_id, &key, CAPS, "client", timeout);
+        (client.unwrap(), server.join().unwrap())
+    }
+
+    #[test]
+    fn ping_and_pong_payloads_must_be_the_empty_list() {
+        let bad = |result: Result<Received, RlpxError>| {
+            matches!(result, Err(RlpxError::Protocol("bad ping payload")))
+        };
+        // Snappy stream `01 00 80`: length 1, then the literal 0x80 instead of 0xc0.
+        for id in [PING, PONG] {
+            let (mut client, mut server) = connected_pair();
+            let mut wire = Vec::new();
+            client.writer.egress.encode(&[id, 0x01, 0x00, 0x80], &mut wire);
+            client.writer.stream.write_all(&wire).unwrap();
+            assert!(bad(server.reader.poll()));
+        }
+        // A Ping carrying `c180` instead of `c0`.
+        let (mut client, mut server) = connected_pair();
+        client.writer.send(PING, &[0xc1, 0x80]).unwrap();
+        assert!(bad(server.reader.poll()));
+        // The empty list is accepted.
+        let (mut client, mut server) = connected_pair();
+        client.writer.ping().unwrap();
+        client.writer.pong().unwrap();
+        for id in [PING, PONG] {
+            let Received::Message(m) = server.reader.poll().unwrap() else { panic!("idle") };
+            assert_eq!((m.id, m.payload), (id, PING_PAYLOAD.to_vec()));
+        }
+    }
+
+    #[test]
+    fn ping_token_bucket_allows_bursts_of_five_and_refills_each_second() {
+        let start = Instant::now();
+        let mut bucket = PingTokenBucket::new(start);
+        for _ in 0..PING_TOKEN_BUCKET_CAPACITY {
+            assert!(bucket.try_take(start));
+        }
+        assert!(!bucket.try_take(start));
+        let one_refill = start + Duration::from_secs(1);
+        assert!(bucket.try_take(one_refill));
+        assert!(!bucket.try_take(one_refill));
+        // Time spent full is not banked: after a long pause only a burst of five is allowed.
+        let later = one_refill + Duration::from_millis(60_500);
+        for _ in 0..PING_TOKEN_BUCKET_CAPACITY {
+            assert!(bucket.try_take(later));
+        }
+        assert!(!bucket.try_take(later));
+        assert!(!bucket.try_take(later + Duration::from_millis(999)));
+        assert!(bucket.try_take(later + Duration::from_secs(1)));
     }
 }
