@@ -32,6 +32,11 @@ pub use chain::{
     StoredBlock, Validation,
 };
 
+#[cfg(feature = "tp2p")]
+mod witness_build;
+#[cfg(feature = "tp2p")]
+pub use witness_build::{Reads, WitnessCache, build_witness, decode_witness, encode_witness};
+
 mod upstream;
 pub use upstream::{BlockKeys, ExecutionWitness, Upstream, Witnesses};
 
@@ -46,6 +51,11 @@ pub use persist::Persistence;
 
 mod sync;
 pub use sync::{BACKFILL_THRESHOLD, Sync};
+
+#[cfg(feature = "tp2p")]
+mod tp2p;
+#[cfg(feature = "tp2p")]
+pub use tp2p::{ANNOUNCE, CAP_BLOCKS, CAP_WITNESS, Fetcher, GET_BODIES, GET_HEADERS, GET_WITNESS, Tp2p, Tp2pArgs, WitnessSource, parse_peer};
 
 mod node;
 pub use node::{Node, RpcError};

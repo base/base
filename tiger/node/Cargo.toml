@@ -58,6 +58,9 @@ secp256k1 = { workspace = true, features = ["std"] }
 rustls.workspace = true
 webpki-roots.workspace = true
 
+# tp2p, optional (feature `tp2p`)
+base-tiger-p2p = { workspace = true, optional = true }
+
 # serialization
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std", "raw_value", "preserve_order"] }
@@ -69,3 +72,6 @@ diff-adapter = []
 # Edge coverage for guided fuzzing; build with `RUSTC_WRAPPER=etc/tools/diff-adapter/sancov-rustc.sh`
 # and `SANCOV_CRATES` naming the crates to instrument (see README.md).
 edge-coverage = []
+# tp2p: blocks, headers and execution witnesses from tiger peers (`--tp2p.*`). Off by default:
+# without it the binary and its dependency tree are unchanged.
+tp2p = ["dep:base-tiger-p2p"]

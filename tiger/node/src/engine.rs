@@ -462,6 +462,11 @@ impl Node {
                     return Ok(Imported::MissingParent);
                 }
                 chain.insert(hash, &stored, prepared).map_err(RpcError::internal)?;
+                #[cfg(feature = "tp2p")]
+                if let Some(cache) = &self.witness_cache {
+                    drop(chain);
+                    cache.stored(hash);
+                }
                 Ok(Imported::Valid)
             }
             (invalid, _) => {
@@ -492,6 +497,9 @@ impl Node {
         // Proofs are fetched at the stored tip, so they serve a block on the tip. A block on a side
         // branch uses its witness, which is stored at commit, after the unwind to its fork point.
         let stateless = chain.db.is_partial() && self.upstream.is_some() && parent.hash == chain.head().hash;
+        // With witnesses from tiger peers (tp2p), one witness beats rounds of upstream proofs.
+        #[cfg(feature = "tp2p")]
+        let stateless = stateless && self.tp2p.get().is_none();
         // Nor may it validate over the tip's partial trie with the reverts and overlays applied:
         // that root can pass without the nodes its commit (over the fork point's trie, whose
         // shape differs) collapses into, and the commit then fails on every retry.
@@ -502,6 +510,11 @@ impl Node {
         for round in 0..=MAX_PROOF_ROUNDS {
             let state = chain.state_after(parent).map_err(RpcError::internal)?;
             let state = if stateless { state.collecting() } else { state };
+            // A full node serving witnesses records the block's reads to build it from proofs.
+            #[cfg(feature = "tp2p")]
+            let recording = self.witness_cache.is_some() && !chain.db.is_partial();
+            #[cfg(feature = "tp2p")]
+            let state = if recording { state.recording() } else { state };
             let validate =
                 || (BlockExecution { chain: &self.spec }).validate(header, transactions, &parent.header, &state);
             let started = std::time::Instant::now();
@@ -523,6 +536,10 @@ impl Node {
             }
             let missing = match validated {
                 Ok(validated) => {
+                    #[cfg(feature = "tp2p")]
+                    if let Some(cache) = self.witness_cache.as_ref().filter(|_| recording) {
+                        cache.put_reads(header.hash_slow(), state.take_reads());
+                    }
                     let prepared = state
                         .take_prepared()
                         .map(|prepared| Validation::Prepared(Box::new(prepared)));
@@ -660,7 +677,7 @@ impl Node {
     /// Validates block `hash` on a partial state over the upstream's execution witness, which
     /// is verified node by node against the parent's state root and header by header against
     /// the parent's ancestry.
-    fn validate_with_witness(
+    pub(crate) fn validate_with_witness(
         &self,
         chain: &crate::Chain,
         witness: crate::ExecutionWitness,

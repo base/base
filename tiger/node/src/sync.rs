@@ -17,7 +17,13 @@ use base_tiger_net::{
     BlockBody, BlockId, BlockSource, ChainHead, Downloader, HeadersRequest, Network, SealedHeader,
 };
 
+#[cfg(feature = "tp2p")]
+use crate::Fetcher;
 use crate::{Node, engine::Imported};
+
+/// Where sync downloads blocks from: devp2p, or with feature `tp2p` devp2p or tiger peers.
+#[cfg(not(feature = "tp2p"))]
+type Fetcher = Downloader;
 
 /// Gaps longer than this are backfilled forward by number (base-reth's
 /// `MIN_BLOCKS_FOR_PIPELINE_RUN`).
@@ -32,8 +38,8 @@ const WITNESS_TIMEOUT: Duration = Duration::from_secs(120);
 /// The node's network and sync requests.
 #[derive(Debug)]
 pub struct Sync {
-    /// The running network.
-    pub network: Network,
+    /// The running devp2p network, unless the node syncs over tp2p only.
+    pub network: Option<Network>,
     targets: Mutex<mpsc::Sender<B256>>,
 }
 
@@ -46,11 +52,18 @@ impl Node {
         let source: Arc<dyn BlockSource> = Arc::clone(self) as Arc<dyn BlockSource>;
         let network = Network::start(config, source).map_err(|error| format!("starting the network: {error}"))?;
         eprintln!("tiger: node id {}", alloy_primitives::hex::encode(network.local_id()));
+        let downloader = Downloader::new(network.clone(), base_tiger_net::DownloadConfig::default());
+        #[cfg(feature = "tp2p")]
+        let downloader = Fetcher::Devp2p(downloader);
+        self.start_sync_with(Some(network), downloader)
+    }
+
+    /// Starts the sync thread downloading through `downloader`.
+    pub fn start_sync_with(self: &Arc<Self>, network: Option<Network>, downloader: Fetcher) -> Result<(), String> {
         let (sender, receiver) = mpsc::channel();
-        let sync = Sync { network: network.clone(), targets: Mutex::new(sender) };
+        let sync = Sync { network, targets: Mutex::new(sender) };
         assert!(self.sync.set(sync).is_ok(), "sync starts once");
         let node = Arc::clone(self);
-        let downloader = Downloader::new(network, base_tiger_net::DownloadConfig::default());
         thread::Builder::new()
             .name("sync".into())
             .spawn(move || node.sync_loop(&downloader, &receiver))
@@ -65,7 +78,7 @@ impl Node {
         }
     }
 
-    fn sync_loop(&self, downloader: &Downloader, targets: &mpsc::Receiver<B256>) {
+    fn sync_loop(&self, downloader: &Fetcher, targets: &mpsc::Receiver<B256>) {
         while let Ok(mut target) = targets.recv() {
             // Only the newest request matters.
             while let Ok(newer) = targets.try_recv() {
@@ -85,7 +98,7 @@ impl Node {
     }
 
     /// Downloads and imports the blocks up to `target`. Returns how many were imported.
-    fn sync_to(&self, downloader: &Downloader, target: B256) -> Result<u64, String> {
+    fn sync_to(&self, downloader: &Fetcher, target: B256) -> Result<u64, String> {
         let error = |error: base_tiger_net::DownloadError| error.to_string();
         if let Some(imported) = self.import_pending(target)? {
             return Ok(imported);
@@ -277,7 +290,7 @@ impl Node {
     /// Downloads the bodies of `headers` (ascending, linked) and imports the blocks in order.
     fn import_downloaded(
         &self,
-        downloader: &Downloader,
+        downloader: &Fetcher,
         headers: &[SealedHeader],
     ) -> Result<u64, String> {
         let bodies = downloader.bodies(headers, &mut |_| {}).map_err(|error| error.to_string())?;

@@ -81,6 +81,12 @@ pub struct Node {
     pub prewarm: OnceLock<crate::Prewarm>,
     /// The persistence thread of a full state, once started.
     pub persistence: crate::Persistence,
+    /// Witnesses of recent blocks for peers, when the node serves them (feature `tp2p`).
+    #[cfg(feature = "tp2p")]
+    pub witness_cache: Option<crate::WitnessCache>,
+    /// tp2p, once started (feature `tp2p`).
+    #[cfg(feature = "tp2p")]
+    pub tp2p: std::sync::Arc<OnceLock<std::sync::Arc<crate::Tp2p>>>,
 }
 
 impl Node {
@@ -90,7 +96,11 @@ impl Node {
         let spec = genesis.chain.clone();
         let stateless = upstream.as_ref().map(|(upstream, block)| crate::StatelessStart { upstream, block });
         let chain = Chain::open(datadir, genesis, stateless)?;
+        #[cfg(feature = "tp2p")]
+        let source = crate::WitnessSource { upstream: upstream.as_ref().map(|(upstream, _)| upstream.clone()), ..Default::default() };
         Ok(Self {
+            #[cfg(feature = "tp2p")]
+            tp2p: std::sync::Arc::clone(&source.tp2p),
             spec,
             chain: RwLock::new(chain),
             engine: Mutex::new(EngineState::default()),
@@ -99,6 +109,11 @@ impl Node {
             rpc_config: crate::RpcConfig::default(),
             prewarm: OnceLock::new(),
             persistence: crate::Persistence::default(),
+            #[cfg(feature = "tp2p")]
+            witness_cache: None,
+            #[cfg(feature = "tp2p")]
+            witnesses: upstream.is_some().then(|| crate::Witnesses::new(&source)),
+            #[cfg(not(feature = "tp2p"))]
             witnesses: upstream.as_ref().map(|(upstream, _)| crate::Witnesses::new(upstream)),
             upstream: upstream.map(|(upstream, _)| upstream),
         })

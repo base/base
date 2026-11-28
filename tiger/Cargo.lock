@@ -1124,6 +1124,7 @@ dependencies = [
  "base-common-rpc-types-engine",
  "base-tiger-evm",
  "base-tiger-net",
+ "base-tiger-p2p",
  "base-tiger-store",
  "base-tiger-trie",
  "evm2",

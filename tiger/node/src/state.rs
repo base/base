@@ -145,6 +145,9 @@ pub struct NodeState<'d> {
     prepared: RefCell<Option<PreparedRoot>>,
     /// When collecting ([`Self::collecting`]): the state reads that were not local.
     misses: Option<RefCell<Misses>>,
+    /// When recording ([`Self::recording`]): every key the execution read, cache hits included.
+    #[cfg(feature = "tp2p")]
+    reads: Option<RefCell<crate::Reads>>,
     /// The cross-block execution cache, when this is the state at the cache's head.
     cache: Option<(std::sync::Arc<crate::ExecCache>, u64)>,
     /// When running ahead ([`Self::running_ahead`]): the slots fetched for it, where it sends
@@ -197,6 +200,8 @@ impl<'d> NodeState<'d> {
             unknown: Cell::new(false),
             prepared: RefCell::new(None),
             misses: None,
+            #[cfg(feature = "tp2p")]
+            reads: None,
             cache: None,
             ahead: None,
             slow: None,
@@ -218,6 +223,21 @@ impl<'d> NodeState<'d> {
     pub fn collecting(mut self) -> Self {
         self.misses = Some(RefCell::new(Misses::default()));
         self
+    }
+
+    /// This state recording every key read (cache hits included) for [`Self::take_reads`], so a
+    /// full node can build the block's execution witness from proofs alone, without executing it
+    /// again (feature `tp2p`; not compiled otherwise).
+    #[cfg(feature = "tp2p")]
+    pub fn recording(mut self) -> Self {
+        self.reads = Some(RefCell::new(crate::Reads::default()));
+        self
+    }
+
+    /// The keys recorded so far (empty when not recording).
+    #[cfg(feature = "tp2p")]
+    pub fn take_reads(&self) -> crate::Reads {
+        self.reads.as_ref().map(|reads| std::mem::take(&mut *reads.borrow_mut())).unwrap_or_default()
     }
 
     /// This state with storage reads that neither the execution cache nor `fetches` answer sent
@@ -312,6 +332,10 @@ impl<'d> NodeState<'d> {
 
     /// The account at `address`.
     pub fn account(&self, address: &Address) -> Result<Option<AccountInfo>, String> {
+        #[cfg(feature = "tp2p")]
+        if let Some(reads) = &self.reads {
+            reads.borrow_mut().accounts.insert(*address);
+        }
         if let Some(account) = self.cache.as_ref().and_then(|(cache, generation)| cache.account(*generation, address)) {
             return Ok(account);
         }
@@ -336,6 +360,10 @@ impl<'d> NodeState<'d> {
 
     /// The value of storage `slot` of `address`.
     pub fn storage(&self, address: &Address, slot: &U256) -> Result<U256, String> {
+        #[cfg(feature = "tp2p")]
+        if let Some(reads) = &self.reads {
+            reads.borrow_mut().storage.entry(*address).or_default().insert(*slot);
+        }
         if let Some(value) = self.cache.as_ref().and_then(|(cache, generation)| cache.storage(*generation, address, slot)) {
             return Ok(value);
         }
@@ -378,6 +406,10 @@ impl<'d> NodeState<'d> {
     /// The code with hash `hash`, analyzed for execution. The execution cache keeps it analyzed
     /// across blocks (evm2 keeps it within one).
     pub fn bytecode(&self, hash: &B256) -> Result<Bytecode, String> {
+        #[cfg(feature = "tp2p")]
+        if let Some(reads) = &self.reads {
+            reads.borrow_mut().codes.insert(*hash);
+        }
         if let Some(code) = self.cache.as_ref().and_then(|(cache, _)| cache.code(hash)) {
             return Ok(code);
         }
@@ -416,6 +448,14 @@ impl<'d> NodeState<'d> {
         self.view.proof(address, slots).map_err(|error| self.record_trie(error))
     }
 
+    /// The proof of the account with hashed address `key` and its hashed `slots`: any path, so a
+    /// witness can include the nodes along a deleted key's siblings.
+    #[cfg(feature = "tp2p")]
+    pub fn proof_hashed(&self, key: B256, slots: &[B256]) -> Result<AccountProof, String> {
+        self.check_stop()?;
+        self.view.proof_hashed(key, slots).map_err(|error| self.record_trie(error))
+    }
+
     /// The trie changes behind the last state root computed after a block on this state, which
     /// [`base_tiger_trie::StateDb::commit_prepared`] reuses when the block is committed.
     pub fn take_prepared(&self) -> Option<PreparedRoot> {
@@ -435,6 +475,10 @@ impl<'d> NodeState<'d> {
 
     /// The hash of ancestor block `number`.
     pub fn block_hash(&self, number: u64) -> Result<B256, String> {
+        #[cfg(feature = "tp2p")]
+        if let Some(reads) = &self.reads {
+            reads.borrow_mut().block_numbers.insert(number);
+        }
         self.block_hashes.get(&number).copied().ok_or_else(|| self.record(format!("missing block hash {number}")))
     }
 }
@@ -481,6 +525,10 @@ impl ParentState for NodeState<'_> {
         changes: &BlockStateAccumulator,
     ) -> Result<B256, String> {
         // The message passer's account is read only for its storage root, not by execution.
+        #[cfg(feature = "tp2p")]
+        if let Some(reads) = &self.reads {
+            reads.borrow_mut().accounts.insert(address);
+        }
         let started = std::time::Instant::now();
         // The block's root, computed just before over the same changes, already hashed them.
         let root = match &*self.prepared.borrow() {

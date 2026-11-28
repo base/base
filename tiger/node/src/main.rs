@@ -22,6 +22,8 @@ const USAGE: &str = "usage:
              [--port <port>] [--discovery.port <port>] [--disable-discovery]
              [--bootnodes <enode,...>] [--trusted-peers <enode,...>] [--p2p-secret-key <file>]
              [--max-outbound-peers <n>] [--max-inbound-peers <n>] [--nat extip:<ip>]
+             [--tp2p.listen <ip:port>] [--tp2p.advertise <ip:port>] [--tp2p.bootnodes <tp2p://key@host:port,...>]
+             [--tp2p.trusted <tp2p://...>] [--tp2p.serve-witness] [--tp2p.only]   (built with --features tp2p)
   tiger diff-adapter
   tiger bench fetch|replay (see node/src/bench.rs)";
 
@@ -40,6 +42,22 @@ struct NodeArgs {
     /// `--engine.persistence-threshold`, `--engine.memory-block-buffer-target` and
     /// `--engine.persistence-backpressure-threshold`.
     persistence: (u64, u64, Option<u64>),
+    /// `--tp2p.*` (feature `tp2p`).
+    #[cfg(feature = "tp2p")]
+    tp2p: Tp2pFlags,
+}
+
+/// `--tp2p.*` options as given.
+#[cfg(feature = "tp2p")]
+#[derive(Debug, Default)]
+struct Tp2pFlags {
+    listen: Option<SocketAddr>,
+    advertise: Option<SocketAddr>,
+    bootnodes: Vec<String>,
+    trusted: Vec<String>,
+    serve_witness: bool,
+    /// Sync over tp2p only: devp2p (RLPx and discv5) is not started.
+    only: bool,
 }
 
 /// Peer-to-peer options, named as base-reth names them.
@@ -84,6 +102,8 @@ impl NodeArgs {
         let (mut http_addr, mut http_port) = (localhost, 8545u16);
         let (mut auth_addr, mut auth_port) = (localhost, 8551u16);
         let mut net = NetArgs { port: 30303, ..NetArgs::default() };
+        #[cfg(feature = "tp2p")]
+        let mut tp2p = Tp2pFlags::default();
         let list = |text: String| -> Vec<String> {
             text.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect()
         };
@@ -139,6 +159,18 @@ impl NodeArgs {
                     let ip = text.strip_prefix("extip:").ok_or_else(|| format!("--nat {text}: only extip:<ip> is supported"))?;
                     net.external_ip = Some(parse_ip(ip.to_owned())?);
                 }
+                #[cfg(feature = "tp2p")]
+                "--tp2p.listen" => tp2p.listen = Some(value()?.parse().map_err(|error| format!("{flag}: {error}"))?),
+                #[cfg(feature = "tp2p")]
+                "--tp2p.advertise" => tp2p.advertise = Some(value()?.parse().map_err(|error| format!("{flag}: {error}"))?),
+                #[cfg(feature = "tp2p")]
+                "--tp2p.bootnodes" => tp2p.bootnodes = list(value()?),
+                #[cfg(feature = "tp2p")]
+                "--tp2p.trusted" => tp2p.trusted = list(value()?),
+                #[cfg(feature = "tp2p")]
+                "--tp2p.serve-witness" => tp2p.serve_witness = true,
+                #[cfg(feature = "tp2p")]
+                "--tp2p.only" => tp2p.only = true,
                 flag if Self::IGNORED_FLAGS.contains(&flag) => {
                     eprintln!("tiger: ignoring {flag}");
                 }
@@ -150,6 +182,10 @@ impl NodeArgs {
             }
             index += 1;
         }
+        #[cfg(feature = "tp2p")]
+        if tp2p.listen.is_none() && (tp2p.only || tp2p.serve_witness || !tp2p.bootnodes.is_empty()) {
+            return Err("--tp2p.only, --tp2p.serve-witness and --tp2p.bootnodes need --tp2p.listen".into());
+        }
         Ok(Self {
             chain: chain.ok_or("--chain is required")?,
             datadir: datadir.ok_or("--datadir is required")?,
@@ -160,6 +196,8 @@ impl NodeArgs {
             net,
             stateless: upstream.map(|upstream| (upstream, start)),
             persistence,
+            #[cfg(feature = "tp2p")]
+            tp2p,
         })
     }
 
@@ -173,6 +211,10 @@ impl NodeArgs {
         let jwt = JwtSecret::load_or_create(&jwt_path)?;
         let mut node = Node::open(&self.datadir, genesis, self.stateless)?;
         node.rpc_config = self.rpc;
+        #[cfg(feature = "tp2p")]
+        if self.tp2p.serve_witness {
+            node.witness_cache = Some(base_tiger::WitnessCache::new(64));
+        }
         node.chain.get_mut().expect("chain lock").set_persistence(self.persistence.0, self.persistence.1, self.persistence.2)?;
         let node = Arc::new(node);
         {
@@ -181,9 +223,32 @@ impl NodeArgs {
             eprintln!("tiger: head {} {}", head.number(), head.hash);
         }
         let secret_path = self.net.secret_key.clone().unwrap_or_else(|| self.datadir.join("discovery-secret"));
-        let config = self.net.config(&node, &self.chain, &secret_path)?;
-        eprintln!("tiger: p2p on port {}", self.net.port);
-        node.start_sync(config)?;
+        #[cfg(feature = "tp2p")]
+        let only_tp2p = self.tp2p.only;
+        #[cfg(not(feature = "tp2p"))]
+        let only_tp2p = false;
+        #[cfg(feature = "tp2p")]
+        if let Some(listen) = self.tp2p.listen {
+            let parse = |list: &[String]| list.iter().map(|text| base_tiger::parse_peer(text)).collect::<Result<Vec<_>, _>>();
+            node.start_witness_builder()?;
+            let tp2p = node.start_tp2p(base_tiger::Tp2pArgs {
+                listen,
+                advertise: self.tp2p.advertise,
+                bootnodes: parse(&self.tp2p.bootnodes)?,
+                trusted: parse(&self.tp2p.trusted)?.into_iter().map(|(key, _)| key).collect(),
+                serve_witness: self.tp2p.serve_witness,
+                secret: NetArgs::secret_key(&secret_path)?,
+            })?;
+            if only_tp2p {
+                eprintln!("tiger: devp2p off, syncing over tp2p only");
+                node.start_sync_with(None, base_tiger::Fetcher::Tp2p(tp2p))?;
+            }
+        }
+        if !only_tp2p {
+            let config = self.net.config(&node, &self.chain, &secret_path)?;
+            eprintln!("tiger: p2p on port {}", self.net.port);
+            node.start_sync(config)?;
+        }
         node.start_prewarm();
         node.start_persistence()?;
         base_tiger::serve(Arc::clone(&node), self.auth, Some(jwt))?;

@@ -418,13 +418,19 @@ pub(super) mod test_utils {
 
     /// [`node`] with its genesis at block `number`.
     pub(crate) fn node_at(number: u64) -> Node {
+        node_with(number, json!({}))
+    }
+
+    /// [`node_at`] with `overrides` applied to its genesis: accounts under `alloc` are added, other
+    /// top-level fields replaced.
+    pub(crate) fn node_with(number: u64, overrides: serde_json::Value) -> Node {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         // Test nodes run concurrently: 64 GiB maps keep them inside the user address space.
         base_tiger_store::Env::set_max_size(64 << 30);
         let dir = std::env::temp_dir()
             .join(format!("tiger-rpc-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         let _ = std::fs::remove_dir_all(&dir);
-        open(&dir, number)
+        open(&dir, number, &overrides)
     }
 
     /// `node` closed and opened again on its datadir, as after a restart. `number` is the
@@ -432,10 +438,10 @@ pub(super) mod test_utils {
     pub(crate) fn reopen(node: Node, number: u64) -> Node {
         let dir = node.chain.read().expect("chain lock").db.datadir.path.clone();
         drop(node);
-        open(&dir, number)
+        open(&dir, number, &json!({}))
     }
 
-    fn open(dir: &std::path::Path, number: u64) -> Node {
+    fn open(dir: &std::path::Path, number: u64, overrides: &Value) -> Node {
         let genesis = json!({
             "config": {
                 "chainId": 8453, "homesteadBlock": 0, "eip150Block": 0, "eip155Block": 0, "eip158Block": 0,
@@ -456,6 +462,16 @@ pub(super) mod test_utils {
                 "0x0000000000000000000000000000000000000001": { "balance": "0xde0b6b3a7640000" }
             }
         });
+        let mut genesis = genesis;
+        for (field, value) in overrides.as_object().expect("overrides are an object") {
+            if field == "alloc" {
+                for (address, account) in value.as_object().expect("alloc is an object") {
+                    genesis["alloc"][address] = account.clone();
+                }
+            } else {
+                genesis[field] = value.clone();
+            }
+        }
         let genesis = Genesis::parse(&genesis.to_string()).expect("test genesis parses");
         Node::open(dir, genesis, None).expect("test node opens")
     }

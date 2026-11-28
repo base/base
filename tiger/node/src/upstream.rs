@@ -18,6 +18,9 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+#[cfg(feature = "tp2p")]
+use crate::WitnessSource;
+
 /// How long one upstream request may take, connect to last byte (a full mainnet block's witness
 /// takes the upstream up to about 15 s).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -410,9 +413,13 @@ struct WitnessSlots {
     by_hash: HashSet<B256>,
 }
 
+/// Where witnesses come from: the upstream RPC, or with feature `tp2p` tiger peers first.
+#[cfg(not(feature = "tp2p"))]
+type WitnessSource = Upstream;
+
 impl Witnesses {
     /// Starts the fetch workers for `upstream`.
-    pub fn new(upstream: &Upstream) -> Self {
+    pub fn new(upstream: &WitnessSource) -> Self {
         let (sender, receiver) = mpsc::channel::<(B256, u64, bool)>();
         let receiver = Arc::new(Mutex::new(receiver));
         let shared = Arc::new((Mutex::new(WitnessSlots::default()), Condvar::new()));
