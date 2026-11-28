@@ -732,7 +732,11 @@ impl Inner {
                 }
             }
             NODES => {
-                state.outgoing.retain(|_, o| o.node != src);
+                // Only the FINDNODE this answers is done; a PING to `src` still waits for its PONG.
+                state.outgoing.retain(|_, o| {
+                    o.node != src
+                        || request_kind_and_id(&o.plaintext) != Some((FINDNODE, &request_id))
+                });
                 let _total = u64::decode(&mut items);
                 let Ok(mut list) = RlpHeader::decode_bytes(&mut items, true) else { return };
                 let mut count = 0;
@@ -1256,6 +1260,14 @@ mod tests {
             inner.ping(&mut state, peer);
             let ping = state.outgoing.values().find(|o| o.node == peer).unwrap();
             let request_id = request_kind_and_id(&ping.plaintext).unwrap().1.to_vec();
+            // A NODES arriving before the PONG, as base-reth answers a FINDNODE first, leaves
+            // the PING pending.
+            let empty = crate::eth::encode_list_of_raw::<Vec<u8>>(&[]);
+            let nodes = encode_message(
+                NODES,
+                &[&Bytes::from_static(&[7]), &1u64, &crate::eth::RawRlp(&empty)],
+            );
+            inner.on_message(&mut state, peer, from, &nodes);
             inner.on_message(&mut state, peer, from, &pong(&request_id));
         };
         // Nine agreeing votes, and a repeat from one of those peers, are not enough.
