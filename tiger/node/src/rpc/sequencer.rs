@@ -14,7 +14,8 @@ use alloy_eips::{Typed2718, eip2718::Decodable2718};
 use alloy_primitives::{B256, Bytes};
 use base_common_consensus::{BASE_TX_TYPE_ID, BaseTxEnvelope, DEPOSIT_TX_TYPE_ID};
 use base_common_genesis::BaseFeature;
-use serde_json::{Value, json};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Value, json, value::RawValue};
 
 use super::param;
 use crate::{Node, RpcError};
@@ -24,6 +25,31 @@ const SEQUENCER_TIMEOUT: Duration = Duration::from_secs(10);
 /// The largest sequencer response read.
 const SEQUENCER_RESPONSE_BYTES_MAX: usize = 4 * 1024 * 1024;
 
+/// base-reth's `TransactionStatusResponse`, which it parses the sequencer's answer as.
+#[derive(Serialize, Deserialize)]
+struct TransactionStatusResponse {
+    status: Status,
+}
+
+/// base-reth's transaction `Status`.
+#[derive(Serialize, Deserialize)]
+enum Status {
+    Unknown,
+    Known,
+}
+
+/// A sequencer reply: its `result` as sent (`Some` even when `null`), or its `error`.
+#[derive(Deserialize)]
+struct Reply {
+    #[serde(default, deserialize_with = "present")]
+    result: Option<Box<RawValue>>,
+    error: Option<Value>,
+}
+
+fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Box<RawValue>>, D::Error> {
+    Box::<RawValue>::deserialize(deserializer).map(Some)
+}
+
 impl Node {
     /// Answers the pool methods; `None` for other methods.
     pub(super) fn rpc_sequencer(&self, method: &str, p: &Value) -> Option<Result<Value, RpcError>> {
@@ -32,9 +58,11 @@ impl Node {
             "base_transactionStatus" => param::<B256>(p, 0).and_then(|hash| match &self.rpc_config.sequencer {
                 // Without a sequencer base-reth asks only its pool; tiger has none.
                 None => Ok(json!({ "status": "Unknown" })),
-                Some(url) => Self::sequencer_request(url, "base_transactionStatus", json!([hash])).map_err(|error| {
-                    RpcError::internal(format!("failed to fetch transaction status: {}", error.message))
-                }),
+                // As base-reth's jsonrpsee client: the answer must parse as a status.
+                Some(url) => Self::sequencer_request(url, "base_transactionStatus", json!([hash]))
+                    .and_then(|raw| serde_json::from_str::<TransactionStatusResponse>(raw.get()).map_err(|error| RpcError::internal(format!("Parse error: {error}"))))
+                    .map(|status| json!(status))
+                    .map_err(|error| RpcError::internal(format!("failed to fetch transaction status: {}", error.message))),
             }),
             _ => return None,
         })
@@ -44,7 +72,7 @@ impl Node {
     /// then forwarded; the sequencer's hash or error is the answer.
     fn send_raw_transaction(&self, raw: &Bytes) -> Result<Value, RpcError> {
         if raw.is_empty() {
-            return Err(RpcError::invalid_params("Empty transaction data".into()));
+            return Err(RpcError::invalid_params("empty transaction data".into()));
         }
         let mut bytes = raw.as_ref();
         let decoded = BaseTxEnvelope::decode_2718(&mut bytes)
@@ -64,27 +92,28 @@ impl Node {
         let Some(url) = &self.rpc_config.sequencer else {
             return Err(RpcError::internal("tiger has no transaction pool; set --rollup.sequencer-http".into()));
         };
-        Self::sequencer_request(url, "eth_sendRawTransaction", json!([raw]))
+        // As base-reth's alloy client: the answer must parse as a transaction hash.
+        let result = Self::sequencer_request(url, "eth_sendRawTransaction", json!([raw]))?;
+        let hash: B256 = serde_json::from_str(result.get())
+            .map_err(|error| RpcError::internal(format!("deserialization error: {error}\n{}", result.get())))?;
+        Ok(json!(hash))
     }
 
-    /// One JSON-RPC call to the sequencer at `url`: its result, or its error passed through
-    /// unchanged; a transport failure is `-32603`.
-    fn sequencer_request(url: &str, method: &str, params: Value) -> Result<Value, RpcError> {
+    /// One JSON-RPC call to the sequencer at `url`: its result as sent, or its error passed
+    /// through unchanged; a transport failure is `-32603`.
+    fn sequencer_request(url: &str, method: &str, params: Value) -> Result<Box<RawValue>, RpcError> {
         let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string();
         let response = Self::http_post(url, &body).map_err(RpcError::internal)?;
-        let mut response: Value = serde_json::from_slice(&response)
+        let response: Reply = serde_json::from_slice(&response)
             .map_err(|error| RpcError::internal(format!("sequencer response: {error}")))?;
-        if let Some(error) = response.get("error") {
+        if let Some(error) = response.error {
             return Err(RpcError {
                 code: error.get("code").and_then(Value::as_i64).unwrap_or(-32603),
                 message: error.get("message").and_then(Value::as_str).unwrap_or_default().to_owned(),
                 data: error.get("data").cloned(),
             });
         }
-        response
-            .get_mut("result")
-            .map(Value::take)
-            .ok_or_else(|| RpcError::internal("sequencer response has no result".into()))
+        response.result.ok_or_else(|| RpcError::internal("sequencer response has no result".into()))
     }
 
     /// POSTs `body` as JSON to an `http://` URL and returns the response body.
@@ -196,5 +225,32 @@ mod tests {
         let (url, _) = sequencer(json!({ "jsonrpc": "2.0", "id": 1, "result": hash }));
         node.rpc_config.sequencer = Some(url);
         assert_eq!(call(&node, "eth_sendRawTransaction", json!([raw]))["result"], json!(hash));
+    }
+
+    /// base-reth parses the sequencer's answer as its response type and refuses one that does
+    /// not parse (fuzz forwarding check), instead of passing it through.
+    #[test]
+    fn malformed_sequencer_answers_are_refused_as_reth() {
+        let mut node = node();
+        let (url, _) = sequencer(json!({ "jsonrpc": "2.0", "id": 1, "result": null }));
+        node.rpc_config.sequencer = Some(url);
+        let error = &call(&node, "eth_sendRawTransaction", json!([signed_transfer()]))["error"];
+        assert_eq!(error["code"], json!(-32603));
+        let message = error["message"].as_str().unwrap();
+        assert!(message.starts_with("deserialization error: invalid type: null, expected 32 bytes"), "{message}");
+        assert!(message.ends_with(" at line 1 column 4\nnull"), "{message}");
+
+        let (url, _) = sequencer(json!({ "jsonrpc": "2.0", "id": 1, "result": { "status": "Bogus" } }));
+        node.rpc_config.sequencer = Some(url);
+        let error = &call(&node, "base_transactionStatus", json!([format!("0x{}", "11".repeat(32))]))["error"];
+        assert_eq!(error["code"], json!(-32603));
+        let message = error["message"].as_str().unwrap();
+        let expected = "failed to fetch transaction status: Parse error: unknown variant `Bogus`, expected `Unknown` or `Known`";
+        assert!(message.starts_with(expected), "{message}");
+
+        let (url, _) = sequencer(json!({ "jsonrpc": "2.0", "id": 1, "result": { "status": "Known" } }));
+        node.rpc_config.sequencer = Some(url);
+        let reply = call(&node, "base_transactionStatus", json!([format!("0x{}", "11".repeat(32))]));
+        assert_eq!(reply["result"], json!({ "status": "Known" }));
     }
 }

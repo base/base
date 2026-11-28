@@ -221,6 +221,12 @@ transaction gossip, and NAT traversal (UPnP). The external IP comes from configu
 
 ### Accepted differences
 
+- **Sequencer failure messages.** When forwarding `eth_sendRawTransaction` or
+  `base_transactionStatus` fails (the sequencer is unreachable, answers non-JSON or a non-2xx
+  status without a JSON-RPC error, or returns a JSON-RPC error to `base_transactionStatus`),
+  tiger answers with the same error codes as base-reth, but not the same messages: base-reth's
+  come from alloy's and jsonrpsee's transport errors and Debug output.
+
 - **A 7702 delegation on a precompile address** (fuzz finding R7). base-reth (revm) checks for a
   precompile at the call's original address first, so the precompile runs; tiger keeps evm2's
   behavior, which resolves the delegation first and runs the delegate's code, in every call path.
