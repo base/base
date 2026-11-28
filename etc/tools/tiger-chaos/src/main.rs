@@ -203,6 +203,7 @@ fn main() -> eyre::Result<()> {
                     // Keep failing runs' datadirs and logs; drop passing ones.
                     let dir = root.join(format!("run-{run}"));
                     let _ = fs::remove_dir_all(dir.join("tiger"));
+                    let _ = fs::remove_dir_all(dir.join("base-crashed"));
                 }
                 done += 1;
                 run += 1;

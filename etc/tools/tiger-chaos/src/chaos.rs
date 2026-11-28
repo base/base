@@ -601,6 +601,8 @@ impl ChaosRun {
         self.event("baseKilled", json!({ "step": index }));
         fs::rename(proc.datadir(), self.proc.datadir())?;
         let _ = fs::remove_file(self.proc.datadir().join("discovery-secret"));
+        // As base-reth left it, for a repro (a passing run deletes it with tiger's datadir).
+        copy_dir(&self.proc.datadir(), &self.dir.join("base-crashed"))?;
         self.shared.progress.store(index, Ordering::SeqCst);
         Ok(index)
     }
@@ -1297,6 +1299,9 @@ impl ChaosRun {
         if let Err(error) = result {
             proc.stop(true);
             let tail = tail_of(&proc.log_path(), 30);
+            // tiger has not reopened it yet: keep the crashed datadir as it was, for a repro.
+            let kept = self.dir.join(format!("crashed-{}", self.epoch()));
+            copy_dir(&self.proc.datadir(), &kept)?;
             self.violation(
                 "crash-handoff-open",
                 json!("base-reth opens tiger's crashed datadir"),
