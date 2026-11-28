@@ -4,13 +4,13 @@ use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
 use base_common_base_tx::NonceManagerSlots;
 use base_common_genesis::BaseFeature;
 use evm2::{
-    AccountInfo, Evm,
+    AccountInfo, Evm, EvmTypes,
     bytecode::Bytecode,
     evm::BlockStateAccumulator,
     registry::{HandlerError, HandlerResult},
 };
 
-use crate::{BaseEvmTypes, BaseForkActivations, IrregularStateChange};
+use crate::{BaseForkActivations, IrregularStateChange};
 
 /// Single-byte code stub planted on otherwise code-less Base transaction system accounts.
 ///
@@ -42,10 +42,10 @@ impl Everest {
     /// This force-deploys a one-byte code stub onto those accounts so they are no longer empty. It
     /// is planted only on an account that has no code yet, so it never overwrites a real
     /// deployment, and it is idempotent: it fires on the first Everest block and is a no-op after.
-    pub fn ensure_base_tx_system_accounts(
+    pub fn ensure_base_tx_system_accounts<T: EvmTypes>(
         chain_spec: &impl BaseForkActivations,
         timestamp: u64,
-        evm: &mut Evm<'_, BaseEvmTypes>,
+        evm: &mut Evm<'_, T>,
         block_state: &mut BlockStateAccumulator,
     ) -> HandlerResult<()> {
         if !chain_spec.is_feature_active_at_timestamp(BaseFeature::NativeNonceManager, timestamp) {

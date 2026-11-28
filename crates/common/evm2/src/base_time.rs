@@ -4,13 +4,13 @@ use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, uint};
 use base_common_consensus::Predeploys;
 use base_common_genesis::BaseFeature;
 use evm2::{
-    AccountInfo, Evm,
+    AccountInfo, Evm, EvmTypes,
     bytecode::Bytecode,
     evm::BlockStateAccumulator,
     registry::{HandlerError, HandlerResult},
 };
 
-use crate::{BaseEvmTypes, BaseForkActivations, IrregularStateChange};
+use crate::{BaseForkActivations, IrregularStateChange};
 
 /// Errors produced while applying the `BaseTime` predeploy transition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,10 +82,10 @@ impl BaseTime {
     /// The transition is staged behind the `Denim` activation. The implementation slot is the
     /// durable migration marker: any existing linkage is preserved so later execution cannot
     /// rewrite the initial deployment or undo a governance upgrade.
-    pub fn ensure_predeploy(
+    pub fn ensure_predeploy<T: EvmTypes>(
         chain_spec: &impl BaseForkActivations,
         timestamp: u64,
-        evm: &mut Evm<'_, BaseEvmTypes>,
+        evm: &mut Evm<'_, T>,
         block_state: &mut BlockStateAccumulator,
     ) -> HandlerResult<()> {
         if !chain_spec.is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, timestamp) {

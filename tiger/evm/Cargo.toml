@@ -18,6 +18,7 @@ base-tiger-precompile-storage.workspace = true
 
 # base
 base-common-flz.workspace = true
+base-common-evm2.workspace = true
 base-common-base-tx.workspace = true
 base-common-genesis.workspace = true
 base-common-l1-fees.workspace = true

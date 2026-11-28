@@ -248,7 +248,7 @@ transaction gossip, and NAT traversal (UPnP). The external IP comes from configu
 
 evm2 (with evm2-inspectors for tracing), alloy types, RLP and trie primitives, serde/serde_json
 for JSON-RPC, and the engine-neutral base crates whose trees hold no reth or revm
-(`base-common-consensus`, `-genesis`, `-l1-fees`, `-flz`, `-base-tx`, `-rpc-types`,
+(`base-common-consensus`, `-genesis`, `-l1-fees`, `-flz`, `-base-tx`, `-evm2`, `-rpc-types`,
 `-rpc-types-engine`), small crypto crates for networking, and reth code copied (not depended
 on) for the database format. No reth crate anywhere. No async runtime, HTTP framework or CLI
 framework: tiger writes its own small HTTP server, JWT check, networking and argument parsing.

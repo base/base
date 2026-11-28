@@ -28,14 +28,12 @@ use super::{
     shared::{LastStep, Shared},
 };
 use super::state::{RpcDb, RpcState};
-use crate::{Chain, Node, RpcError, chain::StoredBlock};
+use crate::{BLOCK_HASH_WINDOW, Chain, Node, RpcError, chain::StoredBlock};
 
 /// reth's default `--rpc.gascap`.
 pub(super) const RPC_GAS_CAP: u64 = 50_000_000;
 /// base-reth's error for a Base transaction request at a block before Everest.
 const BASE_TX_PRE_EVEREST_RPC_ERROR: &str = "Base transaction RPC features are not active before the Everest hard fork; the `nonce_key` parameter is not supported at this block";
-/// Blocks `BLOCKHASH` reaches back.
-const BLOCK_HASH_WINDOW: u64 = 256;
 /// Gas a plain value transfer uses.
 const TRANSFER_GAS: u64 = 21_000;
 /// reth stops the estimation search when the range is below this fraction of the upper bound.

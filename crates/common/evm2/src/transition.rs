@@ -10,13 +10,11 @@
 use alloy_primitives::{Address, U256};
 use base_common_genesis::{BaseFeature, BaseUpgrade, UpgradeConfig};
 use evm2::{
-    AccountInfo, Evm,
+    AccountInfo, Evm, EvmTypes,
     evm::{
         AccountChangeRef, BlockStateAccumulator, StateChangeSink, StateChangeSource, StorageChange,
     },
 };
-
-use crate::BaseEvmTypes;
 
 /// A revm-free view of a Base fork schedule, sufficient for the block-boundary transition hooks to
 /// detect whether an upgrade is active at a given L2 timestamp.
@@ -78,7 +76,11 @@ impl IrregularStateChange {
     }
 
     /// Persists this change to `evm`'s accepted overlay and records it in `block_state`.
-    pub fn apply(&self, evm: &mut Evm<'_, BaseEvmTypes>, block_state: &mut BlockStateAccumulator) {
+    pub fn apply<T: EvmTypes>(
+        &self,
+        evm: &mut Evm<'_, T>,
+        block_state: &mut BlockStateAccumulator,
+    ) {
         evm.commit_source(self);
         // `BlockStateAccumulator`'s sink is infallible.
         let Ok(()) = self.visit(block_state);

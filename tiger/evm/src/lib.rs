@@ -1,9 +1,13 @@
 #![doc = include_str!("../README.md")]
 
 pub use base_common_genesis::BaseFeature;
+// Shared with the base workspace's evm2 crate: fork activations, the block-boundary state
+// transitions (Canyon, Denim's BaseTime, Everest) and the executor's error and context types.
+pub use base_common_evm2::{
+    BaseBlockExecutionCtx, BaseForkActivations, BaseSpecId, BaseTime, BaseTimeTransitionError, BlockGasLimitExceeded,
+    Canyon, CumulativeGasOverflow, DaFootprintAboveGasLimit, Everest, IrregularStateChange, PreExecutionError,
+};
 
-mod spec;
-pub use spec::BaseSpecId;
 
 mod chain;
 pub use chain::ChainSpec;
@@ -16,15 +20,6 @@ pub use validation::{BlockRules, ComputedHeader, Invalid, MAXIMUM_EXTRA_DATA_SIZ
 
 mod block;
 pub use block::{Transactions, assemble_header, computed_header, receipts_root};
-
-mod canyon;
-pub use canyon::Canyon;
-
-mod everest;
-pub use everest::Everest;
-
-mod base_time;
-pub use base_time::{BaseTime, BaseTimeTransitionError};
 
 mod transaction;
 pub use transaction::BaseTxEnvelope;
@@ -41,10 +36,7 @@ mod native_precompiles;
 pub use native_precompiles::{BasePrecompiles, CallEnv, EvmStorageProvider};
 
 mod executor;
-pub use executor::{
-    BaseBlockExecutionCtx, BaseBlockExecutor, BlockEnvInput, BlockExecutionResult,
-    BlockGasLimitExceeded, CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError,
-};
+pub use executor::{BaseBlockExecutor, BlockEnvInput, BlockExecutionResult};
 
 mod registry;
 
@@ -56,8 +48,6 @@ pub use nonce_manager::{ExpiringNonceError, NonceManager, NonceOverflow};
 mod base_tx;
 pub use base_tx::{TX_CONTEXT_ADDRESS, TxBaseError, TxBaseExecutor, TxBaseSimulation};
 
-mod transition;
-pub use transition::{BaseForkActivations, IrregularStateChange};
 
 mod types;
 pub use types::{BaseEvmExt, BaseEvmTypes, BaseTxResultExt};

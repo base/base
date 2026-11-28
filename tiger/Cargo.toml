@@ -25,6 +25,7 @@ base-tiger-precompile-storage = { path = "precompile-storage" }
 # base: engine-neutral Base types whose dependency trees hold no reth or revm.
 base-common-flz = { path = "../crates/common/flz", default-features = false }
 base-common-base-tx = { path = "../crates/common/base-tx", default-features = false }
+base-common-evm2 = { path = "../crates/common/evm2", default-features = false }
 base-common-genesis = { path = "../crates/common/genesis", default-features = false }
 base-common-l1-fees = { path = "../crates/common/l1-fees", default-features = false }
 base-common-consensus = { path = "../crates/common/consensus", default-features = false }

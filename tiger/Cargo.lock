@@ -965,6 +965,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-evm2"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "base-common-base-tx",
+ "base-common-consensus",
+ "base-common-genesis",
+ "base-common-l1-fees",
+ "evm2",
+]
+
+[[package]]
 name = "base-common-flz"
 version = "0.0.0"
 
@@ -1134,6 +1148,7 @@ dependencies = [
  "alloy-trie",
  "base-common-base-tx",
  "base-common-consensus",
+ "base-common-evm2",
  "base-common-flz",
  "base-common-genesis",
  "base-common-l1-fees",

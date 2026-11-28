@@ -16,8 +16,9 @@ use evm2::{
 };
 
 use crate::{
-    BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, ChainSpec, Everest, IntrinsicGas,
-    L1BlockInfo, transaction::BaseTxEnvelope,
+    BaseBlockExecutionCtx, BaseEvmTypes, BaseForkActivations, BaseTime, BlockGasLimitExceeded, Canyon, ChainSpec,
+    CumulativeGasOverflow, DaFootprintAboveGasLimit, Everest, IntrinsicGas, L1BlockInfo, PreExecutionError,
+    transaction::BaseTxEnvelope,
 };
 
 /// The caller of system calls (EIP-4788, EIP-2935).
@@ -41,112 +42,6 @@ pub struct BlockEnvInput {
     /// Parent block hash.
     pub parent_hash: B256,
     /// Parent beacon block root (from Ecotone).
-    pub parent_beacon_block_root: Option<B256>,
-}
-
-/// Error returned when a block's cumulative gas used would overflow `u64`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CumulativeGasOverflow;
-
-impl core::fmt::Display for CumulativeGasOverflow {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("block cumulative gas used overflowed u64")
-    }
-}
-
-impl core::error::Error for CumulativeGasOverflow {}
-
-/// Error returned when a block's pre-execution block-boundary state is invalid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PreExecutionError {
-    /// A post-Cancun block did not carry a parent beacon block root. EIP-4788 requires every
-    /// post-Cancun block to supply one, so its absence makes the block invalid.
-    MissingParentBeaconBlockRoot,
-    /// A Cancun genesis block (number 0) carried a non-zero parent beacon block root. EIP-4788
-    /// requires the genesis beacon root to be zero.
-    CancunGenesisParentBeaconBlockRootNotZero {
-        /// The non-zero parent beacon block root the genesis block carried.
-        parent_beacon_block_root: B256,
-    },
-}
-
-impl core::fmt::Display for PreExecutionError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::MissingParentBeaconBlockRoot => {
-                f.write_str("missing parent beacon block root for post-Cancun block")
-            }
-            Self::CancunGenesisParentBeaconBlockRootNotZero { parent_beacon_block_root } => write!(
-                f,
-                "Cancun genesis parent beacon block root must be zero, got {parent_beacon_block_root}"
-            ),
-        }
-    }
-}
-
-impl core::error::Error for PreExecutionError {}
-
-/// Error returned when a transaction's reserved gas exceeds the block's remaining gas.
-///
-/// Mirrors the reference `BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas`: a
-/// transaction whose reserved gas is larger than the block's unused gas cannot be included. The
-/// reserved gas is the transaction's gas limit, plus — for a Base transaction — the payer's
-/// authentication gas ([`IntrinsicGas::payer_auth_cost_of`]), which is metered on top
-/// of the sender-signed gas limit (matching the reference `reserved_block_gas`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BlockGasLimitExceeded {
-    /// The transaction's reserved gas (gas limit, plus Base transaction payer-auth reservation).
-    pub transaction_gas_limit: u64,
-    /// The block's remaining available gas (block gas limit minus cumulative gas used).
-    pub block_available_gas: u64,
-}
-
-impl core::fmt::Display for BlockGasLimitExceeded {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "transaction gas limit {} is more than the block's available gas {}",
-            self.transaction_gas_limit, self.block_available_gas
-        )
-    }
-}
-
-impl core::error::Error for BlockGasLimitExceeded {}
-
-/// Error returned when a transaction's Jovian DA footprint exceeds the block's remaining DA
-/// footprint budget.
-///
-/// Mirrors the reference `BaseBlockExecutionError::TransactionDaFootprintAboveGasLimit`: from
-/// Jovian, each non-deposit transaction's DA footprint (its FastLZ-estimated compressed size times
-/// the DA-footprint gas scalar) is metered against the block gas limit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DaFootprintAboveGasLimit {
-    /// The transaction's DA footprint.
-    pub transaction_da_footprint: u64,
-    /// The block's remaining DA footprint budget (block gas limit minus accumulated DA footprint).
-    pub available_block_da_footprint: u64,
-}
-
-impl core::fmt::Display for DaFootprintAboveGasLimit {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "transaction DA footprint {} is more than the block's available DA footprint {}",
-            self.transaction_da_footprint, self.available_block_da_footprint
-        )
-    }
-}
-
-impl core::error::Error for DaFootprintAboveGasLimit {}
-
-/// Block-boundary context for pre-execution system calls.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BaseBlockExecutionCtx {
-    /// The parent block hash, stored by the EIP-2935 block-hashes contract (Prague onwards).
-    pub parent_hash: B256,
-    /// The parent beacon block root, stored by the EIP-4788 beacon-roots contract (Cancun
-    /// onwards). Required for every post-Cancun non-genesis block; `None` is only valid before
-    /// Cancun. A post-Cancun `None` is rejected by [`BaseBlockExecutor::apply_pre_execution`].
     pub parent_beacon_block_root: Option<B256>,
 }
 

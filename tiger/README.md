@@ -52,7 +52,7 @@ differential fuzz harness against base-reth.
 ## Results so far
 
 **Small dependency tree.** `cargo tree -e normal,build` for the `tiger` binary has no `reth-*` or
-`revm*` crate and 262 crates in all (2026-11-28), against 766 for `base-reth-node`. Every direct
+`revm*` crate and 263 crates in all (2026-11-28), against 766 for `base-reth-node`. Every direct
 dependency has a reason in [Dependencies](#dependencies). About 100k lines of Rust.
 
 **Correctness.** The differential fuzz harness (`etc/tools/diff-*`) runs base-reth as the
@@ -222,6 +222,7 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `base-common-genesis` | Base upgrade list and feature gates, rollup and system config types. |
 | `base-common-l1-fees` | L1 data fee and operator fee math. |
 | `base-common-flz` | FastLZ size estimate for Fjord L1 fees and the Jovian DA footprint. |
+| `base-common-evm2` | The fork activations, the Canyon, Denim (`BaseTime`) and Everest block-boundary state transitions, and the block executor's error types, shared with the base workspace's evm2 execution crate (its dev-only revm parity harnesses are not in tiger's tree). |
 | `base-common-base-tx` | Intrinsic gas schedule shared with the Base transaction type, and the nonce manager's storage slots for `eth_getTransactionCount` with a nonce key. |
 | `alloy-trie` | Trie node types, nibbles and ordered trie roots (transactions, receipts, proofs). |
 | `alloy-genesis` | Parsing geth-style genesis files, the format base-reth takes as `--chain`. |

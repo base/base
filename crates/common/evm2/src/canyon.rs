@@ -3,13 +3,13 @@
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
 use base_common_genesis::BaseFeature;
 use evm2::{
-    AccountInfo, Evm,
+    AccountInfo, Evm, EvmTypes,
     bytecode::Bytecode,
     evm::BlockStateAccumulator,
     registry::{HandlerError, HandlerResult},
 };
 
-use crate::{BaseEvmTypes, BaseForkActivations, IrregularStateChange};
+use crate::{BaseForkActivations, IrregularStateChange};
 
 /// The address of the create2 deployer.
 const CREATE_2_DEPLOYER_ADDR: Address = address!("0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2");
@@ -35,10 +35,10 @@ impl Canyon {
     /// It fires once, on the first Canyon-active block — detected as "Canyon active now but not at
     /// `timestamp - 2`" (the reference's block-time heuristic; Base blocks are ~2s) — preserving
     /// the account's balance and nonce.
-    pub fn ensure_create2_deployer(
+    pub fn ensure_create2_deployer<T: EvmTypes>(
         chain_spec: &impl BaseForkActivations,
         timestamp: u64,
-        evm: &mut Evm<'_, BaseEvmTypes>,
+        evm: &mut Evm<'_, T>,
         block_state: &mut BlockStateAccumulator,
     ) -> HandlerResult<()> {
         if !chain_spec.is_feature_active_at_timestamp(BaseFeature::Create2Deployer, timestamp)
