@@ -1,17 +1,17 @@
 //! Cryptographic primitives shared by RLPx and discv5: node keys, ECDH, hashes, and ciphers.
 //!
-//! Everything is a thin call into a small audited crate (secp256k1, RustCrypto `aes`, `ctr`,
-//! `sha2`, `hmac`, `aes-gcm`) or keccak from alloy-primitives; HKDF and the NIST concat KDF are
-//! written here because each is a few lines over HMAC/SHA-256.
+//! Everything is a thin call into a small audited crate (secp256k1, `ring` for SHA-256, HMAC and
+//! AES-GCM, RustCrypto `aes` and `ctr` for the AES-CTR that `ring` lacks) or keccak from
+//! alloy-primitives; HKDF and the NIST concat KDF are written here because each is a few lines
+//! over HMAC/SHA-256.
 
 use aes::cipher::{BlockEncrypt, KeyInit, KeyIvInit, StreamCipher};
 use alloy_primitives::{B256, B512, keccak256};
-use hmac::{Hmac, Mac};
 use secp256k1::{
     Message, PublicKey, SECP256K1, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use sha2::{Digest, Sha256};
+use ring::{aead, digest, hmac};
 
 /// A node's identity on the network: the 64-byte uncompressed secp256k1 public key without the
 /// `0x04` prefix, as used in enode URLs and the RLPx handshake.
@@ -88,21 +88,20 @@ pub(crate) fn verify_compact(digest: B256, sig: &[u8], public: &PublicKey) -> bo
 
 /// SHA-256 of the concatenation of `parts`.
 pub(crate) fn sha256(parts: &[&[u8]]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
+    let mut context = digest::Context::new(&digest::SHA256);
     for part in parts {
-        hasher.update(part);
+        context.update(part);
     }
-    hasher.finalize().into()
+    context.finish().as_ref().try_into().expect("SHA-256 digests are 32 bytes")
 }
 
 /// HMAC-SHA-256 of the concatenation of `parts`.
 pub(crate) fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
-    let mut mac =
-        <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(key).expect("HMAC accepts any key length");
+    let mut context = hmac::Context::with_key(&hmac::Key::new(hmac::HMAC_SHA256, key));
     for part in parts {
-        mac.update(part);
+        context.update(part);
     }
-    mac.finalize().into_bytes().into()
+    context.sign().as_ref().try_into().expect("HMAC-SHA-256 tags are 32 bytes")
 }
 
 /// HKDF-SHA-256 (RFC 5869) extract and expand, writing `out.len()` bytes (at most 255 blocks).
@@ -185,11 +184,11 @@ pub(crate) fn aes128_gcm_encrypt(
     plain: &[u8],
     aad: &[u8],
 ) -> Vec<u8> {
-    use aes_gcm::aead::{Aead, Payload};
-    let cipher = aes_gcm::Aes128Gcm::new(key.into());
-    cipher
-        .encrypt(nonce.into(), Payload { msg: plain, aad })
-        .expect("AES-GCM encryption of a bounded packet cannot fail")
+    let mut out = plain.to_vec();
+    aes128_gcm_key(key)
+        .seal_in_place_append_tag(aead::Nonce::assume_unique_for_key(*nonce), aead::Aad::from(aad), &mut out)
+        .expect("AES-GCM encryption of a bounded packet cannot fail");
+    out
 }
 
 /// AES-128-GCM decryption; `None` if the tag does not authenticate.
@@ -199,9 +198,18 @@ pub(crate) fn aes128_gcm_decrypt(
     cipher_text: &[u8],
     aad: &[u8],
 ) -> Option<Vec<u8>> {
-    use aes_gcm::aead::{Aead, Payload};
-    let cipher = aes_gcm::Aes128Gcm::new(key.into());
-    cipher.decrypt(nonce.into(), Payload { msg: cipher_text, aad }).ok()
+    let mut out = cipher_text.to_vec();
+    let plain_len = aes128_gcm_key(key)
+        .open_in_place(aead::Nonce::assume_unique_for_key(*nonce), aead::Aad::from(aad), &mut out)
+        .ok()?
+        .len();
+    out.truncate(plain_len);
+    Some(out)
+}
+
+/// The AES-128-GCM key for one packet; discv5 session keys change per peer, so none is kept.
+fn aes128_gcm_key(key: &[u8; 16]) -> aead::LessSafeKey {
+    aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, key).expect("AES-128 keys are 16 bytes"))
 }
 
 #[cfg(test)]

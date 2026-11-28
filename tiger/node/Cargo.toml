@@ -52,8 +52,7 @@ alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std", "serde"] }
 
 # crypto (Engine API JWT, node key)
-sha2.workspace = true
-hmac.workspace = true
+ring.workspace = true
 secp256k1 = { workspace = true, features = ["std"] }
 
 # TLS for an https:// stateless upstream

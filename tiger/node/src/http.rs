@@ -12,9 +12,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use hmac::{Hmac, KeyInit, Mac};
+use ring::hmac;
 use serde_json::Value;
-use sha2::Sha256;
 
 use crate::Node;
 
@@ -81,9 +80,9 @@ impl JwtSecret {
         if header.get("alg").and_then(Value::as_str) != Some("HS256") {
             return Err("JWT algorithm is not HS256".into());
         }
-        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.0).expect("HMAC takes any key");
-        mac.update(token[..header_len(token)].as_bytes());
-        mac.verify_slice(&base64url_decode(signature)?).map_err(|_| "invalid JWT signature".to_owned())?;
+        let key = hmac::Key::new(hmac::HMAC_SHA256, &self.0);
+        hmac::verify(&key, &token.as_bytes()[..header_len(token)], &base64url_decode(signature)?)
+            .map_err(|_| "invalid JWT signature".to_owned())?;
         let claims: Value = serde_json::from_slice(&base64url_decode(claims)?).map_err(|e| e.to_string())?;
         let iat = claims.get("iat").and_then(Value::as_u64).ok_or("JWT has no iat")?;
         let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("clock after 1970").as_secs();
@@ -254,9 +253,8 @@ mod tests {
             base64url(br#"{"alg":"HS256","typ":"JWT"}"#),
             base64url(format!(r#"{{"iat":{iat}}}"#).as_bytes())
         );
-        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret).unwrap();
-        mac.update(signed.as_bytes());
-        format!("{signed}.{}", base64url(&mac.finalize().into_bytes()))
+        let tag = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, secret), signed.as_bytes());
+        format!("{signed}.{}", base64url(tag.as_ref()))
     }
 
     #[test]

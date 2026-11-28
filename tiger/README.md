@@ -231,9 +231,8 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `base-proof-mpt` | Merkle Patricia trie over hash-addressed nodes, used for witness state and the node's state until `trie/` replaces it. |
 | `serde`, `serde_json` | JSON-RPC and the diff adapter protocol. |
 | `secp256k1` | Node keys, ECDH and signatures for RLPx, discv5 and ENRs (libsecp256k1, already in evm2's tree). |
-| `aes`, `ctr` | AES-256-CTR for RLPx ECIES and frame encryption, and AES-128-CTR for discv5 packet headers. |
-| `aes-gcm` | AES-128-GCM for discv5 message encryption. |
-| `sha2`, `hmac` | SHA-256 and HMAC for the RLPx ECIES KDF and MAC, discv5's HKDF, and HS256 Engine API JWTs. |
+| `aes`, `ctr` | AES-256-CTR for RLPx ECIES and frame encryption, and AES-128-CTR for discv5 packet headers (`ring` has no CTR mode). |
+| `ring` | SHA-256 and HMAC for the RLPx ECIES KDF and MAC, discv5's HKDF, and HS256 Engine API JWTs; AES-128-GCM for discv5 messages (already in the tree as rustls's provider). |
 | `getrandom` | Random node keys, nonces and ephemeral keys from the OS. |
 | `rustls` | TLS for an `https://` stateless upstream (operators' proof endpoints are https); `ring` provider, no aws-lc. |
 | `webpki-roots` | The Mozilla root certificates rustls verifies the upstream's certificate against. |

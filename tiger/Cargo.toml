@@ -57,9 +57,7 @@ rocksdb = { version = "0.24", default-features = false, features = ["lz4", "zstd
 # crypto (networking)
 aes = { version = "0.8.4", default-features = false }
 ctr = { version = "0.9.2", default-features = false }
-sha2 = { version = "0.11.0", default-features = false }
-hmac = { version = "0.13.0", default-features = false }
-aes-gcm = { version = "0.10.3", default-features = false }
+ring = { version = "0.17.14", default-features = false }
 getrandom = { version = "0.3.4", default-features = false }
 secp256k1 = { version = "0.31.1", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
