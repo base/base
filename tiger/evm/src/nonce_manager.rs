@@ -22,8 +22,9 @@
 //!
 //! Every value sits at byte offset 0 of its own slot (the low bytes of the word).
 
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use base_common_base_tx::NonceManagerSlots;
+use base_tiger_precompiles::NonceManagerStorage;
 use evm2::{
     Evm,
     bytecode::Bytecode,
@@ -76,33 +77,9 @@ impl core::error::Error for ExpiringNonceError {}
 pub struct NonceManager;
 
 impl NonceManager {
-    /// Base slot of the `expiringNonceRing` mapping (field 2 of the ERC-7201 namespace).
-    pub const EXPIRING_NONCE_RING_BASE_SLOT: U256 =
-        NonceManagerSlots::NONCES_BASE_SLOT.wrapping_add(U256::from_limbs([2, 0, 0, 0]));
-
-    /// Slot of the ring write pointer (field 3 of the ERC-7201 namespace).
-    pub const EXPIRING_NONCE_RING_PTR_SLOT: U256 =
-        NonceManagerSlots::NONCES_BASE_SLOT.wrapping_add(U256::from_limbs([3, 0, 0, 0]));
-
-    /// Capacity of the nonce-free replay ring buffer (`REPLAY_BUFFER_CAPACITY`), a consensus
-    /// parameter.
-    pub const REPLAY_BUFFER_CAPACITY: u32 = 340_000;
-
-    /// Maximum span of a nonce-free validity window, in milliseconds
-    /// (`NONCE_FREE_EXPIRY_WINDOW`), a consensus parameter.
-    pub const NONCE_FREE_EXPIRY_WINDOW: u64 = 30_000;
-
     /// Code the reference writes to the nonce manager account before any persistent write (the
     /// precompile storage `__initialize`), the same `0xEF` stub the Everest transition plants.
     const ACCOUNT_STUB: [u8; 1] = [0xEF];
-
-    /// The slot of `expiringNonceRing[index]`.
-    pub fn ring_slot(index: u32) -> U256 {
-        let mut buf = [0u8; 64];
-        buf[28..32].copy_from_slice(&index.to_be_bytes());
-        buf[32..].copy_from_slice(&Self::EXPIRING_NONCE_RING_BASE_SLOT.to_be_bytes::<32>());
-        U256::from_be_bytes(keccak256(buf).0)
-    }
 
     /// The `uint64` stored at offset 0 of a slot word.
     const fn low_u64(word: U256) -> u64 {
@@ -198,7 +175,7 @@ impl NonceManager {
             return Err(HandlerError::external(ExpiringNonceError::InvalidReplayId));
         }
         if valid_before_ms <= now_ms
-            || valid_before_ms > now_ms.saturating_add(Self::NONCE_FREE_EXPIRY_WINDOW)
+            || valid_before_ms > now_ms.saturating_add(NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW)
         {
             return Err(HandlerError::external(ExpiringNonceError::InvalidExpiry));
         }
@@ -211,12 +188,12 @@ impl NonceManager {
         Self::ensure_stub(evm)?;
 
         // A pointer at or past capacity can only come from corrupted state; restart at 0.
-        let ptr_word = Self::load(evm, Self::EXPIRING_NONCE_RING_PTR_SLOT)?;
+        let ptr_word = Self::load(evm, NonceManagerStorage::EXPIRING_NONCE_RING_PTR)?;
         let ptr = match u32::try_from(ptr_word.as_limbs()[0] & u64::from(u32::MAX)) {
-            Ok(ptr) if ptr < Self::REPLAY_BUFFER_CAPACITY => ptr,
+            Ok(ptr) if ptr < NonceManagerStorage::REPLAY_BUFFER_CAPACITY => ptr,
             _ => 0,
         };
-        let ring_slot = Self::ring_slot(ptr);
+        let ring_slot = NonceManagerStorage::ring_slot(ptr);
         let old_hash = B256::from(Self::load(evm, ring_slot)?.to_be_bytes::<32>());
         if old_hash != B256::ZERO {
             let old_seen_slot = NonceManagerSlots::expiring_nonce_seen_slot(old_hash);
@@ -229,42 +206,9 @@ impl NonceManager {
 
         Self::store(evm, ring_slot, 32, U256::from_be_bytes(replay_id.0))?;
         Self::store(evm, seen_slot, 8, U256::from(valid_before_ms))?;
-        let next = (ptr + 1) % Self::REPLAY_BUFFER_CAPACITY;
-        Self::store(evm, Self::EXPIRING_NONCE_RING_PTR_SLOT, 4, U256::from(next))?;
+        let next = (ptr + 1) % NonceManagerStorage::REPLAY_BUFFER_CAPACITY;
+        Self::store(evm, NonceManagerStorage::EXPIRING_NONCE_RING_PTR, 4, U256::from(next))?;
         Ok(())
-    }
-
-    /// Returns the current 2D nonce for `account` at `nonce_key`, or `None` for the reserved
-    /// protocol nonce key (`0`). Reads storage untracked, so it does not perturb execution.
-    pub fn get_nonce(
-        evm: &mut Evm<'_, BaseEvmTypes>,
-        account: Address,
-        nonce_key: U256,
-    ) -> HandlerResult<Option<u64>> {
-        let Some(slot) = NonceManagerSlots::nonce_slot(account, nonce_key) else {
-            return Ok(None);
-        };
-        let value = evm
-            .state_mut()
-            .storage_slot_untracked(&NonceManagerSlots::ADDRESS, &slot)
-            .map_err(HandlerError::Fatal)?;
-        Ok(Some(Self::low_u64(value)))
-    }
-
-    /// Returns whether `replay_id` has been recorded and has not yet expired relative to `now`
-    /// (Unix milliseconds) — the nonce-free replay check. Reads storage untracked.
-    pub fn is_expiring_nonce_seen(
-        evm: &mut Evm<'_, BaseEvmTypes>,
-        replay_id: B256,
-        now: u64,
-    ) -> HandlerResult<bool> {
-        let slot = NonceManagerSlots::expiring_nonce_seen_slot(replay_id);
-        let expiry = evm
-            .state_mut()
-            .storage_slot_untracked(&NonceManagerSlots::ADDRESS, &slot)
-            .map_err(HandlerError::Fatal)?;
-        let expiry = Self::low_u64(expiry);
-        Ok(expiry != 0 && expiry > now)
     }
 
     /// Increments the 2D channel nonce for `account` at `nonce_key`, returning the new value, or
@@ -310,48 +254,6 @@ mod tests {
             db,
             Precompiles::base(spec.into()),
         )
-    }
-
-    #[test]
-    fn is_expiring_nonce_seen_respects_recorded_expiry() {
-        let replay_id = B256::repeat_byte(0x42);
-        let slot = NonceManagerSlots::expiring_nonce_seen_slot(replay_id);
-        let mut db = InMemoryDB::default();
-        // Recorded expiry of 5_000 ms.
-        db.insert_account_storage(&NonceManagerSlots::ADDRESS, &slot, &U256::from(5_000u64));
-        let mut evm = evm(db);
-        // Seen while now < expiry; not seen once now >= expiry (the entry has lapsed).
-        assert!(NonceManager::is_expiring_nonce_seen(&mut evm, replay_id, 4_999).unwrap());
-        assert!(!NonceManager::is_expiring_nonce_seen(&mut evm, replay_id, 5_000).unwrap());
-        // An unrecorded id is never seen.
-        assert!(
-            !NonceManager::is_expiring_nonce_seen(&mut evm, B256::repeat_byte(0x99), 0).unwrap()
-        );
-    }
-
-    #[test]
-    fn get_nonce_reads_the_channel_slot() {
-        let slot = NonceManagerSlots::nonce_slot(ACCOUNT, KEY).expect("channel key has a slot");
-        let mut db = InMemoryDB::default();
-        db.insert_account_storage(&NonceManagerSlots::ADDRESS, &slot, &U256::from(42u64));
-        let mut evm = evm(db);
-        assert_eq!(NonceManager::get_nonce(&mut evm, ACCOUNT, KEY).unwrap(), Some(42));
-    }
-
-    #[test]
-    fn get_nonce_is_zero_when_unset() {
-        let mut evm = evm(InMemoryDB::default());
-        assert_eq!(NonceManager::get_nonce(&mut evm, ACCOUNT, KEY).unwrap(), Some(0));
-    }
-
-    #[test]
-    fn get_nonce_returns_none_for_protocol_key() {
-        let mut evm = evm(InMemoryDB::default());
-        assert_eq!(
-            NonceManager::get_nonce(&mut evm, ACCOUNT, NonceManagerSlots::PROTOCOL_NONCE_KEY)
-                .unwrap(),
-            None,
-        );
     }
 
     #[test]

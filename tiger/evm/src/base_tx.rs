@@ -41,7 +41,7 @@ use evm2::{
     bytecode::Bytecode,
     env::{TxEnv, TxEnvExt},
     inspector::Inspector,
-    interpreter::{GasTracker, Host, InstrStop, Interpreter, Message, MessageKind, MessageResult},
+    interpreter::{GasTracker, Host, InstrStop, Interpreter, Message, MessageResult},
     registry::{HandlerError, HandlerResult, TxRequest},
 };
 
@@ -69,9 +69,6 @@ const POOL_SEARCH_TOLERANCE_PER_MILLE: u64 = 15;
 
 /// Slot of the `BaseTime` predeploy that packs the block's millisecond part.
 const BASE_TIME_MILLIS_SLOT: U256 = U256::ZERO;
-
-/// Byte offset of the packed `uint16` millisecond part within its slot word.
-const BASE_TIME_MILLIS_OFFSET: usize = 30;
 
 /// Why a Base transaction is invalid. Every variant makes the transaction non-includable: a
 /// block that carries it is invalid.
@@ -301,15 +298,12 @@ impl TxBaseExecutor {
             .map_err(|_| HandlerError::external(TxBaseError::TimestampOverflow))?;
         // Everest implies Denim, so the block's first deposit has already written this block's
         // millisecond part to `BaseTime`. Read untracked, so the slot is not warmed.
-        let millis_word = evm
+        // The packed `uint16` is the low 16 bits of the slot word.
+        let millis = evm
             .state_mut()
             .storage_slot_untracked(&Predeploys::BASE_TIME, &BASE_TIME_MILLIS_SLOT)
             .map_err(HandlerError::Fatal)?
-            .to_be_bytes::<32>();
-        let millis = u16::from_be_bytes([
-            millis_word[BASE_TIME_MILLIS_OFFSET],
-            millis_word[BASE_TIME_MILLIS_OFFSET + 1],
-        ]);
+            .as_limbs()[0] as u16;
         let now_ms = now.wrapping_mul(1_000).wrapping_add(u64::from(millis));
         let base_fee = evm.block().basefee.saturating_to::<u128>();
         let fee_charge = evm.feature(EvmFeatures::FEE_CHARGE);
@@ -514,8 +508,7 @@ impl TxBaseExecutor {
             tx.gas_limit.min(evm.version().tx_gas_limit_cap.saturating_sub(payer_auth_cost));
         let payer = signed.resolved_payer(sender).unwrap_or(Self::UNSIGNED_OPEN_PAYER);
         Self::check_auth_shape(signed)?;
-        let (intrinsic, execution_gas_available) =
-            Self::resolve_execution_gas(signed, sender, gas_limit)?;
+        let outcome = Self::outcome(signed, sender, payer, gas_limit, base_fee, tx.nonce_key.is_zero())?;
         if let Some(target) = Self::delegation(signed)? {
             Self::install_delegation(evm, sender, target)?;
         }
@@ -523,22 +516,7 @@ impl TxBaseExecutor {
             let _ = NonceManager::increment_nonce(evm, sender, tx.nonce_key)?;
         }
         Self::set_tx_context(evm, sender, payer);
-        Ok(Outcome {
-            sender,
-            payer,
-            gas_limit,
-            sender_intrinsic: intrinsic.sender_intrinsic(),
-            sender_floor: intrinsic.sender_floor(),
-            payer_auth_cost: intrinsic.payer_auth_cost,
-            execution_gas_available,
-            effective: Self::effective_gas_price(
-                tx.max_fee_per_gas,
-                tx.max_priority_fee_per_gas,
-                base_fee,
-            ),
-            base_fee,
-            bump_protocol_nonce: tx.nonce_key.is_zero(),
-        })
+        Ok(outcome)
     }
 
     /// The execution pre-call pipeline, in the reference order: validity window, nonce check,
@@ -564,17 +542,8 @@ impl TxBaseExecutor {
         }
 
         // 1. Resolve the sender and validate the nonce against the pre-transaction state.
-        let (sender, recovered) = match signed.explicit_sender() {
-            Some(sender) => (sender, false),
-            None => {
-                let sender = signed
-                    .recover_eoa_sender()
-                    .ok()
-                    .flatten()
-                    .ok_or(HandlerError::external(TxBaseError::SenderRecovery))?;
-                (sender, true)
-            }
-        };
+        let recovered = tx.sender.is_none();
+        let sender = signed.recover_sender().map_err(|_| HandlerError::external(TxBaseError::SenderRecovery))?;
         let protocol_nonce = {
             let mut account =
                 evm.state_mut().account(&sender, false).map_err(HandlerError::Fatal)?;
@@ -589,16 +558,10 @@ impl TxBaseExecutor {
             Self::recover_named_k1(sender, tx.sender_signature_hash(), signed.sender_auth())?;
         }
         let payer = match tx.payer {
-            None => sender,
-            Some(_) if tx.is_open_payer() => {
-                TxBaseSigned::recover_raw_k1(tx.payer_signature_hash(sender), signed.payer_auth())
-                    .map_err(|_| HandlerError::external(TxBaseError::PayerRecovery))?
+            Some(account) if !tx.is_open_payer() => {
+                Self::recover_named_k1(account, tx.payer_signature_hash(sender), signed.payer_auth())?
             }
-            Some(account) => Self::recover_named_k1(
-                account,
-                tx.payer_signature_hash(sender),
-                signed.payer_auth(),
-            )?,
+            _ => signed.resolved_payer(sender).map_err(|_| HandlerError::external(TxBaseError::PayerRecovery))?,
         };
         let delegation = Self::delegation(signed)?;
 
@@ -624,9 +587,8 @@ impl TxBaseExecutor {
         };
 
         // 5. Intrinsic gas and the EIP-7825 cap on `gas_limit + payer_auth_cost`.
-        let (intrinsic, execution_gas_available) =
-            Self::resolve_execution_gas(signed, sender, tx.gas_limit)?;
-        if tx.gas_limit.saturating_add(intrinsic.payer_auth_cost) > evm.version().tx_gas_limit_cap {
+        let outcome = Self::outcome(signed, sender, payer, tx.gas_limit, base_fee, bump_protocol_nonce)?;
+        if outcome.max_chargeable_gas() > evm.version().tx_gas_limit_cap {
             return Err(HandlerError::external(TxBaseError::GasAboveCap));
         }
 
@@ -644,8 +606,7 @@ impl TxBaseExecutor {
                 let _ = account.warm();
                 account.balance()
             };
-            let required = U256::from(tx.gas_limit.saturating_add(intrinsic.payer_auth_cost))
-                .saturating_mul(U256::from(tx.max_fee_per_gas));
+            let required = U256::from(outcome.max_chargeable_gas()).saturating_mul(U256::from(tx.max_fee_per_gas));
             if balance < required {
                 return Err(HandlerError::InsufficientFunds);
             }
@@ -653,23 +614,7 @@ impl TxBaseExecutor {
 
         // 7. Publish the transaction context.
         Self::set_tx_context(evm, sender, payer);
-
-        Ok(Outcome {
-            sender,
-            payer,
-            gas_limit: tx.gas_limit,
-            sender_intrinsic: intrinsic.sender_intrinsic(),
-            sender_floor: intrinsic.sender_floor(),
-            payer_auth_cost: intrinsic.payer_auth_cost,
-            execution_gas_available,
-            effective: Self::effective_gas_price(
-                tx.max_fee_per_gas,
-                tx.max_priority_fee_per_gas,
-                base_fee,
-            ),
-            base_fee,
-            bump_protocol_nonce,
-        })
+        Ok(outcome)
     }
 
     /// Validates the 2D nonce for block inclusion (the reference `NonceValidator` in
@@ -1008,21 +953,12 @@ impl TxBaseExecutor {
     ) -> Option<Message<BaseEvmTypes>> {
         evm.inspector()?;
         let mut message = Message::<BaseEvmTypes> {
-            kind: MessageKind::Call,
-            depth: 0,
             gas_limit: outcome.gas_limit,
-            reservoir: 0,
             destination: outcome.sender,
             caller: outcome.sender,
             input: enveloped(),
-            value: U256::ZERO,
-            code: Bytecode::new(),
             code_address: outcome.sender,
-            disable_precompiles: false,
-            caller_is_static: false,
-            salt: B256::ZERO,
-            ext: (),
-            _non_exhaustive: (),
+            ..Default::default()
         };
         // The root runs no code, so a hook's override result is ignored, as in the reference.
         Self::with_root_frame(evm, outcome, &message.clone(), |inspector, frame| {
@@ -1078,6 +1014,11 @@ impl TxBaseExecutor {
         evm.set_boxed_inspector(inspector);
     }
 
+    /// The code of `address`.
+    fn load_code(evm: &mut Evm<'_, BaseEvmTypes>, address: Address) -> HandlerResult<Bytecode> {
+        evm.state_mut().account(&address, false).map_err(HandlerError::Fatal)?.load_code().map_err(HandlerError::Fatal)
+    }
+
     /// Builds the top-level call frame for one protocol call: `caller` sends `value` to `to` with
     /// `data` and `gas_limit`. An EIP-7702 delegation at `to` runs the delegate's code, with
     /// precompiles disabled, as for the first frame of a normal transaction.
@@ -1089,29 +1030,16 @@ impl TxBaseExecutor {
         data: Bytes,
         gas_limit: u64,
     ) -> HandlerResult<Message<BaseEvmTypes>> {
-        let mut code = evm
-            .state_mut()
-            .account(&to, false)
-            .map_err(HandlerError::Fatal)?
-            .load_code()
-            .map_err(HandlerError::Fatal)?;
+        let mut code = Self::load_code(evm, to)?;
         let mut code_address = to;
         let mut disable_precompiles = false;
         if let Some(delegate) = code.eip7702_address() {
-            code = evm
-                .state_mut()
-                .account(&delegate, false)
-                .map_err(HandlerError::Fatal)?
-                .load_code()
-                .map_err(HandlerError::Fatal)?;
+            code = Self::load_code(evm, delegate)?;
             code_address = delegate;
             disable_precompiles = true;
         }
         Ok(Message::<BaseEvmTypes> {
-            kind: MessageKind::Call,
-            depth: 0,
             gas_limit,
-            reservoir: 0,
             destination: to,
             caller,
             input: data,
@@ -1119,10 +1047,7 @@ impl TxBaseExecutor {
             code,
             code_address,
             disable_precompiles,
-            caller_is_static: false,
-            salt: B256::ZERO,
-            ext: (),
-            _non_exhaustive: (),
+            ..Default::default()
         })
     }
 
@@ -1179,21 +1104,36 @@ impl TxBaseExecutor {
         Ok((billable_gas, l1_cost))
     }
 
-    /// The intrinsic gas and the gas left for the calls. Errors when `gas_limit` is below the
-    /// EIP-7623 sender floor or below sender-intrinsic gas.
-    fn resolve_execution_gas(
+    /// The pre-call context once `gas_limit` covers the EIP-7623 sender floor and the
+    /// sender-intrinsic gas.
+    fn outcome(
         signed: &TxBaseSigned,
         sender: Address,
+        payer: Address,
         gas_limit: u64,
-    ) -> HandlerResult<(IntrinsicGas, u64)> {
+        base_fee: u128,
+        bump_protocol_nonce: bool,
+    ) -> HandlerResult<Outcome> {
+        let tx = signed.tx();
         let intrinsic = IntrinsicGas::compute(signed, sender);
         if gas_limit < intrinsic.sender_floor() {
             return Err(HandlerError::external(TxBaseError::GasBelowFloor));
         }
-        let available = intrinsic
+        let execution_gas_available = intrinsic
             .execution_gas_available(gas_limit)
             .ok_or(HandlerError::external(TxBaseError::GasBelowIntrinsic))?;
-        Ok((intrinsic, available))
+        Ok(Outcome {
+            sender,
+            payer,
+            gas_limit,
+            sender_intrinsic: intrinsic.sender_intrinsic(),
+            sender_floor: intrinsic.sender_floor(),
+            payer_auth_cost: intrinsic.payer_auth_cost,
+            execution_gas_available,
+            effective: Self::effective_gas_price(tx.max_fee_per_gas, tx.max_priority_fee_per_gas, base_fee),
+            base_fee,
+            bump_protocol_nonce,
+        })
     }
 
     /// EIP-1559 effective gas price: `min(max_fee, base_fee + tip)`.
@@ -2580,10 +2520,10 @@ mod tests {
             U256::from(valid_before * 1_000)
         );
         assert_eq!(
-            slot(&mut evm, nm, NonceManager::ring_slot(0)),
+            slot(&mut evm, nm, base_tiger_precompiles::NonceManagerStorage::ring_slot(0)),
             U256::from_be_bytes(replay_id.0)
         );
-        assert_eq!(slot(&mut evm, nm, NonceManager::EXPIRING_NONCE_RING_PTR_SLOT), U256::ONE);
+        assert_eq!(slot(&mut evm, nm, base_tiger_precompiles::NonceManagerStorage::EXPIRING_NONCE_RING_PTR), U256::ONE);
         // A fee-bumped re-signing is the same logical transaction.
         let bumped = eoa_signed(TxBase { max_priority_fee_per_gas: 2_000_000_000, ..tx }, &key);
         assert!(reason(transact(&mut evm, &bumped).unwrap_err()).contains("replay hash"));
