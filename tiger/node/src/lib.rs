@@ -1,6 +1,8 @@
 #![doc = include_str!("../README.md")]
 
+#[cfg(feature = "diff-adapter")]
 mod adapter;
+#[cfg(feature = "diff-adapter")]
 pub use adapter::Adapter;
 
 mod witness;
@@ -51,7 +53,9 @@ pub use node::{Node, RpcError};
 mod rpc;
 pub use rpc::{RpcConfig, RpcFilters};
 
+#[cfg(feature = "diff-adapter")]
 mod trie_mode;
+#[cfg(feature = "diff-adapter")]
 pub use trie_mode::handle as handle_trie_request;
 
 mod http;

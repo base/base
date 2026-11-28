@@ -63,6 +63,9 @@ serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std", "raw_value", "preserve_order"] }
 
 [features]
+# The differential fuzz harness's adapter (`tiger diff-adapter`, etc/tools/diff-fuzz/PROTOCOL.md)
+# and its trie mode.
+diff-adapter = []
 # Edge coverage for guided fuzzing; build with `RUSTC_WRAPPER=etc/tools/diff-adapter/sancov-rustc.sh`
 # and `SANCOV_CRATES` naming the crates to instrument (see README.md).
 edge-coverage = []

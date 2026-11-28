@@ -21,6 +21,10 @@ For repeated clean builds, such as new worktrees or switching branches, set
 `RUSTC_WRAPPER=sccache`. The cc crate then caches the C and C++ too, and a clean dev build drops
 from about 80s to 17s on 16 cores.
 
+The differential fuzz harness drives tiger through `tiger diff-adapter`, which only builds with
+the `diff-adapter` feature: `cargo build --release -p base-tiger --features diff-adapter` (and
+`cargo test --features base-tiger/diff-adapter` to test it). The default build leaves it out.
+
 ## Status
 
 As of 2026-11-25, tiger follows the Base mainnet tip behind `base-consensus` on a base-reth
@@ -209,7 +213,7 @@ for malloc) made exec p90 slower in every round.
 | `trie/` | `base-tiger-trie` | Merkle Patricia trie, state roots, proofs, and the state database over the store. |
 | `precompiles/` | `base-tiger-precompiles` | Base native precompiles (activation and policy registries, B-20 tokens and factory, transaction context, nonce manager), ported from `base-common-precompiles`, with their storage module: the `PrecompileStorageProvider` boundary, the fixed gas schedule, and the slot and string/array helpers the hand-written storage layouts use. |
 | `net/` | `base-tiger-net` | Peer-to-peer networking and EL sync: discv5, RLPx, eth/69 (client and server), peers, header and body downloader. |
-| `node/` | `base-tiger` | The `tiger` binary: node, Engine API, JSON-RPC, and the differential fuzz adapter. |
+| `node/` | `base-tiger` | The `tiger` binary: node, Engine API, JSON-RPC, and (feature `diff-adapter`) the differential fuzz adapter. |
 
 ## Dependencies
 

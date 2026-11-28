@@ -270,11 +270,23 @@ impl NetArgs {
     }
 }
 
+/// `tiger diff-adapter`: the differential fuzz harness's adapter.
+#[cfg(feature = "diff-adapter")]
+fn diff_adapter() -> Result<(), String> {
+    base_tiger::Adapter::run().map_err(|error| error.to_string())
+}
+
+/// `tiger diff-adapter` in a build without the harness.
+#[cfg(not(feature = "diff-adapter"))]
+fn diff_adapter() -> Result<(), String> {
+    Err("diff-adapter: build tiger with `--features diff-adapter`".to_owned())
+}
+
 fn main() -> ExitCode {
     base_tiger_evm::install_ecrecover_cache();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
-        Some("diff-adapter") => base_tiger::Adapter::run().map_err(|error| error.to_string()),
+        Some("diff-adapter") => diff_adapter(),
         Some("node") => NodeArgs::parse(&args[1..]).and_then(NodeArgs::run),
         Some("bench") => base_tiger::bench(&args[1..]),
         _ => Err(USAGE.to_owned()),
