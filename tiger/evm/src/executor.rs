@@ -313,11 +313,6 @@ impl<'a> BaseBlockExecutor<'a> {
         &self.evm
     }
 
-    /// Returns a mutable reference to the EVM, e.g. to seed accounts before execution.
-    pub const fn evm_mut(&mut self) -> &mut Evm<'a, BaseEvmTypes> {
-        &mut self.evm
-    }
-
     /// Executes `tx`, appending its receipt (with running cumulative gas) and committing its
     /// state changes into the block-state accumulator.
     pub fn execute_transaction(&mut self, tx: &Recovered<BaseTxEnvelope>) -> HandlerResult<()> {

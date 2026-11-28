@@ -108,45 +108,4 @@ impl Node {
             Err(RpcError::method_not_found(method))
         }
     }
-
-    /// Answers one JSON-RPC request object (or batch), returning the response, or `None` for a
-    /// batch of notifications.
-    pub fn handle(&self, request: &Value, authenticated: bool) -> Option<Value> {
-        if let Value::Array(batch) = request {
-            if batch.is_empty() {
-                return Some(Self::error_response(Value::Null, &RpcError::new(-32600, "empty batch")));
-            }
-            return Some(Value::Array(batch.iter().filter_map(|one| self.handle_one(one, authenticated)).collect()));
-        }
-        self.handle_one(request, authenticated)
-    }
-
-    fn handle_one(&self, request: &Value, authenticated: bool) -> Option<Value> {
-        let id = request.get("id").cloned();
-        let Some(method) = request.get("method").and_then(Value::as_str) else {
-            return Some(Self::error_response(id.unwrap_or(Value::Null), &RpcError::new(-32600, "invalid request")));
-        };
-        let params = request.get("params").cloned().unwrap_or(Value::Array(Vec::new()));
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.call(method, &params, authenticated)
-        }))
-        .unwrap_or_else(|panic| {
-            let message = panic
-                .downcast_ref::<&str>()
-                .map(|text| (*text).to_owned())
-                .or_else(|| panic.downcast_ref::<String>().cloned())
-                .unwrap_or_default();
-            eprintln!("tiger: panic in {method}: {message}");
-            Err(RpcError::internal(format!("internal error: {message}")))
-        });
-        let id = id?;
-        Some(match result {
-            Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-            Err(error) => Self::error_response(id, &error),
-        })
-    }
-
-    fn error_response(id: Value, error: &RpcError) -> Value {
-        json!({ "jsonrpc": "2.0", "id": id, "error": error.to_json() })
-    }
 }

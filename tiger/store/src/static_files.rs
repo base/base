@@ -881,11 +881,6 @@ impl StaticFiles {
         Ok(())
     }
 
-    /// Whether any segment has uncommitted rows.
-    pub fn is_dirty(&self) -> bool {
-        self.segments.read().unwrap().iter().any(|f| !f.pending.is_empty())
-    }
-
     /// Commits every pending row, segment by segment.
     pub fn commit(&self) -> io::Result<()> {
         let mut segments = self.segments.write().unwrap();

@@ -115,14 +115,7 @@ impl Adapter {
         match catch_unwind(AssertUnwindSafe(|| self.execute(&request))) {
             Ok(Ok(response)) => serde_json::to_value(response).expect("responses serialize"),
             Ok(Err(error)) => Self::failure(id, error),
-            Err(panic) => {
-                let message = panic
-                    .downcast_ref::<&str>()
-                    .map(|text| (*text).to_owned())
-                    .or_else(|| panic.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "unknown panic payload".to_owned());
-                Self::failure(id, format!("panic: {message}"))
-            }
+            Err(panic) => Self::failure(id, format!("panic: {}", crate::trie_mode::panic_message(&*panic))),
         }
     }
 
