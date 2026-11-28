@@ -144,6 +144,8 @@ pub struct ChaosRun {
     real_disk: bool,
     /// The step at which the ballast filling the disk is removed.
     ballast_until: Option<usize>,
+    /// The running process has a fault armed.
+    armed: bool,
     /// Consecutive Engine API calls failed in a disk-error window.
     disk_retries: u32,
     /// When the ballast was removed because tiger could not take a step on the full disk.
@@ -284,6 +286,7 @@ impl ChaosRun {
             upstream: None,
             real_disk: false,
             ballast_until: None,
+            armed: false,
             disk_retries: 0,
             freed_at: None,
         };
@@ -1089,6 +1092,7 @@ impl ChaosRun {
         }
         // The fault (if any) is armed for this process only.
         self.proc.fault = None;
+        self.armed = armed;
         if let Err(error) = self.proc.wait_ready(&self.tiger) {
             let log = self.log_since_start();
             if self.ballast_until.is_some() {
@@ -1360,6 +1364,15 @@ impl ChaosRun {
                 self.recover(false)?;
                 self.forkchoice(head, safe, finalized)?;
             }
+        }
+        // An armed fault may fail the shutdown's persistence, which loses unpersisted blocks
+        // legitimately: crash the armed process and stop an unarmed one.
+        if self.armed {
+            self.expected_death.store(true, Ordering::SeqCst);
+            self.proc.stop(true);
+            self.event("disarm", json!(null));
+            self.recover(false)?;
+            self.forkchoice(head, safe, finalized)?;
         }
         self.close();
         let clean = self.proc.stop(false);
