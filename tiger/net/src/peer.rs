@@ -492,13 +492,16 @@ fn handle_eth(
 /// Collects encoded headers for a GetBlockHeaders request.
 fn serve_headers(chain: &dyn BlockSource, request: &HeadersRequest) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
+    let limit = request.limit.min(MAX_HEADERS_SERVE as u64);
+    if limit == 0 {
+        return out;
+    }
     let first = match request.start {
         BlockId::Hash(hash) => chain.header_by_hash(hash),
         BlockId::Number(number) => chain.header_by_number(number),
     };
     let Some(first) = first else { return out };
     let step = request.skip.saturating_add(1);
-    let limit = request.limit.min(MAX_HEADERS_SERVE as u64);
     let mut number = first.number;
     let mut header = Some(first);
     let mut bytes = 0;
@@ -572,5 +575,16 @@ mod tests {
         let past_end =
             HeadersRequest { start: BlockId::Number(18), limit: 5, skip: 0, reverse: false };
         assert_eq!(numbers(past_end), vec![18, 19]);
+    }
+
+    #[test]
+    fn limit_zero_serves_no_headers() {
+        let chain = Chain((0..4).map(|number| Header { number, ..Default::default() }).collect());
+        // GetBlockHeaders [7, [start 0, limit 0, skip 0, reverse 0]].
+        let payload = alloy_primitives::hex::decode("c607c480808080").unwrap();
+        let (request_id, mut body) = split_request_id(&payload).unwrap();
+        let request = HeadersRequest::decode(&mut body).unwrap();
+        assert_eq!((request_id, request.limit), (7, 0));
+        assert!(serve_headers(&chain, &request).is_empty());
     }
 }
