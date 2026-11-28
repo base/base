@@ -3,12 +3,15 @@
 use core::num::NonZeroU64;
 
 use alloy_chains::Chain;
+#[cfg(feature = "hardforks")]
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 
+#[cfg(feature = "runtime-registry")]
+use crate::RuntimeUpgradeRegistry;
 use crate::{
-    BaseFeature, BaseUpgrade, ChainGenesis, DenimTimestampSchedule, FeeConfig,
-    RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink, UpgradeConfig,
+    BaseFeature, BaseUpgrade, ChainGenesis, DenimTimestampSchedule, FeeConfig, UpgradeActivation,
+    UpgradeActivationSink, UpgradeConfig,
 };
 
 /// The Rollup configuration.
@@ -116,6 +119,7 @@ impl Default for RollupConfig {
     }
 }
 
+#[cfg(feature = "hardforks")]
 impl EthereumHardforks for RollupConfig {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
         // Helper: cascade through the Base upgrade chain, returning the first set timestamp.
@@ -244,8 +248,13 @@ impl RollupConfig {
 
     /// Returns this rollup config's runtime-aware activation for a contract upgrade ID.
     pub fn upgrade_activation(&self, upgrade_id: BaseUpgrade) -> UpgradeActivation {
-        RuntimeUpgradeRegistry::activation(self.l2_chain_id.id(), upgrade_id)
-            .unwrap_or_else(|| self.upgrades.activation(upgrade_id))
+        #[cfg(feature = "runtime-registry")]
+        if let Some(activation) =
+            RuntimeUpgradeRegistry::activation(self.l2_chain_id.id(), upgrade_id)
+        {
+            return activation;
+        }
+        self.upgrades.activation(upgrade_id)
     }
 
     /// Returns this rollup config's runtime-aware activation timestamp for a contract upgrade ID.
@@ -254,6 +263,7 @@ impl RollupConfig {
     }
 
     /// Applies runtime upgrade overrides to this rollup config's local upgrade view.
+    #[cfg(feature = "runtime-registry")]
     pub fn apply_runtime_upgrade_overrides(&mut self) {
         if let Some(overrides) = RuntimeUpgradeRegistry::overrides(self.l2_chain_id.id()) {
             self.upgrades.apply_activation_overrides(&overrides);
@@ -261,6 +271,7 @@ impl RollupConfig {
     }
 
     /// Returns a clone with runtime upgrade overrides materialized into `upgrades`.
+    #[cfg(feature = "runtime-registry")]
     pub fn with_runtime_upgrade_overrides(&self) -> Self {
         let mut config = self.clone();
         config.apply_runtime_upgrade_overrides();
@@ -763,6 +774,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "runtime-registry")]
     fn feature_gates_observe_runtime_never() {
         const CHAIN_ID: u64 = 9_847_501;
         let mut cfg = RollupConfig { l2_chain_id: Chain::from_id(CHAIN_ID), ..Default::default() };
@@ -1102,6 +1114,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "hardforks")]
     fn test_ethereum_fork_activation() {
         // Pre-Bedrock Ethereum forks always activate at block 0 on Base chains.
         let cfg = RollupConfig::default();
@@ -1218,6 +1231,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "hardforks")]
     fn set_upgrade_activation_timestamp_updates_osaka_activation() {
         let mut cfg = RollupConfig::default();
 
@@ -1236,6 +1250,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "runtime-registry")]
     fn runtime_overrides_update_fork_checks_and_materialized_view() {
         let chain_id = 9_100_002;
         crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
@@ -1273,6 +1288,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "runtime-registry")]
     fn zenith_activation_can_be_enabled_for_testing() {
         let chain_id = 9_100_003;
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 21);
@@ -1436,6 +1452,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "runtime-registry")]
     fn runtime_denim_reschedule_moves_native_cadence_boundary() {
         let chain_id = 9_100_099;
         let cfg = RollupConfig {

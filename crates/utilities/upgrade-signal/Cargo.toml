@@ -15,7 +15,7 @@ workspace = true
 # workspace
 base-retry.workspace = true
 base-metrics.workspace = true
-base-common-genesis = { workspace = true, features = ["std"] }
+base-common-genesis = { workspace = true, features = ["runtime-registry", "std"] }
 
 # alloy
 alloy-json-rpc.workspace = true

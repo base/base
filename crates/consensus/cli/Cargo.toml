@@ -28,7 +28,7 @@ base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
 base-consensus-sources.workspace = true
 base-common-chains.workspace = true
-base-common-genesis.workspace = true
+base-common-genesis = { workspace = true, features = ["runtime-registry"] }
 base-consensus-disc = { workspace = true, features = ["metrics"] }
 base-consensus-node = { workspace = true, features = ["metrics"] }
 base-consensus-providers = { workspace = true, features = ["metrics"] }

@@ -23,7 +23,7 @@ alloy-primitives.workspace = true
 base-common-flz.workspace = true
 base-common-l1-fees.workspace = true
 base-common-chains.workspace = true
-base-common-genesis.workspace = true
+base-common-genesis = { workspace = true, features = ["hardforks"] }
 base-common-precompiles.workspace = true
 # Only used by the enshrined Base transaction executor, which is `std`-only; kept
 # optional so `no_std` (proof/zkVM) builds do not pull in a `std` crate.

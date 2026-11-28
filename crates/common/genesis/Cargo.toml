@@ -19,14 +19,18 @@ alloy-eips.workspace = true
 alloy-chains.workspace = true
 alloy-sol-types.workspace = true
 alloy-consensus.workspace = true
-alloy-hardforks.workspace = true
 alloy-primitives.workspace = true
 
 # Misc
-spin.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 derive_more = { workspace = true, features = ["display", "from", "try_from"] }
+
+# `hardforks` feature
+alloy-hardforks = { workspace = true, optional = true }
+
+# `runtime-registry` feature
+spin = { workspace = true, optional = true }
 
 # `arbitrary` feature
 arbitrary = { workspace = true, features = ["derive"], optional = true }
@@ -44,7 +48,7 @@ alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]
 default = []
-test-utils = []
+test-utils = [ "runtime-registry" ]
 std = [
 	"alloy-chains/std",
 	"alloy-consensus/std",
@@ -53,7 +57,7 @@ std = [
 	"alloy-sol-types/std",
 	"derive_more/std",
 	"serde?/std",
-	"spin/std",
+	"spin?/std",
 	"thiserror/std",
 	"tracing/std",
 ]
@@ -71,7 +75,13 @@ serde = [
 	"alloy-chains/serde",
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
-	"alloy-hardforks/serde",
+	"alloy-hardforks?/serde",
 	"alloy-primitives/serde",
 	"dep:serde",
 ]
+# `BaseUpgrade` as an alloy `Hardfork` that parses with `FromStr`, its Ethereum hardfork mapping,
+# and `EthereumHardforks` for `RollupConfig`.
+hardforks = [ "dep:alloy-hardforks" ]
+# The process-global `RuntimeUpgradeRegistry` of L1-signalled activation overrides, which
+# `RollupConfig` and `BaseUpgrade::from_chain_and_timestamp` consult when it is compiled in.
+runtime-registry = [ "dep:spin" ]

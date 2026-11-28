@@ -6,8 +6,8 @@ use alloc::{
 };
 use core::fmt::Display;
 
-use alloy_hardforks::{EthereumHardfork, hardfork};
-use spin::RwLock;
+#[cfg(feature = "hardforks")]
+use alloy_hardforks::EthereumHardfork;
 
 /// Upgrade configuration for Base-specific upgrades.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
@@ -56,79 +56,123 @@ impl BaseUpgradeConfig {
     }
 }
 
-hardfork!(
-    /// The canonical Base network upgrade.
-    ///
-    /// This single enum spans two domains:
-    /// - the **execution fork ladder** ([`BaseUpgrade::EXECUTION_VARIANTS`]) that maps onto the
-    ///   reth/revm hardfork schedule, and
-    /// - the **contract-backed upgrade set** ([`BaseUpgrade::CONTRACT_VARIANTS`]) that is keyed by
-    ///   the L1 upgrade-signal contract `hardforkId` strings and the genesis [`UpgradeConfig`]
-    ///   timestamp fields.
-    ///
-    /// Real network upgrades are listed in chronological order. [`Bedrock`](BaseUpgrade::Bedrock)
-    /// is execution-only (block-activated, not contract-backed), while
-    /// [`Delta`](BaseUpgrade::Delta) and [`PectraBlobSchedule`](BaseUpgrade::PectraBlobSchedule)
-    /// are contract-backed config upgrades that do not change EVM execution and therefore never
-    /// enter the execution fork ladder.
-    ///
-    /// [`Denim`](BaseUpgrade::Denim) is the fourth Base-specific network upgrade. It is scheduled
-    /// on Base Sepolia and Base Mainnet. It is a first-class upgrade: contract-backed and part of
-    /// the execution fork ladder, so live chains can activate it once an activation time is
-    /// configured.
-    ///
-    /// [`Everest`](BaseUpgrade::Everest) is the fifth Base-specific network upgrade. It is
-    /// unscheduled for now, contract-backed, and part of the execution fork ladder.
-    ///
-    /// [`Zenith`](BaseUpgrade::Zenith) is a hardfork for future experimental features. It is
-    /// genesis-configurable but not contract-backed, since the L1 upgrade-signal contract does
-    /// not yet recognise it.
-    ///
-    /// When building a list of upgrades for a chain, it's still expected to zip with
-    /// [`EthereumHardfork`](alloy_hardforks::EthereumHardfork).
-    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    #[derive(Default)]
-    BaseUpgrade {
-        /// Bedrock: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#bedrock>.
-        Bedrock,
-        /// Regolith: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#regolith>.
-        Regolith,
-        /// Canyon: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#canyon>.
-        Canyon,
-        /// Delta: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#delta>.
-        Delta,
-        /// Ecotone: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#ecotone>.
-        Ecotone,
-        /// Fjord: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#fjord>
-        Fjord,
-        /// Granite: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#granite>
-        Granite,
-        /// Holocene: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#holocene>
-        Holocene,
-        /// Pectra blob schedule: an optional fork present on Base Sepolia chains that observed the
-        /// L1 Pectra network upgrade with the reference node `<=v1.11.1` sequencing the network.
-        PectraBlobSchedule,
-        /// Isthmus: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/isthmus/overview.md>
-        Isthmus,
-        /// Jovian: Base network upgrade.
-        Jovian,
-        /// Azul: First Base-specific network upgrade.
-        Azul,
-        /// Beryl: Second Base-specific network upgrade.
-        #[default]
-        Beryl,
-        /// Cobalt: Third Base-specific network upgrade.
-        Cobalt,
-        /// Denim: Fourth Base-specific network upgrade.
-        Denim,
-        /// Everest: Fifth Base-specific network upgrade. Unscheduled for now.
-        Everest,
-        /// Zenith: hardfork for future experimental features.
-        Zenith,
-    }
-);
+/// The canonical Base network upgrade.
+///
+/// This single enum spans two domains:
+/// - the **execution fork ladder** ([`BaseUpgrade::EXECUTION_VARIANTS`]) that maps onto the
+///   reth/revm hardfork schedule, and
+/// - the **contract-backed upgrade set** ([`BaseUpgrade::CONTRACT_VARIANTS`]) that is keyed by
+///   the L1 upgrade-signal contract `hardforkId` strings and the genesis [`UpgradeConfig`]
+///   timestamp fields.
+///
+/// Real network upgrades are listed in chronological order. [`Bedrock`](BaseUpgrade::Bedrock)
+/// is execution-only (block-activated, not contract-backed), while
+/// [`Delta`](BaseUpgrade::Delta) and [`PectraBlobSchedule`](BaseUpgrade::PectraBlobSchedule)
+/// are contract-backed config upgrades that do not change EVM execution and therefore never
+/// enter the execution fork ladder.
+///
+/// [`Denim`](BaseUpgrade::Denim) is the fourth Base-specific network upgrade. It is scheduled
+/// on Base Sepolia and Base Mainnet. It is a first-class upgrade: contract-backed and part of
+/// the execution fork ladder, so live chains can activate it once an activation time is
+/// configured.
+///
+/// [`Everest`](BaseUpgrade::Everest) is the fifth Base-specific network upgrade. It is
+/// unscheduled for now, contract-backed, and part of the execution fork ladder.
+///
+/// [`Zenith`](BaseUpgrade::Zenith) is a hardfork for future experimental features. It is
+/// genesis-configurable but not contract-backed, since the L1 upgrade-signal contract does
+/// not yet recognise it.
+///
+/// When building a list of upgrades for a chain, it's still expected to zip with Ethereum
+/// hardforks. With the `hardforks` feature it is an `alloy_hardforks::Hardfork` and parses with
+/// [`FromStr`](core::str::FromStr), as the `hardfork!` macro defines them.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum BaseUpgrade {
+    /// Bedrock: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#bedrock>.
+    Bedrock,
+    /// Regolith: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#regolith>.
+    Regolith,
+    /// Canyon: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#canyon>.
+    Canyon,
+    /// Delta: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#delta>.
+    Delta,
+    /// Ecotone: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#ecotone>.
+    Ecotone,
+    /// Fjord: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#fjord>
+    Fjord,
+    /// Granite: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#granite>
+    Granite,
+    /// Holocene: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#holocene>
+    Holocene,
+    /// Pectra blob schedule: an optional fork present on Base Sepolia chains that observed the
+    /// L1 Pectra network upgrade with the reference node `<=v1.11.1` sequencing the network.
+    PectraBlobSchedule,
+    /// Isthmus: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/isthmus/overview.md>
+    Isthmus,
+    /// Jovian: Base network upgrade.
+    Jovian,
+    /// Azul: First Base-specific network upgrade.
+    Azul,
+    /// Beryl: Second Base-specific network upgrade.
+    #[default]
+    Beryl,
+    /// Cobalt: Third Base-specific network upgrade.
+    Cobalt,
+    /// Denim: Fourth Base-specific network upgrade.
+    Denim,
+    /// Everest: Fifth Base-specific network upgrade. Unscheduled for now.
+    Everest,
+    /// Zenith: hardfork for future experimental features.
+    Zenith,
+}
 
 impl BaseUpgrade {
+    /// Every variant, in declaration order.
+    pub const VARIANTS: &'static [Self] = &[
+        Self::Bedrock,
+        Self::Regolith,
+        Self::Canyon,
+        Self::Delta,
+        Self::Ecotone,
+        Self::Fjord,
+        Self::Granite,
+        Self::Holocene,
+        Self::PectraBlobSchedule,
+        Self::Isthmus,
+        Self::Jovian,
+        Self::Azul,
+        Self::Beryl,
+        Self::Cobalt,
+        Self::Denim,
+        Self::Everest,
+        Self::Zenith,
+    ];
+
+    /// Returns the variant's name (`PascalCase`), the reth/execution hardfork identity.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Bedrock => "Bedrock",
+            Self::Regolith => "Regolith",
+            Self::Canyon => "Canyon",
+            Self::Delta => "Delta",
+            Self::Ecotone => "Ecotone",
+            Self::Fjord => "Fjord",
+            Self::Granite => "Granite",
+            Self::Holocene => "Holocene",
+            Self::PectraBlobSchedule => "PectraBlobSchedule",
+            Self::Isthmus => "Isthmus",
+            Self::Jovian => "Jovian",
+            Self::Azul => "Azul",
+            Self::Beryl => "Beryl",
+            Self::Cobalt => "Cobalt",
+            Self::Denim => "Denim",
+            Self::Everest => "Everest",
+            Self::Zenith => "Zenith",
+        }
+    }
+
     /// Latest Base upgrade used by default.
     pub const LATEST: Self = Self::Beryl;
 
@@ -247,6 +291,7 @@ impl BaseUpgrade {
     }
 
     /// Returns the Ethereum execution hardfork activated by this upgrade, if any.
+    #[cfg(feature = "hardforks")]
     pub const fn execution_hardfork(self) -> Option<EthereumHardfork> {
         match self {
             Self::Canyon => Some(EthereumHardfork::Shanghai),
@@ -258,6 +303,7 @@ impl BaseUpgrade {
     }
 
     /// Returns the Base upgrade that carries the given Ethereum hardfork on Base.
+    #[cfg(feature = "hardforks")]
     pub const fn from_ethereum_hardfork(fork: EthereumHardfork) -> Option<Self> {
         match fork {
             EthereumHardfork::Shanghai => Some(Self::Canyon),
@@ -305,11 +351,16 @@ impl BaseUpgrade {
 
     /// Returns the active upgrade at the given timestamp for the specified chain.
     pub fn from_chain_and_timestamp(chain_id: u64, timestamp: u64) -> Option<Self> {
-        let mut config = UpgradeConfig::for_chain_id(chain_id)?;
+        let config = UpgradeConfig::for_chain_id(chain_id)?;
 
-        if let Some(overrides) = RuntimeUpgradeRegistry::overrides(chain_id) {
-            config.apply_activation_overrides(&overrides);
-        }
+        #[cfg(feature = "runtime-registry")]
+        let config = {
+            let mut config = config;
+            if let Some(overrides) = crate::RuntimeUpgradeRegistry::overrides(chain_id) {
+                config.apply_activation_overrides(&overrides);
+            }
+            config
+        };
 
         Self::EXECUTION_VARIANTS.into_iter().rev().find(|&upgrade| {
             upgrade == Self::Bedrock
@@ -317,6 +368,36 @@ impl BaseUpgrade {
                     .activation_timestamp(upgrade)
                     .is_some_and(|activation| timestamp >= activation)
         })
+    }
+}
+
+impl Display for BaseUpgrade {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+#[cfg(feature = "hardforks")]
+impl core::str::FromStr for BaseUpgrade {
+    type Err = alloy_hardforks::ParseHardforkError;
+
+    /// Parses a variant name, ignoring case, as `alloy_hardforks::hardfork!` does.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let lower = s.to_lowercase();
+        Self::VARIANTS
+            .iter()
+            .copied()
+            .find(|upgrade| upgrade.name().to_lowercase() == lower)
+            .ok_or_else(|| {
+                alloy_hardforks::ParseHardforkError::new(alloc::format!("Unknown hardfork: {s}"))
+            })
+    }
+}
+
+#[cfg(feature = "hardforks")]
+impl alloy_hardforks::Hardfork for BaseUpgrade {
+    fn name(&self) -> &'static str {
+        Self::name(self)
     }
 }
 
@@ -420,146 +501,6 @@ impl UpgradeActivationOverrides {
     /// Sets a runtime override that clears an upgrade activation.
     pub fn clear_activation_timestamp(&mut self, upgrade_id: BaseUpgrade) {
         self.set_activation(upgrade_id, UpgradeActivation::Never)
-    }
-}
-
-/// Versioned runtime upgrade activation overrides for one chain.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct RuntimeUpgradeRegistryEntry {
-    /// Runtime upgrade activation overrides.
-    pub overrides: UpgradeActivationOverrides,
-    /// Latest L1 block number whose schedule was applied to the overrides.
-    pub last_updated_block_number: Option<u64>,
-}
-
-/// Process-global runtime upgrade activation overrides, keyed by chain ID.
-///
-/// Only reachable through the associated functions on [`RuntimeUpgradeRegistry`].
-static REGISTRY: RwLock<BTreeMap<u64, RuntimeUpgradeRegistryEntry>> = RwLock::new(BTreeMap::new());
-
-/// Process-local runtime upgrade activation registry.
-///
-/// The runtime upgrade signal treats the L1 contract as the authoritative source for these
-/// overrides, so schedule application may replace the entire override set for a chain rather than
-/// merging with previously stored entries.
-///
-/// The registry state lives in a process-global `spin::RwLock` that is only reachable through the
-/// associated functions on [`RuntimeUpgradeRegistry`]; the lock is not exposed to callers.
-#[derive(Debug, Clone, Copy)]
-pub struct RuntimeUpgradeRegistry;
-
-impl RuntimeUpgradeRegistry {
-    /// Returns the runtime activation override for a chain and contract upgrade ID.
-    pub fn activation(chain_id: u64, upgrade_id: BaseUpgrade) -> Option<UpgradeActivation> {
-        REGISTRY.read().get(&chain_id).and_then(|entry| entry.overrides.activation(upgrade_id))
-    }
-
-    /// Returns all runtime activation overrides for a chain.
-    pub fn overrides(chain_id: u64) -> Option<UpgradeActivationOverrides> {
-        REGISTRY.read().get(&chain_id).map(|entry| entry.overrides.clone())
-    }
-
-    /// Returns the latest L1 block number whose schedule was applied for a chain.
-    pub fn last_updated_block_number(chain_id: u64) -> Option<u64> {
-        REGISTRY.read().get(&chain_id).and_then(|entry| entry.last_updated_block_number)
-    }
-
-    /// Replaces all runtime activation overrides unless their L1 block predates stored state.
-    ///
-    /// The ordering check and replacement happen under one write lock so concurrent refreshes
-    /// cannot overwrite a newer schedule with an older one. Returns `true` when the overrides were
-    /// replaced and `false` when a stale schedule was rejected.
-    pub fn replace_overrides(
-        chain_id: u64,
-        l1_block_number: u64,
-        overrides: UpgradeActivationOverrides,
-    ) -> bool {
-        let mut registry = REGISTRY.write();
-        if registry
-            .get(&chain_id)
-            .and_then(|entry| entry.last_updated_block_number)
-            .is_some_and(|last_updated| l1_block_number < last_updated)
-        {
-            return false;
-        }
-
-        registry.insert(
-            chain_id,
-            RuntimeUpgradeRegistryEntry {
-                overrides,
-                last_updated_block_number: Some(l1_block_number),
-            },
-        );
-        true
-    }
-
-    /// Clears all runtime activation overrides and their L1 block watermark for a chain.
-    pub fn clear_chain(chain_id: u64) {
-        REGISTRY.write().remove(&chain_id);
-    }
-
-    /// Removes one runtime activation override for a chain and contract upgrade ID.
-    pub fn remove_activation_override(chain_id: u64, upgrade_id: BaseUpgrade) -> bool {
-        let mut registry = REGISTRY.write();
-        let Some(entry) = registry.get_mut(&chain_id) else {
-            return false;
-        };
-
-        entry.overrides.remove_activation(upgrade_id)
-    }
-
-    /// Sets one runtime activation override for a chain and contract upgrade ID.
-    pub fn set_activation(chain_id: u64, upgrade_id: BaseUpgrade, activation: UpgradeActivation) {
-        let mut registry = REGISTRY.write();
-        let entry = registry.entry(chain_id).or_default();
-        entry.overrides.set_activation(upgrade_id, activation)
-    }
-
-    /// Sets one runtime timestamp activation override for a chain and contract upgrade ID.
-    pub fn set_activation_timestamp(chain_id: u64, upgrade_id: BaseUpgrade, timestamp: u64) {
-        Self::set_activation(chain_id, upgrade_id, UpgradeActivation::Timestamp(timestamp))
-    }
-
-    /// Activates Zenith for a chain via the runtime registry, bypassing the normal
-    /// override block, for the lifetime of the returned test guard.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[must_use = "the guard must be held for the duration of the test activation"]
-    pub fn activate_zenith_for_testing(chain_id: u64, timestamp: u64) -> impl Drop {
-        struct ZenithActivationGuard {
-            chain_id: u64,
-            previous: Option<UpgradeActivation>,
-            remove_chain_if_empty: bool,
-        }
-
-        impl Drop for ZenithActivationGuard {
-            fn drop(&mut self) {
-                let mut registry = REGISTRY.write();
-                let entry = registry.entry(self.chain_id).or_default();
-                if let Some(previous) = self.previous {
-                    entry.overrides.activations.insert(BaseUpgrade::Zenith, previous);
-                } else {
-                    entry.overrides.activations.remove(&BaseUpgrade::Zenith);
-                }
-                if self.remove_chain_if_empty && entry.overrides.is_empty() {
-                    registry.remove(&self.chain_id);
-                }
-            }
-        }
-
-        let mut registry = REGISTRY.write();
-        let remove_chain_if_empty = !registry.contains_key(&chain_id);
-        let entry = registry.entry(chain_id).or_default();
-        let previous = entry.overrides.activation(BaseUpgrade::Zenith);
-        entry
-            .overrides
-            .activations
-            .insert(BaseUpgrade::Zenith, UpgradeActivation::Timestamp(timestamp));
-        ZenithActivationGuard { chain_id, previous, remove_chain_if_empty }
-    }
-
-    /// Sets one runtime override that clears a chain upgrade activation.
-    pub fn clear_activation_timestamp(chain_id: u64, upgrade_id: BaseUpgrade) {
-        Self::set_activation(chain_id, upgrade_id, UpgradeActivation::Never)
     }
 }
 
@@ -1002,38 +943,20 @@ mod tests {
 
 #[cfg(test)]
 mod runtime_tests {
-    use spin::Mutex;
-
     use super::*;
 
-    static RUNTIME_REGISTRY_TEST_LOCK: Mutex<()> = Mutex::new(());
-
     #[test]
-    fn runtime_registry_tracks_timestamp_and_never_overrides() {
-        let chain_id = 9_100_001;
-        RuntimeUpgradeRegistry::clear_chain(chain_id);
-
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
-        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Beryl);
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
-        // Zenith is not contract-backed: the registry drops the write, so it is never stored.
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Zenith, u64::MAX);
-
-        assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
-            Some(UpgradeActivation::Timestamp(42))
-        );
-        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Zenith), None);
-        assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl),
-            Some(UpgradeActivation::Never)
-        );
-        assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Cobalt),
-            Some(UpgradeActivation::Timestamp(84))
-        );
-
-        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    fn variants_are_complete_and_named_as_declared() {
+        for (index, &upgrade) in BaseUpgrade::VARIANTS.iter().enumerate() {
+            assert_eq!(upgrade as usize, index, "{upgrade:?} out of declaration order");
+            assert_eq!(upgrade.name(), alloc::format!("{upgrade:?}"));
+            assert_eq!(upgrade.to_string(), upgrade.name());
+            #[cfg(feature = "hardforks")]
+            assert_eq!(upgrade.name().to_uppercase().parse::<BaseUpgrade>().ok(), Some(upgrade));
+        }
+        assert_eq!(BaseUpgrade::VARIANTS.last(), Some(&BaseUpgrade::Zenith));
+        #[cfg(feature = "hardforks")]
+        assert!("Zenith2".parse::<BaseUpgrade>().is_err());
     }
 
     #[test]
@@ -1058,87 +981,9 @@ mod runtime_tests {
     }
 
     #[test]
-    fn known_chains_resolve_activation_boundaries() {
-        let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
-        RuntimeUpgradeRegistry::clear_chain(8453);
-        RuntimeUpgradeRegistry::clear_chain(84532);
-        for (chain_id, config) in
-            [(8453, UpgradeConfig::BASE_MAINNET), (84532, UpgradeConfig::BASE_SEPOLIA)]
-        {
-            let mut previous = BaseUpgrade::Bedrock;
-
-            for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
-                let Some(activation) = config.activation_timestamp(upgrade) else {
-                    continue;
-                };
-
-                if activation > 0 {
-                    assert_eq!(
-                        BaseUpgrade::from_chain_and_timestamp(chain_id, activation - 1),
-                        Some(previous),
-                        "chain {chain_id} immediately before {upgrade:?}",
-                    );
-                }
-
-                assert_eq!(
-                    BaseUpgrade::from_chain_and_timestamp(chain_id, activation),
-                    Some(upgrade),
-                    "chain {chain_id} at {upgrade:?} activation",
-                );
-
-                previous = upgrade;
-            }
-        }
-    }
-
-    #[test]
-    fn activation_boundaries_respect_overrides() {
-        let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
-        RuntimeUpgradeRegistry::clear_chain(8453);
-        RuntimeUpgradeRegistry::clear_chain(84532);
-        const CHAIN_ID: u64 = 8453;
-
-        let beryl = UpgradeConfig::BASE_MAINNET.base.beryl.unwrap();
-        let cobalt = beryl + 100;
-
-        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Cobalt, cobalt);
-
-        assert_eq!(
-            BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, cobalt - 1),
-            Some(BaseUpgrade::Beryl)
-        );
-        assert_eq!(
-            BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, cobalt),
-            Some(BaseUpgrade::Cobalt)
-        );
-
-        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
-        RuntimeUpgradeRegistry::clear_activation_timestamp(CHAIN_ID, BaseUpgrade::Beryl);
-
-        assert_eq!(
-            BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, u64::MAX),
-            Some(BaseUpgrade::Denim),
-        );
-
-        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
-    }
-
-    #[test]
     fn unknown_chains_do_not_resolve() {
         for chain_id in [1, 10, 9_999_999] {
             assert_eq!(BaseUpgrade::from_chain_and_timestamp(chain_id, u64::MAX), None);
         }
-    }
-
-    #[test]
-    fn far_future_resolves_latest_scheduled_upgrade() {
-        let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
-        RuntimeUpgradeRegistry::clear_chain(8453);
-        RuntimeUpgradeRegistry::clear_chain(84532);
-        assert_eq!(BaseUpgrade::from_chain_and_timestamp(8453, u64::MAX), Some(BaseUpgrade::Denim));
-        assert_eq!(
-            BaseUpgrade::from_chain_and_timestamp(84532, u64::MAX),
-            Some(BaseUpgrade::Denim)
-        );
     }
 }

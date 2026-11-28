@@ -54,6 +54,7 @@ tracing = { workspace = true, features = ["std"] }
 # workspace
 base-test-utils = { workspace = true, features = ["contracts"] }
 base-common-chains.workspace = true
+base-common-genesis = { workspace = true, features = ["runtime-registry"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # reth

@@ -21,6 +21,17 @@ If you're working in a `no_std` environment, disable default features like so.
 base-common-genesis = { version = "x.y.z", default-features = false, features = ["serde"] }
 ```
 
+### Optional features
+
+- `hardforks`: `BaseUpgrade` as an `alloy_hardforks::Hardfork` that parses with `FromStr`,
+  `BaseUpgrade::execution_hardfork` and `BaseUpgrade::from_ethereum_hardfork`, and
+  `EthereumHardforks` for `RollupConfig`. Brings in `alloy-hardforks`.
+- `runtime-registry`: the process-global `RuntimeUpgradeRegistry` of activation overrides the
+  L1 upgrade signal writes, and `RollupConfig::{apply,with}_runtime_upgrade_overrides`. With it,
+  `RollupConfig` activation checks and `BaseUpgrade::from_chain_and_timestamp` consult the
+  registry; without it nothing can write the registry, so they read the genesis schedule alone.
+  Brings in `spin`. `test-utils` turns it on.
+
 ### Rollup Config
 
 `base-common-genesis` exports a `RollupConfig`, the primary genesis type for Base Consensus.

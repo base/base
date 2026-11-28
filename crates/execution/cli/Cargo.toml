@@ -89,7 +89,7 @@ rstest.workspace = true
 tempfile.workspace = true
 criterion.workspace = true
 alloy-primitives.workspace = true
-base-common-genesis.workspace = true
+base-common-genesis = { workspace = true, features = ["runtime-registry"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 

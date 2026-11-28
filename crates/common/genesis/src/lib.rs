@@ -32,9 +32,11 @@ pub use system::{
 
 mod chain;
 pub use chain::{
-    BaseUpgrade, BaseUpgradeConfig, RuntimeUpgradeRegistry, RuntimeUpgradeRegistryEntry,
-    UpgradeActivation, UpgradeActivationOverrides, UpgradeActivationSink, UpgradeConfig,
+    BaseUpgrade, BaseUpgradeConfig, UpgradeActivation, UpgradeActivationOverrides,
+    UpgradeActivationSink, UpgradeConfig,
 };
+#[cfg(feature = "runtime-registry")]
+pub use chain::{RuntimeUpgradeRegistry, RuntimeUpgradeRegistryEntry};
 
 mod genesis;
 pub use genesis::ChainGenesis;

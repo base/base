@@ -32,7 +32,7 @@ alloy-primitives.workspace = true
 # op
 base-protocol.workspace = true
 base-common-rpc-types.workspace = true
-base-common-genesis = { workspace = true, features = ["std"] }
+base-common-genesis = { workspace = true, features = ["hardforks", "runtime-registry", "std"] }
 
 serde_json.workspace = true
 serde = { workspace = true, optional = true }

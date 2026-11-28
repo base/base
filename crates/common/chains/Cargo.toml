@@ -25,7 +25,7 @@ alloy-hardforks.workspace = true
 alloy-primitives = { workspace = true, features = ["map"] }
 
 # base
-base-common-genesis.workspace = true
+base-common-genesis = { workspace = true, features = ["hardforks"] }
 
 # revm
 revm.workspace = true
@@ -37,6 +37,7 @@ auto_impl.workspace = true
 [dev-dependencies]
 rstest.workspace = true
 alloy-chains.workspace = true
+base-common-genesis = { workspace = true, features = ["runtime-registry"] }
 
 [[test]]
 name = "upgrade_consistency"

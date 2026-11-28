@@ -59,6 +59,7 @@ serde_json.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 base-common-chains.workspace = true
+base-common-genesis = { workspace = true, features = ["runtime-registry"] }
 bincode = { workspace = true, features = ["serde"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
