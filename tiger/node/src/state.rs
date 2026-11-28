@@ -33,9 +33,6 @@ pub trait ParentState {
     ) -> Result<B256, String>;
     /// The first read this state could not serve (a witness or partial state missing data).
     fn missing(&self) -> Option<String>;
-    /// Takes one executed transaction's committed changes, so the state root can start before
-    /// the block ends.
-    fn transaction_committed(&self, _changes: TransactionChanges) {}
 }
 
 /// One transaction's committed state changes in plain keys, collected as the executor commits

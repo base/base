@@ -12,7 +12,7 @@ use base_tiger_evm::{
 use alloy_primitives::B256;
 use evm2::{BlockStateAccumulator, registry::HandlerError};
 
-use crate::{ParentState, TransactionChanges};
+use crate::ParentState;
 
 /// One executed block: what the chain stores and what RPC serves.
 #[derive(Debug, Clone)]
@@ -191,12 +191,7 @@ impl BlockExecution<'_> {
             }
         };
         for (index, tx) in recovered.iter().enumerate() {
-            let mut changes = TransactionChanges::default();
-            let executed = executor.execute_transaction_observed(tx, &mut changes);
-            if executed.is_ok() {
-                state.transaction_committed(changes);
-            }
-            if let Err(error) = executed {
+            if let Err(error) = executor.execute_transaction(tx) {
                 if let Some(missing) = state.missing() {
                     return Err(missing);
                 }
