@@ -376,8 +376,7 @@ fn write_at(path: &Path, file: &File, buf: &[u8], offset: u64) -> io::Result<()>
 
 fn sync(path: &Path, file: &File) -> io::Result<()> {
     file.sync_all()?;
-    Fault::after_sync(path);
-    Ok(())
+    Fault::after_sync(path)
 }
 
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {

@@ -29228,9 +29228,10 @@ int osal_pread(mdbx_filehandle_t fd, void *buf, size_t bytes, uint64_t offset) {
 /* tiger: fault-injection hooks, NULL unless TIGER_FAULT is set (tiger/store/src/fault.rs).
  * tiger_hook_pwrite runs before every positional write and may abort the process, or return an
  * errno (such as ENOSPC) that fails the write instead;
- * tiger_hook_fsync runs after every successful fsync/fdatasync. */
+ * tiger_hook_fsync runs after every successful fsync/fdatasync and may return an errno (EIO)
+ * that fails it instead. */
 int (*tiger_hook_pwrite)(mdbx_filehandle_t fd, const void *buf, size_t bytes, uint64_t offset) = NULL;
-void (*tiger_hook_fsync)(mdbx_filehandle_t fd) = NULL;
+int (*tiger_hook_fsync)(mdbx_filehandle_t fd) = NULL;
 
 int osal_pwrite(mdbx_filehandle_t fd, const void *buf, size_t bytes, uint64_t offset) {
   if (unlikely(tiger_hook_pwrite != NULL)) {
@@ -29334,9 +29335,9 @@ int osal_pwritev(mdbx_filehandle_t fd, struct iovec *iov, size_t sgvcnt, uint64_
 static int osal_fsync_raw(mdbx_filehandle_t fd, enum osal_syncmode_bits mode_bits);
 
 int osal_fsync(mdbx_filehandle_t fd, enum osal_syncmode_bits mode_bits) {
-  const int rc = osal_fsync_raw(fd, mode_bits);
+  int rc = osal_fsync_raw(fd, mode_bits);
   if (unlikely(tiger_hook_fsync != NULL) && rc == MDBX_SUCCESS && (mode_bits & (MDBX_SYNC_DATA | MDBX_SYNC_SIZE)))
-    tiger_hook_fsync(fd);
+    rc = tiger_hook_fsync(fd);
   return rc;
 }
 

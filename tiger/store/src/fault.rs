@@ -21,6 +21,13 @@
 //!   the process keeps running; later writes succeed again, so the store's in-process heal and
 //!   the node's retry can finish. The first failing write prints
 //!   `tiger-fault: enospc at write K..K+M-1 phase="P" file=F`.
+//! - `eio` (with `fail_writes=M`): as `enospc`, with `EIO` (a failing disk) instead; the line
+//!   says `eio`.
+//! - `fsync_eio` (with `fail_writes=M`): from write `K` on, the next `M` fsyncs of a store file
+//!   fail with `EIO`, as Linux reports a failed writeback: the writes to that file since its
+//!   last successful fsync are undone first (they never reached the disk, and the kernel drops
+//!   the dirty pages), and a later fsync succeeds. The process keeps running. Each failing
+//!   fsync prints `tiger-fault: fsync_eio at write N phase="P" file=F: lost L unsynced writes`.
 //!
 //! Before aborting it prints one line to stderr:
 //! `tiger-fault: crash at write K mode=M phase="P" file=F offset=O len=L: D`, where `P` is the
@@ -43,6 +50,10 @@ pub enum FaultMode {
     LoseUnsynced,
     /// Writes fail with `ENOSPC` and the process keeps running.
     Enospc,
+    /// Writes fail with `EIO` and the process keeps running.
+    Eio,
+    /// Fsyncs fail with `EIO` after losing the file's unsynced writes; the process keeps running.
+    FsyncEio,
 }
 
 /// A parsed `TIGER_FAULT` value.
@@ -54,7 +65,7 @@ pub struct FaultConfig {
     pub crash_after_writes: u64,
     /// The crash mode.
     pub mode: FaultMode,
-    /// How many writes from `crash_after_writes` on fail (`enospc` only).
+    /// How many writes (`enospc`, `eio`) or fsyncs (`fsync_eio`) fail.
     pub fail_writes: u64,
 }
 
@@ -62,7 +73,7 @@ impl FaultConfig {
     /// The environment variable that enables fault injection.
     pub const ENV: &'static str = "TIGER_FAULT";
 
-    /// Parses `seed=N,crash_after_writes=K,mode=torn|lose_unsynced|enospc[,fail_writes=M]`.
+    /// Parses `seed=N,crash_after_writes=K,mode=torn|lose_unsynced|enospc|eio|fsync_eio[,fail_writes=M]`.
     pub fn parse(text: &str) -> Result<Self, String> {
         let (mut seed, mut after, mut mode, mut fail_writes) = (0, None, None, 1);
         for part in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
@@ -77,6 +88,8 @@ impl FaultConfig {
                         "torn" => FaultMode::Torn,
                         "lose_unsynced" => FaultMode::LoseUnsynced,
                         "enospc" => FaultMode::Enospc,
+                        "eio" => FaultMode::Eio,
+                        "fsync_eio" => FaultMode::FsyncEio,
                         _ => return Err(format!("bad mode {value:?}")),
                     })
                 }
@@ -119,16 +132,20 @@ struct State {
     synced_len: Vec<(PathBuf, u64)>,
     /// libmdbx file descriptors seen: (fd, tracked path or None, opened with O_DSYNC).
     fds: Vec<(c_int, Option<PathBuf>, bool)>,
+    /// Fsyncs failed so far (`fsync_eio`).
+    fsyncs_failed: u64,
 }
 
 static STATE: OnceLock<Option<Mutex<State>>> = OnceLock::new();
 
 /// `ENOSPC` on Linux and macOS.
 const ENOSPC: c_int = 28;
+/// `EIO` on Linux and macOS.
+const EIO: c_int = 5;
 
 unsafe extern "C" {
     static mut tiger_hook_pwrite: Option<unsafe extern "C" fn(c_int, *const c_void, usize, u64) -> c_int>;
-    static mut tiger_hook_fsync: Option<unsafe extern "C" fn(c_int)>;
+    static mut tiger_hook_fsync: Option<unsafe extern "C" fn(c_int) -> c_int>;
 }
 
 /// Fault injection entry points.
@@ -157,6 +174,7 @@ impl Fault {
                 undo: Vec::new(),
                 synced_len: Vec::new(),
                 fds: Vec::new(),
+                fsyncs_failed: 0,
             }))
         });
     }
@@ -204,7 +222,12 @@ impl Fault {
         };
         let mut state = state.lock().unwrap();
         state.writes += 1;
-        if state.config.mode == FaultMode::Enospc {
+        if state.config.mode == FaultMode::FsyncEio {
+            drop(state);
+            write();
+            return Ok(());
+        }
+        if matches!(state.config.mode, FaultMode::Enospc | FaultMode::Eio) {
             if let Err(errno) = state.enospc(Path::new(name)) {
                 return Err(std::io::Error::from_raw_os_error(errno));
             }
@@ -231,10 +254,12 @@ impl Fault {
         std::process::abort();
     }
 
-    /// Called by tiger's own writers after `path` was synced.
-    pub fn after_sync(path: &Path) {
-        if let Some(state) = Self::state() {
-            state.lock().unwrap().synced(path);
+    /// Called by tiger's own writers after `path` was synced; an error means the sync failed
+    /// (`fsync_eio`).
+    pub fn after_sync(path: &Path) -> std::io::Result<()> {
+        match Self::state() {
+            Some(state) => state.lock().unwrap().synced(path).map_err(std::io::Error::from_raw_os_error),
+            None => Ok(()),
         }
     }
 }
@@ -260,13 +285,13 @@ impl State {
     /// Counts a write; `Err(errno)` means it must fail instead of being performed.
     fn write(&mut self, path: &Path, offset: u64, buf: &[u8], durable: bool, detail: &str) -> Result<(), c_int> {
         self.writes += 1;
-        if self.config.mode == FaultMode::Enospc {
+        if matches!(self.config.mode, FaultMode::Enospc | FaultMode::Eio) {
             return self.enospc(path);
         }
-        if self.writes == self.config.crash_after_writes {
+        if self.config.mode != FaultMode::FsyncEio && self.writes == self.config.crash_after_writes {
             self.crash(path, offset, buf, detail);
         }
-        if self.config.mode != FaultMode::LoseUnsynced || durable {
+        if !matches!(self.config.mode, FaultMode::LoseUnsynced | FaultMode::FsyncEio) || durable {
             return Ok(());
         }
         if !self.synced_len.iter().any(|(p, _)| p == path) {
@@ -279,22 +304,50 @@ impl State {
         Ok(())
     }
 
-    /// `enospc`: whether the write just counted falls in the failing range.
+    /// `enospc` and `eio`: whether the write just counted falls in the failing range.
     fn enospc(&self, path: &Path) -> Result<(), c_int> {
         let first = self.config.crash_after_writes;
         let last = first + self.config.fail_writes - 1;
         if !(first..=last).contains(&self.writes) {
             return Ok(());
         }
+        let (name, errno) = if self.config.mode == FaultMode::Eio { ("eio", EIO) } else { ("enospc", ENOSPC) };
         if self.writes == first {
-            eprintln!("tiger-fault: enospc at write {first}..{last} phase=\"{}\" file={}", self.phase, path.display());
+            eprintln!("tiger-fault: {name} at write {first}..{last} phase=\"{}\" file={}", self.phase, path.display());
         }
-        Err(ENOSPC)
+        Err(errno)
     }
 
-    fn synced(&mut self, path: &Path) {
+    /// A successful sync of `path`, or under `fsync_eio` a failed one (`Err(EIO)`) that lost the
+    /// file's unsynced writes.
+    fn synced(&mut self, path: &Path) -> Result<(), c_int> {
+        let fail = self.config.mode == FaultMode::FsyncEio
+            && self.writes >= self.config.crash_after_writes
+            && self.fsyncs_failed < self.config.fail_writes
+            && self.undo.iter().any(|u| u.path == path);
+        if fail {
+            self.fsyncs_failed += 1;
+            let lost = self.undo.iter().filter(|u| u.path == path).count();
+            for undo in self.undo.iter().rev().filter(|u| u.path == path) {
+                let file = OpenOptions::new().write(true).open(&undo.path).expect("open undo file");
+                let mut restore = undo.old.clone();
+                restore.resize(undo.len as usize, 0);
+                file.write_all_at(&restore, undo.offset).expect("undo write");
+            }
+            let kept_len = self.synced_len.iter().find(|(p, _)| p == path).map(|(_, len)| *len);
+            if let (Some(len), Ok(file)) = (kept_len, OpenOptions::new().write(true).open(path)) {
+                let _ = file.set_len(len);
+            }
+            eprintln!(
+                "tiger-fault: fsync_eio at write {} phase=\"{}\" file={}: lost {lost} unsynced writes",
+                self.writes,
+                self.phase,
+                path.display()
+            );
+        }
         self.undo.retain(|u| u.path != path);
         self.synced_len.retain(|(p, _)| p != path);
+        if fail { Err(EIO) } else { Ok(()) }
     }
 
     fn crash(&mut self, path: &Path, offset: u64, buf: &[u8], detail: &str) -> ! {
@@ -306,7 +359,7 @@ impl State {
                 format!("wrote {prefix} of {} bytes", buf.len())
             }
             FaultMode::LoseUnsynced => self.lose_unsynced(),
-            FaultMode::Enospc => unreachable!("enospc never crashes"),
+            FaultMode::Enospc | FaultMode::Eio | FaultMode::FsyncEio => unreachable!("{:?} never crashes", self.config.mode),
         };
         let phase = if detail.is_empty() { self.phase.clone() } else { format!("{} {detail}", self.phase) };
         eprintln!(
@@ -418,11 +471,12 @@ unsafe extern "C" fn mdbx_pwrite_hook(fd: c_int, buf: *const c_void, bytes: usiz
     }
 }
 
-unsafe extern "C" fn mdbx_fsync_hook(fd: c_int) {
-    let Some(state) = Fault::state() else { return };
+unsafe extern "C" fn mdbx_fsync_hook(fd: c_int) -> c_int {
+    let Some(state) = Fault::state() else { return 0 };
     let mut state = state.lock().unwrap();
-    if let (Some(path), _) = state.fd_info(fd) {
-        state.synced(&path);
+    match state.fd_info(fd) {
+        (Some(path), _) => state.synced(&path).err().unwrap_or(0),
+        (None, _) => 0,
     }
 }
 
@@ -437,6 +491,8 @@ mod tests {
         let config = FaultConfig::parse("seed=3,crash_after_writes=5,mode=enospc,fail_writes=4").unwrap();
         assert_eq!((config.mode, config.fail_writes), (FaultMode::Enospc, 4));
         assert!(FaultConfig::parse("crash_after_writes=5,mode=enospc,fail_writes=0").is_err());
+        assert_eq!(FaultConfig::parse("crash_after_writes=5,mode=eio").unwrap().mode, FaultMode::Eio);
+        assert_eq!(FaultConfig::parse("crash_after_writes=5,mode=fsync_eio,fail_writes=2").unwrap().fail_writes, 2);
         assert_eq!(FaultConfig::parse("crash_after_writes=1,mode=torn").unwrap().mode, FaultMode::Torn);
         assert!(FaultConfig::parse("seed=1,mode=torn").is_err());
         assert!(FaultConfig::parse("crash_after_writes=0,mode=torn").is_err());
