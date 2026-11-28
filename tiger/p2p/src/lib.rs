@@ -22,7 +22,7 @@ pub use table::{
 
 mod node;
 pub use node::{
-    BAN_SCORE, Config, ConnId, Direction, Event, Network, Node, NotifyKind, Output, Penalty,
+    BAN_SCORE, Config, ConnId, Direction, Event, MAX_ANCHORS, Network, Node, NotifyKind, Output, Penalty,
     RequestError, RequestId, RequestKind, Rng, Stats, Target, Validation, message_id,
 };
 

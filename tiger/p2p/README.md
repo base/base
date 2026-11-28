@@ -168,6 +168,13 @@ Discovery is peer exchange, seeded from bootnodes.
   with at most one peer per group (dials in flight count too). Failed dials back off from 10 s,
   doubling, up to 10 minutes.
 - **Inbound cap per group.** A node accepts at most 4 inbound peers per group.
+- **Anchors and saved peers.** With `Config::peers_file` set, the driver saves its anchors and
+  its tried table every minute and at shutdown, and loads them at start, as Bitcoin Core does
+  with `anchors.dat` and `peers.dat`. Anchors are the (at most 4) ready outbound peers connected
+  longest. After a restart they are dialed right after bootnodes, once each, and the tried table
+  comes back as it was. Records are verified again when they are loaded. tiger keeps the file at
+  `<datadir>/tp2p-peers`; base-consensus keeps it where `--p2p.tp2p.peers-path` says, and keeps
+  none without that flag.
 
 ### Eclipse and sybil limits
 
@@ -194,9 +201,24 @@ In every run the victim kept honest peers and received every message. With many 
 though, its outbound slots, the ones it chose itself, went mostly to the attacker. A run with no
 honest outbound peer kept its honest peers through inbound connections from honest nodes, which
 dial the victim's record. An attacker that also controlled the victim's inbound slots, from 8 or
-more groups (4 each), could cut it off completely. Bootnodes and `trusted` peers are the anchor
-against that: they are redialed whenever they are disconnected, and never banned or refused. v1
-has no persistent anchors across restarts.
+more groups (4 each), could cut it off completely. Bootnodes and `trusted` peers are one defence
+against that: they are redialed whenever they are disconnected, and never banned or refused.
+
+Saved peers are the other, for the moment an attacker likes best: a restart, when a node without
+memory starts over from bootnodes and peer exchange. The simulator's `restart` scenario measures
+it: the same network, but the attackers stay dormant until the victim restarts at 60 s, then all
+attack at once; the run lasts 240 s. 12 seeds per row:
+
+| Attacker groups | Saved peers: honest outbound (mean) | Runs with no honest peer | Without: honest outbound (mean) | Runs with no honest peer | Gossip misses without |
+| --- | --- | --- | --- | --- | --- |
+| 2 | 8.0 of 8 | 0 | 3.2 of 4.5 | 0 (7 with no honest outbound) | 0 |
+| 4 | 8.0 of 8 | 0 | 1.3 of 4.7 | 0 (10 with no honest outbound) | 0 |
+| 8 | 8.0 of 8 | 0 | 6.0 of 8 | 3 | 234 |
+| 16 | 7.4 of 8 | 0 | 3.2 of 8 | 3 | 234 |
+| 64 | 6.9 of 8 | 0 | 2.1 of 8 | 4 | 312 |
+
+With saved peers, no victim lost its honest peers or a message. Without them, a third of the
+victims facing 8 or more attacker groups were cut off completely.
 
 ## What the application provides
 

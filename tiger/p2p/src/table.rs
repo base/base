@@ -8,13 +8,15 @@
 //! flooding the table replaces only dead entries. A peer we connected to moves to a "tried"
 //! bucket chosen by its own group. Outbound dials go to at most one peer per group, alternating
 //! between tried and new entries. Bootnodes are fixed entries that are never evicted and are
-//! redialed whenever no outbound connection reaches them.
+//! redialed whenever no outbound connection reaches them. Anchors, the outbound peers of the
+//! previous run, are dialed right after bootnodes, once each; a tried table saved by the previous
+//! run is restored as it was (Bitcoin Core's `anchors.dat` and `peers.dat`).
 //!
 //! Limits (documented in README.md, "Discovery"): an attacker holding addresses in G distinct
 //! groups can fill at most G outbound slots, and at most G × 8 of the new buckets. Sybils inside
 //! one group gain nothing over one node. An attacker with addresses in more groups than the node
 //! has outbound slots, who also answers every peer exchange the node makes, can still win all
-//! slots over time; bootnodes and trusted peers are the anchor against that.
+//! slots over time; bootnodes, trusted peers and anchors are the defence against that.
 
 use std::{
     collections::HashMap,
@@ -116,6 +118,19 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// An entry saved by the previous run. `last_success` 1 marks a success before this run, so
+    /// the entry is never evicted as one that has never worked.
+    const fn restored(record: PeerRecord) -> Self {
+        Self {
+            key: record.key,
+            addr: record.addr,
+            record: Some(record),
+            attempts: 0,
+            last_attempt: None,
+            last_success: 1,
+        }
+    }
+
     const fn terrible(&self) -> bool {
         self.attempts >= TERRIBLE_ATTEMPTS && self.last_success == 0
     }
@@ -133,6 +148,7 @@ enum Location {
     New(usize),
     Tried(usize),
     Fixed,
+    Anchor,
 }
 
 /// The table.
@@ -142,6 +158,7 @@ pub struct PeerTable {
     new: Vec<Vec<Entry>>,
     tried: Vec<Vec<Entry>>,
     fixed: Vec<Entry>,
+    anchors: Vec<Entry>,
     index: HashMap<PeerId, Location>,
     banned: HashMap<PeerId, u64>,
     banned_ips: HashMap<IpAddr, u64>,
@@ -155,6 +172,7 @@ impl PeerTable {
             new: vec![Vec::new(); NEW_BUCKETS],
             tried: vec![Vec::new(); TRIED_BUCKETS],
             fixed: Vec::new(),
+            anchors: Vec::new(),
             index: HashMap::new(),
             banned: HashMap::new(),
             banned_ips: HashMap::new(),
@@ -189,8 +207,48 @@ impl PeerTable {
             Location::New(b) => &mut self.new[b],
             Location::Tried(b) => &mut self.tried[b],
             Location::Fixed => &mut self.fixed,
+            Location::Anchor => &mut self.anchors,
         };
         list.iter_mut().find(|e| e.key.serialize() == *id)
+    }
+
+    /// The signed record of a known peer.
+    pub fn record(&self, id: &PeerId) -> Option<&PeerRecord> {
+        let list = match *self.index.get(id)? {
+            Location::New(b) => &self.new[b],
+            Location::Tried(b) => &self.tried[b],
+            Location::Fixed => &self.fixed,
+            Location::Anchor => &self.anchors,
+        };
+        list.iter().find(|e| e.key.serialize() == *id)?.record.as_ref()
+    }
+
+    /// Adds an outbound peer of the previous run, to be dialed once before tried and new entries.
+    /// The caller verified the record.
+    pub fn add_anchor(&mut self, record: PeerRecord) {
+        let id = record.key.serialize();
+        if self.index.contains_key(&id) {
+            return;
+        }
+        self.index.insert(id, Location::Anchor);
+        self.anchors.push(Entry::restored(record));
+    }
+
+    /// Restores a tried entry saved by the previous run, if its bucket has room. The caller
+    /// verified the record.
+    pub fn add_tried(&mut self, record: PeerRecord) {
+        let id = record.key.serialize();
+        let bucket = self.tried_bucket(&record.addr);
+        if self.index.contains_key(&id) || self.tried[bucket].len() >= BUCKET_SIZE {
+            return;
+        }
+        self.index.insert(id, Location::Tried(bucket));
+        self.tried[bucket].push(Entry::restored(record));
+    }
+
+    /// The signed records of the tried entries, to save for the next run.
+    pub fn tried_records(&self) -> Vec<PeerRecord> {
+        self.tried.iter().flatten().filter_map(|e| e.record.clone()).collect()
     }
 
     /// Adds or updates a verified record heard from `source`. Returns whether the table changed.
@@ -232,8 +290,13 @@ impl PeerTable {
         }
     }
 
-    /// Records a failed dial.
+    /// Records a failed dial. An anchor is tried only once, then forgotten.
     pub fn failed(&mut self, id: &PeerId) {
+        if self.index.get(id) == Some(&Location::Anchor) {
+            self.anchors.retain(|e| e.key.serialize() != *id);
+            self.index.remove(id);
+            return;
+        }
         if let Some(entry) = self.entry_mut(id) {
             entry.attempts = entry.attempts.saturating_add(1);
         }
@@ -247,10 +310,13 @@ impl PeerTable {
             entry.attempts = 0;
             entry.last_success = now;
         }
-        let Location::New(bucket) = location else { return };
-        let position =
-            self.new[bucket].iter().position(|e| e.key.serialize() == *id).expect("indexed");
-        let entry = self.new[bucket].swap_remove(position);
+        let list = match location {
+            Location::New(bucket) => &mut self.new[bucket],
+            Location::Anchor => &mut self.anchors,
+            Location::Tried(_) | Location::Fixed => return,
+        };
+        let position = list.iter().position(|e| e.key.serialize() == *id).expect("indexed");
+        let entry = list.swap_remove(position);
         let tried = self.tried_bucket(&entry.addr);
         if self.tried[tried].len() >= BUCKET_SIZE {
             let stalest = (0..self.tried[tried].len())
@@ -287,8 +353,9 @@ impl PeerTable {
         self.banned_ips.retain(|_, until| now < *until);
     }
 
-    /// A peer to dial: a fixed bootnode first when one is ready and not connected, else an entry
-    /// from tried or new (alternating at random), whose group no outbound connection uses.
+    /// A peer to dial: a fixed bootnode first when one is ready and not connected, then an anchor,
+    /// else an entry from tried or new (alternating at random). Anchors and table entries must be
+    /// in a group no outbound connection uses.
     pub fn select_dial(
         &self,
         now: u64,
@@ -301,6 +368,9 @@ impl PeerTable {
             e.ready(now) && !connected(&id) && !self.is_banned(&id, &e.addr.ip(), now)
         };
         if let Some(e) = self.fixed.iter().find(|e| usable(e)) {
+            return Some((e.key, e.addr));
+        }
+        if let Some(e) = self.anchors.iter().find(|e| usable(e) && !groups_in_use(group(&e.addr))) {
             return Some((e.key, e.addr));
         }
         for _ in 0..64 {
@@ -343,7 +413,11 @@ impl PeerTable {
 
     /// Iterates over every entry (for tests and simulations).
     pub fn entries(&self) -> impl Iterator<Item = &Entry> {
-        self.fixed.iter().chain(self.tried.iter().flatten()).chain(self.new.iter().flatten())
+        self.fixed
+            .iter()
+            .chain(&self.anchors)
+            .chain(self.tried.iter().flatten())
+            .chain(self.new.iter().flatten())
     }
 }
 

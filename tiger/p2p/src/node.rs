@@ -121,6 +121,10 @@ pub struct Config {
     pub advertise: Option<SocketAddr>,
     /// Capability bits this node advertises.
     pub capabilities: u32,
+    /// The sequence number of the node's signed record, which must grow across restarts so peers
+    /// that kept the old record take the new one: the driver sets the wall clock in ms. 0 uses
+    /// the node's clock (simulations).
+    pub record_seq: u64,
     /// Outbound connections to keep.
     pub max_outbound: usize,
     /// Inbound connections to accept.
@@ -129,6 +133,14 @@ pub struct Config {
     pub bootnodes: Vec<(PublicKey, SocketAddr)>,
     /// Peers never banned or refused for capacity.
     pub trusted: Vec<PublicKey>,
+    /// The previous run's anchors ([`Node::remembered`]): dialed once each, right after
+    /// bootnodes. Records that do not verify are dropped.
+    pub anchors: Vec<PeerRecord>,
+    /// The previous run's tried peers ([`Node::remembered`]), restored into the tried table.
+    pub tried: Vec<PeerRecord>,
+    /// Where the driver saves [`Node::remembered`] (every minute and at shutdown) and reads it
+    /// back at start; `None` keeps no state across runs.
+    pub peers_file: Option<std::path::PathBuf>,
     /// Peers that get a small gossip message in full; the others get only its id.
     pub gossip_fanout: usize,
     /// Peers that get a gossip message of at least [`Config::large_gossip`] bytes in full. Pushing
@@ -159,10 +171,14 @@ impl Config {
             secret,
             advertise: None,
             capabilities: 0,
+            record_seq: 0,
             max_outbound: 8,
             max_inbound: 32,
             bootnodes: Vec::new(),
             trusted: Vec::new(),
+            anchors: Vec::new(),
+            tried: Vec::new(),
+            peers_file: None,
             gossip_fanout: 6,
             gossip_fanout_large: 1,
             large_gossip: 16 * 1024,
@@ -342,6 +358,8 @@ const PING_TIMEOUT_MS: u64 = 20_000;
 const STATUS_TIMEOUT_MS: u64 = 10_000;
 const PEX_INTERVAL_MS: u64 = 30_000;
 const PEX_ANSWER_LIMIT: usize = 32;
+/// Anchors kept across a restart.
+pub const MAX_ANCHORS: usize = 4;
 const PEX_MIN_INTERVAL_MS: u64 = 10_000;
 const DIAL_INTERVAL_MS: u64 = 1_000;
 const MAX_PENDING_DIALS: usize = 4;
@@ -529,9 +547,18 @@ impl Node {
         let network_id = config.network.id();
         let local_id = PublicKey::from_secret_key(SECP256K1, &config.secret).serialize();
         let record = config.advertise.map(|addr| {
-            PeerRecord::signed(&config.secret, &network_id, addr, now.max(1), config.capabilities)
+            let seq = if config.record_seq == 0 { now.max(1) } else { config.record_seq };
+            PeerRecord::signed(&config.secret, &network_id, addr, seq, config.capabilities)
         });
-        let table = PeerTable::new(rng.next_u64(), &config.bootnodes);
+        let mut table = PeerTable::new(rng.next_u64(), &config.bootnodes);
+        let valid = |r: &&PeerRecord| r.key.serialize() != local_id && r.verify(&network_id);
+        // Anchors first: an anchor is usually also in the saved tried table, and stays an anchor.
+        for record in config.anchors.iter().filter(valid).take(MAX_ANCHORS) {
+            table.add_anchor(record.clone());
+        }
+        for record in config.tried.iter().filter(valid) {
+            table.add_tried(record.clone());
+        }
         Self {
             config,
             network_id,
@@ -579,6 +606,24 @@ impl Node {
     /// Ready peers with their address and direction.
     pub fn peers(&self) -> Vec<(PeerId, SocketAddr, Direction)> {
         self.peers.values().filter(|p| p.ready()).map(|p| (p.id, p.addr, p.direction)).collect()
+    }
+
+    /// What to keep for the next run: up to [`MAX_ANCHORS`] anchors, the ready outbound peers
+    /// connected longest (the node chose them and they kept serving it), and the tried table.
+    /// Becomes [`Config::anchors`] and [`Config::tried`] after a restart.
+    pub fn remembered(&self) -> (Vec<PeerRecord>, Vec<PeerRecord>) {
+        let mut outbound: Vec<&Peer> = self
+            .peers
+            .values()
+            .filter(|p| p.ready() && p.direction == Direction::Outbound)
+            .collect();
+        outbound.sort_by_key(|p| p.connected_at);
+        let anchors = outbound
+            .iter()
+            .filter_map(|p| self.table.record(&p.id).cloned())
+            .take(MAX_ANCHORS)
+            .collect();
+        (anchors, self.table.tried_records())
     }
 
     /// A ready peer's Status.

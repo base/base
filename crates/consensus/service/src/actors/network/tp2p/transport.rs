@@ -84,6 +84,7 @@ impl Tp2pTransport {
             }
         }
         p2p.trusted = config.trusted.iter().map(|peer| peer.key).collect();
+        p2p.peers_file = config.peers_file.clone();
 
         let (handle, std_events) = base_tiger_p2p::start(p2p, Some(config.listen), false)?;
         let address = Tp2pPeer {
@@ -302,6 +303,7 @@ mod tests {
             bootnodes,
             trusted: Vec::new(),
             secret: B256::from(secret),
+            peers_file: None,
         }
     }
 

@@ -74,6 +74,17 @@ pub struct Tp2pArgs {
         env = "BASE_NODE_P2P_TP2P_PRIV_PATH"
     )]
     pub priv_path: Option<PathBuf>,
+
+    /// File where tp2p keeps its anchors (the outbound peers it dials first after a restart) and
+    /// the peers it connected to, so a restart keeps its outbound slots with peers that served it
+    /// instead of starting from bootnodes and peer exchange alone. Unset keeps nothing.
+    #[arg(
+        id = "tp2p_peers_path",
+        value_name = "PATH",
+        long = "p2p.tp2p.peers-path",
+        env = "BASE_NODE_P2P_TP2P_PEERS_PATH"
+    )]
+    pub peers_path: Option<PathBuf>,
 }
 
 impl Tp2pArgs {
@@ -100,6 +111,7 @@ impl Tp2pArgs {
             bootnodes: self.bootnodes.clone(),
             trusted: self.trusted.clone(),
             secret: B256::from(secret),
+            peers_file: self.peers_path.clone(),
         }))
     }
 }

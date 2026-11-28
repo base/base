@@ -12,6 +12,7 @@ use std::{
     collections::{HashMap, VecDeque},
     io::{self, Read, Write},
     net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream},
+    path::Path,
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -34,7 +35,8 @@ use crate::{
     },
     table::PeerId,
     wire::{
-        DisconnectReason, FLAG_BULK, FLAG_START, Message, MessageId, Reassembler, ResponseCode, chunk,
+        DisconnectReason, FLAG_BULK, FLAG_START, MAX_PEER_RECORDS, Message, MessageId, PeerRecord,
+        Reassembler, ResponseCode, chunk,
     },
 };
 
@@ -59,6 +61,13 @@ pub const MAX_QUEUED_BULK: usize = 128 * 1024 * 1024;
 /// New inbound connections per IP per second (burst twice that).
 const CONNECTIONS_PER_IP_PER_SECOND: f64 = 5.0;
 const CORE_TICK: Duration = Duration::from_millis(20);
+/// How often the core thread saves [`Node::remembered`] to [`Config::peers_file`].
+const PEERS_SAVE_INTERVAL: Duration = Duration::from_secs(60);
+/// The peers file: this magic, then the anchors and the tried records, each as a little-endian
+/// u32 count of `Peers` bodies, then each body as a u32 length and the body (at most
+/// [`MAX_PEER_RECORDS`] records each). A file over [`PEERS_FILE_MAX`] bytes is ignored.
+const PEERS_FILE_MAGIC: &[u8; 8] = b"tp2ppeer";
+const PEERS_FILE_MAX: u64 = 256 * 1024;
 
 /// Byte and message counters for one direction, shared with the caller for measurements.
 #[derive(Debug, Default)]
@@ -314,6 +323,24 @@ pub fn start(
     if !deterministic_seed {
         config.seed = random_u64();
     }
+    let unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64);
+    config.record_seq = unix_ms.max(1);
+    // A missing file is a first run; a corrupt one is ignored, so it can cost the node its
+    // anchors but never its start.
+    if let Some(path) = config.peers_file.clone() {
+        match load_peers(&path) {
+            Ok(Some((anchors, tried))) => {
+                config.anchors.extend(anchors);
+                config.tried.extend(tried);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("tp2p: ignoring peers file {}: {error}", path.display());
+            }
+        }
+    }
     let listener = listen.map(TcpListener::bind).transpose()?;
     let local_addr = listener.as_ref().map(TcpListener::local_addr).transpose()?;
     if config.advertise.is_none() {
@@ -346,6 +373,74 @@ pub fn start(
     Ok((Handle { commands: inputs, local_addr, traffic }, event_rx))
 }
 
+/// A peers file's contents: anchors, then tried records.
+type Remembered = (Vec<PeerRecord>, Vec<PeerRecord>);
+
+/// Writes the peers file atomically: a temporary file, synced, then renamed over the old one, so
+/// a crash leaves either the old file or the new one.
+fn save_peers(path: &Path, anchors: &[PeerRecord], tried: &[PeerRecord]) -> io::Result<()> {
+    let mut out = PEERS_FILE_MAGIC.to_vec();
+    for list in [anchors, tried] {
+        let bodies: Vec<Vec<u8>> = list
+            .chunks(MAX_PEER_RECORDS)
+            .map(|records| Message::Peers(records.to_vec()).encode_body())
+            .collect();
+        out.extend_from_slice(&(bodies.len() as u32).to_le_bytes());
+        for body in bodies {
+            out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            out.extend_from_slice(&body);
+        }
+    }
+    let temporary = path.with_extension("tmp");
+    let mut file = std::fs::File::create(&temporary)?;
+    file.write_all(&out)?;
+    file.sync_all()?;
+    std::fs::rename(temporary, path)
+}
+
+/// Reads a peers file written by [`save_peers`]: `Ok(None)` when it does not exist, an error
+/// when it is unreadable, too large, truncated or malformed. Records are verified later, by
+/// [`Node::new`].
+fn load_peers(path: &Path) -> Result<Option<Remembered>, String> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut bytes = Vec::new();
+    file.take(PEERS_FILE_MAX + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > PEERS_FILE_MAX {
+        return Err(format!("over {PEERS_FILE_MAX} bytes"));
+    }
+    parse_peers(&bytes).map(Some).ok_or_else(|| "truncated or malformed".to_string())
+}
+
+fn parse_peers(bytes: &[u8]) -> Option<Remembered> {
+    let mut rest = bytes.strip_prefix(PEERS_FILE_MAGIC)?;
+    let mut take = |n: usize| -> Option<&[u8]> {
+        let (head, tail) = rest.split_at_checked(n)?;
+        rest = tail;
+        Some(head)
+    };
+    let peers_type = Message::Peers(Vec::new()).type_byte();
+    let mut lists = [Vec::new(), Vec::new()];
+    for list in &mut lists {
+        let bodies = u32::from_le_bytes(take(4)?.try_into().ok()?);
+        for _ in 0..bodies {
+            let len = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+            let Message::Peers(records) = Message::decode(peers_type, take(len)?).ok()? else {
+                return None;
+            };
+            list.extend(records);
+        }
+    }
+    if !rest.is_empty() {
+        return None;
+    }
+    let [anchors, tried] = lists;
+    Some((anchors, tried))
+}
+
 fn now_ms(start: Instant) -> u64 {
     start.elapsed().as_millis() as u64 + 1
 }
@@ -360,6 +455,15 @@ fn core_loop(
     let mut node = Node::new(config, now_ms(start));
     let mut outboxes: HashMap<ConnId, Arc<Outbox>> = HashMap::new();
     let mut last_tick = Instant::now();
+    let mut last_save = Instant::now();
+    let peers_file = node.config().peers_file.clone();
+    let save = |node: &Node| {
+        if let Some(path) = &peers_file {
+            let (anchors, tried) = node.remembered();
+            // Losing the file only costs the next run its anchors.
+            let _ = save_peers(path, &anchors, &tried);
+        }
+    };
     loop {
         let input = inputs.recv_timeout(CORE_TICK);
         let now = now_ms(start);
@@ -400,6 +504,7 @@ fn core_loop(
                     let _ = reply.send(node.score(&peer, now));
                 }
                 Command::Shutdown => {
+                    save(&node);
                     shared.stopped.store(true, Ordering::SeqCst);
                     for outbox in outboxes.values() {
                         outbox.close(DisconnectReason::Requested);
@@ -408,11 +513,18 @@ fn core_loop(
                 }
             },
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                save(&node);
+                return;
+            }
         }
         if last_tick.elapsed() >= CORE_TICK {
             last_tick = Instant::now();
             node.tick(now);
+        }
+        if last_save.elapsed() >= PEERS_SAVE_INTERVAL {
+            last_save = Instant::now();
+            save(&node);
         }
         while let Some(output) = node.poll() {
             match output {
@@ -798,5 +910,62 @@ mod tests {
         assert_eq!(garbage.read(&mut buf).unwrap_or(0), 0);
         assert!(started.elapsed() < Duration::from_secs(1));
         server.shutdown();
+    }
+
+    /// A node restarted with its peers file and no bootnodes dials the peer it had found through
+    /// peer exchange: its outbound slots stay with peers that served it before.
+    #[test]
+    fn restart_redials_anchors_from_the_peers_file() {
+        let key = |i: u8| {
+            PublicKey::from_secret_key(SECP256K1, &SecretKey::from_byte_array([i; 32]).unwrap())
+        };
+        let file = std::env::temp_dir().join(format!("tp2p-peers-{}", std::process::id()));
+        let _ = std::fs::remove_file(&file);
+        let (boot, _boot_events) =
+            start(config(4), Some("127.0.0.1:0".parse().unwrap()), true).unwrap();
+        let boot_addr = boot.local_addr().unwrap();
+        let mut c = config(5);
+        c.bootnodes.push((key(4), boot_addr));
+        let (found, _found_events) = start(c, Some("127.0.0.1:0".parse().unwrap()), true).unwrap();
+        // `found` sends `boot` its record; the client learns it from `boot` and dials it.
+        thread::sleep(Duration::from_millis(500));
+        let mut c = config(6);
+        c.bootnodes.push((key(4), boot_addr));
+        c.peers_file = Some(file.clone());
+        let (client, client_events) =
+            start(c, Some("127.0.0.1:0".parse().unwrap()), true).unwrap();
+        wait(&client_events, |e| match e {
+            Event::PeerReady { peer, .. } if peer == key(5).serialize() => Some(()),
+            _ => None,
+        });
+        client.shutdown();
+        thread::sleep(Duration::from_millis(200));
+        let (anchors, _) = load_peers(&file).unwrap().expect("saved at shutdown");
+        assert_eq!(anchors.iter().map(|r| r.key).collect::<Vec<_>>(), vec![key(5)]);
+
+        let mut c = config(6);
+        c.peers_file = Some(file.clone());
+        let (client, client_events) =
+            start(c, Some("127.0.0.1:0".parse().unwrap()), true).unwrap();
+        wait(&client_events, |e| match e {
+            Event::PeerReady { peer, .. } if peer == key(5).serialize() => Some(()),
+            _ => None,
+        });
+        client.shutdown();
+        found.shutdown();
+        boot.shutdown();
+        thread::sleep(Duration::from_millis(200));
+
+        // A truncated or corrupt file is reported and ignored: the node still starts.
+        let saved = std::fs::read(&file).unwrap();
+        for bad in [&saved[..saved.len() - 1], &b"garbage"[..]] {
+            std::fs::write(&file, bad).unwrap();
+            assert!(load_peers(&file).is_err());
+            let mut c = config(6);
+            c.peers_file = Some(file.clone());
+            let (client, _events) = start(c, None, true).unwrap();
+            client.shutdown();
+        }
+        let _ = std::fs::remove_file(&file);
     }
 }

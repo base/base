@@ -3,6 +3,7 @@
 use std::{
     fmt,
     net::{SocketAddr, ToSocketAddrs},
+    path::PathBuf,
     str::FromStr,
 };
 
@@ -123,6 +124,8 @@ pub struct Tp2pConfig {
     /// The node's static secp256k1 secret key.
     #[debug(skip)]
     pub secret: B256,
+    /// Where tp2p keeps its anchors and tried peers across restarts; `None` keeps nothing.
+    pub peers_file: Option<PathBuf>,
 }
 
 #[cfg(test)]

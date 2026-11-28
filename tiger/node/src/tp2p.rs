@@ -84,6 +84,8 @@ pub struct Tp2pArgs {
     pub serve_witness: bool,
     /// The node key.
     pub secret: SecretKey,
+    /// Where tp2p keeps its anchors and tried peers across restarts.
+    pub peers_file: Option<std::path::PathBuf>,
 }
 
 /// Parses `tp2p://<66 hex compressed key>@host:port`.
@@ -383,6 +385,7 @@ impl Node {
         config.bootnodes = args.bootnodes;
         config.trusted = args.trusted;
         config.advertise = args.advertise;
+        config.peers_file = args.peers_file;
         config.requests = kinds();
         config.notices = vec![NotifyKind { kind: ANNOUNCE, max_len: 40, per_peer_per_second: 20 }];
         config.max_gossip_len = 0;
@@ -674,6 +677,7 @@ mod tests {
                 trusted: Vec::new(),
                 serve_witness: true,
                 secret: a_key,
+                peers_file: None,
             })
             .unwrap();
         let mut blocks = Vec::new();
@@ -695,6 +699,7 @@ mod tests {
                 trusted: Vec::new(),
                 serve_witness: false,
                 secret: SecretKey::from_byte_array([0x42; 32]).unwrap(),
+                peers_file: None,
             })
             .unwrap();
         b.start_sync_with(None, Fetcher::Tp2p(Arc::clone(&b_tp2p))).unwrap();
@@ -812,6 +817,7 @@ mod tests {
                 trusted: Vec::new(),
                 serve_witness: true,
                 secret: a_key,
+                peers_file: None,
             })
             .unwrap();
         let (devp2p_proxy, devp2p_bytes) = counting_proxy(SocketAddr::from(([127, 0, 0, 1], a_port)));
@@ -840,6 +846,7 @@ mod tests {
                 trusted: Vec::new(),
                 serve_witness: false,
                 secret: secp256k1::SecretKey::from_byte_array([0x43; 32]).unwrap(),
+                peers_file: None,
             })
             .unwrap();
         c.start_sync_with(None, Fetcher::Tp2p(Arc::clone(&c_tp2p))).unwrap();

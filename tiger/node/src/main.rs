@@ -238,6 +238,7 @@ impl NodeArgs {
                 trusted: parse(&self.tp2p.trusted)?.into_iter().map(|(key, _)| key).collect(),
                 serve_witness: self.tp2p.serve_witness,
                 secret: NetArgs::secret_key(&secret_path)?,
+                peers_file: Some(self.datadir.join("tp2p-peers")),
             })?;
             if only_tp2p {
                 eprintln!("tiger: devp2p off, syncing over tp2p only");
