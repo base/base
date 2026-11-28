@@ -14,7 +14,7 @@
 
 use std::{fs, io, path::Path};
 
-use crate::{Dbi, Env, EnvOptions, MdbxError, Ro, Rw, Txn};
+use crate::{Dbi, Env, MdbxError, Ro, Rw, Txn};
 
 macro_rules! tables {
     ($($name:ident: $dupsort:expr),* $(,)?) => {
@@ -97,58 +97,23 @@ pub struct Db {
     pub dbis: Vec<Dbi>,
 }
 
-/// Failure to open a datadir database.
-#[derive(Debug)]
-pub enum OpenError {
-    /// MDBX refused.
-    Mdbx(MdbxError),
-    /// File system error.
-    Io(io::Error),
-    /// The `database.version` file holds another version.
-    Version(String),
-}
-
-impl std::fmt::Display for OpenError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Mdbx(err) => write!(f, "{err}"),
-            Self::Io(err) => write!(f, "{err}"),
-            Self::Version(text) => write!(f, "unsupported database version: {text}"),
-        }
-    }
-}
-
-impl std::error::Error for OpenError {}
-
-impl From<MdbxError> for OpenError {
-    fn from(err: MdbxError) -> Self {
-        Self::Mdbx(err)
-    }
-}
-
-impl From<io::Error> for OpenError {
-    fn from(err: io::Error) -> Self {
-        Self::Io(err)
-    }
-}
-
 impl Db {
     /// Opens (creating if needed) the MDBX database in `dir` (the datadir's `db/`), creating
     /// missing tables and the version file as reth does.
-    pub fn open(dir: &Path) -> Result<Self, OpenError> {
+    pub fn open(dir: &Path) -> Result<Self, crate::StoreError> {
         crate::Fault::init();
         fs::create_dir_all(dir)?;
         let version_file = dir.join(DB_VERSION_FILE);
         match fs::read_to_string(&version_file) {
             Ok(text) if text.trim().parse::<u64>().ok() == Some(DB_VERSION) => {}
-            Ok(text) => return Err(OpenError::Version(text)),
+            Ok(text) => return Err(crate::StoreError::Corrupt(format!("database version {text}"))),
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 fs::write(&version_file, DB_VERSION.to_string())?;
             }
             Err(err) => return Err(err.into()),
         }
         crate::Fault::forget_fds();
-        let env = Env::open(dir, EnvOptions::default())?;
+        let env = Env::open(dir)?;
         let txn = env.begin_rw()?;
         let dbis = Table::ALL.iter().map(|t| txn.create_table(t.name(), t.dupsort())).collect::<Result<Vec<_>, _>>()?;
         txn.commit()?;

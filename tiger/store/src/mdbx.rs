@@ -3,9 +3,8 @@
 //! Simplified from reth's `reth-libmdbx` (crates/storage/libmdbx-rs at base/reth 2b20e42), which
 //! is Apache-2.0 licensed. The environment is opened the way reth's `DatabaseEnv::open` opens it
 //! (geometry, max tables, read-ahead off, coalesce, durable sync, rp augment limit), except that
-//! tiger uses `MDBX_WRITEMAP` only when `TIGER_MDBX_WRITEMAP` is set and fault injection is off
-//! (an opt-in to measure base-reth's write path): otherwise all page writes go through `pwrite`,
-//! where the fault-injection layer ([`crate::Fault`]) hooks them. tiger also reclaims free pages LIFO
+//! tiger does not use `MDBX_WRITEMAP`: all page writes go through `pwrite`, where the
+//! fault-injection layer ([`crate::Fault`]) hooks them. tiger also reclaims free pages LIFO
 //! (`MDBX_LIFORECLAIM`): reusing the pages freed last keeps writes on pages the filesystem cache
 //! still holds, where FIFO reuse makes every partial-record `pwrite` on ZFS read its record from
 //! disk first (on a base mainnet datadir, half the commit time). With durable sync it is as
@@ -56,33 +55,14 @@ impl std::error::Error for MdbxError {}
 const GIGABYTE: isize = 1 << 30;
 /// Bytes in one terabyte.
 const TERABYTE: isize = 1 << 40;
-
-/// How an environment is opened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EnvOptions {
-    /// Open read-only.
-    pub read_only: bool,
-    /// Upper bound of the file size in bytes. reth uses 8 TiB.
-    pub max_size: isize,
-    /// File growth step in bytes. reth uses 4 GiB.
-    pub growth_step: isize,
-    /// Database page size for a new file. reth uses the OS page size clamped to 4096..=65536.
-    pub page_size: isize,
-    /// Maximum number of reader slots. reth's default is 32000.
-    pub max_readers: u64,
-}
-
-impl Default for EnvOptions {
-    fn default() -> Self {
-        Self {
-            read_only: false,
-            max_size: 8 * TERABYTE,
-            growth_step: 4 * GIGABYTE,
-            page_size: 4096,
-            max_readers: 32_000,
-        }
-    }
-}
+/// Upper bound of the file size (reth's 8 TiB).
+const MAX_SIZE: isize = 8 * TERABYTE;
+/// File growth step (reth's 4 GiB).
+const GROWTH_STEP: isize = 4 * GIGABYTE;
+/// Page size of a new file (reth's OS page size clamped to 4096..=65536).
+const PAGE_SIZE: isize = 4096;
+/// Reader slots (reth's default).
+const MAX_READERS: u64 = 32_000;
 
 /// The open environment, shared by every transaction.
 #[derive(Debug)]
@@ -112,8 +92,8 @@ pub struct Env {
 }
 
 impl Env {
-    /// Opens or creates the environment in directory `path`.
-    pub fn open(path: &Path, options: EnvOptions) -> Result<Self, MdbxError> {
+    /// Opens or creates the environment in directory `path`, read-write.
+    pub fn open(path: &Path) -> Result<Self, MdbxError> {
         let mut env: *mut ffi::MDBX_env = ptr::null_mut();
         // SAFETY: plain FFI calls on a fresh handle; on error the handle is closed.
         unsafe {
@@ -123,21 +103,19 @@ impl Env {
                     env,
                     0,
                     -1,
-                    options.max_size,
-                    options.growth_step,
+                    MAX_SIZE,
+                    GROWTH_STEP,
                     0,
-                    options.page_size,
+                    PAGE_SIZE,
                 ))?;
                 for (option, value) in [
                     (ffi::MDBX_opt_max_db, 256),
                     (ffi::MDBX_opt_rp_augment_limit, 256 * 1024),
-                    (ffi::MDBX_opt_max_readers, options.max_readers),
+                    (ffi::MDBX_opt_max_readers, MAX_READERS),
                 ] {
                     MdbxError::check(ffi::mdbx_env_set_option(env, option, value))?;
                 }
-                let mut flags =
-                    ffi::MDBX_NORDAHEAD | ffi::MDBX_COALESCE | ffi::MDBX_NOSTICKYTHREADS | ffi::MDBX_LIFORECLAIM;
-                flags |= if options.read_only { ffi::MDBX_RDONLY } else { ffi::MDBX_SYNC_DURABLE };
+                let flags = ffi::MDBX_NORDAHEAD | ffi::MDBX_COALESCE | ffi::MDBX_NOSTICKYTHREADS | ffi::MDBX_LIFORECLAIM | ffi::MDBX_SYNC_DURABLE;
                 let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| MdbxError(ffi::MDBX_EINVAL))?;
                 MdbxError::check(ffi::mdbx_env_open(env, path.as_ptr(), flags, 0o644))
             };
@@ -147,17 +125,6 @@ impl Env {
             }
         }
         Ok(Self { inner: Arc::new(EnvInner { ptr: env }) })
-    }
-
-    /// The page size of the open file.
-    pub fn page_size(&self) -> Result<usize, MdbxError> {
-        // SAFETY: MDBX_stat is plain data; the call fills it.
-        let mut stat: ffi::MDBX_stat = unsafe { std::mem::zeroed() };
-        // SAFETY: valid env handle and a correctly sized out-pointer.
-        MdbxError::check(unsafe {
-            ffi::mdbx_env_stat_ex(self.inner.ptr, ptr::null(), &mut stat, size_of::<ffi::MDBX_stat>())
-        })?;
-        Ok(stat.ms_psize as usize)
     }
 
     /// Begins a read-only transaction.
@@ -299,14 +266,6 @@ impl Txn<Rw> {
         MdbxError::check(unsafe { ffi::mdbx_put(self.ptr, dbi.0, &key, &mut data, ffi::MDBX_UPSERT) })
     }
 
-    /// Appends `key` = `value` where `key` is greater than every key in the table.
-    pub fn append(&mut self, dbi: Dbi, key: &[u8], value: &[u8]) -> Result<(), MdbxError> {
-        let key = val(key);
-        let mut data = val(value);
-        // SAFETY: valid handles; MDBX copies the bytes.
-        MdbxError::check(unsafe { ffi::mdbx_put(self.ptr, dbi.0, &key, &mut data, ffi::MDBX_APPEND) })
-    }
-
     /// Deletes `key` (every duplicate when `value` is `None`, else that duplicate). Returns
     /// whether anything was deleted.
     pub fn delete(&mut self, dbi: Dbi, key: &[u8], value: Option<&[u8]>) -> Result<bool, MdbxError> {
@@ -320,12 +279,6 @@ impl Txn<Rw> {
         }
         MdbxError::check(code)?;
         Ok(true)
-    }
-
-    /// Deletes every entry of a table, keeping the table.
-    pub fn clear(&mut self, dbi: Dbi) -> Result<(), MdbxError> {
-        // SAFETY: valid handles; `false` empties without deleting the table.
-        MdbxError::check(unsafe { ffi::mdbx_drop(self.ptr, dbi.0, false) })
     }
 
     /// Opens a cursor that can also write.
@@ -385,20 +338,10 @@ impl<K> Cursor<'_, K> {
         self.op(None, None, ffi::MDBX_FIRST)
     }
 
-    /// Moves to the last entry (the last duplicate of the last key).
-    pub fn last(&mut self) -> Result<Option<Entry<'_>>, MdbxError> {
-        self.op(None, None, ffi::MDBX_LAST)
-    }
-
     /// Moves to the next entry (the next duplicate, or the first of the next key).
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<Option<Entry<'_>>, MdbxError> {
         self.op(None, None, ffi::MDBX_NEXT)
-    }
-
-    /// Moves to the previous entry.
-    pub fn prev(&mut self) -> Result<Option<Entry<'_>>, MdbxError> {
-        self.op(None, None, ffi::MDBX_PREV)
     }
 
     /// Moves to the first entry whose key is at least `key`.
@@ -463,7 +406,7 @@ mod tests {
     fn plain_and_dupsort_tables_survive_reopen() {
         let dir = temp_dir("reopen");
         {
-            let env = Env::open(&dir, EnvOptions::default()).unwrap();
+            let env = Env::open(&dir).unwrap();
             let mut txn = env.begin_rw().unwrap();
             let plain = txn.create_table("Plain", false).unwrap();
             let dups = txn.create_table("Dups", true).unwrap();
@@ -479,7 +422,7 @@ mod tests {
             txn.put(plain, b"c", b"3").unwrap();
             drop(txn);
         }
-        let env = Env::open(&dir, EnvOptions::default()).unwrap();
+        let env = Env::open(&dir).unwrap();
         let txn = env.begin_ro().unwrap();
         let plain = txn.open_table("Plain").unwrap().unwrap();
         let dups = txn.open_table("Dups").unwrap().unwrap();

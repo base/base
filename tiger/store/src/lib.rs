@@ -14,7 +14,7 @@
 mod mdbx_sys;
 
 mod mdbx;
-pub use mdbx::{Cursor, Dbi, Entry, Env, EnvInner, EnvOptions, MdbxError, Ro, Rw, Txn};
+pub use mdbx::{Cursor, Dbi, Entry, Env, EnvInner, MdbxError, Ro, Rw, Txn};
 
 mod fault;
 pub use fault::{Fault, FaultConfig, FaultMode};
@@ -26,7 +26,7 @@ pub use codec::{
 };
 
 mod tables;
-pub use tables::{DB_VERSION, DB_VERSION_FILE, Db, OpenError, Table};
+pub use tables::{DB_VERSION, DB_VERSION_FILE, Db, Table};
 
 mod static_files;
 pub use static_files::{BLOCKS_PER_FILE, Jar, JarConfig, Lz4, Range, Segment, SegmentHeader, StaticFiles};

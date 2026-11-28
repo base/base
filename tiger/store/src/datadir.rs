@@ -19,7 +19,7 @@ use std::{
 use alloy_eips::eip2718::Encodable2718;
 
 use crate::{
-    AccountBeforeTx, BlockBodyIndices, CodecError, Db, Fault, History, MdbxError, OpenError, Rocks, RocksBatch,
+    AccountBeforeTx, BlockBodyIndices, CodecError, Db, Fault, History, MdbxError, Rocks, RocksBatch,
     RocksTable, Rw, Segment, StageCheckpointCodec, StaticFiles, StorageBeforeTx, Table, Txn, TxCodec,
 };
 
@@ -94,16 +94,6 @@ impl From<rocksdb::Error> for StoreError {
 impl From<CodecError> for StoreError {
     fn from(err: CodecError) -> Self {
         Self::Corrupt(err.to_string())
-    }
-}
-
-impl From<OpenError> for StoreError {
-    fn from(err: OpenError) -> Self {
-        match err {
-            OpenError::Mdbx(err) => Self::Mdbx(err),
-            OpenError::Io(err) => Self::Io(err),
-            OpenError::Version(text) => Self::Corrupt(format!("database version {text}")),
-        }
     }
 }
 

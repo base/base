@@ -500,7 +500,7 @@ mod tests {
     fn crash_child() {
         let Ok(dir) = std::env::var("TIGER_FAULT_TEST_DIR") else { return };
         Fault::init();
-        let env = crate::Env::open(Path::new(&dir), crate::EnvOptions::default()).unwrap();
+        let env = crate::Env::open(Path::new(&dir)).unwrap();
         for i in 0u64..10_000 {
             Fault::phase(i, "mdbx");
             let mut txn = env.begin_rw().unwrap();
@@ -540,7 +540,7 @@ mod tests {
                 .lines()
                 .filter_map(|l| l.strip_prefix("committed ")?.parse::<u64>().ok())
                 .max();
-            let env = crate::Env::open(&dir, crate::EnvOptions::default()).unwrap();
+            let env = crate::Env::open(&dir).unwrap();
             let txn = env.begin_ro().unwrap();
             let Some(table) = txn.open_table("T").unwrap() else {
                 assert_eq!(acknowledged, None, "{stderr}");

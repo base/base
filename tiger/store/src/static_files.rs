@@ -101,10 +101,6 @@ impl Segment {
         matches!(self, Self::AccountChangeSets | Self::StorageChangeSets)
     }
 
-    const fn index(self) -> u32 {
-        self as u32
-    }
-
     fn from_index(index: u32) -> io::Result<Self> {
         Self::ALL.get(index as usize).copied().ok_or_else(|| invalid(format!("unknown segment {index}")))
     }
@@ -209,7 +205,7 @@ impl JarConfig {
         out.extend_from_slice(&h.expected.end.to_le_bytes());
         range(&mut out, h.blocks);
         range(&mut out, h.txs);
-        out.extend_from_slice(&h.segment.index().to_le_bytes());
+        out.extend_from_slice(&(h.segment as u32).to_le_bytes());
         if h.segment.is_change_based() {
             out.extend_from_slice(&h.changeset_offsets_len.to_le_bytes());
         }
@@ -359,13 +355,9 @@ impl Lz4 {
     }
 }
 
-fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
-    file.read_exact_at(buf, offset)
-}
-
 fn read_u64_at(file: &File, offset: u64) -> io::Result<u64> {
     let mut buf = [0; 8];
-    read_exact_at(file, &mut buf, offset)?;
+    file.read_exact_at(&mut buf, offset)?;
     Ok(u64::from_le_bytes(buf))
 }
 
@@ -526,7 +518,7 @@ impl Jar {
     /// The byte range of value `index` (row * columns + column).
     fn value_range(&self, index: u64) -> io::Result<(u64, u64)> {
         let mut buf = [0; 16];
-        read_exact_at(&self.offsets, &mut buf, 1 + OFFSET_SIZE * index)?;
+        self.offsets.read_exact_at(&mut buf, 1 + OFFSET_SIZE * index)?;
         let start = u64::from_le_bytes(buf[..8].try_into().expect("8"));
         let end = u64::from_le_bytes(buf[8..].try_into().expect("8"));
         if start > end {
@@ -535,8 +527,8 @@ impl Jar {
         Ok((start, end))
     }
 
-    /// Appends column `column` of committed row `row` (0-based within this jar) to `out`.
-    pub fn value(&self, row: u64, column: u64, out: &mut Vec<u8>) -> io::Result<()> {
+    /// Column `column` of committed row `row` (0-based within this jar).
+    pub fn value(&self, row: u64, column: u64) -> io::Result<Vec<u8>> {
         let columns = self.config.header.segment.columns();
         assert!(column < columns);
         if row >= self.config.rows {
@@ -544,13 +536,13 @@ impl Jar {
         }
         let (start, end) = self.value_range(row * columns + column)?;
         let mut raw = vec![0; (end - start) as usize];
-        read_exact_at(&self.data, &mut raw, start)?;
-        if self.config.lz4 {
-            Lz4::decompress(&raw, self.config.max_row_size as usize, out)
-        } else {
-            out.extend_from_slice(&raw);
-            Ok(())
+        self.data.read_exact_at(&mut raw, start)?;
+        if !self.config.lz4 {
+            return Ok(raw);
         }
+        let mut out = Vec::new();
+        Lz4::decompress(&raw, self.config.max_row_size as usize, &mut out)?;
+        Ok(out)
     }
 
     /// The `(first row, row count)` of `block`'s changes, for changeset jars.
@@ -740,11 +732,6 @@ impl StaticFiles {
         Ok(())
     }
 
-    /// The directory.
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     /// The committed last block of `segment`, `None` when it has none.
     pub fn last_block(&self, segment: Segment) -> Option<u64> {
         let segments = self.segments.read().unwrap();
@@ -797,8 +784,7 @@ impl StaticFiles {
             if tip.is_none() && files.segment.is_change_based() {
                 expected.start = block;
             }
-            let mut header = JarConfig::new(files.segment, expected).header;
-            header.blocks = None;
+            let header = JarConfig::new(files.segment, expected).header;
             files.pending.push(Pending { header, data: Vec::new(), ends: Vec::new(), rows: 0, max_row_size: 0, csoff: Vec::new() });
         } else if files.pending.is_empty() {
             let header = tip.expect("tip");
@@ -891,10 +877,8 @@ impl StaticFiles {
                 if !is_last {
                     // Files are named after their fixed range even when the expected start moved.
                     let path = self.dir.join(files.segment.file_name(Range::fixed(p.header.expected.start, self.blocks_per_file)));
-                    let mut config = JarConfig::new(files.segment, p.header.expected);
                     // The block range is set by the append; an empty new file has none.
-                    config.header.blocks = None;
-                    files.jars.push(Jar::create(path, config)?);
+                    files.jars.push(Jar::create(path, JarConfig::new(files.segment, p.header.expected))?);
                 }
                 files.jars.last_mut().expect("jar").append(&p)?;
             }
@@ -987,21 +971,13 @@ impl StaticFiles {
     pub fn header(&self, block: u64) -> io::Result<Option<[Vec<u8>; 3]>> {
         self.with_block_jar(Segment::Headers, block, |jar| {
             let row = block - jar.config.header.blocks.expect("blocks").start;
-            let mut columns = [Vec::new(), Vec::new(), Vec::new()];
-            for (c, out) in columns.iter_mut().enumerate() {
-                jar.value(row, c as u64, out)?;
-            }
-            Ok(columns)
+            Ok([jar.value(row, 0)?, jar.value(row, 1)?, jar.value(row, 2)?])
         })
     }
 
     /// Transaction `tx`'s row of a transaction segment.
     pub fn tx_row(&self, segment: Segment, tx: u64) -> io::Result<Option<Vec<u8>>> {
-        self.with_tx_jar(segment, tx, |jar, row| {
-            let mut out = Vec::new();
-            jar.value(row, 0, &mut out)?;
-            Ok(out)
-        })
+        self.with_tx_jar(segment, tx, |jar, row| jar.value(row, 0))
     }
 
     /// Block `block`'s changeset rows, or `None` when the block is not stored.
@@ -1009,13 +985,7 @@ impl StaticFiles {
         assert!(segment.is_change_based());
         let rows = self.with_block_jar(segment, block, |jar| {
             let Some((first, count)) = jar.changeset(block)? else { return Ok(None) };
-            let mut rows = Vec::with_capacity(count as usize);
-            for row in first..first + count {
-                let mut out = Vec::new();
-                jar.value(row, 0, &mut out)?;
-                rows.push(out);
-            }
-            Ok(Some(rows))
+            (first..first + count).map(|row| jar.value(row, 0)).collect::<io::Result<_>>().map(Some)
         })?;
         Ok(rows.flatten())
     }
