@@ -12,8 +12,7 @@
 //! the block shape: `TOUCHED` accounts (3,000), `STORAGE_ACCOUNTS` (150) with `SLOTS` changes each
 //! on average (12), `BIG_TOUCH` slots in each big contract (200), and `REUSE`, the percent of
 //! touches that pick a recently touched account or contract again (0). Mainnet-shaped blocks
-//! (Base, November 2026): `TOUCHED=24 STORAGE_ACCOUNTS=24 SLOTS=2 BIG_TOUCH=8 REUSE=60`. The
-//! chained and streamed sections time the live trie only with `TIGER_LIVE_ROOT=1`.
+//! (Base, November 2026): `TOUCHED=24 STORAGE_ACCOUNTS=24 SLOTS=2 BIG_TOUCH=8 REUSE=60`.
 
 use std::{sync::Arc, time::Instant};
 
@@ -239,43 +238,4 @@ fn main() {
     println!("chain first block: {:.2} ms", times[0]);
     report("chain", times[1..].to_vec());
     println!("digest of chain roots: {}", keccak256(&chain_digest));
-
-    // The same chain again, each block streamed as `TXS` transactions over `EXEC_MS` of
-    // simulated execution: the time that counts is the root after the last transaction.
-    let txs = env("TXS", 200) as usize;
-    let exec = std::time::Duration::from_micros(env("EXEC_MS", 15) * 1000 / txs.max(1) as u64);
-    let mut stream_chain = (*mem).clone();
-    let mut stream_digest = Vec::new();
-    let mut times = Vec::new();
-    for (i, changes) in blocks.iter().enumerate() {
-        let view = db.view_mem(Arc::new(stream_chain.clone()), Vec::new()).unwrap();
-        let session = view.live_session();
-        let mut split = Rng(i as u64);
-        let mut per_tx = vec![BlockChanges::default(); txs];
-        for entry in &changes.accounts {
-            per_tx[split.below(txs as u64) as usize].accounts.push(*entry);
-        }
-        for entry in &changes.storage {
-            per_tx[split.below(txs as u64) as usize].storage.push(*entry);
-        }
-        for tx in per_tx {
-            if let Some(session) = &session {
-                session.transaction(tx);
-            }
-            std::thread::sleep(exec);
-        }
-        let started = Instant::now();
-        let prepared = view.prepare_root_with(changes, session).unwrap();
-        times.push(started.elapsed().as_secs_f64() * 1e3);
-        stream_digest.extend_from_slice(prepared.root.as_slice());
-        stream_chain.extend(
-            stream_chain.head + 1,
-            prepared.hashed(),
-            prepared.trie_updates().unwrap(),
-            &[],
-        );
-    }
-    println!("streamed chain first block: {:.2} ms", times[0]);
-    report("streamed chain (root after the last transaction)", times[1..].to_vec());
-    println!("digest of streamed chain roots: {}", keccak256(&stream_digest));
 }

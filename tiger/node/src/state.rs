@@ -9,7 +9,7 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_tiger_trie::{
-    AccountInfo, AccountProof, BlockChanges, LiveSession, PreparedRoot, StateView, TrieError,
+    AccountInfo, AccountProof, BlockChanges, PreparedRoot, StateView, TrieError,
 };
 use evm2::{
     AccountInfo as EvmAccount, BlockStateAccumulator,
@@ -159,9 +159,6 @@ pub struct NodeState<'d> {
     stop: Option<&'d std::sync::atomic::AtomicBool>,
     /// Time spent computing state and storage roots on this state.
     root_time: Cell<std::time::Duration>,
-    /// The executing block's state root, computed as its transactions commit: started by the
-    /// first one, `Some(None)` when this view cannot.
-    live: RefCell<Option<Option<LiveSession>>>,
 }
 
 /// The accounts, storage slots and code a block's execution read that a partial state does not
@@ -208,7 +205,6 @@ impl<'d> NodeState<'d> {
             slow: None,
             stop: None,
             root_time: Cell::new(std::time::Duration::ZERO),
-            live: RefCell::new(None),
         }
     }
 
@@ -454,8 +450,7 @@ impl ParentState for NodeState<'_> {
     fn state_root_after(&self, changes: &BlockStateAccumulator) -> Result<B256, String> {
         let started = std::time::Instant::now();
         let changes = block_changes(changes);
-        let session = self.live.borrow_mut().take().flatten();
-        let prepared = self.view.prepare_root_with(&changes, session);
+        let prepared = self.view.prepare_root(&changes);
         self.root_time.set(self.root_time.get() + started.elapsed());
         let prepared = match prepared {
             Ok(prepared) => prepared,
@@ -504,13 +499,6 @@ impl ParentState for NodeState<'_> {
 
     fn missing(&self) -> Option<String> {
         self.missing.borrow().clone()
-    }
-
-    fn transaction_committed(&self, changes: TransactionChanges) {
-        let mut live = self.live.borrow_mut();
-        if let Some(session) = live.get_or_insert_with(|| self.view.live_session()) {
-            session.transaction(changes.0);
-        }
     }
 }
 

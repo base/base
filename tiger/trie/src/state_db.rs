@@ -25,7 +25,7 @@ use base_tiger_store::{
 use alloy_rlp::Decodable;
 
 use crate::{
-    AccountProof, DbNodes, EMPTY_ROOT, HashedState, HashedStorage, LIVE_MAX_NODES, LiveBase, LiveSession, LiveSlot, PARTIAL_ROOT_KEY, ProofNodes,
+    AccountProof, DbNodes, EMPTY_ROOT, HashedState, HashedStorage, PARTIAL_ROOT_KEY, ProofNodes,
     Recording, SparseTrie,
     PartialState, StateTries, StateWriter, TrieError, TrieUpdates, TrieView, hash_key,
 };
@@ -253,15 +253,6 @@ pub struct StateDb {
     /// The datadir.
     pub datadir: Datadir,
     partial: bool,
-    /// The trie kept in memory across blocks for the next block's root (full state only).
-    live: std::sync::Arc<std::sync::Mutex<LiveSlot>>,
-    /// Whether roots use the live trie (opt-in: `TIGER_LIVE_ROOT=1` or `check`).
-    live_enabled: bool,
-    /// Whether every live root is checked against the walker (`TIGER_LIVE_ROOT=check`), which
-    /// panics on a difference.
-    live_check: bool,
-    /// Most nodes the live trie keeps between blocks.
-    live_max_nodes: usize,
 }
 
 impl StateDb {
@@ -269,19 +260,7 @@ impl StateDb {
     pub fn open(path: &std::path::Path) -> Result<Self, TrieError> {
         let datadir = Datadir::open(path)?;
         let partial = PartialState::root(&datadir.db.read()?, &datadir.db)?.is_some();
-        let mode = std::env::var("TIGER_LIVE_ROOT").unwrap_or_default();
-        let (live_enabled, live_check) = (mode == "1" || mode == "check", mode == "check");
-        Ok(Self {
-            datadir,
-            partial,
-            live: Default::default(),
-            live_enabled,
-            live_check,
-            live_max_nodes: std::env::var("TIGER_LIVE_MAX_NODES")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(LIVE_MAX_NODES),
-        })
+        Ok(Self { datadir, partial })
     }
 
     /// Opens the partial-state datadir at `path`, creating it when new: its state is the one
@@ -306,18 +285,6 @@ impl StateDb {
         w.commit()?;
         db.partial = true;
         Ok(db)
-    }
-
-    /// Turns the live trie (state roots kept in memory across blocks) on or off; it is off unless
-    /// `TIGER_LIVE_ROOT=1` (or `check`). Off, every root walks the stored trie.
-    pub fn set_live_root(&mut self, enabled: bool) {
-        self.live_enabled = enabled;
-    }
-
-    /// Bounds the live trie to `max_nodes` nodes between blocks (`TIGER_LIVE_MAX_NODES`, else
-    /// [`LIVE_MAX_NODES`]): above it, the least recently used are blinded down to half of it.
-    pub fn set_live_max_nodes(&mut self, max_nodes: usize) {
-        self.live_max_nodes = max_nodes;
     }
 
     /// Whether the datadir holds a partial state.
@@ -1068,33 +1035,14 @@ impl StateView<'_> {
     /// The state root after `extra` with the trie changes that produce it, for
     /// [`StateDb::commit_prepared`] to reuse when the block is committed on this view's block.
     pub fn prepare_root(&self, extra: &BlockChanges) -> Result<PreparedRoot, TrieError> {
-        self.prepare_root_with(extra, None)
-    }
-
-    /// [`Self::prepare_root`] finishing `session`, which streamed the block's transactions (see
-    /// [`Self::live_session`]).
-    pub fn prepare_root_with(&self, extra: &BlockChanges, session: Option<LiveSession>) -> Result<PreparedRoot, TrieError> {
-        let started = std::time::Instant::now();
         let changes = extra.hashed();
-        let hashed_us = started.elapsed().as_micros();
-        let streaming = session.is_some();
-        let mut streamed = session.and_then(|session| session.finish(&changes));
-        if streaming && LiveBase::stats_enabled() {
-            eprintln!(
-                "tiger: live root prepare hashed_us={hashed_us} waited_us={}",
-                started.elapsed().as_micros() - hashed_us
-            );
-        }
         let reusable = self.block == self.tip && self.overlays.is_empty() && self.mem_reverts.is_none();
         if !reusable {
             let root = self.state_root(Some(extra))?;
             return Ok(PreparedRoot { root, state: changes, txn_id: 0, block: 0, trie: None, layered: false });
         }
         if let Some(mem) = &self.mem {
-            let (root, updates) = match streamed.take().or_else(|| self.live_root(&changes)) {
-                Some(result) => self.checked(result, || self.trie_view(&changes).state_root_parallel())?,
-                None => self.trie_view(&changes).state_root_parallel()?,
-            };
+            let (root, updates) = self.trie_view(&changes).state_root_parallel()?;
             let trie = Some(PreparedTrie::Full(root, updates));
             return Ok(PreparedRoot { root, state: changes, txn_id: 0, block: mem.head, trie, layered: true });
         }
@@ -1104,61 +1052,11 @@ impl StateView<'_> {
                 (tries.root, PreparedTrie::Partial(tries))
             }
             None => {
-                let walk = || TrieView::new(&self.txn, self.dbs(), &changes).state_root_parallel();
-                let (root, updates) = match streamed.take().or_else(|| self.live_root(&changes)) {
-                    Some(result) => self.checked(result, walk)?,
-                    None => walk()?,
-                };
+                let (root, updates) = TrieView::new(&self.txn, self.dbs(), &changes).state_root_parallel()?;
                 (root, PreparedTrie::Full(root, updates))
             }
         };
         Ok(PreparedRoot { root, state: changes, txn_id: self.txn.id(), block: self.block, trie: Some(trie), layered: false })
-    }
-
-    /// A live root, compared with the walker's when `TIGER_LIVE_ROOT=check`.
-    fn checked(
-        &self,
-        live: (B256, TrieUpdates),
-        walk: impl FnOnce() -> Result<(B256, TrieUpdates), TrieError>,
-    ) -> Result<(B256, TrieUpdates), TrieError> {
-        if self.db.live_check {
-            let walked = walk()?;
-            assert_eq!(live.0, walked.0, "live state root differs from the walker's at block {}", self.block + 1);
-        }
-        Ok(live)
-    }
-
-    /// Where a live root of this view reads.
-    fn live_base(&self) -> LiveBase {
-        LiveBase {
-            db: self.dbs().clone(),
-            mem: self.mem.clone(),
-            snapshot: self.txn.id(),
-            max_nodes: self.db.live_max_nodes,
-        }
-    }
-
-    /// Whether this view's roots can use the live trie: a full state at its tip.
-    fn live_capable(&self) -> bool {
-        self.db.live_enabled && !self.db.partial && self.block == self.tip && self.overlays.is_empty() && self.mem_reverts.is_none()
-    }
-
-    /// The root after `changes` over this view and its trie updates, from the live trie kept
-    /// across blocks. `None` when it cannot be used; the caller uses the walker.
-    fn live_root(&self, changes: &HashedState) -> Option<(B256, TrieUpdates)> {
-        if !self.live_capable() {
-            return None;
-        }
-        self.live_base().root_once(&self.db.live, changes)
-    }
-
-    /// Starts computing the state root of a block executing over this view as its transactions
-    /// commit, when this view can: pass it to [`Self::prepare_root_with`].
-    pub fn live_session(&self) -> Option<LiveSession> {
-        if !self.live_capable() {
-            return None;
-        }
-        LiveSession::start(std::sync::Arc::clone(&self.db.live), self.live_base())
     }
 
     fn nodes(&self) -> DbNodes<'_, Ro> {
@@ -1205,20 +1103,14 @@ impl StateView<'_> {
     /// [`Self::storage_root_after`] with the changes already hashed (such as a
     /// [`PreparedRoot::hashed`] of them).
     pub fn storage_root_after_hashed(&self, address: Address, extra: &HashedState) -> Result<B256, TrieError> {
-        let started = std::time::Instant::now();
         let key = hash_key(address.as_slice());
         let ours = self.hashed()?;
-        let root = if ours.is_empty() {
-            self.storage_root_in(extra, key)
-        } else {
-            let mut state = ours.clone();
-            state.extend(extra);
-            self.storage_root_in(&state, key)
-        };
-        if LiveBase::stats_enabled() {
-            eprintln!("tiger: storage root after us={}", started.elapsed().as_micros());
+        if ours.is_empty() {
+            return self.storage_root_in(extra, key);
         }
-        root
+        let mut state = ours.clone();
+        state.extend(extra);
+        self.storage_root_in(&state, key)
     }
 
     /// The storage root of the account with hashed address `key`.

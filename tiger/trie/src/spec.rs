@@ -1,11 +1,11 @@
 //! The executable reference specification of the Merkle Patricia state root and of the branch
 //! nodes reth stores for it.
 //!
-//! This is the definition the optimized calculators ([`crate::TrieView`] and [`crate::LiveTrie`])
-//! are tested and proved against. It favors being obviously correct over being fast: every node
+//! This is the definition the optimized calculator ([`crate::TrieView`]) is tested
+//! and proved against. It favors being obviously correct over being fast: every node
 //! is built from scratch by recursion over a sorted key set, as the Yellow Paper (appendix D)
 //! defines the trie, with no caching, no incremental state and no shared code with the
-//! calculators (its own hex-prefix encoding and node layout; RLP headers and keccak come from
+//! calculator (its own hex-prefix encoding and node layout; RLP headers and keccak come from
 //! `alloy-rlp` and `alloy-primitives`).
 //!
 //! Keys are 64-nibble hashed keys, so no key is a prefix of another and branches carry no value.

@@ -19,19 +19,6 @@ Merkle Patricia trie code and the state database of the tiger client.
   own, so two under one subtree are not hashed one after the other), on the calling thread and the idle threads of `WorkerPool` (`src/pool.rs`), threads
   started once and kept: a root waits only for jobs a worker claimed, never for a thread to be
   scheduled, so a busy machine slows it to at worst one thread's time.
-- `LiveTrie` / `LiveState` (`src/live.rs`) keep the trie nodes blocks touched in memory across
-  blocks, revealed lazily from the stored branch rows and flat leaves, in 16 shards per trie. A
-  block's root hashes only what changed, and its trie updates are the stored rows that change.
-  `StateDb` keeps one for the canonical head; it applies only when the view's state root equals
-  the root it was left at, else it starts over from the stored trie. It is off unless
-  `TIGER_LIVE_ROOT=1`: on Base mainnet blocks it is slower than the walker (live root p50 13.0
-  vs 7.0 ms, newPayload p50 29.5 vs 21.9 ms, at 04d10832d; 2 to 4 times slower on the replay
-  bench), mostly waiting for the background session to catch up, and uses up to 0.8 GB more;
-  `TIGER_LIVE_ROOT=check` also walks every root and panics if the two differ. Above
-  `TIGER_LIVE_MAX_NODES` nodes (1,000,000, about 120 bytes each plus leaf values), the least
-  recently used hashed branches are blinded, down to half of it. `LiveSession`
-  (`src/stream.rs`) feeds it each transaction's changes while the block executes, on a
-  background thread, and reconciles with the block's final changes.
 
 ## Verification of the state root
 
@@ -49,35 +36,17 @@ Tested exhaustively:
   extensions, embedded leaves), plus 300 random tries up to 3,000 keys.
 
 Tested by randomized differential checks:
-- `LiveTrie`: 60 seeds × 40 blocks of inserts, updates and deletes against `Spec` (root, and the
-  stored rows after applying each block's updates), dropping the trie or pruning it at random
-  so reveals from the stored rows are exercised; structural invariants (`LiveTrie::check`)
-  after every block.
-- `LiveState`: 40 seeds × 30 blocks of account, storage, wipe and deletion changes against
-  `Spec` for every trie, on 1 to 4 threads, pruned to half its size every third block.
-- Over a datadir: the live state against the walker (`TrieView::state_root`) in the incremental
-  model test, root equal and trie updates with the same effect.
-- End to end (`tests/live.rs`): blocks of transactions streamed into a `LiveSession` (values
-  changed and changed back, wipes, deletions and re-creations, blocks with nothing streamed;
-  `LiveSession::flush` makes the background apply each transaction, some of them, or none
-  before the final changes arrive; half the seeds cap the trie at 1,500 nodes so it prunes
-  every block), committed into one datadir with the session's trie updates and into another
-  with the walker's: roots equal and the two trie tables byte-identical after every block.
+- `TrieView` over a datadir: 12 seeds × 30 blocks of account, slot, wipe and deletion changes
+  against a `HashBuilder` model (roots, proofs, and every few blocks the stored rows against a
+  from-scratch rebuild), with the parallel root equal to the sequential one, also over an
+  in-memory layer while the datadir advances.
 - The node iterator skips the hashed seek after a skipped subtree, and on entering a changed
   subtree whose branch is stored, when the walker reached its next node through stored masks and
   no changed key lies between: checked by running every skipped seek anyway and asserting its
   result would be dropped, over all tests, `root_bench`, sync seeds 13 and 23 and 300 s state
   campaigns (no case found); dropping either condition fails the model test.
-- Mutation checks: removing the deletion of collapsed rows, the tree-mask or hash-mask rules,
-  the stream's reconciliation steps, or a blinded branch's storedness each fail these tests.
 
 Contract and assumptions:
-- Trie updates are the walker's minus rewrites of rows that do not change (the walker rewrites
-  every stored node it walks through), so the tables after applying them are identical.
 - No branch node encodes to under 32 bytes (that needs two keys sharing 62 or more nibbles of
   their keccak); `HashBuilder` panics on it too.
 - keccak (alloy-primitives), RLP headers (alloy-rlp) and alloy-trie's node encodings are trusted.
-  A Kani proof that an account leaf's storage root sits at a fixed offset from its end (which
-  `LiveState` overwrites in place) runs CBMC out of memory (over 28 GB) on alloy-rlp's `U256`
-  encoding even with nonce and balance below 256; it is covered by the `LiveState` tests.
-- Streamed values are never trusted: the final changes decide the result.
