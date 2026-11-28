@@ -62,6 +62,19 @@ impl Calldata {
     /// Decodes a call on interface `C`: an unknown selector, a decode failure, or the call.
     pub fn decode_call<C: SolInterface>(calldata: &[u8]) -> Result<C> {
         let selector = Self::selector(calldata)?;
+        // With an argument-free call on `C`, alloy's length precheck never fires on a selector's
+        // worth of calldata, so its own selector lookup tells an unknown selector apart and the
+        // call needs no second lookup.
+        if C::MIN_DATA_LENGTH == 0 {
+            return C::abi_decode_validate(calldata).map_err(|error| match error {
+                alloy_sol_types::Error::UnknownSelector { .. } => {
+                    BasePrecompileError::UnknownFunctionSelector(selector)
+                }
+                error => {
+                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
+                }
+            });
+        }
         if !C::valid_selector(selector) {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }

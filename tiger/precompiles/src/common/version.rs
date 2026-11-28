@@ -84,11 +84,15 @@ impl B20Version {
     /// decode failure stays there. V1 first decodes against [`IB20V1`], so a `PausableFeature`
     /// beyond Beryl's three fails with Beryl's decode error.
     pub fn decode_b20(self, calldata: &[u8]) -> Result<IB20::IB20Calls> {
+        if self >= Self::V2 {
+            // V2 and later dial the whole surface.
+            return Calldata::decode_call(calldata);
+        }
         let selector = Calldata::selector(calldata)?;
         if !self.dials_b20(selector) {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
-        if self == Self::V1 && IB20V1::IB20Calls::valid_selector(selector) {
+        if IB20V1::IB20Calls::valid_selector(selector) {
             Calldata::decode::<IB20V1::IB20Calls>(calldata, selector)?;
         }
         Calldata::decode(calldata, selector)
