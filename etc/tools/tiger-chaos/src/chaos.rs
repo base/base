@@ -71,6 +71,10 @@ pub struct ChaosConfig {
     pub base_crash_percent: u64,
     /// Percentage of runs with a stateless tiger.
     pub stateless_percent: u64,
+    /// Percentage of runs whose datadir is a small tmpfs that chaos fills (real ENOSPC).
+    pub real_disk_percent: u64,
+    /// Percentage of restarts killed again while reopening.
+    pub reopen_kill_percent: u64,
 }
 
 /// What one run did.
@@ -130,6 +134,10 @@ pub struct ChaosRun {
     floor: u64,
     /// The upstream of a stateless tiger (base-reth on the recording's final datadir).
     upstream: Option<NodeProcess>,
+    /// tiger's datadir is a small tmpfs of its own, which `fillDisk` fills.
+    real_disk: bool,
+    /// The step at which the ballast filling the disk is removed.
+    ballast_until: Option<usize>,
 }
 
 impl ChaosRun {
@@ -263,6 +271,8 @@ impl ChaosRun {
             base_written: false,
             floor: 0,
             upstream: None,
+            real_disk: false,
+            ballast_until: None,
         };
         let mut report = RunReport {
             run,
@@ -315,6 +325,20 @@ impl ChaosRun {
             this.event("stateless", json!({ "start": start_block.number }));
         }
         fs::create_dir_all(this.proc.datadir())?;
+        if snapshot.is_none() && !base_crash && this.rng.chance(config.real_disk_percent) {
+            let status = std::process::Command::new("sudo")
+                .args(["-n", "mount", "-t", "tmpfs", "-o", "size=256m", "tmpfs"])
+                .arg(this.proc.datadir())
+                .status()?;
+            // SAFETY: getuid has no preconditions.
+            let uid = unsafe { libc::getuid() };
+            let chown = std::process::Command::new("sudo")
+                .args(["-n", "chown", &uid.to_string()])
+                .arg(this.proc.datadir())
+                .status()?;
+            this.real_disk = status.success() && chown.success();
+            this.event("realDisk", json!(this.real_disk));
+        }
         append_log(&this.proc.log_path(), "launch: start\n");
         this.proc.spawn(false)?;
         this.proc.wait_ready(&this.tiger)?;
@@ -340,6 +364,15 @@ impl ChaosRun {
             );
         }
         this.proc.stop(true);
+        if this.real_disk {
+            if !this.shared.violations.lock().expect("violations").is_empty() {
+                let _ = copy_dir(&this.proc.datadir(), &dir.join("tiger-kept"));
+            }
+            let _ = std::process::Command::new("sudo")
+                .args(["-n", "umount"])
+                .arg(this.proc.datadir())
+                .status();
+        }
         if let Some(mut upstream) = this.upstream.take() {
             upstream.stop(true);
             let _ = fs::remove_dir_all(upstream.datadir());
@@ -452,10 +485,18 @@ impl ChaosRun {
         let rec = self.rec();
         let per_mille = self.config.intensity;
         for index in first..rec.steps.len() {
-            if self.rng.below(1000) < per_mille {
+            let released = self.ballast_until.is_some_and(|at| at <= index);
+            if released {
+                self.release_disk();
+            }
+            if !released && self.rng.below(1000) < per_mille {
                 self.chaos_action()?;
             }
             self.run_step(index)?;
+            if released && self.proc.fault.is_none() {
+                // tiger took a step with space free again: disk errors are no longer expected.
+                FAULT_WINDOW.store(false, Ordering::SeqCst);
+            }
             self.shared.progress.store(index + 1, Ordering::SeqCst);
             if self
                 .shared
@@ -537,10 +578,48 @@ impl ChaosRun {
         Ok(index)
     }
 
+    /// Fills tiger's datadir file system (a small tmpfs, `--real-disk-percent` of runs) with a
+    /// ballast file, leaving at most a megabyte free, for 1 to 40 steps: every write path meets a
+    /// real `ENOSPC`, the `RocksDB` WAL and the libmdbx file growth included.
+    fn fill_disk(&mut self) -> eyre::Result<()> {
+        let datadir = self.proc.datadir();
+        let output = std::process::Command::new("df")
+            .args(["--output=avail", "-B1"])
+            .arg(&datadir)
+            .output()?;
+        let avail: u64 = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .nth(1)
+            .and_then(|l| l.trim().parse().ok())
+            .unwrap_or(0);
+        let leave = *self.rng.pick(&[0u64, 4096, 65536, 1 << 20]);
+        let steps = self.rng.range(1, 40) as usize;
+        let ballast = datadir.join("ballast");
+        let status = std::process::Command::new("fallocate")
+            .args(["-l", &avail.saturating_sub(leave).max(4096).to_string()])
+            .arg(&ballast)
+            .status()?;
+        self.event(
+            "fillDisk",
+            json!({ "avail": avail, "leave": leave, "steps": steps, "ok": status.success() }),
+        );
+        FAULT_WINDOW.store(true, Ordering::SeqCst);
+        self.ballast_until = Some(self.shared.progress.load(Ordering::SeqCst) + steps);
+        Ok(())
+    }
+
+    /// Removes the ballast; the window for disk errors closes after tiger's next step.
+    fn release_disk(&mut self) {
+        let _ = fs::remove_file(self.proc.datadir().join("ballast"));
+        self.ballast_until = None;
+        self.event("releaseDisk", json!(null));
+    }
+
     /// One random chaos action between steps.
     fn chaos_action(&mut self) -> eyre::Result<()> {
         self.settle()?;
-        match self.rng.weighted(&[16, 22, 8, 10, 24, 20]) {
+        let fill = if self.real_disk && self.ballast_until.is_none() { 18 } else { 0 };
+        match self.rng.weighted(&[16, 22, 8, 10, 24, 20, fill]) {
             0 => {
                 self.event("kill", json!(null));
                 self.kill_now();
@@ -574,7 +653,8 @@ impl ChaosRun {
                 self.recover(clean)?;
             }
             4 => self.arm_fault()?,
-            _ => self.flap()?,
+            5 => self.flap()?,
+            _ => self.fill_disk()?,
         }
         Ok(())
     }
@@ -659,7 +739,7 @@ impl ChaosRun {
         self.proc.stop(false);
         let log = self.log_since_start();
         let clean = log.contains("persisted every block through the head");
-        if !clean && !log.contains("tiger-fault:") {
+        if !clean && !log.contains("tiger-fault:") && self.ballast_until.is_none() {
             self.violation(
                 "stop",
                 json!("SIGTERM before arming a fault"),
@@ -961,10 +1041,28 @@ impl ChaosRun {
         let armed = self.proc.fault.is_some();
         append_log(&self.proc.log_path(), "launch: start\n");
         self.proc.spawn(false)?;
+        // Crash again while it reopens and heals.
+        for _ in 0..3 {
+            if armed || !self.rng.chance(self.config.reopen_kill_percent) {
+                break;
+            }
+            let delay = self.rng.below(400);
+            thread::sleep(Duration::from_millis(delay));
+            self.proc.stop(true);
+            self.event("killDuringReopen", json!({ "delayMs": delay }));
+            append_log(&self.proc.log_path(), "launch: start\n");
+            self.proc.spawn(false)?;
+        }
         // The fault (if any) is armed for this process only.
         self.proc.fault = None;
         if let Err(error) = self.proc.wait_ready(&self.tiger) {
             let log = self.log_since_start();
+            if self.ballast_until.is_some() {
+                // A full disk can keep a node from opening; it must open once space is free.
+                self.event("openFailedDiskFull", json!(log.lines().last()));
+                self.release_disk();
+                return self.recover(false);
+            }
             if armed && log.contains("tiger-fault:") {
                 // The fault fired while reopening: reopen unarmed.
                 self.event(
@@ -1205,6 +1303,9 @@ impl ChaosRun {
     /// chain must match base-reth's answers; then base-reth opens a copy of tiger's datadir and
     /// must answer the same.
     fn finish(&mut self) -> eyre::Result<()> {
+        if self.ballast_until.is_some() {
+            self.release_disk();
+        }
         self.settle()?;
         let rec = self.rec();
         let head = rec.final_head();
@@ -1214,6 +1315,9 @@ impl ChaosRun {
         });
         let (safe, finalized) = last.unwrap_or((rec.genesis, rec.genesis));
         self.forkchoice(head, safe, finalized)?;
+        if self.real_disk && self.proc.fault.is_none() {
+            FAULT_WINDOW.store(false, Ordering::SeqCst);
+        }
         if let Some(killer) = self.killer.take() {
             let _ = killer.join();
             // A late kill: recover before the final checks.

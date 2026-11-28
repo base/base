@@ -650,6 +650,16 @@ impl Reader {
         let allowed = self.allowed(epoch, inv, cmp);
         let containing: Vec<B256> =
             rec.blocks.values().filter(|b| b.txs.contains(&tx)).map(|b| b.hash).collect();
+        // The generator can repeat a deposit (same source hash) further up one chain. base-reth's
+        // hash index then points at the later copy, and unwinding that block deletes the entry
+        // while the earlier copy stays canonical, so base-reth answers null; tiger matches it.
+        let repeated = containing
+            .iter()
+            .any(|a| containing.iter().any(|b| a != b && rec.is_canonical_under(*a, *b)));
+        if repeated {
+            self.shared.count(&self.shared.reads, "txRepeatedSkipped");
+            return;
+        }
         let canonical_somewhere =
             |h: &B256| containing.iter().any(|b| rec.is_canonical_under(*b, *h));
         if found.is_null() {

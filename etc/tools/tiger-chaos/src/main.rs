@@ -100,6 +100,13 @@ enum Command {
         /// Percentage of runs with a stateless tiger (upstream: base-reth on the final datadir).
         #[arg(long, default_value_t = 15)]
         stateless_percent: u64,
+        /// Percentage of runs whose datadir is a small tmpfs that chaos fills (real ENOSPC; needs
+        /// passwordless sudo for mount).
+        #[arg(long, default_value_t = 30)]
+        real_disk_percent: u64,
+        /// Percentage of restarts killed again 0 to 400 ms into reopening.
+        #[arg(long, default_value_t = 20)]
+        reopen_kill_percent: u64,
         /// Keep passing runs' datadirs too.
         #[arg(long)]
         keep_datadirs: bool,
@@ -136,6 +143,8 @@ fn main() -> eyre::Result<()> {
             duplicate_percent,
             base_crash_percent,
             stateless_percent,
+            real_disk_percent,
+            reopen_kill_percent,
         } => {
             fs::create_dir_all(&root)?;
             let loaded: Vec<Arc<Recording>> = recordings
@@ -171,6 +180,8 @@ fn main() -> eyre::Result<()> {
                     duplicate_percent,
                     base_crash_percent,
                     stateless_percent,
+                    real_disk_percent,
+                    reopen_kill_percent,
                 };
                 let report = ChaosRun::execute(&config, &loaded[which], run)?;
                 eprintln!(

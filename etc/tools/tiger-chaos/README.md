@@ -38,6 +38,14 @@ same for both clients. Between steps, at
   unsynced writes (power loss), full disk, and the other modes the tiger build supports;
 - flaps the forkchoice between branch tips above the finalized block, then returns.
 
+In `--real-disk-percent` of runs started from genesis or stateless, tiger's datadir is a 256-megabyte
+tmpfs of its own (needs passwordless `sudo mount`), and a chaos action fills it with a ballast
+file leaving at most a megabyte free for 1 to 40 steps: every write path meets a real `ENOSPC`, the
+`RocksDB` WAL and manifest and libmdbx's file growth included. Disk errors are allowed while it is full; a
+node that cannot open on a full disk must open once the ballast is gone, and after tiger's next
+step with free space errors count again. In `--reopen-kill-percent` of restarts tiger is killed
+again 0 to 400 ms into reopening (inside its heal), up to three times in a row.
+
 In `--duplicate-percent` of Engine API calls the same call is also sent from another thread at
 the same time, as a consensus node retrying after its own timeout; both must succeed.
 
@@ -63,7 +71,10 @@ Violations include a head or tag outside that set, a block by number off every a
 proof whose root is not an allowed block's state root (half-committed or stale state), a proof
 that does not verify, plain reads that disagree with a verified proof of the same block, a
 canonical block, proof or transaction that went missing, and receipts and `eth_getLogs` by block
-hash that differ from base-reth's.
+hash that differ from base-reth's. A transaction whose hash the recording repeats further up one
+chain (the generator can repeat a deposit's source hash) is not looked up: base-reth's hash index
+points at the later copy and drops the entry when that block is unwound, so base-reth itself then
+answers null for the earlier, still canonical copy.
 
 On a datadir base-reth wrote, its history below a block that deleted a storage-holding account is
 wrong (finding B1: base-reth 2b20e42's storage-v2 changesets leave the wiped slots out; tiger
