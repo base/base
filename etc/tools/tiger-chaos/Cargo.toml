@@ -1,0 +1,28 @@
+[package]
+name = "base-tiger-chaos"
+description = "Chaos and Jepsen-style history checking of the tiger execution client's database"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+base-diff-fuzz = { path = "../diff-fuzz" }
+
+# alloy
+alloy-rlp.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std", "serde", "rlp"] }
+
+# misc
+libc.workspace = true
+eyre.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std", "unbounded_depth"] }
+clap = { workspace = true, features = ["derive"] }

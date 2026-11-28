@@ -6460,6 +6460,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-tiger-chaos"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-trie",
+ "base-diff-fuzz",
+ "clap",
+ "eyre",
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "base-trusted-proxy"
 version = "0.0.0"
 dependencies = [
