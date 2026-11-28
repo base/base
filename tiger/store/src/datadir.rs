@@ -120,6 +120,12 @@ pub struct Datadir {
     pub rocks: Rocks,
     /// A failed commit's heal failed too (such as on a full disk): the next write heals first.
     unhealed: AtomicBool,
+    /// Held by the one [`WriteTxn`] from before its heal through its commit's heals. Static
+    /// files hold the open transaction's pending rows in memory, and a heal reloads them from
+    /// disk and rewrites their `.conf` files, so a heal must not run beside another heal or an
+    /// open transaction (the persistence thread and a reorg both write). The MDBX write lock
+    /// alone does not cover a heal before `begin` or after a commit or abort.
+    writer: std::sync::Mutex<()>,
     /// How long the last commit spent on static files, RocksDB and MDBX, and MDBX's own
     /// accounting of its part, for logs.
     pub commit_phases: std::sync::Mutex<([std::time::Duration; 3], crate::CommitStats)>,
@@ -138,6 +144,7 @@ impl Datadir {
             static_files,
             rocks,
             unhealed: AtomicBool::new(false),
+            writer: std::sync::Mutex::new(()),
             commit_phases: std::sync::Mutex::default(),
         };
         let settings = datadir.db.read()?.get(datadir.db.dbi(Table::Metadata), STORAGE_SETTINGS_KEY)?.map(<[u8]>::to_vec);
@@ -198,6 +205,7 @@ impl Datadir {
 
     /// Begins the write transaction.
     pub fn write(&self) -> Result<WriteTxn<'_>, StoreError> {
+        let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if self.unhealed.load(Ordering::SeqCst) {
             self.static_files.reopen()?;
             self.heal()?;
@@ -210,6 +218,7 @@ impl Datadir {
             rocks: RocksBatch::default(),
             label: 0,
             heal_after: false,
+            _writer: writer,
         })
     }
 
@@ -312,6 +321,8 @@ pub struct WriteTxn<'d> {
     label: u64,
     /// Heal after the MDBX commit (unwinds).
     heal_after: bool,
+    /// [`Datadir::writer`], released after the commit's heals and `Drop`'s discard.
+    _writer: std::sync::MutexGuard<'d, ()>,
 }
 
 impl WriteTxn<'_> {
@@ -493,6 +504,30 @@ mod tests {
 
     fn hex(text: &str) -> Vec<u8> {
         (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap()).collect()
+    }
+
+    /// A heal owed from a failed commit (a full disk) reloads the static files from disk, which
+    /// would drop the rows another thread's open transaction has pending: the second writer waits
+    /// for the first to finish before it heals (state fuzz T9).
+    #[test]
+    fn a_heal_waits_for_the_open_transaction() {
+        let path = std::env::temp_dir().join(format!("tiger-heal-waits-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        let datadir = Datadir::open(&path).unwrap();
+        let mut w = datadir.write().unwrap();
+        datadir.static_files.append_changeset(Segment::AccountChangeSets, 0, &[]).unwrap();
+        w.set_checkpoints(0).unwrap();
+        datadir.unhealed.store(true, Ordering::SeqCst);
+        std::thread::scope(|scope| {
+            let other = scope.spawn(|| drop(datadir.write().unwrap()));
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            w.commit().unwrap();
+            other.join().unwrap();
+        });
+        assert_eq!(datadir.tip().unwrap(), Some(0));
+        assert_eq!(datadir.static_files.last_block(Segment::AccountChangeSets), Some(0));
+        drop(datadir);
+        std::fs::remove_dir_all(&path).unwrap();
     }
 
     /// Opens a base-reth datadir (set `TIGER_RETH_DATADIR`; it is healed, so use a copy).
