@@ -183,11 +183,6 @@ impl Fault {
         STATE.get().and_then(Option::as_ref)
     }
 
-    /// Whether fault injection is on.
-    pub fn enabled() -> bool {
-        Self::state().is_some()
-    }
-
     /// Names what the store is doing, for the crash line.
     pub fn phase(commit: u64, step: &str) {
         if let Some(state) = Self::state() {

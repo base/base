@@ -218,13 +218,6 @@ impl SlowReads<'_> {
     }
 }
 
-/// What the run-ahead did in one block, printed with `TIGER_RUN_AHEAD=stats`.
-#[derive(Debug, Default)]
-struct RunAheadStats {
-    taken: AtomicUsize,
-    passes: AtomicUsize,
-}
-
 /// One block's run-ahead: the channels between the workers, the run-ahead threads and the
 /// fetchers, started by the first transaction a worker finds cold.
 #[derive(Debug)]
@@ -237,7 +230,6 @@ struct RunAhead {
     fetch: Mutex<Option<mpsc::Sender<(Address, U256)>>>,
     fetched: Mutex<mpsc::Receiver<(Address, U256)>>,
     fetches: Arc<Fetches>,
-    stats: RunAheadStats,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -255,7 +247,6 @@ impl RunAhead {
             fetch: Mutex::new(Some(fetch)),
             fetched: Mutex::new(fetched),
             fetches: Arc::default(),
-            stats: RunAheadStats::default(),
         }
     }
 
@@ -293,24 +284,11 @@ impl RunAhead {
 }
 
 /// Whether prewarm runs ahead of the transactions its workers find cold (on unless
-/// `TIGER_RUN_AHEAD=0`; `stats` also prints a line per block). On Base mainnet it cut the
-/// insert p99 from 109 to 72 ms with no p50 cost, and costs nothing on a block whose state is
-/// cached (no thread starts).
+/// `TIGER_RUN_AHEAD=0`). On Base mainnet it cut the insert p99 from 109 to 72 ms with no p50
+/// cost, and costs nothing on a block whose state is cached (no thread starts).
 fn run_ahead_enabled() -> bool {
-    run_ahead_mode() != 0
-}
-
-fn run_ahead_stats() -> bool {
-    run_ahead_mode() == 2
-}
-
-fn run_ahead_mode() -> u8 {
-    static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    *MODE.get_or_init(|| match std::env::var("TIGER_RUN_AHEAD").as_deref() {
-        Ok("0") => 0,
-        Ok("stats") => 2,
-        _ => 1,
-    })
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("TIGER_RUN_AHEAD").as_deref() != Ok("0"))
 }
 
 /// The slots the run-ahead threads asked for: read (with their values) or still being read.
@@ -376,7 +354,7 @@ pub(crate) fn warm_while<R>(
     let receiver = Mutex::new(receiver);
     let paths = Mutex::new(Paths::default());
     let run_ahead = RunAhead::new();
-    let (result, stopped) = thread::scope(|scope| {
+    thread::scope(|scope| {
         for worker in 0..workers {
             let (done, changed, run_ahead) = (&done, changed.clone(), &run_ahead);
             // A speculation runs over state the block does not see; whatever it hits must not
@@ -404,24 +382,10 @@ pub(crate) fn warm_while<R>(
         // Every prewarm thread's reads fail from here (see [`NodeState::stopping_on`]): the
         // workers stop at their next read, the walkers at their next path.
         done.store(true, Ordering::Relaxed);
-        let stopped = std::time::Instant::now();
         // The run-ahead threads end when their channel closes, the fetchers when theirs does.
         drop(lock(&run_ahead.take).take());
-        (result, stopped)
-    });
-    if run_ahead_stats() {
-        let fetched = lock(&run_ahead.fetches.slots).len();
-        let stats = &run_ahead.stats;
-        let (taken, passes) = (stats.taken.load(Ordering::Relaxed), stats.passes.load(Ordering::Relaxed));
-        // How long the block waited for its prewarm threads to end after validating.
-        let join_us = stopped.elapsed().as_micros();
-        eprintln!(
-            "tiger: run-ahead block={} txs={} taken={taken} passes={passes} fetched={fetched} join_us={join_us}",
-            header.number,
-            transactions.len()
-        );
-    }
-    result
+        result
+    })
 }
 
 /// One walker: walks the trie paths of the changes the workers send until they are all walked
@@ -565,7 +529,7 @@ impl PrewarmBlock<'_> {
     fn run_ahead(
         &self,
         run_ahead: &RunAhead, fetch: mpsc::Sender<(Address, U256)>, done: &AtomicBool) {
-        let (fetches, stats) = (&run_ahead.fetches, &run_ahead.stats);
+        let fetches = &run_ahead.fetches;
         let Ok(state) = self.chain.state_after(self.parent).map(|state| state.stopping_on(done)) else { return };
         let Some(state) = state.running_ahead(Arc::clone(fetches), fetch) else { return };
         let env = BlockExecution::env(self.header);
@@ -575,7 +539,6 @@ impl PrewarmBlock<'_> {
             if done.load(Ordering::Relaxed) {
                 return;
             }
-            stats.taken.fetch_add(1, Ordering::Relaxed);
             let Ok((_, tx)) = Transactions::decode(&self.transactions[index]) else { continue };
             // Passes guess unread slots as zero and one in turn: a zero fails checks such as
             // `require(info.rank > 0)` and ends a pass at the first unread entry of a batch, a
@@ -584,7 +547,6 @@ impl PrewarmBlock<'_> {
                 if done.load(Ordering::Relaxed) {
                     return;
                 }
-                stats.passes.fetch_add(1, Ordering::Relaxed);
                 let missed = state.ahead_misses();
                 state.ahead_guess(U256::from(pass % 2));
                 let Ok(mut executor) = BaseBlockExecutor::for_block(self.spec, &env, state.database()) else { return };

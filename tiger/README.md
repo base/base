@@ -120,8 +120,8 @@ with a threshold of 2048, and tiger with the same flags persists like it. Live, 
 
 Bigger batches rewrite fewer pages per block, but do not change the insert tail. A shutdown
 flushes the whole in-memory layer, about 4 minutes at 2048, as base-reth does.
-`TIGER_MDBX_WRITEMAP=1` (base-reth's write-mapped MDBX) was slower on ZFS: 61 ms per block at
-2048, with page faults in place of `pwrite`.
+base-reth's write-mapped MDBX (`MDBX_WRITEMAP`, tried and removed) was slower on ZFS: 61 ms per
+block at 2048, with page faults in place of `pwrite`.
 
 Profile-guided builds (`pgo.sh`) cut instructions 8.6% but showed no live gain, since live
 latency is reads, not CPU (see [Optimized builds](#optimized-builds)).

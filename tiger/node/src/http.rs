@@ -149,16 +149,6 @@ pub fn serve(node: Arc<Node>, address: SocketAddr, jwt: Option<JwtSecret>) -> Re
     Ok(())
 }
 
-thread_local! {
-    /// When this connection thread's current request began arriving (`TIGER_VALIDATION_LOG`).
-    static REQUEST_STARTED: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
-}
-
-/// When the request this thread serves began arriving.
-pub(crate) fn request_started() -> Option<std::time::Instant> {
-    REQUEST_STARTED.get()
-}
-
 fn connection(node: &Node, stream: TcpStream, jwt: Option<&JwtSecret>) -> std::io::Result<()> {
     stream.set_read_timeout(Some(IDLE_TIMEOUT))?;
     stream.set_nodelay(true)?;
@@ -172,7 +162,6 @@ fn connection(node: &Node, stream: TcpStream, jwt: Option<&JwtSecret>) -> std::i
         if line.trim().is_empty() {
             continue;
         }
-        REQUEST_STARTED.set(Some(std::time::Instant::now()));
         let method = line.split(' ').next().unwrap_or_default().to_owned();
         let http10 = line.trim_end().ends_with("HTTP/1.0");
         let mut length = 0usize;

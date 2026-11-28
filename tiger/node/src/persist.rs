@@ -111,31 +111,13 @@ impl Node {
     /// Commits one persistence batch when one is due. Returns whether it committed one.
     pub fn persist_once(&self) -> Result<bool, String> {
         let Some(batch) = self.chain.read().expect("chain lock").persistence_batch() else { return Ok(false) };
-        let started = std::time::Instant::now();
         if !batch.commit()? {
             return Ok(false);
         }
-        let committed = started.elapsed();
         // The new in-memory layer is built without the chain lock, which imports need.
         let above = self.chain.read().expect("chain lock").blocks_above(&batch);
-        let rebuilding = std::time::Instant::now();
         let rebuilt = above.as_deref().map(|blocks| crate::MemRebuild::build(batch.last().0, blocks));
-        let layer_blocks = above.map_or(0, |blocks| blocks.len());
-        let rebuilt_in = rebuilding.elapsed();
-        let locking = std::time::Instant::now();
-        let mut chain = self.chain.write().expect("chain lock");
-        let lock_wait = locking.elapsed();
-        chain.persisted(&batch, rebuilt)?;
-        let held = locking.elapsed() - lock_wait;
-        drop(chain);
-        if std::env::var_os("TIGER_PERSIST_LOG").is_some() {
-            let (number, _) = batch.last();
-            crate::Log::line(format!(
-                "tiger: persisted blocks {}..={number} in {committed:?}, layer of {} blocks built in {rebuilt_in:?}, chain lock waited {lock_wait:?} held {held:?}",
-                batch.disk.0 + 1,
-                layer_blocks,
-            ));
-        }
+        self.chain.write().expect("chain lock").persisted(&batch, rebuilt)?;
         *self.persistence.batches.lock().expect("persistence lock") += 1;
         self.persistence.persisted.notify_all();
         Ok(true)

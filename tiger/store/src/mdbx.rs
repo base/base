@@ -138,9 +138,6 @@ impl Env {
                 let mut flags =
                     ffi::MDBX_NORDAHEAD | ffi::MDBX_COALESCE | ffi::MDBX_NOSTICKYTHREADS | ffi::MDBX_LIFORECLAIM;
                 flags |= if options.read_only { ffi::MDBX_RDONLY } else { ffi::MDBX_SYNC_DURABLE };
-                if !options.read_only && std::env::var_os("TIGER_MDBX_WRITEMAP").is_some() && !crate::Fault::enabled() {
-                    flags |= ffi::MDBX_WRITEMAP;
-                }
                 let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| MdbxError(ffi::MDBX_EINVAL))?;
                 MdbxError::check(ffi::mdbx_env_open(env, path.as_ptr(), flags, 0o644))
             };
@@ -339,25 +336,11 @@ impl Txn<Rw> {
         Ok(Cursor { ptr: cursor, txn: PhantomData })
     }
 
-    /// Commits, durably (fsync) before returning, and reports what the commit wrote and where
-    /// its time went.
-    pub fn commit(mut self) -> Result<CommitStats, MdbxError> {
-        // SAFETY: MDBX_txn_info is plain data; valid transaction and a correctly sized pointer.
-        let mut info: ffi::MDBX_txn_info = unsafe { std::mem::zeroed() };
-        MdbxError::check(unsafe { ffi::mdbx_txn_info(self.ptr, &mut info, false) })?;
+    /// Commits, durably (fsync) before returning.
+    pub fn commit(mut self) -> Result<(), MdbxError> {
         let txn = std::mem::replace(&mut self.ptr, ptr::null_mut());
-        // SAFETY: MDBX_commit_latency is plain data.
-        let mut latency: ffi::MDBX_commit_latency = unsafe { std::mem::zeroed() };
         // SAFETY: valid transaction; MDBX frees it whether or not commit succeeds.
-        MdbxError::check(unsafe { ffi::mdbx_txn_commit_ex(txn, &mut latency) })?;
-        // MDBX reports latencies in 1/65536 seconds.
-        let duration = |units: u32| std::time::Duration::from_secs_f64(f64::from(units) / 65536.0);
-        Ok(CommitStats {
-            dirty_bytes: info.txn_space_dirty,
-            gc: duration(latency.gc_wallclock),
-            write: duration(latency.write),
-            sync: duration(latency.sync),
-        })
+        MdbxError::check(unsafe { ffi::mdbx_txn_commit_ex(txn, ptr::null_mut()) })
     }
 }
 
@@ -368,19 +351,6 @@ impl<K> Drop for Txn<K> {
             unsafe { ffi::mdbx_txn_abort(self.ptr) };
         }
     }
-}
-
-/// What a write transaction's commit wrote and where its time went (MDBX's own accounting).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CommitStats {
-    /// Bytes of dirty pages the transaction held before the commit wrote them.
-    pub dirty_bytes: u64,
-    /// Updating the free-page list.
-    pub gc: std::time::Duration,
-    /// Writing the dirty pages.
-    pub write: std::time::Duration,
-    /// Syncing them to disk.
-    pub sync: std::time::Duration,
 }
 
 /// A key-value pair borrowed from the map.
