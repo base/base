@@ -81,6 +81,17 @@ enum Node {
     Branch { children: Box<[Ref; 16]> },
 }
 
+impl Node {
+    /// The leaf or extension with `prefix` put before its key.
+    fn prefixed(self, prefix: &Nibbles) -> Self {
+        match self {
+            Self::Leaf { key, value } => Self::Leaf { key: prefix.join(&key), value },
+            Self::Ext { key, child } => Self::Ext { key: prefix.join(&key), child },
+            Self::Branch { .. } => unreachable!("only a leaf or an extension merges a prefix"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Entry {
     node: Node,
@@ -231,10 +242,25 @@ impl SparseTrie {
 
     /// The value at `key`, `None` when absent.
     pub fn get(&mut self, source: &dyn NodeSource, key: B256) -> Result<Option<Vec<u8>>, TrieError> {
+        self.walk(source, key, None)
+    }
+
+    /// Walks `key`'s path to its leaf or to the node that shows it absent, returning the value
+    /// and appending to `proof` every stored node passed (see [`Self::proof`]).
+    fn walk(&mut self, source: &dyn NodeSource, key: B256, mut proof: Option<&mut Vec<Bytes>>) -> Result<Option<Vec<u8>>, TrieError> {
         let k = Nibbles::unpack(key);
         let (mut loc, mut depth) = (Loc::Root, 0usize);
         loop {
             let Some(i) = self.resolve(source, loc, &k.slice(..depth))? else { return Ok(None) };
+            if let Some(out) = proof.as_deref_mut() {
+                if self.arena[i].rlp.is_none() {
+                    self.root();
+                }
+                let entry = &self.arena[i];
+                if matches!(loc, Loc::Root) || entry.rlp.as_ref().is_some_and(RlpNode::is_hash) {
+                    out.push(Bytes::from(entry.encoded.clone().expect("encoded")));
+                }
+            }
             match &self.arena[i].node {
                 Node::Leaf { key, value } => return Ok((*key == k.slice(depth..)).then(|| value.clone())),
                 Node::Ext { key, .. } => {
@@ -350,22 +376,15 @@ impl SparseTrie {
         child_path.push(n);
         let child = self.resolve(source, Loc::Child(parent, n), &child_path)?.expect("non-empty child");
         let prefix = Nibbles::from_nibbles([n]);
-        let replacement = match self.arena[child].node.clone() {
-            Node::Leaf { key, value } => Node::Leaf { key: prefix.join(&key), value },
-            Node::Ext { key, child } => Node::Ext { key: prefix.join(&key), child },
+        self.arena[parent].node = match self.arena[child].node.clone() {
             Node::Branch { .. } => Node::Ext { key: prefix, child: Ref::Node(child) },
+            node => node.prefixed(&prefix),
         };
-        self.arena[parent].node = replacement;
         // Merge into an extension above.
         if chain.len() >= 2 {
             let grand = chain[chain.len() - 2].1;
             if let Node::Ext { key: grand_key, .. } = self.arena[grand].node.clone() {
-                let merged = match self.arena[parent].node.clone() {
-                    Node::Leaf { key, value } => Node::Leaf { key: grand_key.join(&key), value },
-                    Node::Ext { key, child } => Node::Ext { key: grand_key.join(&key), child },
-                    Node::Branch { .. } => unreachable!("the parent was just collapsed"),
-                };
-                self.arena[grand].node = merged;
+                self.arena[grand].node = self.arena[parent].node.clone().prefixed(&grand_key);
             }
         }
         Ok(())
@@ -472,33 +491,9 @@ impl SparseTrie {
     /// path (the root first, embedded nodes skipped), ending at the leaf or at the node that shows
     /// the key is absent. Empty for an empty trie.
     pub fn proof(&mut self, source: &dyn NodeSource, key: B256) -> Result<Vec<Bytes>, TrieError> {
-        let k = Nibbles::unpack(key);
         let mut out = Vec::new();
-        let (mut loc, mut depth) = (Loc::Root, 0usize);
-        loop {
-            let Some(i) = self.resolve(source, loc, &k.slice(..depth))? else { return Ok(out) };
-            if self.arena[i].rlp.is_none() {
-                self.root();
-            }
-            let entry = &self.arena[i];
-            if matches!(loc, Loc::Root) || entry.rlp.as_ref().is_some_and(RlpNode::is_hash) {
-                out.push(Bytes::from(entry.encoded.clone().expect("encoded")));
-            }
-            match &entry.node {
-                Node::Leaf { .. } => return Ok(out),
-                Node::Ext { key, .. } => {
-                    if !k.slice(depth..).starts_with(key) {
-                        return Ok(out);
-                    }
-                    depth += key.len();
-                    loc = Loc::Child(i, 16);
-                }
-                Node::Branch { .. } => {
-                    loc = Loc::Child(i, k.get_unchecked(depth));
-                    depth += 1;
-                }
-            }
-        }
+        self.walk(source, key, Some(&mut out))?;
+        Ok(out)
     }
 }
 

@@ -22,10 +22,8 @@ use base_tiger_store::{
     StorageEntry, StoreError, Table, Txn, WriteTxn, put_compact_u256,
 };
 
-use alloy_rlp::Decodable;
-
 use crate::{
-    AccountProof, DbNodes, EMPTY_ROOT, HashedState, HashedStorage, PARTIAL_ROOT_KEY, ProofNodes,
+    AccountProof, DbNodes, EMPTY_ROOT, HashedState, HashedStorage, NodeSource, PARTIAL_ROOT_KEY, ProofNodes,
     Recording, SparseTrie,
     PartialState, StateTries, StateWriter, TrieError, TrieUpdates, TrieView, hash_key,
 };
@@ -308,14 +306,13 @@ impl StateDb {
             return Ok(Some(account));
         }
         let Some(root) = self.partial_root(txn)? else { return Ok(None) };
-        let leaf = SparseTrie::new(None, root).get(&DbNodes { txn, db }, key)?;
-        Ok(leaf.map(|leaf| PartialState::decode_account_leaf(&leaf)).transpose()?.map(|(account, _)| account))
+        Ok(PartialState::account(&mut SparseTrie::new(None, root), &DbNodes { txn, db }, key)?.map(|(account, _)| account))
     }
 
     /// The storage root of the account `key` at the stored tip of a partial state.
     fn tip_storage_root<K>(&self, txn: &Txn<K>, root: B256, key: B256) -> Result<B256, TrieError> {
-        let leaf = SparseTrie::new(None, root).get(&DbNodes { txn, db: &self.datadir.db }, key)?;
-        Ok(leaf.map(|leaf| PartialState::decode_account_leaf(&leaf)).transpose()?.map_or(EMPTY_ROOT, |(_, storage_root)| storage_root))
+        let source = DbNodes { txn, db: &self.datadir.db };
+        Ok(PartialState::account(&mut SparseTrie::new(None, root), &source, key)?.map_or(EMPTY_ROOT, |(_, storage_root)| storage_root))
     }
 
     /// The value of hashed `slot` of the account `key` at the stored tip.
@@ -327,10 +324,7 @@ impl StateDb {
         let Some(root) = self.partial_root(txn)? else { return Ok(U256::ZERO) };
         let storage_root = self.tip_storage_root(txn, root, key)?;
         let leaf = SparseTrie::new(Some(key), storage_root).get(&DbNodes { txn, db }, slot)?;
-        match leaf {
-            Some(leaf) => U256::decode(&mut &leaf[..]).map_err(|e| TrieError::Corrupt(format!("storage leaf: {e}"))),
-            None => Ok(U256::ZERO),
-        }
+        Ok(leaf.map(|leaf| PartialState::decode_storage_leaf(&leaf)).transpose()?.unwrap_or_default())
     }
 
     /// Stores what an execution witness for the next block reveals of the stored tip's state
@@ -1076,21 +1070,21 @@ impl StateView<'_> {
     /// answers only at its stored tip without overlays.
     pub fn trie_witness(&self, extra: &BlockChanges) -> Result<Vec<Bytes>, TrieError> {
         let changes = extra.hashed();
-        if self.db.partial {
+        let (nodes, view, proofs);
+        let (source, root): (&dyn NodeSource, B256) = if self.db.partial {
             if self.block != self.tip || !self.overlays.is_empty() {
                 return Err(TrieError::Unknown("witness below the tip of a partial state".into()));
             }
             let root = self.db.partial_root(&self.txn)?.expect("partial");
-            let nodes = self.nodes();
-            let recording = Recording { inner: &nodes, seen: Default::default() };
-            StateTries::apply(&recording, root, &changes)?;
-            return Ok(recording.seen.into_inner().into_values().collect());
-        }
-        let base = self.hashed()?;
-        let view = self.trie_view(base);
-        let root = view.state_root(false)?.0;
-        let source = ProofNodes { view: &view };
-        let recording = Recording { inner: &source, seen: Default::default() };
+            nodes = self.nodes();
+            (&nodes, root)
+        } else {
+            view = self.trie_view(self.hashed()?);
+            let root = view.state_root(false)?.0;
+            proofs = ProofNodes { view: &view };
+            (&proofs, root)
+        };
+        let recording = Recording { inner: source, seen: Default::default() };
         StateTries::apply(&recording, root, &changes)?;
         Ok(recording.seen.into_inner().into_values().collect())
     }

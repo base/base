@@ -23,7 +23,7 @@ use alloy_trie::{EMPTY_ROOT_HASH, Nibbles, TrieAccount, nodes::TrieNode};
 use base_tiger_store::{Account, BytecodeCodec, Db, Rw, StorageEntry, Table, TrieCodec, Txn};
 
 use crate::{
-    AccountProof, HashedState, NodeSource, SparseChanges, SparseTrie, StorageProof, TrieError, TrieView, account_leaf,
+    AccountProof, HashedState, NodeSource, SparseTrie, StorageProof, TrieError, TrieView, account_leaf,
     storage_leaf,
 };
 
@@ -33,10 +33,6 @@ pub const PARTIAL_ROOT_KEY: &[u8] = b"tiger_partial_state_root";
 
 /// Most nodes one witness walk visits (a bound on malformed input).
 const MAX_WITNESS_NODES: usize = 1 << 22;
-
-fn decode_storage_leaf(leaf: &[u8]) -> Result<U256, TrieError> {
-    U256::decode(&mut &leaf[..]).map_err(|e| TrieError::Corrupt(format!("storage leaf: {e}")))
-}
 
 /// Stored nodes of a partial-state datadir.
 #[derive(Debug)]
@@ -127,7 +123,7 @@ impl StateTries {
         let mut storages = BTreeMap::new();
         let keys: BTreeSet<B256> = state.accounts.keys().chain(state.storages.keys()).copied().collect();
         for key in keys {
-            let current = accounts.get(source, key)?.map(|leaf| PartialState::decode_account_leaf(&leaf)).transpose()?;
+            let current = PartialState::account(&mut accounts, source, key)?;
             let account = match state.accounts.get(&key) {
                 Some(account) => *account,
                 None => current.map(|c| c.0),
@@ -153,13 +149,13 @@ impl StateTries {
 
     /// The storage root of the account `key` after the changes (empty root when absent).
     pub fn storage_root(&mut self, source: &dyn NodeSource, key: B256) -> Result<B256, TrieError> {
-        Ok(self.accounts.get(source, key)?.map(|leaf| PartialState::decode_account_leaf(&leaf)).transpose()?.map_or(EMPTY_ROOT_HASH, |c| c.1))
+        Ok(PartialState::account(&mut self.accounts, source, key)?.map_or(EMPTY_ROOT_HASH, |c| c.1))
     }
 
     /// The proof of account `key` and its `slots` after the changes.
     pub fn proof(&mut self, source: &dyn NodeSource, key: B256, slots: &[B256]) -> Result<AccountProof, TrieError> {
         let proof = self.accounts.proof(source, key)?;
-        let current = self.accounts.get(source, key)?.map(|leaf| PartialState::decode_account_leaf(&leaf)).transpose()?;
+        let current = PartialState::account(&mut self.accounts, source, key)?;
         let mut out = AccountProof {
             key,
             account: current.map(|c| c.0),
@@ -180,7 +176,7 @@ impl StateTries {
                 out.storage.push(StorageProof { slot: *slot, value: U256::ZERO, proof: Vec::new() });
                 continue;
             }
-            let value = trie.get(source, *slot)?.map(|leaf| decode_storage_leaf(&leaf)).transpose()?.unwrap_or_default();
+            let value = trie.get(source, *slot)?.map(|leaf| PartialState::decode_storage_leaf(&leaf)).transpose()?.unwrap_or_default();
             out.storage.push(StorageProof { slot: *slot, value, proof: trie.proof(source, *slot)? });
         }
         Ok(out)
@@ -210,26 +206,20 @@ impl StateTries {
             }
             Ok(())
         };
-        for (owner, (wiped, trie)) in &self.storages {
-            if *wiped {
-                for key in Self::owner_keys(txn, db, *owner)? {
+        let tries = self.storages.iter().map(|(owner, (wiped, trie))| (Some(*owner), *wiped, trie));
+        for (owner, wiped, trie) in tries.chain([(None, false, &self.accounts)]) {
+            if let (true, Some(owner)) = (wiped, owner) {
+                for key in Self::owner_keys(txn, db, owner)? {
                     apply(txn, key, None)?;
                 }
             }
             let changes = trie.changes();
             for path in &changes.deletes {
-                apply(txn, PartialState::node_key(Some(*owner), path), None)?;
+                apply(txn, PartialState::node_key(owner, path), None)?;
             }
             for (path, node) in &changes.writes {
-                apply(txn, PartialState::node_key(Some(*owner), path), Some(node))?;
+                apply(txn, PartialState::node_key(owner, path), Some(node))?;
             }
-        }
-        let changes: SparseChanges = self.accounts.changes();
-        for path in &changes.deletes {
-            apply(txn, PartialState::node_key(None, path), None)?;
-        }
-        for (path, node) in &changes.writes {
-            apply(txn, PartialState::node_key(None, path), Some(node))?;
         }
         if self.root == EMPTY_ROOT_HASH {
             apply(txn, PartialState::node_key(None, &Nibbles::new()), None)?;
@@ -280,6 +270,16 @@ impl PartialState {
         }
     }
 
+    /// Decodes a storage leaf.
+    pub fn decode_storage_leaf(leaf: &[u8]) -> Result<U256, TrieError> {
+        U256::decode(&mut &leaf[..]).map_err(|e| TrieError::Corrupt(format!("storage leaf: {e}")))
+    }
+
+    /// The account `key` in `trie` and its storage root, `None` when absent.
+    pub fn account(trie: &mut SparseTrie, source: &dyn NodeSource, key: B256) -> Result<Option<(Account, B256)>, TrieError> {
+        trie.get(source, key)?.map(|leaf| Self::decode_account_leaf(&leaf)).transpose()
+    }
+
     /// Decodes an account leaf: the account and its storage root.
     pub fn decode_account_leaf(leaf: &[u8]) -> Result<(Account, B256), TrieError> {
         let account = TrieAccount::decode(&mut &leaf[..]).map_err(|e| TrieError::Corrupt(format!("account leaf: {e}")))?;
@@ -292,7 +292,7 @@ impl PartialState {
     /// in the flat tables; `codes` go to `Bytecodes`. Nodes not reachable are ignored, so a witness
     /// for another root changes nothing.
     pub fn absorb_witness(txn: &mut Txn<Rw>, db: &Db, root: B256, nodes: &[Bytes], codes: &[Bytes]) -> Result<(), TrieError> {
-        Self::absorb(txn, db, root, nodes, codes, &BTreeMap::new())
+        Self::absorb_proofs(txn, db, root, nodes, codes, &BTreeMap::new())
     }
 
     /// Like [`Self::absorb_witness`] for proofs of the hashed keys `keys` (by trie owner, `None`
@@ -300,17 +300,6 @@ impl PartialState {
     /// `nodes`, the walk continues through the stored node at that path when it has the hash
     /// the parent references, so the proofs' unchanged subtrees are still reached and stored.
     pub fn absorb_proofs(
-        txn: &mut Txn<Rw>,
-        db: &Db,
-        root: B256,
-        nodes: &[Bytes],
-        codes: &[Bytes],
-        keys: &BTreeMap<Option<B256>, Vec<Nibbles>>,
-    ) -> Result<(), TrieError> {
-        Self::absorb(txn, db, root, nodes, codes, keys)
-    }
-
-    fn absorb(
         txn: &mut Txn<Rw>,
         db: &Db,
         root: B256,
@@ -387,7 +376,7 @@ impl PartialState {
                             }
                         }
                         Some(owner) => {
-                            let value = decode_storage_leaf(&leaf.value)?;
+                            let value = Self::decode_storage_leaf(&leaf.value)?;
                             let entry = StorageEntry { key, value }.to_bytes();
                             let mut cursor = txn.cursor_rw(storages)?;
                             if cursor.seek_dup(owner.as_slice(), key.as_slice())?.is_some_and(|(_, v)| v.starts_with(key.as_slice())) {
