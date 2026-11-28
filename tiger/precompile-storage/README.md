@@ -1,72 +1,30 @@
 # base-tiger-precompile-storage
 
-Storage abstractions and the provider boundary for the Base native precompiles in the tiger
+Storage helpers and the provider boundary for the Base native precompiles in the tiger
 client, ported from base/base's `base-precompile-storage` without revm. `PrecompileStorageProvider`
 is the boundary an execution engine implements (storage, transient storage, logs, account and code
 access, gas, checkpoints); `GasSchedule` is the fixed gas table base-reth charges for that work.
 
-## Slot Derivation Rules
+`StorageCtx` is the scoped handle a precompile call works through. `StorageLayout` and the
+`StorageCtx` read/write helpers in `layout.rs` implement the Solidity storage layouts the
+precompiles use, by hand:
 
-### Auto-allocation
+- ERC-7201 namespaces: a layout's fields sit at `root + offset`, where
+  `root = keccak256(keccak256(id) - 1) & ~0xff`. Each precompile storage module hard-codes its
+  root and field offsets and tests the root against `StorageLayout::erc7201_root`.
+- Values are right-aligned in their word. Fields narrower than 32 bytes that share a word are
+  read with one SLOAD and written with an SLOAD and an SSTORE of the merged word.
+- Mappings: `slot(key) = keccak256(lpad32(key) ‖ to_be32(base))` for unsigned integers,
+  addresses and `bytes32`, and `keccak256(bytes(key) ‖ to_be32(base))` for strings. A nested
+  mapping applies the derivation again from the outer entry's slot.
+- Strings use Solidity's short (inline, `len * 2` in the last byte) and long (`len * 2 + 1` in
+  the head, data at `keccak256(slot)`) encodings; `uint64[]` stores its length at the slot and
+  four elements per word at `keccak256(slot)`, the first in the low bytes. From Cobalt
+  (`StorageFeatures::dynamic_storage_tail_cleanup_enabled`), writes of both first read the old
+  value's length and zero the data words it no longer needs.
 
-Fields in a `#[contract]` struct are allocated sequentially following Solidity's right-to-left
-bin-packing rules. Fields smaller than 32 bytes are packed into the same slot when they fit.
-
-```rust,ignore
-#[contract]
-pub struct MyToken {
-    pub name: String,       // slot 0 (full slot — dynamic)
-    pub symbol: String,     // slot 1 (full slot — dynamic)
-    pub decimals: u8,       // slot 2, offset 0 (1 byte)
-    pub paused: bool,       // slot 2, offset 1 (packed with decimals)
-    pub total_supply: U256, // slot 3 (doesn't fit with the 30 remaining bytes)
-}
-```
-
-### Manual slot override
-
-- `#[slot(N)]` — places the field at an explicit absolute slot with offset 0.
-- `#[base_slot(N)]` — resets the auto-allocation chain starting from slot N.
-- `#[slot("key")]` — computes `keccak256("key")` at macro expansion time.
-
-### Namespaced layouts
-
-- `#[namespace("id")]` — starts a `#[contract]` field at the ERC-7201 root for `id`.
-
-Multiple fields with the same namespace use normal Solidity offsets from that root without advancing
-the surrounding contract layout. `#[slot]` and `#[base_slot]` overrides cannot be combined with
-`#[namespace]` on the same field.
-
-The namespace can also be declared once on a reusable `Storable` layout type. A `#[contract]`
-field with that type is automatically mounted at the type's namespace root:
-
-```rust,ignore
-#[derive(Debug, Clone, Storable)]
-#[namespace("b20.asset")]
-pub struct B20AssetStorage {
-    pub shares_to_tokens_ratio: U256,
-}
-
-#[contract]
-pub struct B20Asset {
-    pub security: B20AssetStorage,
-}
-```
-
-### Mapping slot derivation
-
-```text
-slot(key, base) = keccak256(lpad32(key) ‖ to_be32(base))
-```
-
-This matches Solidity's `keccak256(abi.encode(key, slot))` for:
-- Unsigned integers, `Address`, `FixedBytes<32>` — identical encoding
-- `String` — uses `keccak256(bytes(key) ‖ to_be32(base))`, matching Solidity's string-keyed
-  mapping derivation
-- Signed integers — diverges (we zero-left-pad the two's complement bits; Solidity sign-extends)
-- `FixedBytes<N>` for N < 32 — diverges (we left-pad; Solidity right-pads)
-
-Use contract view functions rather than off-chain keccak reconstruction for the divergent types.
+These precompiles run in consensus, so the order and count of storage accesses each helper makes
+is part of its contract (it decides gas) and is documented on it.
 
 ### Append-only rule
 

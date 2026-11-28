@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # tiger
-base-tiger-precompile-macros.workspace = true
 base-tiger-precompile-storage.workspace = true
 
 # base

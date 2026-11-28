@@ -1,8 +1,6 @@
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
-// Allow macro-generated code inside this crate to use `::base_tiger_precompile_storage::` paths.
-extern crate self as base_tiger_precompile_storage;
 
 mod error;
 pub use error::{BasePrecompileError, DelegateCallNotAllowed, IntoPrecompileResult, Result};
@@ -16,25 +14,14 @@ pub use neutral::{
 mod gas;
 pub use gas::{GasSchedule, SstoreValues};
 
-mod packing;
-pub use packing::{
-    FieldLocation, PackedSlot, Word, calc_element_loc, calc_element_offset, calc_element_slot,
-    calc_packed_slot_count,
-};
+mod layout;
+pub use layout::{StorageLayout, StorageValue};
 
 mod provider;
-pub use provider::{
-    ContractStorage, FromWord, Handler, Layout, LayoutCtx, Packable, PrecompileStorageProvider,
-    Storable, StorableType, StorageFeatures, StorageKey, StorageOps, sealed,
-};
+pub use provider::{PrecompileStorageProvider, StorageFeatures};
 
 mod storage_ctx;
 pub use storage_ctx::{CheckpointGuard, StorageCtx};
-
-mod types;
-pub use types::{
-    ArrayHandler, BytesLikeHandler, HandlerCache, Mapping, MappingHandler, Slot, VecHandler,
-};
 
 #[cfg(any(test, feature = "test-utils"))]
 mod hashmap;

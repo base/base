@@ -29,6 +29,16 @@ ones the EVM pre-warms; token addresses are resolved dynamically and are not pre
 `PrecompileStorageProvider` (from `base-tiger-precompile-storage`); `DELEGATECALL`/`CALLCODE`
 calls revert with `DelegateCallNotAllowed()` and no gas used.
 
+## Storage
+
+Each precompile's storage module (`*/storage.rs`, `common/core_storage.rs`) writes its Solidity
+layout out by hand: the ERC-7201 namespace root and field slots as constants, and each accessor
+as the exact SLOADs and SSTOREs base-reth's macro-generated code made, through the helpers on
+`StorageCtx` and `StorageLayout` in `base-tiger-precompile-storage`. The asset and stablecoin
+tokens are `B20TokenStorage` over their extension layouts and share one `TokenAccounting`
+implementation. The `b20_*_golden` tests pin storage access counts and the resulting storage of
+every operation.
+
 The storage provider for evm2 lives in the tiger evm crate. Tests use the in-memory
 `HashMapStorageProvider` behind the `test-utils` feature.
 

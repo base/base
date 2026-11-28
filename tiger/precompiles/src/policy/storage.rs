@@ -1,8 +1,7 @@
 use alloc::vec::Vec;
 
-use alloy_primitives::{Address, LogData, U256, address};
-use base_tiger_precompile_macros::contract;
-use base_tiger_precompile_storage::{Handler, Mapping, Result};
+use alloy_primitives::{Address, LogData, U256, address, uint};
+use base_tiger_precompile_storage::{Result, StorageCtx, StorageLayout};
 
 use crate::PolicyAccounting;
 
@@ -56,24 +55,21 @@ impl PackedPolicy {
     }
 }
 
-/// Storage layout for the `PolicyRegistry` precompile.
+/// Storage of the `PolicyRegistry` precompile, rooted at the `base.policy_registry` ERC-7201
+/// namespace.
 ///
 /// Slots are append-only — never reorder across upgrades.
-#[contract(addr = Self::ADDRESS)]
-#[namespace("base.policy_registry")]
-pub struct PolicyRegistryStorage {
-    pub policies: Mapping<u64, U256>,                  // slot 0
-    pub members: Mapping<u64, Mapping<Address, bool>>, // slot 1
-    pub pending_admins: Mapping<u64, Address>,         // slot 2
-    /// Global monotonic counter for the low 56 bits of all custom policy IDs.
-    /// Intentionally shared across ALLOWLIST and BLOCKLIST types — the type
-    /// discriminator is encoded in the top byte, so both types draw from the
-    /// same 56-bit space without collision.
-    pub next_counter: u64, // slot 3
-    /// Child policy IDs for composite (UNION/INTERSECT) policies; empty for simple policies.
-    /// Introduced with the V2 logic. Full-set replacement on create/update; capped at 4 entries,
-    /// which fit in a single Solidity dynamic-array element slot.
-    pub children: Mapping<u64, Vec<u64>>, // slot 4
+#[derive(Debug)]
+pub struct PolicyRegistryStorage<'a> {
+    /// Storage context of the current call.
+    pub storage: StorageCtx<'a>,
+}
+
+impl<'a> PolicyRegistryStorage<'a> {
+    /// Creates the policy registry's storage adapter.
+    pub const fn new(storage: StorageCtx<'a>) -> Self {
+        Self { storage }
+    }
 }
 
 impl PolicyRegistryStorage<'_> {
@@ -91,6 +87,38 @@ impl PolicyRegistryStorage<'_> {
     ///
     /// A stable protocol sentinel; encoding owned by [`crate::PolicyRegistry`].
     pub const ALWAYS_BLOCK_ID: u64 = crate::PolicyRegistry::ALWAYS_BLOCK_ID;
+
+    /// ERC-7201 namespace id.
+    pub const NAMESPACE: &'static str = "base.policy_registry";
+    /// ERC-7201 namespace root.
+    pub const ROOT: U256 =
+        uint!(0x00503aeb06982fa1fe3151dc68f90b3946c55c449dfd447e49dcaece71ba4a00_U256);
+    /// `mapping(uint64 policyId => uint256)`: [`PackedPolicy`] words.
+    pub const POLICIES: U256 = StorageLayout::field(Self::ROOT, 0);
+    /// `mapping(uint64 policyId => mapping(address account => bool)) members`.
+    pub const MEMBERS: U256 = StorageLayout::field(Self::ROOT, 1);
+    /// `mapping(uint64 policyId => address) pendingAdmins`.
+    pub const PENDING_ADMINS: U256 = StorageLayout::field(Self::ROOT, 2);
+    /// `uint64 nextCounter`, alone in its slot: the global monotonic counter for the low 56 bits
+    /// of all custom policy IDs. Intentionally shared across ALLOWLIST and BLOCKLIST types — the
+    /// type discriminator is encoded in the top byte, so both types draw from the same 56-bit
+    /// space without collision.
+    pub const NEXT_COUNTER: U256 = StorageLayout::field(Self::ROOT, 3);
+    /// `mapping(uint64 policyId => uint64[]) children`: child policy IDs of composite
+    /// (UNION/INTERSECT) policies, empty for simple policies. Introduced with the V2 logic.
+    /// Full-set replacement on create/update; capped at 4 entries, which fit in a single
+    /// dynamic-array element slot.
+    pub const CHILDREN: U256 = StorageLayout::field(Self::ROOT, 4);
+
+    /// Returns the slot of `mapping[policy_id]` for a mapping at `slot`.
+    pub fn policy_slot(policy_id: u64, slot: U256) -> U256 {
+        StorageLayout::mapping(&policy_id.to_be_bytes(), slot)
+    }
+
+    /// Returns the slot of `members[policy_id][account]`.
+    pub fn member_slot(policy_id: u64, account: Address) -> U256 {
+        StorageLayout::mapping(account.as_slice(), Self::policy_slot(policy_id, Self::MEMBERS))
+    }
 }
 
 impl PolicyAccounting for PolicyRegistryStorage<'_> {
@@ -99,59 +127,62 @@ impl PolicyAccounting for PolicyRegistryStorage<'_> {
     }
 
     fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
-        self.policies.at(&policy_id).read()
+        self.storage.read(Self::ADDRESS, Self::policy_slot(policy_id, Self::POLICIES))
     }
 
     fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
-        self.policies.at_mut(&policy_id).write(word)
+        self.storage.write(Self::ADDRESS, Self::policy_slot(policy_id, Self::POLICIES), word)
     }
 
     fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
-        self.members.at(&policy_id).at(&account).read()
+        self.storage.read(Self::ADDRESS, Self::member_slot(policy_id, account))
     }
 
     fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-        self.members.at_mut(&policy_id).at_mut(&account).write(true)
+        self.storage.write(Self::ADDRESS, Self::member_slot(policy_id, account), true)
     }
 
     fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-        self.members.at_mut(&policy_id).at_mut(&account).delete()
+        self.storage.sstore(Self::ADDRESS, Self::member_slot(policy_id, account), U256::ZERO)
     }
 
     fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
-        self.pending_admins.at(&policy_id).read()
+        self.storage.read(Self::ADDRESS, Self::policy_slot(policy_id, Self::PENDING_ADMINS))
     }
 
     fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
-        self.pending_admins.at_mut(&policy_id).write(admin)
+        let slot = Self::policy_slot(policy_id, Self::PENDING_ADMINS);
+        self.storage.write(Self::ADDRESS, slot, admin)
     }
 
     fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
-        self.pending_admins.at_mut(&policy_id).delete()
+        let slot = Self::policy_slot(policy_id, Self::PENDING_ADMINS);
+        self.storage.sstore(Self::ADDRESS, slot, U256::ZERO)
     }
 
     fn read_next_counter(&self) -> Result<u64> {
-        self.next_counter.read()
+        self.storage.read(Self::ADDRESS, Self::NEXT_COUNTER)
     }
 
     fn write_next_counter(&mut self, counter: u64) -> Result<()> {
-        self.next_counter.write(counter)
+        self.storage.write(Self::ADDRESS, Self::NEXT_COUNTER, counter)
     }
 
     fn emit_event(&mut self, log: LogData) -> Result<()> {
-        PolicyRegistryStorage::emit_event(self, log)
+        self.storage.emit_event(Self::ADDRESS, log)
     }
 
     fn mark_initialized(&mut self) -> Result<()> {
-        self.__initialize()
+        self.storage.set_marker_code(Self::ADDRESS)
     }
 
     fn read_children(&self, policy_id: u64) -> Result<Vec<u64>> {
-        self.children.at(&policy_id).read()
+        self.storage.read_u64_array(Self::ADDRESS, Self::policy_slot(policy_id, Self::CHILDREN))
     }
 
     fn write_children(&mut self, policy_id: u64, child_policy_ids: &[u64]) -> Result<()> {
-        self.children.at_mut(&policy_id).write(child_policy_ids.to_vec())
+        let slot = Self::policy_slot(policy_id, Self::CHILDREN);
+        self.storage.write_u64_array(Self::ADDRESS, slot, child_policy_ids)
     }
 }
 
@@ -160,13 +191,13 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256, address, keccak256, uint};
     use base_tiger_precompile_storage::{
         BasePrecompileError, Bytecode, HashMapStorageProvider, PrecompileStorageProvider,
-        StorageCtx, StorageKey,
+        StorageCtx, StorageLayout,
     };
 
     use crate::{
         IPolicyRegistry::PolicyType,
         PolicyAccounting, PolicyRegistry, PolicyVersion,
-        policy::storage::{PackedPolicy, PolicyRegistryStorage, slots},
+        policy::storage::{PackedPolicy, PolicyRegistryStorage},
     };
 
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
@@ -239,6 +270,12 @@ mod tests {
 
     // --- Storage layout / namespace (consensus-critical slot mapping) ---
 
+    /// `keccak256(abi.encode(uint64 key, uint256 slot))`, Solidity's mapping slot.
+    fn solidity_mapping_slot(key: u64, slot: U256) -> U256 {
+        let encoded = [U256::from(key).to_be_bytes::<32>(), slot.to_be_bytes::<32>()].concat();
+        U256::from_be_bytes(keccak256(encoded).0)
+    }
+
     /// Seeds both built-in policies via the pinned V1 bootstrap and returns the provider.
     fn seeded_storage() -> HashMapStorageProvider {
         let mut s = HashMapStorageProvider::new(1);
@@ -262,11 +299,16 @@ mod tests {
 
     #[test]
     fn policy_registry_namespace_matches_base_std_root() {
-        assert_eq!(slots::POLICIES, POLICY_REGISTRY_ROOT);
-        assert_eq!(slots::MEMBERS, POLICY_REGISTRY_ROOT + U256::from(1));
-        assert_eq!(slots::PENDING_ADMINS, POLICY_REGISTRY_ROOT + U256::from(2));
-        assert_eq!(slots::NEXT_COUNTER, POLICY_REGISTRY_ROOT + U256::from(3));
-        assert_eq!(slots::CHILDREN, POLICY_REGISTRY_ROOT + U256::from(4));
+        assert_eq!(
+            StorageLayout::erc7201_root(PolicyRegistryStorage::NAMESPACE),
+            POLICY_REGISTRY_ROOT
+        );
+        assert_eq!(PolicyRegistryStorage::ROOT, POLICY_REGISTRY_ROOT);
+        assert_eq!(PolicyRegistryStorage::POLICIES, POLICY_REGISTRY_ROOT);
+        assert_eq!(PolicyRegistryStorage::MEMBERS, POLICY_REGISTRY_ROOT + U256::from(1));
+        assert_eq!(PolicyRegistryStorage::PENDING_ADMINS, POLICY_REGISTRY_ROOT + U256::from(2));
+        assert_eq!(PolicyRegistryStorage::NEXT_COUNTER, POLICY_REGISTRY_ROOT + U256::from(3));
+        assert_eq!(PolicyRegistryStorage::CHILDREN, POLICY_REGISTRY_ROOT + U256::from(4));
     }
 
     #[test]
@@ -281,7 +323,7 @@ mod tests {
         StorageCtx::enter(&mut s, |ctx| {
             // base-std `childrenSlot(id)` = keccak256(abi.encode(id, childrenBaseSlot)) holds the
             // dynamic-array length; elements pack 4x uint64 per slot at keccak256(that), low first.
-            let len_slot = 2u64.mapping_slot(slots::CHILDREN);
+            let len_slot = solidity_mapping_slot(2, PolicyRegistryStorage::CHILDREN);
             assert_eq!(ctx.sload(PolicyRegistryStorage::ADDRESS, len_slot).unwrap(), U256::from(3));
             let data_slot = U256::from_be_bytes(keccak256(len_slot.to_be_bytes::<32>()).0);
             let packed = ctx.sload(PolicyRegistryStorage::ADDRESS, data_slot).unwrap();
@@ -296,19 +338,11 @@ mod tests {
         let id = create_allowlist(&mut s);
 
         StorageCtx::enter(&mut s, |ctx| {
-            assert_ne!(
-                ctx.sload(PolicyRegistryStorage::ADDRESS, id.mapping_slot(slots::POLICIES))
-                    .unwrap(),
-                U256::ZERO
-            );
-            assert_eq!(
-                ctx.sload(PolicyRegistryStorage::ADDRESS, slots::NEXT_COUNTER).unwrap(),
-                U256::from(3)
-            );
-            assert_eq!(
-                ctx.sload(PolicyRegistryStorage::ADDRESS, id.mapping_slot(U256::ZERO)).unwrap(),
-                U256::ZERO
-            );
+            let word = |slot| ctx.sload(PolicyRegistryStorage::ADDRESS, slot).unwrap();
+            let policy_slot = solidity_mapping_slot(id, PolicyRegistryStorage::POLICIES);
+            assert_ne!(word(policy_slot), U256::ZERO);
+            assert_eq!(word(PolicyRegistryStorage::NEXT_COUNTER), U256::from(3));
+            assert_eq!(word(solidity_mapping_slot(id, U256::ZERO)), U256::ZERO);
         });
     }
 

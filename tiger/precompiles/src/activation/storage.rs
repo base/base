@@ -1,22 +1,23 @@
 //! Storage layout and constants for the activation registry.
 
-use alloy_primitives::{Address, B256, address, b256};
-use base_tiger_precompile_macros::contract;
-use base_tiger_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
+use alloy_primitives::{Address, B256, IntoLogData, U256, address, b256, uint};
+use base_tiger_precompile_storage::{BasePrecompileError, Result, StorageCtx, StorageLayout};
 
 use crate::IActivationRegistry;
 
-/// Runtime activation registry for Base-native features.
-#[contract(addr = Self::ADDRESS)]
-#[namespace("base.activation_registry")]
-pub struct ActivationRegistryStorage {
-    /// Runtime activation flags keyed by feature id.
-    pub features: Mapping<B256, bool>,
-    /// Mutable activation registry admin address.
-    ///
-    /// Zero means "unset" and falls back to the static chain-config admin while the Cobalt
-    /// state-backed admin path is active.
-    pub admin: Address,
+/// Runtime activation registry for Base-native features, rooted at the
+/// `base.activation_registry` ERC-7201 namespace.
+#[derive(Debug)]
+pub struct ActivationRegistryStorage<'a> {
+    /// Storage context of the current call.
+    pub storage: StorageCtx<'a>,
+}
+
+impl<'a> ActivationRegistryStorage<'a> {
+    /// Creates the activation registry's storage adapter.
+    pub const fn new(storage: StorageCtx<'a>) -> Self {
+        Self { storage }
+    }
 }
 
 /// Activation admin source configured for one installed activation registry precompile.
@@ -86,9 +87,27 @@ impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
     pub const ADDRESS: Address = address!("8453000000000000000000000000000000000001");
 
+    /// ERC-7201 namespace id.
+    pub const NAMESPACE: &'static str = "base.activation_registry";
+    /// ERC-7201 namespace root.
+    pub const ROOT: U256 =
+        uint!(0x43ee1bbe25e988521cccd8b2c8fbd38c8287ebff8e074e825a70dfd3885cce00_U256);
+    /// `mapping(bytes32 feature => bool) features`: runtime activation flags.
+    pub const FEATURES: U256 = StorageLayout::field(Self::ROOT, 0);
+    /// `address admin`: the mutable activation registry admin.
+    ///
+    /// Zero means "unset" and falls back to the static chain-config admin while the Cobalt
+    /// state-backed admin path is active.
+    pub const ADMIN: U256 = StorageLayout::field(Self::ROOT, 1);
+
+    /// Returns the slot of `features[feature]`.
+    pub fn feature_slot(feature: B256) -> U256 {
+        StorageLayout::mapping(feature.as_slice(), Self::FEATURES)
+    }
+
     /// Returns the stored activation admin address.
     pub fn stored_admin(&self) -> Result<Address> {
-        self.admin.read()
+        self.storage.read(Self::ADDRESS, Self::ADMIN)
     }
 
     /// Returns the effective activation admin address.
@@ -114,7 +133,7 @@ impl ActivationRegistryStorage<'_> {
 
     /// Returns true when the feature is activated.
     pub fn is_activated(&self, feature: B256) -> Result<bool> {
-        self.features.at(&feature).read()
+        self.storage.read(Self::ADDRESS, Self::feature_slot(feature))
     }
 
     /// Returns `Ok(())` when the feature is activated.
@@ -156,13 +175,14 @@ impl ActivationRegistryStorage<'_> {
 
         let caller = self.require_admin_caller(admin_config)?;
 
-        self.__initialize()?;
-        self.admin.write(new_admin)?;
-        self.emit_event(IActivationRegistry::AdminChanged {
+        self.storage.set_marker_code(Self::ADDRESS)?;
+        self.storage.write(Self::ADDRESS, Self::ADMIN, new_admin)?;
+        let event = IActivationRegistry::AdminChanged {
             previousAdmin: caller,
             newAdmin: new_admin,
             caller,
-        })?;
+        };
+        self.storage.emit_event(Self::ADDRESS, event.into_log_data())?;
 
         Ok(())
     }
@@ -182,7 +202,8 @@ impl ActivationRegistryStorage<'_> {
 
         let caller = self.require_admin_caller(admin_config)?;
 
-        let current_activated_state = self.features.at(&feature).read()?;
+        let slot = Self::feature_slot(feature);
+        let current_activated_state = self.storage.read(Self::ADDRESS, slot)?;
 
         let is_activating_and_already_activated = to_activated_state && current_activated_state;
         let is_deactivating_and_already_deactivated =
@@ -199,14 +220,15 @@ impl ActivationRegistryStorage<'_> {
             }));
         }
 
-        if to_activated_state {
-            self.__initialize()?;
-            self.features.at_mut(&feature).write(true)?;
-            self.emit_event(IActivationRegistry::FeatureActivated { feature, caller })?;
+        let event = if to_activated_state {
+            self.storage.set_marker_code(Self::ADDRESS)?;
+            self.storage.write(Self::ADDRESS, slot, true)?;
+            IActivationRegistry::FeatureActivated { feature, caller }.into_log_data()
         } else {
-            self.features.at_mut(&feature).delete()?;
-            self.emit_event(IActivationRegistry::FeatureDeactivated { feature, caller })?;
-        }
+            self.storage.sstore(Self::ADDRESS, slot, U256::ZERO)?;
+            IActivationRegistry::FeatureDeactivated { feature, caller }.into_log_data()
+        };
+        self.storage.emit_event(Self::ADDRESS, event)?;
 
         Ok(())
     }
@@ -241,13 +263,12 @@ mod tests {
     use alloy_sol_types::{SolCall, SolEvent};
     use base_common_genesis::BaseUpgrade;
     use base_tiger_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, StorageKey,
+        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, StorageLayout,
     };
     use rstest::rstest;
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IActivationRegistry,
-        activation::storage::slots,
     };
 
     const FEATURE: B256 = ActivationFeature::B20Asset.id();
@@ -352,12 +373,20 @@ mod tests {
         assert_eq!(ActivationFeature::B20Asset.id(), keccak256("base.b20_asset"));
     }
 
+    /// `keccak256(abi.encode(bytes32 key, uint256 slot))`, Solidity's mapping slot.
+    fn solidity_mapping_slot(key: B256, slot: U256) -> U256 {
+        U256::from_be_bytes(keccak256([key.0, slot.to_be_bytes::<32>()].concat()).0)
+    }
+
     #[test]
     fn activation_registry_namespace_matches_base_std_root() {
-        assert_eq!(slots::NAMESPACE_ID, "base.activation_registry");
-        assert_eq!(slots::NAMESPACE_ROOT, ACTIVATION_REGISTRY_ROOT);
-        assert_eq!(slots::FEATURES, ACTIVATION_REGISTRY_ROOT);
-        assert_eq!(slots::ADMIN, ACTIVATION_REGISTRY_ROOT + U256::ONE);
+        assert_eq!(
+            StorageLayout::erc7201_root(ActivationRegistryStorage::NAMESPACE),
+            ACTIVATION_REGISTRY_ROOT
+        );
+        assert_eq!(ActivationRegistryStorage::ROOT, ACTIVATION_REGISTRY_ROOT);
+        assert_eq!(ActivationRegistryStorage::FEATURES, ACTIVATION_REGISTRY_ROOT);
+        assert_eq!(ActivationRegistryStorage::ADMIN, ACTIVATION_REGISTRY_ROOT + U256::ONE);
     }
 
     #[test]
@@ -370,14 +399,17 @@ mod tests {
             assert_eq!(
                 ctx.sload(
                     ActivationRegistryStorage::ADDRESS,
-                    FEATURE.mapping_slot(slots::FEATURES)
+                    solidity_mapping_slot(FEATURE, ActivationRegistryStorage::FEATURES)
                 )
                 .unwrap(),
                 U256::ONE
             );
             assert_eq!(
-                ctx.sload(ActivationRegistryStorage::ADDRESS, FEATURE.mapping_slot(U256::ZERO))
-                    .unwrap(),
+                ctx.sload(
+                    ActivationRegistryStorage::ADDRESS,
+                    solidity_mapping_slot(FEATURE, U256::ZERO)
+                )
+                .unwrap(),
                 U256::ZERO
             );
         });

@@ -52,7 +52,7 @@ differential fuzz harness against base-reth.
 ## Results so far
 
 **Small dependency tree.** `cargo tree -e normal,build` for the `tiger` binary has no `reth-*` or
-`revm*` crate and 263 crates in all (2026-11-28), against 766 for `base-reth-node`. Every direct
+`revm*` crate and 262 crates in all (2026-11-28), against 766 for `base-reth-node`. Every direct
 dependency has a reason in [Dependencies](#dependencies). About 100k lines of Rust.
 
 **Correctness.** The differential fuzz harness (`etc/tools/diff-*`) runs base-reth as the
@@ -203,8 +203,7 @@ for malloc) made exec p90 slower in every round.
 | `store/` | `base-tiger-store` | Storage in base-reth's datadir format: MDBX (vendored libmdbx), static files, RocksDB indices; `TIGER_FAULT` crash injection. |
 | `trie/` | `base-tiger-trie` | Merkle Patricia trie, state roots, proofs, and the state database over the store. |
 | `precompiles/` | `base-tiger-precompiles` | Base native precompiles (activation and policy registries, B-20 tokens and factory, transaction context, nonce manager), ported from `base-common-precompiles`. |
-| `precompile-storage/` | `base-tiger-precompile-storage` | Storage types, the `PrecompileStorageProvider` boundary, and the fixed gas schedule the native precompiles use. |
-| `precompile-macros/` | `base-tiger-precompile-macros` | `#[contract]` and storage-layout derive macros for the native precompiles. |
+| `precompile-storage/` | `base-tiger-precompile-storage` | The `PrecompileStorageProvider` boundary, the fixed gas schedule, and the slot and string/array helpers the native precompiles' hand-written storage layouts use. |
 | `net/` | `base-tiger-net` | Peer-to-peer networking and EL sync: discv5, RLPx, eth/69 (client and server), peers, header and body downloader. |
 | `node/` | `base-tiger` | The `tiger` binary: node, Engine API, JSON-RPC, and the differential fuzz adapter. |
 
@@ -240,9 +239,8 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `zstd` | base-reth's compact transaction and receipt encodings in static files are zstd-compressed with reth's dictionaries. |
 | `base-common-consensus` (store) | The Base transaction and receipt types the static-file codecs encode. |
 | `alloy-sol-types` | Solidity ABI encoding and decoding of the native precompile interfaces (`sol!`), and the node's decoding of revert reasons into RPC error messages as reth does. |
-| `syn`, `quote`, `proc-macro2` | Parsing and generating code in `base-tiger-precompile-macros`. |
 | `k256` (dev) | Signing EIP-2612 permits in the B-20 permit tests (already in the tree through `alloy-primitives/k256`). |
-| `rstest`, `proptest` (dev) | Parameterized and property tests carried over unchanged from the base/base precompile crates. |
+| `rstest` (dev) | Parameterized tests carried over unchanged from the base/base precompile crates. |
 
 ## Code copied from other projects
 
@@ -259,5 +257,4 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `store/src/datadir.rs` | commit order and heal after reth's static file and RocksDB consistency checks | same | Hand-written. |
 | `store/build.rs` | reth `crates/storage/libmdbx-rs/mdbx-sys/build.rs` | same | Without bindgen. |
 | `precompiles/` | base/base `crates/common/precompiles/` (MIT) | base/base `3001b65c30e2ebb4e28bb19242ceade6bc604e4b` | Without revm adapters, metrics, observers and Ethereum precompile caps; dispatch through `NativePrecompiles::run`. |
-| `precompile-storage/` | base/base `crates/common/precompile-storage/` (MIT) | same | Own `Bytecode`, `Checkpoint` and fixed `GasSchedule` instead of revm types; the evm2 provider lives in `evm/src/native_precompiles.rs`. |
-| `precompile-macros/` | base/base `crates/common/precompile-macros/` (MIT) | same | Unchanged except the `Bytecode` path. |
+| `precompile-storage/` | base/base `crates/common/precompile-storage/` (MIT) | same | Own `Bytecode`, `Checkpoint` and fixed `GasSchedule` instead of revm types; the evm2 provider lives in `evm/src/native_precompiles.rs`. The `#[contract]`/`Storable` macro framework (base/base `crates/common/precompile-macros/`) and its typed handlers are replaced by hand-written layouts with the same slots and access order. |

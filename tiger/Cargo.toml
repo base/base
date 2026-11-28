@@ -11,7 +11,7 @@ repository = "https://github.com/base/base"
 # dependency is here and SCOPE.md for what the client does.
 [workspace]
 resolver = "2"
-members = ["evm", "net", "node", "precompiles", "precompile-storage", "precompile-macros", "store", "trie"]
+members = ["evm", "net", "node", "precompiles", "precompile-storage", "store", "trie"]
 
 [workspace.dependencies]
 # tiger
@@ -20,7 +20,6 @@ base-tiger-store = { path = "store" }
 base-tiger-trie = { path = "trie" }
 base-tiger-net = { path = "net" }
 base-tiger-precompiles = { path = "precompiles" }
-base-tiger-precompile-macros = { path = "precompile-macros" }
 base-tiger-precompile-storage = { path = "precompile-storage" }
 
 # base: engine-neutral Base types whose dependency trees hold no reth or revm.
@@ -63,15 +62,9 @@ secp256k1 = { version = "0.31.1", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
 
-# proc macros (base-tiger-precompile-macros only)
-syn = { version = "2", features = ["full", "extra-traits"] }
-quote = "1"
-proc-macro2 = "1"
-
 # tests only
 k256 = { version = "0.13", features = ["ecdsa"] }
 rstest = "0.26.1"
-proptest = "1.10.0"
 
 # serialization
 serde = { version = "1.0.228", default-features = false }

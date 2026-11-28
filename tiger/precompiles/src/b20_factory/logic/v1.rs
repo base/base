@@ -5,7 +5,7 @@ use alloc::string::ToString;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
-use base_tiger_precompile_storage::{BasePrecompileError, Bytecode, ContractStorage, Result};
+use base_tiger_precompile_storage::{BasePrecompileError, Bytecode, Result};
 
 use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20Logic, B20Token, B20Version,
@@ -48,16 +48,16 @@ impl FactoryV1 {
         let policy_version = PolicyVersions::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         let mut token = B20Token::with_storage_and_policy(
-            B20StablecoinStorage::from_address(token_address, storage.storage()),
-            PolicyRegistryStorage::new(storage.storage()),
+            B20StablecoinStorage::from_address(token_address, storage.storage),
+            PolicyRegistryStorage::new(storage.storage),
             policy_version,
         );
         let (name, symbol, currency) =
             (init.name.clone(), init.symbol.clone(), init.currency.clone());
         token.accounting_mut().initialize(init)?;
 
-        storage.storage().emit_event(
-            storage.address(),
+        storage.storage.emit_event(
+            B20FactoryStorage::ADDRESS,
             IB20Factory::B20Created {
                 token: token_address,
                 variant: B20Variant::Stablecoin.abi(),
@@ -81,10 +81,10 @@ impl FactoryV1 {
                 B20FactoryStorage::ADDRESS,
             )?;
         }
-        storage.storage().with_caller(B20FactoryStorage::ADDRESS, || {
+        storage.storage.with_caller(B20FactoryStorage::ADDRESS, || {
             for (index, &calldata) in init_calls.iter().enumerate() {
                 token
-                    .route_stablecoin(storage.storage(), calldata, stablecoin_version, true)
+                    .route_stablecoin(storage.storage, calldata, stablecoin_version, true)
                     .map_err(|err| Self::map_init_call_error(index, err))?;
             }
             Ok::<(), BasePrecompileError>(())
@@ -104,15 +104,15 @@ impl FactoryV1 {
         let policy_version = PolicyVersions::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         let mut token = B20Token::with_storage_and_policy(
-            B20AssetStorage::from_address(token_address, storage.storage()),
-            PolicyRegistryStorage::new(storage.storage()),
+            B20AssetStorage::from_address(token_address, storage.storage),
+            PolicyRegistryStorage::new(storage.storage),
             policy_version,
         );
         let (name, symbol, decimals) = (init.name.clone(), init.symbol.clone(), init.decimals);
         token.accounting_mut().initialize(init)?;
 
-        storage.storage().emit_event(
-            storage.address(),
+        storage.storage.emit_event(
+            B20FactoryStorage::ADDRESS,
             IB20Factory::B20Created {
                 token: token_address,
                 variant: B20Variant::Asset.abi(),
@@ -134,10 +134,10 @@ impl FactoryV1 {
                 B20FactoryStorage::ADDRESS,
             )?;
         }
-        storage.storage().with_caller(B20FactoryStorage::ADDRESS, || {
+        storage.storage.with_caller(B20FactoryStorage::ADDRESS, || {
             for (index, &calldata) in init_calls.iter().enumerate() {
                 token
-                    .route_asset(storage.storage(), calldata, asset_version, true)
+                    .route_asset(storage.storage, calldata, asset_version, true)
                     .map_err(|err| Self::map_init_call_error(index, err))?;
             }
             Ok::<(), BasePrecompileError>(())
@@ -180,25 +180,22 @@ impl Factory for FactoryV1 {
     ) -> Result<Address> {
         let variant = B20Variant::from_abi(variant)
             .ok_or_else(|| BasePrecompileError::revert(IB20Factory::InvalidVariant {}))?;
-        ActivationRegistryStorage::new(storage.storage())
+        ActivationRegistryStorage::new(storage.storage)
             .ensure_activated(variant.activation_feature().id())?;
         let params = TokenCreateParams::decode(variant, params)?;
         Self::check_version(params.version(), variant)?;
         params.validate()?;
         let (token_address, _) = variant.compute_address_from_hash(address_hash);
 
-        let already_deployed = storage
-            .storage()
-            .with_account_info(token_address, |info| Ok(!info.is_empty_code_hash()))?;
-        if already_deployed {
+        if storage.storage.has_bytecode(token_address)? {
             return Err(BasePrecompileError::revert(IB20Factory::TokenAlreadyExists {
                 token: token_address,
             }));
         }
 
-        let checkpoint = storage.storage().checkpoint();
+        let checkpoint = storage.storage.checkpoint();
         let stub = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
-        storage.storage().set_code(token_address, stub)?;
+        storage.storage.set_code(token_address, stub)?;
 
         match params {
             TokenCreateParams::Stablecoin { common, init } => {
@@ -332,7 +329,7 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address};
     use alloy_sol_types::{SolCall, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_tiger_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_tiger_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
         B20Version,
@@ -424,8 +421,8 @@ mod tests {
             let token_addr = factory.create_b20(caller, call, BaseUpgrade::Beryl).unwrap();
             let token = B20AssetStorage::from_address(token_addr, ctx);
 
-            assert_eq!(token.b20.name.read().unwrap(), "My Token");
-            assert_eq!(token.b20.symbol.read().unwrap(), "MYT");
+            assert_eq!(token.name().unwrap(), "My Token");
+            assert_eq!(token.symbol().unwrap(), "MYT");
             assert_eq!(AssetAccounting::decimals(&token).unwrap(), B20AssetStorage::MIN_DECIMALS);
             assert_eq!(B20FactoryStorage::DEFAULT_SUPPLY_CAP, B20_MAX_SUPPLY_CAP);
             assert_eq!(token.supply_cap().unwrap(), B20_MAX_SUPPLY_CAP);
@@ -449,7 +446,7 @@ mod tests {
             let token_addr = factory.create_b20(caller, call, BaseUpgrade::Beryl).unwrap();
             let token = B20AssetStorage::from_address(token_addr, ctx);
 
-            assert_eq!(token.b20.total_supply.read().unwrap(), supply);
+            assert_eq!(token.total_supply().unwrap(), supply);
             assert_eq!(token.balance_of(recipient).unwrap(), supply);
         });
     }
@@ -550,8 +547,8 @@ mod tests {
             let token_addr = factory.create_b20(caller, call, BaseUpgrade::Beryl).unwrap();
             let token = B20AssetStorage::from_address(token_addr, ctx);
 
-            assert_eq!(token.b20.name.read().unwrap(), "");
-            assert_eq!(token.b20.symbol.read().unwrap(), "");
+            assert_eq!(token.name().unwrap(), "");
+            assert_eq!(token.symbol().unwrap(), "");
         });
     }
 
@@ -570,7 +567,7 @@ mod tests {
             let token_addr = factory.create_b20(caller, call, BaseUpgrade::Beryl).unwrap();
             let token = B20AssetStorage::from_address(token_addr, ctx);
 
-            assert_eq!(token.b20.name.read().unwrap(), "Configured");
+            assert_eq!(token.name().unwrap(), "Configured");
         });
     }
 

@@ -17,7 +17,7 @@ mod dispatch;
 
 mod logic;
 pub use logic::{B20Logic, B20Token, B20Version};
-pub use core_storage::B20CoreStorage;
+pub use core_storage::{B20CoreStorage, B20TokenKind, B20TokenStorage};
 
 mod ops;
 pub use ops::{

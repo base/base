@@ -187,13 +187,14 @@ mod tests {
     use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
     use base_common_genesis::BaseUpgrade;
     use base_tiger_precompile_storage::{
-        BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx,
+        BasePrecompileError, HashMapStorageProvider, StorageCtx,
     };
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20AssetStorage, B20Token, B20FactoryStorage, B20StablecoinStorage, B20Variant,
-        FactoryVersion, IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion,
+        B20AssetExtensionStorage, B20AssetStorage, B20Token, B20FactoryStorage,
+        B20StablecoinStorage, B20Variant, FactoryVersion, IB20, IB20Factory, PolicyRegistryStorage,
+        PolicyVersion, StablecoinAccounting, TokenAccounting,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -457,8 +458,8 @@ mod tests {
             )
             .unwrap();
             let stablecoin = B20StablecoinStorage::from_address(stablecoin_addr, ctx);
-            assert_eq!(stablecoin.stablecoin.currency.read().unwrap(), "USD");
-            assert_eq!(stablecoin.b20.name.read().unwrap(), "Stablecoin Token");
+            assert_eq!(stablecoin.currency().unwrap(), "USD");
+            assert_eq!(stablecoin.name().unwrap(), "Stablecoin Token");
             assert_eq!(B20Variant::from_address(stablecoin_addr), Some(B20Variant::Stablecoin));
         });
     }
@@ -494,10 +495,13 @@ mod tests {
             assert!(ctx.has_bytecode(expected_addr).unwrap());
 
             let asset_storage = B20AssetStorage::from_address(expected_addr, ctx);
-            assert_eq!(asset_storage.b20.name.read().unwrap(), "Asset Token");
-            assert_eq!(asset_storage.b20.symbol.read().unwrap(), "AST");
+            assert_eq!(asset_storage.name().unwrap(), "Asset Token");
+            assert_eq!(asset_storage.symbol().unwrap(), "AST");
             assert_eq!(AssetAccounting::decimals(&asset_storage).unwrap(), 12);
-            assert_eq!(asset_storage.asset.multiplier.read().unwrap(), U256::ZERO);
+            assert_eq!(
+                ctx.sload(expected_addr, B20AssetExtensionStorage::MULTIPLIER).unwrap(),
+                U256::ZERO
+            );
         });
     }
 

@@ -27,11 +27,11 @@ use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_tiger_precompile_storage::{
-    BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx,
+    BasePrecompileError, HashMapStorageProvider, StorageCtx,
 };
 use base_tiger_precompiles::{
         B20Logic,
-    AssetAccounting, B20Version, B20_MAX_SUPPLY_CAP, B20AssetInit,
+    AssetAccounting, B20Version, B20_MAX_SUPPLY_CAP, B20AssetExtensionStorage, B20AssetInit,
     B20AssetStorage, B20Token, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
     IB20Asset, PolicyVersion, TokenAccounting,
 };
@@ -1995,7 +1995,8 @@ fn golden_read_extra_metadata() {
 fn golden_fresh_multiplier_slot_is_physical_zero() {
     let mut s = fresh();
     read(&mut s, |t| {
-        assert_eq!(t.asset.multiplier.read().unwrap(), U256::ZERO); // raw slot
+        let raw = t.storage.sload(t.address, B20AssetExtensionStorage::MULTIPLIER).unwrap();
+        assert_eq!(raw, U256::ZERO); // raw slot
         assert_eq!(t.multiplier().unwrap(), B20AssetStorage::WAD); // normalized getter
     });
 }

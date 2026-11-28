@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, B256, U256, address, b256};
-use base_tiger_precompile_macros::contract;
-use base_tiger_precompile_storage::Result;
+use base_tiger_precompile_storage::{Result, StorageCtx};
 
 use crate::{B20_MAX_SUPPLY_CAP, B20Variant};
 
@@ -11,11 +10,19 @@ const DEFAULT_SUPPLY_CAP: U256 = B20_MAX_SUPPLY_CAP;
 const FACTORY_MARKER_CODE_HASH: B256 =
     b256!("309b8896ee4c1ff7ec1966155373dee42663b6b40c3fedc70ba501684848d2a3");
 
-/// The B-20 token factory precompile.
-#[contract(addr = Self::ADDRESS)]
-pub struct B20FactoryStorage {}
+/// The B-20 token factory precompile. It keeps no storage of its own.
+#[derive(Debug)]
+pub struct B20FactoryStorage<'a> {
+    /// Storage context of the current call.
+    pub storage: StorageCtx<'a>,
+}
 
 impl<'a> B20FactoryStorage<'a> {
+    /// Creates the factory precompile's storage adapter.
+    pub const fn new(storage: StorageCtx<'a>) -> Self {
+        Self { storage }
+    }
+
     /// Singleton precompile address for the `B20Factory`.
     pub const ADDRESS: Address = address!("B20F000000000000000000000000000000000000");
 

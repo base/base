@@ -390,11 +390,6 @@ impl StorageCtx<'_> {
     pub fn reset_counters(&self) {
         self.with_hashmap(HashMapStorageProvider::reset_counters)
     }
-
-    /// Returns true if the contract at the given address has non-empty bytecode (test-utils only).
-    pub fn has_bytecode(&self, address: Address) -> Result<bool> {
-        self.with_account_info(address, |info| Ok(!info.is_empty_code_hash()))
-    }
 }
 
 #[cfg(test)]

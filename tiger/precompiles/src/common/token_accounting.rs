@@ -38,7 +38,7 @@ impl TransferPolicyIds {
 
 /// Outbound port: all data reads and writes the core business logic requires.
 ///
-/// Each token variant's `#[contract]` storage struct implements this trait.
+/// [`crate::B20TokenStorage`] implements this trait for every token kind.
 /// Capability trait default implementations only depend on this interface, never on EVM storage
 /// directly.
 pub trait TokenAccounting {

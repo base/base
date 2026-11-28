@@ -450,7 +450,7 @@ mod tests {
     use alloy_primitives::{Bytes, address};
     use alloy_sol_types::SolCall;
     use base_common_genesis::BaseUpgrade;
-    use base_tiger_precompile_storage::{BytesLikeHandler, Handler, StorageCtx};
+    use base_tiger_precompile_storage::StorageCtx;
     use base_tiger_precompiles::{ITransactionContext, TxContextStorage};
     use evm2::{env::BlockEnv, evm::InMemoryDB};
 
@@ -549,10 +549,10 @@ mod tests {
         let mut provider =
             EvmStorageProvider::new(&mut evm, env(1_000_000, false, StorageFeatures::Cobalt));
         StorageCtx::enter(&mut provider, |storage| {
-            let mut slot = BytesLikeHandler::<Bytes>::new(U256::from(10), ACCOUNT, storage);
-            slot.write(Bytes::from(vec![0x11; 64])).unwrap();
+            let slot = U256::from(10);
+            storage.write_string(ACCOUNT, slot, &"\u{11}".repeat(64)).unwrap();
             assert_eq!(storage.gas_refunded(), 0);
-            slot.write(Bytes::from_static(b"short")).unwrap();
+            storage.write_string(ACCOUNT, slot, "short").unwrap();
             assert!(storage.gas_refunded() > 0, "clearing long-data slots records a refund");
         });
     }

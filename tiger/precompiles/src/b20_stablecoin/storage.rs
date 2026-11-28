@@ -2,29 +2,37 @@
 
 use alloc::string::String;
 
-use alloy_primitives::{Address, U256};
-use base_tiger_precompile_macros::{StablecoinAccounting, Storable, TokenAccounting, contract};
-use base_tiger_precompile_storage::{BasePrecompileError, Handler, Result, StorageCtx};
+use alloy_primitives::{U256, uint};
+use base_tiger_precompile_storage::{BasePrecompileError, Result, StorageLayout};
 
-use crate::{B20CoreStorage, IB20Factory};
+use crate::{
+    B20CoreStorage, B20TokenKind, B20TokenStorage, B20Variant, IB20Factory, StablecoinAccounting,
+};
 
-/// Stablecoin-specific B-20 storage rooted at the `base.b20.stablecoin` ERC-7201 namespace.
-#[derive(Debug, Clone, Storable)]
-#[namespace("base.b20.stablecoin")]
-pub struct B20StablecoinExtensionStorage {
-    /// Stablecoin currency identifier.
-    #[accessor]
-    #[mutator]
-    pub currency: String, // offset 0
+/// Stablecoin-specific B-20 storage layout, rooted at the `base.b20.stablecoin` ERC-7201
+/// namespace.
+#[derive(Debug)]
+pub struct B20StablecoinExtensionStorage;
+
+impl B20StablecoinExtensionStorage {
+    /// ERC-7201 namespace id.
+    pub const NAMESPACE: &'static str = "base.b20.stablecoin";
+    /// ERC-7201 namespace root.
+    pub const ROOT: U256 =
+        uint!(0x35827975a06ca0e9367ea3129b19441d45d0ca58e30b7693f09e73d0943d6200_U256);
+    /// `string currency`: ISO 4217 currency code.
+    pub const CURRENCY: U256 = StorageLayout::field(Self::ROOT, 0);
+}
+
+impl B20TokenKind for B20StablecoinExtensionStorage {
+    /// Returns the fixed decimals of the token's variant, or 0 for a non-B-20 address.
+    fn decimals(token: &B20StablecoinStorage<'_>) -> Result<u8> {
+        Ok(B20Variant::from_address(token.address).and_then(|v| v.decimals()).unwrap_or(0))
+    }
 }
 
 /// EVM-backed storage for a stablecoin B-20 token.
-#[contract]
-#[derive(TokenAccounting, StablecoinAccounting)]
-pub struct B20StablecoinStorage {
-    pub b20: B20CoreStorage,
-    pub stablecoin: B20StablecoinExtensionStorage,
-}
+pub type B20StablecoinStorage<'a> = B20TokenStorage<'a, B20StablecoinExtensionStorage>;
 
 /// Creation-time parameters for a stablecoin B-20 token.
 ///
@@ -41,12 +49,7 @@ pub struct B20StablecoinInit {
     pub currency: String,
 }
 
-impl<'a> B20StablecoinStorage<'a> {
-    /// Creates a `B20StablecoinStorage` instance targeting `addr`.
-    pub fn from_address(addr: Address, storage: StorageCtx<'a>) -> Self {
-        Self::__new(addr, storage)
-    }
-
+impl B20StablecoinStorage<'_> {
     /// Writes all creation-time fields atomically.
     ///
     /// Validates that `currency` is non-empty and contains only `A-Z` characters
@@ -63,46 +66,39 @@ impl<'a> B20StablecoinStorage<'a> {
                 code: init.currency,
             }));
         }
-        self.b20.name.write(init.name)?;
-        self.b20.symbol.write(init.symbol)?;
-        self.b20.supply_cap.write(init.supply_cap)?;
-        self.stablecoin.currency.write(init.currency)
+        self.storage.write_string(self.address, B20CoreStorage::NAME, &init.name)?;
+        self.storage.write_string(self.address, B20CoreStorage::SYMBOL, &init.symbol)?;
+        self.storage.write(self.address, B20CoreStorage::SUPPLY_CAP, init.supply_cap)?;
+        let currency_slot = B20StablecoinExtensionStorage::CURRENCY;
+        self.storage.write_string(self.address, currency_slot, &init.currency)
+    }
+}
+
+impl StablecoinAccounting for B20StablecoinStorage<'_> {
+    fn currency(&self) -> Result<String> {
+        self.storage.read_string(self.address, B20StablecoinExtensionStorage::CURRENCY)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloc::string::String;
-
-    use alloy_primitives::{Address, U256, address, uint};
-    use base_tiger_precompile_storage::{Handler, StorableType, StorageCtx, setup_storage};
+    use alloy_primitives::{Address, U256, address};
+    use base_tiger_precompile_storage::{StorageCtx, StorageLayout, setup_storage};
 
     use crate::{
-        B20CoreStorage, B20StablecoinExtensionStorage, B20StablecoinStorage,
-        b20_stablecoin::storage::{__packing_b20_stablecoin_extension_storage, slots},
+        B20CoreStorage, B20StablecoinExtensionStorage, B20StablecoinStorage, StablecoinAccounting,
+        TokenAccounting,
     };
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b022");
-    const B20_ROOT: U256 =
-        uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434000_U256);
-    const STABLECOIN_ROOT: U256 =
-        uint!(0x35827975a06ca0e9367ea3129b19441d45d0ca58e30b7693f09e73d0943d6200_U256);
 
     #[test]
-    fn stablecoin_namespaces_match_base_std_roots() {
-        assert_eq!(<B20CoreStorage as StorableType>::STORAGE_NAMESPACE_ROOT, B20_ROOT);
+    fn stablecoin_namespace_matches_base_std_root() {
         assert_eq!(
-            <B20StablecoinExtensionStorage as StorableType>::STORAGE_NAMESPACE_ID,
-            "base.b20.stablecoin"
+            StorageLayout::erc7201_root(B20StablecoinExtensionStorage::NAMESPACE),
+            B20StablecoinExtensionStorage::ROOT
         );
-        assert_eq!(
-            <B20StablecoinExtensionStorage as StorableType>::STORAGE_NAMESPACE_ROOT,
-            STABLECOIN_ROOT
-        );
-
-        assert_eq!(slots::B20, B20_ROOT);
-        assert_eq!(slots::STABLECOIN, STABLECOIN_ROOT);
-        assert_eq!(__packing_b20_stablecoin_extension_storage::CURRENCY_LOC.offset_slots, 0);
+        assert_eq!(B20StablecoinExtensionStorage::CURRENCY, B20StablecoinExtensionStorage::ROOT);
     }
 
     #[test]
@@ -111,11 +107,19 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20StablecoinStorage::from_address(TOKEN, ctx);
-            token.b20.name.write(String::from("Stablecoin")).unwrap();
-            token.stablecoin.currency.write(String::from("USD")).unwrap();
+            token.set_name("Stablecoin".into()).unwrap();
+            let currency_slot = B20StablecoinExtensionStorage::CURRENCY;
+            ctx.write_string(TOKEN, currency_slot, "USD").unwrap();
 
-            assert_eq!(ctx.sload(TOKEN, B20_ROOT).unwrap(), short_string_word("Stablecoin"));
-            assert_eq!(ctx.sload(TOKEN, STABLECOIN_ROOT).unwrap(), short_string_word("USD"));
+            assert_eq!(
+                ctx.sload(TOKEN, B20CoreStorage::ROOT).unwrap(),
+                short_string_word("Stablecoin")
+            );
+            assert_eq!(
+                ctx.sload(TOKEN, B20StablecoinExtensionStorage::ROOT).unwrap(),
+                short_string_word("USD")
+            );
+            assert_eq!(token.currency().unwrap(), "USD");
         });
     }
 

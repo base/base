@@ -1,9 +1,8 @@
 //! Storage layout and constants for the Base transaction 2D nonce manager precompile.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, uint};
 use base_common_base_tx::NonceManagerSlots;
-use base_tiger_precompile_macros::contract;
-use base_tiger_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
+use base_tiger_precompile_storage::{BasePrecompileError, Result, StorageCtx, StorageLayout};
 
 use crate::INonceManager;
 
@@ -29,18 +28,19 @@ use crate::INonceManager;
 /// (`NONCE_KEY_MAX`) transactions: a signature-invariant replay hash is recorded
 /// with its expiry in a fixed-capacity circular buffer that reclaims expired
 /// slots as the write pointer advances.
-#[contract(addr = Self::ADDRESS)]
-#[namespace("base.nonce_manager")]
-pub struct NonceManagerStorage {
-    /// 2D sequence nonces keyed by `(account, nonce_key)`.
-    pub nonces: Mapping<Address, Mapping<U256, u64>>,
-    /// Expiring-nonce seen set: replay hash => `valid_before` expiry timestamp.
-    pub expiring_nonce_seen: Mapping<B256, u64>,
-    /// Circular buffer of recorded replay hashes, indexed by ring position.
-    pub expiring_nonce_ring: Mapping<u32, B256>,
-    /// Current circular-buffer write position; wraps at
-    /// [`Self::REPLAY_BUFFER_CAPACITY`].
-    pub expiring_nonce_ring_ptr: u32,
+///
+/// The layout is rooted at the `base.nonce_manager` ERC-7201 namespace.
+#[derive(Debug)]
+pub struct NonceManagerStorage<'a> {
+    /// Storage context of the current call.
+    pub storage: StorageCtx<'a>,
+}
+
+impl<'a> NonceManagerStorage<'a> {
+    /// Creates the nonce manager's storage adapter.
+    pub const fn new(storage: StorageCtx<'a>) -> Self {
+        Self { storage }
+    }
 }
 
 impl NonceManagerStorage<'_> {
@@ -58,14 +58,44 @@ impl NonceManagerStorage<'_> {
     /// Sourced from the engine-neutral [`NonceManagerSlots`] so off-chain readers
     /// (e.g. RPC) can derive `nonces[account][nonce_key]` slots without
     /// instantiating the precompile, and so the revm and EVM2 engines share one
-    /// slot layout. The `nonce_slot_matches_handler_chain` and
-    /// `expiring_nonce_seen_slot_matches_handler_chain` tests pin the
-    /// macro-generated storage layout to these shared constants. Pair with
-    /// [`Self::nonce_slot`].
+    /// slot layout. The `nonce_slot_matches_storage_layout` and
+    /// `expiring_nonce_seen_slot_matches_storage_layout` tests pin the storage
+    /// layout below to these shared constants. Pair with [`Self::nonce_slot`].
     pub const NONCES_BASE_SLOT: U256 = NonceManagerSlots::NONCES_BASE_SLOT;
     /// Base storage slot of the nonce-free replay mapping.
     pub const EXPIRING_NONCE_SEEN_BASE_SLOT: U256 =
         NonceManagerSlots::EXPIRING_NONCE_SEEN_BASE_SLOT;
+
+    /// ERC-7201 namespace id.
+    pub const NAMESPACE: &'static str = "base.nonce_manager";
+    /// ERC-7201 namespace root.
+    pub const ROOT: U256 =
+        uint!(0x9d3ea32ad25774a46482ebbae019e8da4242109d164d324a59aa787515b9fe00_U256);
+    /// `mapping(address => mapping(uint256 => uint64)) nonces`: 2D sequence nonces.
+    pub const NONCES: U256 = StorageLayout::field(Self::ROOT, 0);
+    /// `mapping(bytes32 => uint64) expiringNonceSeen`: replay hash => `valid_before` expiry.
+    pub const EXPIRING_NONCE_SEEN: U256 = StorageLayout::field(Self::ROOT, 1);
+    /// `mapping(uint32 => bytes32) expiringNonceRing`: circular buffer of replay hashes.
+    pub const EXPIRING_NONCE_RING: U256 = StorageLayout::field(Self::ROOT, 2);
+    /// `uint32 expiringNonceRingPtr`, alone in its slot: the ring write position, wrapping at
+    /// [`Self::REPLAY_BUFFER_CAPACITY`].
+    pub const EXPIRING_NONCE_RING_PTR: U256 = StorageLayout::field(Self::ROOT, 3);
+
+    /// Returns the slot of `nonces[account][nonce_key]`, for any key.
+    pub fn channel_slot(account: Address, nonce_key: U256) -> U256 {
+        let account_slot = StorageLayout::mapping(account.as_slice(), Self::NONCES);
+        StorageLayout::mapping(&nonce_key.to_be_bytes::<32>(), account_slot)
+    }
+
+    /// Returns the slot of `expiringNonceSeen[hash]`.
+    pub fn seen_slot(hash: B256) -> U256 {
+        StorageLayout::mapping(hash.as_slice(), Self::EXPIRING_NONCE_SEEN)
+    }
+
+    /// Returns the slot of `expiringNonceRing[ptr]`.
+    pub fn ring_slot(ptr: u32) -> U256 {
+        StorageLayout::mapping(&ptr.to_be_bytes(), Self::EXPIRING_NONCE_RING)
+    }
 
     /// Fixed capacity of the nonce-free `replay_id` ring buffer
     /// (`REPLAY_BUFFER_CAPACITY` in the Base transaction constant table).
@@ -116,7 +146,7 @@ impl NonceManagerStorage<'_> {
         if nonce_key == Self::PROTOCOL_NONCE_KEY {
             return Err(BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {}));
         }
-        self.nonces.at(&account).at(&nonce_key).read()
+        self.storage.read(Self::ADDRESS, Self::channel_slot(account, nonce_key))
     }
 
     /// Returns the EVM storage slot that holds the 2D channel nonce for
@@ -159,13 +189,14 @@ impl NonceManagerStorage<'_> {
             return Err(BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
         }
 
-        let current = self.nonces.at(&account).at(&nonce_key).read()?;
+        let slot = Self::channel_slot(account, nonce_key);
+        let current: u64 = self.storage.read(Self::ADDRESS, slot)?;
         let new_nonce = current
             .checked_add(1)
             .ok_or_else(|| BasePrecompileError::revert(INonceManager::NonceOverflow {}))?;
 
-        self.__initialize()?;
-        self.nonces.at_mut(&account).at_mut(&nonce_key).write(new_nonce)?;
+        self.storage.set_marker_code(Self::ADDRESS)?;
+        self.storage.write(Self::ADDRESS, slot, new_nonce)?;
         Ok(new_nonce)
     }
 
@@ -179,7 +210,7 @@ impl NonceManagerStorage<'_> {
     /// near an entry's expiry boundary; this getter is an advisory pre-filter and
     /// the block-timestamp check at inclusion is authoritative.
     pub fn is_expiring_nonce_seen(&self, hash: B256, now_ms: u64) -> Result<bool> {
-        let expiry_ms = self.expiring_nonce_seen.at(&hash).read()?;
+        let expiry_ms: u64 = self.storage.read(Self::ADDRESS, Self::seen_slot(hash))?;
         Ok(expiry_ms != 0 && expiry_ms > now_ms)
     }
 
@@ -228,7 +259,8 @@ impl NonceManagerStorage<'_> {
         }
 
         // 2. Replay check: reject if the hash is already seen and not yet expired.
-        let seen_expiry = self.expiring_nonce_seen.at(&expiring_nonce_hash).read()?;
+        let seen_slot = Self::seen_slot(expiring_nonce_hash);
+        let seen_expiry: u64 = self.storage.read(Self::ADDRESS, seen_slot)?;
         if seen_expiry != 0 && seen_expiry > now_ms {
             return Err(BasePrecompileError::revert(INonceManager::ExpiringNonceReplay {}));
         }
@@ -242,35 +274,36 @@ impl NonceManagerStorage<'_> {
         // any early `?` return below rolls back every write in the group.
         let checkpoint = self.storage.checkpoint();
 
-        self.__initialize()?;
+        self.storage.set_marker_code(Self::ADDRESS)?;
 
         // 3. Inspect the entry the write pointer currently references. A pointer
         // at or past capacity can only come from corrupted state; restart at 0
         // rather than touch a slot outside the ring.
-        let ptr = match self.expiring_nonce_ring_ptr.read()? {
+        let ptr = match self.storage.read::<u32>(Self::ADDRESS, Self::EXPIRING_NONCE_RING_PTR)? {
             ptr if ptr < Self::REPLAY_BUFFER_CAPACITY => ptr,
             _ => 0,
         };
-        let old_hash = self.expiring_nonce_ring.at(&ptr).read()?;
+        let old_hash: B256 = self.storage.read(Self::ADDRESS, Self::ring_slot(ptr))?;
 
         // 4. Reclaim the slot only if its occupant has expired (or is empty).
         // The buffer is sized so entries should always be expired by the time the
         // pointer wraps, but verify in case throughput exceeds expectations.
         if old_hash != B256::ZERO {
-            let old_expiry = self.expiring_nonce_seen.at(&old_hash).read()?;
+            let old_seen_slot = Self::seen_slot(old_hash);
+            let old_expiry: u64 = self.storage.read(Self::ADDRESS, old_seen_slot)?;
             if old_expiry != 0 && old_expiry > now_ms {
                 return Err(BasePrecompileError::revert(INonceManager::ExpiringNonceSetFull {}));
             }
-            self.expiring_nonce_seen.at_mut(&old_hash).write(0)?;
+            self.storage.write(Self::ADDRESS, old_seen_slot, 0u64)?;
         }
 
         // 5. Record the new entry.
-        self.expiring_nonce_ring.at_mut(&ptr).write(expiring_nonce_hash)?;
-        self.expiring_nonce_seen.at_mut(&expiring_nonce_hash).write(valid_before_ms)?;
+        self.storage.write(Self::ADDRESS, Self::ring_slot(ptr), expiring_nonce_hash)?;
+        self.storage.write(Self::ADDRESS, seen_slot, valid_before_ms)?;
 
         // 6. Advance the write pointer, wrapping at capacity.
         let next = (ptr + 1) % Self::REPLAY_BUFFER_CAPACITY;
-        self.expiring_nonce_ring_ptr.write(next)?;
+        self.storage.write(Self::ADDRESS, Self::EXPIRING_NONCE_RING_PTR, next)?;
 
         checkpoint.commit();
         Ok(())
@@ -282,7 +315,7 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address};
     use base_common_base_tx::TxBaseGasSchedule;
     use base_tiger_precompile_storage::{
-        BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx, StorageKey,
+        BasePrecompileError, HashMapStorageProvider, StorageCtx, StorageLayout,
     };
 
     use crate::{INonceManager, nonce::storage::NonceManagerStorage};
@@ -373,7 +406,8 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             // Seed the channel at the maximum so the next increment overflows.
-            mgr.nonces.at_mut(&ACCOUNT_A).at_mut(&nonce_key).write(u64::MAX).unwrap();
+            let slot = NonceManagerStorage::channel_slot(ACCOUNT_A, nonce_key);
+            ctx.write(NonceManagerStorage::ADDRESS, slot, u64::MAX).unwrap();
             let err = mgr.increment_nonce(ACCOUNT_A, nonce_key).unwrap_err();
             assert_eq!(err, BasePrecompileError::revert(INonceManager::NonceOverflow {}));
         });
@@ -390,9 +424,11 @@ mod tests {
             // Occupy the slot the write pointer references with an unexpired entry
             // (simulating a full ring) so the slot cannot be reclaimed.
             let occupant = B256::repeat_byte(0xAB);
-            let ptr = mgr.expiring_nonce_ring_ptr.read().unwrap();
-            mgr.expiring_nonce_ring.at_mut(&ptr).write(occupant).unwrap();
-            mgr.expiring_nonce_seen.at_mut(&occupant).write(now_ms + 20_000).unwrap();
+            let ptr = ring_ptr(ctx);
+            ctx.write(NonceManagerStorage::ADDRESS, NonceManagerStorage::ring_slot(ptr), occupant)
+                .unwrap();
+            let seen_slot = NonceManagerStorage::seen_slot(occupant);
+            ctx.write(NonceManagerStorage::ADDRESS, seen_slot, now_ms + 20_000).unwrap();
 
             let err = mgr
                 .check_and_mark_expiring_nonce(B256::repeat_byte(0xCD), now_ms + 20_000, now_ms)
@@ -504,17 +540,15 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             // Seed the pointer just below capacity so the next write wraps it.
-            mgr.expiring_nonce_ring_ptr
-                .write(NonceManagerStorage::REPLAY_BUFFER_CAPACITY - 1)
-                .unwrap();
+            set_ring_ptr(ctx, NonceManagerStorage::REPLAY_BUFFER_CAPACITY - 1);
 
             mgr.check_and_mark_expiring_nonce(B256::repeat_byte(0x77), valid_before, now_ms)
                 .unwrap();
-            assert_eq!(mgr.expiring_nonce_ring_ptr.read().unwrap(), 0);
+            assert_eq!(ring_ptr(ctx), 0);
 
             mgr.check_and_mark_expiring_nonce(B256::repeat_byte(0x88), valid_before, now_ms)
                 .unwrap();
-            assert_eq!(mgr.expiring_nonce_ring_ptr.read().unwrap(), 1);
+            assert_eq!(ring_ptr(ctx), 1);
         });
     }
 
@@ -524,14 +558,17 @@ mod tests {
         let now_ms = 1_000_000u64;
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
-            mgr.expiring_nonce_ring_ptr.write(u32::MAX).unwrap();
+            set_ring_ptr(ctx, u32::MAX);
 
             let hash = B256::repeat_byte(0x99);
             mgr.check_and_mark_expiring_nonce(hash, now_ms + 20_000, now_ms).unwrap();
 
-            assert_eq!(mgr.expiring_nonce_ring.at(&0).read().unwrap(), hash);
-            assert_eq!(mgr.expiring_nonce_ring.at(&u32::MAX).read().unwrap(), B256::ZERO);
-            assert_eq!(mgr.expiring_nonce_ring_ptr.read().unwrap(), 1);
+            let ring = |ptr| -> B256 {
+                ctx.read(NonceManagerStorage::ADDRESS, NonceManagerStorage::ring_slot(ptr)).unwrap()
+            };
+            assert_eq!(ring(0), hash);
+            assert_eq!(ring(u32::MAX), B256::ZERO);
+            assert_eq!(ring_ptr(ctx), 1);
         });
     }
 
@@ -544,35 +581,48 @@ mod tests {
             let err =
                 mgr.check_and_mark_expiring_nonce(B256::ZERO, now_ms + 20_000, now_ms).unwrap_err();
             assert_eq!(err, BasePrecompileError::revert(INonceManager::InvalidReplayId {}));
-            assert_eq!(mgr.expiring_nonce_ring_ptr.read().unwrap(), 0);
+            assert_eq!(ring_ptr(ctx), 0);
         });
     }
 
     #[test]
-    fn nonce_slot_matches_handler_chain() {
-        let mut storage = HashMapStorageProvider::new(1);
+    fn nonce_slot_matches_storage_layout() {
         let nonce_key = U256::from(42);
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mgr = NonceManagerStorage::new(ctx);
-            let inner_base = mgr.nonces.at(&ACCOUNT_A).slot();
-            let expected = nonce_key.mapping_slot(inner_base);
-            assert_eq!(NonceManagerStorage::nonce_slot(ACCOUNT_A, nonce_key).unwrap(), expected);
-        });
+        let expected = NonceManagerStorage::channel_slot(ACCOUNT_A, nonce_key);
+        assert_eq!(NonceManagerStorage::nonce_slot(ACCOUNT_A, nonce_key).unwrap(), expected);
+        assert_eq!(NonceManagerStorage::NONCES_BASE_SLOT, NonceManagerStorage::NONCES);
     }
 
     #[test]
-    fn expiring_nonce_seen_slot_matches_handler_chain() {
-        // Pins the shared-crate slot derivation (now the source of
-        // `expiring_nonce_seen_slot` and `EXPIRING_NONCE_SEEN_BASE_SLOT`) to the
-        // macro-generated storage layout the precompile actually writes to, so the
-        // two cannot diverge.
-        let mut storage = HashMapStorageProvider::new(1);
+    fn expiring_nonce_seen_slot_matches_storage_layout() {
+        // Pins the shared-crate slot derivation (the source of `expiring_nonce_seen_slot` and
+        // `EXPIRING_NONCE_SEEN_BASE_SLOT`) to the storage layout the precompile writes to, so
+        // the two cannot diverge.
         let replay_id = B256::repeat_byte(0x5a);
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mgr = NonceManagerStorage::new(ctx);
-            let expected = mgr.expiring_nonce_seen.at(&replay_id).slot();
-            assert_eq!(NonceManagerStorage::expiring_nonce_seen_slot(replay_id), expected);
-        });
+        let expected = NonceManagerStorage::seen_slot(replay_id);
+        assert_eq!(NonceManagerStorage::expiring_nonce_seen_slot(replay_id), expected);
+        assert_eq!(
+            NonceManagerStorage::EXPIRING_NONCE_SEEN_BASE_SLOT,
+            NonceManagerStorage::EXPIRING_NONCE_SEEN
+        );
+    }
+
+    #[test]
+    fn nonce_manager_namespace_matches_erc7201_root() {
+        assert_eq!(
+            StorageLayout::erc7201_root(NonceManagerStorage::NAMESPACE),
+            NonceManagerStorage::ROOT
+        );
+    }
+
+    fn ring_ptr(ctx: StorageCtx<'_>) -> u32 {
+        let slot = NonceManagerStorage::EXPIRING_NONCE_RING_PTR;
+        ctx.read(NonceManagerStorage::ADDRESS, slot).unwrap()
+    }
+
+    fn set_ring_ptr(ctx: StorageCtx<'_>, ptr: u32) {
+        let slot = NonceManagerStorage::EXPIRING_NONCE_RING_PTR;
+        ctx.write(NonceManagerStorage::ADDRESS, slot, ptr).unwrap();
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "base-tiger-precompile-storage"
-description = "Storage abstractions and the provider boundary for Base native precompiles (tiger port)"
+description = "Storage helpers and the provider boundary for Base native precompiles (tiger port)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,21 +12,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# tiger
-base-tiger-precompile-macros.workspace = true
-
 # alloy
 alloy-sol-types.workspace = true
 alloy-primitives = { workspace = true, features = ["std"] }
-
-[dev-dependencies]
-rstest.workspace = true
-proptest.workspace = true
-alloy-primitives = { workspace = true, features = ["rand"] }
-
-[[test]]
-name = "contract"
-required-features = ["test-utils"]
 
 [features]
 test-utils = []
