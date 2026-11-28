@@ -106,8 +106,23 @@ fn param<T: serde::de::DeserializeOwned>(params: &Value, index: usize) -> Result
 }
 
 impl Node {
-    /// Answers one non-Engine JSON-RPC method.
+    /// Answers one non-Engine JSON-RPC method, again when a reorg dropped the block whose state
+    /// it read (see [`RpcError::REORGED`]). A block that stays dropped, as one named by a hash
+    /// does, ends in that read's error.
     pub fn rpc(&self, method: &str, p: &Value) -> Result<Value, RpcError> {
+        for _ in 1..STATE_ATTEMPTS {
+            match self.rpc_once(method, p) {
+                Err(error) if error.code == RpcError::REORGED => {}
+                answer => return answer,
+            }
+        }
+        self.rpc_once(method, p).map_err(|error| match error.code {
+            RpcError::REORGED => RpcError::internal(error.message),
+            _ => error,
+        })
+    }
+
+    fn rpc_once(&self, method: &str, p: &Value) -> Result<Value, RpcError> {
         if let Some(result) = self.rpc_blocks(method, p).or_else(|| self.rpc_call(method, p)).or_else(|| self.rpc_filters(method, p)).or_else(|| self.rpc_fees(method, p)).or_else(|| self.rpc_sequencer(method, p)).or_else(|| self.rpc_config_method(method)) {
             return result;
         }
@@ -322,7 +337,7 @@ impl Node {
             let parts = {
                 let chain = self.chain.read().expect("chain lock");
                 Self::check_state_held(&chain, block)?;
-                chain.state_parts(block).map_err(RpcError::internal)?
+                chain.state_parts(block).map_err(|error| Self::state_error(&chain, block, error))?
             };
             if let Some(local) = parts.open().map_err(RpcError::internal)? {
                 return self.rpc_state_of(local, block).proof_json(address, keys);
@@ -409,6 +424,18 @@ pub(super) mod test_utils {
         let dir = std::env::temp_dir()
             .join(format!("tiger-rpc-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         let _ = std::fs::remove_dir_all(&dir);
+        open(&dir, number)
+    }
+
+    /// `node` closed and opened again on its datadir, as after a restart. `number` is the
+    /// genesis block number it was made with.
+    pub(crate) fn reopen(node: Node, number: u64) -> Node {
+        let dir = node.chain.read().expect("chain lock").db.datadir.path.clone();
+        drop(node);
+        open(&dir, number)
+    }
+
+    fn open(dir: &std::path::Path, number: u64) -> Node {
         let genesis = json!({
             "config": {
                 "chainId": 8453, "homesteadBlock": 0, "eip150Block": 0, "eip155Block": 0, "eip158Block": 0,
@@ -430,7 +457,7 @@ pub(super) mod test_utils {
             }
         });
         let genesis = Genesis::parse(&genesis.to_string()).expect("test genesis parses");
-        Node::open(&dir, genesis, None).expect("test node opens")
+        Node::open(dir, genesis, None).expect("test node opens")
     }
 
     /// The node's reply to `body`.

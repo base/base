@@ -1540,6 +1540,41 @@ mod tests {
         assert!(parts.open().unwrap().is_none(), "a reorg since the parts were taken");
     }
 
+    /// A state read at a block a reorg dropped after the request resolved it (`latest` naming the
+    /// old head while a forkchoice update replaced it) is answered again rather than failing,
+    /// whether the old head's ancestors were in memory or read back from the datadir.
+    #[test]
+    fn a_state_read_at_a_reorged_head_is_answered_again() {
+        let node = node();
+        let genesis = node.chain.read().unwrap().head().hash;
+        let mut blocks = vec![genesis];
+        for n in 1..=4u8 {
+            blocks.push(build(&node, blocks[n as usize - 1], 2, &[deposit(Address::with_last_byte(n))]));
+            node.chain.write().unwrap().set_canonical(blocks[n as usize]).unwrap();
+        }
+        node.chain.write().unwrap().set_persistence(0, 0, None).unwrap();
+        while node.persist_once().unwrap() {}
+        // After a restart the stored blocks are read back from the datadir, with no changes in
+        // memory, and the head is a block sent again on top of them.
+        let node = crate::rpc::test_utils::reopen(node, 0);
+        let head = build(&node, blocks[4], 2, &[deposit(Address::with_last_byte(5))]);
+        node.chain.write().unwrap().set_canonical(head).unwrap();
+        let old_head = node.chain.read().unwrap().head();
+        assert_eq!(old_head.hash, head);
+        let sibling = build(&node, blocks[2], 4, &[]);
+        node.chain.write().unwrap().set_canonical(sibling).unwrap();
+        let chain = node.chain.read().unwrap();
+        let error = chain.state_after(&old_head).expect_err("the old head's state is gone");
+        assert_eq!(Node::state_error(&chain, &old_head, error).code, crate::RpcError::REORGED);
+        drop(chain);
+        // The new head forks below block 3, so block 3's deposit to 0x…03 is not in its state.
+        let address = Address::with_last_byte(3);
+        let body = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "eth_getBalance",
+            "params": [address, "latest"] });
+        let reply = crate::rpc::test_utils::reply(&node, &body.to_string()).unwrap();
+        assert_eq!(reply["result"], serde_json::json!("0x0"), "{reply}");
+    }
+
     /// A state below the head reverts the in-memory blocks above it (with their values before,
     /// or by searching the blocks below) and answers what the same block answers once stored:
     /// proofs, accounts and slots, including accounts created after it.

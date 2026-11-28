@@ -57,7 +57,18 @@ impl Node {
         block: &StoredBlock,
     ) -> Result<RpcState<'d>, RpcError> {
         Self::check_state_held(chain, block)?;
-        Ok(self.rpc_state_of(chain.state_after(block).map_err(RpcError::internal)?, block))
+        let local = chain.state_after(block).map_err(|error| Self::state_error(chain, block, error))?;
+        Ok(self.rpc_state_of(local, block))
+    }
+
+    /// The error for a state of `block` that would not open: [`RpcError::REORGED`] when `block`
+    /// left the canonical chain (a reorg dropped its branch after the request resolved it), else
+    /// `-32603`.
+    pub fn state_error(chain: &Chain, block: &StoredBlock, error: String) -> RpcError {
+        match chain.is_canonical(&block.hash) {
+            true => RpcError::internal(error),
+            false => RpcError::new(RpcError::REORGED, error),
+        }
     }
 
     /// An error when the datadir pruned the post-state of canonical `block`.

@@ -22,6 +22,12 @@ pub struct RpcError {
 }
 
 impl RpcError {
+    /// The code of a state read whose block a reorg dropped after the request resolved it, as
+    /// `latest` can name the old head while a forkchoice update replaces it. [`Node::rpc`]
+    /// answers such a request again, so the read sees the old or the new head as base-reth's
+    /// does, and never sends this code.
+    pub const REORGED: i64 = i64::MIN;
+
     /// An error with `code` and `message`.
     pub fn new(code: i64, message: impl Into<String>) -> Self {
         Self { code, message: message.into(), data: None }
