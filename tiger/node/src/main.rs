@@ -137,7 +137,8 @@ impl NodeArgs {
                     persistence.2 = Some(value()?.parse().map_err(|error| format!("{flag}: {error}"))?);
                 }
                 "--stateless.upstream" => upstream = Some(base_tiger::Upstream::new(&value()?)?),
-                "--stateless.start" => start = value()?,
+                // A decimal number goes to the upstream as a hex quantity, as the RPC takes it.
+                "--stateless.start" => start = value().map(|block| block.parse::<u64>().map_or(block, |n| format!("{n:#x}")))?,
                 "--port" => net.port = parse_port(value()?)?,
                 "--discovery.port" | "--discovery.v5.port" => net.discovery_port = Some(parse_port(value()?)?),
                 "--disable-discovery" => net.disable_discovery = true,
