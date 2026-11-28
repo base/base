@@ -43,7 +43,7 @@ struct NodeArgs {
 }
 
 /// Peer-to-peer options, named as base-reth names them.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct NetArgs {
     port: u16,
     discovery_port: Option<u16>,
@@ -73,6 +73,9 @@ impl NodeArgs {
         ["--ws", "--rollup.disable-tx-pool-gossip", "-v", "--http.disable-compression"];
 
     fn parse(args: &[String]) -> Result<Self, String> {
+        fn number<T: std::str::FromStr<Err: std::fmt::Display>>(flag: &str, text: String) -> Result<T, String> {
+            text.parse().map_err(|error| format!("{flag}: {error}"))
+        }
         let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let (mut chain, mut datadir, mut jwt_secret) = (None, None, None);
         let (mut upstream, mut start) = (None, "finalized".to_owned());
@@ -80,17 +83,7 @@ impl NodeArgs {
         let mut persistence = (base_tiger::PERSISTENCE_THRESHOLD, base_tiger::MEMORY_BLOCK_BUFFER_TARGET, None);
         let (mut http_addr, mut http_port) = (localhost, 8545u16);
         let (mut auth_addr, mut auth_port) = (localhost, 8551u16);
-        let mut net = NetArgs {
-            port: 30303,
-            discovery_port: None,
-            disable_discovery: false,
-            bootnodes: None,
-            trusted_peers: Vec::new(),
-            secret_key: None,
-            max_outbound: None,
-            max_inbound: None,
-            external_ip: None,
-        };
+        let mut net = NetArgs { port: 30303, ..NetArgs::default() };
         let list = |text: String| -> Vec<String> {
             text.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect()
         };
@@ -127,15 +120,9 @@ impl NodeArgs {
                     let blocks = text.parse::<u64>().map_err(|error| format!("--rpc.eth-proof-window {text}: {error}"))?;
                     rpc = rpc.with_eth_proof_window(blocks)?;
                 }
-                "--engine.persistence-threshold" => {
-                    persistence.0 = value()?.parse().map_err(|error| format!("{flag}: {error}"))?;
-                }
-                "--engine.memory-block-buffer-target" => {
-                    persistence.1 = value()?.parse().map_err(|error| format!("{flag}: {error}"))?;
-                }
-                "--engine.persistence-backpressure-threshold" => {
-                    persistence.2 = Some(value()?.parse().map_err(|error| format!("{flag}: {error}"))?);
-                }
+                "--engine.persistence-threshold" => persistence.0 = number(&flag, value()?)?,
+                "--engine.memory-block-buffer-target" => persistence.1 = number(&flag, value()?)?,
+                "--engine.persistence-backpressure-threshold" => persistence.2 = Some(number(&flag, value()?)?),
                 "--stateless.upstream" => upstream = Some(base_tiger::Upstream::new(&value()?)?),
                 // A decimal number goes to the upstream as a hex quantity, as the RPC takes it.
                 "--stateless.start" => start = value().map(|block| block.parse::<u64>().map_or(block, |n| format!("{n:#x}")))?,
@@ -145,12 +132,8 @@ impl NodeArgs {
                 "--bootnodes" => net.bootnodes = Some(list(value()?)),
                 "--trusted-peers" => net.trusted_peers = list(value()?),
                 "--p2p-secret-key" => net.secret_key = Some(PathBuf::from(value()?)),
-                "--max-outbound-peers" => {
-                    net.max_outbound = Some(value()?.parse().map_err(|error| format!("{flag}: {error}"))?)
-                }
-                "--max-inbound-peers" => {
-                    net.max_inbound = Some(value()?.parse().map_err(|error| format!("{flag}: {error}"))?)
-                }
+                "--max-outbound-peers" => net.max_outbound = Some(number(&flag, value()?)?),
+                "--max-inbound-peers" => net.max_inbound = Some(number(&flag, value()?)?),
                 "--nat" => {
                     let text = value()?;
                     let ip = text.strip_prefix("extip:").ok_or_else(|| format!("--nat {text}: only extip:<ip> is supported"))?;
