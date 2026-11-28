@@ -51,9 +51,9 @@ differential fuzz harness against base-reth.
 
 ## Results so far
 
-**Small dependency tree.** `cargo tree` for the `tiger` binary has no `reth-*` or `revm*` crate
-and 219 crates in all, against 766 for `base-reth-node`. Every direct dependency has a reason in
-[Dependencies](#dependencies). About 100k lines of Rust.
+**Small dependency tree.** `cargo tree -e normal,build` for the `tiger` binary has no `reth-*` or
+`revm*` crate and 263 crates in all (2026-11-28), against 766 for `base-reth-node`. Every direct
+dependency has a reason in [Dependencies](#dependencies). About 100k lines of Rust.
 
 **Correctness.** The differential fuzz harness (`etc/tools/diff-*`) runs base-reth as the
 reference and tiger as another adapter, in every mode: block execution, chain, system config,
