@@ -638,27 +638,32 @@ impl Inner {
         let Ok(ephemeral_key) = PublicKey::from_slice(ephemeral) else { return };
         let secret = ecdh_compressed(&ephemeral_key, &self.key);
         let (initiator_key, recipient_key) = derive_keys(&secret, &challenge, &src, &self.local_id);
-        let Some(plaintext) = aes128_gcm_decrypt(
-            &initiator_key,
-            &packet.nonce,
-            packet.message,
-            &packet.iv_and_header(),
-        ) else {
-            return;
-        };
-        if state.sessions.len() >= MAX_SESSIONS {
-            state.sessions.clear();
-        }
-        state.sessions.insert(src, Session { write_key: recipient_key, read_key: initiator_key });
-        // The id signature, the ephemeral key and the message all check out, so the record may
-        // enter the table now, at its own UDP endpoint. Like sigp discv5, a record with no UDP
-        // endpoint, or one other than the packet's source, gets a session but no table entry.
+        // The id signature and the ephemeral key check out, so the record may enter the table
+        // now, at its own UDP endpoint, before the message is decrypted, as in sigp discv5. Like
+        // sigp, a record with no UDP endpoint, or one other than the packet's source, gets no
+        // table entry.
         if let Some(enr) = enr
             && let Some(udp) = enr.udp_socket()
             && udp == from
         {
             self.add_contact(state, enr, udp, true);
         }
+        let Some(plaintext) = aes128_gcm_decrypt(
+            &initiator_key,
+            &packet.nonce,
+            packet.message,
+            &packet.iv_and_header(),
+        ) else {
+            // sigp drops the new session and challenges the node again, with the sequence
+            // number of its record if the record is now in the table.
+            state.sessions.remove(&src);
+            self.send_whoareyou(state, src, from, &packet.nonce);
+            return;
+        };
+        if state.sessions.len() >= MAX_SESSIONS {
+            state.sessions.clear();
+        }
+        state.sessions.insert(src, Session { write_key: recipient_key, read_key: initiator_key });
         self.on_message(state, src, from, &plaintext);
     }
 
@@ -1117,16 +1122,48 @@ mod tests {
             assert_eq!(in_table, contact.is_some());
             (contact, state.sessions.contains_key(&remote_id))
         };
-        // A valid, correctly signed record with a flipped id signature byte, a garbage
-        // ephemeral key, or an undecryptable message: no session and no table entry.
-        for tamper in [Tamper::IdSignature, Tamper::EphemeralKey, Tamper::Message] {
+        // A valid, correctly signed record with a flipped id signature byte or a garbage
+        // ephemeral key: no session and no table entry.
+        for tamper in [Tamper::IdSignature, Tamper::EphemeralKey] {
             assert_eq!(run(from.port(), tamper), (None, false));
         }
+        // An undecryptable message after a valid id signature and key: the record enters the
+        // table, but there is no session.
+        assert_eq!(run(from.port(), Tamper::Message), (Some(from), false));
         // A verified handshake stores the record's own endpoint.
         assert_eq!(run(from.port(), Tamper::None), (Some(from), true));
         // A record with another UDP endpoint, or none, gets a session but no table entry.
         assert_eq!(run(from.port() ^ 1, Tamper::None), (None, true));
         assert_eq!(run(0, Tamper::None), (None, true));
+    }
+
+    #[test]
+    fn undecryptable_handshake_message_is_challenged_again() {
+        let inner = test_inner();
+        let remote_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        remote_socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let from = remote_socket.local_addr().unwrap();
+        let remote = random_secret_key();
+        let remote_id = node_id(&PublicKey::from_secret_key_global(&remote));
+        let record = Enr::build(&remote, 3, Some(Ipv4Addr::LOCALHOST), 0, from.port(), None);
+        // Reads the next WHOAREYOU sent to the remote: (its nonce, the enr-seq it carries).
+        let mut buf = [0u8; MAX_PACKET];
+        let mut next_whoareyou = || {
+            let len = remote_socket.recv(&mut buf).unwrap();
+            let packet = decode_packet(&BASE_PROTOCOL_ID, &remote_id, &buf[..len]).unwrap();
+            assert_eq!(packet.flag, FLAG_WHOAREYOU);
+            (packet.nonce, u64::from_be_bytes(packet.authdata()[16..24].try_into().unwrap()))
+        };
+        inner.send_whoareyou(&mut inner.state.lock().unwrap(), remote_id, from, &[7; 12]);
+        assert_eq!(next_whoareyou(), ([7; 12], 0));
+        let handshake = handshake_packet(&inner, &remote, &record.encode(), Tamper::Message);
+        let nonce = decode_packet(&BASE_PROTOCOL_ID, &inner.local_id, &handshake).unwrap().nonce;
+        inner.on_packet(&handshake, from);
+        // The re-challenge answers the handshake's nonce and names the record's seq.
+        assert_eq!(next_whoareyou(), (nonce, 3));
+        let state = inner.state.lock().unwrap();
+        assert_eq!(state.challenges[&remote_id].addr, from);
+        assert!(!state.sessions.contains_key(&remote_id));
     }
 
     #[test]
