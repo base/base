@@ -10,7 +10,7 @@
 use std::{
     collections::{HashMap, HashSet},
     io,
-    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -61,6 +61,14 @@ const MAX_FOUND: usize = 1024;
 /// How long a verified node waits to replace a full bucket's oldest entry, which is probed in
 /// the meantime (sigp discv5's k-bucket pending timeout).
 const PENDING_TIMEOUT: Duration = Duration::from_secs(60);
+/// Agreeing PONG votes from distinct peers needed to change the advertised socket (sigp
+/// discv5's `enr_peer_update_min` default, which base-reth keeps).
+const ENR_PEER_UPDATE_MIN: usize = 10;
+/// How long a PONG vote counts (sigp discv5's `vote_duration` default).
+const VOTE_DURATION: Duration = Duration::from_secs(120);
+/// The winning socket's lead over the runner-up, as a fraction of its votes (sigp discv5's
+/// `CLEAR_MAJORITY_PERCENTAGE`).
+const CLEAR_MAJORITY_PERCENTAGE: f64 = 0.3;
 
 /// Discovery configuration.
 #[derive(Debug, Clone)]
@@ -71,7 +79,7 @@ pub struct Discv5Config {
     pub listen_addr: SocketAddr,
     /// The RLPx port to advertise (0 for none).
     pub tcp_port: u16,
-    /// The IP to advertise; learned from PONGs when `None`.
+    /// The IP to advertise; when `None`, the advertised UDP socket follows PONG votes.
     pub external_ip: Option<IpAddr>,
     /// The fork id to advertise under `opel`.
     pub fork_id: ForkId,
@@ -113,6 +121,43 @@ struct PendingEntry {
     replace_at: Instant,
 }
 
+/// The sockets peers report for this node in PONGs: one vote per peer, each counted for
+/// [`VOTE_DURATION`], as sigp discv5's `IpVote` keeps them.
+#[derive(Debug, Default)]
+struct IpVotes {
+    votes: HashMap<B256, (SocketAddrV4, Instant)>,
+}
+
+impl IpVotes {
+    fn insert(&mut self, node: B256, socket: SocketAddrV4, now: Instant) {
+        self.votes.insert(node, (socket, now + VOTE_DURATION));
+    }
+
+    /// Drops expired votes and returns the socket with at least [`ENR_PEER_UPDATE_MIN`] votes
+    /// and a clear lead over every other socket, if there is one.
+    fn majority(&mut self, now: Instant) -> Option<SocketAddrV4> {
+        self.votes.retain(|_, (_, expires)| *expires > now);
+        let mut counts: HashMap<SocketAddrV4, usize> = HashMap::new();
+        for (socket, _) in self.votes.values() {
+            *counts.entry(*socket).or_default() += 1;
+        }
+        let mut best: Option<(SocketAddrV4, usize)> = None;
+        let mut runner_up = 0;
+        for (socket, count) in counts {
+            match best {
+                Some((_, best_count)) if count <= best_count => runner_up = runner_up.max(count),
+                _ => {
+                    runner_up = runner_up.max(best.map_or(0, |(_, best_count)| best_count));
+                    best = Some((socket, count));
+                }
+            }
+        }
+        let (socket, count) = best?;
+        let threshold = ((count as f64) * (1.0 - CLEAR_MAJORITY_PERCENTAGE)).round() as usize;
+        (count >= ENR_PEER_UPDATE_MIN && runner_up < threshold).then_some(socket)
+    }
+}
+
 /// A request we sent, kept until answered, challenged, or timed out.
 #[derive(Debug, Clone)]
 struct Outgoing {
@@ -143,7 +188,8 @@ struct State {
     lookup_rounds: u32,
     found: Vec<FoundNode>,
     next_request_id: u64,
-    ip_learned: bool,
+    /// `None` when the IP is configured: the advertised socket then never changes.
+    ip_votes: Option<IpVotes>,
 }
 
 struct Inner {
@@ -289,6 +335,13 @@ fn encode_header(
     (packet, ad)
 }
 
+/// The message kind and request id of a request or response plaintext.
+fn request_kind_and_id(plaintext: &[u8]) -> Option<(u8, &[u8])> {
+    let (&kind, mut rest) = plaintext.split_first()?;
+    let mut items = RlpHeader::decode_bytes(&mut rest, true).ok()?;
+    Some((kind, RlpHeader::decode_bytes(&mut items, false).ok()?))
+}
+
 fn encode_message(kind: u8, fields: &[&dyn Encodable]) -> Vec<u8> {
     let mut out = vec![kind];
     out.extend(encode_list(fields));
@@ -325,7 +378,7 @@ impl Discv5 {
             local_id,
             protocol_id: BASE_PROTOCOL_ID,
             state: Mutex::new(State {
-                ip_learned: ip.is_some(),
+                ip_votes: ip.is_none().then(IpVotes::default),
                 local_enr,
                 contacts,
                 sessions: HashMap::new(),
@@ -532,7 +585,14 @@ impl Inner {
             self.seal(&request.node, FLAG_HANDSHAKE, &authdata, key, &request.plaintext);
         self.send_to(&out, from);
         state.sessions.insert(request.node, Session { write_key, read_key });
+        let node = request.node;
+        let request_kind = request_kind_and_id(&request.plaintext).map(|(kind, _)| kind);
         state.outgoing.insert(nonce, Outgoing { sent: Instant::now(), ..request });
+        // Like sigp discv5, ping a node we just connected to, so its PONG can vote on our
+        // advertised socket.
+        if state.ip_votes.is_some() && request_kind != Some(PING) {
+            self.ping(state, node);
+        }
     }
 
     fn on_handshake(&self, state: &mut State, packet: &Packet<'_>, from: SocketAddr) {
@@ -622,14 +682,21 @@ impl Inner {
                 self.send_response(state, src, from, &pong);
             }
             PONG => {
-                // The response answers every outgoing request to `src`.
-                state.outgoing.retain(|_, o| o.node != src);
+                // Only a PONG answering one of our PINGs to `src` counts, as in sigp discv5.
+                let answered = state.outgoing.iter().find(|(_, o)| {
+                    o.node == src && request_kind_and_id(&o.plaintext) == Some((PING, &request_id))
+                });
+                let Some(nonce) = answered.map(|(nonce, _)| *nonce) else { return };
+                state.outgoing.remove(&nonce);
                 let _seq = u64::decode(&mut items);
-                if !state.ip_learned
-                    && let Ok(ip) = Bytes::decode(&mut items)
-                    && let Ok(octets) = <[u8; 4]>::try_from(ip.as_ref())
+                let (Ok(ip), Ok(port)) = (Bytes::decode(&mut items), u16::decode(&mut items))
+                else {
+                    return;
+                };
+                if let Ok(octets) = <[u8; 4]>::try_from(ip.as_ref())
+                    && port != 0
                 {
-                    self.learn_ip(state, Ipv4Addr::from(octets));
+                    self.on_ip_vote(state, src, SocketAddrV4::new(Ipv4Addr::from(octets), port));
                 }
             }
             FINDNODE => {
@@ -679,16 +746,34 @@ impl Inner {
         }
     }
 
-    fn learn_ip(&self, state: &mut State, ip: Ipv4Addr) {
-        state.ip_learned = true;
-        let udp = self.socket.local_addr().map(|a| a.port()).unwrap_or(0);
+    fn ping(&self, state: &mut State, node: B256) {
+        let request_id = Self::request_id(state);
+        let ping = encode_message(PING, &[&request_id, &state.local_enr.seq]);
+        self.send_request(state, node, ping);
+    }
+
+    /// Counts `socket`, reported by `node` in a PONG to our PING, towards our advertised UDP
+    /// socket. As in sigp discv5, only peers in the routing table vote, and the record changes
+    /// once one socket holds a clear majority of [`ENR_PEER_UPDATE_MIN`] or more live votes.
+    fn on_ip_vote(&self, state: &mut State, node: B256, socket: SocketAddrV4) {
+        let distance = log2_distance(&self.local_id, &node) as usize;
+        if !state.buckets[distance].contains(&node) {
+            return;
+        }
+        let now = Instant::now();
+        let Some(votes) = state.ip_votes.as_mut() else { return };
+        votes.insert(node, socket, now);
+        let Some(majority) = votes.majority(now) else { return };
+        if state.local_enr.udp_socket() == Some(SocketAddr::V4(majority)) {
+            return;
+        }
         let seq = state.local_enr.seq + 1;
         state.local_enr = Enr::build(
             &self.key,
             seq,
-            Some(ip),
+            Some(*majority.ip()),
             self.config.tcp_port,
-            udp,
+            majority.port(),
             Some(self.config.fork_id),
         );
     }
@@ -726,9 +811,7 @@ impl Inner {
         let oldest = bucket[0];
         let replace_at = Instant::now() + PENDING_TIMEOUT;
         state.pending.insert(distance, PendingEntry { id, contact, oldest, replace_at });
-        let request_id = Self::request_id(state);
-        let ping = encode_message(PING, &[&request_id, &state.local_enr.seq]);
-        self.send_request(state, oldest, ping);
+        self.ping(state, oldest);
     }
 
     /// Records that `node` answered us: if it is the entry a pending node waits to replace, it
@@ -954,7 +1037,7 @@ mod tests {
                 lookup_rounds: 0,
                 found: Vec::new(),
                 next_request_id: 1,
-                ip_learned: true,
+                ip_votes: None,
             }),
             shutdown: AtomicBool::new(false),
         }
@@ -1097,6 +1180,77 @@ mod tests {
         let state = inner.state.lock().unwrap();
         assert!(!state.contacts.contains_key(&full[1]));
         assert!(state.contacts.contains_key(&verified.node_id()));
+    }
+
+    #[test]
+    fn advertised_socket_changes_only_after_enough_agreeing_solicited_pongs() {
+        let inner = test_inner();
+        inner.state.lock().unwrap().ip_votes = Some(IpVotes::default());
+        let reported = SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 7), 30303);
+        let pong = |request_id: &[u8]| {
+            let ip = reported.ip().octets();
+            let request_id = Bytes::copy_from_slice(request_id);
+            encode_message(PONG, &[&request_id, &1u64, &&ip[..], &reported.port()])
+        };
+        let from: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let peers: Vec<B256> = (0..ENR_PEER_UPDATE_MIN as u16)
+            .map(|i| {
+                let key = random_secret_key();
+                let enr = Enr::build(&key, 1, Some(Ipv4Addr::LOCALHOST), 0, 40_000 + i, None);
+                let (id, udp) = (enr.node_id(), enr.udp_socket().unwrap());
+                inner.add_contact(&mut inner.state.lock().unwrap(), enr, udp, false);
+                id
+            })
+            .collect();
+        let advertised = || {
+            let state = inner.state.lock().unwrap();
+            (state.local_enr.seq, state.local_enr.udp_socket())
+        };
+        let before = advertised();
+        // A PONG with req-id 0xdeadbeef that answers no PING casts no vote.
+        {
+            let mut state = inner.state.lock().unwrap();
+            inner.on_message(&mut state, peers[0], from, &pong(&[0xde, 0xad, 0xbe, 0xef]));
+            assert!(state.ip_votes.as_ref().unwrap().votes.is_empty());
+        }
+        assert_eq!(advertised(), before);
+        let solicited = |peer: B256| {
+            let mut state = inner.state.lock().unwrap();
+            inner.ping(&mut state, peer);
+            let ping = state.outgoing.values().find(|o| o.node == peer).unwrap();
+            let request_id = request_kind_and_id(&ping.plaintext).unwrap().1.to_vec();
+            inner.on_message(&mut state, peer, from, &pong(&request_id));
+        };
+        // Nine agreeing votes, and a repeat from one of those peers, are not enough.
+        for peer in &peers[..ENR_PEER_UPDATE_MIN - 1] {
+            solicited(*peer);
+        }
+        solicited(peers[0]);
+        assert_eq!(advertised(), before);
+        // The tenth distinct peer moves the record to the reported socket.
+        solicited(peers[ENR_PEER_UPDATE_MIN - 1]);
+        assert_eq!(advertised(), (before.0 + 1, Some(SocketAddr::V4(reported))));
+    }
+
+    #[test]
+    fn ip_vote_majority_needs_a_clear_lead_and_live_votes() {
+        let a = SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 7), 30303);
+        let b = SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 7), 30304);
+        let now = Instant::now();
+        let votes = |for_a: usize, for_b: usize| {
+            let mut votes = IpVotes::default();
+            for i in 0..for_a + for_b {
+                let socket = if i < for_a { a } else { b };
+                votes.insert(B256::from(random_array::<32>()), socket, now);
+            }
+            votes
+        };
+        // The runner-up must stay below 70% of the winner's votes.
+        assert_eq!(votes(10, 7).majority(now), None);
+        assert_eq!(votes(10, 6).majority(now), Some(a));
+        assert_eq!(votes(9, 0).majority(now), None);
+        // Votes expire after two minutes.
+        assert_eq!(votes(10, 0).majority(now + VOTE_DURATION), None);
     }
 
     #[test]
