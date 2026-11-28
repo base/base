@@ -9,7 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-exclude = ["actions/fixtures", "crates/proof/zk/programs"]
+exclude = ["actions/fixtures", "crates/proof/zk/programs", "tiger"]
 members = [
   "acceptance",
   "actions/*",

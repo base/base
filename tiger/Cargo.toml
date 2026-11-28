@@ -11,7 +11,7 @@ repository = "https://github.com/base/base"
 # dependency is here and SCOPE.md for what the client does.
 [workspace]
 resolver = "2"
-members = ["evm", "net", "node", "precompiles", "store", "trie"]
+members = ["evm", "net", "node", "p2p", "precompiles", "store", "trie"]
 
 [workspace.dependencies]
 # tiger
@@ -19,6 +19,7 @@ base-tiger-evm = { path = "evm" }
 base-tiger-store = { path = "store" }
 base-tiger-trie = { path = "trie" }
 base-tiger-net = { path = "net" }
+base-tiger-p2p = { path = "p2p" }
 base-tiger-precompiles = { path = "precompiles" }
 
 # base: engine-neutral Base types whose dependency trees hold no reth or revm.

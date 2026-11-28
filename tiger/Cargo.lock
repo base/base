@@ -1174,6 +1174,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-tiger-p2p"
+version = "0.0.0"
+dependencies = [
+ "ring",
+ "secp256k1 0.31.1",
+]
+
+[[package]]
 name = "base-tiger-precompiles"
 version = "0.0.0"
 dependencies = [
