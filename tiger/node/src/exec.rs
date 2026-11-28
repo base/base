@@ -25,6 +25,8 @@ pub struct Executed {
     pub senders: Vec<Address>,
     /// One receipt per transaction.
     pub receipts: Vec<BaseReceiptEnvelope>,
+    /// Each transaction's return data on success, revert bytes on `REVERT`, empty on a halt.
+    pub outputs: Vec<Bytes>,
     /// The block's state changes.
     pub changes: BlockStateAccumulator,
     /// The state root after the block.
@@ -125,6 +127,7 @@ impl BlockExecution<'_> {
                 transactions,
                 senders,
                 receipts: result.receipts,
+                outputs: result.outputs,
                 changes,
                 state_root,
             }),
@@ -224,6 +227,7 @@ impl BlockExecution<'_> {
                 transactions: signed,
                 senders: recovered.iter().map(|tx| tx.signer()).collect(),
                 receipts: result.receipts,
+                outputs: result.outputs,
                 changes,
                 state_root,
             }),

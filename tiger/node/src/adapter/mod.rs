@@ -15,7 +15,7 @@ use std::{
 };
 
 use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header};
-use alloy_primitives::{Address, B64, B256, U256};
+use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use base_common_consensus::{BaseReceiptEnvelope, Predeploys};
 use base_common_genesis::{BaseFeature, SystemConfig};
 use base_tiger_evm::{
@@ -259,7 +259,7 @@ impl Adapter {
             invalid_reason: None,
             rejected: built.rejected.into_iter().map(|(index, error)| Rejected { index, error }).collect(),
             header: Some(Self::header_results(&executed.header)),
-            receipts: executed.receipts.iter().map(Self::receipt).collect(),
+            receipts: executed.receipts.iter().zip(&executed.outputs).map(Self::receipt).collect(),
             post: Self::post_state(&executed.changes, state)?,
         })
     }
@@ -312,7 +312,7 @@ impl Adapter {
             invalid_reason,
             rejected: Vec::new(),
             header: Some(Self::header_results(&executed.header)),
-            receipts: executed.receipts.iter().map(Self::receipt).collect(),
+            receipts: executed.receipts.iter().zip(&executed.outputs).map(Self::receipt).collect(),
             post: Self::post_state(&executed.changes, state)?,
         })
     }
@@ -331,7 +331,7 @@ impl Adapter {
         }
     }
 
-    fn receipt(receipt: &BaseReceiptEnvelope) -> Receipt {
+    fn receipt((receipt, output): (&BaseReceiptEnvelope, &Bytes)) -> Receipt {
         Receipt {
             tx_type: receipt.tx_type() as u8,
             status: u8::from(receipt.status()),
@@ -347,6 +347,7 @@ impl Adapter {
                 .collect(),
             deposit_nonce: receipt.deposit_nonce(),
             deposit_receipt_version: receipt.deposit_receipt_version(),
+            output: Some(output.clone()),
         }
     }
 

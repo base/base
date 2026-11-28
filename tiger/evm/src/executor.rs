@@ -11,6 +11,7 @@ use evm2::{
     evm::{DynDatabase, NoopChangeSink, StateChangeSink, Tee},
     env::BlockEnv,
     evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SystemTx},
+    interpreter::InstrStop,
     registry::{HandlerError, HandlerResult},
 };
 
@@ -155,6 +156,8 @@ pub struct BaseBlockExecutionCtx {
 pub struct BlockExecutionResult {
     /// The transaction receipts, in execution order.
     pub receipts: Vec<BaseReceiptEnvelope>,
+    /// Each transaction's return data on success, revert bytes on `REVERT`, empty on a halt.
+    pub outputs: Vec<Bytes>,
     /// The block's cumulative gas used (the last receipt's cumulative gas, or zero).
     pub gas_used: u64,
     /// The block's accumulated Jovian DA footprint (zero before Jovian). Surfaced in the block
@@ -177,6 +180,7 @@ pub struct BaseBlockExecutor<'a> {
     ctx: BaseBlockExecutionCtx,
     block_state: BlockStateAccumulator,
     receipts: Vec<BaseReceiptEnvelope>,
+    outputs: Vec<Bytes>,
     gas_used: u64,
     da_footprint_used: u64,
     /// Whether the block's L1 fee parameters have been read (see [`L1BlockInfo`]).
@@ -191,6 +195,7 @@ impl<'a> BaseBlockExecutor<'a> {
             ctx,
             block_state: BlockStateAccumulator::new(),
             receipts: Vec::new(),
+            outputs: Vec::new(),
             gas_used: 0,
             da_footprint_used: 0,
             l1_loaded: false,
@@ -406,6 +411,7 @@ impl<'a> BaseBlockExecutor<'a> {
         let result = executed.result();
         let success = result.status;
         let logs = result.logs.clone();
+        let output = if success || result.stop == InstrStop::Revert { result.output.clone() } else { Bytes::new() };
         let committed_phases = result.ext.committed_phases;
         // Fail on overflow rather than silently saturating, which would corrupt this and every
         // later receipt's cumulative gas. Practically unreachable given the block-gas pre-check
@@ -450,6 +456,7 @@ impl<'a> BaseBlockExecutor<'a> {
             }
         };
         self.receipts.push(envelope);
+        self.outputs.push(output);
         Ok(())
     }
 
@@ -458,6 +465,7 @@ impl<'a> BaseBlockExecutor<'a> {
     pub fn finish(self) -> (Evm<'a, BaseEvmTypes>, BlockExecutionResult, BlockStateAccumulator) {
         let result = BlockExecutionResult {
             receipts: self.receipts,
+            outputs: self.outputs,
             gas_used: self.gas_used,
             blob_gas_used: self.da_footprint_used,
         };

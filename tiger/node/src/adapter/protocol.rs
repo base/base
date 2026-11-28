@@ -338,6 +338,9 @@ pub(crate) struct Receipt {
     /// Deposit receipt version (deposits, Canyon and later).
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_receipt_version: Option<u64>,
+    /// Return data on success, revert bytes on revert, empty on a halt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<Bytes>,
 }
 
 /// Post-block values of an account the block changed.
