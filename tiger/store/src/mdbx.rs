@@ -55,8 +55,9 @@ impl std::error::Error for MdbxError {}
 const GIGABYTE: isize = 1 << 30;
 /// Bytes in one terabyte.
 const TERABYTE: isize = 1 << 40;
-/// Upper bound of the file size (reth's 8 TiB).
-const MAX_SIZE: isize = 8 * TERABYTE;
+/// Upper bound of the file size (reth's 8 TiB). Tests reserve 64 GiB per environment, so a test
+/// process holding many datadirs stays inside the 128 TiB user address space.
+const MAX_SIZE: isize = if cfg!(any(test, feature = "test-utils")) { 64 * GIGABYTE } else { 8 * TERABYTE };
 /// File growth step (reth's 4 GiB).
 const GROWTH_STEP: isize = 4 * GIGABYTE;
 /// Page size of a new file (reth's OS page size clamped to 4096..=65536).
