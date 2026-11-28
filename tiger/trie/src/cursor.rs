@@ -180,10 +180,12 @@ fn storage_entry(entry: Option<(&[u8], &[u8])>) -> Result<Option<(B256, U256)>, 
 impl<K> HashedCursor for HashedStorageCursor<'_, K> {
     type Value = U256;
 
+    #[inline]
     fn seek(&mut self, key: B256) -> Result<Option<(B256, U256)>, TrieError> {
         storage_entry(self.cursor.seek_dup(self.address.as_slice(), key.as_slice())?)
     }
 
+    #[inline]
     fn next(&mut self) -> Result<Option<(B256, U256)>, TrieError> {
         storage_entry(self.cursor.next_dup()?)
     }
