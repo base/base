@@ -64,6 +64,13 @@ pub struct ChaosConfig {
     pub snapshot_percent: u64,
     /// Percentage of kills after which base-reth opens a copy of the crashed datadir first.
     pub crash_handoff_percent: u64,
+    /// Percentage of Engine API calls sent twice at once.
+    pub duplicate_percent: u64,
+    /// Percentage of runs that start with base-reth following the recording and being killed,
+    /// so tiger opens base-reth's crashed datadir.
+    pub base_crash_percent: u64,
+    /// Percentage of runs with a stateless tiger.
+    pub stateless_percent: u64,
 }
 
 /// What one run did.
@@ -103,6 +110,8 @@ pub struct ChaosRun {
     rng: Rng,
     /// tiger's head as the driver believes it.
     head: B256,
+    /// The recording's latest forkchoice head (where tiger returns to after a flap).
+    trace_head: B256,
     /// The recording's latest safe and finalized blocks.
     safe: B256,
     finalized: B256,
@@ -115,12 +124,61 @@ pub struct ChaosRun {
     events: BTreeMap<String, u64>,
     /// Log of driver actions, for reproducers.
     actions: Vec<Value>,
+    /// tiger is about to reopen a datadir base-reth wrote and crashed on.
+    base_written: bool,
+    /// The lowest block tiger holds: a stateless node's start block, else genesis.
+    floor: u64,
+    /// The upstream of a stateless tiger (base-reth on the recording's final datadir).
+    upstream: Option<NodeProcess>,
 }
 
 impl ChaosRun {
     /// tiger's HTTP and Engine API ports.
     fn tiger_spec(offset: u16) -> String {
         format!("tiger=http://127.0.0.1:{},http://127.0.0.1:{}", 28545 + offset, 28551 + offset)
+    }
+
+    /// The stateless upstream's ports (launch name `oracle`).
+    fn oracle_spec(offset: u16) -> String {
+        format!("oracle=http://127.0.0.1:{},http://127.0.0.1:{}", 20545 + offset, 20551 + offset)
+    }
+
+    /// A stateless run's recording: the final canonical chain from a start block above the last
+    /// storage wipe (base-reth's witnesses below it are wrong, B1) and at least 60 blocks below
+    /// the head, as a payload and a forkchoice update per block (safe 4 and finalized 32 blocks
+    /// back, never below the start). Side branches are left out: the upstream holds only the
+    /// final chain, so it cannot serve their witnesses. Returns the view and the start block.
+    fn stateless_view(rec: &Recording, rng: &mut Rng) -> Option<(Recording, B256)> {
+        let head = rec.final_head();
+        let top = rec.blocks[&head].number;
+        let last_wipe = (1..=top)
+            .rev()
+            .find(|n| rec.ancestor_at(head, *n).is_some_and(|h| rec.blocks[&h].wipes_storage))
+            .unwrap_or(0);
+        let lowest = last_wipe.max(1);
+        if lowest + 60 > top {
+            return None;
+        }
+        let start_number = rng.range(lowest, top - 60);
+        let start = rec.ancestor_at(head, start_number)?;
+        let mut view = rec.clone();
+        view.steps.clear();
+        view.snapshot = None;
+        for number in start_number + 1..=top {
+            let hash = rec.ancestor_at(head, number)?;
+            let original = rec.steps[rec.blocks[&hash].step?].clone();
+            view.blocks.get_mut(&hash)?.step = Some(view.steps.len());
+            view.steps.push(original);
+            let back = |n: u64| rec.ancestor_at(head, number.saturating_sub(n).max(start_number));
+            let (safe, finalized) = (back(4)?, back(32)?);
+            let state = json!({ "headBlockHash": hash, "safeBlockHash": safe, "finalizedBlockHash": finalized });
+            view.steps.push(crate::Step {
+                method: "engine_forkchoiceUpdatedV3".into(),
+                params: json!([state, null]),
+                kind: StepKind::Forkchoice { head: hash, safe, finalized },
+            });
+        }
+        Some((view, start))
     }
 
     /// base-reth's ports when it opens a datadir tiger left (launch name `handoff`).
@@ -153,7 +211,7 @@ impl ChaosRun {
         fs::write(
             dir.join("launch.env"),
             format!(
-                "PORT_OFFSET={}\nTIGER_BIN={}\nBASE_NODE_BIN={}\nTIGER_EXTRA=\"{persistence}\"\n",
+                "PORT_OFFSET={}\nTIGER_BIN={}\nBASE_NODE_BIN={}\nTIGER_EXTRA=\"{persistence}\"\nBASE_EXTRA=\"{persistence}\"\n",
                 config.port_offset,
                 config.tiger_bin.display(),
                 config.base_bin.display()
@@ -162,6 +220,13 @@ impl ChaosRun {
         let tiger = NodeClient::parse(&Self::tiger_spec(config.port_offset), &jwt)?;
         let proc = NodeProcess::new("tiger".into(), config.launch.clone(), dir.clone());
         let snapshot = recording.snapshot.clone().filter(|_| rng.chance(config.snapshot_percent));
+        let base_crash = snapshot.is_none() && rng.chance(config.base_crash_percent);
+        let stateless = (snapshot.is_none() && !base_crash && rng.chance(config.stateless_percent))
+            .then(|| Self::stateless_view(recording, &mut rng))
+            .flatten();
+        let recording = &stateless
+            .as_ref()
+            .map_or_else(|| Arc::clone(recording), |(view, _)| Arc::new(view.clone()));
         let shared = Arc::new(Shared {
             start: Instant::now(),
             recording: Arc::clone(recording),
@@ -171,11 +236,11 @@ impl ChaosRun {
             progress: AtomicUsize::new(snapshot.as_ref().map_or(0, |s| s.steps)),
             stop: AtomicBool::new(false),
             violations: Mutex::new(Vec::new()),
-            quirks: if snapshot.is_some() {
+            quirks: std::sync::RwLock::new(if snapshot.is_some() {
                 Self::base_reth_quirks(config, recording)?
             } else {
                 HashSet::new()
-            },
+            }),
             reads: Mutex::new(BTreeMap::new()),
             failed: Mutex::new(BTreeMap::new()),
         });
@@ -187,6 +252,7 @@ impl ChaosRun {
             proc,
             rng,
             head: recording.genesis,
+            trace_head: recording.genesis,
             safe: recording.genesis,
             finalized: recording.genesis,
             heads_seen: HashSet::from([recording.genesis]),
@@ -194,11 +260,22 @@ impl ChaosRun {
             killer: None,
             events: BTreeMap::new(),
             actions: Vec::new(),
+            base_written: false,
+            floor: 0,
+            upstream: None,
         };
         let mut report = RunReport {
             run,
             seed,
-            start: if snapshot.is_some() { "snapshot".into() } else { "genesis".into() },
+            start: if stateless.is_some() {
+                "stateless".into()
+            } else if snapshot.is_some() {
+                "snapshot".into()
+            } else if base_crash {
+                "baseCrash".into()
+            } else {
+                "genesis".into()
+            },
             persistence,
             ..RunReport::default()
         };
@@ -209,6 +286,7 @@ impl ChaosRun {
             let _ = fs::remove_file(dir.join("tiger/discovery-secret"));
             first = snapshot.steps;
             this.head = snapshot.head;
+            this.trace_head = snapshot.head;
             this.safe = snapshot.safe;
             this.finalized = snapshot.finalized;
             this.heads_seen.insert(snapshot.head);
@@ -217,12 +295,32 @@ impl ChaosRun {
         if snapshot.is_none() {
             let _ = fs::remove_dir_all(this.proc.datadir());
         }
+        if base_crash {
+            first = this.run_base_until_killed()?;
+        }
+        if let Some((_, start)) = &stateless {
+            let start_block = &recording.blocks[start];
+            let mut upstream =
+                NodeProcess::new("oracle".into(), config.launch.clone(), dir.clone());
+            copy_dir(&config.recording.join("oracle-datadir"), &upstream.datadir())?;
+            let oracle = NodeClient::parse(&Self::oracle_spec(config.port_offset), &jwt)?;
+            upstream.spawn(false)?;
+            upstream.wait_ready(&oracle)?;
+            this.upstream = Some(upstream);
+            this.proc.stateless = Some(format!("{} {}", oracle.http_url, start_block.number));
+            this.floor = start_block.number;
+            this.head = *start;
+            this.trace_head = *start;
+            this.heads_seen.insert(*start);
+            this.event("stateless", json!({ "start": start_block.number }));
+        }
         fs::create_dir_all(this.proc.datadir())?;
         append_log(&this.proc.log_path(), "launch: start\n");
         this.proc.spawn(false)?;
         this.proc.wait_ready(&this.tiger)?;
         let start_head = this.head;
-        this.open_epoch(Some(start_head))?;
+        this.base_written = base_crash;
+        this.open_epoch((!base_crash).then_some(start_head))?;
         let readers = Reader::spawn(&this.shared, &this.tiger, config.readers, seed);
         let result = this.drive(first);
         this.shared.stop.store(true, Ordering::SeqCst);
@@ -242,6 +340,10 @@ impl ChaosRun {
             );
         }
         this.proc.stop(true);
+        if let Some(mut upstream) = this.upstream.take() {
+            upstream.stop(true);
+            let _ = fs::remove_dir_all(upstream.datadir());
+        }
         report.steps = this.shared.progress.load(Ordering::SeqCst);
         report.events = this.events.clone();
         report.reads = this.shared.reads.lock().expect("reads").clone();
@@ -287,20 +389,40 @@ impl ChaosRun {
         let mut proc = NodeProcess::new("handoff".into(), config.launch.clone(), dir.clone());
         proc.spawn(false)?;
         proc.wait_ready(&node)?;
+        // B1: blocks below the highest canonical block (up to the snapshot head) that wiped a
+        // storage-holding account.
+        let top = rec.blocks[&snapshot.head].number;
+        let last_wipe = (1..=top).rev().find(|n| {
+            rec.ancestor_at(snapshot.head, *n).is_some_and(|h| rec.blocks[&h].wipes_storage)
+        });
         let mut quirks = HashSet::new();
-        for number in 0..=rec.blocks[&snapshot.head].number {
+        let mut unexplained = Vec::new();
+        for number in 0..=top {
             let Some(at) = rec.ancestor_at(snapshot.head, number) else { continue };
             let proof = node.result(
                 "eth_getProof",
                 &json!(["0x4200000000000000000000000000000000000015", [], format!("{number:#x}")]),
             )?;
             if proof_root(&proof).ok() != Some(rec.blocks[&at].state_root) {
-                quirks.insert(at);
+                if last_wipe.is_some_and(|w| number < w) {
+                    quirks.insert(at);
+                } else {
+                    unexplained.push(number);
+                }
             }
+        }
+        if !unexplained.is_empty() {
+            // Not B1: left unskipped, so the runs on this snapshot report them.
+            eprintln!(
+                "base-reth's own proofs miss the state root at blocks {unexplained:?}, which no storage wipe explains"
+            );
         }
         proc.stop(false);
         let _ = fs::remove_dir_all(&dir);
-        eprintln!("base-reth's own proofs miss the state root at {} snapshot blocks", quirks.len());
+        eprintln!(
+            "base-reth's own proofs miss the state root at {} snapshot blocks below the storage wipe at {last_wipe:?} (B1)",
+            quirks.len()
+        );
         fs::write(&cache, serde_json::to_vec(&quirks)?)?;
         Ok(quirks)
     }
@@ -362,6 +484,57 @@ impl ChaosRun {
             self.handle_failure("node down between steps")?;
         }
         Ok(())
+    }
+
+    /// base-reth (launch name `handoff`, same persistence flags) follows the recording from
+    /// genesis and is killed at a random point, 0 to 300 ms into a step; its datadir becomes
+    /// tiger's. Returns the first step tiger gets. Every head base-reth acknowledged counts as one
+    /// the datadir may reopen at.
+    fn run_base_until_killed(&mut self) -> eyre::Result<usize> {
+        let rec = self.rec();
+        let base = NodeClient::parse(
+            &Self::handoff_spec(self.config.port_offset),
+            &self.dir.join("jwt.hex"),
+        )?;
+        let mut proc =
+            NodeProcess::new("handoff".into(), self.config.launch.clone(), self.dir.clone());
+        proc.spawn(true)?;
+        proc.wait_ready(&base)?;
+        let kill_at = self.rng.range(1, rec.steps.len() as u64 - 1) as usize;
+        let mut index = 0;
+        let mut killer = None;
+        while index < rec.steps.len() {
+            if index == kill_at {
+                let datadir = proc.datadir();
+                let delay = Duration::from_millis(self.rng.below(300));
+                killer = Some(thread::spawn(move || {
+                    thread::sleep(delay);
+                    for pid in Self::node_pids(&datadir) {
+                        // SAFETY: kill has no memory-safety preconditions.
+                        unsafe { libc::kill(pid, libc::SIGKILL) };
+                    }
+                }));
+            }
+            let step = &rec.steps[index];
+            let Ok(reply) = base.engine(&step.method, &step.params) else { break };
+            if let StepKind::Forkchoice { head, safe, finalized } = step.kind
+                && reply["payloadStatus"]["status"] == "VALID"
+            {
+                self.heads_seen.insert(head);
+                self.trace_head = head;
+                (self.safe, self.finalized) = (safe, finalized);
+            }
+            index += 1;
+        }
+        if let Some(killer) = killer {
+            let _ = killer.join();
+        }
+        proc.stop(true);
+        self.event("baseKilled", json!({ "step": index }));
+        fs::rename(proc.datadir(), self.proc.datadir())?;
+        let _ = fs::remove_file(self.proc.datadir().join("discovery-secret"));
+        self.shared.progress.store(index, Ordering::SeqCst);
+        Ok(index)
     }
 
     /// One random chaos action between steps.
@@ -521,7 +694,9 @@ impl ChaosRun {
         if candidates.is_empty() {
             return Ok(());
         }
-        let back = self.head;
+        // Back to the recording's head (tiger's own head may be lower after a crash, below the
+        // finalized block).
+        let back = self.trace_head;
         let (safe, finalized) = (self.safe, self.finalized);
         let count = self.rng.range(2, 9);
         self.event("flap", json!({ "count": count }));
@@ -560,6 +735,7 @@ impl ChaosRun {
                 bail!("step {index} did not finish")
             }
             StepKind::Forkchoice { head, safe, finalized } => {
+                self.trace_head = head;
                 self.safe = safe;
                 self.finalized = finalized;
                 self.forkchoice(head, safe, finalized)
@@ -573,7 +749,10 @@ impl ChaosRun {
         let block = &rec.blocks[&hash];
         let step = &rec.steps[block.step.expect("submitted block")];
         for _ in 0..200 {
-            match self.tiger.engine(&step.method, &step.params) {
+            let dup = self.duplicate(&step.method, &step.params);
+            let result = self.tiger.engine(&step.method, &step.params);
+            self.check_duplicate(dup, &["VALID", "ACCEPTED", "SYNCING"]);
+            match result {
                 Ok(status) => match status["status"].as_str() {
                     Some("VALID" | "ACCEPTED") => return Ok(()),
                     Some("SYNCING") => self.ensure_chain(block.parent)?,
@@ -593,12 +772,49 @@ impl ChaosRun {
         bail!("block {hash} was never taken")
     }
 
+    /// In `--duplicate-percent` of Engine API calls, sends the same call again from another
+    /// thread at the same time, as a consensus node retrying after its own timeout does.
+    fn duplicate(
+        &mut self,
+        method: &str,
+        params: &Value,
+    ) -> Option<thread::JoinHandle<(Value, eyre::Result<Value>)>> {
+        if !self.rng.chance(self.config.duplicate_percent) {
+            return None;
+        }
+        self.event("duplicate", json!(method));
+        let node = self.tiger.clone();
+        let (method, params) = (method.to_owned(), params.clone());
+        Some(thread::spawn(move || {
+            let result = node.engine(&method, &params);
+            (json!({ "method": method, "params": params }), result)
+        }))
+    }
+
+    /// A duplicate call must get one of `allowed` statuses, or no answer when tiger went down.
+    fn check_duplicate(
+        &self,
+        dup: Option<thread::JoinHandle<(Value, eyre::Result<Value>)>>,
+        allowed: &[&str],
+    ) {
+        let Some(handle) = dup else { return };
+        let Ok((request, result)) = handle.join() else { return };
+        let Ok(reply) = result else { return };
+        let status = reply.get("payloadStatus").unwrap_or(&reply)["status"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if !allowed.contains(&status.as_str()) {
+            self.violation("duplicate", request["method"].clone(), json!(allowed), reply);
+        }
+    }
+
     /// Resends the blocks of the chain ending at `hash` that tiger does not have.
     fn ensure_chain(&mut self, hash: B256) -> eyre::Result<()> {
         let rec = self.rec();
         let mut missing = Vec::new();
         let mut at = hash;
-        while at != rec.genesis {
+        while at != rec.genesis && rec.blocks[&at].number > self.floor {
             match self.tiger.result("eth_getBlockByHash", &json!([at, false])) {
                 Ok(block) if !block.is_null() => break,
                 Ok(_) => {}
@@ -643,7 +859,11 @@ impl ChaosRun {
                 timeline.fcus.len() - 1
             };
             let state = json!({ "headBlockHash": head, "safeBlockHash": safe, "finalizedBlockHash": finalized });
-            match self.tiger.engine("engine_forkchoiceUpdatedV3", &json!([state, null])) {
+            let params = json!([state, null]);
+            let dup = self.duplicate("engine_forkchoiceUpdatedV3", &params);
+            let result = self.tiger.engine("engine_forkchoiceUpdatedV3", &params);
+            self.check_duplicate(dup, &["VALID", "SYNCING"]);
+            match result {
                 Ok(result) => match result["payloadStatus"]["status"].as_str() {
                     Some("VALID") => {
                         self.shared.timeline.lock().expect("timeline").fcus[index].acked =
@@ -735,7 +955,7 @@ impl ChaosRun {
         if self.proc.fault.is_none() {
             FAULT_WINDOW.store(false, Ordering::SeqCst);
         }
-        if !clean && self.rng.chance(self.config.crash_handoff_percent) {
+        if !clean && self.floor == 0 && self.rng.chance(self.config.crash_handoff_percent) {
             self.crash_handoff()?;
         }
         let armed = self.proc.fault.is_some();
@@ -801,6 +1021,18 @@ impl ChaosRun {
                 ),
             _ => {}
         }
+        if std::mem::take(&mut self.base_written) {
+            // base-reth wrote the history through this head: B1 applies below its last storage
+            // wipe.
+            let top = rec.blocks[&head].number;
+            let last_wipe = (1..=top)
+                .rev()
+                .find(|n| rec.ancestor_at(head, *n).is_some_and(|h| rec.blocks[&h].wipes_storage));
+            let mut quirks = self.shared.quirks.write().expect("quirks");
+            for number in 0..last_wipe.unwrap_or(0) {
+                quirks.extend(rec.ancestor_at(head, number));
+            }
+        }
         self.check_chain(head);
         self.head = head;
         self.heads_seen.insert(head);
@@ -823,11 +1055,12 @@ impl ChaosRun {
     fn check_chain(&mut self, head: B256) {
         let rec = self.rec();
         let top = rec.blocks[&head].number;
-        let mut heights: Vec<u64> = if top <= 160 {
-            (0..=top).collect()
+        let floor = self.floor.min(top);
+        let mut heights: Vec<u64> = if top - floor <= 160 {
+            (floor..=top).collect()
         } else {
             let mut h: Vec<u64> = (top - 16..=top).collect();
-            h.extend((0..48).map(|_| self.rng.below(top)));
+            h.extend((0..48).map(|_| self.rng.range(floor, top)));
             h
         };
         heights.sort_unstable();
@@ -853,11 +1086,11 @@ impl ChaosRun {
         }
         let mut states = vec![head];
         for _ in 0..3 {
-            let number = self.rng.below(top + 1);
+            let number = self.rng.range(floor, top + 1);
             states.extend(rec.ancestor_at(head, number));
         }
         for at in states {
-            if self.shared.quirks.contains(&at) {
+            if self.shared.quirks.read().expect("quirks").contains(&at) {
                 continue;
             }
             let block = &rec.blocks[&at];
@@ -1001,11 +1234,15 @@ impl ChaosRun {
         }
         self.recover(true)?;
         self.close();
-        let mismatches = Self::compare_with_oracle(&rec, &self.tiger, head);
+        let mismatches = Self::compare_with_oracle(&rec, &self.tiger, head, self.floor);
         for (kind, request, expected, got) in mismatches {
             self.violation(&format!("oracle-{kind}"), request, expected, got);
         }
         self.proc.stop(false);
+        if self.floor > 0 {
+            // A partial datadir is tiger-only.
+            return Ok(());
+        }
         // base-reth opens what tiger left.
         let handoff = self.dir.join("handoff");
         copy_dir(&self.proc.datadir(), &handoff)?;
@@ -1028,7 +1265,7 @@ impl ChaosRun {
             return Ok(());
         }
         self.event("handoff", json!(null));
-        let mismatches = Self::compare_with_oracle(&rec, &node, head);
+        let mismatches = Self::compare_with_oracle(&rec, &node, head, 0);
         for (kind, request, expected, got) in mismatches {
             self.violation(&format!("handoff-{kind}"), request, expected, got);
         }
@@ -1060,6 +1297,7 @@ impl ChaosRun {
         rec: &Recording,
         node: &NodeClient,
         head: B256,
+        floor: u64,
     ) -> Vec<(String, Value, Value, Value)> {
         let mut mismatches = Vec::new();
         match node.result("eth_getBlockByNumber", &json!(["latest", false])) {
@@ -1077,7 +1315,7 @@ impl ChaosRun {
                 json!(error.to_string()),
             )),
         }
-        for (number, oracle) in &rec.oracle {
+        for (number, oracle) in rec.oracle.range(floor + 1..) {
             if mismatches.len() >= 20 {
                 break;
             }
@@ -1111,7 +1349,9 @@ impl ChaosRun {
             }
         }
         let top = rec.blocks[&head].number;
-        for number in [top, top.saturating_sub(1), top / 2, top.saturating_sub(40)] {
+        for number in
+            [top, top.saturating_sub(1), top / 2, top.saturating_sub(40)].map(|n| n.max(floor))
+        {
             let Some(at) = rec.ancestor_at(head, number) else { continue };
             let block = &rec.blocks[&at];
             for (address, slots) in rec.keys_near(at, 8) {

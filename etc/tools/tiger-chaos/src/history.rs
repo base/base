@@ -141,10 +141,11 @@ pub struct Shared {
     pub stop: AtomicBool,
     /// Violations.
     pub violations: Mutex<Vec<Violation>>,
-    /// Blocks whose historical proofs base-reth itself answers against another root on its own
-    /// datadir (see [`crate::ChaosRun::base_reth_quirks`]); a run that started on base-reth's
-    /// datadir does not hold tiger to their roots.
-    pub quirks: HashSet<B256>,
+    /// Blocks whose historical state base-reth wrote wrong (finding B1: a later block wiped a
+    /// storage-holding account and base-reth's changesets left the wiped slots out; see
+    /// [`crate::ChaosRun::base_reth_quirks`]). In a run on base-reth's datadir, tiger reads
+    /// the same history, so their roots are not checked.
+    pub quirks: std::sync::RwLock<HashSet<B256>>,
     /// Read counts by kind.
     pub reads: Mutex<BTreeMap<String, u64>>,
     /// Reads that failed on transport or a JSON-RPC error, by kind (not violations).
@@ -223,7 +224,7 @@ impl Reader {
         let progress = self.shared.progress.load(Ordering::SeqCst).min(rec.steps.len());
         for _ in 0..8 {
             if progress == 0 {
-                return Some(rec.genesis);
+                return None;
             }
             let step = &rec.steps[self.rng.index(progress)];
             if let StepKind::Payload { hash } = step.kind {
@@ -249,7 +250,7 @@ impl Reader {
     }
 
     fn read_once(&mut self) {
-        let kind = self.rng.weighted(&[18, 14, 18, 14, 10, 6, 6, 8, 6]);
+        let kind = self.rng.weighted(&[18, 14, 18, 14, 10, 6, 6, 8, 6, 6]);
         match kind {
             0 => self.read_head(),
             1 => self.read_by_number(),
@@ -259,7 +260,8 @@ impl Reader {
             5 => self.read_tag("safe"),
             6 => self.read_tag("finalized"),
             7 => self.read_receipts(),
-            _ => self.read_tx(),
+            8 => self.read_tx(),
+            _ => self.read_logs(),
         }
     }
 
@@ -411,6 +413,12 @@ impl Reader {
             .collect();
         let proof = match &got {
             Got::Value(proof) => proof,
+            // A block that some allowed head does not have at that number (a reorg during the
+            // read) may be refused.
+            Got::Error(_) if tag.is_none() && expected.iter().any(|e| *e != expected[0]) => {
+                self.shared.count(&self.shared.failed, "proofNumber:reorged");
+                return;
+            }
             Got::Error(_) if tag.is_none() && expected.contains(&None) => return,
             _ => return self.failed(kind, &got, &request, epoch),
         };
@@ -429,7 +437,7 @@ impl Reader {
         };
         let quirk = allowed.heads.iter().any(|h| {
             let at = if tag.is_some() { Some(*h) } else { rec.ancestor_at(*h, number) };
-            at.is_some_and(|b| self.shared.quirks.contains(&b))
+            at.is_some_and(|b| self.shared.quirks.read().expect("quirks").contains(&b))
         });
         if quirk {
             self.shared.count(&self.shared.reads, "quirkSkipped");
@@ -495,7 +503,7 @@ impl Reader {
                 return;
             }
         };
-        if self.shared.quirks.contains(&target) {
+        if self.shared.quirks.read().expect("quirks").contains(&target) {
             self.shared.count(&self.shared.reads, "quirkSkipped");
             return;
         }
@@ -593,6 +601,37 @@ impl Reader {
                 }
             }
             _ => self.failed("receipts", &got, &request, epoch),
+        }
+    }
+
+    /// `eth_getLogs` by block hash: base-reth's receipts' logs for a block of its final chain.
+    fn read_logs(&mut self) {
+        let rec = Arc::clone(&self.shared.recording);
+        let Some(target) = self.sent_block() else { return };
+        let number = rec.blocks[&target].number;
+        let Some(oracle) =
+            rec.oracle.get(&number).filter(|o| recording::hash(&o.block["hash"]) == Some(target))
+        else {
+            return;
+        };
+        let expected: Vec<Value> = oracle
+            .receipts
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|r| r["logs"].as_array().cloned().unwrap_or_default())
+            .collect();
+        let request = json!([{ "blockHash": target }]);
+        let (_, _, epoch, got) = self.call("eth_getLogs", &request);
+        self.shared.count(&self.shared.reads, "logs");
+        match &got {
+            Got::Value(logs) if *logs == json!(expected) => {}
+            Got::Value(logs) => {
+                self.shared.violation("logs", epoch, request, json!(expected), logs.clone())
+            }
+            // An unknown block (lost in a crash) is an error.
+            Got::Error(_) => self.shared.count(&self.shared.failed, "logs:error"),
+            Got::Transport => {}
         }
     }
 

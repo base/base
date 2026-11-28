@@ -90,6 +90,19 @@ enum Command {
         /// Summary file, rewritten after every run.
         #[arg(long)]
         summary: PathBuf,
+        /// Percentage of Engine API calls sent twice at once.
+        #[arg(long, default_value_t = 3)]
+        duplicate_percent: u64,
+        /// Percentage of runs where base-reth follows the recording first and is killed, and
+        /// tiger opens its crashed datadir.
+        #[arg(long, default_value_t = 20)]
+        base_crash_percent: u64,
+        /// Percentage of runs with a stateless tiger (upstream: base-reth on the final datadir).
+        #[arg(long, default_value_t = 15)]
+        stateless_percent: u64,
+        /// Keep passing runs' datadirs too.
+        #[arg(long)]
+        keep_datadirs: bool,
     },
 }
 
@@ -119,6 +132,10 @@ fn main() -> eyre::Result<()> {
             snapshot_percent,
             crash_handoff_percent,
             summary,
+            keep_datadirs,
+            duplicate_percent,
+            base_crash_percent,
+            stateless_percent,
         } => {
             fs::create_dir_all(&root)?;
             let loaded: Vec<Arc<Recording>> = recordings
@@ -151,6 +168,9 @@ fn main() -> eyre::Result<()> {
                     fault_modes: fault_modes.split(',').map(str::to_owned).collect(),
                     snapshot_percent,
                     crash_handoff_percent,
+                    duplicate_percent,
+                    base_crash_percent,
+                    stateless_percent,
                 };
                 let report = ChaosRun::execute(&config, &loaded[which], run)?;
                 eprintln!(
@@ -168,7 +188,7 @@ fn main() -> eyre::Result<()> {
                 }
                 if !report.violations.is_empty() {
                     violations.push(json!({ "run": run, "seed": report.seed, "dir": root.join(format!("run-{run}")), "violations": report.violations }));
-                } else {
+                } else if !keep_datadirs {
                     // Keep failing runs' datadirs and logs; drop passing ones.
                     let dir = root.join(format!("run-{run}"));
                     let _ = fs::remove_dir_all(dir.join("tiger"));

@@ -3,7 +3,7 @@
 //! canonical chain. Chaos runs replay it into tiger; base-reth is the oracle.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     time::Duration,
@@ -71,6 +71,12 @@ pub struct BlockInfo {
     pub txs: Vec<B256>,
     /// Accounts and slots the block changed.
     pub touched: Vec<(Address, Vec<B256>)>,
+    /// Whether the block deleted or wiped an account that held storage (an EIP-161 deletion or
+    /// a `SELFDESTRUCT`). base-reth 2b20e42's storage-v2 changesets leave the wiped slots out
+    /// (finding B1), so on a datadir base-reth wrote, state at every block below this one is
+    /// wrong in base-reth's historical reads and proofs, and tiger reading that datadir agrees.
+    #[serde(default)]
+    pub wipes_storage: bool,
 }
 
 /// base-reth's answers for one block of the final canonical chain.
@@ -200,6 +206,7 @@ impl Recording {
         )?;
         let mut rng = Rng::new(&[seed, 0xc4a0_5eed]);
         let mut touched: HashMap<B256, Vec<(Address, Vec<B256>)>> = HashMap::new();
+        let mut wipes: HashSet<B256> = HashSet::new();
         let mut snapshot = None;
         let mut ops = 0u64;
         while session.height() < blocks {
@@ -217,13 +224,31 @@ impl Recording {
                 "base-reth diverged from the generator at {op:?}: {divergences:?}"
             );
             for block in session.tree.blocks.values() {
-                touched.entry(block.hash).or_insert_with(|| {
+                if touched.contains_key(&block.hash) {
+                    continue;
+                }
+                touched.insert(
+                    block.hash,
                     block
                         .touched
                         .iter()
                         .map(|(a, slots)| (*a, slots.iter().copied().collect()))
-                        .collect()
-                });
+                        .collect(),
+                );
+                let parent =
+                    session.tree.blocks.get(&block.parent).and_then(|p| p.generator.as_ref());
+                if let (Some(parent), Some(child)) = (parent, block.generator.as_ref()) {
+                    // An account that held storage is gone. From Cancun on (every era these chains
+                    // run), SELFDESTRUCT deletes only accounts created in the same transaction, so
+                    // the wipes are EIP-161 deletions of storage-holding genesis allocations.
+                    let wiped = block.touched.keys().any(|address| {
+                        parent.state().account(address).is_some_and(|a| !a.storage.is_empty())
+                            && child.state().account(address).is_none()
+                    });
+                    if wiped {
+                        wipes.insert(block.hash);
+                    }
+                }
             }
             if snapshot.is_none() && session.height() >= blocks / 2 {
                 let proc = &mut session.procs[0];
@@ -262,6 +287,7 @@ impl Recording {
                 step: None,
                 txs: Vec::new(),
                 touched: Vec::new(),
+                wipes_storage: false,
             },
         );
         for entry in engine_steps(&session.trace) {
@@ -297,6 +323,7 @@ impl Recording {
                         step: Some(index),
                         txs: txs.iter().map(keccak256).collect(),
                         touched: touched.get(&hash).cloned().unwrap_or_default(),
+                        wipes_storage: wipes.contains(&hash),
                     });
                     StepKind::Payload { hash }
                 }

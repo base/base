@@ -23,8 +23,11 @@ writes a recording directory:
 ## Chaos runs
 
 `chaos` replays recordings into tiger, one run after another. A run starts tiger on a wiped
-datadir or, in `--snapshot-percent` of runs, on a copy of base-reth's snapshot datadir (the
-base-reth to tiger handoff), with a random persistence threshold (1 to 70). Between steps, at
+datadir; or, in `--snapshot-percent` of runs, on a copy of base-reth's snapshot datadir (the
+base-reth to tiger handoff); or, in `--base-crash-percent` of runs, on the datadir base-reth left
+when it followed the recording from genesis and was killed (SIGKILL) up to 300 ms into a random step
+(tiger heals base-reth's crash leftovers). The persistence threshold is random (1 to 70), the
+same for both clients. Between steps, at
 `--intensity` actions per 1000 steps, it:
 
 - kills tiger with SIGKILL between steps, or from another thread up to 400 ms into the next
@@ -34,6 +37,9 @@ base-reth to tiger handoff), with a random persistence threshold (1 to 70). Betw
 - restarts it with a `TIGER_FAULT` store fault armed (`--fault-modes`): torn writes, lost
   unsynced writes (power loss), full disk, and the other modes the tiger build supports;
 - flaps the forkchoice between branch tips above the finalized block, then returns.
+
+In `--duplicate-percent` of Engine API calls the same call is also sent from another thread at
+the same time, as a consensus node retrying after its own timeout; both must succeed.
 
 A killed or crashed tiger is restarted unarmed and the blocks it lost are resent, as a consensus
 node does. In `--crash-handoff-percent` of crashes base-reth first opens a copy of the crashed
@@ -56,8 +62,15 @@ before it started (an update naming an ancestor of the head keeps the head, as i
 Violations include a head or tag outside that set, a block by number off every allowed chain, a
 proof whose root is not an allowed block's state root (half-committed or stale state), a proof
 that does not verify, plain reads that disagree with a verified proof of the same block, a
-canonical block, proof or transaction that went missing, and receipts that differ from
-base-reth's.
+canonical block, proof or transaction that went missing, and receipts and `eth_getLogs` by block
+hash that differ from base-reth's.
+
+On a datadir base-reth wrote, its history below a block that deleted a storage-holding account is
+wrong (finding B1: base-reth 2b20e42's storage-v2 changesets leave the wiped slots out; tiger
+keeps them in its own `TigerWipedStorage` table, so only a datadir tiger wrote has them).
+Recordings flag such blocks (`wipesStorage`). Runs on base-reth's datadir skip the proof roots of
+blocks that base-reth itself answers wrong and a later flagged block at or below base-reth's tip
+explains; any other wrong root is still a violation.
 
 ### End of a run
 
