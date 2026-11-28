@@ -119,6 +119,17 @@ struct Undo {
     len: u64,
 }
 
+impl Undo {
+    /// Restores the replaced bytes after the first `keep` bytes of the write (zeros past the old
+    /// end of the file).
+    fn restore(&self, keep: usize) {
+        let file = OpenOptions::new().write(true).open(&self.path).expect("open undo file");
+        let mut restore = self.old.clone();
+        restore.resize(self.len as usize, 0);
+        file.write_all_at(&restore[keep..], self.offset + keep as u64).expect("undo write");
+    }
+}
+
 /// The live fault state.
 #[derive(Debug)]
 struct State {
@@ -217,20 +228,15 @@ impl Fault {
         };
         let mut state = state.lock().unwrap();
         state.writes += 1;
-        if state.config.mode == FaultMode::FsyncEio {
-            drop(state);
-            write();
-            return Ok(());
-        }
-        if matches!(state.config.mode, FaultMode::Enospc | FaultMode::Eio) {
-            if let Err(errno) = state.enospc(Path::new(name)) {
-                return Err(std::io::Error::from_raw_os_error(errno));
+        let crash = match state.config.mode {
+            FaultMode::FsyncEio => false,
+            FaultMode::Enospc | FaultMode::Eio => {
+                state.enospc(Path::new(name)).map_err(std::io::Error::from_raw_os_error)?;
+                false
             }
-            drop(state);
-            write();
-            return Ok(());
-        }
-        if state.writes != state.config.crash_after_writes {
+            FaultMode::Torn | FaultMode::LoseUnsynced => state.writes == state.config.crash_after_writes,
+        };
+        if !crash {
             drop(state);
             write();
             return Ok(());
@@ -324,10 +330,7 @@ impl State {
             self.fsyncs_failed += 1;
             let lost = self.undo.iter().filter(|u| u.path == path).count();
             for undo in self.undo.iter().rev().filter(|u| u.path == path) {
-                let file = OpenOptions::new().write(true).open(&undo.path).expect("open undo file");
-                let mut restore = undo.old.clone();
-                restore.resize(undo.len as usize, 0);
-                file.write_all_at(&restore, undo.offset).expect("undo write");
+                undo.restore(0);
             }
             let kept_len = self.synced_len.iter().find(|(p, _)| p == path).map(|(_, len)| *len);
             if let (Some(len), Ok(file)) = (kept_len, OpenOptions::new().write(true).open(path)) {
@@ -392,13 +395,8 @@ impl State {
             if !lost[index] {
                 continue;
             }
-            let len = self.undo[index].len;
-            let keep_bytes = if torn == Some(index) { self.below(len) as usize } else { 0 };
-            let undo = &self.undo[index];
-            let file = OpenOptions::new().write(true).open(&undo.path).expect("open undo file");
-            let mut restore = undo.old.clone();
-            restore.resize(undo.len as usize, 0);
-            file.write_all_at(&restore[keep_bytes..], undo.offset + keep_bytes as u64).expect("undo write");
+            let keep = if torn == Some(index) { self.below(self.undo[index].len) as usize } else { 0 };
+            self.undo[index].restore(keep);
         }
         // Restore file lengths where no kept write extends past the synced length.
         for (path, synced) in &self.synced_len {
