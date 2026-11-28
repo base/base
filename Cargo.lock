@@ -6477,11 +6477,61 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-tiger-net"
+version = "0.0.0"
+dependencies = [
+ "aes",
+ "alloy-consensus 2.5.0",
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-trie",
+ "ctr",
+ "getrandom 0.3.4",
+ "ring",
+ "secp256k1 0.31.1",
+]
+
+[[package]]
 name = "base-tiger-p2p"
 version = "0.0.0"
 dependencies = [
  "ring",
  "secp256k1 0.31.1",
+]
+
+[[package]]
+name = "base-tiger-p2p-fuzz"
+version = "0.0.0"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "alloy-chains",
+ "alloy-consensus 2.5.0",
+ "alloy-eip2124",
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "alloy-rlp",
+ "base-common-consensus",
+ "base-tiger-net",
+ "base-tiger-p2p",
+ "base64 0.22.1",
+ "bytes",
+ "ctr",
+ "discv5",
+ "futures",
+ "hkdf",
+ "hmac 0.12.1",
+ "reth-ecies",
+ "reth-eth-wire",
+ "reth-eth-wire-types",
+ "secp256k1 0.30.0",
+ "secp256k1 0.31.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "snap",
+ "socket2 0.6.5",
 ]
 
 [[package]]

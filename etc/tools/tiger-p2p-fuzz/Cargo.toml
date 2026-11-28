@@ -1,0 +1,55 @@
+[package]
+name = "base-tiger-p2p-fuzz"
+description = "Differential and stateful fuzzing of tiger's devp2p stack and tp2p"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# implementations under test (tiger crates are path dependencies into tiger's own workspace)
+base-tiger-net = { path = "../../../tiger/net" }
+base-tiger-p2p = { path = "../../../tiger/p2p" }
+
+# alloy
+alloy-rlp.workspace = true
+alloy-primitives = { workspace = true, features = ["std", "rand"] }
+
+# el: base-reth's devp2p stack (the reference side of the EL differential)
+snap.workspace = true
+bytes.workspace = true
+discv5.workspace = true
+futures.workspace = true
+alloy-chains.workspace = true
+reth-ecies.workspace = true
+reth-eth-wire.workspace = true
+reth-eth-wire-types.workspace = true
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-eip2124 = "0.2.0"
+base-common-consensus = { workspace = true, features = ["reth"] }
+secp256k1 = { workspace = true, features = ["std", "recovery", "global-context", "rand"] }
+# el: the secp256k1 release base-tiger-net's API takes keys from
+secp256k1-tiger = { package = "secp256k1", version = "0.31.1", default-features = false, features = ["std", "global-context"] }
+# el: discv5 wire crypto for the scripted UDP peer
+aes = "0.8.4"
+ctr = "0.9.2"
+hmac = "0.12.1"
+hkdf = "0.12.4"
+aes-gcm = "0.10.3"
+sha2 = { workspace = true, features = ["std"] }
+# el live: per-scenario loopback source addresses, Engine API JWTs
+socket2 = "0.6.5"
+base64.workspace = true
+
+# el: Engine API payloads for the live devnet
+alloy-eips = { workspace = true, features = ["std"] }
+
+# misc
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"] }
