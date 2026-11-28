@@ -284,20 +284,31 @@ pub(crate) fn handshake(
             Err(error) => return Err(error.into()),
         };
         match P2pMessage::decode(&message)? {
-            Some(P2pMessage::Ping) => conn.writer.pong()?,
-            Some(P2pMessage::Pong) => {}
+            Some(P2pMessage::Ping) => {
+                conn.writer.pong()?;
+                continue;
+            }
+            Some(P2pMessage::Pong) => continue,
             Some(P2pMessage::Disconnect(reason)) => {
                 return Err(SessionError::Rlpx(RlpxError::Disconnected(reason)));
             }
-            None if message.id == eth.offset + eth::STATUS => {
-                break Status::decode_payload(eth.version, &message.payload)
-                    .map_err(|_| SessionError::Incompatible /* bad status */)?;
+            None => {}
+        }
+        // base-reth's eth handshake disconnects with ProtocolBreach on anything but a valid
+        // Status, and on every Status mismatch below.
+        let status = (message.id == eth.offset + eth::STATUS)
+            .then(|| Status::decode_payload(eth.version, &message.payload).ok())
+            .flatten();
+        match status {
+            Some(status) => break status,
+            None => {
+                let _ = conn.writer.disconnect(DisconnectReason::ProtocolBreach);
+                return Err(SessionError::Incompatible /* not a valid status */);
             }
-            None => return Err(SessionError::Incompatible /* message before status */),
         }
     };
     let reject = |writer: &mut RlpxWriter, _why: &'static str| {
-        let _ = writer.disconnect(DisconnectReason::UselessPeer);
+        let _ = writer.disconnect(DisconnectReason::ProtocolBreach);
         Err(SessionError::Incompatible)
     };
     if theirs.network_id != config.network_id {
@@ -702,6 +713,11 @@ mod tests {
         conn.writer.send(offset + eth::TRANSACTIONS, &broadcast).unwrap();
         let breach = Some(DisconnectReason::ProtocolBreach as u8);
         assert_eq!(read_pongs_until_disconnect(&mut conn), (0, breach));
+        // A Ping is answered; a small message other than Status is a breach too.
+        let (mut conn, offset) = connect_before_status();
+        conn.writer.ping().unwrap();
+        conn.writer.send(offset + eth::TRANSACTIONS, &alloy_rlp::encode(vec![0u8; 8])).unwrap();
+        assert_eq!(read_pongs_until_disconnect(&mut conn), (1, breach));
     }
 
     #[test]
