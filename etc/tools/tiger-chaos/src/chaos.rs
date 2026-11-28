@@ -1420,6 +1420,8 @@ impl ChaosRun {
             &Self::handoff_spec(self.config.port_offset),
             &self.dir.join("jwt.hex"),
         )?;
+        // Crash handoffs earlier in the run share the log, and heal what a crash left.
+        let log_start = fs::metadata(proc.log_path()).map_or(0, |m| m.len() as usize);
         proc.spawn(false)?;
         if let Err(error) = proc.wait_ready(&node) {
             proc.stop(true);
@@ -1436,7 +1438,8 @@ impl ChaosRun {
         for (kind, request, expected, got) in mismatches {
             self.violation(&format!("handoff-{kind}"), request, expected, got);
         }
-        let log = fs::read_to_string(proc.log_path()).unwrap_or_default();
+        let log = fs::read(proc.log_path()).unwrap_or_default();
+        let log = String::from_utf8_lossy(log.get(log_start..).unwrap_or_default());
         let warnings: Vec<String> = log
             .lines()
             .filter(|l| {
