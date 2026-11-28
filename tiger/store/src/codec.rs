@@ -11,7 +11,7 @@
 //! bytes. An `Option<B256>`/`Option<Address>` field holds the raw bytes; any other `Option<T>`
 //! holds a varuint length and `T`'s bytes.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, TxKind, U256};
 use alloy_trie::{BranchNodeCompact, Nibbles, TrieMask};
 
 /// A value that does not decode.
@@ -206,6 +206,116 @@ pub fn put_varuint(out: &mut Vec<u8>, mut value: usize) {
     out.push(value as u8);
 }
 
+/// A `Compact` struct encoder: the flags header and the field bytes, written field by field.
+#[derive(Default)]
+pub(crate) struct W {
+    pub(crate) flags: Flags,
+    pub(crate) body: Vec<u8>,
+}
+
+impl W {
+    pub(crate) fn u64(&mut self, v: u64) {
+        let len = put_compact_u64(&mut self.body, v);
+        self.flags.put(4, len);
+    }
+    pub(crate) fn u128(&mut self, v: u128) {
+        let len = put_compact_u128(&mut self.body, v);
+        self.flags.put(5, len);
+    }
+    pub(crate) fn u256(&mut self, v: U256) {
+        let len = put_compact_u256(&mut self.body, v);
+        self.flags.put(6, len);
+    }
+    pub(crate) fn bool(&mut self, v: bool) {
+        self.flags.put(1, u64::from(v));
+    }
+    pub(crate) fn kind(&mut self, v: TxKind) {
+        self.opt_raw(match &v {
+            TxKind::Create => None,
+            TxKind::Call(a) => Some(a.as_slice()),
+        });
+    }
+    /// `Option<u64>` / `Option<u128>`: a presence bit, then length-prefixed compact bytes.
+    pub(crate) fn opt(&mut self, v: Option<u128>) {
+        self.flags.put(1, u64::from(v.is_some()));
+        if let Some(v) = v {
+            let mut tmp = Vec::with_capacity(16);
+            put_compact_u128(&mut tmp, v);
+            put_varuint(&mut self.body, tmp.len());
+            self.body.extend_from_slice(&tmp);
+        }
+    }
+    /// `Option<Address>` / `Option<B256>`: a presence bit, then the raw bytes.
+    pub(crate) fn opt_raw(&mut self, v: Option<&[u8]>) {
+        self.flags.put(1, u64::from(v.is_some()));
+        if let Some(v) = v {
+            self.body.extend_from_slice(v);
+        }
+    }
+    pub(crate) fn raw(&mut self, bytes: &[u8]) {
+        self.body.extend_from_slice(bytes);
+    }
+    /// Appends the flags header, then the fields.
+    pub(crate) fn write(self, out: &mut Vec<u8>) {
+        self.flags.write(out);
+        out.extend_from_slice(&self.body);
+    }
+    pub(crate) fn finish(self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.body.len() + 4);
+        self.write(&mut out);
+        out
+    }
+}
+
+/// A `Compact` struct decoder: the flags header read field by field over the field bytes.
+pub(crate) struct F<'a, 'b> {
+    pub(crate) r: &'b mut Reader<'a>,
+    pub(crate) flags: Flags,
+}
+
+impl F<'_, '_> {
+    pub(crate) fn u64(&mut self) -> Decoded<u64> {
+        let len = self.flags.get(4) as usize;
+        self.r.compact_u64(len)
+    }
+    pub(crate) fn u128(&mut self) -> Decoded<u128> {
+        let len = self.flags.get(5) as usize;
+        self.r.compact_u128(len)
+    }
+    pub(crate) fn u256(&mut self) -> Decoded<U256> {
+        let len = self.flags.get(6) as usize;
+        self.r.compact_u256(len)
+    }
+    pub(crate) fn bool(&mut self) -> bool {
+        self.flags.get(1) == 1
+    }
+    pub(crate) fn kind(&mut self) -> Decoded<TxKind> {
+        Ok(self.opt_address()?.map_or(TxKind::Create, TxKind::Call))
+    }
+    pub(crate) fn opt_address(&mut self) -> Decoded<Option<Address>> {
+        if self.bool() { Ok(Some(self.r.address()?)) } else { Ok(None) }
+    }
+    pub(crate) fn opt_b256(&mut self) -> Decoded<Option<B256>> {
+        if self.bool() { Ok(Some(self.r.b256()?)) } else { Ok(None) }
+    }
+    /// `Option<u128>`: a presence bit, then length-prefixed compact bytes.
+    pub(crate) fn opt(&mut self) -> Decoded<Option<u128>> {
+        if !self.bool() {
+            return Ok(None);
+        }
+        let len = self.r.varuint()?;
+        Ok(Some(self.r.compact_u128(len)?))
+    }
+    /// `Option<u64>`, which rejects more than 8 bytes.
+    pub(crate) fn opt_u64(&mut self) -> Decoded<Option<u64>> {
+        if !self.bool() {
+            return Ok(None);
+        }
+        let len = self.r.varuint()?;
+        Ok(Some(self.r.compact_u64(len)?))
+    }
+}
+
 /// An account as reth stores it (`PlainAccountState`, `HashedAccounts`, changesets).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Account {
@@ -221,16 +331,11 @@ impl Account {
     /// The `Compact` encoding: flags (nonce 4 bits, balance 6, code hash 1; 2 bytes), nonce,
     /// balance, raw code hash.
     pub fn encode(&self, out: &mut Vec<u8>) {
-        let mut body = Vec::with_capacity(72);
-        let mut flags = Flags::default();
-        flags.put(4, put_compact_u64(&mut body, self.nonce));
-        flags.put(6, put_compact_u256(&mut body, self.balance));
-        flags.put(1, u64::from(self.bytecode_hash.is_some()));
-        if let Some(hash) = self.bytecode_hash {
-            body.extend_from_slice(hash.as_slice());
-        }
-        flags.write(out);
-        out.extend_from_slice(&body);
+        let mut w = W { flags: Flags::default(), body: Vec::with_capacity(72) };
+        w.u64(self.nonce);
+        w.u256(self.balance);
+        w.opt_raw(self.bytecode_hash.as_ref().map(|h| h.as_slice()));
+        w.write(out);
     }
 
     /// Encodes into a new buffer.
@@ -242,14 +347,8 @@ impl Account {
 
     /// Reads an account.
     pub fn decode(reader: &mut Reader<'_>) -> Decoded<Self> {
-        let mut flags = reader.flags(2)?;
-        let nonce_len = flags.get(4) as usize;
-        let balance_len = flags.get(6) as usize;
-        let has_hash = flags.get(1) == 1;
-        let nonce = reader.compact_u64(nonce_len)?;
-        let balance = reader.compact_u256(balance_len)?;
-        let bytecode_hash = if has_hash { Some(reader.b256()?) } else { None };
-        Ok(Self { nonce, balance, bytecode_hash })
+        let mut f = F { flags: reader.flags(2)?, r: reader };
+        Ok(Self { nonce: f.u64()?, balance: f.u256()?, bytecode_hash: f.opt_b256()? })
     }
 
     /// Decodes a whole value.
@@ -360,22 +459,16 @@ pub struct StageCheckpointCodec;
 impl StageCheckpointCodec {
     /// Encodes a checkpoint at `block`.
     pub fn encode(block: u64) -> Vec<u8> {
-        let mut body = Vec::with_capacity(8);
-        let mut flags = Flags::default();
-        flags.put(4, put_compact_u64(&mut body, block));
-        flags.put(1, 0);
-        let mut out = Vec::with_capacity(9);
-        flags.write(&mut out);
-        out.extend_from_slice(&body);
-        out
+        let mut w = W::default();
+        w.u64(block);
+        w.bool(false);
+        w.finish()
     }
 
     /// The block number of a stored checkpoint.
     pub fn decode(bytes: &[u8]) -> Decoded<u64> {
         let mut reader = Reader::new(bytes);
-        let mut flags = reader.flags(1)?;
-        let len = flags.get(4) as usize;
-        reader.compact_u64(len)
+        F { flags: reader.flags(1)?, r: &mut reader }.u64()
     }
 }
 
@@ -391,25 +484,19 @@ pub struct BlockBodyIndices {
 impl BlockBodyIndices {
     /// Flags (4 bits per field, 1 byte), then both compact integers.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut body = Vec::with_capacity(16);
-        let mut flags = Flags::default();
-        flags.put(4, put_compact_u64(&mut body, self.first_tx));
-        flags.put(4, put_compact_u64(&mut body, self.tx_count));
-        let mut out = Vec::with_capacity(17);
-        flags.write(&mut out);
-        out.extend_from_slice(&body);
-        out
+        let mut w = W::default();
+        w.u64(self.first_tx);
+        w.u64(self.tx_count);
+        w.finish()
     }
 
     /// Decodes a whole value.
     pub fn from_bytes(bytes: &[u8]) -> Decoded<Self> {
         let mut reader = Reader::new(bytes);
-        let mut flags = reader.flags(1)?;
-        let (a, b) = (flags.get(4) as usize, flags.get(4) as usize);
-        let first_tx = reader.compact_u64(a)?;
-        let tx_count = reader.compact_u64(b)?;
+        let mut f = F { flags: reader.flags(1)?, r: &mut reader };
+        let indices = Self { first_tx: f.u64()?, tx_count: f.u64()? };
         reader.finish()?;
-        Ok(Self { first_tx, tx_count })
+        Ok(indices)
     }
 
     /// The first transaction number after the block.
@@ -424,112 +511,76 @@ impl BlockBodyIndices {
 #[derive(Debug)]
 pub struct HeaderCodec;
 
-fn put_opt_u64(out: &mut Vec<u8>, flags: &mut Flags, value: Option<u64>) {
-    flags.put(1, u64::from(value.is_some()));
-    if let Some(value) = value {
-        let mut tmp = Vec::with_capacity(8);
-        let len = put_compact_u64(&mut tmp, value);
-        put_varuint(out, len as usize);
-        out.extend_from_slice(&tmp);
-    }
-}
-
-fn put_opt_b256(out: &mut Vec<u8>, flags: &mut Flags, value: Option<B256>) {
-    flags.put(1, u64::from(value.is_some()));
-    if let Some(value) = value {
-        out.extend_from_slice(value.as_slice());
-    }
-}
-
-fn get_opt_u64(reader: &mut Reader<'_>, present: bool) -> Decoded<Option<u64>> {
-    if !present {
-        return Ok(None);
-    }
-    let len = reader.varuint()?;
-    Ok(Some(reader.compact_u64(len)?))
-}
-
-fn get_opt_b256(reader: &mut Reader<'_>, present: bool) -> Decoded<Option<B256>> {
-    if present { Ok(Some(reader.b256()?)) } else { Ok(None) }
-}
-
 impl HeaderCodec {
     /// Encodes `header`.
     pub fn encode(header: &alloy_consensus::Header) -> Vec<u8> {
-        let mut body = Vec::with_capacity(600);
-        let mut flags = Flags::default();
-        body.extend_from_slice(header.parent_hash.as_slice());
-        body.extend_from_slice(header.ommers_hash.as_slice());
-        body.extend_from_slice(header.beneficiary.as_slice());
-        body.extend_from_slice(header.state_root.as_slice());
-        body.extend_from_slice(header.transactions_root.as_slice());
-        body.extend_from_slice(header.receipts_root.as_slice());
-        put_opt_b256(&mut body, &mut flags, header.withdrawals_root);
-        body.extend_from_slice(header.logs_bloom.as_slice());
-        flags.put(6, put_compact_u256(&mut body, header.difficulty));
-        flags.put(4, put_compact_u64(&mut body, header.number));
-        flags.put(4, put_compact_u64(&mut body, header.gas_limit));
-        flags.put(4, put_compact_u64(&mut body, header.gas_used));
-        flags.put(4, put_compact_u64(&mut body, header.timestamp));
-        body.extend_from_slice(header.mix_hash.as_slice());
-        flags.put(4, put_compact_u64(&mut body, u64::from_be_bytes(header.nonce.0)));
-        put_opt_u64(&mut body, &mut flags, header.base_fee_per_gas);
-        put_opt_u64(&mut body, &mut flags, header.blob_gas_used);
-        put_opt_u64(&mut body, &mut flags, header.excess_blob_gas);
-        put_opt_b256(&mut body, &mut flags, header.parent_beacon_block_root);
-        let has_ext = header.requests_hash.is_some() || header.block_access_list_hash.is_some() || header.slot_number.is_some();
-        flags.put(1, u64::from(has_ext));
-        if has_ext {
-            let mut ext = Vec::with_capacity(80);
-            let mut ext_flags = Flags::default();
-            put_opt_b256(&mut ext, &mut ext_flags, header.requests_hash);
-            put_opt_b256(&mut ext, &mut ext_flags, header.block_access_list_hash);
-            put_opt_u64(&mut ext, &mut ext_flags, header.slot_number);
-            let mut encoded = Vec::with_capacity(ext.len() + 1);
-            ext_flags.write(&mut encoded);
-            encoded.extend_from_slice(&ext);
-            put_varuint(&mut body, encoded.len());
-            body.extend_from_slice(&encoded);
+        let mut w = W { flags: Flags::default(), body: Vec::with_capacity(600) };
+        for hash in [header.parent_hash, header.ommers_hash] {
+            w.raw(hash.as_slice());
         }
-        body.extend_from_slice(&header.extra_data);
-        let mut out = Vec::with_capacity(body.len() + 4);
-        assert_eq!(flags.used, 32);
-        flags.write(&mut out);
-        out.extend_from_slice(&body);
-        out
+        w.raw(header.beneficiary.as_slice());
+        for hash in [header.state_root, header.transactions_root, header.receipts_root] {
+            w.raw(hash.as_slice());
+        }
+        w.opt_raw(header.withdrawals_root.as_ref().map(|h| h.as_slice()));
+        w.raw(header.logs_bloom.as_slice());
+        w.u256(header.difficulty);
+        for value in [header.number, header.gas_limit, header.gas_used, header.timestamp] {
+            w.u64(value);
+        }
+        w.raw(header.mix_hash.as_slice());
+        w.u64(u64::from_be_bytes(header.nonce.0));
+        for value in [header.base_fee_per_gas, header.blob_gas_used, header.excess_blob_gas] {
+            w.opt(value.map(u128::from));
+        }
+        w.opt_raw(header.parent_beacon_block_root.as_ref().map(|h| h.as_slice()));
+        let has_ext = header.requests_hash.is_some() || header.block_access_list_hash.is_some() || header.slot_number.is_some();
+        w.bool(has_ext);
+        if has_ext {
+            let mut ext = W::default();
+            ext.opt_raw(header.requests_hash.as_ref().map(|h| h.as_slice()));
+            ext.opt_raw(header.block_access_list_hash.as_ref().map(|h| h.as_slice()));
+            ext.opt(header.slot_number.map(u128::from));
+            let encoded = ext.finish();
+            put_varuint(&mut w.body, encoded.len());
+            w.raw(&encoded);
+        }
+        w.raw(&header.extra_data);
+        assert_eq!(w.flags.used, 32);
+        w.finish()
     }
 
     /// Decodes a whole value.
     pub fn decode(bytes: &[u8]) -> Decoded<alloy_consensus::Header> {
         let mut r = Reader::new(bytes);
-        let mut f = r.flags(4)?;
-        let parent_hash = r.b256()?;
-        let ommers_hash = r.b256()?;
-        let beneficiary = r.address()?;
-        let state_root = r.b256()?;
-        let transactions_root = r.b256()?;
-        let receipts_root = r.b256()?;
-        let withdrawals_root = get_opt_b256(&mut r, f.get(1) == 1)?;
-        let logs_bloom = alloy_primitives::Bloom::from_slice(r.take(256)?);
-        let difficulty = r.compact_u256(f.get(6) as usize)?;
-        let number = r.compact_u64(f.get(4) as usize)?;
-        let gas_limit = r.compact_u64(f.get(4) as usize)?;
-        let gas_used = r.compact_u64(f.get(4) as usize)?;
-        let timestamp = r.compact_u64(f.get(4) as usize)?;
-        let mix_hash = r.b256()?;
-        let nonce = r.compact_u64(f.get(4) as usize)?;
-        let base_fee_per_gas = get_opt_u64(&mut r, f.get(1) == 1)?;
-        let blob_gas_used = get_opt_u64(&mut r, f.get(1) == 1)?;
-        let excess_blob_gas = get_opt_u64(&mut r, f.get(1) == 1)?;
-        let parent_beacon_block_root = get_opt_b256(&mut r, f.get(1) == 1)?;
+        let mut f = F { flags: r.flags(4)?, r: &mut r };
+        let parent_hash = f.r.b256()?;
+        let ommers_hash = f.r.b256()?;
+        let beneficiary = f.r.address()?;
+        let state_root = f.r.b256()?;
+        let transactions_root = f.r.b256()?;
+        let receipts_root = f.r.b256()?;
+        let withdrawals_root = f.opt_b256()?;
+        let logs_bloom = alloy_primitives::Bloom::from_slice(f.r.take(256)?);
+        let difficulty = f.u256()?;
+        let number = f.u64()?;
+        let gas_limit = f.u64()?;
+        let gas_used = f.u64()?;
+        let timestamp = f.u64()?;
+        let mix_hash = f.r.b256()?;
+        let nonce = f.u64()?;
+        let base_fee_per_gas = f.opt_u64()?;
+        let blob_gas_used = f.opt_u64()?;
+        let excess_blob_gas = f.opt_u64()?;
+        let parent_beacon_block_root = f.opt_b256()?;
         let (mut requests_hash, mut block_access_list_hash, mut slot_number) = (None, None, None);
-        if f.get(1) == 1 {
-            let len = r.varuint()?;
-            let mut e = Reader::new(r.take(len)?);
-            let mut ef = e.flags(1)?;
-            requests_hash = get_opt_b256(&mut e, ef.get(1) == 1)?;
-            block_access_list_hash = get_opt_b256(&mut e, ef.get(1) == 1)?;
-            slot_number = get_opt_u64(&mut e, ef.get(1) == 1)?;
+        if f.bool() {
+            let len = f.r.varuint()?;
+            let mut e = Reader::new(f.r.take(len)?);
+            let mut ef = F { flags: e.flags(1)?, r: &mut e };
+            requests_hash = ef.opt_b256()?;
+            block_access_list_hash = ef.opt_b256()?;
+            slot_number = ef.opt_u64()?;
             e.finish()?;
         }
         let extra_data = alloy_primitives::Bytes::copy_from_slice(r.rest);

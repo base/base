@@ -23,11 +23,14 @@ use alloy_eips::{
     eip2930::{AccessList, AccessListItem},
     eip7702::{Authorization, SignedAuthorization},
 };
-use alloy_primitives::{Address, B256, Bytes, Log, LogData, Signature, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Log, LogData, Signature, U256};
 use alloy_rlp::{Decodable, Encodable};
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, TxDeposit};
 
-use crate::{CodecError, Decoded, Flags, Reader, put_compact_u64, put_compact_u128, put_compact_u256, put_varuint};
+use crate::{
+    CodecError, Decoded, Reader, put_compact_u64, put_varuint,
+    codec::{F, W},
+};
 
 static TRANSACTION_DICTIONARY: &[u8] = include_bytes!("../zstd/transaction_dictionary.bin");
 static RECEIPT_DICTIONARY: &[u8] = include_bytes!("../zstd/receipt_dictionary.bin");
@@ -63,66 +66,6 @@ const IDENTIFIER_EIP1559: u64 = 2;
 const IDENTIFIER_EXTENDED: u64 = 3;
 const EIP7702_TYPE: u8 = 4;
 const DEPOSIT_TYPE: u8 = 0x7e;
-
-/// A field encoder: flag bits plus the body.
-#[derive(Default)]
-struct W {
-    flags: Flags,
-    body: Vec<u8>,
-}
-
-impl W {
-    fn u64(&mut self, v: u64) {
-        let len = put_compact_u64(&mut self.body, v);
-        self.flags.put(4, len);
-    }
-    fn u128(&mut self, v: u128) {
-        let len = put_compact_u128(&mut self.body, v);
-        self.flags.put(5, len);
-    }
-    fn u256(&mut self, v: U256) {
-        let len = put_compact_u256(&mut self.body, v);
-        self.flags.put(6, len);
-    }
-    fn bool(&mut self, v: bool) {
-        self.flags.put(1, u64::from(v));
-    }
-    fn kind(&mut self, v: TxKind) {
-        match v {
-            TxKind::Create => self.flags.put(1, 0),
-            TxKind::Call(a) => {
-                self.flags.put(1, 1);
-                self.body.extend_from_slice(a.as_slice());
-            }
-        }
-    }
-    /// `Option<u64>` / `Option<u128>`: a presence bit, then length-prefixed compact bytes.
-    fn opt(&mut self, v: Option<u128>) {
-        self.flags.put(1, u64::from(v.is_some()));
-        if let Some(v) = v {
-            let mut tmp = Vec::with_capacity(16);
-            put_compact_u128(&mut tmp, v);
-            put_varuint(&mut self.body, tmp.len());
-            self.body.extend_from_slice(&tmp);
-        }
-    }
-    /// `Option<Address>`: a presence bit, then the raw address.
-    fn opt_address(&mut self, v: Option<Address>) {
-        self.flags.put(1, u64::from(v.is_some()));
-        if let Some(v) = v {
-            self.body.extend_from_slice(v.as_slice());
-        }
-    }
-    fn raw(&mut self, bytes: &[u8]) {
-        self.body.extend_from_slice(bytes);
-    }
-    fn finish(self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.body.len() + 4);
-        self.flags.write(&mut out);
-        out.extend_from_slice(&self.body);
-        out
-    }
-}
 
 fn put_access_list(out: &mut Vec<u8>, list: &AccessList) {
     put_varuint(out, list.0.len());
@@ -188,43 +131,6 @@ fn get_authorizations(r: &mut Reader<'_>) -> Decoded<Vec<SignedAuthorization>> {
         list.push(SignedAuthorization::new_unchecked(Authorization { chain_id, address, nonce }, y_parity, r_, s));
     }
     Ok(list)
-}
-
-/// Reads the pieces the field decoders share.
-struct F<'a, 'b> {
-    r: &'b mut Reader<'a>,
-    flags: Flags,
-}
-
-impl F<'_, '_> {
-    fn u64(&mut self) -> Decoded<u64> {
-        let len = self.flags.get(4) as usize;
-        self.r.compact_u64(len)
-    }
-    fn u128(&mut self) -> Decoded<u128> {
-        let len = self.flags.get(5) as usize;
-        self.r.compact_u128(len)
-    }
-    fn u256(&mut self) -> Decoded<U256> {
-        let len = self.flags.get(6) as usize;
-        self.r.compact_u256(len)
-    }
-    fn bool(&mut self) -> bool {
-        self.flags.get(1) == 1
-    }
-    fn kind(&mut self) -> Decoded<TxKind> {
-        Ok(if self.flags.get(1) == 1 { TxKind::Call(self.r.address()?) } else { TxKind::Create })
-    }
-    fn opt_address(&mut self) -> Decoded<Option<Address>> {
-        if self.flags.get(1) == 0 { Ok(None) } else { Ok(Some(self.r.address()?)) }
-    }
-    fn opt(&mut self) -> Decoded<Option<u128>> {
-        if self.flags.get(1) == 0 {
-            return Ok(None);
-        }
-        let len = self.r.varuint()?;
-        Ok(Some(self.r.compact_u128(len)?))
-    }
 }
 
 static EMPTY_INPUT: Bytes = Bytes::new();
@@ -347,7 +253,7 @@ impl TxCodec {
                 let t = signed.tx();
                 let tail = base_tail(t);
                 w.u64(t.chain_id);
-                w.opt_address(t.sender);
+                w.opt_raw(t.sender.as_ref().map(|a| a.as_slice()));
                 w.u256(t.nonce_key);
                 w.u64(t.nonce_sequence);
                 w.u64(t.valid_after);
@@ -355,7 +261,7 @@ impl TxCodec {
                 w.u128(t.max_priority_fee_per_gas);
                 w.u128(t.max_fee_per_gas);
                 w.u64(t.gas_limit);
-                w.opt_address(t.payer);
+                w.opt_raw(t.payer.as_ref().map(|a| a.as_slice()));
                 w.u64(tail.len() as u64);
                 out.extend_from_slice(&w.finish());
                 out.extend_from_slice(&tail);
