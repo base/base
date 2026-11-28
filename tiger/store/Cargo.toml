@@ -29,8 +29,3 @@ rocksdb.workspace = true
 
 [build-dependencies]
 cc.workspace = true
-
-[features]
-# A 64 GiB MDBX map instead of 8 TiB, so a test process holding many datadirs stays inside the
-# 128 TiB user address space.
-test-utils = []

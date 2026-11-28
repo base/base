@@ -18,7 +18,10 @@ use std::{
     os::unix::ffi::OsStrExt,
     path::Path,
     ptr, slice,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicIsize, Ordering},
+    },
 };
 
 use crate::mdbx_sys as ffi;
@@ -55,9 +58,9 @@ impl std::error::Error for MdbxError {}
 const GIGABYTE: isize = 1 << 30;
 /// Bytes in one terabyte.
 const TERABYTE: isize = 1 << 40;
-/// Upper bound of the file size (reth's 8 TiB). Tests reserve 64 GiB per environment, so a test
-/// process holding many datadirs stays inside the 128 TiB user address space.
-const MAX_SIZE: isize = if cfg!(any(test, feature = "test-utils")) { 64 * GIGABYTE } else { 8 * TERABYTE };
+/// Upper bound of the file size (reth's 8 TiB), unless a test lowered it with
+/// [`Env::set_max_size`].
+static MAX_SIZE: AtomicIsize = AtomicIsize::new(8 * TERABYTE);
 /// File growth step (reth's 4 GiB).
 const GROWTH_STEP: isize = 4 * GIGABYTE;
 /// Page size of a new file (reth's OS page size clamped to 4096..=65536).
@@ -93,6 +96,13 @@ pub struct Env {
 }
 
 impl Env {
+    /// Sets the upper bound of the file size, in bytes, of every environment opened after this
+    /// call. For tests: each environment reserves its upper bound of address space, and a test
+    /// process holding many 8 TiB environments runs out of the 128 TiB user address space.
+    pub fn set_max_size(max_size: isize) {
+        MAX_SIZE.store(max_size, Ordering::Relaxed);
+    }
+
     /// Opens or creates the environment in directory `path`, read-write.
     pub fn open(path: &Path) -> Result<Self, MdbxError> {
         let mut env: *mut ffi::MDBX_env = ptr::null_mut();
@@ -104,7 +114,7 @@ impl Env {
                     env,
                     0,
                     -1,
-                    MAX_SIZE,
+                    MAX_SIZE.load(Ordering::Relaxed),
                     GROWTH_STEP,
                     0,
                     PAGE_SIZE,

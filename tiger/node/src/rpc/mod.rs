@@ -404,6 +404,8 @@ pub(super) mod test_utils {
     /// [`node`] with its genesis at block `number`.
     pub(crate) fn node_at(number: u64) -> Node {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
+        // Test nodes run concurrently: 64 GiB maps keep them inside the user address space.
+        base_tiger_store::Env::set_max_size(64 << 30);
         let dir = std::env::temp_dir()
             .join(format!("tiger-rpc-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         let _ = std::fs::remove_dir_all(&dir);

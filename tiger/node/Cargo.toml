@@ -62,10 +62,6 @@ webpki-roots.workspace = true
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std", "raw_value", "preserve_order"] }
 
-[dev-dependencies]
-# Test datadirs reserve a small MDBX map (see base-tiger-store's `test-utils`).
-base-tiger-store = { workspace = true, features = ["test-utils"] }
-
 [features]
 # Edge coverage for guided fuzzing; build with `RUSTC_WRAPPER=etc/tools/diff-adapter/sancov-rustc.sh`
 # and `SANCOV_CRATES` naming the crates to instrument (see README.md).
