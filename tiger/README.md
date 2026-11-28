@@ -16,6 +16,11 @@ cargo build --release
 cargo test
 ```
 
+RocksDB's C++ (about 700 CPU-seconds) is most of a clean build. Incremental builds take about 2s.
+For repeated clean builds, such as new worktrees or switching branches, set
+`RUSTC_WRAPPER=sccache`. The cc crate then caches the C and C++ too, and a clean dev build drops
+from about 80s to 17s on 16 cores.
+
 ## Status
 
 As of 2026-11-25, tiger follows the Base mainnet tip behind `base-consensus` on a base-reth
