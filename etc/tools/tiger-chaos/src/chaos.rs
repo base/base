@@ -219,8 +219,14 @@ impl ChaosRun {
     ) -> eyre::Result<RunReport> {
         let seed = config.seed.wrapping_mul(1_000_003).wrapping_add(run);
         let mut rng = Rng::new(&[seed, 0xc4a05]);
+        Self::clear_ports(config.port_offset);
         let dir = config.root.join(format!("run-{run}"));
         if dir.exists() {
+            // A run that died with its datadir on a tmpfs left the mount behind.
+            let _ = std::process::Command::new("sudo")
+                .args(["-n", "umount", "-l"])
+                .arg(dir.join("tiger"))
+                .status();
             fs::remove_dir_all(&dir)?;
         }
         fs::create_dir_all(&dir)?;
@@ -722,6 +728,41 @@ impl ChaosRun {
             }
         }
         pids
+    }
+
+    /// Kills node processes left on this campaign's ports (by a harness that exited without
+    /// stopping them, or another campaign on the same offset): a stale node would answer for
+    /// the run's tiger.
+    fn clear_ports(offset: u16) {
+        let ports: Vec<String> =
+            [18545u16, 19545, 20545, 28545].iter().map(|p| (p + offset).to_string()).collect();
+        let stale = || -> Vec<i32> {
+            let mut pids = Vec::new();
+            for entry in fs::read_dir("/proc").into_iter().flatten().flatten() {
+                let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else { continue };
+                let Ok(cmdline) = fs::read(entry.path().join("cmdline")) else { continue };
+                let args: Vec<&[u8]> = cmdline.split(|b| *b == 0).collect();
+                let on_port = args.windows(2).any(|w| {
+                    w[0] == b"--http.port" && ports.iter().any(|p| w[1] == p.as_bytes())
+                });
+                if on_port && args.contains(&b"node".as_slice()) {
+                    pids.push(pid);
+                }
+            }
+            pids
+        };
+        for _ in 0..50 {
+            let pids = stale();
+            if pids.is_empty() {
+                return;
+            }
+            eprintln!("killing stale nodes on the campaign's ports: {pids:?}");
+            for pid in pids {
+                // SAFETY: kill has no memory-safety preconditions.
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 
     fn kill_now(&mut self) {
