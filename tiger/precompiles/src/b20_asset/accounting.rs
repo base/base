@@ -14,7 +14,7 @@ use crate::{TokenAccounting, macros::reject_frozen_selector};
 pub trait AssetAccounting: TokenAccounting {
     /// Returns the current block timestamp from the active storage context.
     ///
-    /// A read used only by the scheduled-multiplier surface (`AssetV2`); earlier versions never
+    /// A read used only by the scheduled-multiplier surface (asset V2); earlier versions never
     /// reach it, so the default rejects like the other frozen-selector defaults.
     fn timestamp(&self) -> Result<U256> {
         reject_frozen_selector!()
@@ -28,7 +28,7 @@ pub trait AssetAccounting: TokenAccounting {
     /// Returns the pending scheduled multiplier target (ERC-8056)
     ///
     /// Packs with [`Self::pending_effective_at`] into a single slot. Introduced with the
-    /// scheduled-multiplier feature (`AssetV2`); earlier versions never touch this slot.
+    /// scheduled-multiplier feature (asset V2); earlier versions never touch this slot.
     fn pending_multiplier(&self) -> Result<u128> {
         reject_frozen_selector!()
     }

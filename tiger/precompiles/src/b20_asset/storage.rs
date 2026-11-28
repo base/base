@@ -23,7 +23,7 @@ pub struct B20AssetExtensionStorage {
     pub used_announcement_ids: Mapping<String, bool>, // slot 2
     /// Extra metadata values by metadata key.
     pub extra_metadata: Mapping<String, String>, // slot 3
-    /// Pending scheduled multiplier target (ERC-8056). Introduced with `AssetV2`
+    /// Pending scheduled multiplier target (ERC-8056). Introduced with asset V2
     #[accessor]
     #[mutator]
     pub pending_multiplier: u128, // slot 4, offset 0

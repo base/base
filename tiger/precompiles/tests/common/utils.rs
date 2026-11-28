@@ -113,7 +113,8 @@ macro_rules! token_golden_harness {
     (
         storage: $storage:ident,
         token: $token:ident,
-        versions: $versions:ident,
+        resolve: $resolve:path,
+        route: $route:ident,
         version: $version:expr,
         upgrade: $upgrade:expr,
         policy: $policy_version:expr $(,)?
@@ -160,9 +161,8 @@ macro_rules! token_golden_harness {
         {
             storage.set_caller(caller);
             ::base_tiger_precompile_storage::StorageCtx::enter(storage, |ctx| {
-                let version = $versions::from_base_upgrade($upgrade)
-                    .expect("the suite's upgrade activates a version");
-                token(ctx, policy).route(ctx, &calldata, version, false)
+                let version = $resolve($upgrade).expect("the suite's upgrade activates a version");
+                token(ctx, policy).$route(ctx, &calldata, version, false)
             })
         }
 
@@ -176,7 +176,7 @@ macro_rules! token_golden_harness {
         {
             storage.set_caller(caller);
             ::base_tiger_precompile_storage::StorageCtx::enter(storage, |ctx| {
-                token(ctx, policy).route(ctx, &calldata, $version, true)
+                token(ctx, policy).$route(ctx, &calldata, $version, true)
             })
         }
 

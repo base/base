@@ -12,6 +12,11 @@ mod calldata_gas;
 pub use calldata_gas::CalldataGas;
 
 mod core_storage;
+
+mod dispatch;
+
+mod logic;
+pub use logic::{B20Logic, B20Token, B20Version};
 pub use core_storage::B20CoreStorage;
 
 mod ops;

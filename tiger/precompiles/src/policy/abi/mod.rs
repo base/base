@@ -44,7 +44,7 @@ mod tests {
 
     /// These three surfaces pass no enum ordinals to [`AbiFingerprint`], so the pinned constants
     /// above keep the values they were blessed with. `PolicyType` ordinals *are* load-bearing —
-    /// the discriminant rides the top byte of every policy ID via `PolicyRegistryV1::make_id` —
+    /// the discriminant rides the top byte of every policy ID via `PolicyRegistry::make_id` —
     /// and `shared_policy_type_discriminants_agree_across_surfaces` below only catches a reorder
     /// of one surface, not a simultaneous reorder of both. Feeding the ordinals in here would
     /// close that, at the cost of re-blessing both constants; deliberately left as a follow-up.
@@ -102,7 +102,7 @@ mod tests {
     }
 
     /// The leaf discriminants must mean the same thing on both surfaces. `PolicyType` rides the
-    /// top byte of every policy ID (`PolicyRegistryV1::make_id`), so a reordering would silently
+    /// top byte of every policy ID (`PolicyRegistry::make_id`), so a reordering would silently
     /// reinterpret every stored policy.
     #[test]
     fn shared_policy_type_discriminants_agree_across_surfaces() {

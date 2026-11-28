@@ -33,7 +33,7 @@ use base_common_genesis::BaseUpgrade;
 use base_tiger_precompile_storage::{HashMapStorageProvider, StorageCtx};
 use base_tiger_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
-    PolicyRegistryStorage, PolicyRegistryV3, PolicyVersion, PolicyVersions,
+    PolicyRegistry, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
     UpgradeGatedStorageFeatures,
 };
 
@@ -329,7 +329,7 @@ fn golden_inverted_policy_id_reads_before_activation() {
     assert_eq!(
         return_data,
         Bytes::from(IPolicyRegistry::invertedPolicyIdCall::abi_encode_returns(
-            &(policy_id | PolicyRegistryV3::INVERTED_POLICY_BIT)
+            &(policy_id | PolicyRegistry::INVERTED_POLICY_BIT)
         )),
         "invertedPolicyId returns the id with the inverted-policy bit set",
     );

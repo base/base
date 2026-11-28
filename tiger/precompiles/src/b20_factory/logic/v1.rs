@@ -8,10 +8,10 @@ use base_common_genesis::BaseUpgrade;
 use base_tiger_precompile_storage::{BasePrecompileError, Bytecode, ContractStorage, Result};
 
 use crate::{
-    ActivationRegistryStorage, AssetVersions, B20AssetInit, B20AssetStorage, B20AssetToken,
-    B20FactoryStorage, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken, B20TokenRole,
+    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20Logic, B20Token, B20Version,
+    B20FactoryStorage, B20StablecoinInit, B20StablecoinStorage, B20TokenRole,
     B20Variant, Factory, IB20Factory, InitCalls, PolicyRegistryStorage, PolicyVersions,
-    StablecoinVersions, Token,
+    Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -47,7 +47,7 @@ impl FactoryV1 {
     ) -> Result<()> {
         let policy_version = PolicyVersions::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
-        let mut token = B20StablecoinToken::with_storage_and_policy(
+        let mut token = B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(token_address, storage.storage()),
             PolicyRegistryStorage::new(storage.storage()),
             policy_version,
@@ -71,21 +71,20 @@ impl FactoryV1 {
             .encode_log_data(),
         )?;
 
+        let stablecoin_version = B20Version::stablecoin(upgrade)
+            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         if !common.initial_admin.is_zero() {
-            token.grant_role_unchecked(
+            B20Logic::stablecoin(stablecoin_version).grant_role_unchecked(
+                &mut token,
                 B20TokenRole::DefaultAdmin.id(),
                 common.initial_admin,
                 B20FactoryStorage::ADDRESS,
-                upgrade,
             )?;
         }
-
-        let stablecoin_version = StablecoinVersions::from_base_upgrade(upgrade)
-            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         storage.storage().with_caller(B20FactoryStorage::ADDRESS, || {
             for (index, &calldata) in init_calls.iter().enumerate() {
                 token
-                    .route(storage.storage(), calldata, stablecoin_version, true)
+                    .route_stablecoin(storage.storage(), calldata, stablecoin_version, true)
                     .map_err(|err| Self::map_init_call_error(index, err))?;
             }
             Ok::<(), BasePrecompileError>(())
@@ -104,7 +103,7 @@ impl FactoryV1 {
     ) -> Result<()> {
         let policy_version = PolicyVersions::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
-        let mut token = B20AssetToken::with_storage_and_policy(
+        let mut token = B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(token_address, storage.storage()),
             PolicyRegistryStorage::new(storage.storage()),
             policy_version,
@@ -125,21 +124,20 @@ impl FactoryV1 {
             .encode_log_data(),
         )?;
 
+        let asset_version = B20Version::asset(upgrade)
+            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         if !common.initial_admin.is_zero() {
-            token.grant_role_unchecked(
+            B20Logic::asset(asset_version).grant_role_unchecked(
+                &mut token,
                 B20TokenRole::DefaultAdmin.id(),
                 common.initial_admin,
                 B20FactoryStorage::ADDRESS,
-                upgrade,
             )?;
         }
-
-        let asset_version = AssetVersions::from_base_upgrade(upgrade)
-            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         storage.storage().with_caller(B20FactoryStorage::ADDRESS, || {
             for (index, &calldata) in init_calls.iter().enumerate() {
                 token
-                    .route(storage.storage(), calldata, asset_version, true)
+                    .route_asset(storage.storage(), calldata, asset_version, true)
                     .map_err(|err| Self::map_init_call_error(index, err))?;
             }
             Ok::<(), BasePrecompileError>(())
@@ -337,8 +335,9 @@ mod tests {
     use base_tiger_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
 
     use crate::{
-        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, Asset,
-        AssetAccounting, AssetV1, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
+        B20Version,
+        B20Logic,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20Token,
         B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory, PolicyRegistryStorage,
         PolicyVersion, Token, TokenAccounting,
     };
@@ -386,8 +385,8 @@ mod tests {
     fn token_at<'a>(
         addr: Address,
         ctx: StorageCtx<'a>,
-    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
-        B20AssetToken::with_storage_and_policy(
+    ) -> B20Token<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(addr, ctx),
             PolicyRegistryStorage::new(ctx),
             PolicyVersion::V1,
@@ -612,9 +611,9 @@ mod tests {
             let bob = Address::repeat_byte(0xBB);
             let mut token = token_at(token_addr, ctx);
 
-            AssetV1.mint(&mut token, alice, alice, U256::from(1_000u64), true).unwrap();
-            AssetV1.transfer(&mut token, alice, bob, U256::from(300u64), false).unwrap();
-            AssetV1.mint(&mut token, alice, alice, U256::from(200u64), true).unwrap();
+            B20Logic::asset(B20Version::V1).mint(&mut token, alice, alice, U256::from(1_000u64), true).unwrap();
+            B20Logic::asset(B20Version::V1).transfer(&mut token, alice, bob, U256::from(300u64), false).unwrap();
+            B20Logic::asset(B20Version::V1).mint(&mut token, alice, alice, U256::from(200u64), true).unwrap();
 
             assert_eq!(token.accounting().balance_of(alice).unwrap(), U256::from(900u64));
             assert_eq!(token.accounting().balance_of(bob).unwrap(), U256::from(300u64));
@@ -652,15 +651,15 @@ mod tests {
             assert_eq!(second_token.token_address(), second);
 
             let (_, _, _, _, first_domain_address, _, _) =
-                AssetV1.eip712_domain(&first_token, ctx.chain_id()).unwrap();
+                B20Logic::asset(B20Version::V1).eip712_domain(&first_token, ctx.chain_id()).unwrap();
             let (_, _, _, _, second_domain_address, _, _) =
-                AssetV1.eip712_domain(&second_token, ctx.chain_id()).unwrap();
+                B20Logic::asset(B20Version::V1).eip712_domain(&second_token, ctx.chain_id()).unwrap();
 
             assert_eq!(first_domain_address, first);
             assert_eq!(second_domain_address, second);
             assert_ne!(
-                AssetV1.domain_separator(&first_token, ctx.chain_id()).unwrap(),
-                AssetV1.domain_separator(&second_token, ctx.chain_id()).unwrap()
+                B20Logic::asset(B20Version::V1).domain_separator(&first_token, ctx.chain_id()).unwrap(),
+                B20Logic::asset(B20Version::V1).domain_separator(&second_token, ctx.chain_id()).unwrap()
             );
         });
     }
@@ -690,7 +689,7 @@ mod tests {
             let mut factory = B20FactoryStorage::new(ctx);
             let token_addr = factory.create_b20(caller, call, BaseUpgrade::Beryl).unwrap();
 
-            let token = B20AssetToken::with_storage_and_policy(
+            let token = B20Token::with_storage_and_policy(
                 B20AssetStorage::from_address(token_addr, ctx),
                 PolicyRegistryStorage::new(ctx),
                 PolicyVersion::V1,
@@ -728,7 +727,7 @@ mod tests {
             let mut factory = B20FactoryStorage::new(ctx);
             let token_addr = factory.create_b20(caller, call_no_admin, BaseUpgrade::Beryl).unwrap();
 
-            let token = B20AssetToken::with_storage_and_policy(
+            let token = B20Token::with_storage_and_policy(
                 B20AssetStorage::from_address(token_addr, ctx),
                 PolicyRegistryStorage::new(ctx),
                 PolicyVersion::V1,

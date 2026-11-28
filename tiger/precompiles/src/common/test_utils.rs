@@ -1,6 +1,6 @@
 //! In-memory fakes of [`TokenAccounting`] and [`PolicyAccounting`] for unit tests.
 //!
-//! Use these for the versioned `logic/vN` unit tests.
+//! Use these for the logic unit tests.
 //! For factory, dispatch, and storage-layout tests keep the EVM harness.
 
 use std::{
@@ -14,15 +14,16 @@ use base_tiger_precompile_storage::Result;
 use crate::{
     PackedPolicy, PolicyAccounting, PolicyRegistryStorage,
     b20_asset::{AssetAccounting, B20AssetStorage},
-    b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
+    b20_stablecoin::StablecoinAccounting,
+    common::B20Token,
     common::{B20_MAX_SUPPLY_CAP, TokenAccounting, TransferPolicyIds},
 };
 
-/// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
+/// Convenience alias: [`B20Token`] wired with both in-memory fakes.
 ///
-/// The stablecoin holder is a minimal storage+policy holder (its behavior lives in `logic/vN`), so
+/// The stablecoin holder is a minimal storage+policy holder (its behavior lives in [`crate::B20Logic`]), so
 /// this alias is used by dispatch/`inner` tests.
-pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting>;
+pub type TestStablecoinToken = B20Token<InMemoryTokenAccounting, FakePolicyAccounting>;
 
 /// HashMap-backed [`TokenAccounting`] for unit tests.
 ///
@@ -281,7 +282,7 @@ impl StablecoinAccounting for InMemoryTokenAccounting {
 /// In-memory [`PolicyAccounting`] for unit tests.
 ///
 /// Pair with [`PolicyVersion::V1`] on tokens so authorization goes through
-/// [`crate::PolicyRegistryLogic`]. Call [`FakePolicyAccounting::allow`] to grant membership
+/// [`crate::PolicyRegistry`]. Call [`FakePolicyAccounting::allow`] to grant membership
 /// (ALLOWLIST semantics under V1) before exercising token ops that need a custom policy.
 #[derive(Debug)]
 pub struct FakePolicyAccounting {

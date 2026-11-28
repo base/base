@@ -20,59 +20,11 @@ use alloy_sol_types::SolInterface;
 use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{
-    Asset, AssetAccounting, AssetV1, AssetV2, AssetV3, B20Abi, IB20, IB20Asset, IB20AssetV1,
-    IB20AssetV2, PolicyAccounting,
-};
-
-/// An activated version of the asset B-20 precompile logic.
-///
-/// Each variant maps to an immutable implementation via [`Self::implementation`] and to the
-/// composite wire surface frozen at its fork via [`Self::abi`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AssetVersion {
-    /// Introduced at Beryl, the asset's activation fork.
-    V1,
-    /// Introduced at Cobalt. Adds the ERC-8056 scheduled-multiplier surface
-    V2,
-    /// Introduced at Denim, superseding [`Self::V2`].
-    V3,
-}
-
-impl AssetVersion {
-    /// Returns the immutable logic implementation for this version.
-    pub fn implementation<'l, S, A>(self) -> &'l dyn Asset<S, A>
-    where
-        S: AssetAccounting + 'l,
-        A: PolicyAccounting + 'l,
-    {
-        static V1: AssetV1 = AssetV1;
-        static V2: AssetV2 = AssetV2;
-        static V3: AssetV3 = AssetV3;
-        match self {
-            Self::V1 => &V1,
-            Self::V2 => &V2,
-            Self::V3 => &V3,
-        }
-    }
-
-    /// Returns the composite dialable surface frozen for this version.
-    ///
-    /// The join is exhaustive over [`AssetVersion`]: every logic version declares both its
-    /// asset-extension ABI and the common [`B20Abi`] it decodes against. There is no independent
-    /// common fork ladder.
-    pub const fn abi(self) -> AssetAbiPair {
-        match self {
-            Self::V1 => AssetAbiPair { asset: AssetAbi::V1, common_b20: B20Abi::V1 },
-            // V3 reuses the Cobalt wire surface until a later Denim PR adds selectors.
-            Self::V2 | Self::V3 => AssetAbiPair { asset: AssetAbi::V2, common_b20: B20Abi::V2 },
-        }
-    }
-}
+use crate::{B20Abi, B20Version, IB20, IB20Asset, IB20AssetV1, IB20AssetV2};
 
 /// A frozen wire (ABI) surface of the asset-specific B-20 extension.
 ///
-/// Reached only through [`AssetVersion::abi`]. Covers only asset-extension selectors;
+/// Reached only through [`AssetAbiPair::of`]. Covers only asset-extension selectors;
 /// the inherited common surface is selected separately as [`B20Abi`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetAbi {
@@ -129,7 +81,7 @@ impl AssetAbi {
 
 /// The complete dialable surface for an asset token version: extension + common.
 ///
-/// Produced only by [`AssetVersion::abi`]. Asset selectors are tried first; common
+/// Produced only by [`AssetAbiPair::of`]. Asset selectors are tried first; common
 /// selectors are the fallthrough. The two surfaces are disjoint, so a selector never
 /// lands in both arms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +104,14 @@ pub(crate) enum AssetCall {
 }
 
 impl AssetAbiPair {
+    /// The surface frozen for `version`: V3 reuses the Cobalt (V2) surface.
+    pub const fn of(version: B20Version) -> Self {
+        match version {
+            B20Version::V1 => Self { asset: AssetAbi::V1, common_b20: B20Abi::V1 },
+            B20Version::V2 | B20Version::V3 => Self { asset: AssetAbi::V2, common_b20: B20Abi::V2 },
+        }
+    }
+
     /// Decodes `calldata` into a routable call for this composite surface.
     pub(crate) fn decode(self, calldata: &[u8]) -> Result<AssetCall> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
@@ -170,32 +130,18 @@ impl AssetAbiPair {
     }
 }
 
-/// Resolver that selects the asset version active at a given hardfork.
-///
-/// The version is resolved once per call from the block's active upgrade; there
-/// is only ever one active version at a time.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct AssetVersions;
-
-impl AssetVersions {
-    /// Returns the version active at `upgrade`, or `None` before the introduction
-    /// fork (Beryl), where the asset precompile is not installed at all.
-    ///
-    /// V1 is active from Beryl; V2 supersedes it from Cobalt; V3 supersedes V2 from Denim.
-    pub const fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<AssetVersion> {
-        // Ordered thresholds rather than per-variant arms: a fork newer than Denim must inherit the
-        // latest version (V3) until one supersedes it, and `BaseUpgrade` is `#[non_exhaustive]`, so
-        // an explicit-variant match would need a wildcard that would wrongly send future forks to
-        // `None`.
+impl B20Version {
+    /// The asset version active at `upgrade`, or `None` before Beryl, where the asset precompile
+    /// is not installed. A fork newer than Denim inherits V3 until one supersedes it.
+    pub const fn asset(upgrade: BaseUpgrade) -> Option<Self> {
         match upgrade {
-            u if u.is_feature_enabled(BaseFeature::AssetPrecompileV3) => Some(AssetVersion::V3),
-            u if u.is_feature_enabled(BaseFeature::AssetPrecompileV2) => Some(AssetVersion::V2),
-            u if u.is_feature_enabled(BaseFeature::AssetPrecompile) => Some(AssetVersion::V1),
+            u if u.is_feature_enabled(BaseFeature::AssetPrecompileV3) => Some(Self::V3),
+            u if u.is_feature_enabled(BaseFeature::AssetPrecompileV2) => Some(Self::V2),
+            u if u.is_feature_enabled(BaseFeature::AssetPrecompile) => Some(Self::V1),
             _ => None,
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
@@ -206,28 +152,28 @@ mod tests {
 
     use super::{AssetAbiPair, AssetCall};
     use crate::{
-        AssetAbi, AssetVersion, AssetVersions, B20Abi, IB20, IB20Asset, IB20AssetV1, IB20AssetV2,
+        AssetAbi, B20Version, B20Abi, IB20, IB20Asset, IB20AssetV1, IB20AssetV2,
     };
 
     #[test]
     fn resolves_none_before_beryl() {
-        assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Azul), None);
+        assert_eq!(B20Version::asset(BaseUpgrade::Azul), None);
     }
 
     #[test]
     fn resolves_v1_from_beryl() {
-        assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Beryl), Some(AssetVersion::V1));
+        assert_eq!(B20Version::asset(BaseUpgrade::Beryl), Some(B20Version::V1));
     }
 
     #[test]
     fn resolves_v2_at_cobalt() {
-        assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
+        assert_eq!(B20Version::asset(BaseUpgrade::Cobalt), Some(B20Version::V2));
     }
 
     #[test]
     fn resolves_v3_from_denim() {
-        assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Denim), Some(AssetVersion::V3));
-        assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Zenith), Some(AssetVersion::V3));
+        assert_eq!(B20Version::asset(BaseUpgrade::Denim), Some(B20Version::V3));
+        assert_eq!(B20Version::asset(BaseUpgrade::Zenith), Some(B20Version::V3));
     }
 
     /// The logic axis and both wire axes meet only here. Driven from the fork ladder so the whole
@@ -235,27 +181,27 @@ mod tests {
     #[test]
     fn each_fork_resolves_to_its_wire_surface() {
         assert_eq!(
-            AssetVersion::V1.abi(),
+            AssetAbiPair::of(B20Version::V1),
             AssetAbiPair { asset: AssetAbi::V1, common_b20: B20Abi::V1 }
         );
         assert_eq!(
-            AssetVersion::V2.abi(),
+            AssetAbiPair::of(B20Version::V2),
             AssetAbiPair { asset: AssetAbi::V2, common_b20: B20Abi::V2 }
         );
         assert_eq!(
-            AssetVersion::V3.abi(),
+            AssetAbiPair::of(B20Version::V3),
             AssetAbiPair { asset: AssetAbi::V2, common_b20: B20Abi::V2 }
         );
 
-        let beryl = AssetVersions::from_base_upgrade(BaseUpgrade::Beryl).unwrap();
-        let cobalt = AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt).unwrap();
-        let denim = AssetVersions::from_base_upgrade(BaseUpgrade::Denim).unwrap();
-        assert_eq!(beryl.abi().asset, AssetAbi::V1);
-        assert_eq!(beryl.abi().common_b20, B20Abi::V1);
-        assert_eq!(cobalt.abi().asset, AssetAbi::V2);
-        assert_eq!(cobalt.abi().common_b20, B20Abi::V2);
-        assert_eq!(denim.abi().asset, AssetAbi::V2);
-        assert_eq!(denim.abi().common_b20, B20Abi::V2);
+        let beryl = B20Version::asset(BaseUpgrade::Beryl).unwrap();
+        let cobalt = B20Version::asset(BaseUpgrade::Cobalt).unwrap();
+        let denim = B20Version::asset(BaseUpgrade::Denim).unwrap();
+        assert_eq!(AssetAbiPair::of(beryl).asset, AssetAbi::V1);
+        assert_eq!(AssetAbiPair::of(beryl).common_b20, B20Abi::V1);
+        assert_eq!(AssetAbiPair::of(cobalt).asset, AssetAbi::V2);
+        assert_eq!(AssetAbiPair::of(cobalt).common_b20, B20Abi::V2);
+        assert_eq!(AssetAbiPair::of(denim).asset, AssetAbi::V2);
+        assert_eq!(AssetAbiPair::of(denim).common_b20, B20Abi::V2);
     }
 
     /// `SolInterface::NAME` lands in consensus data: the short-calldata branch of
@@ -331,7 +277,7 @@ mod tests {
 
     #[test]
     fn asset_and_common_selectors_are_disjoint_on_each_wire() {
-        for wire in [AssetVersion::V1.abi(), AssetVersion::V2.abi(), AssetVersion::V3.abi()] {
+        for wire in [AssetAbiPair::of(B20Version::V1), AssetAbiPair::of(B20Version::V2), AssetAbiPair::of(B20Version::V3)] {
             for selector in IB20Asset::IB20AssetCalls::selectors() {
                 if wire.asset.valid_selector(selector) {
                     assert!(
@@ -355,7 +301,7 @@ mod tests {
     fn decode_rejects_cobalt_asset_selector_at_v1() {
         let calldata = IB20Asset::uiMultiplierCall {}.abi_encode();
         assert_eq!(
-            AssetVersion::V1.abi().decode(&calldata),
+            AssetAbiPair::of(B20Version::V1).decode(&calldata),
             Err(BasePrecompileError::UnknownFunctionSelector(
                 IB20Asset::uiMultiplierCall::SELECTOR
             ))
@@ -365,9 +311,9 @@ mod tests {
     #[test]
     fn decode_accepts_cobalt_asset_selector_at_v2() {
         let calldata = IB20Asset::uiMultiplierCall {}.abi_encode();
-        for version in [AssetVersion::V2, AssetVersion::V3] {
+        for version in [B20Version::V2, B20Version::V3] {
             assert!(matches!(
-                version.abi().decode(&calldata),
+                AssetAbiPair::of(version).decode(&calldata),
                 Ok(AssetCall::Asset(IB20Asset::IB20AssetCalls::uiMultiplier(_)))
             ));
         }
@@ -376,9 +322,9 @@ mod tests {
     #[test]
     fn decode_accepts_common_selector_at_both_versions() {
         let calldata = IB20::nameCall {}.abi_encode();
-        for version in [AssetVersion::V1, AssetVersion::V2, AssetVersion::V3] {
+        for version in [B20Version::V1, B20Version::V2, B20Version::V3] {
             assert!(matches!(
-                version.abi().decode(&calldata),
+                AssetAbiPair::of(version).decode(&calldata),
                 Ok(AssetCall::Common(IB20::IB20Calls::name(_)))
             ));
         }
@@ -388,7 +334,7 @@ mod tests {
     fn decode_malformed_known_common_call_is_abi_decode_failed() {
         // `transfer(address,uint256)` with only the selector: owned by common, not asset.
         let calldata = IB20::transferCall::SELECTOR.to_vec();
-        let err = AssetVersion::V1.abi().decode(&calldata).unwrap_err();
+        let err = AssetAbiPair::of(B20Version::V1).decode(&calldata).unwrap_err();
         assert!(matches!(
             err,
             BasePrecompileError::AbiDecodeFailed {
@@ -397,8 +343,8 @@ mod tests {
             } if selector == IB20::transferCall::SELECTOR
         ));
         // Same bytes at V2/V3: common V1 and V2 declare the same surface today, and V3 reuses V2.
-        assert_eq!(AssetVersion::V2.abi().decode(&calldata), Err(err.clone()));
-        assert_eq!(AssetVersion::V3.abi().decode(&calldata), Err(err));
+        assert_eq!(AssetAbiPair::of(B20Version::V2).decode(&calldata), Err(err.clone()));
+        assert_eq!(AssetAbiPair::of(B20Version::V3).decode(&calldata), Err(err));
     }
 
     #[test]
@@ -406,7 +352,7 @@ mod tests {
         // Truncated `updateUIMultiplier` args: V2 owns the selector, so failure stays on asset.
         let mut calldata = IB20Asset::updateUIMultiplierCall::SELECTOR.to_vec();
         calldata.extend_from_slice(&[0u8; 8]);
-        let err = AssetVersion::V2.abi().decode(&calldata).unwrap_err();
+        let err = AssetAbiPair::of(B20Version::V2).decode(&calldata).unwrap_err();
         assert!(matches!(
             err,
             BasePrecompileError::AbiDecodeFailed {
@@ -420,15 +366,15 @@ mod tests {
     fn decode_unknown_selector_is_rejected() {
         let calldata = [0xde, 0xad, 0xbe, 0xef];
         assert_eq!(
-            AssetVersion::V1.abi().decode(&calldata),
+            AssetAbiPair::of(B20Version::V1).decode(&calldata),
             Err(BasePrecompileError::UnknownFunctionSelector(calldata))
         );
         assert_eq!(
-            AssetVersion::V2.abi().decode(&calldata),
+            AssetAbiPair::of(B20Version::V2).decode(&calldata),
             Err(BasePrecompileError::UnknownFunctionSelector(calldata))
         );
         assert_eq!(
-            AssetVersion::V3.abi().decode(&calldata),
+            AssetAbiPair::of(B20Version::V3).decode(&calldata),
             Err(BasePrecompileError::UnknownFunctionSelector(calldata))
         );
     }
@@ -436,7 +382,7 @@ mod tests {
     #[test]
     fn decode_empty_calldata_is_unknown_selector() {
         assert_eq!(
-            AssetVersion::V1.abi().decode(&[]),
+            AssetAbiPair::of(B20Version::V1).decode(&[]),
             Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
         );
     }

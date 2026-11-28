@@ -11,10 +11,10 @@ use alloy_primitives::FixedBytes;
 use alloy_sol_types::sol;
 
 /// ERC-165 interface id (`IERC165`, `0x01ffc9a7`), the `supportsInterface(bytes4)` selector.
-/// Advertised by `AssetV2` (ERC-8056 requires ERC-165); not itself an ERC-8056 id.
+/// Advertised by asset V2 (ERC-8056 requires ERC-165); not itself an ERC-8056 id.
 pub const ERC165_INTERFACE_ID: FixedBytes<4> = FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]);
 
-/// The ERC-8056 interface IDs advertised by `supportsInterface` from `AssetV2`:
+/// The ERC-8056 interface IDs advertised by `supportsInterface` from asset V2:
 /// `IScaledUIAmount`, `IScaledUIAmountNewUIMultiplier`, `IScaledUIAmountBalances`, and (added by the
 /// interface review) the `IScaledUIAmountConversion` extension `0x57854fc3`.
 pub const ERC8056_INTERFACE_IDS: [FixedBytes<4>; 4] = [
@@ -68,7 +68,7 @@ sol! {
 
         // ── Events ───────────────────────────────────────────────────────────
 
-        /// Deprecated V1 event. `AssetV2`'s instant setter (`updateMultiplier`) emits this alongside
+        /// Deprecated V1 event. asset V2's instant setter (`updateMultiplier`) emits this alongside
         /// `UIMultiplierUpdated` for backward compatibility with indexers on the legacy topic; the
         /// scheduled `updateUIMultiplier` emits only `UIMultiplierUpdated`.
         event MultiplierUpdated(uint256 multiplier);
@@ -164,7 +164,7 @@ sol! {
         function cancelUIMultiplierUpdate() external;
 
         /// Instant failsafe: sets the current multiplier immediately and clears any pending.
-        /// At `AssetV1` emits only `MultiplierUpdated`; `AssetV2` emits both `MultiplierUpdated` and
+        /// At asset V1 emits only `MultiplierUpdated`; asset V2 emits both `MultiplierUpdated` and
         /// `UIMultiplierUpdated`. Deprecated (retained dialable, and kept in base-std's `IB20Asset`
         /// interface as a deprecated function); the canonical setter is the scheduled
         /// `updateUIMultiplier`.

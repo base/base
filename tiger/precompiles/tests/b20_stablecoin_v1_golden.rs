@@ -1,7 +1,7 @@
 //! Golden tests pinning Stablecoin **V1** behavior of the B-20 precompile (BOP-425).
 //!
 //! Every op (mutations, computed reads, direct/const reads) is driven through the
-//! **version-resolver-gated** dispatch path (`BaseUpgrade::Beryl` -> `StablecoinVersion::V1`)
+//! **version-resolver-gated** dispatch path (`BaseUpgrade::Beryl` -> `B20Version::V1`)
 //! against the real EVM-backed `B20StablecoinStorage` over `HashMapStorageProvider`, with an
 //! `FakePolicyAccounting` for deterministic allow/block decisions. Each case asserts:
 //!   1. exact returned ABI bytes (or the typed revert),
@@ -24,9 +24,9 @@ use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_tiger_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 use base_tiger_precompiles::{
-    B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
-    B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, PolicyVersion, Stablecoin,
-    StablecoinV1, StablecoinVersion, StablecoinVersions, TokenAccounting,
+        B20Logic,
+    B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20Token,
+    B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, PolicyVersion, B20Version, TokenAccounting,
 };
 
 mod common;
@@ -41,7 +41,7 @@ use common::{
 const NAME: &str = "USD Coin";
 const SYMBOL: &str = "USDC";
 const CURRENCY: &str = "USD";
-const LOGIC: StablecoinV1 = StablecoinV1;
+const LOGIC: B20Logic = B20Logic::stablecoin(B20Version::V1);
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 
@@ -123,9 +123,10 @@ fn fresh() -> HashMapStorageProvider {
 
 crate::token_golden_harness! {
     storage: B20StablecoinStorage,
-    token: B20StablecoinToken,
-    versions: StablecoinVersions,
-    version: StablecoinVersion::V1,
+    token: B20Token,
+    resolve: B20Version::stablecoin,
+    route: route_stablecoin,
+    version: B20Version::V1,
     upgrade: BaseUpgrade::Beryl,
     policy: PolicyVersion::V1,
 }
@@ -148,7 +149,7 @@ fn gas_reverting(
 /// The V1 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
 fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
     StorageCtx::enter(storage, |ctx| {
-        let token = B20StablecoinToken::with_storage_and_policy(
+        let token = B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
@@ -163,10 +164,10 @@ fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
 
 #[test]
 fn resolver_activates_v1_at_beryl() {
-    assert_eq!(StablecoinVersions::from_base_upgrade(BaseUpgrade::Azul), None);
+    assert_eq!(B20Version::stablecoin(BaseUpgrade::Azul), None);
     assert_eq!(
-        StablecoinVersions::from_base_upgrade(BaseUpgrade::Beryl),
-        Some(StablecoinVersion::V1)
+        B20Version::stablecoin(BaseUpgrade::Beryl),
+        Some(B20Version::V1)
     );
 }
 
@@ -678,7 +679,7 @@ fn golden_burn_blocked_reverts_when_not_blocked() {
 }
 
 /// The seize common selectors (`seizeWithMemo` and the `SEIZE_ROLE` / `SEIZE_EXEMPT_POLICY` /
-/// `SEIZE_RECEIVER_POLICY` getters) were introduced at Cobalt (`StablecoinV2`). At V1 (Beryl) they
+/// `SEIZE_RECEIVER_POLICY` getters) were introduced at Cobalt (stablecoin V2). At V1 (Beryl) they
 /// are absent from the frozen common `IB20` surface, so `route` rejects them as `UnknownFunctionSelector`.
 #[test]
 fn golden_seize_selectors_unknown_at_v1() {
@@ -696,7 +697,7 @@ fn golden_seize_selectors_unknown_at_v1() {
     }
 }
 
-/// The seize policy scopes were introduced at Cobalt (`StablecoinV2`). Although the
+/// The seize policy scopes were introduced at Cobalt (stablecoin V2). Although the
 /// `SEIZE_EXEMPT_POLICY()` / `SEIZE_RECEIVER_POLICY()` getter selectors are absent from V1, the scope
 /// *values* must also not leak through the common `updatePolicy` selector, which is dialable on V1:
 /// V1 rejects them with `UnsupportedPolicyType`, matching the base-std `v1.0.0` reference.
@@ -783,7 +784,7 @@ fn golden_unpause_clears_feature_bit() {
     assert_root("unpause", s, ROOT_UNPAUSE);
 }
 
-/// The `SEIZE` pause feature was introduced at Cobalt (`StablecoinV2`) as enum member 3. On the
+/// The `SEIZE` pause feature was introduced at Cobalt (stablecoin V2) as enum member 3. On the
 /// frozen V1 (Beryl) common wire the `PausableFeature` enum has only three members, so `pause`/
 /// `unpause`/`isPaused` carrying `SEIZE` fail to decode (`AbiDecodeFailed`) before any shared
 /// validation runs. Unlike the `bytes32` policy scope, the enum argument is range-checked by the
@@ -1156,12 +1157,12 @@ fn golden_permit_charges_no_recovery_gas() {
     s.set_caller(owner);
     s.set_timestamp(U256::ZERO);
     StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
-        .route(ctx, &calldata, StablecoinVersion::V1, true)
+        .route_stablecoin(ctx, &calldata, B20Version::V1, true)
     })
     .expect("permit must succeed");
     assert_eq!(s.gas_deducted(), 0, "V1 permit must not charge any recovery gas (unmetered)");
@@ -1340,12 +1341,12 @@ fn dispatch_rejects_nonzero_value() {
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     s.set_call_value(U256::ONE);
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        .dispatch_stablecoin(ctx, &calldata, BaseUpgrade::Beryl)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -1357,12 +1358,12 @@ fn dispatch_reverts_before_beryl() {
     let mut s = fresh();
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Azul)
+        .dispatch_stablecoin(ctx, &calldata, BaseUpgrade::Azul)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -1375,12 +1376,12 @@ fn dispatch_reverts_when_uninitialized() {
     let mut s = HashMapStorageProvider::new(CHAIN_ID);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        .dispatch_stablecoin(ctx, &calldata, BaseUpgrade::Beryl)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -1760,12 +1761,12 @@ fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        .dispatch_stablecoin(ctx, &calldata, BaseUpgrade::Beryl)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -1778,14 +1779,14 @@ fn golden_inner_reverts_before_beryl() {
     let mut s = fresh();
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let err = StorageCtx::enter(&mut s, |ctx| {
-        let mut token = B20StablecoinToken::with_storage_and_policy(
+        let mut token = B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         );
-        StablecoinVersions::from_base_upgrade(BaseUpgrade::Azul).map_or_else(
+        B20Version::stablecoin(BaseUpgrade::Azul).map_or_else(
             || Err(BasePrecompileError::Revert(Bytes::new())),
-            |version| token.route(ctx, &calldata, version, false),
+            |version| token.route_stablecoin(ctx, &calldata, version, false),
         )
     })
     .unwrap_err();
@@ -1798,13 +1799,13 @@ fn golden_grant_role_unchecked_bootstraps_first_admin() {
     let mut s = fresh();
     s.set_caller(TOKEN);
     StorageCtx::enter(&mut s, |ctx| {
-        let mut token = B20StablecoinToken::with_storage_and_policy(
+        let mut token = B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         );
-        token
-            .grant_role_unchecked(B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN, BaseUpgrade::Beryl)
+        LOGIC
+            .grant_role_unchecked(&mut token, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
             .unwrap();
     });
     read(&mut s, |t| {

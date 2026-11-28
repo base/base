@@ -6,10 +6,11 @@ use alloy_sol_types::SolInterface;
 use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
 use super::{IB20, IB20V1, IB20V2};
+use crate::B20Version;
 
 /// A frozen wire (ABI) surface of the shared B-20 token interface.
 ///
-/// Reached only through a token version's wire join (e.g. [`crate::AssetVersion::abi`]). There is
+/// Reached only through a token version's wire join (such as [`crate::AssetAbiPair::of`]). There is
 /// deliberately no `from_base_upgrade` here: a second resolver over the fork ladder would be two
 /// maps that must agree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +22,14 @@ pub enum B20Abi {
 }
 
 impl B20Abi {
+    /// The common surface frozen for `version`: V3 reuses the Cobalt (V2) surface.
+    pub const fn of(version: B20Version) -> Self {
+        match version {
+            B20Version::V1 => Self::V1,
+            B20Version::V2 | B20Version::V3 => Self::V2,
+        }
+    }
+
     /// Returns whether `selector` was dialable on this wire surface.
     pub fn valid_selector(self, selector: [u8; 4]) -> bool {
         match self {

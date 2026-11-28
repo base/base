@@ -18,6 +18,10 @@ call charges the same gas, writes the same storage, and emits the same logs as i
   the activation registry rejects value and stores its own admin.
 - Denim: asset, stablecoin and policy logic v3.
 
+Each precompile has one logic implementation for all its versions, with a check on the version
+wherever one differs: `PolicyRegistry` for the policy registry, and `B20Logic` for the B-20 tokens
+(the asset and stablecoin kinds share the core; the asset's own methods are in `b20_asset`).
+
 `lookup(address)` resolves a call target: fixed addresses first, then B-20 token addresses, the
 same order base-reth's `PrecompilesMap` uses. `fixed()` lists the fixed addresses, which are the
 ones the EVM pre-warms; token addresses are resolved dynamically and are not pre-warmed.

@@ -17,8 +17,8 @@ use base_tiger_precompile_storage::{
 };
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistryStorage, B20AssetStorage, B20AssetToken,
-    B20FactoryStorage, B20StablecoinStorage, B20StablecoinToken, B20Variant, NonceManagerStorage,
+    ActivationAdminConfig, ActivationRegistryStorage, B20AssetStorage, B20Token,
+    B20FactoryStorage, B20StablecoinStorage, B20Variant, NonceManagerStorage,
     PolicyRegistryStorage, PolicyVersions, TxContextStorage, UpgradeGatedStorageFeatures,
 };
 
@@ -171,23 +171,23 @@ impl NativePrecompiles {
                 let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
                     return Ok(PrecompileOutput::revert(0, Bytes::new(), 0));
                 };
-                B20AssetToken::with_storage_and_policy(
+                B20Token::with_storage_and_policy(
                     B20AssetStorage::from_address(address, ctx),
                     PolicyRegistryStorage::new(ctx),
                     version,
                 )
-                .dispatch(ctx, calldata, upgrade)
+                .dispatch_asset(ctx, calldata, upgrade)
             }
             NativePrecompile::B20Stablecoin => {
                 let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
                     return Ok(PrecompileOutput::revert(0, Bytes::new(), 0));
                 };
-                B20StablecoinToken::with_storage_and_policy(
+                B20Token::with_storage_and_policy(
                     B20StablecoinStorage::from_address(address, ctx),
                     PolicyRegistryStorage::new(ctx),
                     version,
                 )
-                .dispatch(ctx, calldata, upgrade)
+                .dispatch_stablecoin(ctx, calldata, upgrade)
             }
             NativePrecompile::TxContext => TxContextStorage::new(ctx).dispatch(ctx, calldata),
             NativePrecompile::NonceManager => NonceManagerStorage::new(ctx).dispatch(ctx, calldata),

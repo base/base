@@ -9,7 +9,7 @@
 //! pin.
 //!
 //! Every op is driven through the **version-resolver-gated** dispatch path
-//! (`BaseUpgrade::Denim` -> `StablecoinVersion::V3`) against the real EVM-backed
+//! (`BaseUpgrade::Denim` -> `B20Version::V3`) against the real EVM-backed
 //! `B20StablecoinStorage` over `HashMapStorageProvider` configured with `StorageFeatures::Cobalt`
 //! (the production storage config at Denim), with a `FakePolicyAccounting` for deterministic
 //! allow/block decisions. Each case asserts:
@@ -28,9 +28,9 @@ use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_tiger_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 use base_tiger_precompiles::{
-    B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
-    B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, PolicyVersion, Stablecoin,
-    StablecoinV3, StablecoinVersion, StablecoinVersions, TokenAccounting,
+        B20Logic,
+    B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20Token,
+    B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, PolicyVersion, B20Version, TokenAccounting,
 };
 
 mod common;
@@ -45,7 +45,7 @@ use common::{
 const NAME: &str = "Base Dollar";
 const SYMBOL: &str = "bUSD";
 const CURRENCY: &str = "USD";
-const LOGIC: StablecoinV3 = StablecoinV3;
+const LOGIC: B20Logic = B20Logic::stablecoin(B20Version::V3);
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 //
@@ -137,9 +137,10 @@ fn fresh() -> HashMapStorageProvider {
 
 crate::token_golden_harness! {
     storage: B20StablecoinStorage,
-    token: B20StablecoinToken,
-    versions: StablecoinVersions,
-    version: StablecoinVersion::V3,
+    token: B20Token,
+    resolve: B20Version::stablecoin,
+    route: route_stablecoin,
+    version: B20Version::V3,
     upgrade: BaseUpgrade::Denim,
     policy: PolicyVersion::V3,
 }
@@ -148,7 +149,7 @@ crate::unprivileged_revert_gas_harness!(B20StablecoinStorage);
 /// The V2 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
 fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
     StorageCtx::enter(storage, |ctx| {
-        let token = B20StablecoinToken::with_storage_and_policy(
+        let token = B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V3,
@@ -185,8 +186,8 @@ fn assert_unprivileged_requires_role(calldata: Vec<u8>, role: B256) {
 #[test]
 fn resolver_activates_v3_from_denim() {
     assert_eq!(
-        StablecoinVersions::from_base_upgrade(BaseUpgrade::Denim),
-        Some(StablecoinVersion::V3)
+        B20Version::stablecoin(BaseUpgrade::Denim),
+        Some(B20Version::V3)
     );
 }
 
@@ -196,12 +197,12 @@ fn dispatch_rejects_nonzero_value() {
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     s.set_call_value(U256::ONE);
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V3,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Denim)
+        .dispatch_stablecoin(ctx, &calldata, BaseUpgrade::Denim)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -213,12 +214,12 @@ fn dispatch_reverts_when_uninitialized() {
     let mut s = storage_at(BaseUpgrade::Denim);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V3,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Denim)
+        .dispatch_stablecoin(ctx, &calldata, BaseUpgrade::Denim)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -232,12 +233,12 @@ fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V3,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Denim)
+        .dispatch_stablecoin(ctx, &calldata, BaseUpgrade::Denim)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -1889,12 +1890,12 @@ fn golden_permit_charges_recovery_gas() {
             .abi_encode();
     s.set_caller(owner);
     StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V3,
         )
-        .route(ctx, &calldata, StablecoinVersion::V3, true)
+        .route_stablecoin(ctx, &calldata, B20Version::V3, true)
     })
     .expect("permit must succeed");
     assert_eq!(s.gas_deducted(), 3000, "V2 permit must charge the fixed ECRECOVER-equivalent cost");

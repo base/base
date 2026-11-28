@@ -14,14 +14,13 @@ use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_tiger_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, IPolicyRegistryV3, PolicyAccounting,
-    PolicyRegistryLogic, PolicyRegistryV1, PolicyRegistryV2, PolicyRegistryV3,
+    IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, IPolicyRegistryV3, PolicyRegistry,
 };
 
 /// An activated version of the `PolicyRegistry` precompile logic.
 ///
 /// Each variant maps to an immutable implementation via [`Self::implementation`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PolicyVersion {
     /// Introduced at Beryl, the fork where the policy registry precompile is installed.
     V1,
@@ -33,18 +32,8 @@ pub enum PolicyVersion {
 
 impl PolicyVersion {
     /// Returns the immutable logic implementation for this version.
-    pub fn implementation<'l, S>(self) -> &'l dyn PolicyRegistryLogic<S>
-    where
-        S: PolicyAccounting + 'l,
-    {
-        static V1: PolicyRegistryV1 = PolicyRegistryV1;
-        static V2: PolicyRegistryV2 = PolicyRegistryV2;
-        static V3: PolicyRegistryV3 = PolicyRegistryV3;
-        match self {
-            Self::V1 => &V1,
-            Self::V2 => &V2,
-            Self::V3 => &V3,
-        }
+    pub const fn implementation(self) -> PolicyRegistry {
+        PolicyRegistry::new(self)
     }
     /// Returns the wire (ABI) surface frozen for this version.
     pub const fn abi(self) -> PolicyAbi {

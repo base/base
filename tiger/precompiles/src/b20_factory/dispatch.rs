@@ -192,7 +192,7 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20AssetStorage, B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20Variant,
+        B20AssetStorage, B20Token, B20FactoryStorage, B20StablecoinStorage, B20Variant,
         FactoryVersion, IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion,
     };
 
@@ -235,8 +235,8 @@ mod tests {
     fn token_at<'a>(
         addr: Address,
         ctx: StorageCtx<'a>,
-    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
-        B20AssetToken::with_storage_and_policy(
+    ) -> B20Token<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(addr, ctx),
             PolicyRegistryStorage::new(ctx),
             PolicyVersion::V1,
@@ -263,7 +263,7 @@ mod tests {
 
     fn dispatch_b20_success(ctx: StorageCtx<'_>, token_addr: Address, call: impl SolCall) -> Bytes {
         let mut token = token_at(token_addr, ctx);
-        let output = token.dispatch(ctx, &call.abi_encode(), BaseUpgrade::Beryl).unwrap();
+        let output = token.dispatch_asset(ctx, &call.abi_encode(), BaseUpgrade::Beryl).unwrap();
         assert!(!output.is_revert(), "token call reverted: {:?}", output.bytes);
         output.bytes
     }
@@ -593,7 +593,7 @@ mod tests {
 
             let mut token = token_at(token_addr, ctx);
             let result =
-                token.dispatch(ctx, &IB20::nameCall {}.abi_encode(), BaseUpgrade::Beryl).unwrap();
+                token.dispatch_asset(ctx, &IB20::nameCall {}.abi_encode(), BaseUpgrade::Beryl).unwrap();
 
             assert!(result.is_revert());
             assert!(result.bytes.is_empty());

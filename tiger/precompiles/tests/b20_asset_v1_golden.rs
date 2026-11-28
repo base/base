@@ -5,7 +5,7 @@
 //! and continues to satisfy every pin below unchanged.
 //!
 //! Every op (mutations, computed reads, direct/const reads) is driven through the
-//! **version-resolver-gated** dispatch path (`BaseUpgrade::Beryl` -> `AssetVersion::V1`) against
+//! **version-resolver-gated** dispatch path (`BaseUpgrade::Beryl` -> `B20Version::V1`) against
 //! the real EVM-backed `B20AssetStorage` over `HashMapStorageProvider`, with an `FakePolicyAccounting`
 //! for deterministic allow/block decisions. Each case asserts:
 //!   1. exact returned ABI bytes (or the typed revert),
@@ -30,8 +30,9 @@ use base_tiger_precompile_storage::{
     BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx,
 };
 use base_tiger_precompiles::{
-    Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
-    B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
+        B20Logic,
+    AssetAccounting, B20Version, B20_MAX_SUPPLY_CAP, B20AssetInit,
+    B20AssetStorage, B20Token, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
     IB20Asset, PolicyVersion, TokenAccounting,
 };
 
@@ -47,7 +48,7 @@ use common::{
 const NAME: &str = "Base Asset";
 const SYMBOL: &str = "bASSET";
 const DECIMALS: u8 = 6;
-const LOGIC: AssetV1 = AssetV1;
+const LOGIC: B20Logic = B20Logic::asset(B20Version::V1);
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 
@@ -154,9 +155,10 @@ fn operator_role() -> B256 {
 
 crate::token_golden_harness! {
     storage: B20AssetStorage,
-    token: B20AssetToken,
-    versions: AssetVersions,
-    version: AssetVersion::V1,
+    token: B20Token,
+    resolve: B20Version::asset,
+    route: route_asset,
+    version: B20Version::V1,
     upgrade: BaseUpgrade::Beryl,
     policy: PolicyVersion::V1,
 }
@@ -164,7 +166,7 @@ crate::token_golden_harness! {
 /// The V1 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
 fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
     StorageCtx::enter(storage, |ctx| {
-        let token = B20AssetToken::with_storage_and_policy(
+        let token = B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
@@ -179,12 +181,12 @@ fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
 
 #[test]
 fn resolver_maps_forks_to_versions() {
-    assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Azul), None);
-    assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Beryl), Some(AssetVersion::V1));
-    assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
+    assert_eq!(B20Version::asset(BaseUpgrade::Azul), None);
+    assert_eq!(B20Version::asset(BaseUpgrade::Beryl), Some(B20Version::V1));
+    assert_eq!(B20Version::asset(BaseUpgrade::Cobalt), Some(B20Version::V2));
 }
 
-/// The ERC-8056 scheduled-multiplier selectors were introduced at Cobalt (`AssetV2`). At V1 (Beryl)
+/// The ERC-8056 scheduled-multiplier selectors were introduced at Cobalt (asset V2). At V1 (Beryl)
 /// they are absent from the frozen asset wire surface, so `route` falls through to the disjoint
 /// inherited `IB20` decode and rejects them as `UnknownFunctionSelector`, byte-identically to the
 /// deleted hand-written fork gate.
@@ -215,7 +217,7 @@ fn golden_v2_selectors_unknown_at_v1() {
 }
 
 /// The seize common selectors (`seizeWithMemo` and the `SEIZE_ROLE` / `SEIZE_EXEMPT_POLICY` /
-/// `SEIZE_RECEIVER_POLICY` getters) were introduced at Cobalt (`AssetV2`). At V1 (Beryl) they are
+/// `SEIZE_RECEIVER_POLICY` getters) were introduced at Cobalt (asset V2). At V1 (Beryl) they are
 /// absent from the frozen common `IB20` surface, so `route` rejects them as `UnknownFunctionSelector`.
 #[test]
 fn golden_seize_selectors_unknown_at_v1() {
@@ -233,7 +235,7 @@ fn golden_seize_selectors_unknown_at_v1() {
     }
 }
 
-/// The seize policy scopes were introduced at Cobalt (`AssetV2`). Although the `SEIZE_EXEMPT_POLICY()`
+/// The seize policy scopes were introduced at Cobalt (asset V2). Although the `SEIZE_EXEMPT_POLICY()`
 /// / `SEIZE_RECEIVER_POLICY()` getter selectors are absent from V1, the scope *values* must also not
 /// leak through the common `updatePolicy` selector, which is dialable on V1: V1 rejects them with
 /// `UnsupportedPolicyType`, matching the base-std `v1.0.0` reference.
@@ -849,7 +851,7 @@ fn golden_unpause_clears_feature_bit() {
     assert_root("unpause", s, ROOT_UNPAUSE);
 }
 
-/// The `SEIZE` pause feature was introduced at Cobalt (`AssetV2`) as enum member 3. On the frozen V1
+/// The `SEIZE` pause feature was introduced at Cobalt (asset V2) as enum member 3. On the frozen V1
 /// (Beryl) common wire the `PausableFeature` enum has only three members, so `pause`/`unpause`/
 /// `isPaused` carrying `SEIZE` fail to decode (`AbiDecodeFailed`) before any shared validation runs.
 /// Unlike the `bytes32` policy scope, the enum argument is range-checked by the wire decode itself.
@@ -1221,12 +1223,12 @@ fn golden_permit_charges_no_recovery_gas() {
     s.set_caller(owner);
     s.set_timestamp(U256::ZERO);
     StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
-        .route(ctx, &calldata, AssetVersion::V1, true)
+        .route_asset(ctx, &calldata, B20Version::V1, true)
     })
     .expect("permit must succeed");
     assert_eq!(s.gas_deducted(), 0, "V1 permit must not charge any recovery gas (unmetered)");
@@ -1391,12 +1393,12 @@ fn dispatch_rejects_nonzero_value() {
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     s.set_call_value(U256::ONE);
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        .dispatch_asset(ctx, &calldata, BaseUpgrade::Beryl)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -1408,12 +1410,12 @@ fn dispatch_reverts_before_beryl() {
     let mut s = fresh();
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Azul)
+        .dispatch_asset(ctx, &calldata, BaseUpgrade::Azul)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -1426,12 +1428,12 @@ fn dispatch_reverts_when_uninitialized() {
     let mut s = storage_at(BaseUpgrade::Beryl);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        .dispatch_asset(ctx, &calldata, BaseUpgrade::Beryl)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -1811,12 +1813,12 @@ fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        .dispatch_asset(ctx, &calldata, BaseUpgrade::Beryl)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -1829,14 +1831,14 @@ fn golden_inner_reverts_before_beryl() {
     let mut s = fresh();
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let err = StorageCtx::enter(&mut s, |ctx| {
-        let mut token = B20AssetToken::with_storage_and_policy(
+        let mut token = B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         );
-        AssetVersions::from_base_upgrade(BaseUpgrade::Azul).map_or_else(
+        B20Version::asset(BaseUpgrade::Azul).map_or_else(
             || Err(BasePrecompileError::Revert(Bytes::new())),
-            |version| token.route(ctx, &calldata, version, false),
+            |version| token.route_asset(ctx, &calldata, version, false),
         )
     })
     .unwrap_err();
@@ -1849,13 +1851,13 @@ fn golden_grant_role_unchecked_bootstraps_first_admin() {
     let mut s = fresh();
     s.set_caller(TOKEN);
     StorageCtx::enter(&mut s, |ctx| {
-        let mut token = B20AssetToken::with_storage_and_policy(
+        let mut token = B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         );
-        token
-            .grant_role_unchecked(B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN, BaseUpgrade::Beryl)
+        LOGIC
+            .grant_role_unchecked(&mut token, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
             .unwrap();
     });
     read(&mut s, |t| {

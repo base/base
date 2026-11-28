@@ -9,7 +9,7 @@
 //! pin.
 //!
 //! Every op is driven through the **version-resolver-gated** dispatch path
-//! (`BaseUpgrade::Denim` -> `AssetVersion::V3`) against the real EVM-backed `B20AssetStorage`
+//! (`BaseUpgrade::Denim` -> `B20Version::V3`) against the real EVM-backed `B20AssetStorage`
 //! over `HashMapStorageProvider` configured with `StorageFeatures::Cobalt` (the production
 //! storage config at Denim), with a `FakePolicyAccounting` for deterministic allow/block
 //! decisions. Each case asserts:
@@ -30,8 +30,9 @@ use base_tiger_precompile_storage::{
     BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx,
 };
 use base_tiger_precompiles::{
-    Asset, AssetAccounting, AssetV3, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
-    B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, ERC165_INTERFACE_ID,
+        B20Logic,
+    AssetAccounting, B20Version, B20_MAX_SUPPLY_CAP, B20AssetInit,
+    B20AssetStorage, B20Token, B20PolicyType, B20TokenRole, ERC165_INTERFACE_ID,
     ERC8056_INTERFACE_IDS, FakePolicyAccounting, IB20, IB20Asset, PolicyVersion, TokenAccounting,
 };
 
@@ -47,7 +48,7 @@ use common::{
 const NAME: &str = "Base Asset";
 const SYMBOL: &str = "bASSET";
 const DECIMALS: u8 = 6;
-const LOGIC: AssetV3 = AssetV3;
+const LOGIC: B20Logic = B20Logic::asset(B20Version::V3);
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 //
@@ -175,9 +176,10 @@ fn operator_role() -> B256 {
 
 crate::token_golden_harness! {
     storage: B20AssetStorage,
-    token: B20AssetToken,
-    versions: AssetVersions,
-    version: AssetVersion::V3,
+    token: B20Token,
+    resolve: B20Version::asset,
+    route: route_asset,
+    version: B20Version::V3,
     upgrade: BaseUpgrade::Denim,
     policy: PolicyVersion::V3,
 }
@@ -186,7 +188,7 @@ crate::unprivileged_revert_gas_harness!(B20AssetStorage);
 /// The V2 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
 fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
     StorageCtx::enter(storage, |ctx| {
-        let token = B20AssetToken::with_storage_and_policy(
+        let token = B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V3,
@@ -222,7 +224,7 @@ fn assert_unprivileged_requires_role(calldata: Vec<u8>, role: B256) {
 
 #[test]
 fn resolver_resolves_v3_from_denim() {
-    assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Denim), Some(AssetVersion::V3));
+    assert_eq!(B20Version::asset(BaseUpgrade::Denim), Some(B20Version::V3));
 }
 
 #[test]
@@ -231,12 +233,12 @@ fn dispatch_rejects_nonzero_value() {
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     s.set_call_value(U256::ONE);
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V3,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Denim)
+        .dispatch_asset(ctx, &calldata, BaseUpgrade::Denim)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -248,12 +250,12 @@ fn dispatch_reverts_when_uninitialized() {
     let mut s = storage_at(BaseUpgrade::Denim);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V3,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Denim)
+        .dispatch_asset(ctx, &calldata, BaseUpgrade::Denim)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -267,12 +269,12 @@ fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V3,
         )
-        .dispatch(ctx, &calldata, BaseUpgrade::Denim)
+        .dispatch_asset(ctx, &calldata, BaseUpgrade::Denim)
     })
     .expect("dispatch must not fatally error");
     assert!(out.is_revert());
@@ -1944,12 +1946,12 @@ fn golden_permit_charges_recovery_gas() {
     s.set_caller(owner);
     s.set_timestamp(U256::ZERO);
     StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
+        B20Token::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V3,
         )
-        .route(ctx, &calldata, AssetVersion::V3, true)
+        .route_asset(ctx, &calldata, B20Version::V3, true)
     })
     .expect("permit must succeed");
     assert_eq!(s.gas_deducted(), 3000, "V2 permit must charge the fixed ECRECOVER-equivalent cost");

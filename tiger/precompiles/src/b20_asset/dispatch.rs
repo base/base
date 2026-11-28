@@ -1,12 +1,8 @@
 //! ABI dispatch for the asset B-20 variant.
 //!
-//! The dispatcher owns everything that is *not* version-specific: it decodes the
-//! calldata, resolves the active version once from the hardfork (via
-//! [`AssetVersions`]), and routes each operation — including reads — to the active
-//! version's [`Asset`] implementation. Only constant getters (role IDs, policy type
-//! IDs) that are invariant across all versions are answered inline. The `announce`
-//! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
-//! routing responsibility; its version-defined business steps live on [`Asset`].
+//! Resolves the active version from the hardfork, decodes against that version's asset and common
+//! surfaces, and routes common calls to the shared B-20 dispatcher. The `announce` internal-call
+//! loop stays here because re-dispatching arbitrary sub-calls is a routing responsibility.
 
 use alloc::{string::String, vec::Vec};
 
@@ -16,79 +12,36 @@ use base_common_genesis::BaseUpgrade;
 use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
-    B20PolicyType, B20TokenRole, CalldataGas,
-    IB20::{self, IB20Calls as C},
+    AssetAbiPair, AssetAccounting, AssetCall, B20AssetStorage, B20Logic, B20Token, B20Version,
     IB20Asset::{self, IB20AssetCalls as SC},
-    PermitArgs, PolicyAccounting,
+    PolicyAccounting, Token,
 };
 
-impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
-    /// ABI-dispatches `calldata` to the appropriate handler for `upgrade`.
-    pub fn dispatch(
+impl<S: AssetAccounting, A: PolicyAccounting> B20Token<S, A> {
+    /// ABI-dispatches `calldata` to the asset logic active at `upgrade`.
+    pub fn dispatch_asset(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
         upgrade: BaseUpgrade,
     ) -> PrecompileResult {
-        if !ctx.call_value().is_zero() {
-            return ctx.error_result(BasePrecompileError::revert(IB20::NonPayable {}));
-        }
-        if let Err(error) = CalldataGas::deduct(ctx, calldata) {
-            return ctx.error_result(error);
-        }
-        // Gate by hardfork: resolve the active version once. `None` is unreachable in practice —
-        // the precompile is only installed from Beryl — but we revert defensively.
-        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
-            return ctx.error_result(BasePrecompileError::Revert(Bytes::new()));
-        };
-        // Ensure the token has been deployed (has bytecode at its address).
-        match version.implementation().is_initialized(self) {
-            Ok(true) => {}
-            Ok(false) => {
-                return ctx.error_result(BasePrecompileError::Revert(Bytes::new()));
-            }
-            Err(error) => return ctx.error_result(error),
-        }
-        ctx.result_output(self.route(ctx, calldata, version, false), |b| b)
-    }
-
-    /// Grants `role` to `account` without checking caller authorization, using the token logic
-    /// implementation active at `upgrade`.
-    ///
-    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`Asset::grant_role`](crate::Asset) path is not yet reachable.
-    pub fn grant_role_unchecked(
-        &mut self,
-        role: alloy_primitives::B256,
-        account: alloy_primitives::Address,
-        sender: alloy_primitives::Address,
-        upgrade: BaseUpgrade,
-    ) -> base_tiger_precompile_storage::Result<()> {
-        // `None` is unreachable in practice — the precompile is only installed from Beryl — but
-        // we revert defensively, mirroring `dispatch`.
-        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
-            return Err(BasePrecompileError::Revert(Bytes::new()));
-        };
-        version.implementation().grant_role_unchecked(self, role, account, sender)
+        self.dispatch_with(ctx, calldata, B20Version::asset(upgrade), |token, version| {
+            token.route_asset(ctx, calldata, version, false)
+        })
     }
 
     /// Decodes calldata and routes it to `version` with optional factory-init privilege.
-    pub fn route(
+    pub fn route_asset(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-        version: AssetVersion,
+        version: B20Version,
         privileged: bool,
     ) -> base_tiger_precompile_storage::Result<Bytes> {
         // Fast-path `announce` before the generic decode; `announce` is the only B-20 selector an
-        // aliased payload can amplify. `DecodedAnnounce::decode_if_announce` runs
-        // `decode_sequence` and `valid_token` and keeps the `bytes[]` entries as slices into
-        // `calldata`, never owned copies. A call this version doesn't recognize as `announce`
-        // falls through to the generic decode below, unchanged. A recognized but malformed
-        // `announce` returns `Some(Err(..))` when the rejection can be cheap without changing
-        // frozen revert bytes (Cantina #16 follow-up). V1/Beryl can't take that path, so it falls
-        // through too, with today's error bytes.
+        // aliased payload can amplify. `DecodedAnnounce::decode_if_announce` keeps the `bytes[]`
+        // entries as slices into `calldata`, never owned copies. A call this version doesn't
+        // recognize as `announce` falls through to the generic decode below, unchanged.
         match DecodedAnnounce::decode_if_announce(calldata, version) {
             Some(Ok(announce)) => {
                 self.run_announce(ctx, version, privileged, announce)?;
@@ -97,243 +50,37 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             Some(Err(error)) => return Err(error),
             None => {}
         }
-
-        match version.abi().decode(calldata)? {
+        let logic = B20Logic::asset(version);
+        match AssetAbiPair::of(version).decode(calldata)? {
             AssetCall::Asset(call) => self.handle_asset_call(ctx, call, version, privileged),
-            AssetCall::Common(call) => self.handle_b20_call(ctx, call, version, privileged),
+            AssetCall::Common(call) => {
+                self.handle_b20_call(ctx, call, logic, privileged, AssetAccounting::decimals)
+            }
         }
-    }
-
-    fn handle_b20_call(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        call: C,
-        version: AssetVersion,
-        privileged: bool,
-    ) -> base_tiger_precompile_storage::Result<Bytes> {
-        let logic = version.implementation();
-        let caller = ctx.caller();
-        let encoded: Bytes = match call {
-            // --- Pure reads (routed to the active version) ---
-            C::name(_) => logic.name(self)?.abi_encode().into(),
-            C::symbol(_) => logic.symbol(self)?.abi_encode().into(),
-            C::decimals(_) => U256::from(logic.decimals(self)?).abi_encode().into(),
-            C::totalSupply(_) => logic.total_supply(self)?.abi_encode().into(),
-            C::balanceOf(c) => logic.balance_of(self, c.account)?.abi_encode().into(),
-            C::allowance(c) => logic.allowance(self, c.owner, c.spender)?.abi_encode().into(),
-            C::supplyCap(_) => logic.supply_cap(self)?.abi_encode().into(),
-            C::nonces(c) => logic.nonce(self, c.owner)?.abi_encode().into(),
-            C::contractURI(_) => logic.contract_uri(self)?.abi_encode().into(),
-
-            // --- Role identifiers (invariant across versions) ---
-            C::DEFAULT_ADMIN_ROLE(_) => B20TokenRole::DefaultAdmin.id().abi_encode().into(),
-            C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
-            C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
-            C::BURN_BLOCKED_ROLE(_) => B20TokenRole::BurnBlocked.id().abi_encode().into(),
-            C::SEIZE_ROLE(_) => B20TokenRole::Seize.id().abi_encode().into(),
-            C::PAUSE_ROLE(_) => B20TokenRole::Pause.id().abi_encode().into(),
-            C::UNPAUSE_ROLE(_) => B20TokenRole::Unpause.id().abi_encode().into(),
-            C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
-
-            // --- Policy type identifiers (invariant across versions) ---
-            C::TRANSFER_SENDER_POLICY(_) => B20PolicyType::TransferSender.id().abi_encode().into(),
-            C::TRANSFER_RECEIVER_POLICY(_) => {
-                B20PolicyType::TransferReceiver.id().abi_encode().into()
-            }
-            C::TRANSFER_EXECUTOR_POLICY(_) => {
-                B20PolicyType::TransferExecutor.id().abi_encode().into()
-            }
-            C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
-            C::SEIZE_EXEMPT_POLICY(_) => B20PolicyType::SeizeExempt.id().abi_encode().into(),
-            C::SEIZE_RECEIVER_POLICY(_) => B20PolicyType::SeizeReceiver.id().abi_encode().into(),
-
-            // --- Role reads ---
-            C::hasRole(c) => logic.has_role(self, c.role, c.account)?.abi_encode().into(),
-            C::getRoleAdmin(c) => logic.role_admin(self, c.role)?.abi_encode().into(),
-
-            // --- Pause reads ---
-            C::pausedFeatures(_) => logic.paused_features(self)?.abi_encode().into(),
-            C::isPaused(c) => logic.is_paused(self, c.feature)?.abi_encode().into(),
-
-            // --- Policy reads ---
-            C::policyId(c) => logic.policy_id(self, c.policyScope)?.abi_encode().into(),
-
-            // --- Domain reads ---
-            C::DOMAIN_SEPARATOR(_) => {
-                logic.domain_separator(self, ctx.chain_id())?.abi_encode().into()
-            }
-            C::eip712Domain(_) => {
-                let (fields, name, version, chain_id, verifying_contract, salt, extensions) =
-                    logic.eip712_domain(self, ctx.chain_id())?;
-                IB20::eip712DomainCall::abi_encode_returns(&IB20::eip712DomainReturn {
-                    fields,
-                    name,
-                    version,
-                    chainId: chain_id,
-                    verifyingContract: verifying_contract,
-                    salt,
-                    extensions,
-                })
-                .into()
-            }
-
-            // --- ERC-20 mutating ---
-            C::transfer(c) => {
-                logic.transfer(self, caller, c.to, c.amount, privileged)?;
-                true.abi_encode().into()
-            }
-            C::transferFrom(c) => {
-                logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
-                true.abi_encode().into()
-            }
-            C::approve(c) => {
-                logic.approve(self, caller, c.spender, c.amount)?;
-                true.abi_encode().into()
-            }
-            C::transferWithMemo(c) => {
-                logic.transfer(self, caller, c.to, c.amount, privileged)?;
-                logic.emit_memo(self, caller, c.memo)?;
-                true.abi_encode().into()
-            }
-            C::transferFromWithMemo(c) => {
-                logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
-                logic.emit_memo(self, caller, c.memo)?;
-                true.abi_encode().into()
-            }
-
-            // --- Mint ---
-            C::mint(c) => {
-                logic.mint(self, caller, c.to, c.amount, privileged)?;
-                Bytes::new()
-            }
-            C::mintWithMemo(c) => {
-                logic.mint(self, caller, c.to, c.amount, privileged)?;
-                logic.emit_memo(self, caller, c.memo)?;
-                Bytes::new()
-            }
-
-            // --- Burn ---
-            // Self-burn operations are never factory-privileged: during init the caller is the
-            // factory, not a token holder.
-            C::burn(c) => {
-                logic.burn(self, caller, c.amount)?;
-                Bytes::new()
-            }
-            C::burnWithMemo(c) => {
-                logic.burn(self, caller, c.amount)?;
-                logic.emit_memo(self, caller, c.memo)?;
-                Bytes::new()
-            }
-            C::burnBlocked(c) => {
-                logic.burn_blocked(self, caller, c.from, c.amount, privileged)?;
-                Bytes::new()
-            }
-
-            // --- Seize ---
-            C::seizeWithMemo(c) => {
-                logic.seize_with_memo(self, caller, c.from, c.to, c.amount, c.memo)?;
-                Bytes::new()
-            }
-
-            // --- Pause ---
-            C::pause(c) => {
-                logic.pause(self, caller, c.features, privileged)?;
-                Bytes::new()
-            }
-            C::unpause(c) => {
-                logic.unpause(self, caller, c.features, privileged)?;
-                Bytes::new()
-            }
-
-            // --- Admin ---
-            C::updateSupplyCap(c) => {
-                logic.update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
-                Bytes::new()
-            }
-            C::updateName(c) => {
-                logic.update_name(self, caller, c.newName, privileged)?;
-                Bytes::new()
-            }
-            C::updateSymbol(c) => {
-                logic.update_symbol(self, caller, c.newSymbol, privileged)?;
-                Bytes::new()
-            }
-            C::updateContractURI(c) => {
-                logic.update_contract_uri(self, caller, c.newURI, privileged)?;
-                Bytes::new()
-            }
-
-            // --- Role mutations ---
-            C::grantRole(c) => {
-                logic.grant_role(self, caller, c.role, c.account, privileged)?;
-                Bytes::new()
-            }
-            C::revokeRole(c) => {
-                logic.revoke_role(self, caller, c.role, c.account, privileged)?;
-                Bytes::new()
-            }
-            // Renounce operations are never factory-privileged: they are only meaningful for the
-            // role holder making the call after token creation.
-            C::renounceRole(c) => {
-                logic.renounce_role(self, caller, c.role, c.callerConfirmation)?;
-                Bytes::new()
-            }
-            C::renounceLastAdmin(_) => {
-                logic.renounce_last_admin(self, caller)?;
-                Bytes::new()
-            }
-            C::setRoleAdmin(c) => {
-                logic.set_role_admin(self, caller, c.role, c.newAdminRole, privileged)?;
-                Bytes::new()
-            }
-
-            // --- Policy mutations ---
-            C::updatePolicy(c) => {
-                logic.update_policy(self, caller, c.policyScope, c.newPolicyId, privileged)?;
-                Bytes::new()
-            }
-
-            // --- Permit ---
-            C::permit(c) => {
-                logic.permit(
-                    self,
-                    ctx.chain_id(),
-                    ctx.timestamp(),
-                    PermitArgs {
-                        owner: c.owner,
-                        spender: c.spender,
-                        value: c.value,
-                        deadline: c.deadline,
-                        v: c.v,
-                        r: c.r,
-                        s: c.s,
-                    },
-                )?;
-                Bytes::new()
-            }
-        };
-        Ok(encoded)
     }
 
     fn handle_asset_call(
         &mut self,
         ctx: StorageCtx<'_>,
         call: SC,
-        version: AssetVersion,
+        version: B20Version,
         privileged: bool,
     ) -> base_tiger_precompile_storage::Result<Bytes> {
-        let logic = version.implementation();
+        let logic = B20Logic::asset(version);
         let caller = ctx.caller();
         let encoded: Bytes = match call {
-            SC::OPERATOR_ROLE(_) => logic.operator_role().abi_encode().into(),
+            SC::OPERATOR_ROLE(_) => B20Logic::OPERATOR_ROLE.abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
-            SC::MAX_UI_MULTIPLIER(_) => logic.max_ui_multiplier()?.abi_encode().into(),
+            SC::MAX_UI_MULTIPLIER(_) => B20Logic::MAX_UI_MULTIPLIER.abi_encode().into(),
 
             // --- Multiplier reads ---
-            SC::multiplier(_) => logic.multiplier(self)?.abi_encode().into(),
-            SC::uiMultiplier(_) => logic.ui_multiplier(self)?.abi_encode().into(),
+            SC::multiplier(_) | SC::uiMultiplier(_) => {
+                logic.effective_multiplier(self)?.abi_encode().into()
+            }
             SC::newUIMultiplier(_) => logic.new_ui_multiplier(self)?.abi_encode().into(),
-            SC::effectiveAt(_) => logic.effective_at(self)?.abi_encode().into(),
+            SC::effectiveAt(_) => {
+                U256::from(self.accounting().pending_effective_at()?).abi_encode().into()
+            }
             SC::toScaledBalance(c) => {
                 logic.to_scaled_balance(self, c.rawBalance)?.abi_encode().into()
             }
@@ -342,21 +89,23 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             SC::toUIAmount(c) => logic.to_scaled_balance(self, c.rawAmount)?.abi_encode().into(),
             SC::fromUIAmount(c) => logic.to_raw_balance(self, c.uiAmount)?.abi_encode().into(),
             SC::scaledBalanceOf(c) => logic.scaled_balance_of(self, c.account)?.abi_encode().into(),
-            SC::balanceOfUI(c) => logic.balance_of_ui(self, c.account)?.abi_encode().into(),
+            SC::balanceOfUI(c) => logic.scaled_balance_of(self, c.account)?.abi_encode().into(),
             SC::totalSupplyUI(_) => logic.total_supply_ui(self)?.abi_encode().into(),
 
             // --- ERC-165 ---
             SC::supportsInterface(c) => {
-                logic.supports_interface(c.interfaceId)?.abi_encode().into()
+                B20Logic::supports_interface(c.interfaceId).abi_encode().into()
             }
 
             // --- Announcement reads ---
             SC::isAnnouncementIdUsed(c) => {
-                logic.is_announcement_id_used(self, c.id.as_str())?.abi_encode().into()
+                self.accounting().is_announcement_id_used(c.id.as_str())?.abi_encode().into()
             }
 
             // --- Extra metadata reads ---
-            SC::extraMetadata(c) => logic.extra_metadata(self, c.key.as_str())?.abi_encode().into(),
+            SC::extraMetadata(c) => {
+                self.accounting().extra_metadata(c.key.as_str())?.abi_encode().into()
+            }
 
             // --- Multiplier mutations ---
             SC::updateMultiplier(c) => {
@@ -408,16 +157,16 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     /// One body for both entry paths: the borrowed fast path in [`Self::route`] and the owned
     /// `SC::announce` safety net both feed a [`DecodedAnnounce`] through here. The internal-call
     /// loop lives here because re-dispatching sub-calls is a routing responsibility. The version's
-    /// [`Asset::begin_announce`]/[`Asset::end_announce`] bracket the loop with the version-defined
+    /// [`B20Logic::begin_announce`]/[`B20Logic::end_announce`] bracket the loop with the version-defined
     /// business steps, and the in-loop selector check blocks recursive `announce`.
     fn run_announce(
         &mut self,
         ctx: StorageCtx<'_>,
-        version: AssetVersion,
+        version: B20Version,
         privileged: bool,
         announce: DecodedAnnounce<'_>,
     ) -> base_tiger_precompile_storage::Result<()> {
-        let logic = version.implementation();
+        let logic = B20Logic::asset(version);
         let caller = ctx.caller();
         let DecodedAnnounce { id, description, uri, internal_calls } = announce;
         logic.begin_announce(self, caller, id.clone(), description, uri, privileged)?;
@@ -438,7 +187,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             if call_bytes[..4] == IB20Asset::announceCall::SELECTOR {
                 return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
             }
-            self.route(ctx, call_bytes, version, privileged).map_err(|err| {
+            self.route_asset(ctx, call_bytes, version, privileged).map_err(|err| {
                 if err.is_system_error() {
                     err
                 } else {
@@ -488,32 +237,28 @@ impl<'a> DecodedAnnounce<'a> {
     /// `valid_selector` future-proofs a fork that drops `announce`.
     fn decode_if_announce(
         calldata: &'a [u8],
-        version: AssetVersion,
+        version: B20Version,
     ) -> Option<Result<Self, BasePrecompileError>> {
         let selector = calldata.first_chunk::<4>().copied()?;
         if selector != IB20Asset::announceCall::SELECTOR {
             return None;
         }
-        if !version.abi().asset.valid_selector(selector) {
+        if !AssetAbiPair::of(version).asset.valid_selector(selector) {
             return None;
         }
         let rest = &calldata[4..];
         let token =
             abi::decode_sequence::<<IB20Asset::announceCall as SolCall>::Token<'a>>(rest).ok()?;
         if !<<IB20Asset::announceCall as SolCall>::Parameters<'a> as SolType>::valid_token(&token) {
-            return match version {
-                // V1/Beryl: revert bytes are already consensus-frozen — keep falling through to
-                // the owned decoder's diagnostic, however expensive, unchanged.
-                AssetVersion::V1 => None,
-                // V2/Cobalt and V3/Denim: not scheduled on any network yet, so this can
-                // short-circuit cheaply without touching any live consensus bytes.
-                AssetVersion::V2 | AssetVersion::V3 => {
-                    Some(Err(BasePrecompileError::AbiDecodeFailed {
-                        selector,
-                        error: String::from("announce: malformed bytes[] payload"),
-                    }))
-                }
-            };
+            // V1/Beryl revert bytes are consensus-frozen: keep falling through to the owned
+            // decoder's diagnostic, however expensive. Later versions short-circuit cheaply.
+            if version == B20Version::V1 {
+                return None;
+            }
+            return Some(Err(BasePrecompileError::AbiDecodeFailed {
+                selector,
+                error: String::from("announce: malformed bytes[] payload"),
+            }));
         }
         // Field `.0` of `PackedSeqToken<'a>` is `&'a [u8]`, so each iter yields a slice with the
         // full calldata lifetime. `as_slice()` would tie borrows to `token` (a local) instead.
@@ -556,12 +301,13 @@ mod tests {
     use base_tiger_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
 
     use crate::{
+        B20Logic,
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        AssetV1, AssetVersion, B20AssetStorage, B20AssetToken, B20TokenRole, FakePolicyAccounting,
+        B20Version, B20AssetStorage, B20Token, B20TokenRole, FakePolicyAccounting,
         IB20, IB20Asset, InMemoryTokenAccounting, PolicyVersion, Token, TokenAccounting,
     };
 
-    type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, FakePolicyAccounting>;
+    type TestAssetToken = B20Token<InMemoryTokenAccounting, FakePolicyAccounting>;
 
     /// Upgrade at which the asset precompile is active for every dispatch test.
     const UPGRADE: BaseUpgrade = BaseUpgrade::Beryl;
@@ -602,7 +348,7 @@ mod tests {
     fn call_asset(token: &mut TestAssetToken, caller: Address, calldata: Vec<u8>) -> Result<Bytes> {
         let mut storage = storage_with_caller(caller);
         StorageCtx::enter(&mut storage, |ctx| {
-            token.route(ctx, calldata.as_ref(), AssetVersion::V1, false)
+            token.route_asset(ctx, calldata.as_ref(), B20Version::V1, false)
         })
     }
 
@@ -616,7 +362,7 @@ mod tests {
         storage.set_timestamp(now);
         token.accounting_mut().timestamp = now;
         StorageCtx::enter(&mut storage, |ctx| {
-            token.route(ctx, calldata.as_ref(), AssetVersion::V2, false)
+            token.route_asset(ctx, calldata.as_ref(), B20Version::V2, false)
         })
     }
 
@@ -678,7 +424,7 @@ mod tests {
         let mut token = make_token();
         // Any balance > 1 overflows when multiplied by this multiplier.
         token.accounting_mut().multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(
             IB20Asset::toScaledBalanceCall { rawBalance: U256::from(2u64) }.abi_encode(),
@@ -702,7 +448,7 @@ mod tests {
     fn announce_inner_ordinary_revert_wraps_as_internal_call_failed() {
         let mut token = make_token();
         // ALICE has OPERATOR_ROLE (needed for announce) but not MINT_ROLE (needed for mint).
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(IB20::mintCall { to: BOB, amount: U256::ONE }.abi_encode());
         let calldata = IB20Asset::announceCall {
@@ -726,7 +472,7 @@ mod tests {
     #[test]
     fn route_v2_schedules_and_flips_multiplier_lazily() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
         let target = B20AssetStorage::WAD * U256::from(3u64);
         let effective_at = U256::from(1_000u64);
 
@@ -828,7 +574,7 @@ mod tests {
         let mut storage = storage_with_caller(ALICE);
         storage.set_call_value(U256::from(1u64));
 
-        let out = StorageCtx::enter(&mut storage, |ctx| token.dispatch(ctx, &calldata, UPGRADE))
+        let out = StorageCtx::enter(&mut storage, |ctx| token.dispatch_asset(ctx, &calldata, UPGRADE))
             .expect("dispatch must not fatally error");
 
         assert!(out.is_revert());
@@ -900,7 +646,7 @@ mod tests {
     #[test]
     fn aliased_announce_valid_marks_id_used() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let tail = IB20Asset::multiplierCall {}.abi_encode(); // zero-arg read: re-dispatches Ok
         let calldata = aliased_announce_calldata(1_024, &tail);
@@ -913,7 +659,7 @@ mod tests {
     #[test]
     fn aliased_announce_redispatches_each_entry() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
         token.accounting_mut().roles.insert((B20TokenRole::Mint.id(), ALICE), true);
 
         let n = 8usize;
@@ -928,7 +674,7 @@ mod tests {
     #[test]
     fn aliased_announce_nested_announce_reverts() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let tail = IB20Asset::announceCall::SELECTOR.to_vec(); // first 4 bytes == announce selector
         let calldata = aliased_announce_calldata(2, &tail);
@@ -945,7 +691,7 @@ mod tests {
     /// Behavioral parity check against the ABI oracle. For every payload row, at both V1 and V2:
     ///
     /// * `route` accepts iff `announceCall::abi_decode_validate(payload).is_ok()`;
-    /// * on decode-time rejection, the returned error equals `version.abi().decode(payload)
+    /// * on decode-time rejection, the returned error equals `AssetAbiPair::of(version).decode(payload)
     ///   .unwrap_err()`, the same fall-through the fix guarantees.
     ///
     /// Any consensus-relevant drift (accept-set change, error-byte change, V1/V2 divergence) makes
@@ -1039,12 +785,12 @@ mod tests {
                 "row `{name}`: oracle disagrees; refresh the test if the payload changed"
             );
 
-            for version in [AssetVersion::V1, AssetVersion::V2, AssetVersion::V3] {
+            for version in [B20Version::V1, B20Version::V2, B20Version::V3] {
                 let mut token = make_token();
-                token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+                token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
                 let mut storage = storage_with_caller(ALICE);
                 let outcome = StorageCtx::enter(&mut storage, |ctx| {
-                    token.route(ctx, &calldata, version, false)
+                    token.route_asset(ctx, &calldata, version, false)
                 });
 
                 assert_eq!(
@@ -1054,9 +800,9 @@ mod tests {
                 );
 
                 if let Err(err) = outcome {
-                    let control = version.abi().decode(&calldata).unwrap_err();
+                    let control = crate::AssetAbiPair::of(version).decode(&calldata).unwrap_err();
                     if rejects_via_valid_token
-                        && matches!(version, AssetVersion::V2 | AssetVersion::V3)
+                        && matches!(version, B20Version::V2 | B20Version::V3)
                     {
                         assert_ne!(
                             err, control,
@@ -1099,7 +845,7 @@ mod tests {
     #[test]
     fn empty_internal_calls_announce_succeeds() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let calldata = IB20Asset::announceCall {
             internalCalls: Vec::new(),
@@ -1117,7 +863,7 @@ mod tests {
     #[test]
     fn large_non_aliased_announce_succeeds() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let entry = Bytes::from(IB20Asset::multiplierCall {}.abi_encode());
         let calldata = IB20Asset::announceCall {
@@ -1136,7 +882,7 @@ mod tests {
     #[test]
     fn short_internal_call_reverts_as_malformed() {
         let mut token = make_token();
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20Logic::OPERATOR_ROLE, ALICE), true);
 
         let calldata = IB20Asset::announceCall {
             internalCalls: alloc::vec![Bytes::from_static(&[0x01, 0x02])],

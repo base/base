@@ -38,7 +38,7 @@ sol! {
 
         // ── Events ───────────────────────────────────────────────────────────
 
-        /// Emitted by `updateMultiplier` (V1, Beryl). The scheduled-multiplier version `AssetV2`
+        /// Emitted by `updateMultiplier` (V1, Beryl). The scheduled-multiplier version asset V2
         /// emits `UIMultiplierUpdated` instead.
         event MultiplierUpdated(uint256 multiplier);
 
@@ -88,7 +88,7 @@ sol! {
         function scaledBalanceOf(address account) external view returns (uint256);
 
         /// Instant failsafe: sets the current multiplier immediately.
-        /// At `AssetV1` emits `MultiplierUpdated`, which was replaced in `AssetV2` by
+        /// At asset V1 emits `MultiplierUpdated`, which was replaced in asset V2 by
         /// `UIMultiplierUpdated`.
         function updateMultiplier(uint256 newMultiplier) external;
 
@@ -152,7 +152,7 @@ mod tests {
         assert_eq!(selectors, expected);
     }
 
-    /// The 11 selectors introduced at Cobalt (`AssetV2`) — the ERC-8056 scheduled UI-multiplier
+    /// The 11 selectors introduced at Cobalt (asset V2) — the ERC-8056 scheduled UI-multiplier
     /// surface, the Conversion-extension `toUIAmount` / `fromUIAmount` aliases, and the
     /// `MAX_UI_MULTIPLIER` getter — must be absent from Beryl's frozen surface. That absence is what
     /// rejects them as `UnknownFunctionSelector` at V1, replacing the hand-written fork gate in

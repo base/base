@@ -6,7 +6,7 @@ use base_tiger_precompile_storage::{BasePrecompileError, PrecompileResult, Stora
 use crate::{
     ActivationFeature, ActivationRegistryStorage, CalldataGas,
     IPolicyRegistry::{self, IPolicyRegistryCalls as C},
-    PolicyRegistryStorage, PolicyRegistryV2, PolicyVersion, PolicyVersions,
+    PolicyRegistry, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
 };
 
 impl PolicyRegistryStorage<'_> {
@@ -115,13 +115,13 @@ impl PolicyRegistryStorage<'_> {
             // through the logic trait.
             C::MIN_COMPOSITE_CHILD_POLICIES(_) => {
                 Ok(IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::abi_encode_returns(
-                    &U256::from(PolicyRegistryV2::MIN_CHILD_POLICIES),
+                    &U256::from(PolicyRegistry::MIN_CHILD_POLICIES),
                 )
                 .into())
             }
             C::MAX_COMPOSITE_CHILD_POLICIES(_) => {
                 Ok(IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::abi_encode_returns(
-                    &U256::from(PolicyRegistryV2::MAX_CHILD_POLICIES),
+                    &U256::from(PolicyRegistry::MAX_CHILD_POLICIES),
                 )
                 .into())
             }
@@ -160,7 +160,7 @@ impl PolicyRegistryStorage<'_> {
             }
             // Introduced in V3 (Denim).
             C::invertedPolicyId(call) => {
-                let policy_id = logic.compute_inverted_policy_id(call.policyId)?;
+                let policy_id = PolicyRegistry::inverted_policy_id(call.policyId);
                 Ok(IPolicyRegistry::invertedPolicyIdCall::abi_encode_returns(&policy_id).into())
             }
         }
@@ -176,7 +176,7 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
-        PolicyRegistryStorage, PolicyRegistryV1,
+        PolicyRegistry, PolicyRegistryStorage, PolicyVersion,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -202,7 +202,7 @@ mod tests {
         activate_policy_registry(storage);
         StorageCtx::enter(storage, |ctx| {
             let mut rt = PolicyRegistryStorage::new(ctx);
-            PolicyRegistryV1.ensure_initialized_and_get_counter(&mut rt)
+            PolicyRegistry::new(PolicyVersion::V1).ensure_initialized_and_get_counter(&mut rt)
         })
         .unwrap();
     }
@@ -253,7 +253,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryV1::ALWAYS_ALLOW_ID }
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistry::ALWAYS_ALLOW_ID }
                 .abi_encode();
 
         let output = run(&mut storage, &calldata);
@@ -312,7 +312,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
         let calldata = IPolicyRegistry::isAuthorizedCall {
-            policyId: PolicyRegistryV1::ALWAYS_ALLOW_ID,
+            policyId: PolicyRegistry::ALWAYS_ALLOW_ID,
             account: ALICE,
         }
         .abi_encode();
@@ -763,7 +763,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_call_value(alloy_primitives::U256::from(1u64));
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryV1::ALWAYS_ALLOW_ID }
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistry::ALWAYS_ALLOW_ID }
                 .abi_encode();
 
         let out = run(&mut storage, &calldata);
