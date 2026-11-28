@@ -31,6 +31,10 @@ use crate::{
 /// Set while a run has an `enospc` or `eio` fault armed: reads and writes may fail with the
 /// disk error, which is not a violation.
 static FAULT_WINDOW: AtomicBool = AtomicBool::new(false);
+/// Failed calls on a full real disk before the ballast is removed.
+const STUCK_RETRIES: u32 = 10;
+/// How long tiger may keep failing after the ballast is removed.
+const FREED_GRACE: Duration = Duration::from_secs(20);
 
 /// Whether a disk-error fault window is open.
 pub fn fault_window_open() -> bool {
@@ -119,6 +123,8 @@ pub struct ChaosRun {
     /// The recording's latest safe and finalized blocks.
     safe: B256,
     finalized: B256,
+    /// tiger's safe and finalized blocks as the driver believes them; `None` after a reopen.
+    tags: Option<(B256, B256)>,
     /// Every head tiger was moved to or reopened at.
     heads_seen: HashSet<B256>,
     /// Set before the driver kills tiger on purpose.
@@ -138,6 +144,10 @@ pub struct ChaosRun {
     real_disk: bool,
     /// The step at which the ballast filling the disk is removed.
     ballast_until: Option<usize>,
+    /// Consecutive Engine API calls failed in a disk-error window.
+    disk_retries: u32,
+    /// When the ballast was removed because tiger could not take a step on the full disk.
+    freed_at: Option<Instant>,
 }
 
 impl ChaosRun {
@@ -263,6 +273,7 @@ impl ChaosRun {
             trace_head: recording.genesis,
             safe: recording.genesis,
             finalized: recording.genesis,
+            tags: None,
             heads_seen: HashSet::from([recording.genesis]),
             expected_death: Arc::new(AtomicBool::new(false)),
             killer: None,
@@ -273,6 +284,8 @@ impl ChaosRun {
             upstream: None,
             real_disk: false,
             ballast_until: None,
+            disk_retries: 0,
+            freed_at: None,
         };
         let mut report = RunReport {
             run,
@@ -493,7 +506,9 @@ impl ChaosRun {
                 self.chaos_action()?;
             }
             self.run_step(index)?;
-            if released && self.proc.fault.is_none() {
+            self.disk_retries = 0;
+            let freed = self.freed_at.take().is_some();
+            if (released || freed) && self.proc.fault.is_none() {
                 // tiger took a step with space free again: disk errors are no longer expected.
                 FAULT_WINDOW.store(false, Ordering::SeqCst);
             }
@@ -919,12 +934,11 @@ impl ChaosRun {
     fn forkchoice(&mut self, head: B256, safe: B256, finalized: B256) -> eyre::Result<()> {
         let rec = self.rec();
         for _ in 0..200 {
-            // base-reth keeps its head on an update naming one of the head's ancestors.
-            let effective = if head != self.head && rec.is_canonical_under(head, self.head) {
-                self.head
-            } else {
-                head
-            };
+            // base-reth keeps its head, safe and finalized blocks on an update naming one of the
+            // head's ancestors.
+            let ancestor = head != self.head && rec.is_canonical_under(head, self.head);
+            let (effective, tags) =
+                if ancestor { (self.head, self.tags) } else { (head, Some((safe, finalized))) };
             let epoch = self.epoch();
             let index = {
                 let mut timeline = self.shared.timeline.lock().expect("timeline");
@@ -933,8 +947,8 @@ impl ChaosRun {
                     sent: self.shared.now(),
                     acked: None,
                     head: effective,
-                    safe,
-                    finalized,
+                    safe: tags.map(|t| t.0),
+                    finalized: tags.map(|t| t.1),
                 });
                 timeline.fcus.len() - 1
             };
@@ -949,6 +963,7 @@ impl ChaosRun {
                         self.shared.timeline.lock().expect("timeline").fcus[index].acked =
                             Some(self.shared.now());
                         self.head = effective;
+                        self.tags = tags;
                         self.heads_seen.insert(effective);
                         return Ok(());
                     }
@@ -972,6 +987,25 @@ impl ChaosRun {
         {
             if fault_window_open() {
                 self.event("diskErrorRetry", json!(null));
+                self.disk_retries += 1;
+                // An operator frees space when the node is stuck on a full disk; tiger must then
+                // take the step without a restart, as base-reth's next persistence does.
+                if self.disk_retries >= STUCK_RETRIES && self.ballast_until.is_some() {
+                    self.release_disk();
+                    self.freed_at = Some(Instant::now());
+                }
+                if self.freed_at.is_some_and(|at| at.elapsed() > FREED_GRACE) {
+                    self.freed_at = None;
+                    let tail = self.log_tail();
+                    self.violation(
+                        "stuck-after-disk-freed",
+                        json!(error),
+                        json!("steps taken once space is free"),
+                        json!(tail),
+                    );
+                    self.expected_death.store(true, Ordering::SeqCst);
+                    self.proc.stop(true);
+                }
                 thread::sleep(Duration::from_millis(300));
                 return Ok(());
             }
@@ -1133,6 +1167,7 @@ impl ChaosRun {
         }
         self.check_chain(head);
         self.head = head;
+        self.tags = None;
         self.heads_seen.insert(head);
         let epoch = {
             let mut timeline = self.shared.timeline.lock().expect("timeline");

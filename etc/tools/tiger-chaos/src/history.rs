@@ -38,10 +38,11 @@ pub struct Fcu {
     pub acked: Option<f64>,
     /// The head the node keeps after it (an update to an ancestor of the head keeps the head).
     pub head: B256,
-    /// Safe block.
-    pub safe: B256,
-    /// Finalized block.
-    pub finalized: B256,
+    /// The safe block the node keeps after it (an update to an ancestor of the head keeps the
+    /// safe and finalized blocks, as base-reth does); `None` when unknown, after a reopen.
+    pub safe: Option<B256>,
+    /// The finalized block the node keeps after it (as `safe`).
+    pub finalized: Option<B256>,
 }
 
 /// One process lifetime.
@@ -83,8 +84,8 @@ impl Timeline {
         match last_acked {
             Some(i) => {
                 allowed.heads.push(fcus[i].head);
-                allowed.safe.push(fcus[i].safe);
-                allowed.finalized.push(fcus[i].finalized);
+                allowed.safe.extend(fcus[i].safe);
+                allowed.finalized.extend(fcus[i].finalized);
             }
             None => allowed.heads.push(info.recovered),
         }
@@ -92,12 +93,12 @@ impl Timeline {
         for fcu in &fcus[from..] {
             if fcu.sent < completed {
                 allowed.heads.push(fcu.head);
-                allowed.safe.push(fcu.safe);
-                allowed.finalized.push(fcu.finalized);
+                allowed.safe.extend(fcu.safe);
+                allowed.finalized.extend(fcu.finalized);
             }
         }
-        // Before the epoch's first acknowledged update the tags are unknown: skip them.
-        if last_acked.is_none() {
+        // Until an acknowledged update sets the tags in the epoch they are unknown: skip them.
+        if last_acked.is_none_or(|i| fcus[i].safe.is_none()) {
             allowed.safe.clear();
             allowed.finalized.clear();
         }
