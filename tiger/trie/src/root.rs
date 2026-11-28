@@ -372,19 +372,8 @@ impl SplitJob {
         for (nibble, part) in self.parts.iter().enumerate() {
             parts.push(part.take(|| view.walk_storage_partition(self.address, nibble as u8))?);
         }
-        let mut state_mask = TrieMask::default();
-        let mut stack = Vec::with_capacity(16);
-        for (nibble, part) in parts.iter().enumerate() {
-            if let Some(node) = &part.node {
-                state_mask.set_bit(nibble as u8);
-                stack.push(node.clone());
-            }
-        }
         // A root that is not a branch (at most one subtree) is the subtree's own top node.
-        if stack.len() < 2 {
-            return view.storage_root_updates(self.address);
-        }
-        let root = keccak256(alloy_rlp::encode(BranchNode { stack, state_mask }));
+        let Some(root) = Partition::join(&parts) else { return view.storage_root_updates(self.address) };
         let mut updates = StorageTrieUpdates::default();
         for part in parts {
             TrieUpdates::merge_nodes(&mut updates.nodes, part.updated, part.removed);
@@ -426,6 +415,21 @@ struct Partition {
     removed: Vec<Nibbles>,
     /// The changed-storage accounts that are leaves of the subtree (account trie only).
     storage_leaves: Vec<B256>,
+}
+
+impl Partition {
+    /// The root branch over the 16 subtrees' top nodes, `None` when fewer than two hold keys.
+    fn join(parts: &[Self]) -> Option<B256> {
+        let mut state_mask = TrieMask::default();
+        let mut stack = Vec::with_capacity(16);
+        for (nibble, part) in parts.iter().enumerate() {
+            if let Some(node) = &part.node {
+                state_mask.set_bit(nibble as u8);
+                stack.push(node.clone());
+            }
+        }
+        (stack.len() >= 2).then(|| keccak256(alloy_rlp::encode(BranchNode { stack, state_mask })))
+    }
 }
 
 /// A trie cursor that sees only the nodes below one nibble of the root.
@@ -554,19 +558,8 @@ impl<'t> TrieView<'t, Ro> {
             roots.extend(partition_roots);
             partitions.push(partition);
         }
-        let mut state_mask = TrieMask::default();
-        let mut stack = Vec::with_capacity(16);
-        for (nibble, partition) in partitions.iter().enumerate() {
-            if let Some(node) = &partition.node {
-                state_mask.set_bit(nibble as u8);
-                stack.push(node.clone());
-            }
-        }
         // A root that is not a branch (at most one subtree) is the subtree's own top node.
-        if stack.len() < 2 {
-            return self.state_root(true);
-        }
-        let root = keccak256(alloy_rlp::encode(BranchNode { stack, state_mask }));
+        let Some(root) = Partition::join(&partitions) else { return self.state_root(true) };
         let mut updates = TrieUpdates::default();
         for partition in partitions {
             for address in partition.storage_leaves {
@@ -635,23 +628,58 @@ impl<'t> TrieView<'t, Ro> {
     }
 
     /// Walks the subtree of the account keys starting with `nibble` as [`Self::state_root`] walks
-    /// the whole trie, taking changed accounts' storage roots from `roots`. A placeholder branch
-    /// at a neighboring nibble makes the hash builder treat the subtree as a child of a root
-    /// branch, so it builds, stores and references the subtree's nodes exactly as in a walk of
-    /// the whole trie; the subtree's top node is the one it retains at the nibble's path.
+    /// the whole trie (see [`Self::walk_subtree`]), taking changed accounts' storage roots from
+    /// `roots`.
     fn walk_partition(&self, nibble: u8, roots: &HashMap<B256, B256>) -> Result<Partition, TrieError> {
-        let prefix = Nibbles::from_nibbles([nibble]);
         let mine = |key: &&B256| key[0] >> 4 == nibble;
         let changed = self.state.accounts.keys().chain(self.state.storages.keys()).filter(mine);
         let mem = self.mem.map(|m| &m.trie.account_nodes);
-        let cursor = NibbleTrieCursor { inner: TrieOverlayCursor::new(AccountTrieCursor::new(self.txn, self.db)?, mem), nibble };
-        let walker = TrieWalker::new(cursor, PrefixSet::new(nibble_keys(changed)), true)?;
+        let cursor = TrieOverlayCursor::new(AccountTrieCursor::new(self.txn, self.db)?, mem);
+        Self::walk_subtree(nibble, None, cursor, nibble_keys(changed), || self.account_cursor(), |address, account, partition| {
+            let storage_root = match roots.get(&address) {
+                Some(root) => {
+                    partition.storage_leaves.push(address);
+                    *root
+                }
+                None => self.storage_root_inner(address, false, &[])?.0,
+            };
+            Ok(account_leaf(&account, storage_root))
+        })
+    }
+
+    /// Walks the subtree of `address`'s storage keys starting with `nibble` (see
+    /// [`Self::walk_subtree`]). Not for a wiped storage.
+    fn walk_storage_partition(&self, address: B256, nibble: u8) -> Result<Partition, TrieError> {
+        let changed = self.state.storages.get(&address).into_iter().flat_map(|storage| storage.slots.keys());
+        let changed = changed.filter(|key| key[0] >> 4 == nibble);
+        let cursor = self.storage_trie_cursor(address, false)?;
+        Self::walk_subtree(nibble, Some(address), cursor, nibble_keys(changed), || self.storage_cursor(address), |_, value, _| {
+            Ok(storage_leaf(value))
+        })
+    }
+
+    /// Walks the subtree of trie `owner`'s keys (`None`: the account trie) starting with `nibble`
+    /// over the stored `trie` and the `hashed` leaves, encoding each leaf with `leaf`. A
+    /// placeholder branch at a neighboring nibble makes the hash builder treat the subtree as a
+    /// child of a root branch, so it builds, stores and references the subtree's nodes exactly as
+    /// in a walk of the whole trie; the subtree's top node is the one it retains at the nibble's
+    /// path.
+    fn walk_subtree<H: HashedCursor>(
+        nibble: u8,
+        owner: Option<B256>,
+        trie: impl TrieCursor,
+        changed: Vec<Nibbles>,
+        hashed: impl FnOnce() -> Result<H, TrieError>,
+        mut leaf: impl FnMut(B256, H::Value, &mut Partition) -> Result<Vec<u8>, TrieError>,
+    ) -> Result<Partition, TrieError> {
+        let prefix = Nibbles::from_nibbles([nibble]);
+        let walker = TrieWalker::new(NibbleTrieCursor { inner: trie, nibble }, PrefixSet::new(changed), true)?;
         let mut builder = HashBuilder::default().with_updates(true).with_proof_retainer(ProofRetainer::new(vec![prefix]));
         let placeholder = |nibble: u8| Nibbles::from_nibbles([nibble]);
         if nibble == 15 {
             builder.add_branch(placeholder(14), B256::ZERO, false);
         }
-        let mut iter = TrieNodeIter::new(walker, NibbleHashedCursor { inner: self.account_cursor()?, nibble });
+        let mut iter = TrieNodeIter::new(walker, NibbleHashedCursor { inner: hashed()?, nibble });
         let mut partition = Partition::default();
         let mut empty = true;
         while let Some(element) = iter.try_next()? {
@@ -663,15 +691,9 @@ impl<'t> TrieView<'t, Ro> {
                     }
                     builder.add_branch(key, hash, stored);
                 }
-                TrieElement::Leaf(address, account) => {
-                    let storage_root = match roots.get(&address) {
-                        Some(root) => {
-                            partition.storage_leaves.push(address);
-                            *root
-                        }
-                        None => self.storage_root_inner(address, false, &[])?.0,
-                    };
-                    builder.add_leaf(Nibbles::unpack(address), &account_leaf(&account, storage_root));
+                TrieElement::Leaf(key, value) => {
+                    let leaf = leaf(key, value, &mut partition)?;
+                    builder.add_leaf(Nibbles::unpack(key), &leaf);
                 }
             }
         }
@@ -686,54 +708,10 @@ impl<'t> TrieView<'t, Ro> {
         builder.root();
         if partition.node.is_none() {
             let top = builder.take_proof_nodes().get(&prefix).map(|rlp| RlpNode::from_rlp(rlp));
-            partition.node = Some(top.ok_or_else(|| TrieError::Corrupt(format!("no top node in account subtree {nibble:x}")))?);
-        }
-        let (_, updated) = builder.split();
-        partition.updated = updated.into_iter().filter(|(path, _)| path.first() == Some(nibble)).collect();
-        Ok(partition)
-    }
-
-    /// Walks the subtree of `address`'s storage keys starting with `nibble`, as
-    /// [`Self::walk_partition`] walks an account subtree: with placeholder branches at the
-    /// neighboring nibbles, so the hash builder builds, stores and references the subtree's
-    /// nodes exactly as a walk of the whole storage trie does. Not for a wiped storage.
-    fn walk_storage_partition(&self, address: B256, nibble: u8) -> Result<Partition, TrieError> {
-        let prefix = Nibbles::from_nibbles([nibble]);
-        let changed = self.state.storages.get(&address).into_iter().flat_map(|storage| storage.slots.keys());
-        let changed = changed.filter(|key| key[0] >> 4 == nibble);
-        let cursor = NibbleTrieCursor { inner: self.storage_trie_cursor(address, false)?, nibble };
-        let walker = TrieWalker::new(cursor, PrefixSet::new(nibble_keys(changed)), true)?;
-        let mut builder = HashBuilder::default().with_updates(true).with_proof_retainer(ProofRetainer::new(vec![prefix]));
-        let placeholder = |nibble: u8| Nibbles::from_nibbles([nibble]);
-        if nibble == 15 {
-            builder.add_branch(placeholder(14), B256::ZERO, false);
-        }
-        let mut iter = TrieNodeIter::new(walker, NibbleHashedCursor { inner: self.storage_cursor(address)?, nibble });
-        let mut partition = Partition::default();
-        let mut empty = true;
-        while let Some(element) = iter.try_next()? {
-            empty = false;
-            match element {
-                TrieElement::Branch(key, hash, stored) => {
-                    if key == prefix {
-                        partition.node = Some(RlpNode::word_rlp(&hash));
-                    }
-                    builder.add_branch(key, hash, stored);
-                }
-                TrieElement::Leaf(slot, value) => builder.add_leaf(Nibbles::unpack(slot), &storage_leaf(value)),
-            }
-        }
-        partition.removed = iter.walker.removed_keys.take().unwrap_or_default();
-        if empty {
-            return Ok(partition);
-        }
-        if nibble < 15 {
-            builder.add_branch(placeholder(nibble + 1), B256::ZERO, false);
-        }
-        builder.root();
-        if partition.node.is_none() {
-            let top = builder.take_proof_nodes().get(&prefix).map(|rlp| RlpNode::from_rlp(rlp));
-            let missing = || TrieError::Corrupt(format!("no top node in storage subtree {nibble:x} of {address}"));
+            let missing = || match owner {
+                None => TrieError::Corrupt(format!("no top node in account subtree {nibble:x}")),
+                Some(address) => TrieError::Corrupt(format!("no top node in storage subtree {nibble:x} of {address}")),
+            };
             partition.node = Some(top.ok_or_else(missing)?);
         }
         let (_, updated) = builder.split();
