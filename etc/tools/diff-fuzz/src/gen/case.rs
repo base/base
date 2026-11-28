@@ -202,7 +202,7 @@ impl Generator {
         let activate = Native::active(upgrade) && !Native::active(state_era.upgrade());
         Template::build(&mut rng, input, &mut |planner, deposits| {
             if !deposits && activate {
-                Scenarios::activate_features(planner);
+                Scenarios::activate_features(planner, Scenarios::ALL_FEATURES);
             }
             if !deposits {
                 for (salt, variant, holders) in &tokens {

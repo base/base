@@ -1447,6 +1447,30 @@ impl<'a> RpcGen<'a> {
                 if self.rng.chance(30) {
                     items.push(json!(42));
                 }
+                // A notification (no id, so no answer) and request-shaped objects that are not
+                // requests, each of which the batch answers on its own.
+                if self.rng.chance(30) {
+                    let mut item =
+                        serde_json::from_str::<Value>(&self.family(family).body).expect("JSON");
+                    item.as_object_mut().expect("object").remove("id");
+                    items.push(item);
+                }
+                if self.rng.chance(20) {
+                    items.push(
+                        self.rng
+                            .pick(&[
+                                json!({ "jsonrpc": "2.0", "id": 98 }),
+                                json!({ "jsonrpc": "2.0", "id": 97, "method": 5 }),
+                                json!("eth_blockNumber"),
+                                json!([]),
+                            ])
+                            .clone(),
+                    );
+                }
+                if items.len() > 1 && self.rng.chance(10) {
+                    let at = self.rng.index(items.len());
+                    items.swap(0, at);
+                }
                 Value::Array(items).to_string()
             }
             12 => "[]".to_owned(),

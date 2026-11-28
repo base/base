@@ -340,7 +340,7 @@ impl Transplant {
         let id = self.id();
         let template = Template::build(&mut rng, input, &mut |planner, deposits| {
             if !deposits && activate {
-                Scenarios::activate_features(planner);
+                Scenarios::activate_features(planner, Scenarios::ALL_FEATURES);
             }
             for (position, (item, (raw, call))) in self.items.iter().zip(&calls).enumerate() {
                 let (Some(raw), Some(call)) = (raw, call) else { continue };

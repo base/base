@@ -30,8 +30,10 @@ use crate::r#gen::{
 /// The scenario state of one chain.
 #[derive(Debug, Clone)]
 pub struct Scenarios {
-    /// The native features still need activation (the chain started before Beryl).
-    pub needs_activation: bool,
+    /// Native features still to activate, as a bit set over [`Self::FEATURES`] (the chain
+    /// started before Beryl). Each is activated in a random later block, so native calls also
+    /// run with none or only some of the features active.
+    pub needs_activation: u8,
     /// The registry admin still needs to move to the operator (started before Cobalt).
     pub needs_admin: bool,
     /// Blocks planned so far.
@@ -47,6 +49,16 @@ impl Scenarios {
     pub const ALL: [&'static str; 6] =
         ["programs", "tokens", "delegations", "storage", "deposits", "withdrawals"];
 
+    /// The features the activation scenario activates, in bit order.
+    pub const FEATURES: [ActivationFeature; 3] = [
+        ActivationFeature::PolicyRegistry,
+        ActivationFeature::B20Stablecoin,
+        ActivationFeature::B20Asset,
+    ];
+
+    /// Every bit of [`Self::FEATURES`].
+    pub const ALL_FEATURES: u8 = (1 << Self::FEATURES.len()) - 1;
+
     /// Scenario state for a chain whose genesis state is from `era`.
     pub fn new(rng: &mut Rng, era: Era) -> Self {
         let mut enabled = 0;
@@ -56,7 +68,7 @@ impl Scenarios {
             }
         }
         Self {
-            needs_activation: !Native::active(era.upgrade()),
+            needs_activation: if Native::active(era.upgrade()) { 0 } else { Self::ALL_FEATURES },
             needs_admin: !era.upgrade().is_feature_enabled(BaseFeature::StatefulActivationAdmin),
             blocks: 0,
             storage_phase: 0,
@@ -68,13 +80,13 @@ impl Scenarios {
         Self::ALL.iter().position(|n| *n == name).is_some_and(|bit| self.enabled & (1 << bit) != 0)
     }
 
-    /// Activates the native features as the chain-config admin, by deposit.
-    pub fn activate_features(planner: &mut Planner<'_>) {
-        for feature in [
-            ActivationFeature::PolicyRegistry,
-            ActivationFeature::B20Stablecoin,
-            ActivationFeature::B20Asset,
-        ] {
+    /// Activates the native features in `mask` (bits over [`Self::FEATURES`]) as the
+    /// chain-config admin, by deposit.
+    pub fn activate_features(planner: &mut Planner<'_>, mask: u8) {
+        for (bit, feature) in Self::FEATURES.into_iter().enumerate() {
+            if mask & (1 << bit) == 0 {
+                continue;
+            }
             let input = IActivationRegistry::activateCall { feature: feature.id() }.abi_encode();
             planner.deposit_call(
                 MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS,
@@ -99,9 +111,13 @@ impl Scenarios {
         }
         self.blocks += 1;
         let upgrade = planner.ctx.upgrade;
-        if Native::active(upgrade) && self.needs_activation {
-            Self::activate_features(planner);
-            self.needs_activation = false;
+        if Native::active(upgrade) && self.needs_activation != 0 {
+            let mask: u8 = (0..Self::FEATURES.len())
+                .filter(|_| planner.rng.chance(40))
+                .fold(0, |mask, bit| mask | (1 << bit))
+                & self.needs_activation;
+            Self::activate_features(planner, mask);
+            self.needs_activation &= !mask;
         }
         if upgrade.is_feature_enabled(BaseFeature::StatefulActivationAdmin) && self.needs_admin {
             let input =
