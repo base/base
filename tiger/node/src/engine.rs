@@ -524,6 +524,12 @@ impl Node {
         // Proofs are fetched at the stored tip, so they serve a block on the tip. A block on a side
         // branch uses its witness, which is stored at commit, after the unwind to its fork point.
         let stateless = chain.db.is_partial() && self.upstream.is_some() && parent.hash == chain.head().hash;
+        // Nor may it validate over the tip's partial trie with the reverts and overlays applied:
+        // that root can pass without the nodes its commit (over the fork point's trie, whose
+        // shape differs) collapses into, and the commit then fails on every retry.
+        if chain.db.is_partial() && self.witnesses.is_some() && parent.hash != chain.head().hash {
+            return Ok(Err(format!("block {} is not on the stored tip, so it needs its witness", header.number)));
+        }
         let mut previous: Option<String> = None;
         for round in 0..=MAX_PROOF_ROUNDS {
             let state = chain.state_after(parent).map_err(RpcError::internal)?;
