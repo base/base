@@ -606,17 +606,21 @@ impl Jar {
         self.offsets.set_len(1 + OFFSET_SIZE * (rows * columns + 1))?;
         sync(&self.path, &self.data)?;
         sync(&with_suffix(&self.path, ".off"), &self.offsets)?;
-        if let Some(csoff) = &self.csoff {
-            csoff.set_len(csoff_len * CSOFF_SIZE)?;
-            sync(&with_suffix(&self.path, ".csoff"), csoff)?;
-        }
         self.config.rows = rows;
         if rows == 0 {
             self.config.max_row_size = 0;
         }
         self.config.header = header;
         self.config.header.changeset_offsets_len = csoff_len;
-        self.write_config()
+        // The shrunk config is committed before the `.csoff` is cut, as base-reth leaves it: a
+        // crash in between leaves more records than the header claims, which every opener heals.
+        // The reverse (a header claiming records the `.csoff` lacks) base-reth cannot open.
+        self.write_config()?;
+        if let Some(csoff) = &self.csoff {
+            csoff.set_len(csoff_len * CSOFF_SIZE)?;
+            sync(&with_suffix(&self.path, ".csoff"), csoff)?;
+        }
+        Ok(())
     }
 
     fn delete(self) -> io::Result<()> {
