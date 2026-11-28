@@ -136,6 +136,15 @@ debug = "none"
 panic = "unwind"
 codegen-units = 16
 
+# One codegen unit keeps the hot hashing and state paths inlined across the EVM and the generic
+# precompile dispatch compiled into it; split units left them out of line by chance. About 1.4%
+# fewer execution instructions per replayed mainnet block, for about 13 s (7%) more clean build.
+[profile.release.package.base-tiger-evm]
+codegen-units = 1
+
+[profile.release.package.evm2]
+codegen-units = 1
+
 # Fat LTO and one codegen unit: slower to build, about 4% fewer instructions per replayed block
 # than release (README.md, "Optimized builds"). `pgo.sh` builds with it by default.
 [profile.maxperf]
