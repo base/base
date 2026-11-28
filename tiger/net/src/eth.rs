@@ -109,8 +109,8 @@ impl Status {
             return Err(alloy_rlp::Error::Custom("status version differs from negotiated"));
         }
         let network_id = u64::decode(&mut items)?;
-        if version >= 69 {
-            Ok(Self {
+        let status = if version >= 69 {
+            Self {
                 version,
                 network_id,
                 genesis: B256::decode(&mut items)?,
@@ -118,14 +118,22 @@ impl Status {
                 earliest: u64::decode(&mut items)?,
                 latest: u64::decode(&mut items)?,
                 head_hash: B256::decode(&mut items)?,
-            })
+            }
         } else {
-            let _total_difficulty = U256::decode(&mut items)?;
+            // base-reth rejects a total difficulty wider than 160 bits.
+            if U256::decode(&mut items)?.bit_len() > 160 {
+                return Err(alloy_rlp::Error::Custom("total difficulty above 160 bits"));
+            }
             let head_hash = B256::decode(&mut items)?;
             let genesis = B256::decode(&mut items)?;
             let fork_id = ForkId::decode(&mut items)?;
-            Ok(Self { version, network_id, genesis, fork_id, head_hash, earliest: 0, latest: 0 })
+            Self { version, network_id, genesis, fork_id, head_hash, earliest: 0, latest: 0 }
+        };
+        // Like base-reth's derived decoder, extra fields are an error.
+        if !items.is_empty() {
+            return Err(alloy_rlp::Error::ListLengthMismatch { expected: 0, got: items.len() });
         }
+        Ok(status)
     }
 }
 

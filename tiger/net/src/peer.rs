@@ -321,6 +321,10 @@ pub(crate) fn handshake(
     if config.forks.validate(local_head, theirs.fork_id).is_err() {
         return reject(&mut conn.writer, "fork id");
     }
+    // base-reth fails these eth/69 checks without a Disconnect, so the connection just closes.
+    if theirs.version >= 69 && (theirs.earliest > theirs.latest || theirs.head_hash.is_zero()) {
+        return Err(SessionError::Incompatible /* bad block range */);
+    }
     let peer = Arc::new(Peer {
         id: conn.remote_id,
         addr: conn.writer.peer_addr().unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 0))),
@@ -718,6 +722,25 @@ mod tests {
         conn.writer.ping().unwrap();
         conn.writer.send(offset + eth::TRANSACTIONS, &alloy_rlp::encode(vec![0u8; 8])).unwrap();
         assert_eq!(read_pongs_until_disconnect(&mut conn), (1, breach));
+    }
+
+    #[test]
+    fn bad_status_contents_end_the_handshake_like_base_reth() {
+        let status = local_status(&session_config(), 69, test_chain().chain_head());
+        // An extra field fails to decode: ProtocolBreach.
+        let (mut conn, offset) = connect_before_status();
+        let encoded = status.encode_payload();
+        let mut fields = RlpHeader::decode_bytes(&mut &encoded[..], true).unwrap().to_vec();
+        fields.push(0x80);
+        let payload = crate::eth::encode_list_of_raw(&[fields]);
+        conn.writer.send(offset + eth::STATUS, &payload).unwrap();
+        let breach = Some(DisconnectReason::ProtocolBreach as u8);
+        assert_eq!(read_pongs_until_disconnect(&mut conn), (0, breach));
+        // An eth/69 range with earliest above latest: closed without a Disconnect.
+        let (mut conn, offset) = connect_before_status();
+        let bad = Status { earliest: status.latest + 1, ..status };
+        conn.writer.send(offset + eth::STATUS, &bad.encode_payload()).unwrap();
+        assert_eq!(read_pongs_until_disconnect(&mut conn), (0, None));
     }
 
     #[test]
