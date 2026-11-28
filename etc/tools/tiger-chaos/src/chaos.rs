@@ -35,6 +35,8 @@ static FAULT_WINDOW: AtomicBool = AtomicBool::new(false);
 const STUCK_RETRIES: u32 = 10;
 /// How long tiger may keep failing after the ballast is removed.
 const FREED_GRACE: Duration = Duration::from_secs(20);
+/// How long disk errors are still expected after the ballast is removed.
+const FREED_SETTLE: Duration = Duration::from_secs(10);
 
 /// Whether a disk-error fault window is open.
 pub fn fault_window_open() -> bool {
@@ -150,6 +152,8 @@ pub struct ChaosRun {
     disk_retries: u32,
     /// When the ballast was removed because tiger could not take a step on the full disk.
     freed_at: Option<Instant>,
+    /// When the ballast was last removed (disk errors are expected for a while after).
+    disk_freed_at: Option<Instant>,
 }
 
 impl ChaosRun {
@@ -289,6 +293,7 @@ impl ChaosRun {
             armed: false,
             disk_retries: 0,
             freed_at: None,
+            disk_freed_at: None,
         };
         let mut report = RunReport {
             run,
@@ -510,9 +515,13 @@ impl ChaosRun {
             }
             self.run_step(index)?;
             self.disk_retries = 0;
-            let freed = self.freed_at.take().is_some();
-            if (released || freed) && self.proc.fault.is_none() {
-                // tiger took a step with space free again: disk errors are no longer expected.
+            if self.freed_at.take().is_some() {
+                self.disk_freed_at = Some(Instant::now());
+            }
+            if self.disk_freed_at.is_some_and(|at| at.elapsed() >= FREED_SETTLE) {
+                // tiger took a step a while after space was freed: disk errors are no longer
+                // expected (RocksDB retries a write that hit a full disk in the background).
+                self.disk_freed_at = None;
                 FAULT_WINDOW.store(false, Ordering::SeqCst);
             }
             self.shared.progress.store(index + 1, Ordering::SeqCst);
@@ -626,10 +635,12 @@ impl ChaosRun {
         Ok(())
     }
 
-    /// Removes the ballast; the window for disk errors closes after tiger's next step.
+    /// Removes the ballast; the window for disk errors closes after the first step tiger takes
+    /// `FREED_SETTLE` later.
     fn release_disk(&mut self) {
         let _ = fs::remove_file(self.proc.datadir().join("ballast"));
         self.ballast_until = None;
+        self.disk_freed_at = Some(Instant::now());
         self.event("releaseDisk", json!(null));
     }
 
@@ -1007,6 +1018,7 @@ impl ChaosRun {
                         json!(tail),
                     );
                     self.expected_death.store(true, Ordering::SeqCst);
+                    self.close();
                     self.proc.stop(true);
                 }
                 thread::sleep(Duration::from_millis(300));
@@ -1069,7 +1081,9 @@ impl ChaosRun {
         }
         self.proc.stop(true);
         self.expected_death.store(false, Ordering::SeqCst);
-        if self.proc.fault.is_none() {
+        // A reopened node retries nothing a full disk failed; it is still full under a ballast.
+        if self.proc.fault.is_none() && self.ballast_until.is_none() {
+            self.disk_freed_at = None;
             FAULT_WINDOW.store(false, Ordering::SeqCst);
         }
         if !clean && self.floor == 0 && self.rng.chance(self.config.crash_handoff_percent) {
@@ -1369,6 +1383,7 @@ impl ChaosRun {
         // legitimately: crash the armed process and stop an unarmed one.
         if self.armed {
             self.expected_death.store(true, Ordering::SeqCst);
+            self.close();
             self.proc.stop(true);
             self.event("disarm", json!(null));
             self.recover(false)?;
