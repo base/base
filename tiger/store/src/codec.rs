@@ -123,12 +123,6 @@ impl<'a> Reader<'a> {
         Err(CodecError("varuint too long"))
     }
 
-    /// Takes a varuint-length-prefixed byte string.
-    pub fn bytes(&mut self) -> Decoded<&'a [u8]> {
-        let len = self.varuint()?;
-        self.take(len)
-    }
-
     /// Takes the derive's flags header of `n` bytes.
     pub fn flags(&mut self, n: usize) -> Decoded<Flags> {
         let mut bits = 0u64;

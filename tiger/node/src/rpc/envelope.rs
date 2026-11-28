@@ -48,35 +48,26 @@ impl Node {
             let object = raw_objects.get(index)?;
             serde_json::from_str::<RawParams<'_>>(object.get()).ok()?.params.map(RawValue::get)
         };
-        match request {
-            Value::Array(batch) if batch.is_empty() => {
-                Some(Self::response(Value::Null, Err(RpcError::new(-32600, "Invalid request"))))
+        // An unparsable object is an invalid request in a batch and a parse error on its own.
+        let answer = |index: usize, one: &Value, unparsable: Value| match Self::envelope(one, raw_params(index)) {
+            Envelope::Request { id, method, params, raw } => {
+                Some(Self::response(id, self.dispatch(method, &params, raw, authenticated)))
             }
+            Envelope::Notification => None,
+            Envelope::Invalid(id) => Some(Self::invalid_request(id)),
+            Envelope::Unparsable => Some(unparsable),
+        };
+        match request {
+            Value::Array(batch) if batch.is_empty() => Some(Self::invalid_request(Value::Null)),
             Value::Array(batch) => {
                 let responses: Vec<Value> = batch
                     .iter()
                     .enumerate()
-                    .filter_map(|(index, one)| match Self::envelope(one, raw_params(index)) {
-                        Envelope::Request { id, method, params, raw } => {
-                            Some(Self::response(id, self.dispatch(method, &params, raw, authenticated)))
-                        }
-                        Envelope::Notification => None,
-                        Envelope::Invalid(id) => Some(Self::invalid_request(id)),
-                        Envelope::Unparsable => Some(Self::invalid_request(Value::Null)),
-                    })
+                    .filter_map(|(index, one)| answer(index, one, Self::invalid_request(Value::Null)))
                     .collect();
                 (!responses.is_empty()).then_some(Value::Array(responses))
             }
-            one => match Self::envelope(&one, raw_params(0)) {
-                Envelope::Request { id, method, params, raw } => {
-                    Some(Self::response(id, self.dispatch(method, &params, raw, authenticated)))
-                }
-                Envelope::Notification => None,
-                Envelope::Invalid(id) => Some(Self::invalid_request(id)),
-                Envelope::Unparsable => {
-                    Some(Self::response(Value::Null, Err(RpcError::new(-32700, "Parse error"))))
-                }
-            },
+            one => answer(0, &one, Self::response(Value::Null, Err(RpcError::new(-32700, "Parse error")))),
         }
     }
 

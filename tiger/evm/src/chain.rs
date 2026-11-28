@@ -39,11 +39,7 @@ impl ChainSpec {
         Self {
             chain_id: 8453,
             upgrades: UpgradeConfig::BASE_MAINNET,
-            fee_config: FeeConfig {
-                eip1559_elasticity: 6,
-                eip1559_denominator: 50,
-                eip1559_denominator_canyon: 250,
-            },
+            fee_config: FeeConfig::BASE_MAINNET,
             genesis_number: 0,
             genesis_timestamp: 1_686_789_347,
             block_time: 2,
