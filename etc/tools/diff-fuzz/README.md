@@ -14,7 +14,12 @@ not implement later upgrades yet (chains can still cross into the next era). Eve
 scheduled on mainnet; `BASE_DIFF_EVEREST_TIMESTAMP=<unix seconds>` (at or after Denim) schedules it
 for the harness and every adapter, adds an `everest` era, and lets generators plan Base
 transactions (type `0x79`: protocol, 2D and nonce-free nonces, recovered or named sender, self,
-named or open payer, delegation changes, multi-phase calls).
+named or open payer, delegation changes, multi-phase calls), and `chain-fuzz` then also starts
+chains just before Everest. `BASE_DIFF_MIN_ERA` is the lower bound matching `BASE_DIFF_MAX_ERA`.
+`BASE_DIFF_NATIVE_WEIGHT` sets the native-precompile share of the traffic mix (default 14 of
+about 140); `BASE_DIFF_MIN_ERA=beryl BASE_DIFF_NATIVE_WEIGHT=150` focuses a run on the native
+precompiles, and `chain-fuzz` lists the `np:` features it reached under `nativeNames` in
+`chain-coverage.json`.
 
 - `run <paths>`: saved requests (JSON files, JSON-lines files, or directories of them).
 - `gen --seed S --count N`: single-block generator cases `0..N`.

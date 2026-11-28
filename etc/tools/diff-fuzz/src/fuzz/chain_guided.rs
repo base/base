@@ -2,7 +2,7 @@
 //! generator snapshots, and later runs continue them with edits.
 
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{Arc, Mutex},
@@ -555,6 +555,9 @@ impl ChainFuzzer {
             "stats": &s.stats,
             "features": s.corpus.ids.len(),
             "names": s.corpus.names.len(),
+            // Native precompile features (`np:<precompile>:<selector>:<outcome>`) reached, so a
+            // run shows which methods and revert paths its chains exercised.
+            "nativeNames": s.corpus.names.iter().filter(|n| n.starts_with("np:")).collect::<BTreeSet<_>>(),
             "edges": Self::edges(&s.corpus),
             "families": s.corpus.families(),
             "corpus": s.corpus.entries.len(),

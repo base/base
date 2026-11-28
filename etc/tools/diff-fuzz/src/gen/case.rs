@@ -183,6 +183,7 @@ impl Generator {
                     roles,
                     holders: holders.iter().copied().collect(),
                     approvals: BTreeSet::new(),
+                    ui_update_pending: false,
                 });
                 tokens.push((salt, variant, holders));
             }

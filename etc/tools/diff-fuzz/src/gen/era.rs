@@ -103,19 +103,36 @@ impl Era {
     /// clients that do not implement later upgrades yet. Unset means every era.
     pub const MAX_ERA_ENV: &str = "BASE_DIFF_MAX_ERA";
 
-    /// The eras generators target: [`Self::all`] up to [`Self::MAX_ERA_ENV`].
+    /// Environment variable naming the oldest era generators target, such as `beryl` to spend
+    /// every case on the eras with Base's native precompiles. Unset means every era.
+    pub const MIN_ERA_ENV: &str = "BASE_DIFF_MIN_ERA";
+
+    /// The eras generators target: [`Self::all`] from [`Self::MIN_ERA_ENV`] up to
+    /// [`Self::MAX_ERA_ENV`].
     ///
     /// # Panics
     ///
-    /// When the variable names no era.
+    /// When a variable names no era, or the range is empty.
     pub fn targeted() -> Vec<Self> {
-        let Ok(name) = std::env::var(Self::MAX_ERA_ENV) else { return Self::all().to_vec() };
-        let last = Self::all()
+        let bound = |env: &str| {
+            let name = std::env::var(env).ok()?;
+            Some(
+                Self::all()
+                    .iter()
+                    .copied()
+                    .find(|era| era.name() == name.trim())
+                    .unwrap_or_else(|| panic!("{env} names no era: {name}")),
+            )
+        };
+        let (first, last) = (bound(Self::MIN_ERA_ENV), bound(Self::MAX_ERA_ENV));
+        let eras: Vec<Self> = Self::all()
             .iter()
             .copied()
-            .find(|era| era.name() == name.trim())
-            .unwrap_or_else(|| panic!("{} names no era: {name}", Self::MAX_ERA_ENV));
-        Self::all().iter().copied().filter(|era| *era <= last).collect()
+            .filter(|era| first.is_none_or(|first| *era >= first))
+            .filter(|era| last.is_none_or(|last| *era <= last))
+            .collect();
+        assert!(!eras.is_empty(), "{} is after {}", Self::MIN_ERA_ENV, Self::MAX_ERA_ENV);
+        eras
     }
 
     /// Mainnet activation timestamp of the era's upgrade.

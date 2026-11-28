@@ -1,6 +1,8 @@
 //! ABI calls to Base's native precompiles: the B-20 token factory and tokens, the policy and
 //! activation registries, and the transaction-context and nonce-manager precompiles.
 
+use std::sync::OnceLock;
+
 use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
 use alloy_signer::SignerSync;
 use alloy_sol_types::{SolCall, SolValue};
@@ -16,7 +18,7 @@ use base_common_precompiles::{
 use crate::r#gen::{
     bootstrap::Bootstrap,
     keys::Keys,
-    registry::{Registry, Token},
+    registry::{Policy, Registry, Token},
     rng::Rng,
 };
 
@@ -51,6 +53,31 @@ pub struct Native;
 const CURRENCIES: [&str; 6] = ["USD", "EUR", "JPY", "GBP", "usd", "XXX"];
 
 impl Native {
+    /// Environment variable giving native-precompile calls a different weight in the random
+    /// traffic mix (default [`Self::DEFAULT_WEIGHT`], out of about 140), such as `120` for a
+    /// precompile-focused campaign.
+    pub const WEIGHT_ENV: &str = "BASE_DIFF_NATIVE_WEIGHT";
+
+    /// Weight of native-precompile calls in the random traffic mix without [`Self::WEIGHT_ENV`].
+    pub const DEFAULT_WEIGHT: u64 = 14;
+
+    /// Weight of native-precompile calls in the random traffic mix (see [`Self::WEIGHT_ENV`]).
+    ///
+    /// # Panics
+    ///
+    /// When the variable is not a number.
+    pub fn weight() -> u64 {
+        static WEIGHT: OnceLock<u64> = OnceLock::new();
+        *WEIGHT.get_or_init(|| {
+            std::env::var(Self::WEIGHT_ENV).map_or(Self::DEFAULT_WEIGHT, |value| {
+                value
+                    .trim()
+                    .parse()
+                    .unwrap_or_else(|_| panic!("{} is not a number: {value}", Self::WEIGHT_ENV))
+            })
+        })
+    }
+
     /// Whether native precompiles exist under `upgrade`.
     pub const fn active(upgrade: BaseUpgrade) -> bool {
         upgrade.is_feature_enabled(BaseFeature::TokenFactoryPrecompile)
@@ -413,7 +440,10 @@ impl Native {
                 *rng.pick(&[0u64, 1, (1 << 56) | 1, u64::MAX, small])
             }
         };
-        let mut call = match rng.below(30) {
+        // A scheduled UI multiplier update can only be cancelled before it matures, so try
+        // soon after one is seen.
+        let arm = if token.ui_update_pending && rng.chance(20) { 25 } else { rng.below(30) };
+        let mut call = match arm {
             0..=4 => {
                 let input = IB20::transferCall { to: recipient, amount }.abi_encode();
                 Self::call(to, input, Self::holder(rng, token), "b20.transfer")
@@ -648,7 +678,8 @@ impl Native {
             U256::MAX,
             wad / U256::from(3),
         ]);
-        match rng.below(8) {
+        let arm = if token.ui_update_pending && rng.chance(50) { 2 } else { rng.below(8) };
+        match arm {
             0 => Self::call(
                 to,
                 IB20Asset::updateMultiplierCall { newMultiplier: multiplier }.abi_encode(),
@@ -828,10 +859,17 @@ impl Native {
                 Self::call(to, input, admin_caller, "policy.stageUpdateAdmin")
             }
             7 => {
-                let caller = existing
-                    .as_ref()
-                    .and_then(|p| p.pending_admin)
-                    .map_or(Caller::Anyone, Caller::Account);
+                // Finalizing only succeeds on a staged handoff, so prefer one when there is one.
+                let staged: Vec<&Policy> =
+                    registry.policies.iter().filter(|p| p.pending_admin.is_some()).collect();
+                let target = if !staged.is_empty() && rng.chance(80) {
+                    Some(staged[rng.index(staged.len())])
+                } else {
+                    existing.as_ref()
+                };
+                let caller =
+                    target.and_then(|p| p.pending_admin).map_or(Caller::Anyone, Caller::Account);
+                let policy_id = target.map_or(policy_id, |p| p.id);
                 Self::call(
                     to,
                     IPolicyRegistry::finalizeUpdateAdminCall { policyId: policy_id }.abi_encode(),
@@ -846,14 +884,29 @@ impl Native {
                 "policy.renounceAdmin",
             ),
             9 if composite => {
-                let children: Vec<u64> =
-                    registry.policies.iter().take(rng.range(0, 3) as usize).map(|p| p.id).collect();
+                // Only a composite policy's admin can update it, and only to 2 to 4 simple
+                // children, so aim mostly at a known composite with simple children.
+                let composites: Vec<&Policy> =
+                    registry.policies.iter().filter(|p| p.kind >= 2).collect();
+                let (policy_id, caller) = if !composites.is_empty() && rng.chance(80) {
+                    let p = composites[rng.index(composites.len())];
+                    (p.id, if rng.chance(90) { Caller::Account(p.admin) } else { Caller::Anyone })
+                } else {
+                    (policy_id, admin_caller)
+                };
+                let simple: Vec<u64> =
+                    registry.policies.iter().filter(|p| p.kind < 2).map(|p| p.id).collect();
+                let children: Vec<u64> = if !simple.is_empty() && rng.chance(80) {
+                    (0..rng.range(1, 6)).map(|_| simple[rng.index(simple.len())]).collect()
+                } else {
+                    registry.policies.iter().take(rng.range(0, 3) as usize).map(|p| p.id).collect()
+                };
                 let input = IPolicyRegistry::updateCompositeCall {
                     policyId: policy_id,
                     childPolicyIds: children,
                 }
                 .abi_encode();
-                Self::call(to, input, admin_caller, "policy.updateComposite")
+                Self::call(to, input, caller, "policy.updateComposite")
             }
             _ => {
                 let account = Self::any_account(rng, registry);

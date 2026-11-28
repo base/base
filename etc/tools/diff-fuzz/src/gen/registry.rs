@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{Address, B256, Bytes, Log as PrimitiveLog, LogData, U256};
 use alloy_sol_types::SolEvent;
-use base_common_precompiles::{B20Variant, IB20, IB20Factory, IPolicyRegistry};
+use base_common_precompiles::{B20Variant, IB20, IB20Asset, IB20Factory, IPolicyRegistry};
 
 use crate::{
     Log,
@@ -49,6 +49,8 @@ pub struct Token {
     pub holders: BTreeSet<Address>,
     /// Accounts that were approved as spenders, by owner.
     pub approvals: BTreeSet<(Address, Address)>,
+    /// An asset UI multiplier update was scheduled and not cancelled since (it may have matured).
+    pub ui_update_pending: bool,
 }
 
 impl Token {
@@ -143,7 +145,15 @@ impl Registry {
                         roles: BTreeMap::new(),
                         holders: BTreeSet::new(),
                         approvals: BTreeSet::new(),
+                        ui_update_pending: false,
                     });
+                }
+            } else if *topic0 == IB20Asset::UIMultiplierUpdated::SIGNATURE_HASH
+                || *topic0 == IB20Asset::UIMultiplierUpdateCancelled::SIGNATURE_HASH
+            {
+                if let Some(token) = self.token_mut(&log.address) {
+                    token.ui_update_pending =
+                        *topic0 == IB20Asset::UIMultiplierUpdated::SIGNATURE_HASH;
                 }
             } else if *topic0 == IB20::NameUpdated::SIGNATURE_HASH {
                 if let Ok(event) = IB20::NameUpdated::decode_log(&primitive)

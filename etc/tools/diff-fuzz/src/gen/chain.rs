@@ -23,9 +23,10 @@ use crate::{
     },
 };
 
-/// Forks a chain may be started just before, so that it crosses the activation.
-const CROSSINGS: [Era; 6] =
-    [Era::Isthmus, Era::Jovian, Era::Azul, Era::Beryl, Era::Cobalt, Era::Denim];
+/// Forks a chain may be started just before, so that it crosses the activation. Everest counts
+/// only when it has an activation time (it is then among the targeted eras).
+const CROSSINGS: [Era; 7] =
+    [Era::Isthmus, Era::Jovian, Era::Azul, Era::Beryl, Era::Cobalt, Era::Denim, Era::Everest];
 
 /// A change to a chain's pending block, for coverage-guided chain fuzzing. The chain after an
 /// edit is still a deterministic function of the seed, the edits, and the agreed responses.

@@ -1504,7 +1504,7 @@ impl<'a> Planner<'a> {
         if self.rng.chance(invalid_percent) {
             return self.invalid();
         }
-        let native = if Native::active(self.ctx.upgrade) { 14 } else { 0 };
+        let native = if Native::active(self.ctx.upgrade) { Native::weight() } else { 0 };
         let deposits = if self.ctx.deposits_allowed { 7 } else { 0 };
         let base_tx = if self.feature(BaseFeature::TxBase) { 25 } else { 0 };
         let weights = [10, 30, 6, 10, native, 9, 7, deposits, 3, 3, 2, 2, base_tx];
