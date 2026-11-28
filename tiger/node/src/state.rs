@@ -3,11 +3,11 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     rc::Rc,
 };
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, map::HashMap};
 use base_tiger_trie::{
     AccountInfo, AccountProof, BlockChanges, PreparedRoot, StateView, TrieError,
 };

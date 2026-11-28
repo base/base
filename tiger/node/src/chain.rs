@@ -19,7 +19,6 @@
 //! root, and the witness is stored with the block when it commits.
 
 use std::{
-    collections::HashMap,
     path::Path,
     sync::{
         Arc, Mutex,
@@ -29,7 +28,7 @@ use std::{
 
 use alloy_consensus::{Header, TxReceipt};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, map::HashMap};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, BaseTxEnvelope as SignedTx};
 use base_tiger_store::{Fault, Segment, Table, WriteTxn};
@@ -344,7 +343,7 @@ pub struct MemRebuild {
 impl MemRebuild {
     /// Merges `blocks` (from [`Chain::blocks_above`]) over stored block `over`.
     pub fn build(over: u64, blocks: &[(Arc<StoredBlock>, Arc<Validation>)]) -> Self {
-        let mut rebuilt = Self { mem: MemState::new(over), txs: HashMap::new(), blocks: Vec::with_capacity(blocks.len()) };
+        let mut rebuilt = Self { mem: MemState::new(over), txs: HashMap::default(), blocks: Vec::with_capacity(blocks.len()) };
         for (block, validation) in blocks {
             let Validation::Prepared(prepared) = &**validation else { unreachable!("blocks_above takes prepared ones") };
             let trie = prepared.trie_updates().expect("blocks_above takes ones with trie updates");
@@ -455,9 +454,9 @@ impl Chain {
         ));
         let mut chain = Self {
             db: Arc::new(db),
-            blocks: HashMap::new(),
-            validations: HashMap::new(),
-            befores: HashMap::new(),
+            blocks: HashMap::default(),
+            validations: HashMap::default(),
+            befores: HashMap::default(),
             first: genesis.header.number,
             earliest: genesis.header.number,
             earliest_state: genesis.header.number,
@@ -466,7 +465,7 @@ impl Chain {
             disk: (genesis.header.number, genesis.hash),
             canon: Vec::new(),
             mem: Arc::new(MemState::new(genesis.header.number)),
-            mem_txs: HashMap::new(),
+            mem_txs: HashMap::default(),
             epoch: Arc::new(AtomicU64::new(0)),
             persistence_threshold: PERSISTENCE_THRESHOLD,
             memory_block_buffer_target: MEMORY_BLOCK_BUFFER_TARGET,
@@ -903,7 +902,7 @@ impl Chain {
     /// Ancestors below a stateless start block are left out (unknown).
     pub fn block_hashes(&self, block: &StoredBlock) -> HashMap<u64, B256> {
         let first = block.number().saturating_sub(BLOCK_HASH_WINDOW - 1);
-        let mut hashes = HashMap::with_capacity(BLOCK_HASH_WINDOW as usize);
+        let mut hashes = HashMap::with_capacity_and_hasher(BLOCK_HASH_WINDOW as usize, Default::default());
         let mut number = block.number();
         let mut hash = block.hash;
         // Walk the in-memory side branch down to the canonical chain, then read canonical hashes.
@@ -1348,7 +1347,7 @@ impl Chain {
         let mut kept: Vec<Arc<StoredBlock>> =
             self.blocks.values().filter(|block| block.number() > low).cloned().collect();
         kept.sort_by_key(|block| block.number());
-        let mut reachable = HashMap::with_capacity(kept.len());
+        let mut reachable = HashMap::with_capacity_and_hasher(kept.len(), Default::default());
         for block in kept {
             let parent = block.header.parent_hash;
             let in_canon = self.in_canon(block.number()).is_some_and(|canon| canon.hash == block.hash);
