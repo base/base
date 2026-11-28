@@ -6,12 +6,12 @@
 
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     rc::Rc,
     sync::Arc,
 };
 
-use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, keccak256, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_trie::{EMPTY_ROOT_HASH, Nibbles, TrieAccount};
 use base_tiger_trie::{NoNodes, SparseTrie, TrieError};

@@ -10,7 +10,7 @@
 //! A full state prewarms each block in process while it executes instead ([`warm_while`]).
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     sync::{
         Arc, Condvar, Mutex, mpsc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -20,7 +20,10 @@ use std::{
 };
 
 use alloy_consensus::Header;
-use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256};
+use alloy_primitives::{
+    Address, B256, Bytes, KECCAK256_EMPTY, U256,
+    map::{HashMap, HashSet},
+};
 use base_tiger_evm::{BaseBlockExecutor, ChainSpec, Transactions};
 use evm2::{
     evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS},

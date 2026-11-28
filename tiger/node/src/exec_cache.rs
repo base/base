@@ -17,14 +17,13 @@
 //! overshoot) costs the same 2^18 buckets of 89 bytes per shard.
 
 use std::{
-    collections::HashMap,
     sync::{
         Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
     },
 };
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use base_tiger_trie::{AccountInfo, BlockChanges};
 use evm2::bytecode::Bytecode;
 
