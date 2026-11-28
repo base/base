@@ -2,14 +2,13 @@
 //! state changes layered on top, as reth's `StateRoot`, `StorageRoot` and `Proof` compute them.
 
 use std::{
-    collections::HashMap,
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
 
-use alloy_primitives::{B256, Bytes, U256, keccak256};
+use alloy_primitives::{B256, Bytes, U256, keccak256, map::HashMap};
 use alloy_trie::{
     BranchNodeCompact, EMPTY_ROOT_HASH, HashBuilder, Nibbles, TrieMask,
     nodes::{BranchNode, RlpNode},
@@ -548,7 +547,7 @@ impl<'t> TrieView<'t, Ro> {
         else {
             return self.state_root(true);
         };
-        let mut roots = StorageRoots::new();
+        let mut roots = StorageRoots::default();
         let mut partitions = Vec::with_capacity(16);
         for (partition, partition_roots) in results.into_iter().flatten() {
             roots.extend(partition_roots);
@@ -618,7 +617,7 @@ impl<'t> TrieView<'t, Ro> {
     /// jobs in `jobs` for large ones), then that account subtree's walk over them (see
     /// [`Self::walk_partition`]).
     fn partition_with_storage(&self, nibble: u8, jobs: &StorageJobs) -> Result<(Partition, StorageRoots), TrieError> {
-        let mut roots = StorageRoots::new();
+        let mut roots = StorageRoots::default();
         let mine = |key: &B256| key[0] >> 4 == nibble;
         for address in self.state.storages.keys().filter(|key| mine(key)) {
             if !jobs.has(address) {
