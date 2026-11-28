@@ -23,7 +23,7 @@ const MAX_OFFSET: usize = 65_535;
 const HASH_BITS: u32 = 14;
 
 /// Decodes a Snappy block whose uncompressed length is at most `max`.
-pub(crate) fn decompress(input: &[u8], max: usize) -> Result<Vec<u8>, SnappyError> {
+pub fn decompress(input: &[u8], max: usize) -> Result<Vec<u8>, SnappyError> {
     let (len, mut pos) = read_varint(input)?;
     if len > max as u64 {
         return Err(SnappyError::TooLarge);
@@ -91,7 +91,7 @@ pub(crate) fn decompress(input: &[u8], max: usize) -> Result<Vec<u8>, SnappyErro
 }
 
 /// Encodes `input` as one Snappy block.
-pub(crate) fn compress(input: &[u8]) -> Vec<u8> {
+pub fn compress(input: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(input.len() + input.len() / 6 + 16);
     write_varint(&mut out, input.len() as u64);
     let mut table = vec![u32::MAX; 1 << HASH_BITS];

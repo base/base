@@ -4,15 +4,18 @@ mod crypto;
 pub use crypto::PeerId;
 
 mod snappy;
-pub use snappy::SnappyError;
+pub use snappy::{SnappyError, compress as snappy_compress, decompress as snappy_decompress};
 
 mod ecies;
-pub use ecies::{Accepted, EciesError, FrameCodec, FrameEgress, FrameIngress, Initiator};
+pub use ecies::{
+    Accepted, EciesError, FrameCodec, FrameEgress, FrameIngress, Initiator, accept as ecies_accept,
+    handshake_packet_len,
+};
 
 mod rlpx;
 pub use rlpx::{
     Capability, DisconnectReason, Hello, LocalCapability, P2pMessage, RawMessage, Received,
-    RlpxConnection, RlpxError, RlpxReader, RlpxWriter, SharedCapability,
+    RlpxConnection, RlpxError, RlpxReader, RlpxWriter, SharedCapability, negotiate,
 };
 
 mod forkid;
@@ -22,7 +25,7 @@ mod block;
 pub use block::{BlockBody, BodyError, SealedHeader};
 
 mod eth;
-pub use eth::{BlockId, ETH_CAPABILITIES, HeadersRequest, RawRlp, Status};
+pub use eth::{BlockId, ETH_CAPABILITIES, HeadersRequest, RawRlp, Status, split_request_id};
 
 mod enr;
 pub use enr::{Enr, EnrError, FORK_KEY};

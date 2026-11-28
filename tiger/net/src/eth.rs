@@ -202,7 +202,7 @@ pub(crate) fn encode_list(items: &[&dyn Encodable]) -> Vec<u8> {
 }
 
 /// Splits a request or response payload `[request_id, body]` into the id and the body bytes.
-pub(crate) fn split_request_id(payload: &[u8]) -> alloy_rlp::Result<(u64, &[u8])> {
+pub fn split_request_id(payload: &[u8]) -> alloy_rlp::Result<(u64, &[u8])> {
     let mut buf = payload;
     let mut items = RlpHeader::decode_bytes(&mut buf, true)?;
     let id = u64::decode(&mut items)?;

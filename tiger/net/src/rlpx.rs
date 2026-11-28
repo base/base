@@ -162,7 +162,7 @@ pub struct LocalCapability {
 
 /// Computes the shared capabilities: the highest common version of each name, ordered by name,
 /// with message ids assigned consecutively from 0x10 (devp2p rules).
-pub(crate) fn negotiate(
+pub fn negotiate(
     local: &[LocalCapability],
     remote: &[Capability],
 ) -> Result<Vec<SharedCapability>, RlpxError> {

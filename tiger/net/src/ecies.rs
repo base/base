@@ -111,7 +111,7 @@ fn open_packet(secret: &SecretKey, packet: &[u8]) -> Result<Vec<u8>, EciesError>
 }
 
 /// Returns the total length of an EIP-8 handshake packet from its first two bytes.
-pub(crate) fn handshake_packet_len(prefix: [u8; 2]) -> Result<usize, EciesError> {
+pub fn handshake_packet_len(prefix: [u8; 2]) -> Result<usize, EciesError> {
     let len = u16::from_be_bytes(prefix) as usize + 2;
     if len > MAX_HANDSHAKE_PACKET || len < 2 + ECIES_OVERHEAD {
         return Err(EciesError::BadLength);
@@ -201,7 +201,7 @@ pub struct Accepted {
 }
 
 /// Accepts an auth packet (size prefix included) as the recipient.
-pub(crate) fn accept(static_key: &SecretKey, auth: &[u8]) -> Result<Accepted, EciesError> {
+pub fn accept(static_key: &SecretKey, auth: &[u8]) -> Result<Accepted, EciesError> {
     accept_with_keys(static_key, auth, random_secret_key(), B256::from(random_array()))
 }
 
