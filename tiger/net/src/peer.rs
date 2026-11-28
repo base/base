@@ -328,7 +328,10 @@ pub(crate) fn run_session(
 ) -> SessionError {
     let error = session_loop(peer, &mut reader, config, chain, shutdown);
     peer.close(match &error {
-        SessionError::Breach | SessionError::Incompatible => DisconnectReason::ProtocolBreach,
+        // Malformed or oversized messages are a protocol breach to base-reth too.
+        SessionError::Breach
+        | SessionError::Incompatible
+        | SessionError::Rlpx(RlpxError::Protocol(_)) => DisconnectReason::ProtocolBreach,
         SessionError::Rlpx(RlpxError::Disconnected(_)) => DisconnectReason::Requested,
         SessionError::Rlpx(_) => DisconnectReason::TcpError,
     });
@@ -531,8 +534,78 @@ fn serve_headers(chain: &dyn BlockSource, request: &HeadersRequest) -> Vec<Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        crypto::{peer_id_of_secret, random_secret_key},
+        eth::ETH_CAPABILITIES,
+        forkid::ForkSchedule,
+    };
+    use std::{net::TcpListener, thread};
 
     struct Chain(Vec<Header>);
+
+    fn session_config() -> SessionConfig {
+        SessionConfig {
+            network_id: 8453,
+            forks: ForkSchedule::base(B256::ZERO, 0, 0, &[]),
+            handshake_timeout: Duration::from_secs(5),
+            ping_interval: Duration::from_secs(60),
+        }
+    }
+
+    fn test_chain() -> Chain {
+        Chain((0..4).map(|number| Header { number, ..Default::default() }).collect())
+    }
+
+    /// Starts a session served by `run_session` and returns the remote end of it after the
+    /// Status exchange, with the eth capability's offset.
+    fn connect_to_session() -> (RlpxConnection, u8) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_key = random_secret_key();
+        let server_id = peer_id_of_secret(&server_key);
+        let timeout = Duration::from_secs(5);
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let conn =
+                RlpxConnection::accept(stream, &server_key, &ETH_CAPABILITIES, "tiger", timeout)
+                    .unwrap();
+            let (config, chain) = (session_config(), test_chain());
+            let (peer, reader) = handshake(conn, &config, &chain, false, true).unwrap();
+            run_session(&peer, reader, &config, &chain, &AtomicBool::new(false));
+        });
+        let key = random_secret_key();
+        let mut conn =
+            RlpxConnection::connect(addr, server_id, &key, &ETH_CAPABILITIES, "remote", timeout)
+                .unwrap();
+        let offset = conn.shared[0].offset;
+        let status = local_status(&session_config(), 69, test_chain().chain_head());
+        conn.writer.send(offset + eth::STATUS, &status.encode_payload()).unwrap();
+        loop {
+            let Received::Message(message) = conn.reader.poll().unwrap() else { continue };
+            if message.id == offset + eth::STATUS {
+                break;
+            }
+        }
+        (conn, offset)
+    }
+
+    /// Reads until the session disconnects or goes quiet for a second: the Pongs received and
+    /// the Disconnect reason, if any.
+    fn read_pongs_until_disconnect(conn: &mut RlpxConnection) -> (usize, Option<u8>) {
+        conn.reader.set_timeout(Duration::from_secs(1)).unwrap();
+        let mut pongs = 0;
+        loop {
+            let message = match conn.reader.poll() {
+                Ok(Received::Message(message)) => message,
+                Ok(Received::Idle) | Err(_) => return (pongs, None),
+            };
+            match P2pMessage::decode(&message) {
+                Ok(Some(P2pMessage::Pong)) => pongs += 1,
+                Ok(Some(P2pMessage::Disconnect(reason))) => return (pongs, Some(reason)),
+                _ => {}
+            }
+        }
+    }
 
     impl BlockSource for Chain {
         fn chain_head(&self) -> ChainHead {
@@ -586,5 +659,21 @@ mod tests {
         let request = HeadersRequest::decode(&mut body).unwrap();
         assert_eq!((request_id, request.limit), (7, 0));
         assert!(serve_headers(&chain, &request).is_empty());
+    }
+
+    #[test]
+    fn eth_message_over_10_mib_disconnects_with_protocol_breach() {
+        // A 9 MiB broadcast is within the limit: ignored, and the session still answers a Ping.
+        let (mut conn, offset) = connect_to_session();
+        let broadcast = alloy_rlp::encode(vec![0u8; 9 * 1024 * 1024]);
+        conn.writer.send(offset + eth::TRANSACTIONS, &broadcast).unwrap();
+        conn.writer.ping().unwrap();
+        assert_eq!(read_pongs_until_disconnect(&mut conn), (1, None));
+        // An 11 MiB one is refused from its Snappy length prefix.
+        let (mut conn, offset) = connect_to_session();
+        let broadcast = alloy_rlp::encode(vec![0u8; 11 * 1024 * 1024]);
+        conn.writer.send(offset + eth::TRANSACTIONS, &broadcast).unwrap();
+        let breach = Some(DisconnectReason::ProtocolBreach as u8);
+        assert_eq!(read_pongs_until_disconnect(&mut conn), (0, breach));
     }
 }

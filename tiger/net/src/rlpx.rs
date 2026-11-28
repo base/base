@@ -16,13 +16,16 @@ use secp256k1::SecretKey;
 use crate::{
     crypto::{PeerId, peer_id_of_secret},
     ecies::{self, EciesError, FrameCodec, FrameEgress, FrameIngress, Initiator},
-    snappy,
+    snappy::{self, SnappyError},
 };
 
 /// The devp2p base protocol version tiger speaks (v5 adds Snappy compression).
 pub(crate) const P2P_VERSION: u64 = 5;
 /// Largest uncompressed message accepted, as in reth and geth.
 pub(crate) const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+/// Largest eth message accepted, base-reth's `MAX_MESSAGE_SIZE`. reth counts the message id
+/// byte, so the payload may be one byte less. Every capability tiger negotiates is eth.
+const MAX_ETH_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 /// Message ids below this are reserved for the `p2p` capability.
 pub(crate) const BASE_PROTOCOL_OFFSET: u8 = 0x10;
 
@@ -447,9 +450,16 @@ impl RlpxReader {
         let frame = self.ingress.decode_body(&mut body, size)?;
         let mut cursor = frame;
         let id = u8::decode(&mut cursor)?;
+        let max =
+            if id >= BASE_PROTOCOL_OFFSET { MAX_ETH_MESSAGE_SIZE - 1 } else { MAX_MESSAGE_SIZE };
+        // The Snappy length prefix is checked against `max` before anything is allocated.
         let payload = if self.snappy {
-            snappy::decompress(cursor, MAX_MESSAGE_SIZE)
-                .map_err(|_| RlpxError::Protocol("bad snappy"))?
+            snappy::decompress(cursor, max).map_err(|error| match error {
+                SnappyError::TooLarge => RlpxError::Protocol("message too big"),
+                SnappyError::Truncated | SnappyError::Corrupt => RlpxError::Protocol("bad snappy"),
+            })?
+        } else if cursor.len() > max {
+            return Err(RlpxError::Protocol("message too big"));
         } else {
             cursor.to_vec()
         };
