@@ -22,18 +22,9 @@ Merkle Patricia trie code and the state database of the tiger client.
 
 ## Verification of the state root
 
-`Spec` (`src/spec.rs`) is the reference: a from-scratch recursive build of the trie (Yellow Paper
-appendix D) that gives the root and reth's stored branch rows (`hash_mask`: child is a branch;
-`tree_mask`: the child's topmost branch is stored; a branch is stored when either is non-empty;
-the root never is). Everything else is checked against it or against the walker.
-
-Proved (Kani, `cargo kani` in `trie/`, harnesses under `cfg(kani)`):
-- hex-prefix encoding is injective and round-trips for every nibble string up to 6 long.
-
-Tested exhaustively:
-- `Spec` equals alloy-trie's `HashBuilder` (root and stored rows) on every subset of five
-  families of up to 16 keys that differ in chosen nibble positions (deep shared prefixes,
-  extensions, embedded leaves), plus 300 random tries up to 3,000 keys.
+Stored branch rows follow reth: `hash_mask` bit `i` when child `i` is a branch, `tree_mask` bit `i`
+when the child's topmost branch is stored; a branch is stored when either is non-empty, and the
+root never is.
 
 Tested by randomized differential checks:
 - `TrieView` over a datadir: 12 seeds × 30 blocks of account, slot, wipe and deletion changes

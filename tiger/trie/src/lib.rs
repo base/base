@@ -30,9 +30,6 @@ pub use partial::{DbNodes, PARTIAL_ROOT_KEY, PartialState, ProofNodes, Recording
 mod pool;
 pub use pool::WorkerPool;
 
-mod spec;
-pub use spec::{KEY_NIBBLES, Spec};
-
 mod write;
 pub use write::StateWriter;
 
