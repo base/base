@@ -42,6 +42,96 @@ impl<S: TokenAccounting, A: PolicyAccounting> B20Token<S, A> {
     ) -> Self {
         Self { accounting, policy, registry: PolicyRegistry::new(policy_version) }
     }
+
+    /// Debits `amount` from `from`, reverting with `InsufficientBalance` if it holds less.
+    pub fn debit(&mut self, from: Address, amount: U256) -> Result<()> {
+        let balance = self.accounting.balance_of(from)?;
+        if balance < amount {
+            return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
+                sender: from,
+                balance,
+                needed: amount,
+            }));
+        }
+        self.accounting.set_balance(from, balance - amount)
+    }
+
+    /// Credits `amount` to `to`.
+    pub fn credit(&mut self, to: Address, amount: U256) -> Result<()> {
+        let balance = self.accounting.balance_of(to)?;
+        let balance = balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting.set_balance(to, balance)
+    }
+
+    /// Debits `from`, credits `to`, and emits `Transfer(from, to, amount)`, with no policy,
+    /// allowance, pause, or zero-address checks: callers apply their own guards first.
+    pub fn move_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
+        self.debit(from, amount)?;
+        self.credit(to, amount)?;
+        self.accounting.emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
+    }
+
+    /// Supply-reducing core of the burn operations, without pause or role checks.
+    pub fn burn_balance(&mut self, from: Address, amount: U256) -> Result<()> {
+        self.debit(from, amount)?;
+        let supply = self.accounting.total_supply()?;
+        let supply = supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting.set_total_supply(supply)?;
+        let to = Address::ZERO;
+        self.accounting.emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
+    }
+
+    /// Grants (`grant`) or revokes `role` for `account` without checking caller authorization,
+    /// keeping the default admin's member count. Does nothing if `account` already has the
+    /// requested membership.
+    pub fn set_role_unchecked(
+        &mut self,
+        role: B256,
+        account: Address,
+        sender: Address,
+        grant: bool,
+    ) -> Result<()> {
+        if self.accounting.has_role(role, account)? == grant {
+            return Ok(());
+        }
+        self.accounting.set_role(role, account, grant)?;
+        if role == B20TokenRole::DefaultAdmin.id() {
+            let count = self.accounting.role_member_count(role)?;
+            let count =
+                if grant { count.checked_add(U256::ONE) } else { count.checked_sub(U256::ONE) };
+            let count = count.ok_or_else(BasePrecompileError::under_overflow)?;
+            self.accounting.set_role_member_count(role, count)?;
+        }
+        let log = if grant {
+            IB20::RoleGranted { role, account, sender }.encode_log_data()
+        } else {
+            IB20::RoleRevoked { role, account, sender }.encode_log_data()
+        };
+        self.accounting.emit_event(log)
+    }
+
+    /// Ensures role-admin mutations are still reachable: the token has a default admin.
+    pub fn ensure_role_admin_mutations_available(&self, caller: Address) -> Result<()> {
+        let admin_role = B20TokenRole::DefaultAdmin.id();
+        if self.accounting.role_member_count(admin_role)? == U256::ZERO {
+            return Err(BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: caller,
+                neededRole: admin_role,
+            }));
+        }
+        Ok(())
+    }
+
+    /// Rejects removing `role` from `account` when that would remove the last default admin.
+    pub fn ensure_not_last_admin(&self, role: B256, account: Address) -> Result<()> {
+        if role == B20TokenRole::DefaultAdmin.id()
+            && self.accounting.has_role(role, account)?
+            && self.accounting.role_member_count(role)? == U256::ONE
+        {
+            return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
+        }
+        Ok(())
+    }
 }
 
 /// The B-20 logic of one version.
@@ -74,18 +164,13 @@ impl B20Logic {
 
     /// The features `pause`/`unpause`/`isPaused` accept: `SEIZE` from V2.
     fn pausable_features(self) -> &'static [IB20::PausableFeature] {
-        const V1: &[IB20::PausableFeature] = &[
-            IB20::PausableFeature::TRANSFER,
-            IB20::PausableFeature::MINT,
-            IB20::PausableFeature::BURN,
-        ];
-        const V2: &[IB20::PausableFeature] = &[
+        const FEATURES: &[IB20::PausableFeature] = &[
             IB20::PausableFeature::TRANSFER,
             IB20::PausableFeature::MINT,
             IB20::PausableFeature::BURN,
             IB20::PausableFeature::SEIZE,
         ];
-        if self.version >= B20Version::V2 { V2 } else { V1 }
+        if self.version >= B20Version::V2 { FEATURES } else { &FEATURES[..3] }
     }
 
     /// Hashes with gas metering from V2; V1's (Beryl's) schedule hashes unmetered.
@@ -132,26 +217,17 @@ impl B20Logic {
         if let Some(policies) = policies {
             let v3 = self.version >= B20Version::V3;
             if v3 {
-                token.ensure_authorized_by_id(
-                    B20PolicyType::TransferExecutor.id(),
-                    policies.executor,
-                    caller,
-                )?;
+                let executor = B20PolicyType::TransferExecutor.id();
+                token.ensure_authorized_by_id(executor, policies.executor, caller)?;
             }
             if !v3 || caller != from || policies.executor != policies.sender {
-                token.ensure_authorized_by_id(
-                    B20PolicyType::TransferSender.id(),
-                    policies.sender,
-                    from,
-                )?;
+                let sender = B20PolicyType::TransferSender.id();
+                token.ensure_authorized_by_id(sender, policies.sender, from)?;
             }
-            token.ensure_authorized_by_id(
-                B20PolicyType::TransferReceiver.id(),
-                policies.receiver,
-                to,
-            )?;
+            let receiver = B20PolicyType::TransferReceiver.id();
+            token.ensure_authorized_by_id(receiver, policies.receiver, to)?;
         }
-        self.move_balance(token, from, to, amount)
+        token.move_balance(from, to, amount)
     }
 
     /// V1's transfer core: zero checks, then one read per transfer policy (unless privileged).
@@ -173,96 +249,7 @@ impl B20Logic {
             token.ensure_policy_type(B20PolicyType::TransferSender, from)?;
             token.ensure_policy_type(B20PolicyType::TransferReceiver, to)?;
         }
-        self.move_balance(token, from, to, amount)
-    }
-
-    /// Debits `from`, credits `to`, and emits `Transfer(from, to, amount)`, with no policy,
-    /// allowance, pause, or zero-address checks: callers apply their own guards first.
-    fn move_balance<S: TokenAccounting, A: PolicyAccounting>(
-        &self,
-        token: &mut B20Token<S, A>,
-        from: Address,
-        to: Address,
-        amount: U256,
-    ) -> Result<()> {
-        let from_balance = token.accounting.balance_of(from)?;
-        if from_balance < amount {
-            return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
-                sender: from,
-                balance: from_balance,
-                needed: amount,
-            }));
-        }
-        let new_from_balance =
-            from_balance.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting.set_balance(from, new_from_balance)?;
-        let to_balance = token.accounting.balance_of(to)?;
-        let new_to_balance =
-            to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting.set_balance(to, new_to_balance)?;
-        token.accounting.emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
-    }
-
-    /// Supply-reducing core of the burn operations, without pause or role checks.
-    fn burn_inner<S: TokenAccounting, A: PolicyAccounting>(
-        &self,
-        token: &mut B20Token<S, A>,
-        from: Address,
-        amount: U256,
-    ) -> Result<()> {
-        let balance = token.accounting.balance_of(from)?;
-        if balance < amount {
-            return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
-                sender: from,
-                balance,
-                needed: amount,
-            }));
-        }
-        token.accounting.set_balance(from, balance - amount)?;
-        let supply = token.accounting.total_supply()?;
-        let new_supply =
-            supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting.set_total_supply(new_supply)?;
-        token
-            .accounting
-            .emit_event(IB20::Transfer { from, to: Address::ZERO, amount }.encode_log_data())
-    }
-
-    /// Revokes `role` from `account` without checking caller authorization.
-    fn revoke_role_unchecked<S: TokenAccounting, A: PolicyAccounting>(
-        &self,
-        token: &mut B20Token<S, A>,
-        role: B256,
-        account: Address,
-        sender: Address,
-    ) -> Result<()> {
-        if !token.accounting.has_role(role, account)? {
-            return Ok(());
-        }
-        token.accounting.set_role(role, account, false)?;
-        if role == B20TokenRole::DefaultAdmin.id() {
-            let current = token.accounting.role_member_count(role)?;
-            let next =
-                current.checked_sub(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            token.accounting.set_role_member_count(role, next)?;
-        }
-        token.accounting.emit_event(IB20::RoleRevoked { role, account, sender }.encode_log_data())
-    }
-
-    /// Ensures role-admin mutations are still reachable.
-    fn ensure_role_admin_mutations_available<S: TokenAccounting, A: PolicyAccounting>(
-        &self,
-        token: &B20Token<S, A>,
-        caller: Address,
-    ) -> Result<()> {
-        let admin_role = B20TokenRole::DefaultAdmin.id();
-        if token.accounting.role_member_count(admin_role)? == U256::ZERO {
-            return Err(BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: caller,
-                neededRole: admin_role,
-            }));
-        }
-        Ok(())
+        token.move_balance(from, to, amount)
     }
 
     /// Ensures `policy_scope` names a built-in B-20 policy slot this version supports: the seize
@@ -350,11 +337,8 @@ impl B20Logic {
             // One SLOAD fetches all transfer policy ids for the executor and sender/receiver checks.
             let policies = token.accounting.transfer_policy_ids()?;
             if self.version == B20Version::V2 && caller != from {
-                token.ensure_authorized_by_id(
-                    B20PolicyType::TransferExecutor.id(),
-                    policies.executor,
-                    caller,
-                )?;
+                let executor = B20PolicyType::TransferExecutor.id();
+                token.ensure_authorized_by_id(executor, policies.executor, caller)?;
             }
             self.transfer_inner(token, caller, from, to, amount, Some(&policies))?;
         }
@@ -379,9 +363,8 @@ impl B20Logic {
             return Err(BasePrecompileError::revert(IB20::InvalidSpender { spender }));
         }
         token.accounting.set_allowance(caller, spender, amount)?;
-        token
-            .accounting
-            .emit_event(IB20::Approval { owner: caller, spender, amount }.encode_log_data())
+        let owner = caller;
+        token.accounting.emit_event(IB20::Approval { owner, spender, amount }.encode_log_data())
     }
 
     /// Emits `Memo(caller, memo)`.
@@ -404,9 +387,7 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         token.ensure_not_paused(IB20::PausableFeature::MINT)?;
-        if !privileged {
-            token.ensure_token_role(caller, B20TokenRole::Mint)?;
-        }
+        token.ensure_role_unless(privileged, caller, B20TokenRole::Mint.id())?;
         self.ensure_recipient(token, to)?;
         token.ensure_policy_type(B20PolicyType::MintReceiver, to)?;
         let supply = token.accounting.total_supply()?;
@@ -420,13 +401,9 @@ impl B20Logic {
             }));
         }
         token.accounting.set_total_supply(new_supply)?;
-        let to_balance = token.accounting.balance_of(to)?;
-        let new_balance =
-            to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting.set_balance(to, new_balance)?;
-        token
-            .accounting
-            .emit_event(IB20::Transfer { from: Address::ZERO, to, amount }.encode_log_data())
+        token.credit(to, amount)?;
+        let from = Address::ZERO;
+        token.accounting.emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
     }
 
     /// Burns `amount` of the caller's own balance (never factory-privileged).
@@ -438,7 +415,7 @@ impl B20Logic {
     ) -> Result<()> {
         token.ensure_not_paused(IB20::PausableFeature::BURN)?;
         token.ensure_token_role(caller, B20TokenRole::Burn)?;
-        self.burn_inner(token, caller, amount)
+        token.burn_balance(caller, amount)
     }
 
     /// Burns `amount` from `from`, which must be blocked by the sender policy.
@@ -451,11 +428,9 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         token.ensure_not_paused(IB20::PausableFeature::BURN)?;
-        if !privileged {
-            token.ensure_token_role(caller, B20TokenRole::BurnBlocked)?;
-        }
+        token.ensure_role_unless(privileged, caller, B20TokenRole::BurnBlocked.id())?;
         token.ensure_blocked(from)?;
-        self.burn_inner(token, from, amount)?;
+        token.burn_balance(from, amount)?;
         token.accounting.emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
     }
 
@@ -484,7 +459,7 @@ impl B20Logic {
         // Gate the destination like `mint` gates `MintReceiver`: an unset scope is always-allow, so
         // a treasury need not be allowlisted by default.
         token.ensure_policy_type(B20PolicyType::SeizeReceiver, to)?;
-        self.move_balance(token, from, to, amount)?;
+        token.move_balance(from, to, amount)?;
         // `Memo` must immediately follow the `Transfer` (from `move_balance`), before `Seized`.
         self.emit_memo(token, caller, memo)?;
         token.accounting.emit_event(IB20::Seized { caller, from, to, amount }.encode_log_data())
@@ -502,10 +477,8 @@ impl B20Logic {
         for feature in &features {
             B20PausableFeature::ensure_one_of(*feature, self.pausable_features())?;
         }
-        if !privileged {
-            let role = if pause { B20TokenRole::Pause } else { B20TokenRole::Unpause };
-            token.ensure_token_role(caller, role)?;
-        }
+        let role = if pause { B20TokenRole::Pause } else { B20TokenRole::Unpause };
+        token.ensure_role_unless(privileged, caller, role.id())?;
         if features.is_empty() {
             return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
         }
@@ -556,9 +529,7 @@ impl B20Logic {
         new_cap: U256,
         privileged: bool,
     ) -> Result<()> {
-        if !privileged {
-            token.ensure_token_role(caller, B20TokenRole::DefaultAdmin)?;
-        }
+        token.ensure_role_unless(privileged, caller, B20TokenRole::DefaultAdmin.id())?;
         let supply = token.accounting.total_supply()?;
         if new_cap < supply || new_cap > B20_MAX_SUPPLY_CAP {
             return Err(BasePrecompileError::revert(IB20::InvalidSupplyCap {
@@ -582,13 +553,10 @@ impl B20Logic {
         name: String,
         privileged: bool,
     ) -> Result<()> {
-        if !privileged {
-            token.ensure_token_role(caller, B20TokenRole::Metadata)?;
-        }
+        token.ensure_role_unless(privileged, caller, B20TokenRole::Metadata.id())?;
         token.accounting.set_name(name.clone())?;
-        token
-            .accounting
-            .emit_event(IB20::NameUpdated { updater: caller, newName: name }.encode_log_data())?;
+        let log = IB20::NameUpdated { updater: caller, newName: name }.encode_log_data();
+        token.accounting.emit_event(log)?;
         token.accounting.emit_event(IB20::EIP712DomainChanged {}.encode_log_data())
     }
 
@@ -600,13 +568,10 @@ impl B20Logic {
         symbol: String,
         privileged: bool,
     ) -> Result<()> {
-        if !privileged {
-            token.ensure_token_role(caller, B20TokenRole::Metadata)?;
-        }
+        token.ensure_role_unless(privileged, caller, B20TokenRole::Metadata.id())?;
         token.accounting.set_symbol(symbol.clone())?;
-        token.accounting.emit_event(
-            IB20::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data(),
-        )
+        let log = IB20::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data();
+        token.accounting.emit_event(log)
     }
 
     /// Sets the contract URI.
@@ -617,9 +582,7 @@ impl B20Logic {
         uri: String,
         privileged: bool,
     ) -> Result<()> {
-        if !privileged {
-            token.ensure_token_role(caller, B20TokenRole::Metadata)?;
-        }
+        token.ensure_role_unless(privileged, caller, B20TokenRole::Metadata.id())?;
         token.accounting.set_contract_uri(uri)?;
         token.accounting.emit_event(IB20::ContractURIUpdated {}.encode_log_data())
     }
@@ -634,13 +597,13 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         if role == B20TokenRole::DefaultAdmin.id() || !privileged {
-            self.ensure_role_admin_mutations_available(token, caller)?;
+            token.ensure_role_admin_mutations_available(caller)?;
         }
         if !privileged {
             let admin = token.accounting.role_admin(role)?;
             token.ensure_role(caller, admin)?;
         }
-        self.grant_role_unchecked(token, role, account, caller)
+        token.set_role_unchecked(role, account, caller, true)
     }
 
     /// Grants `role` to `account` without checking caller authorization.
@@ -651,17 +614,7 @@ impl B20Logic {
         account: Address,
         sender: Address,
     ) -> Result<()> {
-        if token.accounting.has_role(role, account)? {
-            return Ok(());
-        }
-        token.accounting.set_role(role, account, true)?;
-        if role == B20TokenRole::DefaultAdmin.id() {
-            let current = token.accounting.role_member_count(role)?;
-            let next =
-                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            token.accounting.set_role_member_count(role, next)?;
-        }
-        token.accounting.emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
+        token.set_role_unchecked(role, account, sender, true)
     }
 
     /// Revokes `role` from `account`; the last default admin cannot be revoked.
@@ -674,17 +627,12 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            self.ensure_role_admin_mutations_available(token, caller)?;
+            token.ensure_role_admin_mutations_available(caller)?;
             let admin = token.accounting.role_admin(role)?;
             token.ensure_role(caller, admin)?;
         }
-        if role == B20TokenRole::DefaultAdmin.id()
-            && token.accounting.has_role(role, account)?
-            && token.accounting.role_member_count(role)? == U256::ONE
-        {
-            return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
-        }
-        self.revoke_role_unchecked(token, role, account, caller)
+        token.ensure_not_last_admin(role, account)?;
+        token.set_role_unchecked(role, account, caller, false)
     }
 
     /// Renounces the caller's `role`; the last default admin must use `renounceLastAdmin`.
@@ -698,13 +646,8 @@ impl B20Logic {
         if confirmation != caller {
             return Err(BasePrecompileError::revert(IB20::AccessControlBadConfirmation {}));
         }
-        if role == B20TokenRole::DefaultAdmin.id()
-            && token.accounting.has_role(role, caller)?
-            && token.accounting.role_member_count(role)? == U256::ONE
-        {
-            return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
-        }
-        self.revoke_role_unchecked(token, role, caller, caller)
+        token.ensure_not_last_admin(role, caller)?;
+        token.set_role_unchecked(role, caller, caller, false)
     }
 
     /// The sole default admin gives up the role, leaving the token without one.
@@ -718,10 +661,9 @@ impl B20Logic {
         if token.accounting.role_member_count(admin_role)? != U256::ONE {
             return Err(BasePrecompileError::revert(IB20::NotSoleAdmin {}));
         }
-        self.revoke_role_unchecked(token, admin_role, caller, caller)?;
-        token
-            .accounting
-            .emit_event(IB20::LastAdminRenounced { previousAdmin: caller }.encode_log_data())
+        token.set_role_unchecked(admin_role, caller, caller, false)?;
+        let log = IB20::LastAdminRenounced { previousAdmin: caller }.encode_log_data();
+        token.accounting.emit_event(log)
     }
 
     /// Sets the admin role of `role`.
@@ -735,7 +677,7 @@ impl B20Logic {
     ) -> Result<()> {
         let previous_admin_role = token.accounting.role_admin(role)?;
         if !privileged {
-            self.ensure_role_admin_mutations_available(token, caller)?;
+            token.ensure_role_admin_mutations_available(caller)?;
             token.ensure_role(caller, previous_admin_role)?;
         }
         token.accounting.set_role_admin(role, new_admin_role)?;
@@ -758,9 +700,7 @@ impl B20Logic {
         new_policy_id: u64,
         privileged: bool,
     ) -> Result<()> {
-        if !privileged {
-            token.ensure_token_role(caller, B20TokenRole::DefaultAdmin)?;
-        }
+        token.ensure_role_unless(privileged, caller, B20TokenRole::DefaultAdmin.id())?;
         self.ensure_supported_policy_type(policy_scope)?;
         let early_read = self.stablecoin && self.version == B20Version::V1;
         let early_old_policy_id =
@@ -890,14 +830,12 @@ mod tests {
 
         use alloy_primitives::{Address, B256, U256, keccak256};
         use alloy_sol_types::SolEvent;
-
-        use crate::BasePrecompileError;
         use k256::ecdsa::SigningKey;
 
         use crate::{
-            B20Logic, B20PolicyType, B20Token, B20TokenRole, B20Version, FakePolicyAccounting, IB20,
-            InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion,
-            TokenAccounting,
+            B20Logic, B20PolicyType, B20Token, B20TokenRole, B20Version, BasePrecompileError,
+            FakePolicyAccounting, IB20, InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage,
+            PolicyVersion, TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x22);
@@ -1427,14 +1365,12 @@ mod tests {
 
         use alloy_primitives::{Address, B256, U256, keccak256};
         use alloy_sol_types::SolEvent;
-
-        use crate::{BasePrecompileError, Result};
         use k256::ecdsa::SigningKey;
 
         use crate::{
-            B20Logic, B20PolicyType, B20Token, B20TokenRole, B20Version, FakePolicyAccounting, IB20,
-            InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion,
-            TokenAccounting,
+            B20Logic, B20PolicyType, B20Token, B20TokenRole, B20Version, BasePrecompileError,
+            FakePolicyAccounting, IB20, InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage,
+            PolicyVersion, Result, TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x22);
@@ -2238,14 +2174,12 @@ mod tests {
 
         use alloy_primitives::{Address, B256, U256, keccak256};
         use alloy_sol_types::SolEvent;
-
-        use crate::BasePrecompileError;
         use k256::ecdsa::SigningKey;
 
         use crate::{
             B20Logic, B20PolicyType, B20Token, B20TokenRole, B20Variant, B20Version,
-            FakePolicyAccounting, IB20, InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage,
-            PolicyVersion, TokenAccounting,
+            BasePrecompileError, FakePolicyAccounting, IB20, InMemoryTokenAccounting, PermitArgs,
+            PolicyRegistryStorage, PolicyVersion, TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x22);

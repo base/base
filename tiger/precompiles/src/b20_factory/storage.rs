@@ -47,11 +47,9 @@ impl<'a> B20FactoryStorage<'a> {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, address, keccak256};
 
-    use crate::{HashMapStorageProvider, StorageCtx};
-
     use super::FACTORY_MARKER_CODE_HASH;
 
-    use crate::{B20FactoryStorage, B20Variant};
+    use crate::{B20FactoryStorage, B20Variant, HashMapStorageProvider, StorageCtx};
 
     #[test]
     fn factory_address_matches_canonical_precompile_address() {

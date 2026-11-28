@@ -1,7 +1,7 @@
 //! ABI dispatch for the activation registry.
 
 use alloy_primitives::Bytes;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolValue};
 use base_common_genesis::{BaseFeature, BaseUpgrade};
 
 use crate::{
@@ -21,16 +21,12 @@ impl ActivationRegistryStorage<'_> {
         // Activation-registry selectors are all nonpayable; reject attached ETH from Cobalt
         // onward. Pre-Cobalt (Beryl) preserves the historical accept-and-strand behavior so
         // replay of live-installed activation calls remains byte-identical.
-        if upgrade.is_feature_enabled(BaseFeature::ActivationRegistryRejectsValue)
-            && !ctx.call_value().is_zero()
-        {
-            return ctx
-                .error_result(BasePrecompileError::revert(IActivationRegistry::NonPayable {}));
-        }
-        if let Err(error) = Calldata::deduct_gas(ctx, calldata) {
-            return ctx.error_result(error);
-        }
-        ctx.result_output(self.inner(calldata, admin_config), |output| output)
+        let non_payable = upgrade
+            .is_feature_enabled(BaseFeature::ActivationRegistryRejectsValue)
+            .then_some(IActivationRegistry::NonPayable {});
+        Calldata::dispatch(ctx, calldata, non_payable, Some(()), |()| {
+            self.inner(calldata, admin_config)
+        })
     }
 
     fn inner(
@@ -44,30 +40,14 @@ impl ActivationRegistryStorage<'_> {
         }
 
         match Calldata::decode_call(calldata)? {
-            C::isActivated(call) => {
-                let activated = self.is_activated(call.feature)?;
-                Ok(IActivationRegistry::isActivatedCall::abi_encode_returns(&activated).into())
-            }
-            C::checkActivated(call) => {
-                self.ensure_activated(call.feature)?;
-                Ok(Bytes::new())
-            }
-            C::activate(call) => {
-                self.activate(call.feature, admin_config)?;
-                Ok(Bytes::new())
-            }
+            C::isActivated(call) => Ok(self.is_activated(call.feature)?.abi_encode().into()),
+            C::checkActivated(call) => self.ensure_activated(call.feature).map(|()| Bytes::new()),
+            C::activate(call) => self.activate(call.feature, admin_config).map(|()| Bytes::new()),
             C::deactivate(call) => {
-                self.deactivate(call.feature, admin_config)?;
-                Ok(Bytes::new())
+                self.deactivate(call.feature, admin_config).map(|()| Bytes::new())
             }
-            C::setAdmin(call) => {
-                self.set_admin(call.newAdmin, admin_config)?;
-                Ok(Bytes::new())
-            }
-            C::admin(_) => {
-                Ok(IActivationRegistry::adminCall::abi_encode_returns(&self.admin(admin_config)?)
-                    .into())
-            }
+            C::setAdmin(call) => self.set_admin(call.newAdmin, admin_config).map(|()| Bytes::new()),
+            C::admin(_) => Ok(self.admin(admin_config)?.abi_encode().into()),
         }
     }
 }

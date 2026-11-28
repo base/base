@@ -9,9 +9,11 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, LogData, U256, keccak256};
+use alloy_sol_types::SolValue;
 
 use crate::{
-    PackedPolicy, PolicyAccounting, PolicyRegistryStorage, Result,
+    ActivationAdminConfig, B20Variant, PackedPolicy, PolicyAccounting, PolicyRegistryStorage,
+    Result,
     b20_asset::{AssetAccounting, B20AssetStorage},
     b20_stablecoin::StablecoinAccounting,
     common::B20Token,
@@ -475,5 +477,46 @@ impl AssetAccounting for InMemoryTokenAccounting {
 
     fn decimals(&self) -> Result<u8> {
         Ok(if self.decimals == 0 { B20AssetStorage::MIN_DECIMALS } else { self.decimals })
+    }
+}
+
+impl B20Variant {
+    /// Computes this variant's deterministic token address for `creator` and `salt`.
+    ///
+    /// Returns the address and the 9-byte hash tail embedded in the address.
+    pub fn compute_address(self, creator: Address, salt: B256) -> (Address, [u8; 9]) {
+        let hash = keccak256((creator, salt).abi_encode());
+        self.compute_address_from_hash(hash)
+    }
+
+    /// Computes a deterministic B-20 token address for an ABI discriminant.
+    pub fn compute_address_for_discriminant(
+        creator: Address,
+        variant: u8,
+        salt: B256,
+    ) -> (Address, [u8; 9]) {
+        let hash = keccak256((creator, salt).abi_encode());
+
+        let mut tail = [0u8; 9];
+        tail.copy_from_slice(&hash[..9]);
+
+        let mut addr_bytes = [0u8; 20];
+        addr_bytes[0] = Self::PREFIX_BYTE;
+        addr_bytes[10] = variant;
+        addr_bytes[11..].copy_from_slice(&tail);
+
+        (Address::from(addr_bytes), tail)
+    }
+}
+
+impl ActivationAdminConfig {
+    /// Creates a static-only activation admin configuration.
+    pub const fn static_fallback(fallback: Option<Address>) -> Self {
+        Self::new(fallback, false)
+    }
+
+    /// Creates a state-backed activation admin configuration.
+    pub const fn state_backed(fallback: Option<Address>) -> Self {
+        Self::new(fallback, true)
     }
 }

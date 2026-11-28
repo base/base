@@ -27,11 +27,6 @@ impl PackedPolicy {
         Self(U256::from_be_slice(&word) | Self::EXISTS_BIT)
     }
 
-    /// Returns this policy word with its admin replaced.
-    pub fn with_admin(self, new_admin: Address) -> Self {
-        Self::new(new_admin)
-    }
-
     /// Returns the admin address encoded in this policy word.
     pub fn admin(self) -> Address {
         let bytes = (self.0 & Self::ADMIN_MASK).to_be_bytes::<32>();

@@ -1,7 +1,7 @@
 //! ABI dispatch for the Base transaction context precompile.
 
 use alloy_primitives::Bytes;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::SolValue;
 
 use crate::{
     BasePrecompileError, Calldata, ITransactionContext::{self, ITransactionContextCalls as C},
@@ -21,8 +21,8 @@ impl TxContextStorage<'_> {
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         // Transaction-context getters are nonpayable; reject attached ETH first.
         if !ctx.call_value().is_zero() {
-            return ctx
-                .error_result(BasePrecompileError::revert(ITransactionContext::NonPayable {}));
+            let error = BasePrecompileError::revert(ITransactionContext::NonPayable {});
+            return ctx.result_output(Err(error));
         }
         let result = self.inner(calldata).and_then(|output| {
             let words = u64::try_from(output.len().div_ceil(32))
@@ -32,26 +32,16 @@ impl TxContextStorage<'_> {
             ctx.deduct_gas(output_cost)?;
             Ok(output)
         });
-        ctx.result_output(result, |output| output)
+        ctx.result_output(result)
     }
 
     fn inner(&self, calldata: &[u8]) -> crate::Result<Bytes> {
-        match Calldata::decode_call(calldata)? {
-            C::getTransactionSender(_) => Ok(
-                ITransactionContext::getTransactionSenderCall::abi_encode_returns(&self.sender()?)
-                    .into(),
-            ),
-            C::getTransactionPayer(_) => {
-                Ok(ITransactionContext::getTransactionPayerCall::abi_encode_returns(&self.payer()?)
-                    .into())
-            }
-            C::getTransactionSenderActorId(_) => {
-                Ok(ITransactionContext::getTransactionSenderActorIdCall::abi_encode_returns(
-                    &self.sender_actor_id()?,
-                )
-                .into())
-            }
-        }
+        let encoded = match Calldata::decode_call(calldata)? {
+            C::getTransactionSender(_) => self.sender()?.abi_encode(),
+            C::getTransactionPayer(_) => self.payer()?.abi_encode(),
+            C::getTransactionSenderActorId(_) => self.sender_actor_id()?.abi_encode(),
+        };
+        Ok(encoded.into())
     }
 }
 

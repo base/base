@@ -1,11 +1,12 @@
-//! Calldata handling shared by the native precompile dispatchers: the selector, the validating
-//! ABI decode and its error bytes, and the calldata gas.
+//! Calldata handling shared by the native precompile dispatchers: the call envelope, the
+//! selector, the validating ABI decode and its error bytes, and the calldata gas.
 
 use alloc::string::ToString;
 
-use alloy_sol_types::SolInterface;
+use alloy_primitives::Bytes;
+use alloy_sol_types::{SolError, SolInterface};
 
-use crate::{BasePrecompileError, Result, StorageCtx};
+use crate::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
 /// Calldata helpers for native precompile dispatch.
 #[derive(Debug, Clone, Copy)]
@@ -21,9 +22,26 @@ impl Calldata {
         (calldata.len() as u64).div_ceil(32).saturating_mul(Self::WORD_GAS)
     }
 
-    /// Deducts the calldata gas for `calldata` from `ctx`.
-    pub fn deduct_gas(ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<()> {
-        ctx.deduct_gas(Self::gas(calldata))
+    /// The call envelope of a native precompile: reverts with `non_payable` on call value (when
+    /// given), charges the calldata gas, reverts empty while no `version` is active, then runs
+    /// `route` with the version and converts its result with the call's gas accounting.
+    pub fn dispatch<V>(
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        non_payable: Option<impl SolError>,
+        version: Option<V>,
+        route: impl FnOnce(V) -> Result<Bytes>,
+    ) -> PrecompileResult {
+        let result = (|| {
+            if let Some(error) = non_payable
+                && !ctx.call_value().is_zero()
+            {
+                return Err(BasePrecompileError::revert(error));
+            }
+            ctx.deduct_gas(Self::gas(calldata))?;
+            route(version.ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?)
+        })();
+        ctx.result_output(result)
     }
 
     /// Returns the 4-byte selector. Shorter calldata is an unknown, all-zero selector.
@@ -55,11 +73,8 @@ impl Calldata {
 mod tests {
     use alloy_sol_types::SolCall;
 
-    use crate::{BasePrecompileError, Result};
-
     use super::Calldata;
-
-    use crate::IPolicyRegistry;
+    use crate::{BasePrecompileError, IPolicyRegistry, Result};
 
     fn decode_policy_call(calldata: &[u8]) -> Result<IPolicyRegistry::IPolicyRegistryCalls> {
         Calldata::decode_call(calldata)

@@ -1,11 +1,10 @@
 //! ABI dispatch for the Base transaction 2D nonce manager precompile.
 
-use alloy_primitives::Bytes;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::SolValue;
 
 use crate::{
-    BasePrecompileError, Calldata, INonceManager::{self, INonceManagerCalls as C}, PrecompileResult,
-    StorageCtx, nonce::storage::NonceManagerStorage,
+    Calldata, INonceManager::{self, INonceManagerCalls as C}, PrecompileResult, StorageCtx,
+    nonce::storage::NonceManagerStorage,
 };
 
 impl NonceManagerStorage<'_> {
@@ -13,27 +12,17 @@ impl NonceManagerStorage<'_> {
     ///
     /// Only the read-only `getNonce` getter is reachable through the ABI; the
     /// nonce-mutating entry points (`increment_nonce`, `check_and_mark_expiring_nonce`)
-    /// are driven by the Base transaction execution layer, not by EVM calls.
+    /// are driven by the Base transaction execution layer, not by EVM calls. `getNonce` is
+    /// nonpayable, and its input calldata is priced per word, unlike the transaction context's
+    /// output words.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        // `getNonce` is nonpayable; reject attached ETH before charging calldata gas.
-        if !ctx.call_value().is_zero() {
-            return ctx.error_result(BasePrecompileError::revert(INonceManager::NonPayable {}));
-        }
-        // Input calldata is priced per word, unlike the transaction context's output words.
-        if let Err(error) = Calldata::deduct_gas(ctx, calldata) {
-            return ctx.error_result(error);
-        }
-        // `getNonce` is a read-only getter and never produces a gas refund.
-        ctx.result_output(self.inner(calldata), |output| output)
-    }
-
-    fn inner(&self, calldata: &[u8]) -> crate::Result<Bytes> {
-        match Calldata::decode_call(calldata)? {
-            C::getNonce(call) => Ok(INonceManager::getNonceCall::abi_encode_returns(
-                &self.get_nonce(call.account, call.nonceKey)?,
-            )
-            .into()),
-        }
+        Calldata::dispatch(ctx, calldata, Some(INonceManager::NonPayable {}), Some(()), |()| {
+            match Calldata::decode_call(calldata)? {
+                C::getNonce(call) => {
+                    Ok(self.get_nonce(call.account, call.nonceKey)?.abi_encode().into())
+                }
+            }
+        })
     }
 }
 

@@ -10,10 +10,10 @@ use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_genesis::{BaseFeature, BaseUpgrade};
 
 use crate::{
-    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20FactoryStorage, B20Logic,
+    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20FactoryStorage,
     B20StablecoinInit, B20StablecoinStorage, B20Token, B20TokenRole, B20Variant, B20Version,
-    BasePrecompileError, IB20Factory, PolicyAccounting, PolicyRegistryStorage,
-    PolicyVersion, PolicyVersions, Result, TokenAccounting,
+    BasePrecompileError, IB20Factory, PolicyAccounting, PolicyRegistryStorage, PolicyVersion,
+    PolicyVersions, Result, TokenAccounting,
 };
 
 /// An activated version of the B-20 token factory logic.
@@ -110,8 +110,7 @@ impl B20FactoryStorage<'_> {
         self.emit_created(token_address, B20Variant::Stablecoin, name, symbol, decimals, params)?;
 
         let version = B20Version::stablecoin(upgrade).ok_or_else(Self::empty_revert)?;
-        let logic = B20Logic::stablecoin(version);
-        self.init_token(&mut token, logic, common.initial_admin, init_calls, |token, calldata| {
+        self.init_token(&mut token, common.initial_admin, init_calls, |token, calldata| {
             token.route_stablecoin(self.storage, calldata, version, true)
         })
     }
@@ -134,8 +133,7 @@ impl B20FactoryStorage<'_> {
         self.emit_created(token_address, B20Variant::Asset, name, symbol, decimals, Vec::new())?;
 
         let version = B20Version::asset(upgrade).ok_or_else(Self::empty_revert)?;
-        let logic = B20Logic::asset(version);
-        self.init_token(&mut token, logic, common.initial_admin, init_calls, |token, calldata| {
+        self.init_token(&mut token, common.initial_admin, init_calls, |token, calldata| {
             token.route_asset(self.storage, calldata, version, true)
         })
     }
@@ -174,14 +172,13 @@ impl B20FactoryStorage<'_> {
     fn init_token<S: TokenAccounting, A: PolicyAccounting>(
         &self,
         token: &mut B20Token<S, A>,
-        logic: B20Logic,
         initial_admin: Address,
         init_calls: &[&[u8]],
         route: impl Fn(&mut B20Token<S, A>, &[u8]) -> Result<Bytes>,
     ) -> Result<()> {
         if !initial_admin.is_zero() {
             let admin_role = B20TokenRole::DefaultAdmin.id();
-            logic.grant_role_unchecked(token, admin_role, initial_admin, Self::ADDRESS)?;
+            token.set_role_unchecked(admin_role, initial_admin, Self::ADDRESS, true)?;
         }
         self.storage.with_caller(Self::ADDRESS, || {
             for (index, &calldata) in init_calls.iter().enumerate() {

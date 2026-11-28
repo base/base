@@ -8,8 +8,8 @@ use alloy_sol_types::{SolCall, SolType, SolValue, abi};
 use base_common_genesis::BaseUpgrade;
 
 use crate::{
-    B20FactoryStorage, B20Variant, BasePrecompileError, Calldata, FactoryVersions, IB20Factory,
-    PrecompileResult, Result, StorageCtx,
+    B20FactoryStorage, B20Variant, BasePrecompileError, Calldata, FactoryVersions,
+    IB20Factory::{self, IB20FactoryCalls as C}, PrecompileResult, Result, StorageCtx,
 };
 
 impl B20FactoryStorage<'_> {
@@ -20,16 +20,10 @@ impl B20FactoryStorage<'_> {
         calldata: &[u8],
         upgrade: BaseUpgrade,
     ) -> PrecompileResult {
-        if !ctx.call_value().is_zero() {
-            return ctx.error_result(BasePrecompileError::revert(IB20Factory::NonPayable {}));
-        }
-        if let Err(error) = Calldata::deduct_gas(ctx, calldata) {
-            return ctx.error_result(error);
-        }
-        if FactoryVersions::from_base_upgrade(upgrade).is_none() {
-            return ctx.error_result(BasePrecompileError::Revert(Bytes::new()));
-        }
-        ctx.result_output(self.route(ctx, calldata, upgrade), |b| b)
+        let version = FactoryVersions::from_base_upgrade(upgrade);
+        Calldata::dispatch(ctx, calldata, Some(IB20Factory::NonPayable {}), version, |_| {
+            self.route(ctx, calldata, upgrade)
+        })
     }
 
     fn route(
@@ -45,27 +39,21 @@ impl B20FactoryStorage<'_> {
             Some(Err(error)) => return Err(error),
             None => {}
         }
-        match Calldata::decode_call(calldata)? {
-            IB20Factory::IB20FactoryCalls::createB20(call) => {
-                self.run_create_b20(ctx, upgrade, CreateB20Request::from_call(&call))
+        let encoded = match Calldata::decode_call(calldata)? {
+            C::createB20(call) => {
+                return self.run_create_b20(ctx, upgrade, CreateB20Request::from_call(&call));
             }
-            IB20Factory::IB20FactoryCalls::getB20Address(call) => {
+            C::getB20Address(call) => {
                 let v = B20Variant::from_abi(call.variant).expect(
                     "abi_decode_validate rejects non-canonical discriminants before dispatch",
                 );
                 let hash = ctx.metered_keccak256(&(call.sender, call.salt).abi_encode())?;
-                let addr = v.compute_address_from_hash(hash).0;
-                Ok(IB20Factory::getB20AddressCall::abi_encode_returns(&addr).into())
+                v.compute_address_from_hash(hash).0.abi_encode()
             }
-            IB20Factory::IB20FactoryCalls::isB20(call) => {
-                let result = self.is_b20(call.token)?;
-                Ok(IB20Factory::isB20Call::abi_encode_returns(&result).into())
-            }
-            IB20Factory::IB20FactoryCalls::isB20Initialized(call) => {
-                let initialized = self.is_b20_initialized(call.token)?;
-                Ok(IB20Factory::isB20InitializedCall::abi_encode_returns(&initialized).into())
-            }
-        }
+            C::isB20(call) => self.is_b20(call.token)?.abi_encode(),
+            C::isB20Initialized(call) => self.is_b20_initialized(call.token)?.abi_encode(),
+        };
+        Ok(encoded.into())
     }
 
     fn run_create_b20(
@@ -87,7 +75,7 @@ impl B20FactoryStorage<'_> {
             address_hash,
             upgrade,
         )?;
-        Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
+        Ok(token.abi_encode().into())
     }
 }
 

@@ -25,16 +25,6 @@ impl B20Logic {
     /// `type(uint128).max`, a `uint128` multiplier keeps `balance * multiplier` inside `uint256`.
     pub const MAX_UI_MULTIPLIER: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
 
-    /// Ensures the caller holds the asset operator role (unless privileged).
-    fn ensure_operator_role<S: AssetAccounting, A: PolicyAccounting>(
-        &self,
-        token: &B20Token<S, A>,
-        caller: Address,
-        privileged: bool,
-    ) -> Result<()> {
-        if privileged { Ok(()) } else { token.ensure_role(caller, Self::OPERATOR_ROLE) }
-    }
-
     /// Sets the current multiplier. V1 just writes it; from V2 it is an instantaneous failsafe
     /// that also clears any pending update (emitting `UIMultiplierUpdateCancelled` for a live
     /// one) and emits the ERC-8056 `UIMultiplierUpdated` after the legacy `MultiplierUpdated`.
@@ -46,7 +36,7 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         if self.version == B20Version::V1 {
-            self.ensure_operator_role(token, caller, privileged)?;
+            token.ensure_role_unless(privileged, caller, Self::OPERATOR_ROLE)?;
             if new_multiplier.is_zero() {
                 return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
             }
@@ -56,7 +46,7 @@ impl B20Logic {
             );
         }
         let now = token.accounting.timestamp()?;
-        self.ensure_operator_role(token, caller, privileged)?;
+        token.ensure_role_unless(privileged, caller, Self::OPERATOR_ROLE)?;
         if new_multiplier.is_zero() || new_multiplier > Self::MAX_UI_MULTIPLIER {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
         }
@@ -100,9 +90,7 @@ impl B20Logic {
         value: String,
         privileged: bool,
     ) -> Result<()> {
-        if !privileged {
-            token.ensure_token_role(caller, B20TokenRole::Metadata)?;
-        }
+        token.ensure_role_unless(privileged, caller, B20TokenRole::Metadata.id())?;
         if key.is_empty() {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidMetadataKey {}));
         }
@@ -125,9 +113,7 @@ impl B20Logic {
         // mints run privileged to avoid re-checking per recipient. Check order: PAUSE -> ROLE ->
         // INPUT -> BUSINESS.
         token.ensure_not_paused(IB20::PausableFeature::MINT)?;
-        if !privileged {
-            token.ensure_token_role(caller, B20TokenRole::Mint)?;
-        }
+        token.ensure_role_unless(privileged, caller, B20TokenRole::Mint.id())?;
         if recipients.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Asset::LengthMismatch {
                 leftLen: U256::from(recipients.len()),
@@ -153,7 +139,7 @@ impl B20Logic {
         uri: String,
         privileged: bool,
     ) -> Result<()> {
-        self.ensure_operator_role(token, caller, privileged)?;
+        token.ensure_role_unless(privileged, caller, Self::OPERATOR_ROLE)?;
         if token.accounting.is_announcement_id_used(id.as_str())? {
             return Err(BasePrecompileError::revert(IB20Asset::AnnouncementIdAlreadyUsed { id }));
         }
@@ -262,7 +248,7 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         let now = token.accounting.timestamp()?;
-        self.ensure_operator_role(token, caller, privileged)?;
+        token.ensure_role_unless(privileged, caller, Self::OPERATOR_ROLE)?;
         if new_multiplier.is_zero() || new_multiplier > Self::MAX_UI_MULTIPLIER {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
         }
@@ -313,7 +299,7 @@ impl B20Logic {
         privileged: bool,
     ) -> Result<()> {
         let now = token.accounting.timestamp()?;
-        self.ensure_operator_role(token, caller, privileged)?;
+        token.ensure_role_unless(privileged, caller, Self::OPERATOR_ROLE)?;
         let pending_multiplier = U256::from(token.accounting.pending_multiplier()?);
         let pending_effective_at = U256::from(token.accounting.pending_effective_at()?);
         // A pending maturing at exactly `now` has already taken effect and is not cancellable.
@@ -349,14 +335,13 @@ mod tests {
 
         use alloy_primitives::{Address, B256, U256, keccak256};
         use alloy_sol_types::SolEvent;
-
-        use crate::{BasePrecompileError, Result};
         use k256::ecdsa::SigningKey;
 
         use crate::{
-            AssetAccounting, B20Logic, B20Version, B20AssetStorage, B20Token, B20PolicyType,
-            B20TokenRole, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, PermitArgs,
-            PolicyRegistryStorage, PolicyVersion, TokenAccounting,
+            AssetAccounting, B20AssetStorage, B20Logic, B20PolicyType, B20Token, B20TokenRole,
+            B20Version, BasePrecompileError, FakePolicyAccounting, IB20, IB20Asset,
+            InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion, Result,
+            TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x21);
@@ -946,14 +931,13 @@ mod tests {
 
         use alloy_primitives::{Address, B256, FixedBytes, LogData, U256, keccak256};
         use alloy_sol_types::SolEvent;
-
-        use crate::{BasePrecompileError, Result};
         use k256::ecdsa::SigningKey;
 
         use crate::{
-            AssetAccounting, B20Logic, B20Version, B20AssetStorage, B20Token, B20PolicyType,
-            B20TokenRole, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, PermitArgs,
-            PolicyRegistryStorage, PolicyVersion, TokenAccounting,
+            AssetAccounting, B20AssetStorage, B20Logic, B20PolicyType, B20Token, B20TokenRole,
+            B20Version, BasePrecompileError, FakePolicyAccounting, IB20, IB20Asset,
+            InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion, Result,
+            TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x21);
@@ -2249,14 +2233,13 @@ mod tests {
 
         use alloy_primitives::{Address, B256, FixedBytes, LogData, U256, keccak256};
         use alloy_sol_types::SolEvent;
-
-        use crate::BasePrecompileError;
         use k256::ecdsa::SigningKey;
 
         use crate::{
-            AssetAccounting, B20Logic, B20Version, B20AssetStorage, B20Token, B20PolicyType,
-            B20TokenRole, B20Variant, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting,
-            PermitArgs, PolicyRegistryStorage, PolicyVersion, TokenAccounting,
+            AssetAccounting, B20AssetStorage, B20Logic, B20PolicyType, B20Token, B20TokenRole,
+            B20Variant, B20Version, BasePrecompileError, FakePolicyAccounting, IB20, IB20Asset,
+            InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion,
+            TokenAccounting,
         };
 
         const TOKEN: Address = Address::repeat_byte(0x21);

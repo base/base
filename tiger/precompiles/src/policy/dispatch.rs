@@ -1,11 +1,13 @@
+use alloc::vec::Vec;
+
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::SolValue;
 use base_common_genesis::BaseUpgrade;
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, BasePrecompileError, Calldata,
+    ActivationFeature, ActivationRegistryStorage, Calldata,
     IPolicyRegistry::{self, IPolicyRegistryCalls as C}, PolicyRegistry, PolicyRegistryStorage,
-    PolicyVersions, PrecompileResult, StorageCtx,
+    PolicyVersions, PrecompileResult, Result, StorageCtx,
 };
 
 impl PolicyRegistryStorage<'_> {
@@ -19,20 +21,13 @@ impl PolicyRegistryStorage<'_> {
         calldata: &[u8],
         upgrade: BaseUpgrade,
     ) -> PrecompileResult {
-        if !ctx.call_value().is_zero() {
-            return ctx.error_result(BasePrecompileError::revert(IPolicyRegistry::NonPayable {}));
-        }
-        if let Err(error) = Calldata::deduct_gas(ctx, calldata) {
-            return ctx.error_result(error);
-        }
-        // Gate by hardfork: resolve the active version once. `None` is unreachable in
-        // practice — the precompile is only installed from Beryl — but we revert defensively.
-        let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
-            return ctx.error_result(BasePrecompileError::Revert(Bytes::new()));
-        };
-        // Views bypass the activation gate; writes need the feature activated. Every call clears
-        // the wire gate first, so malformed arguments fail regardless of activation state.
-        let result = version.decode(calldata).and_then(|call| {
+        // `None` (no active version) is unreachable in practice — the precompile is only installed
+        // from Beryl — but reverts defensively.
+        let version = PolicyVersions::from_base_upgrade(upgrade);
+        Calldata::dispatch(ctx, calldata, Some(IPolicyRegistry::NonPayable {}), version, |version| {
+            // Views bypass the activation gate; writes need the feature activated. Every call
+            // clears the wire gate first, so malformed arguments fail regardless of activation.
+            let call = version.decode(calldata)?;
             let view = matches!(
                 call,
                 C::isAuthorized(_)
@@ -48,108 +43,62 @@ impl PolicyRegistryStorage<'_> {
                 ActivationRegistryStorage::new(ctx)
                     .ensure_activated(ActivationFeature::PolicyRegistry.id())?;
             }
-            self.route(call, PolicyRegistry::new(version))
-        });
-        ctx.result_output(result, |b| b)
+            self.route(call, PolicyRegistry::new(version)).map(Bytes::from)
+        })
     }
 
-    /// Routes a decoded call to the active version's logic.
-    fn route(
-        &mut self,
-        call: C,
-        logic: PolicyRegistry,
-    ) -> crate::Result<Bytes> {
-        match call {
-            C::createPolicy(call) => {
-                let id = logic.create_policy(self, call.admin, call.policyType)?;
-                Ok(IPolicyRegistry::createPolicyCall::abi_encode_returns(&id).into())
+    /// Routes a decoded call to the active version's logic and ABI-encodes its return value
+    /// (empty for calls that return nothing).
+    fn route(&mut self, call: C, logic: PolicyRegistry) -> Result<Vec<u8>> {
+        Ok(match call {
+            C::createPolicy(c) => logic.create_policy(self, c.admin, c.policyType)?.abi_encode(),
+            C::createPolicyWithAccounts(c) => logic
+                .create_policy_with_accounts(self, c.admin, c.policyType, c.accounts)?
+                .abi_encode(),
+            C::stageUpdateAdmin(c) => {
+                logic.stage_update_admin(self, c.policyId, c.newAdmin)?;
+                Vec::new()
             }
-            C::createPolicyWithAccounts(call) => {
-                let id = logic.create_policy_with_accounts(
-                    self,
-                    call.admin,
-                    call.policyType,
-                    call.accounts,
-                )?;
-                Ok(IPolicyRegistry::createPolicyWithAccountsCall::abi_encode_returns(&id).into())
+            C::finalizeUpdateAdmin(c) => {
+                logic.finalize_update_admin(self, c.policyId)?;
+                Vec::new()
             }
-            C::stageUpdateAdmin(call) => {
-                logic.stage_update_admin(self, call.policyId, call.newAdmin)?;
-                Ok(Bytes::new())
+            C::renounceAdmin(c) => {
+                logic.renounce_admin(self, c.policyId)?;
+                Vec::new()
             }
-            C::finalizeUpdateAdmin(call) => {
-                logic.finalize_update_admin(self, call.policyId)?;
-                Ok(Bytes::new())
+            C::updateAllowlist(c) => {
+                logic.update_allowlist(self, c.policyId, c.allowed, c.accounts)?;
+                Vec::new()
             }
-            C::renounceAdmin(call) => {
-                logic.renounce_admin(self, call.policyId)?;
-                Ok(Bytes::new())
+            C::updateBlocklist(c) => {
+                logic.update_blocklist(self, c.policyId, c.blocked, c.accounts)?;
+                Vec::new()
             }
-            C::updateAllowlist(call) => {
-                logic.update_allowlist(self, call.policyId, call.allowed, call.accounts)?;
-                Ok(Bytes::new())
-            }
-            C::updateBlocklist(call) => {
-                logic.update_blocklist(self, call.policyId, call.blocked, call.accounts)?;
-                Ok(Bytes::new())
-            }
-            C::isAuthorized(call) => {
-                let authorized = logic.is_authorized(self, call.policyId, call.account)?;
-                Ok(IPolicyRegistry::isAuthorizedCall::abi_encode_returns(&authorized).into())
-            }
-            // Introduced in V2 (Cobalt). Version-invariant constants, answered without going
-            // through the logic trait.
+            C::isAuthorized(c) => logic.is_authorized(self, c.policyId, c.account)?.abi_encode(),
+            // Introduced in V2 (Cobalt), like the composite calls below.
             C::MIN_COMPOSITE_CHILD_POLICIES(_) => {
-                Ok(IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::abi_encode_returns(
-                    &U256::from(PolicyRegistry::MIN_CHILD_POLICIES),
-                )
-                .into())
+                U256::from(PolicyRegistry::MIN_CHILD_POLICIES).abi_encode()
             }
             C::MAX_COMPOSITE_CHILD_POLICIES(_) => {
-                Ok(IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::abi_encode_returns(
-                    &U256::from(PolicyRegistry::MAX_CHILD_POLICIES),
-                )
-                .into())
+                U256::from(PolicyRegistry::MAX_CHILD_POLICIES).abi_encode()
             }
-            C::policyExists(call) => {
-                let exists = logic.policy_exists(self, call.policyId)?;
-                Ok(IPolicyRegistry::policyExistsCall::abi_encode_returns(&exists).into())
+            C::policyExists(c) => logic.policy_exists(self, c.policyId)?.abi_encode(),
+            C::policyAdmin(c) => logic.get_policy_admin(self, c.policyId)?.abi_encode(),
+            C::pendingPolicyAdmin(c) => logic.pending_policy_admin(self, c.policyId)?.abi_encode(),
+            C::createCompositePolicy(c) => logic
+                .create_composite_policy(self, c.admin, c.policyType, c.childPolicyIds)?
+                .abi_encode(),
+            C::updateComposite(c) => {
+                logic.update_composite(self, c.policyId, c.childPolicyIds)?;
+                Vec::new()
             }
-            C::policyAdmin(call) => {
-                let admin = logic.get_policy_admin(self, call.policyId)?;
-                Ok(IPolicyRegistry::policyAdminCall::abi_encode_returns(&admin).into())
-            }
-            C::pendingPolicyAdmin(call) => {
-                let pending = logic.pending_policy_admin(self, call.policyId)?;
-                Ok(IPolicyRegistry::pendingPolicyAdminCall::abi_encode_returns(&pending).into())
-            }
-            // Introduced in V2 (Cobalt).
-            C::createCompositePolicy(call) => {
-                let id = logic.create_composite_policy(
-                    self,
-                    call.admin,
-                    call.policyType,
-                    call.childPolicyIds,
-                )?;
-                Ok(IPolicyRegistry::createCompositePolicyCall::abi_encode_returns(&id).into())
-            }
-            // Introduced in V2 (Cobalt).
-            C::updateComposite(call) => {
-                logic.update_composite(self, call.policyId, call.childPolicyIds)?;
-                Ok(Bytes::new())
-            }
-            // Introduced in V2 (Cobalt).
-            C::compositePolicyChildIds(call) => {
-                let children = logic.composite_policy_child_ids(self, call.policyId)?;
-                Ok(IPolicyRegistry::compositePolicyChildIdsCall::abi_encode_returns(&children)
-                    .into())
+            C::compositePolicyChildIds(c) => {
+                logic.composite_policy_child_ids(self, c.policyId)?.abi_encode()
             }
             // Introduced in V3 (Denim).
-            C::invertedPolicyId(call) => {
-                let policy_id = PolicyRegistry::inverted_policy_id(call.policyId);
-                Ok(IPolicyRegistry::invertedPolicyIdCall::abi_encode_returns(&policy_id).into())
-            }
-        }
+            C::invertedPolicyId(c) => PolicyRegistry::inverted_policy_id(c.policyId).abi_encode(),
+        })
     }
 }
 

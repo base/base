@@ -153,11 +153,9 @@ impl PermitArgs {
 mod tests {
     use alloy_primitives::{Address, B256, U256, keccak256};
     use alloy_sol_types::SolValue;
-
-    use crate::BasePrecompileError;
     use k256::ecdsa::SigningKey;
 
-    use crate::{IB20, PermitArgs};
+    use crate::{BasePrecompileError, IB20, PermitArgs};
 
     const SPENDER: Address = Address::repeat_byte(0xbb);
     const DOMAIN_SEPARATOR: B256 = B256::repeat_byte(0x77);

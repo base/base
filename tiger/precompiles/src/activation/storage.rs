@@ -33,16 +33,6 @@ impl ActivationAdminConfig {
     pub const fn new(fallback: Option<Address>, state_enabled: bool) -> Self {
         Self { fallback, state_enabled }
     }
-
-    /// Creates a static-only activation admin configuration.
-    pub const fn static_fallback(fallback: Option<Address>) -> Self {
-        Self::new(fallback, false)
-    }
-
-    /// Creates a state-backed activation admin configuration.
-    pub const fn state_backed(fallback: Option<Address>) -> Self {
-        Self::new(fallback, true)
-    }
 }
 
 /// Identifies a Base-native precompile feature in the activation registry.
@@ -140,7 +130,6 @@ impl ActivationRegistryStorage<'_> {
         if self.is_activated(feature)? {
             return Ok(());
         }
-
         Err(BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated { feature }))
     }
 
@@ -202,21 +191,13 @@ impl ActivationRegistryStorage<'_> {
         let caller = self.require_admin_caller(admin_config)?;
 
         let slot = Self::feature_slot(feature);
-        let current_activated_state = self.storage.read(Self::ADDRESS, slot)?;
-
-        let is_activating_and_already_activated = to_activated_state && current_activated_state;
-        let is_deactivating_and_already_deactivated =
-            !to_activated_state && !current_activated_state;
-
-        if is_activating_and_already_activated {
-            return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
-                feature,
-            }));
-        }
-        if is_deactivating_and_already_deactivated {
-            return Err(BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
-                feature,
-            }));
+        let current_activated_state: bool = self.storage.read(Self::ADDRESS, slot)?;
+        if current_activated_state == to_activated_state {
+            return Err(if to_activated_state {
+                BasePrecompileError::revert(IActivationRegistry::AlreadyActivated { feature })
+            } else {
+                BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated { feature })
+            });
         }
 
         let event = if to_activated_state {

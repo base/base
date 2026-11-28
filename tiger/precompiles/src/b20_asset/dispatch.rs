@@ -68,63 +68,46 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20Token<S, A> {
     ) -> crate::Result<Bytes> {
         let logic = B20Logic::asset(version);
         let caller = ctx.caller();
-        let encoded: Bytes = match call {
-            SC::OPERATOR_ROLE(_) => B20Logic::OPERATOR_ROLE.abi_encode().into(),
-            SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
-            SC::MAX_UI_MULTIPLIER(_) => B20Logic::MAX_UI_MULTIPLIER.abi_encode().into(),
+        let empty = |result: crate::Result<()>| result.map(|()| Vec::new());
+        let encoded: Vec<u8> = match call {
+            SC::OPERATOR_ROLE(_) => B20Logic::OPERATOR_ROLE.abi_encode(),
+            SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode(),
+            SC::MAX_UI_MULTIPLIER(_) => B20Logic::MAX_UI_MULTIPLIER.abi_encode(),
 
             // --- Multiplier reads ---
             SC::multiplier(_) | SC::uiMultiplier(_) => {
-                logic.effective_multiplier(self)?.abi_encode().into()
+                logic.effective_multiplier(self)?.abi_encode()
             }
-            SC::newUIMultiplier(_) => logic.new_ui_multiplier(self)?.abi_encode().into(),
-            SC::effectiveAt(_) => {
-                U256::from(self.accounting.pending_effective_at()?).abi_encode().into()
-            }
-            SC::toScaledBalance(c) => {
-                logic.to_scaled_balance(self, c.rawBalance)?.abi_encode().into()
-            }
-            SC::toRawBalance(c) => logic.to_raw_balance(self, c.scaledBalance)?.abi_encode().into(),
+            SC::newUIMultiplier(_) => logic.new_ui_multiplier(self)?.abi_encode(),
+            SC::effectiveAt(_) => U256::from(self.accounting.pending_effective_at()?).abi_encode(),
+            SC::toScaledBalance(c) => logic.to_scaled_balance(self, c.rawBalance)?.abi_encode(),
+            SC::toRawBalance(c) => logic.to_raw_balance(self, c.scaledBalance)?.abi_encode(),
             // ERC-8056 Conversion extension: aliases of `toScaledBalance` / `toRawBalance`.
-            SC::toUIAmount(c) => logic.to_scaled_balance(self, c.rawAmount)?.abi_encode().into(),
-            SC::fromUIAmount(c) => logic.to_raw_balance(self, c.uiAmount)?.abi_encode().into(),
-            SC::scaledBalanceOf(c) => logic.scaled_balance_of(self, c.account)?.abi_encode().into(),
-            SC::balanceOfUI(c) => logic.scaled_balance_of(self, c.account)?.abi_encode().into(),
-            SC::totalSupplyUI(_) => logic.total_supply_ui(self)?.abi_encode().into(),
+            SC::toUIAmount(c) => logic.to_scaled_balance(self, c.rawAmount)?.abi_encode(),
+            SC::fromUIAmount(c) => logic.to_raw_balance(self, c.uiAmount)?.abi_encode(),
+            SC::scaledBalanceOf(c) => logic.scaled_balance_of(self, c.account)?.abi_encode(),
+            SC::balanceOfUI(c) => logic.scaled_balance_of(self, c.account)?.abi_encode(),
+            SC::totalSupplyUI(_) => logic.total_supply_ui(self)?.abi_encode(),
 
             // --- ERC-165 ---
-            SC::supportsInterface(c) => {
-                B20Logic::supports_interface(c.interfaceId).abi_encode().into()
-            }
+            SC::supportsInterface(c) => B20Logic::supports_interface(c.interfaceId).abi_encode(),
 
-            // --- Announcement reads ---
+            // --- Announcement and extra metadata reads ---
             SC::isAnnouncementIdUsed(c) => {
-                self.accounting.is_announcement_id_used(c.id.as_str())?.abi_encode().into()
+                self.accounting.is_announcement_id_used(c.id.as_str())?.abi_encode()
             }
-
-            // --- Extra metadata reads ---
-            SC::extraMetadata(c) => {
-                self.accounting.extra_metadata(c.key.as_str())?.abi_encode().into()
-            }
+            SC::extraMetadata(c) => self.accounting.extra_metadata(c.key.as_str())?.abi_encode(),
 
             // --- Multiplier mutations ---
             SC::updateMultiplier(c) => {
-                logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
-                Bytes::new()
+                empty(logic.update_multiplier(self, caller, c.newMultiplier, privileged))?
             }
             SC::updateUIMultiplier(c) => {
-                logic.update_ui_multiplier(
-                    self,
-                    caller,
-                    c.newMultiplier,
-                    c.effectiveAt,
-                    privileged,
-                )?;
-                Bytes::new()
+                let (multiplier, at) = (c.newMultiplier, c.effectiveAt);
+                empty(logic.update_ui_multiplier(self, caller, multiplier, at, privileged))?
             }
             SC::cancelUIMultiplierUpdate(_) => {
-                logic.cancel_ui_multiplier_update(self, caller, privileged)?;
-                Bytes::new()
+                empty(logic.cancel_ui_multiplier_update(self, caller, privileged))?
             }
 
             // --- Announcement ---
@@ -133,23 +116,18 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20Token<S, A> {
             // executes correctly by feeding the owned call into the same runner via
             // `DecodedAnnounce::from_owned`.
             SC::announce(c) => {
-                self.run_announce(ctx, version, privileged, DecodedAnnounce::from_owned(&c))?;
-                Bytes::new()
+                empty(self.run_announce(ctx, version, privileged, DecodedAnnounce::from_owned(&c)))?
             }
 
-            // --- Batched mint ---
+            // --- Batched mint and extra metadata mutations ---
             SC::batchMint(c) => {
-                logic.batch_mint(self, caller, c.recipients, c.amounts, privileged)?;
-                Bytes::new()
+                empty(logic.batch_mint(self, caller, c.recipients, c.amounts, privileged))?
             }
-
-            // --- Extra metadata mutations ---
             SC::updateExtraMetadata(c) => {
-                logic.update_extra_metadata(self, caller, c.key, c.value, privileged)?;
-                Bytes::new()
+                empty(logic.update_extra_metadata(self, caller, c.key, c.value, privileged))?
             }
         };
-        Ok(encoded)
+        Ok(encoded.into())
     }
 
     /// Posts an announcement and atomically executes its internal calls via self-dispatch.

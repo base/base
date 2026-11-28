@@ -165,27 +165,20 @@ impl NativePrecompiles {
             NativePrecompile::PolicyRegistry => {
                 PolicyRegistryStorage::new(ctx).dispatch(ctx, calldata, upgrade)
             }
-            NativePrecompile::B20Asset => {
+            NativePrecompile::B20Asset | NativePrecompile::B20Stablecoin => {
                 let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
                     return Ok(PrecompileOutput::revert(0, Bytes::new()));
                 };
-                B20Token::with_storage_and_policy(
-                    B20AssetStorage::from_address(address, ctx),
-                    PolicyRegistryStorage::new(ctx),
-                    version,
-                )
-                .dispatch_asset(ctx, calldata, upgrade)
-            }
-            NativePrecompile::B20Stablecoin => {
-                let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
-                    return Ok(PrecompileOutput::revert(0, Bytes::new()));
-                };
-                B20Token::with_storage_and_policy(
-                    B20StablecoinStorage::from_address(address, ctx),
-                    PolicyRegistryStorage::new(ctx),
-                    version,
-                )
-                .dispatch_stablecoin(ctx, calldata, upgrade)
+                let policy = PolicyRegistryStorage::new(ctx);
+                if precompile == NativePrecompile::B20Asset {
+                    let asset = B20AssetStorage::from_address(address, ctx);
+                    B20Token::with_storage_and_policy(asset, policy, version)
+                        .dispatch_asset(ctx, calldata, upgrade)
+                } else {
+                    let stablecoin = B20StablecoinStorage::from_address(address, ctx);
+                    B20Token::with_storage_and_policy(stablecoin, policy, version)
+                        .dispatch_stablecoin(ctx, calldata, upgrade)
+                }
             }
             NativePrecompile::TxContext => TxContextStorage::new(ctx).dispatch(ctx, calldata),
             NativePrecompile::NonceManager => NonceManagerStorage::new(ctx).dispatch(ctx, calldata),

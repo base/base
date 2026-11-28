@@ -73,17 +73,6 @@ impl B20AssetStorage<'_> {
         self.storage.write(self.address, B20AssetExtensionStorage::DECIMALS, init.decimals)?;
         self.storage.write(self.address, B20AssetExtensionStorage::MULTIPLIER, init.multiplier)
     }
-
-    /// Writes the ERC-8056 pending schedule (multiplier and effective-at) with one SLOAD and one
-    /// SSTORE of the word they share, keeping its unused top 8 bytes.
-    pub fn write_pending(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
-        let slot = B20AssetExtensionStorage::PENDING;
-        let word = self.storage.sload(self.address, slot)?;
-        let word = StorageLayout::insert(word, 0, 16, U256::from(multiplier));
-        let effective_at = U256::from(effective_at);
-        let word = StorageLayout::insert(word, 16, StorageLayout::U64_BYTES, effective_at);
-        self.storage.sstore(self.address, slot, word)
-    }
 }
 
 impl AssetAccounting for B20AssetStorage<'_> {
@@ -113,12 +102,19 @@ impl AssetAccounting for B20AssetStorage<'_> {
         Ok(effective_at.to::<u64>())
     }
 
+    /// Writes the ERC-8056 pending schedule (multiplier and effective-at) with one SLOAD and one
+    /// SSTORE of the word they share, keeping its unused top 8 bytes.
     fn set_pending_and_effective_at(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
-        self.write_pending(multiplier, effective_at)
+        let slot = B20AssetExtensionStorage::PENDING;
+        let word = self.storage.sload(self.address, slot)?;
+        let word = StorageLayout::insert(word, 0, 16, U256::from(multiplier));
+        let effective_at = U256::from(effective_at);
+        let word = StorageLayout::insert(word, 16, StorageLayout::U64_BYTES, effective_at);
+        self.storage.sstore(self.address, slot, word)
     }
 
     fn clear_pending_multiplier_and_effective_at(&mut self) -> Result<()> {
-        self.write_pending(0, 0)
+        self.set_pending_and_effective_at(0, 0)
     }
 
     fn extra_metadata(&self, key: &str) -> Result<String> {
@@ -158,13 +154,11 @@ mod tests {
 
     use alloy_primitives::{Address, B256, U256, address};
 
-    use crate::{StorageCtx, StorageLayout, setup_storage};
-
     use super::{B20AssetExtensionStorage, B20AssetInit, B20AssetStorage};
 
     use crate::{
-        AssetAccounting, B20PolicyType, B20TokenKind, B20TokenRole, TokenAccounting,
-        TransferPolicyIds,
+        AssetAccounting, B20PolicyType, B20TokenKind, B20TokenRole, StorageCtx, StorageLayout,
+        TokenAccounting, TransferPolicyIds, setup_storage,
     };
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");

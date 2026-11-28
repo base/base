@@ -64,18 +64,15 @@ impl StorageCtx<'_> {
 }
 
 impl<'a> StorageCtx<'a> {
-    fn with_storage<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut dyn PrecompileStorageProvider) -> R,
-    {
+    fn with_storage<R>(&self, f: impl FnOnce(&mut dyn PrecompileStorageProvider) -> R) -> R {
         let mut guard = self.storage.borrow_mut();
         f(&mut **guard)
     }
 
-    fn try_with_storage<F, R>(&self, f: F) -> Result<R>
-    where
-        F: FnOnce(&mut dyn PrecompileStorageProvider) -> Result<R>,
-    {
+    fn try_with_storage<R>(
+        &self,
+        f: impl FnOnce(&mut dyn PrecompileStorageProvider) -> Result<R>,
+    ) -> Result<R> {
         let mut guard = self.storage.try_borrow_mut().map_err(|_| {
             BasePrecompileError::Fatal("Storage context is already mutably borrowed".to_string())
         })?;
@@ -90,17 +87,11 @@ impl<'a> StorageCtx<'a> {
         address: Address,
         mut f: impl FnMut(&AccountInfo) -> Result<T>,
     ) -> Result<T> {
-        let mut result: Option<Result<T>> = None;
-        self.try_with_storage(|s| {
-            s.with_account_info(address, &mut |info| {
-                result = Some(f(info));
-            })
-        })?;
-        result.unwrap_or_else(|| {
-            Err(BasePrecompileError::Fatal(
-                "with_account_info callback was not invoked".to_string(),
-            ))
-        })
+        let mut result = None;
+        let mut record = |info: &AccountInfo| result = Some(f(info));
+        self.try_with_storage(|s| s.with_account_info(address, &mut record))?;
+        let message = "with_account_info callback was not invoked";
+        result.unwrap_or_else(|| Err(BasePrecompileError::Fatal(message.to_string())))
     }
 
     /// Returns the current chain ID.
@@ -201,29 +192,20 @@ impl<'a> StorageCtx<'a> {
         CheckpointGuard { storage: *self, checkpoint: Some(checkpoint) }
     }
 
-    /// Returns a [`PrecompileResult`] constructed from the given error.
-    pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
-        error.into().into_precompile_result(self.gas_used(), self.storage_features())
-    }
-
-    /// Converts a `Result<T>` into a [`PrecompileResult`] with the call's gas accounting.
+    /// Converts a call's result into a [`PrecompileResult`] with its gas accounting.
     ///
-    /// On success, `encode_ok` encodes the value and the output carries `gas_used` and the
+    /// On success, the output carries the encoded return value, `gas_used` and the
     /// accumulated `gas_refunded`, which the frame handler adds to the transaction's refund
     /// counter (where the EIP-3529 cap applies). On error, the output carries no refund; see
     /// [`BasePrecompileError::into_precompile_result`].
-    pub fn result_output<T>(
-        &self,
-        result: Result<T>,
-        encode_ok: impl FnOnce(T) -> Bytes,
-    ) -> PrecompileResult {
+    pub fn result_output(&self, result: Result<Bytes>) -> PrecompileResult {
         match result {
             Ok(output) => {
-                let mut out = PrecompileOutput::new(self.gas_used(), encode_ok(output));
+                let mut out = PrecompileOutput::new(self.gas_used(), output);
                 out.gas_refunded = self.gas_refunded();
                 Ok(out)
             }
-            Err(error) => self.error_result(error),
+            Err(error) => error.into_precompile_result(self.gas_used(), self.storage_features()),
         }
     }
 }
@@ -369,7 +351,7 @@ mod tests {
             ctx.sstore(addr, key, U256::from(42)).unwrap();
             ctx.sstore(addr, key, U256::ZERO).unwrap();
 
-            ctx.result_output::<Bytes>(Ok(Bytes::new()), |b| b)
+            ctx.result_output(Ok(Bytes::new()))
         })
         .unwrap();
 
@@ -387,7 +369,7 @@ mod tests {
             ctx.sstore(addr, key, U256::from(1)).unwrap();
             ctx.sstore(addr, key, U256::ZERO).unwrap();
 
-            ctx.result_output::<Bytes>(Err(BasePrecompileError::Revert(Bytes::new())), |b| b)
+            ctx.result_output(Err(BasePrecompileError::Revert(Bytes::new())))
         })
         .unwrap();
 
@@ -403,7 +385,7 @@ mod tests {
 
         let mut legacy = HashMapStorageProvider::new(1);
         let legacy_output = StorageCtx::enter(&mut legacy, |ctx| {
-            ctx.result_output::<Bytes>(Err(error()), |output| output)
+            ctx.result_output(Err(error()))
         })
         .unwrap();
         assert_eq!(
@@ -416,7 +398,7 @@ mod tests {
             StorageFeatures::Cobalt,
         );
         let cobalt_output = StorageCtx::enter(&mut cobalt, |ctx| {
-            ctx.result_output::<Bytes>(Err(error()), |output| output)
+            ctx.result_output(Err(error()))
         })
         .unwrap();
         assert_eq!(cobalt_output.bytes, Bytes::from(selector.to_vec()));
@@ -427,7 +409,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
-            ctx.result_output::<Bytes>(Ok(Bytes::new()), |b| b)
+            ctx.result_output(Ok(Bytes::new()))
         })
         .unwrap();
 

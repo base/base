@@ -152,25 +152,21 @@ impl PolicyRegistry {
         policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID
     }
 
-    /// Reverts `ChildPoliciesOutsideOfRange` when the child count is outside `[2, 4]`.
-    fn require_child_policy_in_range(child_policy_ids: &[u64]) -> Result<()> {
+    /// Requires a composite's children to number within `[2, 4]` and each to be a created,
+    /// custom, simple policy. Two passes so `PolicyNotFound` (any non-existent child) takes
+    /// precedence over `InvalidChildPolicy` (a built-in sentinel or a composite) across the whole
+    /// set — the canonical revert order.
+    fn validate_children<S: PolicyAccounting>(
+        &self,
+        storage: &S,
+        child_policy_ids: &[u64],
+    ) -> Result<()> {
         let count = child_policy_ids.len();
         if !(Self::MIN_CHILD_POLICIES..=Self::MAX_CHILD_POLICIES).contains(&count) {
             return Err(BasePrecompileError::revert(
                 IPolicyRegistry::ChildPoliciesOutsideOfRange {},
             ));
         }
-        Ok(())
-    }
-
-    /// Requires every composite child to be a created, custom, simple policy. Two passes so
-    /// `PolicyNotFound` (any non-existent child) takes precedence over `InvalidChildPolicy`
-    /// (a built-in sentinel or a composite) across the whole set — the canonical revert order.
-    fn validate_composite_child_policies<S: PolicyAccounting>(
-        &self,
-        storage: &S,
-        child_policy_ids: &[u64],
-    ) -> Result<()> {
         for &child in child_policy_ids {
             // Reverts PolicyNotFound when the child's base policy does not exist.
             self.require_existing_policy(storage, self.base_policy_id(child))?;
@@ -184,6 +180,41 @@ impl PolicyRegistry {
             }
         }
         Ok(())
+    }
+
+    /// Writes the children of composite `policy_id` and emits `CompositePolicyUpdated`.
+    fn write_children<S: PolicyAccounting>(
+        storage: &mut S,
+        policy_id: u64,
+        child_policy_ids: Vec<u64>,
+    ) -> Result<()> {
+        storage.write_children(policy_id, &child_policy_ids)?;
+        let updater = storage.caller();
+        storage.emit_event(
+            IPolicyRegistry::CompositePolicyUpdated {
+                policyId: policy_id,
+                updater,
+                childPolicyIds: child_policy_ids,
+            }
+            .encode_log_data(),
+        )
+    }
+
+    /// Emits `PolicyAdminUpdated`.
+    fn emit_admin_updated<S: PolicyAccounting>(
+        storage: &mut S,
+        policy_id: u64,
+        previous_admin: Address,
+        new_admin: Address,
+    ) -> Result<()> {
+        storage.emit_event(
+            IPolicyRegistry::PolicyAdminUpdated {
+                policyId: policy_id,
+                previousAdmin: previous_admin,
+                newAdmin: new_admin,
+            }
+            .encode_log_data(),
+        )
     }
 
     /// Validates policy-creation inputs and returns the raw policy type discriminator.
@@ -224,14 +255,8 @@ impl PolicyRegistry {
         if counter >= Self::BUILTIN_POLICY_COUNT {
             return Ok(counter);
         }
-        debug_assert_eq!(
-            Self::make_id(PolicyType::BLOCKLIST as u8, 0),
-            Self::ALWAYS_ALLOW_ID
-        );
-        debug_assert_eq!(
-            Self::make_id(PolicyType::ALLOWLIST as u8, 1),
-            Self::ALWAYS_BLOCK_ID
-        );
+        const { assert!(Self::make_id(PolicyType::BLOCKLIST as u8, 0) == Self::ALWAYS_ALLOW_ID) };
+        const { assert!(Self::make_id(PolicyType::ALLOWLIST as u8, 1) == Self::ALWAYS_BLOCK_ID) };
         storage.mark_initialized()?;
         let builtin = PackedPolicy::new(Address::ZERO).into_u256();
         storage.write_policy_word(Self::ALWAYS_ALLOW_ID, builtin)?;
@@ -256,23 +281,13 @@ impl PolicyRegistry {
         let policy_id = Self::make_id(policy_type_u8, counter);
         storage.write_policy_word(policy_id, PackedPolicy::new(admin).into_u256())?;
 
-        let caller = storage.caller();
+        let creator = storage.caller();
         storage.emit_event(
-            IPolicyRegistry::PolicyCreated {
-                policyId: policy_id,
-                creator: caller,
-                policyType: policy_type,
-            }
-            .encode_log_data(),
+            IPolicyRegistry::PolicyCreated { policyId: policy_id, creator, policyType: policy_type }
+                .encode_log_data(),
         )?;
-        storage.emit_event(
-            IPolicyRegistry::PolicyAdminUpdated {
-                policyId: policy_id,
-                previousAdmin: Address::ZERO,
-                newAdmin: admin,
-            }
-            .encode_log_data(),
-        )?;
+        let previous_admin = Address::ZERO;
+        Self::emit_admin_updated(storage, policy_id, previous_admin, admin)?;
 
         Ok(policy_id)
     }
@@ -329,31 +344,23 @@ impl PolicyRegistry {
         let policy_type_u8 = self.validate_create_policy_inputs(admin, policy_type)?;
         Self::require_account_batch_size(&accounts)?;
         let policy_id = self.create_policy_inner(storage, admin, policy_type, policy_type_u8)?;
-        let caller = storage.caller();
+        let updater = storage.caller();
         for account in &accounts {
             storage.set_member(policy_id, *account)?;
         }
-        match policy_type {
-            PolicyType::ALLOWLIST => storage.emit_event(
-                IPolicyRegistry::AllowlistUpdated {
-                    policyId: policy_id,
-                    updater: caller,
-                    allowed: true,
-                    accounts,
-                }
-                .encode_log_data(),
-            )?,
-            PolicyType::BLOCKLIST => storage.emit_event(
-                IPolicyRegistry::BlocklistUpdated {
-                    policyId: policy_id,
-                    updater: caller,
-                    blocked: true,
-                    accounts,
-                }
-                .encode_log_data(),
-            )?,
+        let (id, allowed, blocked) = (policy_id, true, true);
+        let log = match policy_type {
+            PolicyType::ALLOWLIST => {
+                IPolicyRegistry::AllowlistUpdated { policyId: id, updater, allowed, accounts }
+                    .encode_log_data()
+            }
+            PolicyType::BLOCKLIST => {
+                IPolicyRegistry::BlocklistUpdated { policyId: id, updater, blocked, accounts }
+                    .encode_log_data()
+            }
             _ => return Err(BasePrecompileError::enum_conversion_error()),
-        }
+        };
+        storage.emit_event(log)?;
         Ok(policy_id)
     }
 
@@ -371,21 +378,11 @@ impl PolicyRegistry {
         if !matches!(policy_type, PolicyType::UNION | PolicyType::INTERSECT) {
             return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
         }
-        Self::require_child_policy_in_range(&child_policy_ids)?;
-        self.validate_composite_child_policies(storage, &child_policy_ids)?;
-
+        self.validate_children(storage, &child_policy_ids)?;
         // Reuse the simple create core for counter/ID/PolicyCreated+PolicyAdminUpdated events.
         let policy_id =
             self.create_policy_inner(storage, admin, policy_type, policy_type as u8)?;
-        storage.write_children(policy_id, &child_policy_ids)?;
-        storage.emit_event(
-            IPolicyRegistry::CompositePolicyUpdated {
-                policyId: policy_id,
-                updater: storage.caller(),
-                childPolicyIds: child_policy_ids,
-            }
-            .encode_log_data(),
-        )?;
+        Self::write_children(storage, policy_id, child_policy_ids)?;
         Ok(policy_id)
     }
 
@@ -403,19 +400,8 @@ impl PolicyRegistry {
         if packed.admin() != storage.caller() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
         }
-        Self::require_child_policy_in_range(&child_policy_ids)?;
-        self.validate_composite_child_policies(storage, &child_policy_ids)?;
-
-        storage.write_children(policy_id, &child_policy_ids)?;
-        storage.emit_event(
-            IPolicyRegistry::CompositePolicyUpdated {
-                policyId: policy_id,
-                updater: storage.caller(),
-                childPolicyIds: child_policy_ids,
-            }
-            .encode_log_data(),
-        )?;
-        Ok(())
+        self.validate_children(storage, &child_policy_ids)?;
+        Self::write_children(storage, policy_id, child_policy_ids)
     }
 
     /// Stages a pending admin transfer for `policy_id`.
@@ -441,8 +427,7 @@ impl PolicyRegistry {
                 pendingAdmin: new_admin,
             }
             .encode_log_data(),
-        )?;
-        Ok(())
+        )
     }
 
     /// Completes a pending admin transfer; caller must be the staged pending admin.
@@ -460,34 +445,17 @@ impl PolicyRegistry {
         if pending != caller {
             return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
         }
-        let previous_admin = packed.admin();
-        storage.write_policy_word(policy_id, packed.with_admin(caller).into_u256())?;
+        storage.write_policy_word(policy_id, PackedPolicy::new(caller).into_u256())?;
         storage.delete_pending_admin(policy_id)?;
-        storage.emit_event(
-            IPolicyRegistry::PolicyAdminUpdated {
-                policyId: policy_id,
-                previousAdmin: previous_admin,
-                newAdmin: caller,
-            }
-            .encode_log_data(),
-        )?;
-        Ok(())
+        Self::emit_admin_updated(storage, policy_id, packed.admin(), caller)
     }
 
     /// Permanently relinquishes admin of `policy_id`.
     pub fn renounce_admin<S: PolicyAccounting>(&self, storage: &mut S, policy_id: u64) -> Result<()> {
-        let (packed, caller) = self.require_admin(storage, policy_id)?;
-        storage.write_policy_word(policy_id, packed.with_admin(Address::ZERO).into_u256())?;
+        let (_, caller) = self.require_admin(storage, policy_id)?;
+        storage.write_policy_word(policy_id, PackedPolicy::new(Address::ZERO).into_u256())?;
         storage.delete_pending_admin(policy_id)?;
-        storage.emit_event(
-            IPolicyRegistry::PolicyAdminUpdated {
-                policyId: policy_id,
-                previousAdmin: caller,
-                newAdmin: Address::ZERO,
-            }
-            .encode_log_data(),
-        )?;
-        Ok(())
+        Self::emit_admin_updated(storage, policy_id, caller, Address::ZERO)
     }
 
     /// Adds or removes `accounts` from an ALLOWLIST policy's member set.
@@ -498,17 +466,11 @@ impl PolicyRegistry {
         allowed: bool,
         accounts: Vec<Address>,
     ) -> Result<()> {
-        let caller =
+        let updater =
             self.update_membership(storage, policy_id, Self::ALLOWLIST_TYPE, allowed, &accounts)?;
-        storage.emit_event(
-            IPolicyRegistry::AllowlistUpdated {
-                policyId: policy_id,
-                updater: caller,
-                allowed,
-                accounts,
-            }
-            .encode_log_data(),
-        )
+        let id = policy_id;
+        let log = IPolicyRegistry::AllowlistUpdated { policyId: id, updater, allowed, accounts };
+        storage.emit_event(log.encode_log_data())
     }
 
     /// Adds or removes `accounts` from a BLOCKLIST policy's member set.
@@ -519,17 +481,11 @@ impl PolicyRegistry {
         blocked: bool,
         accounts: Vec<Address>,
     ) -> Result<()> {
-        let caller =
+        let updater =
             self.update_membership(storage, policy_id, Self::BLOCKLIST_TYPE, blocked, &accounts)?;
-        storage.emit_event(
-            IPolicyRegistry::BlocklistUpdated {
-                policyId: policy_id,
-                updater: caller,
-                blocked,
-                accounts,
-            }
-            .encode_log_data(),
-        )
+        let id = policy_id;
+        let log = IPolicyRegistry::BlocklistUpdated { policyId: id, updater, blocked, accounts };
+        storage.emit_event(log.encode_log_data())
     }
 
     /// Returns whether `account` is authorized under `policy_id`.

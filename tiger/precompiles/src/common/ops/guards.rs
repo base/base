@@ -24,6 +24,11 @@ impl<S: TokenAccounting, A: PolicyAccounting> B20Token<S, A> {
         }))
     }
 
+    /// Ensures `caller` holds `role` unless the call is factory-privileged.
+    pub fn ensure_role_unless(&self, privileged: bool, caller: Address, role: B256) -> Result<()> {
+        if privileged { Ok(()) } else { self.ensure_role(caller, role) }
+    }
+
     /// Ensures `feature` is not paused.
     pub fn ensure_not_paused(&self, feature: IB20::PausableFeature) -> Result<()> {
         if (self.accounting.paused()? & B20PausableFeature::mask(feature)) == U256::ZERO {

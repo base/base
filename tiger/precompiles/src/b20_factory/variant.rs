@@ -1,7 +1,6 @@
 //! B-20 token variant address derivation.
 
-use alloy_primitives::{Address, B256, keccak256};
-use alloy_sol_types::SolValue;
+use alloy_primitives::{Address, B256};
 
 use crate::{ActivationFeature, IB20Factory};
 
@@ -110,14 +109,6 @@ impl B20Variant {
         [Self::PREFIX_BYTE, 0, 0, 0, 0, 0, 0, 0, 0, 0, self.discriminant()]
     }
 
-    /// Computes this variant's deterministic token address for `creator` and `salt`.
-    ///
-    /// Returns the address and the 9-byte hash tail embedded in the address.
-    pub fn compute_address(self, creator: Address, salt: B256) -> (Address, [u8; 9]) {
-        let hash = keccak256((creator, salt).abi_encode());
-        self.compute_address_from_hash(hash)
-    }
-
     /// Computes the deterministic token address from a pre-computed `keccak256(creator, salt)` hash.
     ///
     /// Use when the hash is already available (e.g. after charging keccak gas via `ctx.metered_keccak256`)
@@ -128,25 +119,6 @@ impl B20Variant {
 
         let mut addr_bytes = [0u8; 20];
         addr_bytes[..11].copy_from_slice(&self.address_prefix());
-        addr_bytes[11..].copy_from_slice(&tail);
-
-        (Address::from(addr_bytes), tail)
-    }
-
-    /// Computes a deterministic B-20 token address for an ABI discriminant.
-    pub fn compute_address_for_discriminant(
-        creator: Address,
-        variant: u8,
-        salt: B256,
-    ) -> (Address, [u8; 9]) {
-        let hash = keccak256((creator, salt).abi_encode());
-
-        let mut tail = [0u8; 9];
-        tail.copy_from_slice(&hash[..9]);
-
-        let mut addr_bytes = [0u8; 20];
-        addr_bytes[0] = Self::PREFIX_BYTE;
-        addr_bytes[10] = variant;
         addr_bytes[11..].copy_from_slice(&tail);
 
         (Address::from(addr_bytes), tail)
