@@ -648,7 +648,6 @@ mod tests {
         use alloy_primitives::{Address, U256, address};
         use alloy_sol_types::SolEvent;
         use base_tiger_precompile_storage::{BasePrecompileError, Result};
-        use rstest::rstest;
 
         use crate::{
             FakePolicyAccounting, IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyRegistry, PolicyVersion,
@@ -1152,68 +1151,99 @@ mod tests {
             assert_eq!(LOGIC.pending_policy_admin(&rt, nonexistent).unwrap(), Address::ZERO);
         }
 
-        #[rstest]
-        #[case::update_allowlist_on_blocklist(
-            create_blocklist,
-            ADMIN,
-            |mut rt: Storage, id: u64| LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]),
-            BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
-        )]
-        #[case::update_blocklist_on_allowlist(
-            create_allowlist,
-            ADMIN,
-            |mut rt: Storage, id: u64| LOGIC.update_blocklist(&mut rt, id, true, vec![ALICE]),
-            BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
-        )]
-        #[case::update_allowlist_on_blocklist_as_non_admin(
-            create_blocklist,
-            ALICE,
-            |mut rt: Storage, id: u64| LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]),
-            BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
-        )]
-        #[case::update_blocklist_on_allowlist_as_non_admin(
-            create_allowlist,
-            ALICE,
-            |mut rt: Storage, id: u64| LOGIC.update_blocklist(&mut rt, id, true, vec![ALICE]),
-            BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
-        )]
-        #[case::finalize_admin_without_pending(
-            create_allowlist,
-            ADMIN,
-            |mut rt: Storage, id: u64| LOGIC.finalize_update_admin(&mut rt, id),
-            BasePrecompileError::revert(IPolicyRegistry::NoPendingAdmin {})
-        )]
-        #[case::stage_admin_as_non_admin(
-            create_allowlist,
-            ALICE,
-            |mut rt: Storage, id: u64| LOGIC.stage_update_admin(&mut rt, id, NEW_ADMIN),
-            BasePrecompileError::revert(IPolicyRegistry::Unauthorized {})
-        )]
-        #[case::update_allowlist_after_renounce(
-            create_allowlist,
-            ADMIN,
-            |mut rt: Storage, id: u64| {
-                LOGIC.renounce_admin(&mut rt, id).unwrap();
-                LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE])
-            },
-            BasePrecompileError::revert(IPolicyRegistry::Unauthorized {})
-        )]
-        #[case::renounce_admin_as_non_admin(
-            create_allowlist,
-            ALICE,
-            |mut rt: Storage, id: u64| LOGIC.renounce_admin(&mut rt, id),
-            BasePrecompileError::revert(IPolicyRegistry::Unauthorized {})
-        )]
         fn rejected_operation_reverts(
-            #[case] create: fn(&mut Storage) -> u64,
-            #[case] caller: Address,
-            #[case] operation: fn(Storage, u64) -> Result<()>,
-            #[case] expected: BasePrecompileError,
+            create: fn(&mut Storage) -> u64,
+            caller: Address,
+            operation: impl FnOnce(Storage, u64) -> Result<()>,
+            expected: BasePrecompileError,
         ) {
             let mut rt = initialized();
             let id = create(&mut rt);
             set_caller(&mut rt, caller);
             assert_eq!(operation(rt, id).unwrap_err(), expected);
+        }
+
+        #[test]
+        fn update_allowlist_on_blocklist_reverts() {
+            rejected_operation_reverts(
+                create_blocklist,
+                ADMIN,
+                |mut rt, id| LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]),
+                BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}),
+            );
+        }
+
+        #[test]
+        fn update_blocklist_on_allowlist_reverts() {
+            rejected_operation_reverts(
+                create_allowlist,
+                ADMIN,
+                |mut rt, id| LOGIC.update_blocklist(&mut rt, id, true, vec![ALICE]),
+                BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}),
+            );
+        }
+
+        #[test]
+        fn update_allowlist_on_blocklist_as_non_admin_reverts() {
+            rejected_operation_reverts(
+                create_blocklist,
+                ALICE,
+                |mut rt, id| LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]),
+                BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}),
+            );
+        }
+
+        #[test]
+        fn update_blocklist_on_allowlist_as_non_admin_reverts() {
+            rejected_operation_reverts(
+                create_allowlist,
+                ALICE,
+                |mut rt, id| LOGIC.update_blocklist(&mut rt, id, true, vec![ALICE]),
+                BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}),
+            );
+        }
+
+        #[test]
+        fn finalize_admin_without_pending_reverts() {
+            rejected_operation_reverts(
+                create_allowlist,
+                ADMIN,
+                |mut rt, id| LOGIC.finalize_update_admin(&mut rt, id),
+                BasePrecompileError::revert(IPolicyRegistry::NoPendingAdmin {}),
+            );
+        }
+
+        #[test]
+        fn stage_admin_as_non_admin_reverts() {
+            rejected_operation_reverts(
+                create_allowlist,
+                ALICE,
+                |mut rt, id| LOGIC.stage_update_admin(&mut rt, id, NEW_ADMIN),
+                BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}),
+            );
+        }
+
+        #[test]
+        fn update_allowlist_after_renounce_reverts() {
+            rejected_operation_reverts(
+                create_allowlist,
+                ADMIN,
+                |mut rt, id| {
+                    LOGIC.renounce_admin(&mut rt, id).unwrap();
+                    LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE])
+                },
+                BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}),
+            );
+        }
+
+        #[test]
+        fn renounce_admin_as_non_admin_reverts() {
+            rejected_operation_reverts(
+                create_allowlist,
+                ALICE,
+                |mut rt, id| LOGIC.renounce_admin(&mut rt, id),
+                BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}),
+            );
         }
 
     }

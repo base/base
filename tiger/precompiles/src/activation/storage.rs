@@ -265,7 +265,6 @@ mod tests {
     use base_tiger_precompile_storage::{
         BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, StorageLayout,
     };
-    use rstest::rstest;
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IActivationRegistry,
@@ -507,41 +506,12 @@ mod tests {
         assert_activated(&mut storage, true);
     }
 
-    #[rstest]
-    #[case::state_backed_admin_is_disabled(
-        STATIC_ADMIN_CONFIG,
-        NEW_ADMIN,
-        ADMIN,
-        false,
-        BasePrecompileError::revert(IActivationRegistry::AdminStorageNotEnabled {})
-    )]
-    #[case::zero_address(
-        STATE_ADMIN_CONFIG,
-        Address::ZERO,
-        ADMIN,
-        false,
-        BasePrecompileError::revert(IActivationRegistry::ZeroAdminAddress {})
-    )]
-    #[case::unauthorized_caller(
-        STATE_ADMIN_CONFIG,
-        NEW_ADMIN,
-        NEW_ADMIN,
-        false,
-        BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller: NEW_ADMIN })
-    )]
-    #[case::static_context(
-        STATE_ADMIN_CONFIG,
-        NEW_ADMIN,
-        ADMIN,
-        true,
-        BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {})
-    )]
     fn set_admin_reverts(
-        #[case] admin_config: ActivationAdminConfig,
-        #[case] new_admin: Address,
-        #[case] caller: Address,
-        #[case] is_static: bool,
-        #[case] expected_error: BasePrecompileError,
+        admin_config: ActivationAdminConfig,
+        new_admin: Address,
+        caller: Address,
+        is_static: bool,
+        expected_error: BasePrecompileError,
     ) {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_caller(caller);
@@ -553,6 +523,50 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(err, expected_error);
+    }
+
+    #[test]
+    fn set_admin_reverts_when_state_backed_admin_is_disabled() {
+        set_admin_reverts(
+            STATIC_ADMIN_CONFIG,
+            NEW_ADMIN,
+            ADMIN,
+            false,
+            BasePrecompileError::revert(IActivationRegistry::AdminStorageNotEnabled {}),
+        );
+    }
+
+    #[test]
+    fn set_admin_reverts_on_zero_address() {
+        set_admin_reverts(
+            STATE_ADMIN_CONFIG,
+            Address::ZERO,
+            ADMIN,
+            false,
+            BasePrecompileError::revert(IActivationRegistry::ZeroAdminAddress {}),
+        );
+    }
+
+    #[test]
+    fn set_admin_reverts_for_unauthorized_caller() {
+        set_admin_reverts(
+            STATE_ADMIN_CONFIG,
+            NEW_ADMIN,
+            NEW_ADMIN,
+            false,
+            BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller: NEW_ADMIN }),
+        );
+    }
+
+    #[test]
+    fn set_admin_reverts_in_static_context() {
+        set_admin_reverts(
+            STATE_ADMIN_CONFIG,
+            NEW_ADMIN,
+            ADMIN,
+            true,
+            BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {}),
+        );
     }
 
     #[test]
@@ -574,10 +588,7 @@ mod tests {
         assert_activated(&mut storage, false);
     }
 
-    #[rstest]
-    #[case::activate_when_active(Transition::Activate, true)]
-    #[case::deactivate_when_inactive(Transition::Deactivate, false)]
-    fn repeated_transition_reverts(#[case] transition: Transition, #[case] initially_active: bool) {
+    fn repeated_transition_reverts(transition: Transition, initially_active: bool) {
         let mut storage = HashMapStorageProvider::new(1);
 
         set_active(&mut storage, initially_active);
@@ -605,15 +616,10 @@ mod tests {
         assert_eq!(storage.get_events(ActivationRegistryStorage::ADDRESS).len(), events_before);
     }
 
-    #[rstest]
-    #[case::activate_unauthorized(Transition::Activate, InvalidContext::Unauthorized, false)]
-    #[case::deactivate_unauthorized(Transition::Deactivate, InvalidContext::Unauthorized, true)]
-    #[case::activate_static(Transition::Activate, InvalidContext::Static, false)]
-    #[case::deactivate_static(Transition::Deactivate, InvalidContext::Static, true)]
     fn invalid_context_cannot_change_activation(
-        #[case] transition: Transition,
-        #[case] context: InvalidContext,
-        #[case] initially_active: bool,
+        transition: Transition,
+        context: InvalidContext,
+        initially_active: bool,
     ) {
         let mut storage = HashMapStorageProvider::new(1);
 
@@ -623,6 +629,52 @@ mod tests {
 
         assert!(result.is_err());
         assert_activated(&mut storage, initially_active);
+    }
+
+    #[test]
+    fn activate_when_active_reverts() {
+        repeated_transition_reverts(Transition::Activate, true);
+    }
+
+    #[test]
+    fn deactivate_when_inactive_reverts() {
+        repeated_transition_reverts(Transition::Deactivate, false);
+    }
+
+    #[test]
+    fn unauthorized_caller_cannot_activate() {
+        invalid_context_cannot_change_activation(
+            Transition::Activate,
+            InvalidContext::Unauthorized,
+            false,
+        );
+    }
+
+    #[test]
+    fn unauthorized_caller_cannot_deactivate() {
+        invalid_context_cannot_change_activation(
+            Transition::Deactivate,
+            InvalidContext::Unauthorized,
+            true,
+        );
+    }
+
+    #[test]
+    fn static_context_cannot_activate() {
+        invalid_context_cannot_change_activation(
+            Transition::Activate,
+            InvalidContext::Static,
+            false,
+        );
+    }
+
+    #[test]
+    fn static_context_cannot_deactivate() {
+        invalid_context_cannot_change_activation(
+            Transition::Deactivate,
+            InvalidContext::Static,
+            true,
+        );
     }
 
     #[test]

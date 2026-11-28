@@ -241,7 +241,6 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `base-common-consensus` (store) | The Base transaction and receipt types the static-file codecs encode. |
 | `alloy-sol-types` | Solidity ABI encoding and decoding of the native precompile interfaces (`sol!`), and the node's decoding of revert reasons into RPC error messages as reth does. |
 | `k256` (dev) | Signing EIP-2612 permits in the B-20 permit tests (already in the tree through `alloy-primitives/k256`). |
-| `rstest` (dev) | Parameterized tests carried over unchanged from the base/base precompile crates. |
 
 ## Code copied from other projects
 

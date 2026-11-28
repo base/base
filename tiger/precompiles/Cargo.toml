@@ -25,7 +25,6 @@ alloy-primitives = { workspace = true, features = ["std", "k256"] }
 
 [dev-dependencies]
 k256.workspace = true
-rstest.workspace = true
 base-tiger-precompile-storage = { workspace = true, features = ["test-utils"] }
 
 [features]

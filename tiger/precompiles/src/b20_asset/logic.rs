@@ -351,7 +351,6 @@ mod tests {
         use alloy_sol_types::SolEvent;
         use base_tiger_precompile_storage::{BasePrecompileError, Result};
         use k256::ecdsa::SigningKey;
-        use rstest::rstest;
 
         use crate::{
             AssetAccounting, B20Logic, B20Version, B20AssetStorage, B20Token, B20PolicyType,
@@ -539,23 +538,9 @@ mod tests {
 
         /// Unprivileged callers are rejected by the access-control gate, which names the role the
         /// operation requires.
-        #[rstest]
-        #[case::mint(B20TokenRole::Mint.id(), |tok: &mut Tok| LOGIC.mint(tok, ALICE, BOB, U256::from(1u64), false))]
-        #[case::update_multiplier(B20Logic::OPERATOR_ROLE, |tok: &mut Tok| {
-            LOGIC.update_multiplier(tok, ALICE, B20AssetStorage::WAD, false)
-        })]
-        #[case::batch_mint(B20TokenRole::Mint.id(), |tok: &mut Tok| {
-            LOGIC.batch_mint(tok, ALICE, vec![BOB], vec![U256::from(1u64)], false)
-        })]
-        #[case::update_extra_metadata(B20TokenRole::Metadata.id(), |tok: &mut Tok| {
-            LOGIC.update_extra_metadata(tok, ALICE, "k".to_string(), "v".to_string(), false)
-        })]
-        #[case::begin_announce(B20Logic::OPERATOR_ROLE, |tok: &mut Tok| {
-            LOGIC.begin_announce(tok, ALICE, "id".to_string(), String::new(), String::new(), false)
-        })]
-        fn unprivileged_operations_require_role(
-            #[case] needed_role: B256,
-            #[case] op: fn(&mut Tok) -> Result<()>,
+        fn unprivileged_operation_requires_role(
+            needed_role: B256,
+            op: impl FnOnce(&mut Tok) -> Result<()>,
         ) {
             let mut tok = token();
             let err = op(&mut tok).unwrap_err();
@@ -566,6 +551,42 @@ mod tests {
                     neededRole: needed_role,
                 })
             );
+        }
+
+        #[test]
+        fn unprivileged_mint_requires_role() {
+            unprivileged_operation_requires_role(B20TokenRole::Mint.id(), |tok| {
+                LOGIC.mint(tok, ALICE, BOB, U256::from(1u64), false)
+            });
+        }
+
+        #[test]
+        fn unprivileged_update_multiplier_requires_role() {
+            unprivileged_operation_requires_role(B20Logic::OPERATOR_ROLE, |tok| {
+                LOGIC.update_multiplier(tok, ALICE, B20AssetStorage::WAD, false)
+            });
+        }
+
+        #[test]
+        fn unprivileged_batch_mint_requires_role() {
+            unprivileged_operation_requires_role(B20TokenRole::Mint.id(), |tok| {
+                LOGIC.batch_mint(tok, ALICE, vec![BOB], vec![U256::from(1u64)], false)
+            });
+        }
+
+        #[test]
+        fn unprivileged_update_extra_metadata_requires_role() {
+            unprivileged_operation_requires_role(B20TokenRole::Metadata.id(), |tok| {
+                LOGIC.update_extra_metadata(tok, ALICE, "k".to_string(), "v".to_string(), false)
+            });
+        }
+
+        #[test]
+        fn unprivileged_begin_announce_requires_role() {
+            unprivileged_operation_requires_role(B20Logic::OPERATOR_ROLE, |tok| {
+                let id = "id".to_string();
+                LOGIC.begin_announce(tok, ALICE, id, String::new(), String::new(), false)
+            });
         }
 
         // --- burn ---
@@ -926,7 +947,6 @@ mod tests {
         use alloy_sol_types::SolEvent;
         use base_tiger_precompile_storage::{BasePrecompileError, Result};
         use k256::ecdsa::SigningKey;
-        use rstest::rstest;
 
         use crate::{
             AssetAccounting, B20Logic, B20Version, B20AssetStorage, B20Token, B20PolicyType,
@@ -1153,17 +1173,10 @@ mod tests {
 
         /// Every privileged entry point rejects a caller lacking the required role with the same
         /// `AccessControlUnauthorizedAccount` revert.
-        #[rstest]
-        #[case(ALICE, B20TokenRole::Mint.id(), unauthorized_mint)]
-        #[case(ADMIN, B20TokenRole::Seize.id(), unauthorized_seize)]
-        #[case(ALICE, B20Logic::OPERATOR_ROLE, unauthorized_update_multiplier)]
-        #[case(ALICE, B20TokenRole::Mint.id(), unauthorized_batch_mint)]
-        #[case(ALICE, B20TokenRole::Metadata.id(), unauthorized_update_extra_metadata)]
-        #[case(ALICE, B20Logic::OPERATOR_ROLE, unauthorized_begin_announce)]
-        fn privileged_calls_require_role(
-            #[case] account: Address,
-            #[case] needed_role: B256,
-            #[case] call: fn(&mut Tok) -> Result<()>,
+        fn privileged_call_requires_role(
+            account: Address,
+            needed_role: B256,
+            call: fn(&mut Tok) -> Result<()>,
         ) {
             let mut tok = token();
             make_seizable(&mut tok);
@@ -1174,6 +1187,48 @@ mod tests {
                     account,
                     neededRole: needed_role,
                 })
+            );
+        }
+
+        #[test]
+        fn privileged_mint_requires_role() {
+            privileged_call_requires_role(ALICE, B20TokenRole::Mint.id(), unauthorized_mint);
+        }
+
+        #[test]
+        fn privileged_seize_requires_role() {
+            privileged_call_requires_role(ADMIN, B20TokenRole::Seize.id(), unauthorized_seize);
+        }
+
+        #[test]
+        fn privileged_update_multiplier_requires_role() {
+            privileged_call_requires_role(
+                ALICE,
+                B20Logic::OPERATOR_ROLE,
+                unauthorized_update_multiplier,
+            );
+        }
+
+        #[test]
+        fn privileged_batch_mint_requires_role() {
+            privileged_call_requires_role(ALICE, B20TokenRole::Mint.id(), unauthorized_batch_mint);
+        }
+
+        #[test]
+        fn privileged_update_extra_metadata_requires_role() {
+            privileged_call_requires_role(
+                ALICE,
+                B20TokenRole::Metadata.id(),
+                unauthorized_update_extra_metadata,
+            );
+        }
+
+        #[test]
+        fn privileged_begin_announce_requires_role() {
+            privileged_call_requires_role(
+                ALICE,
+                B20Logic::OPERATOR_ROLE,
+                unauthorized_begin_announce,
             );
         }
 
@@ -1316,27 +1371,10 @@ mod tests {
             );
         }
 
-        #[rstest]
-        #[case::transfer_receiver_policy_ignored_on_to(
-            Some((B20PolicyType::TransferReceiver, PolicyRegistryStorage::ALWAYS_BLOCK_ID)),
-            50,
-            None
-        )]
-        #[case::seize_receiver_policy_forbids(
-            Some((B20PolicyType::SeizeReceiver, PolicyRegistryStorage::ALWAYS_BLOCK_ID)),
-            1,
-            Some(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
-        )]
-        #[case::unset_receiver_policy_allows_any_destination(None, 50, None)]
-        #[case::seize_receiver_policy_allows(
-            Some((B20PolicyType::SeizeReceiver, PolicyRegistryStorage::ALWAYS_ALLOW_ID)),
-            50,
-            None
-        )]
         fn seize_receiver_policy(
-            #[case] policy: Option<(B20PolicyType, u64)>,
-            #[case] amount: u64,
-            #[case] forbidden_policy_id: Option<u64>,
+            policy: Option<(B20PolicyType, u64)>,
+            amount: u64,
+            forbidden_policy_id: Option<u64>,
         ) {
             let mut tok = token();
             fund(&mut tok, ALICE, U256::from(50u64));
@@ -1362,6 +1400,38 @@ mod tests {
                     assert_eq!(tok.accounting.balance_of(BOB).unwrap(), U256::from(amount));
                 }
             }
+        }
+
+        #[test]
+        fn transfer_receiver_policy_ignored_on_seize() {
+            seize_receiver_policy(
+                Some((B20PolicyType::TransferReceiver, PolicyRegistryStorage::ALWAYS_BLOCK_ID)),
+                50,
+                None,
+            );
+        }
+
+        #[test]
+        fn seize_receiver_policy_forbids() {
+            seize_receiver_policy(
+                Some((B20PolicyType::SeizeReceiver, PolicyRegistryStorage::ALWAYS_BLOCK_ID)),
+                1,
+                Some(PolicyRegistryStorage::ALWAYS_BLOCK_ID),
+            );
+        }
+
+        #[test]
+        fn unset_receiver_policy_allows_any_destination() {
+            seize_receiver_policy(None, 50, None);
+        }
+
+        #[test]
+        fn seize_receiver_policy_allows() {
+            seize_receiver_policy(
+                Some((B20PolicyType::SeizeReceiver, PolicyRegistryStorage::ALWAYS_ALLOW_ID)),
+                50,
+                None,
+            );
         }
 
         #[test]

@@ -65,7 +65,6 @@ webpki-roots = "1"
 
 # tests only
 k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
-rstest = "0.26.1"
 
 # serialization
 serde = { version = "1.0.228", default-features = false }
