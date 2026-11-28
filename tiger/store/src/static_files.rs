@@ -602,8 +602,9 @@ impl Jar {
         assert!(rows <= self.config.rows);
         let columns = self.config.header.segment.columns();
         let data_end = read_u64_at(&self.offsets, 1 + OFFSET_SIZE * rows * columns)?;
-        self.data.set_len(data_end)?;
+        // `.off` before data, as base-reth cuts them, so crash states stay ones base-reth makes.
         self.offsets.set_len(1 + OFFSET_SIZE * (rows * columns + 1))?;
+        self.data.set_len(data_end)?;
         sync(&self.path, &self.data)?;
         sync(&with_suffix(&self.path, ".off"), &self.offsets)?;
         self.config.rows = rows;
