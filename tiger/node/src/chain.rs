@@ -291,6 +291,9 @@ pub struct Chain {
     /// The values before each recent block of what it touched ([`crate::state::block_befores`]),
     /// within [`BEFORES_DEPTH`] of the head, for states below the head ([`Self::mem_before`]).
     befores: HashMap<B256, Arc<BlockChanges>>,
+    /// The depth bound of the last [`Self::prune`], while nothing it dropped could have come
+    /// back; `None` asks the next prune to walk every block.
+    pruned_low: Option<u64>,
     /// The first block the datadir holds: the genesis block, or a stateless start block.
     first: u64,
     /// The first block whose body and receipts the datadir holds: `first`, or above it in a
@@ -457,6 +460,7 @@ impl Chain {
             blocks: HashMap::default(),
             validations: HashMap::default(),
             befores: HashMap::default(),
+            pruned_low: None,
             first: genesis.header.number,
             earliest: genesis.header.number,
             earliest_state: genesis.header.number,
@@ -954,6 +958,9 @@ impl Chain {
             executed.receipts.clone(),
             Some(Arc::new(block_changes(&executed.changes))),
         ));
+        if self.pruned_low.is_some_and(|low| block.number() <= low) {
+            self.pruned_low = None;
+        }
         self.blocks.insert(hash, Arc::clone(&block));
         self.befores.insert(hash, Arc::new(block_befores(&executed.changes)));
         if let Some(validation) = validation {
@@ -1052,7 +1059,8 @@ impl Chain {
             return Ok(());
         }
         let fork_number = fork_block.number();
-        if fork_number == self.head.number() {
+        let extends = fork_number == self.head.number();
+        if extends {
             for block in branch {
                 self.extend_canon(Arc::clone(&block))?;
                 // The execution cache moves with the head when the head's child is added.
@@ -1071,7 +1079,14 @@ impl Chain {
             self.cache_head = self.head.hash;
         }
         self.forkchoice.head = head;
-        self.prune();
+        // Extending the head drops no block while the depth bound stays: every kept block
+        // still descends from a canonical one.
+        let low = self.head.number().saturating_sub(MEMORY_DEPTH).min(self.disk.0);
+        if extends && self.pruned_low == Some(low) {
+            self.prune_befores();
+        } else {
+            self.prune();
+        }
         Ok(())
     }
 
@@ -1360,9 +1375,16 @@ impl Chain {
             }
         }
         self.blocks = reachable;
+        self.pruned_low = Some(low);
         // Persisted blocks need no validation any more.
         let (blocks, disk) = (&self.blocks, self.disk.0);
         self.validations.retain(|hash, _| blocks.get(hash).is_some_and(|block| block.number() > disk));
+        self.prune_befores();
+    }
+
+    /// Drops the befores of blocks `BEFORES_DEPTH` or more below the head, or persisted.
+    fn prune_befores(&mut self) {
+        let (blocks, disk) = (&self.blocks, self.disk.0);
         let low = self.head.number().saturating_sub(BEFORES_DEPTH).max(disk);
         self.befores.retain(|hash, _| blocks.get(hash).is_some_and(|block| block.number() > low));
     }
