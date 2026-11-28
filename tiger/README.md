@@ -223,7 +223,7 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | --- | --- |
 | `evm2` | The EVM interpreter, gas schedule, and standard precompiles. |
 | `evm2-inspectors` | The access list inspector for `eth_createAccessList`, and the tracers for `debug_trace*` and `trace_*`. |
-| `alloy-primitives` | Addresses, hashes, U256, keccak. |
+| `alloy-primitives` | Addresses, hashes, U256, keccak. `map-foldhash`: alloy maps (B256Map, AddressMap) hash with foldhash instead of std SipHash, about 0.2% of import. |
 | `alloy-rlp` | RLP encoding of headers, transactions, receipts and trie nodes. |
 | `alloy-consensus`, `alloy-eips` | Ethereum header, transaction, receipt and EIP types that Base types build on. |
 | `base-common-consensus` | Base transaction and receipt envelopes, deposits, L1 info decoding, predeploy addresses. |

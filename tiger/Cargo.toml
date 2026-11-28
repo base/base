@@ -45,7 +45,7 @@ alloy-genesis = { version = "2.5.0", default-features = false }
 alloy-rpc-types-eth = { version = "2.5.0", default-features = false }
 alloy-rpc-types-engine = { version = "2.5.0", default-features = false }
 alloy-sol-types = { version = "1.6.1", default-features = false, features = ["std"] }
-alloy-primitives = { version = "1.6.1", default-features = false }
+alloy-primitives = { version = "1.6.1", default-features = false, features = ["map-foldhash"] }
 
 # build
 cc = "1.2"
