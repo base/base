@@ -26,7 +26,6 @@ base-tiger-net.workspace = true
 base-tiger-trie.workspace = true
 
 # base
-base-proof-mpt = { path = "../../crates/proof/mpt", default-features = false, features = ["std"] }
 base-common-flz = { workspace = true, features = ["std"] }
 base-common-genesis = { workspace = true, features = ["std"] }
 base-common-l1-fees.workspace = true

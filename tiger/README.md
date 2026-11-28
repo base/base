@@ -228,7 +228,6 @@ Every direct dependency and why it is here. Anything not listed is pulled in by 
 | `alloy-genesis` | Parsing geth-style genesis files, the format base-reth takes as `--chain`. |
 | `alloy-rpc-types-engine`, `base-common-rpc-types-engine` | Engine API payload, attribute, forkchoice and envelope wire types, and base-reth's payload id. |
 | `alloy-rpc-types-eth`, `base-common-rpc-types` | JSON-RPC block, transaction and receipt shapes, so responses serialize as base-reth's do. |
-| `base-proof-mpt` | Merkle Patricia trie over hash-addressed nodes, used for witness state and the node's state until `trie/` replaces it. |
 | `serde`, `serde_json` | JSON-RPC and the diff adapter protocol. |
 | `secp256k1` | Node keys, ECDH and signatures for RLPx, discv5 and ENRs (libsecp256k1, already in evm2's tree). |
 | `aes`, `ctr` | AES-256-CTR for RLPx ECIES and frame encryption, and AES-128-CTR for discv5 packet headers (`ring` has no CTR mode). |

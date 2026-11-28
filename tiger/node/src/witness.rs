@@ -14,7 +14,7 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, keccak256};
 use alloy_rlp::Decodable;
 use alloy_trie::{EMPTY_ROOT_HASH, Nibbles, TrieAccount};
-use base_proof_mpt::{NoopTrieProvider, TrieNode, TrieNodeError, TrieProvider};
+use base_tiger_trie::{NoNodes, SparseTrie, TrieError};
 use evm2::{
     AccountInfo, BlockStateAccumulator, bytecode::Bytecode, evm::Database,
 };
@@ -94,18 +94,20 @@ impl Nodes {
         self.missing.borrow_mut().get_or_insert(error).clone()
     }
 
-    fn trie_error(&self, error: TrieNodeError) -> WitnessError {
-        self.missing.borrow().clone().unwrap_or_else(|| WitnessError::Malformed(error.to_string()))
+    /// The first read the witness could not serve, or `error` itself for a malformed node.
+    fn trie_error(&self, error: TrieError) -> WitnessError {
+        match error {
+            TrieError::MissingNode { hash, .. } => self.record(WitnessError::MissingTrieNode(hash)),
+            error => self.missing.borrow().clone().unwrap_or_else(|| WitnessError::Malformed(error.to_string())),
+        }
     }
 
     fn open_account(
         &self,
-        trie: &mut TrieNode,
+        trie: &mut SparseTrie,
         hashed_address: B256,
     ) -> Result<Option<TrieAccount>, WitnessError> {
-        let leaf = trie
-            .open(&Nibbles::unpack(hashed_address), self)
-            .map_err(|error| self.trie_error(error))?;
+        let leaf = trie.get(self, hashed_address).map_err(|error| self.trie_error(error))?;
         leaf.map(|rlp| {
             TrieAccount::decode(&mut rlp.as_ref())
                 .map_err(|error| WitnessError::Malformed(error.to_string()))
@@ -116,22 +118,20 @@ impl Nodes {
     /// Applies slot writes (hashed slot, value; zero deletes) to `trie`.
     fn apply_storage(
         &self,
-        trie: &mut TrieNode,
+        trie: &mut SparseTrie,
         writes: &BTreeMap<B256, U256>,
     ) -> Result<(), WitnessError> {
         for (slot, value) in writes {
-            let path = Nibbles::unpack(slot);
-            if value.is_zero() {
-                match trie.delete(&path, self) {
-                    Ok(()) | Err(TrieNodeError::KeyNotFound) => {}
-                    Err(error) => return Err(self.trie_error(error)),
-                }
-            } else {
-                trie.insert(&path, alloy_rlp::encode(value).into(), self)
-                    .map_err(|error| self.trie_error(error))?;
-            }
+            let leaf = (!value.is_zero()).then(|| alloy_rlp::encode(value));
+            trie.update(self, *slot, leaf).map_err(|error| self.trie_error(error))?;
         }
         Ok(())
+    }
+}
+
+impl base_tiger_trie::NodeSource for Nodes {
+    fn node(&self, _owner: Option<B256>, _path: &Nibbles, hash: B256) -> Result<Option<Vec<u8>>, TrieError> {
+        Ok(self.source.trie_node(&hash).map(|node| node.to_vec()))
     }
 }
 
@@ -150,56 +150,38 @@ pub struct GenesisAccount {
     pub storage: BTreeMap<U256, U256>,
 }
 
-fn storage_trie(storage: &BTreeMap<U256, U256>) -> TrieNode {
-    let mut trie = TrieNode::Empty;
-    for (slot, value) in storage {
-        assert!(!value.is_zero(), "zero slots are not stored");
-        let path = Nibbles::unpack(keccak256(slot.to_be_bytes::<32>()));
-        trie.insert(&path, alloy_rlp::encode(value).into(), &NoopTrieProvider)
-            .expect("inserting into a fully revealed trie reads no nodes");
-    }
-    trie
-}
-
 /// The storage root of `storage` (non-zero slots).
 pub fn storage_root(storage: &BTreeMap<U256, U256>) -> B256 {
-    storage_trie(storage).blind()
+    let mut trie = SparseTrie::new(None, EMPTY_ROOT_HASH);
+    for (slot, value) in storage {
+        assert!(!value.is_zero(), "zero slots are not stored");
+        trie.update(&NoNodes, keccak256(slot.to_be_bytes::<32>()), Some(alloy_rlp::encode(value)))
+            .expect("inserting into a fully revealed trie reads no nodes");
+    }
+    trie.root()
 }
 
 /// The state root of a whole state built from scratch.
 pub fn build_state(accounts: &BTreeMap<Address, GenesisAccount>) -> B256 {
-    let mut trie = TrieNode::Empty;
+    let mut trie = SparseTrie::new(None, EMPTY_ROOT_HASH);
     for (address, account) in accounts {
-        let storage = storage_trie(&account.storage);
         let leaf = TrieAccount {
             nonce: account.nonce,
             balance: account.balance,
-            storage_root: storage.blind(),
+            storage_root: storage_root(&account.storage),
             code_hash: account.code_hash,
         };
-        trie.insert(&Nibbles::unpack(keccak256(address)), alloy_rlp::encode(leaf).into(), &NoopTrieProvider)
+        trie.update(&NoNodes, keccak256(address), Some(alloy_rlp::encode(leaf)))
             .expect("inserting into a fully revealed trie reads no nodes");
     }
-    trie.blind()
-}
-
-impl TrieProvider for Nodes {
-    type Error = WitnessError;
-
-    fn trie_node_by_hash(&self, key: B256) -> Result<TrieNode, WitnessError> {
-        let Some(node) = self.source.trie_node(&key) else {
-            return Err(self.record(WitnessError::MissingTrieNode(key)));
-        };
-        TrieNode::decode(&mut node.as_ref())
-            .map_err(|error| WitnessError::Malformed(format!("node {key}: {error}")))
-    }
+    trie.root()
 }
 
 #[derive(Debug)]
 struct Tries {
-    accounts: TrieNode,
+    accounts: SparseTrie,
     /// Parent storage tries by hashed address, opened lazily.
-    storages: HashMap<B256, TrieNode>,
+    storages: HashMap<B256, SparseTrie>,
 }
 
 /// The parent state of one block, served from its witness.
@@ -224,10 +206,13 @@ impl WitnessState {
             nodes: Nodes { source, missing: RefCell::new(None) },
             block_hashes: block_hashes.into_iter().collect(),
             tries: RefCell::new(Tries {
-                accounts: TrieNode::new_blinded(state_root),
+                accounts: SparseTrie::new(None, state_root),
                 storages: storage_roots
                     .into_iter()
-                    .map(|(address, root)| (keccak256(address), TrieNode::new_blinded(root)))
+                    .map(|(address, root)| {
+                        let hashed_address = keccak256(address);
+                        (hashed_address, SparseTrie::new(Some(hashed_address), root))
+                    })
                     .collect(),
             }),
         }
@@ -253,11 +238,11 @@ impl WitnessState {
             let Some(account) = self.nodes.open_account(&mut tries.accounts, hashed_address)? else {
                 return Ok(U256::ZERO);
             };
-            tries.storages.insert(hashed_address, TrieNode::new_blinded(account.storage_root));
+            tries.storages.insert(hashed_address, SparseTrie::new(Some(hashed_address), account.storage_root));
         }
         let trie = tries.storages.get_mut(&hashed_address).expect("opened above");
         let leaf = trie
-            .open(&Nibbles::unpack(keccak256(slot.to_be_bytes::<32>())), &self.nodes)
+            .get(&self.nodes, keccak256(slot.to_be_bytes::<32>()))
             .map_err(|error| self.nodes.trie_error(error))?;
         leaf.map_or(Ok(U256::ZERO), |rlp| {
             U256::decode(&mut rlp.as_ref()).map_err(|error| WitnessError::Malformed(error.to_string()))
@@ -284,7 +269,7 @@ impl WitnessState {
     }
 
     /// The parent storage trie of `hashed_address` (empty when the account does not exist).
-    fn parent_storage_trie(&self, hashed_address: B256) -> Result<TrieNode, WitnessError> {
+    fn parent_storage_trie(&self, hashed_address: B256) -> Result<SparseTrie, WitnessError> {
         let mut guard = self.tries.borrow_mut();
         let tries = &mut *guard;
         if let Some(trie) = tries.storages.get(&hashed_address) {
@@ -294,7 +279,7 @@ impl WitnessState {
             .nodes
             .open_account(&mut tries.accounts, hashed_address)?
             .map_or(EMPTY_ROOT_HASH, |account| account.storage_root);
-        Ok(TrieNode::new_blinded(root))
+        Ok(SparseTrie::new(Some(hashed_address), root))
     }
 
     /// Storage root of `address` after `changes`, from its parent storage trie (or an empty one
@@ -307,7 +292,7 @@ impl WitnessState {
         let hashed_address = keccak256(address);
         let wiped = changes.storage_wipes().any(|wiped| wiped == address);
         let mut trie = if wiped {
-            TrieNode::new_blinded(EMPTY_ROOT_HASH)
+            SparseTrie::new(Some(hashed_address), EMPTY_ROOT_HASH)
         } else {
             self.parent_storage_trie(hashed_address)?
         };
@@ -317,7 +302,7 @@ impl WitnessState {
             .map(|(key, slot)| (keccak256(key.key().to_be_bytes::<32>()), slot.current))
             .collect();
         self.nodes.apply_storage(&mut trie, &writes)?;
-        Ok(trie.blind())
+        Ok(trie.root())
     }
 
     /// The state after `changes`, applied to the parent state.
@@ -343,17 +328,13 @@ impl WitnessState {
         let mut accounts = self.tries.borrow().accounts.clone();
         let nodes = &self.nodes;
         for hashed_address in touched {
-            let path = Nibbles::unpack(hashed_address);
             let parent = nodes.open_account(&mut accounts, hashed_address)?;
             let info = match infos.get(&hashed_address) {
                 Some(info) => info.as_ref().map(|info| (info.nonce, info.balance, info.code_hash)),
                 None => parent.map(|account| (account.nonce, account.balance, account.code_hash)),
             };
             let Some((nonce, balance, code_hash)) = info else {
-                match accounts.delete(&path, nodes) {
-                    Ok(()) | Err(TrieNodeError::KeyNotFound) => {}
-                    Err(error) => return Err(nodes.trie_error(error)),
-                }
+                accounts.update(nodes, hashed_address, None).map_err(|error| nodes.trie_error(error))?;
                 continue;
             };
             let empty = BTreeMap::new();
@@ -362,17 +343,17 @@ impl WitnessState {
                 parent.map_or(EMPTY_ROOT_HASH, |account| account.storage_root)
             } else {
                 let mut trie = if wiped.contains(&hashed_address) {
-                    TrieNode::new_blinded(EMPTY_ROOT_HASH)
+                    SparseTrie::new(Some(hashed_address), EMPTY_ROOT_HASH)
                 } else {
                     self.parent_storage_trie(hashed_address)?
                 };
                 nodes.apply_storage(&mut trie, slot_writes)?;
-                trie.blind()
+                trie.root()
             };
             let leaf = alloy_rlp::encode(TrieAccount { nonce, balance, storage_root, code_hash });
-            accounts.insert(&path, leaf.into(), nodes).map_err(|error| nodes.trie_error(error))?;
+            accounts.update(nodes, hashed_address, Some(leaf)).map_err(|error| nodes.trie_error(error))?;
         }
-        Ok(accounts.blind())
+        Ok(accounts.root())
     }
 }
 

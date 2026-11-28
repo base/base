@@ -178,8 +178,6 @@ dependencies = [
  "c-kzg",
  "derive_more",
  "either",
- "ethereum_ssz",
- "ethereum_ssz_derive",
  "serde",
  "serde_with",
  "sha2 0.10.9",
@@ -323,8 +321,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "derive_more",
- "ethereum_ssz",
- "ethereum_ssz_derive",
  "rand 0.8.7",
  "serde",
  "strum",
@@ -1046,11 +1042,8 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-serde",
  "base-common-consensus",
- "ethereum_ssz",
- "ethereum_ssz_derive",
  "serde",
  "sha2 0.10.9",
- "snap",
  "thiserror",
 ]
 
@@ -1096,18 +1089,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-mpt"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "alloy-trie",
- "base-common-rpc-types-engine",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "base-tiger"
 version = "0.0.0"
 dependencies = [
@@ -1128,7 +1109,6 @@ dependencies = [
  "base-common-l1-fees",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
- "base-proof-mpt",
  "base-tiger-evm",
  "base-tiger-net",
  "base-tiger-store",
@@ -2033,46 +2013,6 @@ checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "ethereum_serde_utils"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38df44a7a271ab43835678f9215b53cc2523e4714a215da6643d83dc110245da"
-dependencies = [
- "alloy-primitives",
- "hex",
- "serde",
- "serde_derive",
- "serde_json",
-]
-
-[[package]]
-name = "ethereum_ssz"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e462875ad8693755ea8913d6e905715c76ea4836e2254e18c9cf0f7a8f8c2a13"
-dependencies = [
- "alloy-primitives",
- "ethereum_serde_utils",
- "itertools 0.14.0",
- "serde",
- "serde_derive",
- "smallvec",
- "typenum",
-]
-
-[[package]]
-name = "ethereum_ssz_derive"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "daf022360bdbe9456eda5f35718a50476d5b2a0d51a97ed4eae27420737a6fba"
-dependencies = [
- "darling",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -4226,12 +4166,6 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 dependencies = [
  "serde",
 ]
-
-[[package]]
-name = "snap"
-version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "199905e6153d6405f9728fe44daace35f8f837bbf830bb6e85fbd5828709a886"
 
 [[package]]
 name = "spin"
