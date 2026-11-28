@@ -38,6 +38,19 @@ safety (no honest node accepts an invalid message), liveness (every honest node 
 accepted message once the network heals), eclipse (a victim keeps at least one honest peer),
 request answers, and that queues stay within their caps.
 
+## tp2p devnet acceptance
+
+`devnet/` runs anvil as L1 and three base-consensus and tiger pairs, all built with `--features
+tp2p` and running with libp2p and devp2p off: a sequencer, a follower (EL sync and unsafe blocks
+over tp2p) and a stateless tiger that gets its witnesses from tiger peers. The stateless tiger
+reads its start block from the sequencer's RPC through a proxy that logs every method it calls.
+The scripts run each process as an Amp orb service.
+
+```sh
+devnet/down.sh; devnet/up.sh    # data and logs in /tmp/tp2p-devnet
+devnet/check.sh                 # same hash and state root on every block, open sockets, upstream calls
+```
+
 ## EL differential
 
 `el` compares tiger's devp2p stack (`base-tiger-net`) against base-reth (the reth crates pinned in

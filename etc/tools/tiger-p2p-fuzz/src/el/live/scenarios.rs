@@ -203,12 +203,13 @@ impl Run<'_> {
             Ok(peer) => peer,
             Err(lines) => return lines,
         };
-        for (id, payload) in messages {
-            if let Err(e) = peer.send(*id, payload) {
-                return vec![format!("send failed: {e}")];
-            }
+        // A peer may close mid-burst; what it sent before closing (a Disconnect) still counts.
+        let failed = messages.iter().find_map(|(id, payload)| peer.send(*id, payload).err());
+        let mut lines = describe(&peer.observe(WAIT));
+        // Only that a send failed is compared: EPIPE or ECONNRESET depends on timing.
+        if failed.is_some() {
+            lines.insert(0, "send failed".to_string());
         }
-        let lines = describe(&peer.observe(WAIT));
         self.peer = Some(peer);
         lines
     }
@@ -449,6 +450,28 @@ pub(crate) fn all() -> Vec<Scenario> {
             events.extend(peer.observe(Duration::from_millis(1500)));
             r.peer = Some(peer);
             describe(&events)
+        }),
+        s!("status", "oversize-before-status", |r| {
+            // An 11 MiB Transactions message (over the 10 MiB eth limit) before Status.
+            let (mut peer, _) = match r.status_pending(69) {
+                Ok(x) => x,
+                Err(l) => return l,
+            };
+            let _ = peer.send(ETH + 0x02, &l(vec![b(vec![0; 11 << 20])]).encode());
+            let lines = describe(&peer.observe(WAIT));
+            r.peer = Some(peer);
+            lines
+        }),
+        s!("status", "ping-violation-before-status", |r| {
+            // A Ping with a non-empty payload before Status.
+            let (mut peer, _) = match r.status_pending(69) {
+                Ok(x) => x,
+                Err(l) => return l,
+            };
+            let _ = peer.send(0x02, &[0xc1, 0x80]);
+            let lines = describe(&peer.observe(WAIT));
+            r.peer = Some(peer);
+            lines
         }),
         s!("status", "no-status-timeout", |r| {
             let (mut peer, _) = match r.status_pending(69) {
@@ -735,6 +758,8 @@ pub(crate) fn all() -> Vec<Scenario> {
             r.exchange(68, &[(ETH + 0x11, payload)])
         }),
         s!("ids", "id-0x7f", |r| r.exchange(69, &[(0x7f, vec![0xc0])])),
+        s!("ids", "id-0x7f-11MiB", |r| r
+            .exchange(69, &[(0x7f, l(vec![b(vec![0; 11 << 20])]).encode())])),
         s!("ids", "status-after-handshake", |r| {
             let mut peer = match r.session(69) {
                 Ok(p) => p,
@@ -793,10 +818,9 @@ pub(crate) fn all() -> Vec<Scenario> {
         s!("p2p", "ping-flood-50", |r| {
             let pings: Vec<(u8, Vec<u8>)> = (0..50).map(|_| (0x02, vec![0xc0])).collect();
             let lines = r.exchange(69, &pings);
-            let pongs = lines.iter().filter(|l| *l == "pong").count();
-            let mut out: Vec<String> = lines.into_iter().filter(|l| l != "pong").collect();
-            out.insert(0, format!("{pongs} pongs"));
-            out
+            // The pong count depends on when the peer flushes before disconnecting, so only
+            // the rest of the outcome is compared.
+            lines.into_iter().filter(|l| l != "pong").collect()
         }),
         s!("p2p", "disconnect-uncompressed", |r| {
             let mut peer = match r.session(69) {

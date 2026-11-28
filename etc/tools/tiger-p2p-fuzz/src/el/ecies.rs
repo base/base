@@ -88,7 +88,7 @@ pub(crate) fn generate(rng: &mut Rng) -> Seed {
         _ => {
             // Frame spec: header plaintext (16) | body length (2) | corruption (1) | position (2)
             // | first (1) | body.
-            let len = *rng.pick(&[1usize, 2, 15, 16, 17, 100, 2047, 2048]);
+            let len = *rng.pick(&[1usize, 2, 15, 16, 17, 100, 2047, 2048, 2049, 3000, 0xffff]);
             let declared = match rng.below(6) {
                 0 => 0,
                 1 => len + 1,
